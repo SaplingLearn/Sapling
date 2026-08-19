@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -86,7 +87,15 @@ OWNED = ("instructor_name", "meeting_times", "location")
 
 
 def _all_rows(name: str, columns: str, filters: dict | None = None) -> list[dict]:
-    """Read a whole table, paging past the PostgREST row cap."""
+    """Read a whole table, paging past the PostgREST row cap.
+
+    Terminates on a **short page**, and treats the row count as advisory:
+    `select_with_count` reports `total = 0` whenever Content-Range is missing or
+    unparseable, which made the old `offset >= total` guard read `1000 >= 0` and
+    return page one as if it were the whole table — silently. Truncating
+    `existing` is the dangerous direction: the importer would queue inserts for
+    sections that already exist and take a duplicate-key 409 mid-batch.
+    """
     out: list[dict] = []
     offset = 0
     while True:
@@ -95,7 +104,9 @@ def _all_rows(name: str, columns: str, filters: dict | None = None) -> list[dict
         )
         out.extend(rows)
         offset += len(rows)
-        if not rows or offset >= total:
+        # A full page means there may be more; `total` only lets us stop one
+        # request early when the header was there to read.
+        if len(rows) < PAGE or (total and offset >= total):
             return out
 
 
@@ -131,6 +142,26 @@ def load_catalog(path: Path, include_probe: bool) -> list[dict]:
 # verbatim; mapping them to NULL is the importer's job, same as Staff/TBA.
 _NO_LOCATION = {"no room", "tba", "tbd", "arr", ""}
 
+# Same idea for the schedule column, which is student-facing too — but it can't be
+# an exact-match set: bu.edu publishes an arranged section as a bare "ARR" on some
+# pages and as "ARR 12:00 am-12:00 am" on others (the table still renders the time
+# column, so it pads a zero-length midnight slot). Both mean "no meeting time
+# published", and storing either shows students a class time that doesn't exist.
+# `scripts/scrape_bu_catalog.py::is_placeholder_schedule` is the same check at
+# scrape time; it is repeated here because the importer also runs against catalog
+# files written before that landed (and importing scripts/ from db/ would drag
+# bs4 + httpx into an ops script that needs neither).
+_NO_MEETING_HEADS = ("arr", "tba", "tbd", "arranged")
+# What may follow the placeholder token for the cell to still count as one:
+# time characters only. Deliberately conservative — "ARR TR 2:00 pm" carries a
+# real pattern and is kept verbatim.
+_TIME_ONLY_RE = re.compile(r"^[\d\s:.apm\u2013-]*$", re.I)
+
+
+def _is_placeholder_schedule(text: str) -> bool:
+    head, _, rest = " ".join(text.split()).lower().partition(" ")
+    return head in _NO_MEETING_HEADS and bool(_TIME_ONLY_RE.match(rest))
+
 
 def _merge_meetings(rows: list[dict]) -> dict:
     """Collapse the meeting patterns BU publishes for one section into one row.
@@ -156,7 +187,7 @@ def _merge_meetings(rows: list[dict]) -> dict:
     locations: list[str] = []
     for s in rows:
         t = (s.get("meeting_times") or "").strip()
-        if t and t not in times:
+        if t and not _is_placeholder_schedule(t) and t not in times:
             times.append(t)
         loc = (s.get("location") or "").strip()
         if loc and loc.lower() not in _NO_LOCATION and loc not in locations:
@@ -284,6 +315,25 @@ def link_school(apply: bool) -> None:
         print(f"  linked {min(i + BATCH, len(todo)):,}/{len(todo):,}", flush=True)
 
 
+def _offering_row(offering_id: str, course_id: str, term_id: str, want: dict) -> dict:
+    """A **complete** `course_offerings` row for the batched write path.
+
+    Updates go out as whole rows rather than patches because the writer is
+    `upsert(on_conflict="id")` — `INSERT ... ON CONFLICT (id) DO UPDATE` — and
+    Postgres checks NOT NULL on the candidate tuple *before* it detects the
+    conflict. A payload of only the changed columns would fail with 23502 on
+    course_id/term_id instead of updating the row. Re-sending an unchanged column
+    with its current value is a no-op.
+    """
+    return {
+        "id": offering_id,
+        "course_id": course_id,
+        "term_id": term_id,
+        "section": want["section"],
+        **{k: want[k] for k in OWNED},
+    }
+
+
 def run(
     term: str,
     apply: bool,
@@ -339,7 +389,7 @@ def run(
           f"across {len(existing):,} courses\n")
 
     to_insert: list[dict] = []
-    to_update: list[tuple[str, dict]] = []   # (offering_id, patch)
+    to_update: list[dict] = []   # whole rows, keyed on an existing offering id
     adopted = unchanged = skipped_codes = 0
 
     for code, sections in sorted(wanted.items()):
@@ -359,21 +409,14 @@ def run(
             row = by_section.get(want["section"])
             if row is None and hollow:
                 row = hollow.pop(0)
-                to_update.append((row["id"], {"section": want["section"], **{k: want[k] for k in OWNED}}))
+                to_update.append(_offering_row(row["id"], course_id, term_id, want))
                 adopted += 1
                 continue
             if row is None:
-                to_insert.append({
-                    "id": str(uuid.uuid4()),
-                    "course_id": course_id,
-                    "term_id": term_id,
-                    "section": want["section"],
-                    **{k: want[k] for k in OWNED},
-                })
+                to_insert.append(_offering_row(str(uuid.uuid4()), course_id, term_id, want))
                 continue
-            patch = {k: want[k] for k in OWNED if row.get(k) != want[k]}
-            if patch:
-                to_update.append((row["id"], patch))
+            if any(row.get(k) != want[k] for k in OWNED):
+                to_update.append(_offering_row(row["id"], course_id, term_id, want))
             else:
                 unchanged += 1
 
@@ -386,7 +429,7 @@ def run(
         for code, sections in wanted.items()
         if code in by_code
     }
-    adopted_ids = {oid for oid, _ in to_update}
+    adopted_ids = {r["id"] for r in to_update}
     stale = sum(
         1
         for course_id, rows in existing.items()
@@ -406,7 +449,18 @@ def run(
         print(f"stale:     {stale:,} offerings in {label} the scrape no longer lists (left alone)")
 
     if not to_insert and not to_update:
-        print("\nNothing to do — already in sync.")
+        # `--link-school` is a separate unit of work, on `courses` rather than
+        # `course_offerings` (#280 task 3), so it is still owed when the offering
+        # sync has nothing to do. Returning unconditionally here dropped it on
+        # every re-run — and the re-run is exactly the path that matters:
+        # link_school [FAIL]s on duplicate course_codes and asks the operator to
+        # merge them and run again, by which time the offerings are in sync.
+        if do_link_school:
+            print("\nOfferings already in sync — nothing to insert or update; "
+                  "--link-school still runs below.")
+            link_school(apply=apply)
+        else:
+            print("\nNothing to do — already in sync.")
         return
     if not apply:
         print("\ndry run — nothing written. Re-run with --apply.")
@@ -418,10 +472,15 @@ def run(
         table("course_offerings").insert(to_insert[i : i + BATCH])
         print(f"  inserted {min(i + BATCH, len(to_insert)):,}/{len(to_insert):,}", flush=True)
 
-    for n, (offering_id, patch) in enumerate(to_update, 1):
-        table("course_offerings").update(patch, filters={"id": f"eq.{offering_id}"})
-        if n % BATCH == 0:
-            print(f"  updated {n:,}/{len(to_update):,}", flush=True)
+    # Updates and adoptions go out in the same BATCH-sized writes as the inserts.
+    # One PATCH per row was O(sections) sequential round trips — 4,122 of them for
+    # staging's hollow fall-2026 offerings alone, plus one per section the registrar
+    # later changes, each its own transaction and each firing
+    # trg_course_offerings_updated_at. `upsert(on_conflict="id")` sends whole rows
+    # (see _offering_row) and PostgREST resolves them with merge-duplicates.
+    for i in range(0, len(to_update), BATCH):
+        table("course_offerings").upsert(to_update[i : i + BATCH], on_conflict="id")
+        print(f"  updated {min(i + BATCH, len(to_update)):,}/{len(to_update):,}", flush=True)
 
     print(f"\nDone: {len(to_insert):,} inserted, {len(to_update):,} updated in {label}.")
 

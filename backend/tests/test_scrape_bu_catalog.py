@@ -125,6 +125,41 @@ def test_empty_cells_become_none_not_empty_string():
     (s,) = _extract_sections(_soup(html))
     assert s["location"] is None
     assert s["notes"] is None
+    # "ARR 12:00 am-12:00 am" is the registrar's placeholder for "arranged", not a
+    # real midnight class — storing it verbatim would show students a fake time.
+    assert s["meeting_times"] is None
+
+
+def test_placeholder_schedules_become_none():
+    """The Schedule column's "Staff": ARR/TBA mean no meeting time was published."""
+    html = """
+    <h4>FALL 2026 Schedule</h4>
+    <table>
+      <tr><th>Section</th><th>Instructor</th><th>Location</th><th>Schedule</th><th>Notes</th></tr>
+      <tr><td>A1</td><td>Erdos</td><td>CAS 226</td><td>ARR</td><td></td></tr>
+      <tr><td>A2</td><td>Erdos</td><td>CAS 226</td><td>TBA</td><td></td></tr>
+      <tr><td>A3</td><td>Erdos</td><td>CAS 226</td><td>MWF 9:05 am-9:55 am</td><td></td></tr>
+    </table>
+    """
+    sections = _extract_sections(_soup(html))
+    assert [s["meeting_times"] for s in sections] == [None, None, "MWF 9:05 am-9:55 am"]
+
+
+def test_a_real_pattern_after_arr_is_kept():
+    """The placeholder check is deliberately narrow: only time text may follow it.
+
+    A cell that pairs the token with a genuine pattern still carries a meeting the
+    students need, so nulling it would lose data the scrape is here to collect.
+    """
+    html = """
+    <h4>FALL 2026 Schedule</h4>
+    <table>
+      <tr><th>Section</th><th>Instructor</th><th>Location</th><th>Schedule</th><th>Notes</th></tr>
+      <tr><td>A1</td><td>Erdos</td><td>CAS 226</td><td>ARR TR 2:00 pm-3:15 pm</td><td></td></tr>
+    </table>
+    """
+    (s,) = _extract_sections(_soup(html))
+    assert s["meeting_times"] == "ARR TR 2:00 pm-3:15 pm"
 
 
 def test_non_schedule_tables_are_skipped():

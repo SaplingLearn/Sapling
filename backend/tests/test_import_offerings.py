@@ -1,8 +1,10 @@
 """Hermetic tests for db/import_offerings.py (#280).
 
-No real DB: `db.import_offerings.table` is patched to a FakeTable backed by an
-in-memory store that mimics the PostgREST semantics the importer actually uses —
-paged select_with_count, eq/in filters, insert, update, and upsert-on-conflict.
+No real DB: `db.import_offerings.table` is patched to the shared PostgREST fake
+from tests/conftest.py (`fake_postgrest`), which mimics the semantics the importer
+actually uses — paged select_with_count, eq/in filters, insert, update, and
+upsert-on-conflict — and is shared with test_seed_staging.py so both scripts are
+checked against one model of PostgREST rather than two forks of one.
 
 The invariants under test are the ones that cost real data if they break:
 per-section row creation, **adoption** of the hollow legacy offering in place
@@ -10,7 +12,6 @@ per-section row creation, **adoption** of the hollow legacy offering in place
 re-run.
 """
 import json
-from unittest.mock import patch
 
 import pytest
 
@@ -20,85 +21,10 @@ import db.import_offerings as imp
 # ─── Fake PostgREST ──────────────────────────────────────────────────────────
 
 
-class _Store:
-    def __init__(self, tables=None):
-        self.tables: dict[str, list[dict]] = {
-            "terms": [{"id": "fall-2026", "label": "Fall 2026"}],
-            "courses": [],
-            "course_offerings": [],
-            "schools": [],
-        }
-        self.tables.update(tables or {})
-
-    def rows(self, name):
-        return self.tables.setdefault(name, [])
-
-
-class _FakeTable:
-    def __init__(self, name, store):
-        self.name = name
-        self.store = store
-
-    @property
-    def _t(self):
-        return self.store.rows(self.name)
-
-    def _match(self, rows, filters):
-        for col, expr in (filters or {}).items():
-            if expr.startswith("eq."):
-                val = expr[3:]
-                rows = [r for r in rows if str(r.get(col)) == val]
-            elif expr.startswith("in.("):
-                vals = set(expr[4:-1].split(","))
-                rows = [r for r in rows if str(r.get(col)) in vals]
-            else:
-                raise AssertionError(f"unexpected filter {expr!r}")
-        return rows
-
-    def select(self, columns="*", filters=None, order=None, limit=None):
-        rows = self._match(list(self._t), filters)
-        return rows[:limit] if limit else rows
-
-    def select_with_count(self, columns="*", filters=None, order=None, limit=None, offset=None):
-        rows = self._match(list(self._t), filters)
-        total = len(rows)
-        start = offset or 0
-        return rows[start : start + limit if limit else None], total
-
-    def insert(self, data):
-        rows = data if isinstance(data, list) else [data]
-        ids = {r["id"] for r in self._t}
-        for r in rows:
-            assert r["id"] not in ids, f"duplicate insert into {self.name}: {r['id']}"
-            self._t.append(dict(r))
-        return rows
-
-    def update(self, data, filters):
-        hit = self._match(self._t, filters)
-        for r in hit:
-            r.update(data)
-        return hit
-
-    def upsert(self, data, on_conflict="id"):
-        rows = data if isinstance(data, list) else [data]
-        keys = on_conflict.split(",")
-        for row in rows:
-            match = next(
-                (r for r in self._t if all(str(r.get(k)) == str(row.get(k)) for k in keys)),
-                None,
-            )
-            if match:
-                match.update(row)
-            else:
-                self._t.append(dict(row))
-        return rows
-
-
 @pytest.fixture
-def store():
-    s = _Store()
-    with patch.object(imp, "table", side_effect=lambda name: _FakeTable(name, s)):
-        yield s
+def store(fake_postgrest):
+    # `terms` is read and never written — migration 0019 seeds the canonical rows.
+    return fake_postgrest(imp, tables={"terms": [{"id": "fall-2026", "label": "Fall 2026"}]})
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -143,7 +69,7 @@ def _run(tmp_path, courses, store, **kw):
 
 
 def _seed_course(store, code="CAS CS 330", cid="course-cs330"):
-    store.rows("courses").append({"id": cid, "course_code": code, "school_id": None})
+    store.seed("courses", {"id": cid, "course_code": code, "school_id": None})
     return cid
 
 
@@ -199,10 +125,31 @@ def test_multiple_meeting_patterns_are_merged_not_dropped(tmp_path, store):
     assert offering["instructor_name"] == "Srinivasan"
 
 
-def test_placeholder_locations_become_null(tmp_path, store):
+def test_placeholder_locations_and_schedules_become_null(tmp_path, store):
+    """Both student-facing columns get the same treatment as "Staff" on instructor.
+
+    An older catalog file (written before the scraper nulled these) is the case
+    that matters: leaving "ARR" in `meeting_times` puts a schedule in front of
+    students that the registrar never published.
+    """
     _seed_course(store)
-    (offering,) = _run(tmp_path, [_course(sections=(("A1", "Erdos", "ARR", "NO ROOM"),))], store)
+    (offering,) = _run(
+        tmp_path,
+        [_course(sections=(("A1", "Erdos", "ARR 12:00 am-12:00 am", "NO ROOM"),))],
+        store,
+    )
     assert offering["location"] is None
+    assert offering["meeting_times"] is None
+
+
+def test_a_real_pattern_beside_a_placeholder_survives(tmp_path, store):
+    """One meeting ARR, one real: the real pattern must not be dropped with it."""
+    _seed_course(store)
+    (offering,) = _run(tmp_path, [_course(sections=(
+        ("A1", "Erdos", "ARR", "NO ROOM"),
+        ("A1", "Erdos", "MWF 9:05 am-9:55 am", "STO B50"),
+    ))], store)
+    assert offering["meeting_times"] == "MWF 9:05 am-9:55 am"
 
 
 def test_distinct_rooms_are_both_kept(tmp_path, store):
@@ -241,7 +188,7 @@ def test_adopts_hollow_offering_in_place(tmp_path, store):
     and cascade-delete documents/notes.
     """
     cid = _seed_course(store)
-    store.rows("course_offerings").append({
+    store.seed("course_offerings", {
         "id": "legacy-offering", "course_id": cid, "term_id": "fall-2026",
         "section": None, "instructor_name": "Erdos", "meeting_times": None, "location": None,
     })
@@ -259,7 +206,7 @@ def test_adopts_hollow_offering_in_place(tmp_path, store):
 
 def test_adoption_is_stable_across_runs(tmp_path, store):
     cid = _seed_course(store)
-    store.rows("course_offerings").append({
+    store.seed("course_offerings", {
         "id": "legacy-offering", "course_id": cid, "term_id": "fall-2026",
         "section": None, "instructor_name": None, "meeting_times": None, "location": None,
     })
@@ -333,7 +280,7 @@ def test_fractional_credits_become_null(tmp_path, store):
 def test_stale_offerings_are_left_alone(tmp_path, store):
     """A section the scrape no longer lists is reported, never deleted."""
     cid = _seed_course(store)
-    store.rows("course_offerings").append({
+    store.seed("course_offerings", {
         "id": "off-c1", "course_id": cid, "term_id": "fall-2026",
         "section": "C1", "instructor_name": "Ghost", "meeting_times": None, "location": None,
     })
@@ -343,7 +290,7 @@ def test_stale_offerings_are_left_alone(tmp_path, store):
 
 def test_other_terms_are_untouched(tmp_path, store):
     cid = _seed_course(store)
-    store.rows("course_offerings").append({
+    store.seed("course_offerings", {
         "id": "spring-off", "course_id": cid, "term_id": "spring-2026",
         "section": None, "instructor_name": None, "meeting_times": None, "location": None,
     })
@@ -376,11 +323,110 @@ def test_link_school_refuses_on_duplicate_codes(store):
 
 
 def test_link_school_leaves_other_schools_alone(store):
-    store.rows("courses").append(
-        {"id": "demo", "course_code": "CS101", "school_id": "seed-school-demo"}
+    store.seed(
+        "courses", {"id": "demo", "course_code": "CS101", "school_id": "seed-school-demo"}
     )
     _seed_course(store, cid="c1")
     imp.link_school(apply=True)
 
     demo = next(c for c in store.rows("courses") if c["id"] == "demo")
     assert demo["school_id"] == "seed-school-demo"
+
+
+def test_link_school_still_runs_when_offerings_are_already_in_sync(tmp_path, store):
+    """`--link-school` is owed even when the offering sync has nothing to do.
+
+    This is the retry path the flag exists for: link_school [FAIL]s on duplicate
+    course_codes and tells the operator to merge them and run again — by which time
+    the offerings are in sync. An unconditional early return there meant the
+    documented runbook command silently linked nothing on every re-run.
+    """
+    _seed_course(store)
+    course = _course(sections=(("A1", "Erdos", "TR 2:00 pm", "LSE B01"),))
+    _run(tmp_path, [course], store)                        # the sync itself
+    _run(tmp_path, [course], store, do_link_school=True)   # nothing to sync, still links
+
+    (school,) = store.rows("schools")
+    assert school["slug"] == "boston-university"
+    assert all(c["school_id"] == school["id"] for c in store.rows("courses"))
+
+
+def test_in_sync_run_without_the_flag_writes_nothing(tmp_path, store):
+    _seed_course(store)
+    course = _course(sections=(("A1", "Erdos", "TR 2:00 pm", "LSE B01"),))
+    _run(tmp_path, [course], store)
+    writes_before = len(store.calls)
+    _run(tmp_path, [course], store)
+
+    assert store.calls[writes_before:] == [], "an in-sync run must issue no writes"
+    assert store.rows("schools") == []
+
+
+def test_in_sync_dry_run_does_not_link(tmp_path, store):
+    """The nothing-to-do branch must still respect --apply's absence."""
+    _seed_course(store)
+    course = _course(sections=(("A1", "Erdos", "TR 2:00 pm", "LSE B01"),))
+    _run(tmp_path, [course], store)
+    _run(tmp_path, [course], store, apply=False, do_link_school=True)
+
+    assert store.rows("schools") == [], "a dry run must not create the school row"
+    assert all(c["school_id"] is None for c in store.rows("courses"))
+
+
+# ─── Write shape ─────────────────────────────────────────────────────────────
+
+
+def test_updates_are_batched_not_one_request_per_row(tmp_path, store):
+    """Adoptions and updates share the inserts' batching.
+
+    One PATCH per row made a routine refresh O(sections) sequential HTTP requests
+    — 4,122 of them for staging's hollow fall-2026 offerings alone — each its own
+    transaction, each firing trg_course_offerings_updated_at.
+    """
+    _seed_course(store)
+    before = _course(sections=tuple((f"A{i}", "Erdos", "TR 2:00 pm", "LSE B01") for i in (1, 2, 3)))
+    _run(tmp_path, [before], store)
+    writes_before = len(store.calls)
+
+    after = _course(sections=tuple((f"A{i}", "Kfoury", "TR 2:00 pm", "CAS 226") for i in (1, 2, 3)))
+    offerings = _run(tmp_path, [after], store)
+
+    assert store.calls[writes_before:] == [("course_offerings", "upsert", 3)], (
+        "three changed sections must go out as one batched upsert, not three PATCHes"
+    )
+    assert len(offerings) == 3, "upsert on id must update in place, never insert a twin"
+    assert {o["section"] for o in offerings} == {"A1", "A2", "A3"}
+    assert all(o["instructor_name"] == "Kfoury" and o["location"] == "CAS 226" for o in offerings)
+
+
+def test_paging_continues_when_the_row_count_is_unreadable(tmp_path, store, monkeypatch):
+    """`select_with_count` reports total=0 when Content-Range is missing/unparseable.
+
+    The old `offset >= total` guard then read `PAGE >= 0` and returned page one as
+    the whole table. Truncating `existing` is the dangerous direction: the importer
+    queues inserts for sections that already exist and takes a duplicate-key 409
+    mid-batch (here: a second row for A2 under a fresh uuid).
+    """
+    monkeypatch.setattr(imp, "PAGE", 1)
+    cid = _seed_course(store)
+    for section in ("A1", "A2"):
+        store.seed("course_offerings", {
+            "id": f"off-{section.lower()}", "course_id": cid, "term_id": "fall-2026",
+            "section": section, "instructor_name": "Erdos",
+            "meeting_times": "TR 2:00 pm", "location": "LSE B01",
+        })
+
+    def countless_table(name):
+        """The shared fake, with the row count stripped as a missing header does."""
+        t = store.table(name)
+        paged = t.select_with_count
+        t.select_with_count = lambda *a, **kw: (paged(*a, **kw)[0], 0)
+        return t
+
+    monkeypatch.setattr(imp, "table", countless_table)
+    offerings = _run(tmp_path, [_course(sections=(
+        ("A1", "Erdos", "TR 2:00 pm", "LSE B01"),
+        ("A2", "Erdos", "TR 2:00 pm", "LSE B01"),
+    ))], store)
+
+    assert [o["id"] for o in offerings] == ["off-a1", "off-a2"]

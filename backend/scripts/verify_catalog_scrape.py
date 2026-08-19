@@ -36,7 +36,7 @@ import httpx
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR / "scripts"))
 
-from scrape_bu_catalog import HEADERS, parse_course  # noqa: E402
+from scrape_bu_catalog import HEADERS, is_placeholder_schedule, parse_course  # noqa: E402
 
 CATALOG_FILE = BACKEND_DIR / "data" / "bu_catalog_fall_2026.json"
 CODE_RE = re.compile(r"^[A-Z]{2,4}\s+[A-Z]{1,4}\s+[A-Z]?\d{3}[A-Z]?$")
@@ -160,8 +160,19 @@ def _sections(catalog: list[dict]) -> int:
         print(f"  [warn] {len(dup_courses):,} courses publish multiple meetings for one "
               f"section (merged on import): {dup_courses[:3]}")
 
+    # "ARR" / "ARR 12:00 am-12:00 am" is the registrar saying no meeting time was
+    # published, so it is neither coverage nor a schedule fit to show a student.
+    # Counted before the coverage lines so `meeting_times` reports real patterns
+    # only — a placeholder used to inflate the headline metric to 100%.
+    placeholder_times = sum(
+        1 for c in catalog for s in (c.get("sections") or [])
+        if is_placeholder_schedule(s.get("meeting_times") or "")
+    )
+
     for field in ("instructor_name", "meeting_times", "location"):
         have = sum(1 for c in catalog for s in (c.get("sections") or []) if s.get(field))
+        if field == "meeting_times":
+            have -= placeholder_times
         print(f"  coverage {field:16} {have:6,}/{total:,}  ({100*have//total}%)")
 
     # "Staff"/"TBA" must be NULL, not stored literally — students would see it.
@@ -172,6 +183,11 @@ def _sections(catalog: list[dict]) -> int:
     if placeholder:
         problems += placeholder
         print(f"  [FAIL] {placeholder:,} sections stored a placeholder instructor literally")
+
+    if placeholder_times:
+        problems += placeholder_times
+        print(f"  [FAIL] {placeholder_times:,} sections stored a placeholder schedule literally "
+              "(re-run scripts/scrape_bu_catalog.py --rescan)")
 
     return problems
 

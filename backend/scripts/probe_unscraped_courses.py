@@ -66,17 +66,27 @@ SLUG = {
 CONCURRENCY = int(os.getenv("BU_CONCURRENCY", "1"))
 DELAY = float(os.getenv("BU_PAGE_DELAY", "15"))
 
+PAGE = 1000    # PostgREST default max rows per response
+
 
 def _all_rows(name: str, columns: str) -> list[dict]:
+    """Read a whole table, paging past the PostgREST row cap.
+
+    Terminates on a short page and treats the count as advisory, for the same
+    reason as db/import_offerings.py::_all_rows: `select_with_count` reports
+    `total = 0` when Content-Range is missing or unparseable, and `offset >= total`
+    then reads `1000 >= 0` — silently returning page one as the whole table. Here
+    that would make the probe invent "unscraped" courses out of rows it never read.
+    """
     out: list[dict] = []
     offset = 0
     while True:
         rows, total = table(name).select_with_count(
-            columns, order="id.asc", limit=1000, offset=offset
+            columns, order="id.asc", limit=PAGE, offset=offset
         )
         out.extend(rows)
         offset += len(rows)
-        if not rows or offset >= total:
+        if len(rows) < PAGE or (total and offset >= total):
             return out
 
 

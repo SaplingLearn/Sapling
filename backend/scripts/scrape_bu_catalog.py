@@ -203,6 +203,31 @@ def _extract_prereq_and_desc(soup: BeautifulSoup) -> tuple[str, str]:
 # `instructor_name` so the DB stores NULL rather than the literal string "Staff".
 _NO_INSTRUCTOR = {"tba", "tbd", "staff", "instructor", ""}
 
+# The same problem in the Schedule column, which is just as student-facing:
+# "ARR" ("arranged") is the schedule equivalent of "Staff" — no meeting time
+# published. It can't be an exact-match set, because bu.edu pads arranged rows
+# with a zero-length midnight slot on some pages ("ARR 12:00 am-12:00 am"), and
+# that string would land in `course_offerings.meeting_times` and be shown to
+# students as a real class time (and counted as coverage by
+# scripts/verify_catalog_scrape.py).
+_NO_MEETING = ("arr", "tba", "tbd", "arranged")
+# What may follow the placeholder token and still leave the cell a placeholder:
+# time characters only.
+_TIME_ONLY_RE = re.compile(r"^[\d\s:.apm\u2013-]*$", re.I)
+
+
+def is_placeholder_schedule(text: str) -> bool:
+    """True when a Schedule cell means "no meeting time", not a real pattern.
+
+    Conservative on purpose: only a leading ARR/TBA-style token followed by
+    nothing but time characters counts, so a cell like "ARR TR 2:00 pm" keeps its
+    real pattern. scripts/verify_catalog_scrape.py uses this to fail a scrape that
+    stored a placeholder literally; db/import_offerings.py repeats the check for
+    catalog files written before this existed.
+    """
+    head, _, rest = " ".join((text or "").split()).lower().partition(" ")
+    return head in _NO_MEETING and bool(_TIME_ONLY_RE.match(rest))
+
 
 def _extract_sections(soup: BeautifulSoup) -> list[dict]:
     """One record per scheduled **section** — the operational layer of #280.
@@ -257,11 +282,12 @@ def _extract_sections(soup: BeautifulSoup) -> list[dict]:
             if not code:
                 continue
             instructor = cell("instructor")
+            schedule = cell("schedule")
             sections.append({
                 "term":            term,
                 "section":         code,
                 "instructor_name": None if instructor.lower() in _NO_INSTRUCTOR else instructor,
-                "meeting_times":   cell("schedule") or None,
+                "meeting_times":   None if is_placeholder_schedule(schedule) else schedule or None,
                 "location":        cell("location") or None,
                 "notes":           cell("notes") or None,
             })
