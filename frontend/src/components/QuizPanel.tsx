@@ -55,10 +55,15 @@ interface QuizPanelProps {
   onExit: () => void;
 }
 
+// Tops out at 10, not 15. The backend bounds `num_questions` to 1-10
+// (backend/models/__init__.py::GenerateQuizBody) because the quiz agent's
+// `Quiz.questions` array is capped at 10 — removing that cap made
+// gemini-2.5-flash-lite answer roughly half of all generations with an
+// empty `finish_reason=error` response. While this list offered 15,
+// picking it was an unconditional 422 for every student.
 const COUNT_OPTIONS = [
   { value: "5", label: "5 questions" },
   { value: "10", label: "10 questions" },
-  { value: "15", label: "15 questions" },
 ];
 
 const DIFFICULTY_OPTIONS = [
