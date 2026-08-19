@@ -19,23 +19,9 @@ import pytest
 from services import events_service
 from services.tool_signals import Expect, report_empty_result
 
-
-@pytest.fixture
-def sink():
-    """Collect enqueued events instead of hitting the DB."""
-    events_service.reset_for_tests()
-    rows: list[dict] = []
-
-    def _capture(name):
-        m = MagicMock()
-        m.insert.side_effect = lambda payload: rows.extend(
-            payload if isinstance(payload, list) else [payload]
-        )
-        return m
-
-    with patch("services.events_service.table", side_effect=_capture):
-        yield rows
-        events_service.flush_now()
+# The `sink` fixture (collect enqueued events instead of writing them) lives in
+# tests/conftest.py — it was duplicated here and in
+# test_quiz_tool_instrumentation.py, and the copies had already drifted apart.
 
 
 def _probe(has_rows: bool, *, raises: bool = False):
@@ -69,7 +55,12 @@ def test_empty_result_for_a_user_with_data_warns_and_emits(sink, caplog):
     assert len(sink) == 1
     row = sink[0]
     assert row["event_type"] == "quiz.tool_empty"
-    assert row["category"] == "error"
+    # category="usage", NOT "error": this fires once per generation for every
+    # student in a class whose aggregates exist, and /api/admin/analytics/
+    # errors scans `category = error` newest-first — filing it there buries
+    # quiz.context_write_failed and rag.retrieval_failed under routine
+    # traffic. Same call quiz.rag_uncovered already makes.
+    assert row["category"] == "usage"
     assert row["user_id"] == "u1"
     # The tool name is the whole point — an operator has to know WHICH input
     # went quiet, not just that one did.
@@ -77,6 +68,9 @@ def test_empty_result_for_a_user_with_data_warns_and_emits(sink, caplog):
     assert row["payload"]["expect"] == "enrolled"
     assert row["payload"]["concept_node_id"] == "n1"
     assert "read_misconceptions_for_course" in caplog.text
+    # The user id rides the event's own field, never the log message
+    # (Engineering Style Guide forbids logging user ids).
+    assert "u1" not in caplog.text
 
 
 def test_feature_dimension_lets_the_tutor_share_the_seam(sink):
@@ -145,6 +139,28 @@ def test_probe_failure_degrades_to_silence(sink):
         ) is False
     events_service.flush_now()
     assert sink == []
+
+
+def test_probe_failure_is_logged_loudly(sink, caplog):
+    """Silence toward the CALLER, not toward the operator. At debug level a
+    permanently broken probe makes this whole seam inert while looking exactly
+    like "no discrepancies found" — the F5 bug class, one layer up. The line
+    has to name which probe and which table, and carry the traceback."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="services.tool_signals"):
+        with _probe(False, raises=True):
+            report_empty_result(
+                "t", user_id="u1", count=0, expect=Expect.HAS_ATTEMPTS,
+            )
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "has_attempts" in msg
+    assert "quiz_attempts" in msg
+    assert warnings[0].exc_info is not None
+    # Never the user id (Engineering Style Guide).
+    assert "u1" not in msg
 
 
 def test_event_emission_failure_never_raises(sink):

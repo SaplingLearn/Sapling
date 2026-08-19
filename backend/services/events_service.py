@@ -40,7 +40,7 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
                                         + prompt dimensions (F6): blocks, k_chunks,
                                         material_chars, digest_present, recent_asked
 quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
-quiz.tool_empty               error     tool, feature, expect, concept_node_id
+quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
@@ -98,7 +98,12 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # plausibly should have data. Three inputs were silently empty for
     # months (#529's 42P10, the misconceptions offering-id filter, the
     # digest key drift) because nothing distinguished "legitimately empty"
-    # from "the query is wrong". This is that distinction, made countable.
+    # from "the query is wrong". This is that distinction, made countable —
+    # and countable is the operative word: category="usage", because it
+    # fires once per generation for every student in a class whose
+    # aggregates exist, and the /errors feed would drown in it (same
+    # reasoning as quiz.rag_uncovered; see the emit site in
+    # services/tool_signals.py).
     "quiz.tool_empty",
     # E8: generation ran with no course-material grounding. Ungrounded
     # generation is a legitimate mode (a course with nothing indexed), but

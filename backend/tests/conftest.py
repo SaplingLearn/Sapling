@@ -85,6 +85,40 @@ def _reset_events_service():
     events_service.reset_for_tests()
 
 
+@pytest.fixture
+def sink():
+    """Collect events the code under test enqueues, instead of hitting the DB.
+
+    Shared because two suites (`test_tool_signals_f5.py`,
+    `test_quiz_tool_instrumentation.py`) had byte-for-byte copies of it, and
+    the copies had already drifted: one drained the worker queue on teardown
+    and the other didn't, so a row enqueued but not flushed by a test could
+    surface in the NEXT test's list. The post-yield `flush_now()` is the
+    load-bearing half — keep it.
+
+    Yields the list of enqueued rows. A test that asserts on rows still calls
+    `events_service.flush_now()` itself first: enqueueing is asynchronous, so
+    the list is only complete after a drain.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from services import events_service
+
+    events_service.reset_for_tests()
+    rows: list[dict] = []
+
+    def _capture(name):
+        m = MagicMock()
+        m.insert.side_effect = lambda payload: rows.extend(
+            payload if isinstance(payload, list) else [payload]
+        )
+        return m
+
+    with patch("services.events_service.table", side_effect=_capture):
+        yield rows
+        events_service.flush_now()
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_supabase_client(request, monkeypatch):
     """Hermetic safety net (#210): no test may make a real Supabase call.

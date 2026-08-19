@@ -33,8 +33,11 @@ class is as likely to land there as in the quiz.
 
 Contract, matching every other observability path in this codebase: **never
 raises, never blocks the tool it observes.** A probe that fails means
-"can't tell", which is silence — a broken probe must not manufacture
-findings any more than it should hide them.
+"can't tell", which produces no FINDING — a broken probe must not manufacture
+them any more than it should hide them. It does, however, produce a WARNING:
+silence toward the caller is not silence toward the operator, and a probe that
+can never answer would otherwise leave this whole seam inert while looking
+exactly like "nothing is wrong" — the bug class one layer up.
 """
 
 from __future__ import annotations
@@ -120,8 +123,17 @@ def _user_plausibly_has_data(
     try:
         rows = table(table_name).select("id", filters=filters, limit=1)
     except Exception:
-        logger.debug(
-            "tool_signals: %s probe failed for user=%s", expect, user_id,
+        # WARNING, not debug: a probe that can never answer makes this whole
+        # seam silently inert — the exact failure mode F5 exists to end, one
+        # layer up. At debug it would be invisible in production, so a typo'd
+        # filter or a renamed table would look identical to "no discrepancies
+        # found". The table name and expectation are what identify WHICH probe
+        # is broken; the user id is deliberately absent (Engineering Style
+        # Guide: never log user ids) and adds nothing — the probe's target,
+        # not its subject, is the bug.
+        logger.warning(
+            "tool_signals: %s probe failed against %s; treating as can't-tell",
+            expect.value, table_name,
             exc_info=True,
         )
         return None
@@ -174,14 +186,27 @@ def report_empty_result(
         if plausible is not True:
             return False
 
+        # No user id in the message (Engineering Style Guide forbids logging
+        # them); the event below carries it in the correlatable field.
         logger.warning(
-            "%s returned no rows for user=%s despite %s — a personalization "
-            "input may be silently broken (F5)",
-            tool, user_id, expect.value,
+            "%s returned no rows despite %s — a personalization input may be "
+            "silently broken (F5)",
+            tool, expect.value,
         )
         log_event(
             "quiz.tool_empty",
-            category="error",
+            # category="usage", NOT "error" — the same call
+            # `quiz.rag_uncovered` already makes. This fires once per
+            # generation for EVERY enrolled student in any class that has
+            # `offering_concept_stats` rows (the misconceptions probe's
+            # COURSE_HAS_AGGREGATES expectation is true for a whole class at
+            # once), and `/api/admin/analytics/errors` scans
+            # `category = error` newest-first — so filing it as an error
+            # buries `quiz.context_write_failed` and `rag.retrieval_failed`
+            # under routine traffic, degrading the surface workstream B just
+            # repaired. This event is a discrepancy worth COUNTING, not a
+            # failed request; the `by_event_type` rollup is where it belongs.
+            category="usage",
             user_id=user_id,
             payload={
                 "tool": tool,

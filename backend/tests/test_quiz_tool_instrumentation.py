@@ -24,20 +24,9 @@ from agents.tools.quiz_history import (
 from services import events_service, prompt_dimensions
 
 
-@pytest.fixture
-def sink():
-    events_service.reset_for_tests()
-    rows: list[dict] = []
-
-    def _capture(name):
-        m = MagicMock()
-        m.insert.side_effect = lambda payload: rows.extend(
-            payload if isinstance(payload, list) else [payload]
-        )
-        return m
-
-    with patch("services.events_service.table", side_effect=_capture):
-        yield rows
+# `sink` (collect enqueued events instead of writing them) comes from
+# tests/conftest.py. It used to be duplicated here, minus the post-yield
+# flush_now() drain the other copy had.
 
 
 @pytest.fixture(autouse=True)
@@ -259,8 +248,16 @@ def test_misconceptions_tool_skips_the_probe_with_no_resolvable_offering(sink):
 
 
 def test_misconceptions_tool_is_silent_when_it_returns_rows(sink):
+    """And costs nothing: the offering resolution behind the probe is uncached
+    and issues two unbounded PostgREST reads, so gating it on "a course id
+    exists" instead of on the result being EMPTY made every quiz generation
+    pay both round-trips even when the tool had rows to return —
+    contradicting tool_signals' own contract (one owner-scoped indexed read,
+    only on the empty path)."""
+    resolve = MagicMock(return_value=["off-1"])
     with (
-        _probe(True),
+        _probe(True) as probe,
+        patch("agents.tools.graph_read.user_offering_ids_for_course", resolve),
         patch(
             "agents.tools.graph_read.read_misconceptions_for_course",
             return_value=[Misconception(text="thinks recursion is iteration")],
@@ -270,6 +267,8 @@ def test_misconceptions_tool_is_silent_when_it_returns_rows(sink):
     events_service.flush_now()
     assert sink == []
     assert len(out) == 1
+    resolve.assert_not_called()
+    probe.assert_not_called()
 
 
 def test_misconceptions_tool_records_its_block_size(sink):

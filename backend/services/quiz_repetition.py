@@ -87,10 +87,14 @@ def recent_question_identities(
             limit=_ATTEMPT_SCAN_LIMIT,
         ) or []
     except Exception:
+        # No user id in the message (Engineering Style Guide: never log user
+        # ids). The concept node is what identifies WHICH read failed; the
+        # request-scoped log/trace context already ties the line back to the
+        # caller, so the id added nothing but a privacy liability.
         logger.warning(
-            "quiz repetition: attempt read failed user=%s concept=%s; "
+            "quiz repetition: attempt read failed concept=%s; "
             "generating without a do-not-repeat list",
-            user_id, concept_node_id, exc_info=True,
+            concept_node_id, exc_info=True,
         )
         return []
 

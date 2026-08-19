@@ -449,24 +449,33 @@ async def read_misconceptions_for_course_tool(
     # for the class, but this tool's read returned none — the signature of a
     # keyspace mismatch, which is precisely how #553 (abstract course id used
     # where an offering id is expected) presents.
-    offering_ids: list[str] = []
-    if ctx.deps.course_id:
+    #
+    # Gated on the result being EMPTY, not merely on having a course id.
+    # `user_offering_ids_for_course` is uncached and issues two unbounded
+    # PostgREST reads (enrollments -> offerings), and this runs on the quiz
+    # generation request path — resolving it whenever a course id exists made
+    # every generation pay both round-trips even when the tool returned rows,
+    # contradicting tool_signals' own documented contract ("one owner-scoped
+    # indexed read, only on the empty path"). `report_empty_result` would
+    # short-circuit on a non-zero count anyway, so the work was pure waste.
+    if not out and ctx.deps.course_id:
+        offering_ids: list[str] = []
         try:
             offering_ids = await asyncio.to_thread(
                 user_offering_ids_for_course, ctx.deps.user_id, ctx.deps.course_id
             )
         except Exception:
             logger.debug("misconceptions probe: offering resolution failed", exc_info=True)
-    if offering_ids:
-        await report_empty_result_async(
-            "read_misconceptions_for_course",
-            user_id=ctx.deps.user_id,
-            count=len(out),
-            expect=Expect.COURSE_HAS_AGGREGATES,
-            feature=getattr(ctx.deps, "feature", "unknown"),
-            scope={"offering_id": f"in.({','.join(offering_ids)})"},
-            payload={"course_id": ctx.deps.course_id},
-        )
+        if offering_ids:
+            await report_empty_result_async(
+                "read_misconceptions_for_course",
+                user_id=ctx.deps.user_id,
+                count=len(out),
+                expect=Expect.COURSE_HAS_AGGREGATES,
+                feature=getattr(ctx.deps, "feature", "unknown"),
+                scope={"offering_id": f"in.({','.join(offering_ids)})"},
+                payload={"course_id": ctx.deps.course_id},
+            )
     # F6: this block's contribution to the prompt.
     prompt_dimensions.record(misconceptions=len(out))
     return [
