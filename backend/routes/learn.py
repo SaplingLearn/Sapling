@@ -102,6 +102,35 @@ def _build_pro_model_settings():
     )
 
 
+def _new_run_text(result) -> str:
+    """The text THIS agent run actually produced, ignoring `message_history`.
+
+    `result.output` is NOT that. It resolves out of the run's full message
+    list, and `_prepare_chat_run` puts `message_history` into `run_kwargs` —
+    so a turn whose model response carries no text part (the model ended its
+    turn after tool calls; ~25% of turns observed on gemini-2.5-flash-lite)
+    hands back the PREVIOUS turn's assistant message. That message is fully
+    formed and non-blank, so it sails straight through the
+    `if not reply.strip()` guard below it, gets persisted, and the tutor
+    answers a follow-up with a byte-identical copy of its own last answer.
+
+    `new_messages()` excludes the history that was passed in, so joining the
+    TextParts of its model responses is exactly "what this turn said" — the
+    non-streaming twin of the `joined.strip()` narrowing in
+    `services/chat_stream.py`. ThinkingParts and ToolCallParts are not
+    output text and are skipped: a turn that only thought and called tools
+    produced no reply.
+    """
+    parts: list[str] = []
+    for msg in result.new_messages():
+        if not isinstance(msg, ModelResponse):
+            continue
+        for part in msg.parts:
+            if isinstance(part, TextPart):
+                parts.append(part.content or "")
+    return "".join(parts)
+
+
 def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     """
     Find the course_id associated with a topic/concept for a user.
@@ -452,7 +481,12 @@ async def _start_session_agent(
             await agent.run(assembled, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
         )
-        reply = result.output  # str — chat_tutor agents return plain Markdown.
+        # str — chat_tutor agents return plain Markdown. Safe to read
+        # `.output` directly here (no `_new_run_text` narrowing): this call
+        # passes `message_history=[]` above, so there is no prior assistant
+        # message for a textless response to resolve back to — the stale-read
+        # hazard needs history in the run's message list.
+        reply = result.output
         if not reply.strip():
             raise UnexpectedModelBehavior(
                 "chat_tutor produced a whitespace-only session greeting"
@@ -638,19 +672,31 @@ async def _chat_via_agent(
             await agent.run(user_message, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
         )
-        reply = result.output  # str — chat_tutor agents return plain Markdown.
+        # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
+        # puts `message_history` into `run_kwargs`, so a textless model
+        # response makes `.output` resolve to the PREVIOUS turn's assistant
+        # message — fully formed, non-blank, and therefore invisible to the
+        # `not reply.strip()` guard below. Trust it only when this run
+        # actually produced text, mirroring `stream_agent_turn`'s narrowing.
+        # This matters here more than anywhere: `_chat_turn_json` is both the
+        # POST /api/learn/chat route AND the streamed route's Rung-1
+        # fallback, which is exactly where the streaming fix now sends
+        # textless turns.
+        new_text = _new_run_text(result)
+        reply = result.output if new_text.strip() else new_text
 
         if not reply.strip():
             # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
-            # end-of-turn tool call with a bare-newline final text. On this JSON
-            # path that whitespace IS the run output; treat it as degenerate
-            # model output so the caller's UnexpectedModelBehavior handling —
-            # the route's 502 mapping, or the stream fallback's Rung-1 ladder —
-            # applies instead of persisting an empty assistant row. (The
-            # streamed path handles the same quirk inside `stream_agent_turn`.)
+            # end-of-turn tool call with a bare-newline final text; and per the
+            # narrowing above, a turn that ended after tool calls with no text
+            # part reaches here blank instead of replaying history. Either way
+            # this turn produced no reply: treat it as degenerate model output
+            # so the caller's UnexpectedModelBehavior handling — the route's
+            # 502 mapping, or the stream fallback's Rung-1 ladder — applies
+            # instead of persisting a stale or empty assistant row.
             # Usage was recorded above — tokens were spent.
             raise UnexpectedModelBehavior(
-                "chat_tutor produced a whitespace-only reply"
+                "chat_tutor produced no reply text this turn"
             )
     except Exception as exc:
         # PR #472 review: THIS run's tools may have written graph/mastery
@@ -1264,12 +1310,18 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         await agent.run(assembled, **run_kwargs),
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
     )
-    reply = result.output
+    # History-bearing run (`_load_message_history` above), so `.output` alone
+    # would hand back the previous turn's assistant message when this turn's
+    # model response carries no text part — and `save_message` below would
+    # persist that duplicate. See `_new_run_text`.
+    new_text = _new_run_text(result)
+    reply = result.output if new_text.strip() else new_text
     if not reply.strip():
-        # #153: degenerate whitespace-only output — surface through the
-        # guardrail mapping rather than persisting an empty assistant row.
+        # #153: degenerate whitespace-only output, or a turn that ended after
+        # tool calls with no text at all — surface through the guardrail
+        # mapping rather than persisting an empty or stale assistant row.
         raise UnexpectedModelBehavior(
-            "chat_tutor produced a whitespace-only action reply"
+            "chat_tutor produced no action reply text this turn"
         )
 
     graph_update = merge_graph_updates(deps.graph_updates)
