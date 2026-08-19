@@ -139,10 +139,103 @@ def _clear_rate_state():
 
 class TestSyncAuthz:
     def test_sync_unowned_course_returns_404(self):
-        # No user_courses row → _user_owns_course False → 404 (IDOR guard).
-        with patch("routes.gradescope.table", side_effect=_table_factory({})):
+        # No resolvable enrollment → 404 (IDOR guard). This used to read a
+        # `user_courses` row; 0020 renamed that table to `enrollments`, so the
+        # guard now resolves through academics.enrollment_id_for (#265).
+        # Patched explicitly: enrollment_id_for reads services.academics.table,
+        # NOT routes.gradescope.table, so mocking the latter alone would leave
+        # this passing by accident via the suite's global stub.
+        with (
+            patch("routes.gradescope.table", side_effect=_table_factory({})),
+            patch("routes.gradescope.enrollment_id_for", return_value=None),
+        ):
             r = client.post("/api/gradescope/sync/c1", params={"user_id": "u1"})
         assert r.status_code == 404
+
+
+class TestLinkIsEnrollmentKeyed:
+    """#265: gradescope_course_links keys on enrollment_id (0027). These pin
+    the SHAPE the routes send — a mocked DB can't catch column drift (that's
+    what the integration lane is for), but it can catch a regression back to
+    the abstract course id, which is what broke here."""
+
+    def test_link_writes_enrollment_id_and_never_the_course_id(self):
+        writes = {}
+
+        def factory(name):
+            m = MagicMock()
+            m.select.return_value = []
+            m.delete.return_value = []
+
+            def _insert(d):
+                writes[name] = d
+                return [d]
+
+            m.insert.side_effect = _insert
+            return m
+
+        with (
+            patch("routes.gradescope.table", side_effect=factory),
+            patch("routes.gradescope.enrollment_id_for", return_value="enr-1"),
+        ):
+            r = client.post(
+                "/api/gradescope/link",
+                json={
+                    "user_id": "u1",
+                    "sapling_course_id": "course-1",
+                    "gradescope_course_id": "gs-9",
+                },
+            )
+
+        assert r.status_code == 200
+        row = writes["gradescope_course_links"]
+        assert row["enrollment_id"] == "enr-1"
+        # The columns the pre-redesign code wrote do not exist on the table.
+        assert "sapling_course_id" not in row
+        assert "user_id" not in row
+        # ...but the API still answers in course-id vocabulary.
+        assert r.json()["link"]["sapling_course_id"] == "course-1"
+
+    def test_link_404s_when_the_user_has_no_enrollment(self):
+        with (
+            patch("routes.gradescope.table", side_effect=_table_factory({})),
+            patch("routes.gradescope.enrollment_id_for", return_value=None),
+        ):
+            r = client.post(
+                "/api/gradescope/link",
+                json={
+                    "user_id": "u1",
+                    "sapling_course_id": "course-1",
+                    "gradescope_course_id": "gs-9",
+                },
+            )
+        assert r.status_code == 404
+
+    def test_list_links_maps_enrollment_rows_back_to_course_ids(self):
+        rows = {
+            "gradescope_course_links": [
+                {
+                    "id": "l1",
+                    "enrollment_id": "enr-1",
+                    "gradescope_course_id": "gs-9",
+                    "last_synced_at": None,
+                }
+            ]
+        }
+        with (
+            patch("routes.gradescope.table", side_effect=_table_factory(rows)),
+            patch(
+                "routes.gradescope.user_enrollment_ids",
+                return_value=[{"id": "enr-1", "offering_id": "off-1"}],
+            ),
+            patch("routes.gradescope.offering_course_id", return_value="course-1"),
+        ):
+            r = client.get("/api/gradescope/links", params={"user_id": "u1"})
+
+        assert r.status_code == 200
+        link = r.json()["links"][0]
+        assert link["sapling_course_id"] == "course-1"
+        assert link["gradescope_course_id"] == "gs-9"
 
 
 class TestRateLimiting:

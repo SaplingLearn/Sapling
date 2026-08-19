@@ -188,6 +188,17 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("assignments", "id", "notes"),
     ("assignments", "id", "points_possible"),
     ("assignments", "id", "points_earned"),
+    ("feedback", "id", "comment"),
+    ("feedback", "id", "topic"),
+    ("issue_reports", "id", "topic"),
+    ("issue_reports", "id", "description"),
+    ("quiz_attempts", "id", "questions_json"),
+    ("quiz_attempts", "id", "answers_json"),
+    ("quiz_context", "id", "context_json"),
+    ("flashcards", "id", "front"),
+    ("flashcards", "id", "back"),
+    ("study_guides", "id", "content"),
+    ("room_summaries", "room_id", "summary"),
 )
 
 

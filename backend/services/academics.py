@@ -100,11 +100,15 @@ def resolve_offering(
     """Return the offering id for (course, term).
 
     ``term_id`` defaults to the current term. If no matching offering exists:
-    - ``create=True`` inserts one (NULL section) and returns its id, so a fresh
-      enrollment lands in the real current semester instead of a legacy term.
-      Race-safe: losing a concurrent create to the partial unique index
-      (migration 0036) re-selects and returns the winner's row instead of
-      surfacing the conflict;
+    - ``create=True`` inserts one and returns its id, so a fresh enrollment
+      lands in the real current semester instead of a legacy term. The insert
+      omits ``section``; the column is NOT NULL DEFAULT '' (migration
+      0033_offering_section_not_null), so "no section" is stored as the empty
+      string rather than NULL. Race-safe: losing a concurrent create to
+      ``course_offerings_unique`` — UNIQUE (course_id, term_id, section) from
+      0020, which covers the sectionless case precisely because '' is a real
+      value where NULL was not — re-selects and returns the winner's row
+      instead of surfacing the conflict;
     - ``create=False`` falls back to any existing offering of the course —
       unless ``fallback=False`` (#141): a caller that explicitly targeted a
       term (the study-tool semester scoping) gets None back rather than a
@@ -138,9 +142,10 @@ def resolve_offering(
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 409:
                 raise
-            # Lost a create race: the NULL-section partial unique index (0036)
-            # rejected a second offering for (course, term). The winner's row
-            # exists now — return it.
+            # Lost a create race: course_offerings_unique (course_id, term_id,
+            # section) rejected a second offering for (course, term) — both
+            # inserts defaulted section to ''. The winner's row exists now —
+            # return it.
             rows = table("course_offerings").select(
                 "id",
                 filters={"course_id": f"eq.{course_id}", "term_id": f"eq.{term_id}"},

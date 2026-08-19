@@ -26,6 +26,8 @@ from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_pre
 from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
+from services.streak_service import touch_streak_safe
+from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
 
@@ -1013,6 +1015,24 @@ def end_session(body: EndSessionBody, request: Request):
         filters={"id": f"eq.{body.session_id}"},
     )
 
+    # The row above is the commit point for "session completed" — award
+    # immediately after it, keyed on the session id. A double end-session
+    # call (no guard against re-ending here, same as the pre-existing
+    # login_streak/session_count achievement check below) re-runs this, but
+    # the xp_events idempotency key makes the repeat a clean no-op.
+    award_xp_safe(
+        body.user_id, "session_completed",
+        source_type="session", source_id=body.session_id,
+    )
+
+    # touch_streak_safe shares this exact commit point: it's the same
+    # post-"session completed" moment as the XP award above, past the
+    # pending-session early return, and touch_streak's own same-day check
+    # makes a double end-session call a no-op just like the xp_events key
+    # does for the award above. Run it before the login_streak achievement
+    # check below so that check sees today's advanced streak_count.
+    touch_streak_safe(body.user_id)
+
     msgs = table("messages").select(
         "graph_update_json",
         filters={"session_id": f"eq.{body.session_id}"},
@@ -1068,6 +1088,18 @@ def end_session(body: EndSessionBody, request: Request):
         from services.achievement_service import check_achievements
         newly_earned = check_achievements(body.user_id, "login_streak", {})
         newly_earned += check_achievements(body.user_id, "session_count", {})
+        # A finished session is the only thing that advances these. Without
+        # them `deep-focus` (session_minutes), `early-bird`
+        # (session_before_hour), `night-owl` (session_after_midnight) and
+        # `perfect-week` (goal_streak) are live badges nothing can award.
+        # Fired here, after the sessions row has its ended_at, because every
+        # one of these stats is computed from ended_at.
+        newly_earned += check_achievements(body.user_id, "session_minutes", {})
+        newly_earned += check_achievements(body.user_id, "session_before_hour", {})
+        newly_earned += check_achievements(body.user_id, "session_after_midnight", {})
+        # goal_streak counts days that met daily_goal_xp; the session_completed
+        # award above may well be what tipped today over the line.
+        newly_earned += check_achievements(body.user_id, "goal_streak", {})
     except Exception:
         pass
 

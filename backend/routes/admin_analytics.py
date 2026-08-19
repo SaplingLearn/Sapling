@@ -441,14 +441,18 @@ def errors(
     offset: int = Query(0, ge=0),
     bucket: Bucket | None = Query(None),
 ) -> ErrorsPage:
-    """Paginated error.* event feed; `?bucket=day` adds a per-day series (its own capped scan)."""
+    """Paginated error-category event feed; `?bucket=day` adds a per-day series (its own capped scan)."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
-    # error.* events, newest first — paginated server-side (no aggregation).
+    # ALL category="error" events, newest first — not just the error.* HTTP
+    # names. Backend failures like quiz.context_write_failed (#529/B3) and
+    # the rag.* pair (#482) carry the error category without the name
+    # prefix; filtering by name hid exactly the events whose invisibility
+    # they were added to end. Non-HTTP rows simply null the payload fields.
     rows, total = table("events").select_with_count(
         "created_at,event_type,request_id,user_id,payload",
-        filters={"created_at": [f"gte.{from_iso}", f"lte.{to_iso}"], "event_type": "like.error.*"},
+        filters={"created_at": [f"gte.{from_iso}", f"lte.{to_iso}"], "category": "eq.error"},
         order="created_at.desc", limit=limit, offset=offset,
     )
     series = None
@@ -456,7 +460,7 @@ def errors(
     if bucket:
         scan_rows, series_truncated = _scan_range(
             "events", "created_at", from_iso, to_iso,
-            extra_filters={"event_type": "like.error.*"},
+            extra_filters={"category": "eq.error"},
         )
         series = _count_series(scan_rows)
     items = []

@@ -25,6 +25,7 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services.encryption import decrypt_json_column
 
 logger = logging.getLogger(__name__)
 
@@ -56,32 +57,65 @@ class QuizHistory(BaseModel):
     recent_attempts: list[RecentQuizAttempt] = Field(default_factory=list)
 
 
+# String fields worth surfacing, in display order. `questions_seen_summary`
+# and `notes` are what agents/quiz_context.py::QuizContext actually writes;
+# summary/context/digest cover older free-form rows.
+_SUMMARY_STRING_KEYS = ("summary", "questions_seen_summary", "notes", "context", "digest")
+
+# List-of-strings fields, with a label so the agent knows what each block is.
+# `weak_areas`/`common_mistakes` are the live QuizContext field names;
+# misconceptions/common_errors cover older rows.
+_SUMMARY_LIST_KEYS = (
+    ("weak_areas", "Weak areas"),
+    ("common_mistakes", "Common mistakes"),
+    ("misconceptions", "Misconceptions"),
+    ("common_errors", "Common errors"),
+)
+
+
 def _coerce_summary(ctx: Any) -> str | None:
     """quiz_context.context_json is free-form (whatever the post-submit
-    LLM produced). Different prompt versions have stored either a flat
-    string or a small dict. Coerce to a single string the agent can
-    reason over, or None if there's nothing useful."""
+    LLM produced). Coerce to a single string the agent can reason over,
+    or None if there's nothing useful.
+
+    #529/B4: this must consume the WHOLE QuizContext shape. The old
+    version returned the first matching string key — for a live
+    QuizContext row that was `notes` alone, silently dropping
+    weak_areas / common_mistakes / questions_seen_summary (and its list
+    fallback looked for `common_errors`, a key QuizContext never writes).
+    """
     if not ctx:
         return None
     if isinstance(ctx, str):
         text = ctx.strip()
         return text or None
     if isinstance(ctx, dict):
-        # Common shapes: {"summary": "..."}, {"notes": "..."},
-        # {"misconceptions": [...], "weak_areas": [...]}.
-        for key in ("summary", "notes", "context", "digest"):
+        parts: list[str] = []
+        for key in _SUMMARY_STRING_KEYS:
             v = ctx.get(key)
             if isinstance(v, str) and v.strip():
-                return v.strip()
-        # Fall back to flattening list-of-strings entries so the agent
-        # at least sees the misconceptions/weak_areas the prior job
-        # extracted, even when no top-level summary string exists.
-        parts: list[str] = []
-        for key in ("misconceptions", "weak_areas", "common_errors"):
-            for item in ctx.get(key) or []:
-                if isinstance(item, str) and item.strip():
-                    parts.append(f"- {item.strip()}")
-        return "\n".join(parts) or None
+                parts.append(v.strip())
+        for key, label in _SUMMARY_LIST_KEYS:
+            raw = ctx.get(key)
+            if not isinstance(raw, list):
+                # Legacy free-form rows can hold a string (or dict) under a
+                # list-shaped key; iterating those element-wise would spray
+                # per-character bullets / dict keys into the agent's prompt.
+                continue
+            items = [
+                item.strip()
+                for item in raw
+                if isinstance(item, str) and item.strip()
+            ]
+            if items:
+                parts.append(label + ":\n" + "\n".join(f"- {i}" for i in items))
+        rec = ctx.get("recommended_difficulty")
+        if isinstance(rec, str) and rec.strip():
+            # The post-submit agent's difficulty recommendation — surfaced
+            # here or it rots encrypted-and-unread (its only other mention
+            # is the dead legacy prompt template).
+            parts.append(f"Recommended next difficulty: {rec.strip()}")
+        return "\n\n".join(parts) or None
     return None
 
 
@@ -116,7 +150,7 @@ async def read_recent_quiz_attempts(
                 },
                 limit=1,
             )
-            return rows[0]["context_json"] if rows else None
+            return decrypt_json_column(rows[0]["context_json"]) if rows else None
         except Exception:
             logger.exception(
                 "read_recent_quiz_attempts: quiz_context fetch failed "

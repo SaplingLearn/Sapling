@@ -26,3 +26,27 @@ if (typeof window !== "undefined" && !window.localStorage) {
     configurable: true,
   });
 }
+
+// jsdom ships no `window.matchMedia` at all, so any component that reads
+// `window.matchMedia('(prefers-reduced-motion: reduce)').matches` (the
+// landing knowledge-graph demo, KnowledgeGraph3D, ...) would throw under
+// vitest without a stub. Default to reduced-motion = true: that's the
+// parked/complete frame, which is also the correct assertion target for a
+// hermetic unit test (no RAF loop, no clock-driven flakiness). Test files
+// that need different behavior (e.g. `useIsMobile.test.tsx`,
+// `KnowledgeGraph3D.test.tsx`) already install their own `window.matchMedia`
+// per test via `beforeEach`, which overrides this file-load-time default.
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes("prefers-reduced-motion"),
+    media: query,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent() {
+      return false;
+    },
+  })) as unknown as typeof window.matchMedia;
+}
