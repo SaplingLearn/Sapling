@@ -23,6 +23,14 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// Newsletter / beta signup — used by the public landing's beta modal.
+// The backend already mounts this router on staging (main.py, /api/newsletter).
+export const subscribeToNewsletter = (email: string) =>
+  fetchJSON<{ ok: boolean }>('/api/newsletter/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
 // Users
 export const getUsers = () =>
   fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');

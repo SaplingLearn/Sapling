@@ -65,7 +65,7 @@ renders the element.
 
 | Surface | Prefix | Owning file(s) |
 | --- | --- | --- |
-| Sign-in | `signin` | `frontend/src/components/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
+| Sign-in | `signin` | `frontend/src/components/marketing/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
 | Approval gate | `pending` | `frontend/src/app/pending/page.tsx` |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/ChatPanel.tsx` (rendered by `screens/Learn.tsx`) |

@@ -52,7 +52,11 @@ const eslintConfig = [
   // the browser suite, add its owning file to `files` below.
   {
     files: [
-      "src/components/SignInModal.tsx",
+      // The sign-in surface moved to components/marketing/ when the v5 landing
+      // replaced the old page; the orphaned components/SignInModal.tsx was
+      // deleted. Keep the path current or the convention silently stops being
+      // enforced on the one surface the browser suite drives first.
+      "src/components/marketing/SignInModal.tsx",
       "src/app/pending/page.tsx",
       "src/components/DocumentUploadModal.tsx",
       "src/components/ChatPanel.tsx",
