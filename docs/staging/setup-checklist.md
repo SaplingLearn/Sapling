@@ -16,11 +16,14 @@ variables, Cloudflare worker secrets, or a local gitignored `backend/.env.stagin
 - [ ] Create a new project `sapling-staging` (same region as prod).
 - [ ] Copy **Settings → API → Project URL** → `SUPABASE_URL`.
 - [ ] Copy **Settings → API → service_role key** → `SUPABASE_SERVICE_KEY` (backend only — never the frontend).
-- [ ] Copy **Settings → Database → Connection string → "Direct connection" (port 5432, not the pooler)** → `SUPABASE_DB_URL`.
+- [ ] Copy **Connect → "Session pooler" (port 5432)** → `SUPABASE_DB_URL`. Not the
+      "Direct connection" — that host is IPv6-only and unreachable from most networks
+      and from GitHub runners. Not port 6543 either (transaction mode breaks DDL).
+      Note the pooler username carries the project ref: `postgres.<ref>`.
 - [ ] Generate a staging encryption key → `ENCRYPTION_KEY`:
       `python -c "import secrets; print(secrets.token_hex(32))"`
 - [ ] Create storage buckets `avatars` and `cosmetic-assets` (match prod).
-- [ ] Once you have the keys locally (Step 6), apply schema: `SUPABASE_DB_URL=<direct> python -m db.migrate`.
+- [ ] Once you have the keys locally (Step 6), apply schema: `SUPABASE_DB_URL=<session-pooler> python -m db.migrate`.
 
 ### Step 2 — Google Cloud (OAuth) — you can do this NOW
 - [ ] Create OAuth client "Sapling Staging" (Web application).

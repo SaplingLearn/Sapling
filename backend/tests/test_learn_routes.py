@@ -1013,7 +1013,7 @@ class TestChatContextBlockFraming:
     def _prepare(self, user_message, catalog="Geometric algorithms.", chunks=None):
         from unittest.mock import MagicMock, patch
 
-        import routes.learn as learn_routes
+        from routes.learn import _prepare_chat_run
 
         with (
             patch("routes.learn.agent_for_mode", return_value=MagicMock()),
@@ -1022,7 +1022,7 @@ class TestChatContextBlockFraming:
             patch("services.rag_service.retrieve_chunks", return_value=chunks or []),
             patch("services.graph_context.build_graph_context_block", return_value=""),
         ):
-            _agent, message, _kwargs, _deps = learn_routes._prepare_chat_run(
+            _agent, message, _kwargs, _deps = _prepare_chat_run(
                 user_id="u1",
                 session_id="s1",
                 course_id="c1",
@@ -1058,3 +1058,43 @@ class TestChatContextBlockFraming:
     def test_student_question_marker_preserved(self):
         message = self._prepare("can we talk about markov chains")
         assert "[STUDENT QUESTION]\ncan we talk about markov chains" in message
+
+    def test_relevant_material_is_framed_as_teaching_substance(self):
+        """Spec tier 1, the test the spec asked for first and nobody wrote:
+        "Relevant material still used. A question matching indexed material
+        still draws on it, rather than being answered generically. Guards
+        tier 1 against the tier-2 fallback swallowing it."
+
+        This is not hypothetical. `search_course_materials` is called in 0 of
+        the 17 committed chat_tutor cassettes (5 of 16 on origin/main), no
+        evaluator requires it, and `_RAG_HEADER`'s "ignore it silently and
+        answer from your own knowledge" is a standing invitation to skip the
+        retrieved block. The prompt must therefore present matching material
+        as substance to teach FROM, with the ignore clause strictly
+        conditional on the material not covering the question.
+        """
+        chunk = "A convex hull is the smallest convex polygon enclosing a point set."
+        message = self._prepare(
+            "how do I compute the convex hull of a point set?",
+            chunks=[{"chunk_text": chunk, "similarity": 0.93}],
+        )
+
+        # The retrieved material reaches the model verbatim.
+        assert chunk in message
+
+        # Framed as teaching substance, positively — not as background the
+        # model may skip.
+        assert "Use as teaching substance when it is relevant to the question." in message
+
+        # The escape hatch stays CONDITIONAL. An unconditional "ignore it and
+        # answer from your own knowledge" is exactly how tier 2 swallows
+        # tier 1, and it would still satisfy
+        # test_rag_block_tells_the_model_to_fall_back above.
+        assert "If it does not cover the question, ignore it silently" in message
+
+        # Ordering: material is presented before the question it answers, and
+        # it is a block in its own right rather than text folded into the
+        # catalog block (whose header says "Never volunteer it").
+        material_at = message.index("COURSE MATERIAL")
+        assert message.index("COURSE REFERENCE") < material_at
+        assert material_at < message.index(chunk) < message.index("[STUDENT QUESTION]")

@@ -34,7 +34,12 @@ class SupabaseTable:
         filters: Optional[dict] = None,
         order: Optional[str] = None,
         limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> list:
+        """Read rows. Pass `limit`/`offset` to page — PostgREST caps a
+        response at `max_rows` (1000) and answers 206 Partial Content,
+        which is a 2xx, so an unpaged read over that many rows truncates
+        silently."""
         params: dict = {"select": columns}
         if filters:
             params.update(filters)
@@ -42,6 +47,8 @@ class SupabaseTable:
             params["order"] = order
         if limit:
             params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
         r = _client.get(self.url, params=params)
         r.raise_for_status()
         return r.json()
@@ -82,9 +89,20 @@ class SupabaseTable:
         r.raise_for_status()
         return r.json()
 
-    def update(self, data: dict, filters: dict) -> list:
-        r = _client.patch(self.url, params=filters, json=data)
+    def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
+        """PATCH matching rows; returns the updated rows.
+
+        `prefer_return_minimal=True` overrides the client-wide
+        `Prefer: return=representation` for writes whose result nobody
+        reads — a background sweep over many rows would otherwise drag
+        every updated row (including large encrypted columns) back over
+        the wire. Returns [] in that mode.
+        """
+        headers = {"Prefer": "return=minimal"} if prefer_return_minimal else None
+        r = _client.patch(self.url, params=filters, json=data, headers=headers)
         r.raise_for_status()
+        if prefer_return_minimal:
+            return []
         return r.json()
 
     def upsert(self, data, on_conflict: str = "id") -> list:

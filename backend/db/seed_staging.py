@@ -6,7 +6,8 @@ This lays a small, self-contained demo dataset on top of the *new*
 (post-0019–0027) schema so the live staging app renders the knowledge graph,
 gradebook, and courses-with-term against a real database. Migrations 0019–0027
 must already be applied and the canonical ``terms`` (fall-2025 / spring-2026 /
-summer-2026 / fall-2026) already seeded (0019); this seed only *reads* those
+fall-2026 — 0019 seeds these and 0032 retires Summer 2026) already seeded; this
+seed only *reads* those
 terms and adds demo rows around them. It never touches, duplicates, or depends
 on the real course catalog.
 

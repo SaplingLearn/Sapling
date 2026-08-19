@@ -26,7 +26,10 @@ DOC_CATEGORIES = {
 CURVE_MODES = {"raw", "curved"}
 
 # Terms pre-seeded by 0019 — the seed references these but never writes them.
-PRESEEDED_TERMS = {"fall-2025", "spring-2026", "summer-2026", "fall-2026"}
+# summer-2026 is deliberately absent: 0019 seeds it, but 0032_retire_summer_2026
+# deletes it, so a fake DB that still offers it would let a seed referencing a
+# nonexistent term pass here and fail against a real database.
+PRESEEDED_TERMS = {"fall-2025", "spring-2026", "fall-2026"}
 
 
 # Primary key column per table (user_profiles is keyed on user_id, not id).

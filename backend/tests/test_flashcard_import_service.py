@@ -59,6 +59,28 @@ class TestDedup:
             assert "offering_id" not in str(call_kwargs)
             assert "course_id" not in str(call_kwargs)
 
+    def test_dedup_matches_against_encrypted_existing_cards(self):
+        # #518: dedupe must be decrypt-aware — existing rows are ciphertext.
+        from services.encryption import encrypt
+        with patch("services.flashcard_import_service.table") as t:
+            t.return_value.select.return_value = [
+                {"front": encrypt("What is a variable?")}
+            ]
+            new = [{"front": "What is a variable?", "back": "A named storage location."}]
+            keep, skipped = svc.dedup_against_existing("u1", "c1", new)
+        assert keep == []
+        assert skipped == new
+
+    def test_dedup_still_matches_legacy_plaintext_rows(self):
+        # Pre-backfill rows are still plaintext — decrypt_if_present falls
+        # back to the raw value, so dedupe keeps working unchanged.
+        with patch("services.flashcard_import_service.table") as t:
+            t.return_value.select.return_value = [{"front": "What is a variable?"}]
+            new = [{"front": "What is a variable?", "back": "A named storage location."}]
+            keep, skipped = svc.dedup_against_existing("u1", "c1", new)
+        assert keep == []
+        assert skipped == new
+
 
 # ── check_rate_limit ─────────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -14,7 +15,7 @@ from db.connection import table
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -28,6 +29,8 @@ from services.flashcard_import_service import (
     gemini_cloze,
     generate_flashcards as _generate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -236,8 +239,8 @@ def generate(body: GenerateFlashcardsBody, request: Request):
             "id": str(uuid.uuid4()),
             "user_id": body.user_id,
             "topic": body.topic,
-            "front": c["front"],
-            "back": c["back"],
+            "front": encrypt_if_present(c["front"]),
+            "back": encrypt_if_present(c["back"]),
             "times_reviewed": 0,
             "last_reviewed_at": None,
             "created_at": now,
@@ -261,8 +264,16 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     except Exception:
         pass
 
+    # rows_to_insert holds the ciphertext just written; the response the
+    # frontend renders (freshly generated cards, before any list re-fetch)
+    # must carry plaintext front/back, not the encrypted insert payload.
+    response_cards = [
+        {**row, "front": decrypt_if_present(row["front"]), "back": decrypt_if_present(row["back"])}
+        for row in rows_to_insert
+    ]
+
     return {
-        "flashcards": rows_to_insert,
+        "flashcards": response_cards,
         "context_used": {
             "documents_found": len(documents),
             "weak_concepts_found": len(weak_concepts),
@@ -291,6 +302,9 @@ def get_flashcards(
             "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
             filters=filters, order="created_at.desc"
         ) or []
+        for r in rows:
+            r["front"] = decrypt_if_present(r.get("front"))
+            r["back"] = decrypt_if_present(r.get("back"))
         if semester:
             # Term scoping (#141). This route is user-wide (no course id), so
             # the filter works on the cards' offering: cards from the selected
@@ -342,6 +356,19 @@ def rate_card(body: FlashcardRatingBody, request: Request):
         },
         filters={"id": f"eq.{body.card_id}"},
     )
+
+    # The review counter is the only thing that advances `flashcards_reviewed`
+    # (Quick Draw: review 100 cards), so this is its only possible dispatch
+    # point. Post-commit: the review is already recorded, so a failing check
+    # must not fail the rating.
+    try:
+        check_achievements(body.user_id, "flashcards_reviewed", {})
+    except Exception:
+        logger.exception(
+            "achievement dispatch failed after card rating user=%s card=%s",
+            body.user_id, body.card_id,
+        )
+
     return {"ok": True}
 
 
@@ -397,8 +424,8 @@ def import_commit(body: ImportCommitBody, request: Request):
             "user_id": body.user_id,
             "topic": body.topic,
             "offering_id": offering_id,
-            "front": c["front"],
-            "back": c["back"],
+            "front": encrypt_if_present(c["front"]),
+            "back": encrypt_if_present(c["back"]),
             "times_reviewed": 0,
             "last_reviewed_at": None,
             "created_at": now,

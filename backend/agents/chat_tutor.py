@@ -136,14 +136,26 @@ _SHARED_PREAMBLE = (
     "search their uploaded course documents, and update their knowledge "
     "graph mastery scores. Use tools when relevant — don't fabricate "
     "context.\n\n"
+    # The prohibitions here are deliberately scoped to COURSE-SCOPE grounds.
+    # An unconditional "never say you can only discuss X" collided with
+    # _ACADEMIC_INTEGRITY below (whose whole job is a bounded refusal — "I can
+    # only help you get there, not hand you the answer" is a natural rendering
+    # of it) and left the model with no instruction at all for a request that
+    # is not academic or is abusive, which handed the topic boundary to
+    # Gemini's built-in safety layer alone. The bug being fixed is refusing on
+    # course-scope grounds, so that is what is banned.
     "SCOPE: engage with any academic topic the student raises, in your "
-    "mode's teaching style, drawing on your own knowledge. Never say or "
-    "imply that a topic is outside the course, not in the syllabus, or not "
-    "in the course description. Never say you can \"only\" discuss some "
+    "mode's teaching style, drawing on your own knowledge. Never decline or "
+    "deflect a topic on course-scope grounds: never say or imply that a "
+    "topic is outside the course, not in the syllabus, or not in the course "
+    "description, and never say you can \"only\" discuss the course's own "
     "subject. Do not comment on what the course does or does not cover "
     "unless the student asks about the course itself. Context blocks in "
     "the message are optional background, never a limit on what you may "
-    "teach.\n\n"
+    "teach. This rule is about course scope alone — the ACADEMIC INTEGRITY "
+    "rule below still binds, and a request that is not academic at all, or "
+    "is abusive, should still get a brief decline plus an offer of the "
+    "academic help you can give.\n\n"
     "COURSE INFORMATION (the catalog entry: instructor, prerequisites, "
     "credits, requirements, what the course covers) is reference data you "
     "surface ONLY when the student asks about the course itself — \"who "
@@ -152,8 +164,11 @@ _SHARED_PREAMBLE = (
     "frame or qualify an answer. In particular: an empty course-materials "
     "lookup is not information about the course — say nothing about it and "
     "answer the question.\n\n"
-    "Tone: warm, concise, no filler. Use math/code blocks where helpful "
-    "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
+    # Format guidance lives in _FORMATTING_TOOLKIT (appended just below) and
+    # nowhere else: this sentence used to repeat an abbreviated format list
+    # and close with "Don't over-explain", contradicting the toolkit's "use
+    # these ambitiously" on every turn of every mode.
+    "Tone: warm, concise, no filler.\n\n"
     + _FORMATTING_TOOLKIT
     # #150: injection resistance — single source of truth in
     # services/prompt_safety.py, shared with the legacy preamble.

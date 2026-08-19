@@ -844,13 +844,20 @@ class TestQuizAgentSuccess:
             })
 
         assert r.status_code == 200
-        # quiz_attempts row stores the same legacy-shape questions list.
+        # quiz_attempts row stores the legacy-shape questions list, but
+        # #521 encrypts it at rest — the wire shape only reappears on
+        # decrypt. isinstance(..., str) fails again if encryption is
+        # ever reverted (a raw list, not ciphertext, would come back).
+        from services.encryption import decrypt_json_column
+
         payload = captured["payload"]
         assert payload["user_id"] == "user_andres"
         assert payload["concept_node_id"] == "node1"
         assert payload["difficulty"] == "easy"
-        assert isinstance(payload["questions_json"], list)
-        assert payload["questions_json"][0]["id"] == 1
+        assert isinstance(payload["questions_json"], str)
+        decrypted_questions = decrypt_json_column(payload["questions_json"])
+        assert isinstance(decrypted_questions, list)
+        assert decrypted_questions[0]["id"] == 1
 
 
 class TestQuizContextUpdate:
@@ -960,7 +967,12 @@ class TestQuizAgentDegrade:
                 "use_shared_context": False,
             })
         assert r.status_code == 502
-        agent_run_mock.assert_called_once()  # the agent path was actually tried
+        # The agent path was actually tried — twice, because #543 E2 gives
+        # total drift the same bounded top-up as partial drift (it used to
+        # be the ONE case that never retried, which is backwards: a
+        # transient formatting slip is exactly what one retry clears).
+        # Still exactly one retry, then 502.
+        assert agent_run_mock.call_count == 2
 
 
 # ── Wire-format contract: pinned by tests so silent drift can't recur ───────
@@ -1521,6 +1533,90 @@ class TestQuizGuardrailRetryModel:
         assert f"retrying on {_FALLBACK_MODEL_NAME}" in retry_lines[0]
 
 
+class TestAdaptiveModeStillOverGenerates:
+    """Adaptive difficulty (#540 A1) and over-generation (#534) landed on
+    separate branches and both rewrote this routing message. They compose:
+    adaptive mode decides the DIFFICULTY clause, over-generation decides HOW
+    MANY questions are asked for. A merge that took #540's clause wholesale
+    would ask for `num_questions` and silently disable over-generation for
+    every adaptive quiz — the default mode — leaving quiz_agent's output
+    validator nothing to select from and putting the worked-problem ratio
+    back at the model's mercy, with no visible failure to point at.
+    """
+
+    NUM_QUESTIONS = 5
+
+    def _fake_quiz(self, n):
+        return Quiz(questions=[
+            QuizQuestion(
+                question=f"A ball is thrown at {i} m/s; how far in 2s?",
+                type="multiple_choice", difficulty="medium",
+                options=[f"{2 * i} m", "1 m", "2 m", "3 m"],
+                correct_answer=f"{2 * i} m",
+                explanation="distance = speed x time.", concept="Kinematics",
+            )
+            for i in range(1, n + 1)
+        ])
+
+    def _routing_message(self, difficulty: str) -> tuple[str, int]:
+        """Generate a quiz and return (message sent to the agent, count served)."""
+        from agents.quiz import quiz_ask_size
+
+        run_mock = AsyncMock(return_value=SimpleNamespace(
+            output=self._fake_quiz(quiz_ask_size(self.NUM_QUESTIONS))
+        ))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": self.NUM_QUESTIONS,
+                "difficulty": difficulty,
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200, r.text
+        return run_mock.call_args.args[0], len(r.json()["questions"])
+
+    def test_both_difficulty_branches_ask_for_the_over_generated_count(self):
+        from agents.quiz import quiz_ask_size
+
+        ask_for = quiz_ask_size(self.NUM_QUESTIONS)
+        assert ask_for > self.NUM_QUESTIONS, "fixture assumes real over-generation"
+        for difficulty in ("adaptive", "hard"):
+            message, _ = self._routing_message(difficulty)
+            assert f"Generate {ask_for} " in message, difficulty
+            assert f"Generate {self.NUM_QUESTIONS} " not in message, difficulty
+
+    def test_the_adaptive_branch_still_hands_the_agent_the_difficulty_choice(self):
+        message, _ = self._routing_message("adaptive")
+        assert "ADAPTIVE MODE" in message
+        # The whole point of adaptive: no target difficulty is dictated.
+        assert "adaptive questions" not in message
+
+    def test_the_conceptual_allowance_survives_in_both_branches(self):
+        """Stated as prose, not as a schema key: QuizQuestion has no `kind`
+        field, and a self-declared kind enum was measured taking flash-lite
+        from 5/5 to 3/5 successful generations before it was reverted."""
+        from agents.quiz import conceptual_allowance
+
+        allowance = conceptual_allowance(self.NUM_QUESTIONS)
+        for difficulty in ("adaptive", "hard"):
+            message, _ = self._routing_message(difficulty)
+            assert f"At most {allowance} of them may be purely conceptual" in message, (
+                difficulty
+            )
+            assert "kind=" not in message, difficulty
+
+    def test_the_client_still_gets_exactly_what_it_asked_for(self):
+        """Over-generation is an internal selection budget; the surplus must
+        never reach the student."""
+        for difficulty in ("adaptive", "hard"):
+            _, served = self._routing_message(difficulty)
+            assert served == self.NUM_QUESTIONS, difficulty
+
+
 class TestSubmitQuizConcurrentClaim:
     """#129 (PR #464 review): the completed_at pre-read is only a fast path —
     two CONCURRENT submits both pass it. The real gate is the atomic claim
@@ -1628,6 +1724,155 @@ class TestSubmitQuizConcurrentClaim:
         data, filters = claim_calls[0]
         assert "completed_at" in data
         assert filters.get("completed_at") == "is.null"
+
+
+# ── #521: quiz JSON payloads encrypted at rest, plaintext in responses ──────
+
+
+class TestQuizEncryption:
+    """#521: quiz JSON payloads are ciphertext at rest, plaintext in responses."""
+
+    def test_generate_inserts_encrypted_questions(self):
+        """Mirrors TestQuizAgentSuccess.test_persists_to_quiz_attempts_table's
+        arrange, but asserts the captured insert payload's questions_json is
+        ciphertext that decrypts back to the wire-format question list."""
+        from services.encryption import decrypt_json_column
+
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?",
+                type="multiple_choice",
+                difficulty="easy",
+                options=["a", "b", "c", "d"],
+                correct_answer="a",
+                explanation="ok",
+                concept="X",
+            ),
+        ])
+        captured = {}
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "graph_nodes":
+                mock.select.return_value = [{
+                    "id": "node1",
+                    "course_id": "course1",
+                    "concept_name": "X",
+                    "mastery_score": 0.5,
+                }]
+            elif name == "quiz_attempts":
+                def _capture(payload):
+                    captured["payload"] = payload
+                    return [{"id": payload["id"]}]
+                mock.insert.side_effect = _capture
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        row = captured["payload"]
+        assert isinstance(row["questions_json"], str)
+        decrypted = decrypt_json_column(row["questions_json"])
+        assert isinstance(decrypted, list) and decrypted
+        # Scalars stay plaintext:
+        assert row["difficulty"] in ("easy", "medium", "hard")
+
+    def test_submit_decrypts_encrypted_questions_and_encrypts_answers(self):
+        """Mirrors TestSubmitQuizMasteryWrite's arrange, but the stored
+        questions_json is ciphertext (encrypt_json(SAMPLE_QUESTIONS)) — the
+        post-backfill row shape. submit_quiz must decrypt it to score, and
+        the recorded answers_json update payload must itself be ciphertext."""
+        from services.encryption import encrypt_json, decrypt_json_column
+
+        update_calls: list = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": encrypt_json(SAMPLE_QUESTIONS),  # ciphertext at rest
+                }]
+
+                def _update(data, filters=None):
+                    update_calls.append(data)
+                    return [{"id": "updated"}]
+                mock.update.side_effect = _update
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            elif name == "users":
+                mock.select.return_value = [{"name": "Andres"}]
+            else:
+                mock.select.return_value = []
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.apply_graph_update"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+
+        assert r.status_code == 200
+        data = r.json()
+        # The response scores against the DECRYPTED questions.
+        assert data["score"] == 2
+        assert data["total"] == 2
+
+        answers_updates = [d for d in update_calls if "answers_json" in d]
+        assert len(answers_updates) == 1
+        row = answers_updates[0]
+        assert isinstance(row["answers_json"], str)
+        decrypted_answers = decrypt_json_column(row["answers_json"])
+        assert isinstance(decrypted_answers, list)
+        assert decrypted_answers[0]["question_id"] == 1
+        assert decrypted_answers[0]["selected_label"] == "A"
+
+    def test_submit_still_accepts_legacy_plaintext_questions(self):
+        """Pre-backfill quiz_attempts rows store questions_json as a raw
+        list (legacy JSONB), not ciphertext. decrypt_json_column must pass
+        those through unchanged and score identically to the ciphertext
+        path above."""
+        with _submit_quiz_mocks():  # SAMPLE_QUESTIONS stored as a plain list
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["score"] == 2
+        assert data["total"] == 2
 
 
 # ── quiz_context_update.txt template hygiene (#306) ──────────────────────────
