@@ -1,7 +1,8 @@
 # Tutor course-scope: stop refusing off-syllabus questions
 
 Date: 2026-08-10
-Status: approved, not yet implemented
+Status: implemented (`fix/tutor-course-scope-pr`) — the shipped SCOPE wording is
+narrower than the draft below; see change 2b.
 Scope: chat tutor only (`routes/learn.py`, `agents/chat_tutor.py`, one param on `services/rag_service.py`)
 
 ## Problem
@@ -25,7 +26,7 @@ never reached the model.
 The trigger is the **unconditionally injected catalog block**.
 `routes/learn.py::_prepare_chat_run` (learn.py:534-563) assembles:
 
-```
+```text
 COURSE CATALOG INFO (official BU course data):
   <CAS CS 132 — geometric algorithms description>
 
@@ -100,7 +101,7 @@ Relabel the two injected blocks so each states its purpose and its fallback.
 
 Catalog (learn.py:542) — replace `"COURSE CATALOG INFO (official BU course data):"`:
 
-```
+```text
 COURSE REFERENCE (administrative data about this course). Use ONLY if the
 student directly asks about the course itself — what it covers, prerequisites,
 credits, schedule. Never volunteer it. Never use it to decide whether a topic
@@ -109,7 +110,7 @@ may be discussed.
 
 RAG (learn.py:547) — pass a chat-specific header (see change 3):
 
-```
+```text
 COURSE MATERIAL (excerpts from this course's documents). Use as teaching
 substance when it is relevant to the question. If it does not cover the
 question, ignore it silently and answer from your own knowledge.
@@ -123,7 +124,7 @@ Three edits:
 mastery in their course material" — which quietly reinforces the self-restriction.
 Replace with:
 
-```
+```text
 You are Sapling, an AI tutor. You help a student build mastery in whatever
 they are studying — their coursework first, and any academic topic they bring
 you. You have tools to fetch the student's progress, search their uploaded
@@ -131,9 +132,9 @@ course documents, and update their knowledge graph mastery scores. Use tools
 when relevant — don't fabricate context.
 ```
 
-**b. Add the scope rule:**
+**b. Add the scope rule.** Drafted as an unconditional prohibition:
 
-```
+```text
 SCOPE: answer any academic question the student asks, fully, from your own
 knowledge. Never say or imply that a topic is outside the course, not in the
 syllabus, or not in the course description. Never say you can "only" discuss
@@ -141,6 +142,19 @@ some subject. Do not comment on what the course does or does not cover unless
 the student asks about the course itself. Context blocks in the message are
 optional background, never a limit on what you may teach.
 ```
+
+Shipped narrower, on review: `Never say you can "only" discuss some subject`
+banned the canonical safe-refusal phrasing outright and collided with the
+ACADEMIC INTEGRITY rule six lines below it, whose whole job is a bounded
+refusal ("I can only help you get there, not hand you the answer"). The draft
+also gave no instruction for a request that is not academic at all, or is
+abusive — which left the tutor's topic boundary to Gemini's built-in safety
+layer and nothing else. The prohibitions are therefore scoped to course-scope
+grounds, and the rule closes by stating that the integrity rule still binds and
+that a non-academic or abusive request should get a brief decline plus an offer
+of the academic help the tutor can give. `agents/chat_tutor.py::_SHARED_PREAMBLE`
+holds the shipped text; `tests/test_chat_tutor_imports.py::TestScopeRule` pins
+both halves.
 
 **c. Restore the formatting toolkit** from `prompts/preamble.txt` lines 11-66 —
 the "use these ambitiously" instruction covering LaTeX (inline/display, the
@@ -216,6 +230,25 @@ These split into two kinds, and the split should be explicit rather than blurred
 Implementation should not claim the bug is fixed on the strength of the
 deterministic tests alone; they verify the framing changed, not that behaviour
 did.
+
+### As implemented
+
+- Tests 1-3 all live in `backend/tests/test_learn_routes.py::TestChatContextBlockFraming`
+  (test 3 as `test_relevant_material_is_framed_as_teaching_substance`), with the
+  prompt text itself pinned by
+  `backend/tests/test_chat_tutor_imports.py::TestScopeRule`.
+- The `chat_tutor` eval set carries the off-syllabus cases
+  (`socratic_off_syllabus_markov_chains`, `socratic_history_themes`) scored by
+  `NoCourseScopeRefusalEvaluator` / `OffSyllabusTopicEngagedEvaluator`. Those run
+  in **replay** mode against frozen cassettes, which is the "deterministic" half
+  of the split above, NOT the behavioural half — deleting the SCOPE paragraph
+  leaves both at 1.0 because the recordings do not change. The note above those
+  evaluators in `backend/tests/evals/chat_tutor.py` spells this out.
+- The behavioural half is the scheduled, non-blocking `behavioral` job in
+  `.github/workflows/evals.yml`: `SAPLING_EVAL_MODE=live`, chat_tutor only,
+  `SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-flash-lite` per the Fast/Lite requirement
+  above. Not a PR gate — a live model is nondeterministic and would flake the
+  merge queue.
 
 ## Risks
 
