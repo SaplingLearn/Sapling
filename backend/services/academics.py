@@ -123,10 +123,17 @@ def resolve_offering(
         term_id = t["id"] if t else None
 
     if term_id:
+        # Order by section first, created_at only as a tiebreak. Since #280 a
+        # course has one offering *per published section* (CAS CS 330 has 7), and
+        # those are written by a single batch insert — so they share a created_at
+        # and `created_at.asc` alone leaves the winner up to the planner. Two calls
+        # could then hand the same user different offerings and split their
+        # documents/notes across sections. Section-less rows ('') sort first, which
+        # keeps pre-#280 behaviour wherever a hollow offering still exists.
         rows = table("course_offerings").select(
             "id",
             filters={"course_id": f"eq.{course_id}", "term_id": f"eq.{term_id}"},
-            order="created_at.asc",
+            order="section.asc,created_at.asc",
             limit=1,
         )
         if rows:
@@ -145,11 +152,14 @@ def resolve_offering(
             # Lost a create race: course_offerings_unique (course_id, term_id,
             # section) rejected a second offering for (course, term) — both
             # inserts defaulted section to ''. The winner's row exists now —
-            # return it.
+            # return it. Ordered exactly like the steady-state read above: on
+            # `created_at.asc` alone this path could return a row the next
+            # (non-racing) read would not, because a course's batch-imported
+            # sections share a created_at and the winner is then the planner's.
             rows = table("course_offerings").select(
                 "id",
                 filters={"course_id": f"eq.{course_id}", "term_id": f"eq.{term_id}"},
-                order="created_at.asc",
+                order="section.asc,created_at.asc",
                 limit=1,
             )
             if rows:
@@ -160,9 +170,18 @@ def resolve_offering(
         return None
 
     # No offering in the target term and not creating — fall back to any offering
-    # of this course so reads still resolve to something sensible.
+    # of this course so reads still resolve to something sensible. Ordered for the
+    # same reason as the term-filtered query (ADR 0026 Decision 3), and it bites
+    # harder here: this query spans EVERY term, so since #280 it picks among all of
+    # a course's sections in all terms (CAS CS 330 alone has 7 in fall-2026).
+    # Unordered, consecutive calls could hand one user different sections and split
+    # their documents/notes — masked today only because current_term() resolves to
+    # the newest seeded term, and live the moment a later term is seeded.
     any_off = table("course_offerings").select(
-        "id", filters={"course_id": f"eq.{course_id}"}, limit=1
+        "id",
+        filters={"course_id": f"eq.{course_id}"},
+        order="section.asc,created_at.asc",
+        limit=1,
     )
     return any_off[0]["id"] if any_off else None
 
