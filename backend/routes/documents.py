@@ -49,10 +49,10 @@ from services.request_context import current_request_id
 from services.durable import workflow_id
 from agents import WORKER_LIMITS
 from agents._providers import model_mode
-from agents.classifier import classifier_agent
-from agents.summary import summary_agent
-from agents.concept_extraction import concept_extraction_agent
-from agents.syllabus_extraction import syllabus_extraction_agent
+from agents.classifier import DocumentClassification, classifier_agent
+from agents.summary import Summary, summary_agent
+from agents.concept_extraction import ConceptList, concept_extraction_agent
+from agents.syllabus_extraction import SyllabusAssignments, syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
@@ -390,7 +390,11 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     return row
 
 
-async def _run_document_workers(extracted_text: str, deps, classification):
+async def _run_document_workers(
+    extracted_text: str,
+    deps: SaplingDeps,
+    classification: DocumentClassification,
+) -> tuple[Summary, ConceptList, SyllabusAssignments | None]:
     """Run the summary / concepts / syllabus workers in parallel.
 
     Extracted from the streaming route so the duplicate path can bypass it
@@ -419,6 +423,35 @@ async def _run_document_workers(extracted_text: str, deps, classification):
     record_agent_usage(summary_r, feature="document", task="summary")
     record_agent_usage(concepts_r, feature="document", task="concepts")
     return summary_r.output, concepts_r.output, syllabus
+
+
+# Substrings that identify "this column is not in the schema" in a PostgREST
+# insert failure, whichever layer rejected it: Postgres reports
+# `column "x" of relation "documents" does not exist` (SQLSTATE 42703),
+# PostgREST's own schema cache reports `PGRST204` /
+# `Could not find the 'x' column of 'documents' in the schema cache`.
+_MISSING_COLUMN_MARKERS = ("does not exist", "schema cache", "pgrst204", "42703")
+
+
+def _is_missing_column_error(exc: Exception) -> bool:
+    """True when a write failed because a column is absent from the schema.
+
+    The message we need is in the RESPONSE BODY, not in the exception text:
+    `httpx.HTTPStatusError` stringifies to "Client error '400 Bad Request' for
+    url ..." and names no column, so matching on `str(exc)` alone would treat
+    every missing-column failure as an unrelated error (and vice versa).
+    """
+    text = str(exc)
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            text = f"{text} {response.text}"
+        except Exception:
+            # A body that cannot be read tells us nothing; fall back to the
+            # exception text rather than masking the original failure.
+            pass
+    lowered = text.lower()
+    return any(marker in lowered for marker in _MISSING_COLUMN_MARKERS)
 
 
 def _persist_document(
@@ -484,19 +517,33 @@ def _persist_document(
         row["agent_result"] = encrypt_if_present(result.model_dump_json())
     try:
         inserted = table("documents").insert(row)
-    except Exception:
+    except Exception as e:
         # Schema may not yet have the request_id / file_sha256 / agent_result
         # columns; retry without them so deployments can ship the code before
         # the migration runs. Drop them in one retry — the insert already
         # failed once, and a per-column ladder would cost an extra round-trip
         # per missing column.
-        if "request_id" in row or "file_sha256" in row:
-            row.pop("request_id", None)
-            row.pop("file_sha256", None)
-            row.pop("agent_result", None)
-            inserted = table("documents").insert(row)
-        else:
+        #
+        # Narrowed to a missing-column failure on purpose. A bare `except` also
+        # caught transient PostgREST errors and unrelated constraint
+        # violations, and then wrote a row with no fingerprint and no stored
+        # result — permanently invisible to dedup, with nothing to replay, and
+        # nothing in the log to say so.
+        if not (
+            _is_missing_column_error(e)
+            and ("request_id" in row or "file_sha256" in row)
+        ):
             raise
+        logger.warning(
+            "documents insert rejected the request_id/file_sha256/agent_result "
+            "columns (%s) — retrying without them. This row cannot be found by "
+            "file-level dedup and carries no replayable result; run the "
+            "20260802012500 / 20260802012600 migrations.", e,
+        )
+        row.pop("request_id", None)
+        row.pop("file_sha256", None)
+        row.pop("agent_result", None)
+        inserted = table("documents").insert(row)
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
@@ -614,14 +661,23 @@ async def upload_document_sync(
             ),
         )
 
+    # The upload form sends the ABSTRACT course id; documents key on the
+    # OFFERING. Resolve to the current-term offering once (create=True so a
+    # fresh upload lands in the real semester). The abstract course_id stays
+    # the key for the graph + course-context + calendar side effects below.
+    # Resolved before the dedup lookup because find_duplicate prefers a
+    # same-offering twin when the same bytes have several.
+    offering_id = resolve_offering(course_id, create=True)
+
     # File-level dedup: the same deck arrives from many students under many
     # filenames. The fingerprint covers the bytes only, so a rename still
     # matches. A twin means the text is already stored — skip OCR, the slowest
     # step on this path. The lookup is global because extraction is a pure
     # function of the bytes; whether the shared CHUNKS can be reused is a
-    # course-scoped question, answered on the streaming route which indexes.
+    # separate question, answered against course_chunks itself when the
+    # streaming route's post-roll indexes.
     file_hash = file_sha256(file_bytes)
-    twin = find_duplicate(file_hash)
+    twin = find_duplicate(file_hash, offering_id)
     if twin:
         logger.info(
             "Duplicate upload '%s' matches document %s — reusing extracted text",
@@ -630,12 +686,6 @@ async def upload_document_sync(
         extracted_text = twin["extracted_text"]
     else:
         extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
-
-    # The upload form sends the ABSTRACT course id; documents key on the
-    # OFFERING. Resolve to the current-term offering once (create=True so a
-    # fresh upload lands in the real semester). The abstract course_id stays
-    # the key for the graph + course-context + calendar side effects below.
-    offering_id = resolve_offering(course_id, create=True)
 
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
     # Unify with the middleware-stamped request ID so agent traces and
@@ -690,30 +740,53 @@ async def upload_document_sync(
     # A duplicate carries the twin's whole pipeline result, so the agents are
     # skipped outright. Every per-student side effect below still fires — they
     # run against THIS user_id, so replaying a syllabus gives this student
-    # their own calendar entries rather than reusing the twin's.
+    # their own calendar entries rather than reusing the twin's. Both branches
+    # sit inside one try: the replay's graph merge is as load-bearing as
+    # `process_document`'s, and a failure there must land on the same
+    # retry-friendly 502 rather than a 500 with nothing persisted either way.
     replayed = twin.get("result") if twin else None
-    if replayed is not None:
-        logger.info(
-            "Replaying stored pipeline result from document %s for '%s'",
-            twin.get("id"), filename,
-        )
-        result: DocumentProcessingResult = replayed
-    else:
-        try:
+    try:
+        if replayed is not None:
+            logger.info(
+                "Replaying stored pipeline result from document %s for '%s' — "
+                "skipping the classifier and workers",
+                twin.get("id"), filename,
+            )
+            # The graph merge is the one step that CANNOT be replayed: the
+            # stored result's concepts were merged into the ORIGINAL uploader's
+            # graph. On the fresh path `process_document` does this merge
+            # itself (agents/document.py `_step_apply_graph`), and the replay
+            # branch skips `process_document` entirely — so without this call
+            # the second student to upload a syllabus silently gets no graph
+            # seeding at all. `_graph_backstop` cannot cover it either: it
+            # returns early for slides / lecture notes / readings, and a cached
+            # `graph_updated=True` would make it return early for syllabi too
+            # (which is why `decode_result` clears that field).
+            # Same call the streaming route makes, with THIS user_id.
+            concept_names = [c.name for c in replayed.concepts.concepts]
+            merged = await apply_concepts_to_graph(user_id, course_id, concept_names)
+            logger.info(
+                "Merged %d replayed concept(s) into %s's graph for course %s",
+                merged, user_id, course_id,
+            )
+            result: DocumentProcessingResult = replayed.model_copy(
+                update={"graph_updated": merged > 0},
+            )
+        else:
             with workflow_id(f"doc:{user_id}:{request_id}"):
                 result: DocumentProcessingResult = await process_document(extracted_text, deps)
-        except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-            logger.warning(
-                "Agent guardrails tripped for '%s'; returning 502",
-                filename, exc_info=e,
-            )
-            raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
-        except Exception as e:
-            logger.exception(
-                "Unexpected agent failure for '%s'; returning 502",
-                filename,
-            )
-            raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        logger.warning(
+            "Agent guardrails tripped for '%s'; returning 502",
+            filename, exc_info=e,
+        )
+        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
+    except Exception as e:
+        logger.exception(
+            "Unexpected pipeline failure for '%s'; returning 502",
+            filename,
+        )
+        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
 
     # async def route: these are synchronous PostgREST round-trips — keep them
     # off the event loop, same as the SSE generator's post-roll (#132 item 22).
@@ -804,7 +877,7 @@ async def upload_document(
     # strategies: setting extracted_text non-None also short-circuits the
     # async `if extracted_text is None:` phase below.
     file_hash = file_sha256(file_bytes)
-    twin = find_duplicate(file_hash)
+    twin = find_duplicate(file_hash, offering_id)
     if twin:
         logger.info(
             "Duplicate upload '%s' matches document %s — reusing extracted text",
@@ -1088,25 +1161,20 @@ async def upload_document(
             # the stream IS the response. _spawn_post_roll uses create_task
             # but attaches a done-callback so exceptions land in the log
             # instead of disappearing.
+            # The index task is ALWAYS scheduled, duplicate or not. Whether the
+            # chunks can be reused is decided inside _index_document_chunks,
+            # against course_chunks itself: the twin's `documents` row proves
+            # only that someone uploaded these bytes, never that its chunks
+            # landed (a /upload/sync row never indexes at all), and skipping on
+            # that basis left courses with permanently zero retrievable
+            # material. The task's own lookup costs two cheap selects; the
+            # embedding it guards is what actually costs anything.
             post_roll: list[tuple] = [
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
             ]
-            # The shared corpus is deduplicated by content, so a file already
-            # indexed for THIS course would re-embed every chunk only to upsert
-            # it onto the rows that already exist. Skip the work entirely.
-            # A twin from another course still indexes: chunk ids are
-            # course-scoped, so its chunks do not serve this course.
-            if chunks_already_exist(twin, offering_id):
-                logger.info(
-                    "Chunks for '%s' already indexed under offering %s — skipping re-index",
-                    filename, offering_id,
-                )
-            else:
-                post_roll.append(
-                    ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
-                )
             _spawn_post_roll(*post_roll)
         except Exception:
             logger.exception(
@@ -1173,7 +1241,10 @@ def _index_document_chunks(
     """Chunk, embed, and upsert a document into course_chunks.
 
     Runs in a background thread via _spawn_post_roll after the document
-    is persisted, so it never blocks the SSE stream.
+    is persisted, so it never blocks the SSE stream. Scheduled for EVERY
+    upload, duplicate or not; the reuse decision is made here, against
+    course_chunks, because only this function knows the resolved course code
+    and the real chunk list — the two things `rag_service.chunk_id` hashes.
     """
     import time
     from services.chunker import chunk_for_category
@@ -1201,6 +1272,21 @@ def _index_document_chunks(
             )
         except Exception:
             logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
+
+        # The shared corpus is content-addressed per course code, so a file
+        # already indexed for this course would re-embed every chunk only to
+        # upsert it onto the rows that already exist. Asked of course_chunks
+        # itself — the caller cannot answer it from the dedup twin, whose
+        # `documents` row proves only that someone uploaded these bytes (see
+        # document_dedup.chunks_already_exist for the four ways such a row
+        # exists with no chunks behind it).
+        if chunks_already_exist(bu_course_id, chunks):
+            logger.info(
+                "[RAG] doc %s duplicates content already indexed for %s — "
+                "skipping the re-embed",
+                doc_id, bu_course_id,
+            )
+            return
 
         # Relevance gate: skip docs that are off-topic for the course. The
         # embedding-based check below routes through services.rag_service
