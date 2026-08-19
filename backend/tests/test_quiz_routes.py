@@ -546,12 +546,19 @@ class TestGenerateQuizDifficultyEnum:
 class TestGenerateQuizNumQuestionsBound:
     """num_questions must be bounded to 1-10 inclusive. Requests outside
     this range should return HTTP 422 (validation error) instead of
-    silently truncating to the schema max_length. This regression test
-    prevents the bug where num_questions > 10 silently returned ≤10
-    questions instead of erroring."""
+    silently truncating. This regression test prevents the bug where an
+    over-cap num_questions silently returned fewer questions than asked.
+
+    The bound is 10 because that is what the agent's `Quiz.questions` array
+    can serve: raising it to 15 meant dropping `max_length` from that array,
+    and gemini-2.5-flash-lite then answered roughly half of all generations
+    with an empty `finish_reason=error` response (A/B in agents/quiz.py).
+    QuizPanel's COUNT_OPTIONS offers 5 / 10 to match, so the picker never
+    offers a value the API refuses.
+    """
 
     def test_num_questions_over_cap_rejected(self):
-        """POST with num_questions=15 should return 422, not silently truncate."""
+        """POST with num_questions=11 should return 422, not silently truncate."""
         agent_run = AsyncMock()
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -560,13 +567,21 @@ class TestGenerateQuizNumQuestionsBound:
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_andres",
                 "concept_node_id": "node1",
-                "num_questions": 15,  # exceeds max_length=10
+                "num_questions": 11,  # exceeds the 10 the schema can serve
                 "difficulty": "medium",
                 "use_shared_context": False,
             })
         assert r.status_code == 422
         # The agent must not run for an over-cap num_questions.
         agent_run.assert_not_called()
+
+    def test_the_largest_count_the_ui_offers_is_accepted(self):
+        """QuizPanel's COUNT_OPTIONS tops out at 10 (the agent's schema cap); the API must take it."""
+        from models import GenerateQuizBody
+
+        assert GenerateQuizBody(
+            concept_node_id="node1", num_questions=10
+        ).num_questions == 10
 
     def test_num_questions_at_cap_accepted(self):
         """POST with num_questions=10 (at the max) should succeed."""
@@ -1041,6 +1056,85 @@ class TestQuizWireFormatContract:
         assert correct[0]["text"].strip() == "4"
 
 
+class TestCorrectAnswerNearMiss:
+    """A retyping slip is not a disagreement about the answer.
+
+    Observed live on a 15-question Markov Chains quiz: the option read
+    "...depends only on the current state, not on the sequence of events
+    that preceded it." and `correct_answer` came back "...not on the on
+    the sequence of events...". One stuttered word cost the whole
+    question, and the student silently got 14 instead of 15.
+
+    The tolerance must stay narrow: mis-marking an answer is worse than a
+    shorter quiz, so anything genuinely ambiguous still drops.
+    """
+
+    STEM = ("A stochastic process where the future state depends only on "
+            "the current state, not on the sequence of events that preceded it.")
+
+    def _q(self, options, correct_answer):
+        from agents.quiz import QuizQuestion
+
+        return QuizQuestion(
+            question="What is a Markov chain?",
+            type="multiple_choice", difficulty="easy",
+            options=options, correct_answer=correct_answer,
+            explanation="Memorylessness.", concept="Markov Chains",
+        )
+
+    def _others(self):
+        return [
+            "A process where each event is independent of the others.",
+            "A process that always returns to its starting state.",
+            "A deterministic process with no randomness.",
+        ]
+
+    def test_stuttered_word_still_matches(self):
+        from routes.quiz import _agent_question_to_wire
+
+        stutter = self.STEM.replace("not on the sequence", "not on the on the sequence")
+        wire = _agent_question_to_wire(
+            self._q([self.STEM, *self._others()], stutter), qid=1
+        )
+        assert wire is not None, "near-miss retype should not drop the question"
+        correct = [o for o in wire["options"] if o["correct"]]
+        assert len(correct) == 1
+        assert correct[0]["text"] == self.STEM
+
+    def test_case_and_trailing_punctuation_differences_match(self):
+        from routes.quiz import _agent_question_to_wire
+
+        wire = _agent_question_to_wire(
+            self._q(["Irreducible", "Ergodic", "Periodic", "Transient"],
+                    "ergodic."), qid=1
+        )
+        assert wire is not None
+        correct = [o for o in wire["options"] if o["correct"]]
+        assert correct[0]["text"] == "Ergodic"
+
+    def test_ambiguous_near_match_still_drops(self):
+        """Two options equally close — the intent is unrecoverable, so the
+        question must drop rather than have one guessed correct."""
+        from routes.quiz import _agent_question_to_wire
+
+        wire = _agent_question_to_wire(
+            self._q(["The value is 0.51", "The value is 0.52",
+                     "The value is 0.53", "The value is 0.54"],
+                    "The value is 0.5"), qid=1
+        )
+        assert wire is None
+
+    def test_genuinely_absent_answer_still_drops(self):
+        """The original invariant is untouched: an answer that simply isn't
+        among the options is drift, not a typo."""
+        from routes.quiz import _agent_question_to_wire
+
+        wire = _agent_question_to_wire(
+            self._q(["3", "5", "6", "7"], "4"), qid=1
+        )
+        assert wire is None
+
+
 class TestQuizGrounding:
     """_quiz_via_agent prepends a COURSE MATERIAL block (best-effort) and
     the quiz still generates when grounding is absent."""
@@ -1250,6 +1344,277 @@ class TestQuizModelPref:
         assert _resolve_model_pref(None) is None
         assert _resolve_model_pref("") is None
         assert _resolve_model_pref("auto") is None  # not in the map
+
+    # ── Per-run thinking budget ────────────────────────────────────────────
+    #
+    # The budget used to be pinned as agent-level model_settings
+    # (GoogleModelSettings(google_thinking_config=ThinkingConfig(
+    # thinking_budget=0)) on quiz_agent). Agent-level settings apply to EVERY
+    # run, including one whose `model=` kwarg is gemini-2.5-pro — and Pro
+    # rejects a zero budget outright, so `model_pref="smart"` was a 400 on
+    # arrival. The budget now lives on the run, chosen for the run's model.
+
+    def _thinking_budget(self, kwargs):
+        """The thinking budget this run was given, or None if none was set."""
+        settings = kwargs.get("model_settings") or {}
+        config = settings.get("google_thinking_config")
+        return None if config is None else config.thinking_budget
+
+    def test_smart_pref_does_not_send_a_zero_thinking_budget(self):
+        from routes.quiz import _PRO_THINKING_BUDGET
+
+        run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+        ):
+            r = self._post({"model_pref": "smart"})
+        assert r.status_code == 200
+        kwargs = run_mock.call_args.kwargs
+        assert kwargs["model"].model_name == "gemini-2.5-pro"
+        budget = self._thinking_budget(kwargs)
+        assert budget != 0, (
+            "gemini-2.5-pro rejects thinking_budget=0 — a Pro run must never "
+            "be handed one, from the agent or from the route"
+        )
+        assert budget == _PRO_THINKING_BUDGET
+
+    def test_lite_runs_still_turn_thinking_off(self):
+        """Thinking off is what took a 361s-then-502 generation down to ~18s;
+        moving the setting to the route must not lose it on the Lite path."""
+        for body in ({"model_pref": "fast"}, {}):
+            run_mock = AsyncMock(
+                return_value=SimpleNamespace(output=self._fake_quiz())
+            )
+            with (
+                patch("routes.quiz.table", side_effect=_generate_table_factory()),
+                patch("routes.quiz.quiz_agent.run", new=run_mock),
+            ):
+                r = self._post(body)
+            assert r.status_code == 200, body
+            assert self._thinking_budget(run_mock.call_args.kwargs) == 0, body
+
+    def test_the_agent_pins_no_thinking_config_of_its_own(self):
+        """The other half of the fix: anything left on the agent leaks into the
+        Pro run, where a zero budget is a 400. max_tokens is model-agnostic and
+        stays."""
+        from agents.quiz import _QUIZ_SETTINGS
+
+        assert "google_thinking_config" not in _QUIZ_SETTINGS
+        assert _QUIZ_SETTINGS.get("max_tokens") == 8192
+
+
+class TestQuizGuardrailRetryModel:
+    """The "retry on a different model" has to leave the failing model behind.
+
+    The fallback was built by `_resolve_model_pref("fast")`, which resolves to
+    gemini-2.5-flash-lite — the very model the first attempt just failed on
+    (agents/_providers.py::_DEFAULTS["quiz"]). By the retry comment's own
+    measurement (~140s per failed attempt) that turned one failure into ~280s
+    of student wait before the identical 502, and the log line named
+    gemini-2.5-flash, a model the route never used.
+    """
+
+    def _fake_quiz(self):
+        return Quiz(questions=[
+            QuizQuestion(
+                question="P = [[0.7, 0.3], [0.4, 0.6]]; what is P[0][1]?",
+                type="multiple_choice", difficulty="easy",
+                options=["0.3", "0.7", "0.4", "0.6"], correct_answer="0.3",
+                explanation="Row 0, column 1.", concept="Arithmetic",
+            ),
+        ])
+
+    def _post(self, body_extra: dict | None = None):
+        return client.post("/api/quiz/generate", json={
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "num_questions": 1,
+            "difficulty": "easy",
+            "use_shared_context": False,
+            **(body_extra or {}),
+        })
+
+    def test_the_fallback_is_not_the_model_that_just_failed(self):
+        from agents._providers import model_name_for
+        from routes.quiz import _FALLBACK_MODEL_NAME, _PREF_MODEL_NAMES
+
+        assert _FALLBACK_MODEL_NAME != model_name_for("quiz")
+        assert _FALLBACK_MODEL_NAME != _PREF_MODEL_NAMES["fast"]
+
+    def test_a_guardrail_trip_retries_on_the_fallback_model(self):
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from routes.quiz import _FALLBACK_MODEL_NAME
+
+        seen: list = []
+
+        async def flaky_run(*args, **kwargs):
+            seen.append(kwargs.get("model"))
+            if len(seen) == 1:
+                raise UnexpectedModelBehavior("empty finish_reason=error response")
+            return SimpleNamespace(output=self._fake_quiz())
+
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=flaky_run),
+        ):
+            r = self._post()
+        assert r.status_code == 200, r.text
+        assert len(seen) == 2, "expected exactly one escalation"
+        assert seen[0] is None, "first attempt runs on the agent's own default"
+        assert seen[1].model_name == _FALLBACK_MODEL_NAME
+
+    def test_an_explicit_preference_is_not_overridden_on_failure(self):
+        """A student who picked a model gets that model. Escalating away from it
+        would silently answer a "smart" request from a cheaper tier."""
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        seen: list = []
+
+        async def always_trips(*args, **kwargs):
+            seen.append(kwargs.get("model"))
+            raise UnexpectedModelBehavior("empty finish_reason=error response")
+
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=always_trips),
+        ):
+            r = self._post({"model_pref": "smart"})
+        assert r.status_code == 502
+        assert len(seen) == 1
+        assert seen[0].model_name == "gemini-2.5-pro"
+
+    def test_a_usage_limit_trip_is_not_retried(self):
+        """The second attempt reuses the same ORCHESTRATOR_LIMITS object, so a
+        run that exhausted the budget exhausts it again — retrying only doubles
+        the wait before the same 502."""
+        from pydantic_ai.exceptions import UsageLimitExceeded
+
+        calls = {"n": 0}
+
+        async def over_budget(*args, **kwargs):
+            calls["n"] += 1
+            raise UsageLimitExceeded("request_limit of 8 exceeded")
+
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=over_budget),
+        ):
+            r = self._post()
+        assert r.status_code == 502
+        assert calls["n"] == 1, "UsageLimitExceeded must not buy a second attempt"
+
+    def test_the_log_names_the_model_the_retry_actually_uses(self, caplog):
+        """The old line hard-coded "retrying on gemini-2.5-flash" while the
+        fallback it built was flash-lite."""
+        import logging
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from routes.quiz import _FALLBACK_MODEL_NAME
+
+        calls = {"n": 0}
+
+        async def flaky_run(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise UnexpectedModelBehavior("empty finish_reason=error response")
+            return SimpleNamespace(output=self._fake_quiz())
+
+        with (
+            caplog.at_level(logging.WARNING, logger="routes.quiz"),
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=flaky_run),
+        ):
+            r = self._post()
+        assert r.status_code == 200, r.text
+        retry_lines = [
+            m for m in caplog.messages if "tripped a guardrail" in m
+        ]
+        assert retry_lines, "the escalation must be logged"
+        assert f"retrying on {_FALLBACK_MODEL_NAME}" in retry_lines[0]
+
+
+class TestAdaptiveModeStillOverGenerates:
+    """Adaptive difficulty (#540 A1) and over-generation (#534) landed on
+    separate branches and both rewrote this routing message. They compose:
+    adaptive mode decides the DIFFICULTY clause, over-generation decides HOW
+    MANY questions are asked for. A merge that took #540's clause wholesale
+    would ask for `num_questions` and silently disable over-generation for
+    every adaptive quiz — the default mode — leaving quiz_agent's output
+    validator nothing to select from and putting the worked-problem ratio
+    back at the model's mercy, with no visible failure to point at.
+    """
+
+    NUM_QUESTIONS = 5
+
+    def _fake_quiz(self, n):
+        return Quiz(questions=[
+            QuizQuestion(
+                question=f"A ball is thrown at {i} m/s; how far in 2s?",
+                type="multiple_choice", difficulty="medium",
+                options=[f"{2 * i} m", "1 m", "2 m", "3 m"],
+                correct_answer=f"{2 * i} m",
+                explanation="distance = speed x time.", concept="Kinematics",
+            )
+            for i in range(1, n + 1)
+        ])
+
+    def _routing_message(self, difficulty: str) -> tuple[str, int]:
+        """Generate a quiz and return (message sent to the agent, count served)."""
+        from agents.quiz import quiz_ask_size
+
+        run_mock = AsyncMock(return_value=SimpleNamespace(
+            output=self._fake_quiz(quiz_ask_size(self.NUM_QUESTIONS))
+        ))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": self.NUM_QUESTIONS,
+                "difficulty": difficulty,
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200, r.text
+        return run_mock.call_args.args[0], len(r.json()["questions"])
+
+    def test_both_difficulty_branches_ask_for_the_over_generated_count(self):
+        from agents.quiz import quiz_ask_size
+
+        ask_for = quiz_ask_size(self.NUM_QUESTIONS)
+        assert ask_for > self.NUM_QUESTIONS, "fixture assumes real over-generation"
+        for difficulty in ("adaptive", "hard"):
+            message, _ = self._routing_message(difficulty)
+            assert f"Generate {ask_for} " in message, difficulty
+            assert f"Generate {self.NUM_QUESTIONS} " not in message, difficulty
+
+    def test_the_adaptive_branch_still_hands_the_agent_the_difficulty_choice(self):
+        message, _ = self._routing_message("adaptive")
+        assert "ADAPTIVE MODE" in message
+        # The whole point of adaptive: no target difficulty is dictated.
+        assert "adaptive questions" not in message
+
+    def test_the_conceptual_allowance_survives_in_both_branches(self):
+        """Stated as prose, not as a schema key: QuizQuestion has no `kind`
+        field, and a self-declared kind enum was measured taking flash-lite
+        from 5/5 to 3/5 successful generations before it was reverted."""
+        from agents.quiz import conceptual_allowance
+
+        allowance = conceptual_allowance(self.NUM_QUESTIONS)
+        for difficulty in ("adaptive", "hard"):
+            message, _ = self._routing_message(difficulty)
+            assert f"At most {allowance} of them may be purely conceptual" in message, (
+                difficulty
+            )
+            assert "kind=" not in message, difficulty
+
+    def test_the_client_still_gets_exactly_what_it_asked_for(self):
+        """Over-generation is an internal selection budget; the surplus must
+        never reach the student."""
+        for difficulty in ("adaptive", "hard"):
+            _, served = self._routing_message(difficulty)
+            assert served == self.NUM_QUESTIONS, difficulty
 
 
 class TestSubmitQuizConcurrentClaim:

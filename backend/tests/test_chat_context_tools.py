@@ -22,6 +22,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agents.tools.chat_context import (
     CourseProgress,
     read_session_history,
@@ -36,6 +38,22 @@ from agents.tools.chat_context import (
 def _run(coro):
     """Drive an async coroutine to completion in a sync test."""
     return asyncio.run(coro)
+
+
+@pytest.fixture(autouse=True)
+def _stub_offering_lookup():
+    """`documents` keys on offering_id, so search_course_materials resolves
+    the abstract course to the user's offerings before querying.
+
+    That resolution is incidental to what most tests here assert (ranking,
+    user scoping, decryption), so stub it to one offering. The test that
+    pins the query shape asserts on it directly.
+    """
+    with patch(
+        "agents.tools.chat_context.user_offering_ids_for_course",
+        return_value=["off-1"],
+    ):
+        yield
 
 
 # ── search_course_materials ───────────────────────────────────────────────
@@ -89,6 +107,86 @@ class TestSearchCourseMaterialsUserScope:
         # caller's user_id, not course_id alone.
         filters = t.return_value.select.call_args.kwargs["filters"]
         assert filters.get("user_id") == "eq.user_mine"
+
+
+class TestEmptyLookupCarriesItsOwnInstruction:
+    """An empty materials lookup must not become a statement about the course.
+
+    Before this, the tool returned a bare `[]` and the model narrated it:
+    "I couldn't find any information about Markov chains in the course
+    materials. Let's focus on the main topics of this course." Emptiness
+    means only that nothing is indexed -- most courses have no uploads --
+    and course scope is never something the tutor volunteers.
+    """
+
+    def _call(self, materials):
+        from agents.tools.chat_context import search_course_materials_tool
+
+        class _Stub:
+            async def course_materials(self, *_a, **_k):
+                return materials
+
+        ctx = SimpleNamespace(
+            deps=SimpleNamespace(
+                user_id="u1", course_id="c1", session_id="s1", retrieval=_Stub()
+            )
+        )
+        return _run(search_course_materials_tool(ctx, "markov chains"))
+
+    def test_empty_result_tells_the_model_not_to_mention_it(self):
+        out = self._call([])
+        assert out.materials == []
+        g = out.guidance.lower()
+        assert "says nothing about" in g
+        assert "do not mention this lookup" in g
+        assert "teach the topic from your own knowledge" in g
+
+    def test_populated_result_still_forbids_scope_commentary(self):
+        from agents.tools.chat_context import CourseMaterial
+
+        out = self._call([CourseMaterial(document_id="d1", file_name="a.pdf", summary="s")])
+        assert len(out.materials) == 1
+        assert "never remark on what the course" in out.guidance.lower()
+
+
+class TestSearchCourseMaterialsQueryShape:
+    """The query must go through offering_id, not course_id.
+
+    `documents` has no `course_id` column on any environment — the abstract
+    course lives one level up. Filtering on it made PostgREST answer 400 on
+    every call, and because failures degrade silently to [], the tool looked
+    to the model like "this course has no materials". Students were then told
+    their topic wasn't in the course. Nothing caught it: the evals use a
+    fixture retrieval seam that never issues this query.
+    """
+
+    def test_filters_on_the_users_offerings_not_course_id(self):
+        with patch("agents.tools.chat_context.table") as t, patch(
+            "agents.tools.chat_context.user_offering_ids_for_course",
+            return_value=["off-a", "off-b"],
+        ) as resolve:
+            t.return_value.select.return_value = []
+            _run(search_course_materials("course_cs101", "recursion", user_id="user_a"))
+
+        resolve.assert_called_once_with("user_a", "course_cs101")
+        filters = t.return_value.select.call_args.kwargs["filters"]
+        assert "course_id" not in filters, "documents has no course_id column"
+        assert filters["offering_id"] == "in.(off-a,off-b)"
+        assert filters["user_id"] == "eq.user_a"
+        # Soft-deleted documents must not resurface in tutor context.
+        assert filters["deleted_at"] == "is.null"
+
+    def test_no_enrolled_offerings_short_circuits_without_querying(self):
+        with patch("agents.tools.chat_context.table") as t, patch(
+            "agents.tools.chat_context.user_offering_ids_for_course",
+            return_value=[],
+        ):
+            result = _run(
+                search_course_materials("course_cs101", "recursion", user_id="user_a")
+            )
+
+        assert result == []
+        t.return_value.select.assert_not_called()
 
 
 class TestSearchCourseMaterials:

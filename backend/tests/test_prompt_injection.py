@@ -265,8 +265,11 @@ class TestToolReturnWrapping:
         out = asyncio.run(
             search_course_materials_tool(_ctx(_StubRetrieval(materials)), "limits")
         )
-        assert len(out) == 1
-        m = out[0]
+        # The tool returns CourseMaterialsResult (materials + guidance) so an
+        # empty lookup can carry its own instruction; the envelope contract
+        # below is unchanged.
+        assert len(out.materials) == 1
+        m = out.materials[0]
         # Long free text: enveloped.
         assert m.summary.startswith(UNTRUSTED_BEGIN_PREFIX)
         assert INJECTION in m.summary

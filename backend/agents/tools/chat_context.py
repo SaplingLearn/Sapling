@@ -45,6 +45,7 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services.academics import user_offering_ids_for_course
 from services.encryption import decrypt_if_present, decrypt_json
 
 # Shared tokenizer (#149): factored to services/token_overlap.py so the
@@ -142,12 +143,28 @@ async def search_course_materials(
 
     def _fetch() -> list[dict[str, Any]]:
         try:
+            # `documents` is keyed on offering_id, NOT course_id — the
+            # abstract course lives one level up (CLAUDE.md: "study/analytics
+            # key on offering_id"). Filtering on documents.course_id asked
+            # PostgREST for a column that does not exist, so this tool
+            # answered 400 on every call and — because failures degrade
+            # silently to [] below — looked to the model like "this course
+            # has no materials". The model then told students their topic
+            # wasn't in the course. routes/flashcards.py:141 already used
+            # the offering-based idiom; this now matches it.
+            offering_ids = user_offering_ids_for_course(user_id, course_id)
+            if not offering_ids:
+                return []
+            joined = ",".join(offering_ids)
             return (
                 table("documents").select(
                     "id,file_name,summary,concept_notes",
                     filters={
-                        "course_id": f"eq.{course_id}",
+                        "offering_id": f"in.({joined})",
                         "user_id": f"eq.{user_id}",
+                        # Soft-deleted documents must not be resurrected into
+                        # the tutor's context (the previous query omitted this).
+                        "deleted_at": "is.null",
                     },
                     order="created_at.desc",
                 )
@@ -251,11 +268,52 @@ def _harden_materials(materials: list[CourseMaterial]) -> list[CourseMaterial]:
     return hardened
 
 
+# Returned verbatim to the model whenever the lookup comes back empty.
+#
+# An empty result used to be a bare `[]`, and the model reliably narrated it
+# as a fact about the course — "I couldn't find any information about Markov
+# chains in the course materials. Let's focus on the main topics of this
+# course." That is wrong twice: emptiness means only that nothing is indexed
+# (most courses have no uploads at all), and course scope is not something
+# the tutor volunteers.
+#
+# A rule at the point of the empty result lands where a rule thousands of
+# characters earlier in the system prompt does not, especially on the Lite
+# tier where this was reported.
+_NO_MATERIALS_GUIDANCE = (
+    "No indexed course documents matched this query. This says NOTHING about "
+    "whether the topic belongs to the course — most courses have no uploaded "
+    "documents at all. Do NOT tell the student the topic is missing from the "
+    "course materials, is not in the course, or that you can only cover "
+    "certain topics. Do not mention this lookup. Just teach the topic from "
+    "your own knowledge."
+)
+
+_HAVE_MATERIALS_GUIDANCE = (
+    "Supporting excerpts from this student's course documents. Use them when "
+    "relevant. If they don't cover the question, ignore them silently and "
+    "answer from your own knowledge — never remark on what the course does "
+    "or doesn't contain."
+)
+
+
+class CourseMaterialsResult(BaseModel):
+    """What `search_course_materials_tool` hands back to the model.
+
+    Carries `guidance` alongside the rows so an empty result arrives with an
+    explicit instruction rather than as a bare `[]` the model is free to
+    interpret as a statement about the course.
+    """
+
+    materials: list[CourseMaterial]
+    guidance: str
+
+
 async def search_course_materials_tool(
     ctx: RunContext[SaplingDeps],
     query: str,
     limit: int = 5,
-) -> list[CourseMaterial]:
+) -> CourseMaterialsResult:
     """Pydantic AI tool wrapper.
 
     The LLM supplies `query` (and optionally `limit`); `course_id` and
@@ -265,13 +323,20 @@ async def search_course_materials_tool(
     else the Supabase-backed default — identical to calling
     `search_course_materials` directly. Free-text fields arrive at the
     model inside the #150 untrusted envelope (`_harden_materials`).
+
+    Returns a `CourseMaterialsResult` rather than a bare list so that an
+    empty lookup carries its own instruction — see `_NO_MATERIALS_GUIDANCE`.
     """
     from agents.tools.retrieval import resolve_retrieval
 
     materials = await resolve_retrieval(ctx.deps).course_materials(
         ctx.deps.course_id, query, limit, user_id=ctx.deps.user_id
     )
-    return _harden_materials(materials)
+    hardened = _harden_materials(materials)
+    return CourseMaterialsResult(
+        materials=hardened,
+        guidance=_HAVE_MATERIALS_GUIDANCE if hardened else _NO_MATERIALS_GUIDANCE,
+    )
 
 
 # read_session_history

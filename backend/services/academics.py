@@ -138,6 +138,10 @@ def resolve_offering(
             table("course_offerings").insert(
                 {"id": new_id, "course_id": course_id, "term_id": term_id}
             )
+            # A new offering invalidates the cached course→offerings list, or
+            # every already-warmed process would keep serving the old set and
+            # the chat tutor would look straight past this term's materials.
+            _offering_ids_for_course_cached.cache_clear()
             return new_id
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 409:
@@ -182,16 +186,40 @@ def offering_course_id(offering_id: str) -> str | None:
     return rows[0]["course_id"] if rows else None
 
 
+@lru_cache(maxsize=4096)
+def _offering_ids_for_course_cached(course_id: str) -> tuple[str, ...]:
+    """Every offering of an abstract course, cached per-process.
+
+    Cached because this is the stable half of ``user_offering_ids_for_course``,
+    which the chat tutor's ``search_course_materials`` calls on EVERY turn: the
+    tool paid two PostgREST round-trips before it could issue the one read it
+    actually wanted. An offering is created at term rollover, never per
+    request, so this caches on the same basis as ``offering_course_id`` above —
+    with an explicit invalidation at the one insert site (``resolve_offering``)
+    plus ``clear_academics_caches()`` for test setup.
+
+    Returns a ``tuple`` because ``lru_cache`` hands every caller the same
+    object; a ``list`` would let one of them mutate the cache in place.
+    """
+    if not course_id:
+        return ()
+    offs = table("course_offerings").select(
+        "id", filters={"course_id": f"eq.{course_id}"}
+    ) or []
+    return tuple(o["id"] for o in offs if o.get("id"))
+
+
 def user_offering_ids_for_course(user_id: str, course_id: str) -> list[str]:
     """The offerings of an abstract course that ``user_id`` is enrolled in.
 
     Two-step (offerings of the course, then the user's enrollments intersected)
     to avoid fragile PostgREST embedded-filter syntax.
+
+    Only the first step is cached. Enrollments change while a process is warm —
+    a student who enrolls mid-session must see that course's materials on the
+    next tutor turn — so the enrollment read stays live.
     """
-    offs = table("course_offerings").select(
-        "id", filters={"course_id": f"eq.{course_id}"}
-    ) or []
-    off_ids = {o["id"] for o in offs}
+    off_ids = set(_offering_ids_for_course_cached(course_id))
     if not off_ids:
         return []
     enr = table("enrollments").select(
@@ -229,9 +257,12 @@ def term_for_offering(offering_id: str) -> dict | None:
 def clear_academics_caches() -> None:
     """Clear the per-process academics caches. Called from test setup (so mocked
     DB state doesn't leak across tests); rarely needed at runtime since the
-    cached mappings are immutable."""
+    cached mappings are immutable (the one that isn't quite —
+    _offering_ids_for_course_cached — is invalidated where offerings are
+    created)."""
     offering_course_id.cache_clear()
     _term_for_offering_cached.cache_clear()
+    _offering_ids_for_course_cached.cache_clear()
 
 
 def user_enrollment_ids(user_id: str) -> list[dict]:

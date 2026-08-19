@@ -156,6 +156,14 @@ _SHARED_PREAMBLE = (
     "rule below still binds, and a request that is not academic at all, or "
     "is abusive, should still get a brief decline plus an offer of the "
     "academic help you can give.\n\n"
+    "COURSE INFORMATION (the catalog entry: instructor, prerequisites, "
+    "credits, requirements, what the course covers) is reference data you "
+    "surface ONLY when the student asks about the course itself — \"who "
+    "teaches this?\", \"what are the prereqs?\", \"what does this class "
+    "cover?\". Never open with it, never volunteer it, and never use it to "
+    "frame or qualify an answer. In particular: an empty course-materials "
+    "lookup is not information about the course — say nothing about it and "
+    "answer the question.\n\n"
     # Format guidance lives in _FORMATTING_TOOLKIT (appended just below) and
     # nowhere else: this sentence used to repeat an abbreviated format list
     # and close with "Don't over-explain", contradicting the toolkit's "use

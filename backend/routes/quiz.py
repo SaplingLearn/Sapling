@@ -12,7 +12,10 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 import config
 from agents import ORCHESTRATOR_LIMITS, TOPUP_LIMITS
 from agents._providers import UnregisteredHandlerError
-from agents.quiz import quiz_agent, Quiz, QuizQuestion
+from agents.quiz import (
+    quiz_agent, Quiz, QuizQuestion, conceptual_allowance, quiz_ask_size,
+    resolve_correct_index,
+)
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
@@ -364,31 +367,27 @@ def _validate_wire_question(wire: dict) -> bool:
     return True
 
 
+
 def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     """Map an agent QuizQuestion to the legacy wire-format dict, or
     return None if the question violates the contract.
 
     The agent must produce `correct_answer` as one of the strings in
-    `q.options` verbatim. If that invariant is broken (LLM drift), we
-    DROP the question rather than silently mark an arbitrary option
-    correct — emitting an unverifiable question to the user is worse
-    than a slightly shorter quiz.
+    `q.options`. `_resolve_correct_index` decides which one, tolerating
+    retyping slips but refusing to guess between two plausible options.
+    When it can't tell, we DROP the question rather than silently mark an
+    arbitrary option correct — emitting an unverifiable question to the
+    user is worse than a slightly shorter quiz.
 
     Returning None lets the caller filter questions out cleanly.
     """
-    options: list[dict] = []
-    matched = False
-    canonical = q.correct_answer.strip()
-    for i, text in enumerate(q.options[: len(_OPTION_LABELS)]):
-        is_correct = (not matched) and (text.strip() == canonical)
-        if is_correct:
-            matched = True
-        options.append({
-            "label": _OPTION_LABELS[i],
-            "text": text,
-            "correct": is_correct,
-        })
-    if not matched:
+    texts = q.options[: len(_OPTION_LABELS)]
+    correct_i = resolve_correct_index(q.correct_answer, texts)
+    options: list[dict] = [
+        {"label": _OPTION_LABELS[i], "text": text, "correct": i == correct_i}
+        for i, text in enumerate(texts)
+    ]
+    if correct_i is None:
         # Generation drift: agent's correct_answer doesn't match any
         # option verbatim. Surface in logs (Logfire span carries the
         # question_id correlation) and drop. Caller filters None.
@@ -431,6 +430,23 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 }
 
 
+# The model the guardrail retry escalates to. Deliberately NOT
+# _PREF_MODEL_NAMES["fast"]: that resolves to gemini-2.5-flash-lite, which is
+# also this route's DEFAULT model (agents/_providers.py::_DEFAULTS["quiz"]),
+# so a "retry on a different model" built from it re-ran the identical payload
+# on the identical model — measured, two ~140s failures back to back instead
+# of one, then the same 502 either way. gemini-2.5-flash is the smallest
+# genuine change: it leaves the failing input behind without paying Pro's
+# latency on a path the student is already waiting on.
+_FALLBACK_MODEL_NAME = "gemini-2.5-flash"
+
+# Gemini 2.5 Pro always thinks — thinking_budget=0 is rejected outright (the
+# same asymmetry agents/flashcard.py records: "Flash accepts thinking_budget=0
+# (unlike Pro)"). 2048 is the cap routes/learn.py applies to the Pro chat
+# tutor: enough for a real chain of thought, not enough latency to feel.
+_PRO_THINKING_BUDGET = 2048
+
+
 def _resolve_model_pref(model_pref: str | None):
     """Build a GoogleModel override for the per-request fast/smart
     preference, or return None to use the agent's default.
@@ -459,6 +475,60 @@ def _resolve_model_pref(model_pref: str | None):
     if not name:
         return None
     return google_model(name)
+
+
+def _resolve_fallback_model():
+    """Build the guardrail-retry model, or None when there is nothing to
+    escalate to.
+
+    Same SAPLING_MODEL_MODE seam as `_resolve_model_pref` (#391): outside real
+    mode there is no live GoogleModel to construct, so the route simply gets
+    no second attempt rather than dialing Gemini from a function-mode test.
+    """
+    from agents._providers import _model_mode, google_model
+    if _model_mode() != "real":
+        return None
+    return google_model(_FALLBACK_MODEL_NAME)
+
+
+def _effective_model_name(model_override) -> str:
+    """The model name a run will actually use, given its `model=` override.
+
+    None means no override, so the run lands on the agent's own task-default
+    model — whose configured name `model_name_for("quiz")` reports, env
+    override included. Used both to pick per-run model settings and to log the
+    model a retry really escalates to, so neither can name a model the run
+    isn't using.
+    """
+    from agents._providers import model_name_for
+    return getattr(model_override, "model_name", None) or model_name_for("quiz")
+
+
+def _build_quiz_model_settings(model_name: str):
+    """Thinking config for ONE quiz run, chosen for the model that run uses.
+
+    This cannot live on the agent, and agents/quiz.py says why: agent-level
+    model_settings apply to EVERY run, including the `model_pref="smart"` run
+    whose `model=` kwarg is gemini-2.5-pro, and Pro 400s on a zero budget.
+    Same split as agents/chat_tutor.py + routes/learn.py, where one agent
+    instance also serves both tiers.
+
+    flash-lite and flash accept thinking_budget=0, and switching thinking off
+    is what took quiz generation from runs of 361s that ended as a 502 down to
+    ~18s — so those keep it off, and only a Pro run gets a budget.
+
+    Imported lazily for the same reason as `google_model`: keeps the
+    GoogleProvider construction off this module's import path.
+    """
+    from google.genai.types import ThinkingConfig
+    from pydantic_ai.models.google import GoogleModelSettings
+    # Substring, not equality: the point is "does this model refuse a zero
+    # budget", which is a property of the Pro tier rather than of one version
+    # string, and SAPLING_MODEL_QUIZ can name a Pro model directly.
+    budget = _PRO_THINKING_BUDGET if "pro" in model_name else 0
+    return GoogleModelSettings(
+        google_thinking_config=ThinkingConfig(thinking_budget=budget)
+    )
 
 
 def _resolve_bu_code(course_id: str | None) -> str | None:
@@ -536,10 +606,32 @@ async def _quiz_via_agent(
         course_id=course_id,
         supabase=None,
         request_id=request_id,
+        # Read by quiz_agent's _select_requested_quiz output validator, which
+        # trims the over-generated surplus back to this count (preferring
+        # worked problems as it does). Without it the count is prompt-only,
+        # and the model under-delivers (asked 10, returned 6) with nothing
+        # to catch it.
+        num_questions=num_questions,
     )
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
+    # Ask for MORE than the student wants. quiz_agent's output validator
+    # then selects `num_questions` from them, preferring worked problems and
+    # dropping unanswerable ones. The ratio used to be enforced by bouncing
+    # a non-compliant quiz back with ModelRetry, which re-ran the whole
+    # generation and walked through ORCHESTRATOR_LIMITS — a measured 43s for
+    # a quiz that still missed the ratio, and 361s for one that 502'd. One
+    # slightly larger generation costs a fraction of that and lets the ratio
+    # be selected instead of argued for.
+    ask_for = quiz_ask_size(num_questions)
+    allowance = conceptual_allowance(num_questions)
+    # Adaptive mode and over-generation are orthogonal and both apply: this
+    # branch only decides the DIFFICULTY clause, never the count. Asking for
+    # `num_questions` here would silently disable over-generation for every
+    # adaptive quiz — the default mode — leaving the validator nothing to
+    # select from and putting the worked-problem ratio back at the model's
+    # mercy.
     if difficulty == "adaptive":
         # #540 A1: no target difficulty — the agent picks the whole mix
         # from mastery + recent accuracy (ADAPTIVE MODE in the system
@@ -547,17 +639,28 @@ async def _quiz_via_agent(
         # easy|medium|hard; the route reports the overall pick back to
         # the client as `resolved_difficulty`.
         difficulty_clause = (
-            f"Generate {num_questions} questions in ADAPTIVE MODE: you "
+            f"Generate {ask_for} questions in ADAPTIVE MODE: you "
             f"choose each question's difficulty (easy, medium, or hard) "
             f"from the student's mastery and recent accuracy, per the "
             f"adaptive-mode rules in your system prompt."
         )
     else:
         difficulty_clause = (
-            f"Generate {num_questions} {difficulty} questions for the student."
+            f"Generate {ask_for} {difficulty} questions for the student."
         )
+    # The allowance is phrased as prose, not as a schema constraint, and is
+    # appended to whichever clause was built above. This message used to say
+    # "may be kind='conceptual'", but QuizQuestion has no `kind` field: a
+    # self-declared kind enum was measured taking flash-lite from 5/5 to 3/5
+    # successful generations and was reverted, so the classification is now
+    # inferred from the stem (agents/quiz.py::is_worked_problem). Constraining
+    # a key the model cannot emit is wasted prompt, and RULE 2 of the system
+    # prompt already states the rule in schema-supported terms.
     routing_msg = (
         f"{difficulty_clause} "
+        f"At most {allowance} of them may be purely conceptual (see RULE 2) "
+        f"— every other question must pose concrete values for the student "
+        f"to compute with. "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
@@ -584,25 +687,104 @@ async def _quiz_via_agent(
         user_message = routing_msg
 
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps}
+    run_kwargs: dict = {
+        "deps": deps,
+        # Per RUN, not pinned on the agent: the same quiz_agent instance
+        # serves Lite (thinking off) and Pro (thinking capped), and Pro
+        # rejects thinking_budget=0. See _build_quiz_model_settings.
+        "model_settings": _build_quiz_model_settings(
+            _effective_model_name(model_override)
+        ),
+    }
     if model_override is not None:
         run_kwargs["model"] = model_override
 
-    async def _run(message: str, limits) -> Quiz:
+    async def _run(message: str, limits, kwargs: dict | None = None) -> Quiz:
         # #544 F2: bound EACH agent run rather than the whole function.
         # Wrapping the outer coroutine cancelled it mid-flight, and
         # CancelledError is a BaseException — it flew straight past the
         # top-up's serve-what-we-have handler and threw away questions the
         # student had already paid for. Timing out one run raises an
         # ordinary TimeoutError the existing handlers can reason about.
+        #
+        # `kwargs` overrides run_kwargs for the fallback-model attempt
+        # below; every other caller (the top-up) runs on the same model
+        # and settings as the primary generation.
         result = record_agent_usage(
             await asyncio.wait_for(
-                quiz_agent.run(message, usage_limits=limits, **run_kwargs),
+                quiz_agent.run(
+                    message, usage_limits=limits, **(kwargs or run_kwargs)
+                ),
                 timeout=QUIZ_GENERATION_TIMEOUT_SEC,
             ),
             feature="quiz", task="quiz", user_id=deps.user_id,
         )
         return result.output
+
+    async def _run_primary() -> Quiz:
+        # On a guardrail trip, retry ONCE on a genuinely different model.
+        #
+        # gemini-2.5-flash-lite intermittently answers this request with an
+        # empty response: `finish_reason=error`, zero output tokens, no parts.
+        # Not malformed output — nothing at all. pydantic-ai spends both output
+        # retries re-asking, gets the identical empty response each time
+        # (identical input_tokens too), and raises UnexpectedModelBehavior,
+        # which this route turns into a 502. Sampled live it hit roughly one
+        # generation in four.
+        #
+        # The retry therefore has to CHANGE THE MODEL. Re-running the same
+        # payload on the same model reproduces the failure exactly — measured,
+        # a plain fresh re-run failed both times, at 137s and 144s. A retry
+        # that lands back on flash-lite only doubles the student's wait before
+        # the identical 502, which is why the escalation target is
+        # _FALLBACK_MODEL_NAME and not the "fast" preference (which IS
+        # flash-lite, this route's default).
+        #
+        # Skipped when the caller named a model: an explicit "fast"/"smart"
+        # preference is the student's choice, not something to override on
+        # failure.
+        #
+        # Cost is bounded and only paid on failure: the ~75% of requests that
+        # succeed on flash-lite never build the second model.
+        #
+        # Only the PRIMARY generation escalates. A failed top-up already
+        # degrades to serving the questions we have, so paying a second full
+        # generation for it would buy latency the student never asked for.
+        last_error: Exception | None = None
+        attempts: list[dict] = [run_kwargs]
+        if model_override is None:
+            fallback = _resolve_fallback_model()
+            if fallback is not None:
+                attempts.append({
+                    **run_kwargs,
+                    "model": fallback,
+                    # Recomputed rather than inherited, so the settings still
+                    # match the model if either end of this pair changes tier.
+                    "model_settings": _build_quiz_model_settings(
+                        _effective_model_name(fallback)
+                    ),
+                })
+        for attempt, kwargs in enumerate(attempts, start=1):
+            try:
+                return await _run(user_message, ORCHESTRATOR_LIMITS, kwargs)
+            except UnexpectedModelBehavior as exc:
+                # Only THIS exception earns a second attempt. UsageLimitExceeded
+                # was caught here too, but the retry reuses the same
+                # ORCHESTRATOR_LIMITS object — a run that exhausted the budget
+                # exhausts it again — so retrying on it bought a second full
+                # wait for a guaranteed repeat failure. It propagates to
+                # generate_quiz, which maps it to the same typed 502.
+                last_error = exc
+                next_kwargs = attempts[attempt] if attempt < len(attempts) else None
+                logger.warning(
+                    "quiz: generation attempt %d/%d tripped a guardrail (%s); %s",
+                    attempt, len(attempts), type(exc).__name__,
+                    # Name the model the NEXT attempt actually runs on — the old
+                    # line hard-coded a model this route never used.
+                    f"retrying on {_effective_model_name(next_kwargs.get('model'))}"
+                    if next_kwargs is not None else "giving up",
+                )
+        raise last_error  # generate_quiz maps this to its typed 502
 
     # Filter out questions the agent got wrong (correct_answer not among
     # the options, duplicate/insufficient options, no single correct
@@ -616,6 +798,10 @@ async def _quiz_via_agent(
     # count, and the E2E seam always returns 3 no matter what was asked.
     # Keying the top-up on under-delivery therefore fired a second full
     # generation on perfectly good responses.
+    #
+    # The primary run over-generates (`ask_for` > num_questions), so the
+    # surplus that survives validation is trimmed back to num_questions at
+    # the return below — the client never sees the extras.
     wire_questions: list[dict] = []
     seen_stems: set[str] = set()
     dropped = 0
@@ -637,7 +823,7 @@ async def _quiz_via_agent(
             seen_stems.add(stem)
             wire_questions.append(mapped)
 
-    _absorb(await _run(user_message, ORCHESTRATOR_LIMITS))
+    _absorb(await _run_primary())
 
     # #543 E2: one bounded top-up when DRIFT cost us a big share of the
     # quiz. Gated on questions actually dropped (never on a clean short

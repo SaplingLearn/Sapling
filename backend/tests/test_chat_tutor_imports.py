@@ -107,6 +107,38 @@ class TestScopeRule:
             ), mode
 
 
+class TestCourseInformationIsNeverVolunteered:
+    """Course *information* -- the catalog entry -- is reference data, not an
+    opener. The tutor surfaces it only when asked about the course itself.
+
+    Reported as: asked about Markov chains, the tutor led with "I couldn't
+    find any information about Markov chains in the course materials. Let's
+    focus on the main topics of this course."
+    """
+
+    def test_every_mode_forbids_volunteering_course_information(self):
+        from agents.chat_tutor import _PROMPTS
+
+        for mode, prompt in _PROMPTS.items():
+            assert "COURSE INFORMATION" in prompt, mode
+            assert "never volunteer it" in prompt, mode
+            assert "Never open with it" in prompt, mode
+
+    def test_names_the_questions_that_do_warrant_it(self):
+        """The rule must not overcorrect into refusing to discuss the course."""
+        from agents.chat_tutor import _PROMPTS
+
+        for prompt in _PROMPTS.values():
+            assert "prerequisites" in prompt
+            assert "instructor" in prompt
+
+    def test_empty_materials_lookup_is_called_out_as_not_information(self):
+        from agents.chat_tutor import _PROMPTS
+
+        for prompt in _PROMPTS.values():
+            assert "an empty course-materials lookup is not information" in prompt.lower()
+
+
 class TestFormattingToolkit:
     """2026-08-10 tutor-course-scope spec: restore the preamble.txt formatting guidance the agent rewrite
     dropped. The renderer (frontend MarkdownChat.tsx) still supports all of
