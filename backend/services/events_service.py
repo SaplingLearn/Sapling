@@ -82,6 +82,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "document.processed",
     "quiz.started",
     "quiz.completed",
+    # #529/B3: the post-submit context write failed. category="error" so it
+    # surfaces in admin analytics — this failure was invisible for months
+    # precisely because nothing emitted when the background task died.
+    "quiz.context_write_failed",
+    # #544/F3: generation failed (agent error, timeout, or every question
+    # dropped). Same reasoning: a 502 the student sees should be a 502 an
+    # admin can count.
+    "quiz.generation_failed",
     "chat.message_sent",
     "note.created",
     "session.started",

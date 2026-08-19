@@ -316,3 +316,65 @@ test("quiz resubmit: replaying a completed submission returns 409 and re-applies
     10,
   );
 });
+
+/**
+ * Journey (#540 A1/A2): the select phase is config-driven and adaptive
+ * difficulty reports what generation actually chose.
+ *
+ * The class of bug this pins: the old static UI lists offered values the
+ * route rejects ("15 questions" against le=10, "Adaptive" against a
+ * concrete-only difficulty check). The selects must now mirror
+ * GET /api/quiz/config, and an adaptive generate must echo
+ * requested_difficulty="adaptive" + a concrete resolved_difficulty —
+ * "medium" here, pinned to the all-medium fixture questions in
+ * agents/function_handlers_e2e.py (KEEP IN SYNC).
+ */
+test("selects mirror /api/quiz/config; adaptive reports its resolved difficulty (#540)", async ({
+  page,
+}) => {
+  const cfgResponse = await page.request.get("/api/quiz/config");
+  expect(cfgResponse.ok()).toBe(true);
+  const cfg = await cfgResponse.json();
+  expect(cfg.num_questions.options.length).toBeGreaterThan(0);
+  for (const n of cfg.num_questions.options) {
+    expect(n).toBeGreaterThanOrEqual(cfg.num_questions.min);
+    expect(n).toBeLessThanOrEqual(cfg.num_questions.max);
+  }
+  expect(cfg.difficulties).toContain("adaptive");
+
+  await page.addInitScript(() => {
+    window.localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+  await page.goto(`/quiz?concept=${NODE_ID}`);
+  await expect(page.getByTestId("quiz-start")).toBeEnabled();
+
+  // The count select offers exactly the config's options — an out-of-range
+  // value here is the #540 regression.
+  await page.getByRole("button", { name: "Number of questions" }).click();
+  const countOptions = page.getByRole("option");
+  // The selected option carries a trailing ✓ marker — match on the label.
+  await expect(countOptions).toHaveText(
+    cfg.num_questions.options.map((n: number) => new RegExp(`^${n} questions`)),
+  );
+  // Close by committing the current default (5 questions).
+  await page.getByRole("option", { name: "5 questions" }).click();
+
+  // Pick Adaptive and start; capture the real wire round trip.
+  await page.getByRole("button", { name: "Difficulty" }).click();
+  await page.getByRole("option", { name: "Adaptive" }).click();
+  const responsePromise = page.waitForResponse(
+    r => r.url().includes("/api/quiz/generate") && r.request().method() === "POST",
+  );
+  await page.getByTestId("quiz-start").click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+  expect(response.request().postDataJSON().difficulty).toBe("adaptive");
+  const body = await response.json();
+  expect(body.requested_difficulty).toBe("adaptive");
+  expect(body.resolved_difficulty).toBe("medium");
+
+  // The pick is surfaced to the student, not just returned on the wire.
+  await expect(page.getByTestId("quiz-resolved-difficulty")).toHaveText(
+    /adaptive · medium/i,
+  );
+});
