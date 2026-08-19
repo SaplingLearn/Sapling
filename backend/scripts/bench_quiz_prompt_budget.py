@@ -27,6 +27,14 @@ Offline benchmark: outside the request path, and never imported BY
 application code (same rule as scripts/_raw_gemini.py). It reads
 application constants; nothing reads it.
 
+`count_tokens` is not reachable through a pydantic-ai agent, so this is one
+of the sanctioned raw-`genai.Client` sites (CLAUDE.md). It therefore holds
+the same two invariants the seam requires: the model name comes from
+`model_name_for("quiz")` — never a literal, or the benchmark prices a tier
+the quiz no longer runs on — and the client is built lazily behind a
+`model_mode()` gate (#439), so a non-real mode fails loudly instead of
+counting tokens against a transport that isn't there.
+
 RESULTS: see the block printed by the run, and the summary recorded in
 docs/quiz-prompt-budget.md.
 """
@@ -44,24 +52,56 @@ load_dotenv()
 from google import genai  # noqa: E402
 from google.genai import types as genai_types  # noqa: E402
 
+from agents._providers import model_mode, model_name_for  # noqa: E402
 from agents.quiz import _SYSTEM_PROMPT  # noqa: E402
 from config import GEMINI_API_KEY  # noqa: E402
 from services.quiz_config import QUIZ_MAX_QUESTIONS  # noqa: E402
 from services.quiz_repetition import RECENT_QUESTION_LIMIT  # noqa: E402
 
-MODEL = "gemini-2.5-flash-lite"
+# Resolved through the provider config, not hard-coded: the whole point of
+# measuring "the quiz's prompt" is that it is measured on the model the quiz
+# task actually runs on, and `_DEFAULTS["quiz"]` / SAPLING_MODEL_QUIZ is where
+# that lives. A literal here silently prices the wrong tier the first time
+# anyone re-slots the task — the same drift the imported `_SYSTEM_PROMPT`
+# avoids for the prompt itself.
+MODEL = model_name_for("quiz")
 
-_client = genai.Client(
-    api_key=GEMINI_API_KEY or "dummy-key-for-import",
-    http_options=genai_types.HttpOptions(timeout=60_000),
-)
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    """The raw `count_tokens` client, built lazily behind the #439 gate.
+
+    Nothing below the `agents/_providers.py` seam may construct a
+    `google.genai.Client` without a `model_mode()` gate (CLAUDE.md, #439), and
+    this script is below it: it needs `count_tokens`, which is not reachable
+    through a pydantic-ai agent. So it takes the same shape
+    `services/rag_service.py` does — lazy construction, real-mode only, dummy
+    key fallback — instead of building a live client at import time. In
+    function/cassette mode there is no transport to count against, and a
+    keyless run cannot count tokens at all; both fail loudly here rather than
+    producing numbers nobody should trust.
+    """
+    global _client
+    if model_mode() != "real":
+        raise SystemExit(
+            f"bench_quiz_prompt_budget: SAPLING_MODEL_MODE={model_mode()!r} — "
+            "token counting needs the real Gemini transport. Unset the var "
+            "(or set it to 'real') and re-run."
+        )
+    if _client is None:
+        _client = genai.Client(
+            api_key=GEMINI_API_KEY or "dummy-key-for-import",
+            http_options=genai_types.HttpOptions(timeout=60_000),
+        )
+    return _client
 
 
 def count(text: str) -> int:
     """Exact prompt tokens for `text` on the quiz's model tier."""
     if not text:
         return 0
-    resp = _client.models.count_tokens(model=MODEL, contents=text)
+    resp = _get_client().models.count_tokens(model=MODEL, contents=text)
     return int(resp.total_tokens)
 
 

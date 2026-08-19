@@ -63,6 +63,18 @@ def test_snapshot_is_a_copy():
     assert pd.snapshot()["blocks"] == ["rag"]
 
 
+def test_snapshot_is_a_DEEP_copy():
+    """The values aren't all scalars — `blocks` is a list the route appends to
+    as it assembles the prompt. A shallow copy shares that list, so the
+    "copy" still hands the events worker an object under active mutation,
+    which is the race snapshot() exists to prevent."""
+    pd.start_capture()
+    pd.record(blocks=["rag"])
+    snap = pd.snapshot()
+    snap["blocks"].append("tampered")
+    assert pd.snapshot()["blocks"] == ["rag"]
+
+
 def test_start_capture_resets_previous_state():
     pd.start_capture()
     pd.record(k_chunks=9)

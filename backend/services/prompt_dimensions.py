@@ -35,6 +35,7 @@ Contract: never raises, never blocks. This is measurement.
 from __future__ import annotations
 
 import contextvars
+import copy
 import logging
 
 logger = logging.getLogger(__name__)
@@ -72,15 +73,21 @@ def record(**dims) -> None:
 
 
 def snapshot() -> dict:
-    """The dimensions recorded so far, as a COPY.
+    """The dimensions recorded so far, as a DEEP copy.
 
     A copy because the caller's next move is to stuff this into an event
     payload that the events worker serializes on another thread — handing
     out the live dict would race a tool still recording into it.
+
+    DEEP because the values are not all scalars: `blocks` is a list that the
+    route mutates as it assembles the prompt (append "rag", append
+    "recently_asked", ...). A shallow `dict(current)` shares that list, so the
+    "copy" would still hand the worker an object under active mutation — the
+    exact race this function exists to prevent, just one level down.
     """
     try:
         current = _DIMS.get()
-        return dict(current) if current else {}
+        return copy.deepcopy(current) if current else {}
     except Exception:  # pragma: no cover - defensive
         return {}
 

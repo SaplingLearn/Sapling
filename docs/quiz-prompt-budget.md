@@ -3,7 +3,7 @@
 **Measured 2026-08-14** on `gemini-2.5-flash-lite` (the quiz task's model slot,
 ADR 0008) via Gemini's `count_tokens` endpoint. Reproduce with:
 
-```
+```sh
 cd backend && venv/bin/python -m scripts.bench_quiz_prompt_budget
 ```
 
@@ -68,10 +68,18 @@ looking.**
   ```
 
 - Attribution to sections comes from the F6 dimensions on the `quiz.started`
-  event (`blocks`, `k_chunks`, `material_chars`, `digest_present`,
-  `digest_chars`, `recent_attempts`, `misconceptions`, `recent_asked`), which
-  shares a `request_id` with the `llm_usage` row for the same generation. Join
-  on that to price a real population rather than this synthetic one.
+  event (`blocks`, `k_chunks`, `material_chars`, `recent_asked`,
+  `routing_chars`, `adaptive`), which shares a `request_id` with the
+  `llm_usage` row for the same generation. Join on that to price a real
+  population rather than this synthetic one. `blocks` is the list of section
+  names actually assembled, so `misconceptions_requested` (whether the
+  misconceptions tool was offered at all) lives inside it rather than as a
+  dimension of its own.
+  The agent's tools contribute a few more when the model actually calls them
+  — `digest_present`/`digest_chars`/`recent_attempts` from
+  `read_recent_quiz_attempts`, `misconceptions` from
+  `read_misconceptions_for_course` — so treat those as present-when-called,
+  not guaranteed, in a rollup.
 
 ## If trimming becomes necessary
 
