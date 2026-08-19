@@ -14,21 +14,40 @@
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, fireEvent } from "@testing-library/react";
 import React from "react";
 import type { GraphNode } from "@/lib/data";
 
 vi.stubEnv("NEXT_PUBLIC_TEST_MODE", "1");
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let lastProps: Record<string, any> | null = null;
+// Exactly the props these tests read — spelled out so the capture needs no
+// `any` (and therefore no eslint suppression). No index signature: forwardRef
+// runs its props type through `PropsWithoutRef`, and `Omit` collapses an
+// index-signature type down to just the index signature, losing every key.
+type CapturedProps = {
+  cooldownTicks: number;
+  warmupTicks: number;
+};
+let lastProps: CapturedProps | null = null;
+let zoomToFitSpy = vi.fn();
 
 vi.mock("react-force-graph-3d", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default: (props: any) => {
-    lastProps = props;
+  // A NAMED function inside forwardRef so the component has a display name,
+  // and props are recorded in an EFFECT rather than in the render body:
+  // reassigning a module-scope variable during render is a render-phase side
+  // effect (react-hooks/globals) that tears under a discarded concurrent
+  // render. Testing Library's render/rerender/act all flush passive effects
+  // before returning, so tests still observe the props synchronously.
+  default: React.forwardRef(function ForceGraph3DMock(
+    props: CapturedProps,
+    ref: React.Ref<unknown>,
+  ) {
+    React.useImperativeHandle(ref, () => ({ zoomToFit: zoomToFitSpy }));
+    React.useEffect(() => {
+      lastProps = props;
+    });
     return null;
-  },
+  }),
 }));
 
 vi.mock("next/dynamic", async () =>
@@ -70,6 +89,7 @@ const NODE: GraphNode = {
 
 beforeEach(() => {
   lastProps = null;
+  zoomToFitSpy = vi.fn();
   installNoPreferenceMatchMedia();
 });
 
@@ -78,9 +98,23 @@ afterEach(() => {
 });
 
 describe("KnowledgeGraph3D — test-mode determinism", () => {
-  it("forces cooldownTicks to 0 even without a reduced-motion preference", () => {
+  it("forces cooldownTicks to 0 and warmupTicks to 200 even without a reduced-motion preference", () => {
     render(<KnowledgeGraph3D nodes={[NODE]} edges={[]} />);
     expect(lastProps).not.toBeNull();
     expect(lastProps!.cooldownTicks).toBe(0);
+    // warmupTicks mirrors KnowledgeGraph2D's sim.tick(200) precedent: run
+    // the simulation to a real settled layout synchronously instead of
+    // skipping it outright under test mode.
+    expect(lastProps!.warmupTicks).toBe(200);
+  });
+
+  it("recenter button fires an instant (0ms) fit under test mode (IS_TEST_MODE gating)", () => {
+    // IS_TEST_MODE is stubbed true file-wide here even though the OS
+    // reports no reduced-motion preference — the button's zoomToFit
+    // gating (`reducedMotion || IS_TEST_MODE ? 0 : 400`) must still zero
+    // the duration via the IS_TEST_MODE half of that condition.
+    const { getByTestId } = render(<KnowledgeGraph3D nodes={[NODE]} edges={[]} />);
+    fireEvent.click(getByTestId("graph-zoom-reset"));
+    expect(zoomToFitSpy).toHaveBeenCalledWith(0, 60);
   });
 });

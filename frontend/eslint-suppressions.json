@@ -67,11 +67,6 @@
       "count": 12
     }
   },
-  "src/components/graph/KnowledgeGraph3D.test.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/components/marketing/SignInModal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
