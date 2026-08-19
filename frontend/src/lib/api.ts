@@ -48,6 +48,17 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// Newsletter / beta list
+//
+// Backed by backend/routes/newsletter.py, which upserts on `email` — so a
+// repeat signup is a no-op rather than an error, and the caller can treat
+// success as "you're on the list" regardless of whether it was already there.
+export const subscribeToNewsletter = (email: string) =>
+  fetchJSON<{ ok: boolean }>('/api/newsletter/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
 // Users
 export const getUsers = () =>
   fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');
@@ -429,8 +440,19 @@ export const resumeSession = (sessionId: string) =>
   }>(`/api/learn/sessions/${sessionId}/resume`);
 
 // Quiz
+export interface QuizConfig {
+  num_questions: { min: number; max: number; options: number[] };
+  difficulties: string[];
+  question_types: string[];
+}
+
+// #540 A2: the backend is the single source of truth for selector values —
+// QuizPanel builds its count/difficulty selects from this so the UI can
+// never again offer a value the route rejects (e.g. the old "15 questions").
+export const fetchQuizConfig = () => fetchJSON<QuizConfig>('/api/quiz/config');
+
 export const generateQuiz = (userId: string, conceptNodeId: string, numQuestions: number, difficulty: string, useSharedContext = true) =>
-  fetchJSON<{ quiz_id: string; questions: any[] }>('/api/quiz/generate', {
+  fetchJSON<{ quiz_id: string; questions: any[]; requested_difficulty?: string; resolved_difficulty?: string; requested_count?: number; delivered_count?: number }>('/api/quiz/generate', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, concept_node_id: conceptNodeId, num_questions: numQuestions, difficulty, use_shared_context: useSharedContext }),
   });

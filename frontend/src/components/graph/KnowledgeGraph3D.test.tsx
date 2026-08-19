@@ -44,31 +44,12 @@ vi.mock("react-force-graph-3d", () => ({
   },
 }));
 
-// next/dynamic is used to client-only-load react-force-graph-3d. In
-// tests we want the mock module above to render synchronously, so we
-// replace `dynamic(loader)` with a component that calls the resolved
-// module's default export directly. Because the mock for
-// react-force-graph-3d is hoisted, `loader()` resolves immediately and
-// our require fallback grabs the same object the runtime would.
-vi.mock("next/dynamic", () => ({
-  default: (loader: any) => {
-    // Resolve the loader once, synchronously where possible. Vitest's
-    // module mocks resolve as already-fulfilled promises, so we read
-    // the .then callback synchronously via `.then()` and stash the
-    // component. The wrapper below renders whatever's been resolved.
-    let Resolved: any = () => null;
-    Promise.resolve(loader()).then((mod: any) => {
-      Resolved = mod?.default ?? mod;
-    });
-    const Wrapper = (props: any) => {
-      // Re-resolve at render time too — covers the (rare) case where
-      // the microtask hasn't flushed yet on first paint.
-      const C = Resolved;
-      return C ? C(props) : null;
-    };
-    return Wrapper;
-  },
-}));
+// next/dynamic is used to client-only-load react-force-graph-3d; the
+// shared passthrough renders the (hoisted, already-resolved) mock module
+// synchronously.
+vi.mock("next/dynamic", async () =>
+  (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
+);
 
 import { KnowledgeGraph3D } from "./KnowledgeGraph3D";
 import type { GraphEdge, GraphNode } from "@/lib/data";

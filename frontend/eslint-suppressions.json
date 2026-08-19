@@ -1,15 +1,4 @@
 {
-  "src/app/(public)/page.tsx": {
-    "@next/next/no-html-link-for-pages": {
-      "count": 1
-    },
-    "prefer-const": {
-      "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "src/components/CustomSelect.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -80,7 +69,7 @@
   },
   "src/components/graph/KnowledgeGraph3D.test.tsx": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 6
+      "count": 2
     }
   },
   "src/components/marketing/SignInModal.tsx": {

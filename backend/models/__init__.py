@@ -1,6 +1,8 @@
 from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, Field
 
+from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +48,10 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     user_id: str = "user_andres"
     concept_node_id: str
-    num_questions: int = Field(default=5, ge=1, le=10)
+    # Bounds come from services/quiz_config.py — the same constants
+    # GET /api/quiz/config serves, so the client can't offer a value
+    # this model rejects (#540 A2).
+    num_questions: int = Field(default=5, ge=QUIZ_MIN_QUESTIONS, le=QUIZ_MAX_QUESTIONS)
     difficulty: str = "medium"
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has
@@ -55,6 +60,31 @@ class GenerateQuizBody(BaseModel):
     # through to whatever SAPLING_MODEL_QUIZ resolves to (default
     # gemini-2.5-flash-lite per ADR 0008).
     model_pref: Optional[Literal["fast", "smart"]] = None
+    # DEPRECATED (#541 C3, removal tracked in #546): when true (the default
+    # the current QuizPanel needs), the response's per-option dicts carry
+    # `correct` booleans — the full answer key, client-side. Removing the
+    # key is a hard requirement of the #537 revamp: the new client grades
+    # through POST /api/quiz/attempts/{id}/answer instead. Every keyed
+    # response is logged so we can see when usage reaches zero.
+    include_answer_key: bool = True
+
+
+class AnswerQuestionBody(BaseModel):
+    """One answer for POST /api/quiz/attempts/{attempt_id}/answer (#541 C1).
+
+    Indexes are 0-based positions into the attempt's stored questions and
+    the question's options. The wire questions carry 1-based `id`s (what
+    /submit keys on), so `question_index = id - 1` — two addressing schemes
+    for one question. `question_id` is the guard against confusing them:
+    send the id you displayed and the route rejects a mismatch instead of
+    silently grading the neighbouring question (which the idempotency rule
+    would then lock in). The response echoes both either way."""
+
+    question_index: int = Field(ge=0)
+    selected_index: int = Field(ge=0)
+    question_id: Optional[int] = None
+    time_ms: Optional[int] = Field(default=None, ge=0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class AnswerItem(BaseModel):

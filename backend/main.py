@@ -26,7 +26,9 @@ from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
+from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
+from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
@@ -145,6 +147,11 @@ app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
 # _drop_request_arguments; request/response headers are not captured
 # (capture_headers=False); and the separate arguments/endpoint spans are off
 # (extra_spans=False). No student content leaves the process on request spans.
+# Must run BEFORE instrument_fastapi: on FastAPI >= 0.138 the otel route
+# resolver raises AttributeError on any wrong-method request, turning every
+# 405 into a 500. See services/otel_fastapi_compat.py for the full analysis.
+otel_fastapi_compat.install_route_details_guard()
+
 logfire.instrument_fastapi(
     app,
     capture_headers=False,
@@ -183,22 +190,52 @@ app.add_middleware(
 app.add_middleware(RequestIDMiddleware)
 
 
+# #540 A3: on /api/quiz/* paths, quiz_errors.error_content wraps errors in
+# the coded envelope (QuizAPIError raise sites carry precise codes; plain
+# HTTPExceptions fall back to a status-derived one); everywhere else it
+# returns the legacy {detail, request_id} shape unchanged.
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    content = quiz_errors.error_content(
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+        rid,
+        code=getattr(exc, "code", None),
+        machine_detail=getattr(exc, "machine_detail", None),
+    )
+    # Preserve headers the raise site set (e.g. Retry-After on a 429) —
+    # dropping them would strip the only machine-readable part of a
+    # throttling response.
+    headers = dict(getattr(exc, "headers", None) or {})
+    if rid:
+        headers["X-Request-ID"] = rid
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail, "request_id": rid},
-        headers={"X-Request-ID": rid} if rid else {},
+        content=content,
+        headers=headers,
     )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    code, message = quiz_errors.validation_error_code(exc.errors())
+    if code is quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE:
+        message = (
+            f"Quizzes can have between {quiz_config.QUIZ_MIN_QUESTIONS} "
+            f"and {quiz_config.QUIZ_MAX_QUESTIONS} questions."
+        )
+    content = quiz_errors.error_content(
+        request.url.path, 422, exc.errors(), rid,
+        code=code, message=message, machine_detail=exc.errors(),
+    )
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "request_id": rid},
+        content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
 
@@ -207,9 +244,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    content = quiz_errors.error_content(
+        request.url.path, 500, "Internal server error.", rid,
+    )
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error.", "request_id": rid},
+        content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
 

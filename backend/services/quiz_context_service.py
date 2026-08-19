@@ -1,5 +1,4 @@
 import logging
-import uuid
 from datetime import datetime, timezone
 
 from db.connection import table
@@ -26,9 +25,12 @@ def get_quiz_context(user_id: str, concept_node_id: str):
 
 
 def save_quiz_context(user_id: str, concept_node_id: str, context: dict):
+    # No client-generated id: PostgREST's merge-duplicates upsert updates
+    # every column in the payload on conflict, so an id here would rewrite
+    # the existing row's PRIMARY KEY on each refresh. Fresh inserts get the
+    # column's DB default (gen_random_uuid).
     table("quiz_context").upsert(
         {
-            "id": str(uuid.uuid4()),
             "user_id": user_id,
             "concept_node_id": concept_node_id,
             "context_json": encrypt_json(context),

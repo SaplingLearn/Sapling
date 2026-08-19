@@ -202,11 +202,13 @@ def _enforce_gs_rate_limit(user_id: str, action: str, *, limit: int, window_sec:
         f"gradescope:{action}:{user_id}", limit=limit, window_sec=window_sec
     )
     if retry is not None:
-        # main.py's HTTPException handler drops exc.headers, so the retry budget
-        # rides in the detail string rather than a Retry-After header.
+        # main.py's HTTPException handler forwards exc.headers as of #544, so
+        # the budget rides in a real Retry-After. It stays in the detail
+        # string too — clients that only surface the message keep working.
         raise HTTPException(
             status_code=429,
             detail=f"Too many Gradescope {action} requests. Retry in {retry}s.",
+            headers={"Retry-After": str(retry)},
         )
 
 
