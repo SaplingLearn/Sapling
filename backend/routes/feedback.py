@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from db.connection import SUPABASE_KEY, SUPABASE_URL, table
 from models import SubmitFeedbackBody, SubmitIssueReportBody
 from services.auth_guard import get_session_user_id
+from services.encryption import encrypt_if_present
 from services.request_limits import read_within_limit
 
 logger = logging.getLogger(__name__)
@@ -38,9 +39,9 @@ def submit_feedback(body: SubmitFeedbackBody, request: Request):
         "type": body.type,
         "rating": body.rating,
         "selected_options": body.selected_options,
-        "comment": body.comment,
+        "comment": encrypt_if_present(body.comment),
         "session_id": body.session_id,
-        "topic": body.topic,
+        "topic": encrypt_if_present(body.topic),
     })
     return {"ok": True}
 
@@ -55,8 +56,8 @@ def submit_issue_report(body: SubmitIssueReportBody, request: Request):
     table("issue_reports").insert({
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "topic": body.topic,
-        "description": body.description,
+        "topic": encrypt_if_present(body.topic),
+        "description": encrypt_if_present(body.description),
         "screenshot_urls": body.screenshot_urls,
     })
     return {"ok": True}

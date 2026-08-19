@@ -84,6 +84,9 @@ renders the element.
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
+| Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
+| Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -204,6 +207,8 @@ route:
 | `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
 | `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
 | `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
+| `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when a renderer throws; never contains a graph |
+| `graph-crash-retry` | "Try again" button inside the crash placeholder — wired to the boundary's reset |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
 `data-node-id` attribute instead of a testid suffix (the repeated-items rule
@@ -218,6 +223,7 @@ never collide in the DOM.
 | testid | element |
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
+| `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
 
 ### `social`
 
@@ -257,6 +263,12 @@ never collide in the DOM.
 | `social-member-{userId}` | a member row on the overview |
 | `social-member-kick-{userId}` | "Kick" on that member row (leader only) |
 | `social-match-run` | "Find matches" on the study-match tab |
+| `social-friend-row-{userId}` | a friend row in the Friends panel (`FriendsPanel`/`FriendRow`, Task 16) |
+| `social-friend-remove-{userId}` | "Remove" on that friend row (two-click confirm) |
+| `social-friend-incoming-{requestId}` | an incoming friend-request row |
+| `social-friend-accept-{requestId}` | "Accept" on an incoming request |
+| `social-friend-decline-{requestId}` | "Decline" on an incoming request |
+| `social-friend-outgoing-{requestId}` | an outgoing (pending) friend-request row |
 
 ### `dashboard`
 
@@ -308,6 +320,40 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
+
+### `profile`
+
+Added with the Task 16/17 friends work — the add-friend action rendered on
+someone else's profile (`AddFriendAction` in `ProfileView.tsx`).
+
+| testid | element |
+| --- | --- |
+| `profile-friend-status` | "Friends" chip shown in place of the button once already friends |
+| `profile-add-friend` | "Add friend" / disabled "Request sent" button |
+
+### `achievements`
+
+Added with the Task 17 E2E journey over the `/achievements` screen
+(`Achievements.tsx` + `screens/achievements/*.tsx`, built in Tasks 13–14).
+The surface spans four files, and — unlike every other multi-file surface
+above — the testids are **not** all `achievements-`-prefixed: the hero/level/
+XP readout uses a `gamification-` prefix (the XP/level system's own name,
+reused verbatim from the spec this journey was written against) and the
+leaderboard/activity tab panels prefix with their own tab name
+(`leaderboard-`, `activity-`) since each panel is a distinct, self-contained
+sub-view a test targets independently of the `achievements-tab-*` control
+that opens it. Treat this as the fixed vocabulary for the `/achievements`
+screen; don't add a fifth prefix here without a reason as strong as these.
+
+| testid | element |
+| --- | --- |
+| `achievements-tab-achievements` / `-leaderboard` / `-activity` | the three tab-bar buttons (`Achievements.tsx::TabBar`) |
+| `achievements-showcase-remove-{achievementId}` | the showcase card's "×" remove-from-showcase button, suffixed with the achievement id |
+| `gamification-hero` | the hero card root (`achievements/HeroCard.tsx`) — level ring, growth-stage art, XP bar |
+| `gamification-level` | the "LVL {n}" pill on the hero card |
+| `gamification-total-xp` | the plain numeric total-XP readout on the hero card (no thousands separator, so tests can `Number()` it directly) |
+| `leaderboard-row-you` | the current viewer's row in the leaderboard list (`achievements/LeaderboardTab.tsx::RankRow`), present only when `row.is_you` |
+| `activity-week-total` | the "Week total" stat tile's value on the Activity tab (`achievements/ActivityTab.tsx`) |
 
 ### `library`
 
@@ -386,6 +432,20 @@ The `landing-surface-*` ids suffix the *surface* rather than a render index
 because each one mounts exactly once and the surface name is the stable
 domain id here.
 
+### `adminfb`
+
+Added with the #520 admin feedback tab. Reads the two decrypting admin
+endpoints (`GET /api/admin/feedback`, `GET /api/admin/issue-reports`) and
+renders them read-only — there are no interactive elements (no
+button/input/textarea), just the two list cards and their rows.
+
+| testid | element |
+| --- | --- |
+| `adminfb-feedback-card` | feedback list card root |
+| `adminfb-feedback-row` | one feedback entry (repeated, no suffix — read-only list, no per-row action to select) |
+| `adminfb-issues-card` | issue-report list card root |
+| `adminfb-issue-row` | one issue report (repeated, no suffix) |
+
 ## Enforcement
 
 `frontend/eslint.config.mjs` has a per-file `no-restricted-syntax` block scoped
@@ -422,6 +482,14 @@ There is no lint coverage on `signin-trigger` in `src/app/(public)/page.tsx` —
 the landing page has dozens of buttons that are not part of any browser test, so
 that file stays out of the `files` list. The trigger is documented here instead.
 
+There is likewise no lint coverage on `adminfb-*` in `Admin.tsx`. `FeedbackTab`
+(the tab that owns them) has zero `<button>`/`<input>`/`<textarea>` elements,
+so nothing there needs the rule — but `Admin.tsx` as a whole stays out of the
+`files` list deliberately: enrolling it would flag 51 pre-existing untagged
+elements across the file's other tabs (Users, Roles, Achievements, Cosmetics,
+Allowlist, Audit), none of which have browser coverage today. Revisit when an
+admin journey lands.
+
 `screens/Dashboard.tsx` joined the `files` list with the `dashboard` surface
 (#386) carrying 25 pre-existing untagged intrinsic elements; those are
 baselined in `eslint-suppressions.json` (the repo's legacy-debt mechanism —
@@ -445,6 +513,14 @@ The `gradebook` surface files (#139/#468) get the same treatment:
 and `Gradebook/AssignmentModal.tsx` carry pre-existing untagged
 buttons/inputs that are baselined in `eslint-suppressions.json`; only NEW
 interactive elements there must carry a testid.
+
+`ProfileView.tsx` (`profile` surface) and `screens/Achievements.tsx` +
+`screens/achievements/HeroCard.tsx`/`LeaderboardTab.tsx`/`ActivityTab.tsx`
+(`achievements` surface, Task 17) joined the `files` list with no baselined
+backlog: `ProfileView.tsx`'s buttons already carried testids from Task 16,
+and `Achievements.tsx`'s one pre-existing untagged button (showcase
+"remove") was tagged (`achievements-showcase-remove-{achievementId}`)
+rather than baselined.
 
 ### Adding a surface
 

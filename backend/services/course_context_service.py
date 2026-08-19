@@ -23,6 +23,7 @@ from db.connection import table
 from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
 from agents.usage import record_agent_usage
+from services.encryption import decrypt_json_column
 
 
 def _generate_data_hash(stats_rows: list) -> str:
@@ -281,11 +282,10 @@ def update_course_context(offering_id: str) -> None:
 
         for ctx in ctx_rows:
             cj = ctx.get("context_json") or {}
-            if isinstance(cj, str):
-                try:
-                    cj = json.loads(cj)
-                except Exception:
-                    cj = {}
+            try:
+                cj = decrypt_json_column(cj) or {}
+            except Exception:
+                cj = {}
 
             for m in cj.get("common_mistakes", []):
                 m = (m or "").strip()

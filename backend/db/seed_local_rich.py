@@ -553,7 +553,7 @@ def seed_notes_documents() -> None:
         )
 
 
-# (fc_id, user_id, offering_id, topic, front, back) — plaintext, grouped by topic.
+# (fc_id, user_id, offering_id, topic, front, back) — 🔒 front/back, grouped by topic.
 _FLASHCARDS = [
     ("rich-fc-cs-1", USER_ACTIVE, OFF_CS_F25, "CS Basics",
      "What is a variable?", "A named storage location for a value."),
@@ -579,8 +579,9 @@ def seed_flashcards() -> None:
                 "user_id": user_id,
                 "offering_id": off_id,
                 "topic": topic,
-                "front": front,
-                "back": back,
+                # 🔒 front / back (#518)
+                "front": encrypt_if_present(front),
+                "back": encrypt_if_present(back),
             },
         )
 
@@ -625,9 +626,24 @@ def seed_study_guides() -> None:
                 "offering_id": off_id,
                 "exam_id": exam_id,
                 "generated_at": generated_at,
-                "content": content,
+                # 🔒 content (#518)
+                "content": encrypt_json(content),
             },
         )
+
+
+def seed_room_summaries() -> None:
+    # #518: room_summaries.summary is 🔒. PK is room_id (no id column), so this
+    # can't go through insert_if_absent.
+    if not table("room_summaries").select("room_id", filters={"room_id": f"eq.{ROOM_STUDY}"}):
+        table("room_summaries").insert({
+            "room_id": ROOM_STUDY,
+            "summary": encrypt_if_present("The group is reviewing recursion before the midterm."),
+            "member_hash": "rich-member-hash-v1",
+        })
+        h.record("room_summaries", created=True)
+    else:
+        h.record("room_summaries", created=False)
 
 
 # (qa_id, concept_node_id, difficulty, score, total, questions_json, answers_json, completed_at)
@@ -657,11 +673,52 @@ def seed_quiz() -> None:
                 "score": score,
                 "total": total,
                 "difficulty": difficulty,
-                "questions_json": questions,
-                "answers_json": answers,
+                # 🔒 questions_json / answers_json
+                "questions_json": encrypt_json(questions),
+                "answers_json": encrypt_json(answers) if answers is not None else None,
                 "completed_at": completed_at,
             },
         )
+
+    # #521: quiz_context is 🔒 — one row so the roundtrip test has a baseline.
+    h.insert_if_absent(
+        "quiz_context",
+        "rich-qc-cs-variables",
+        {
+            "user_id": USER_ACTIVE,
+            "concept_node_id": "rich-node-cs-variables",
+            "context_json": encrypt_json(
+                {"misconceptions": ["confuses = with =="], "asked": 2}
+            ),
+        },
+    )
+
+
+# #520: feedback/issue_reports are 🔒 (comment/topic/description) — seed them
+# encrypted so the roundtrip test + ciphertext oracle have baseline rows.
+def seed_feedback() -> None:
+    h.insert_if_absent(
+        "feedback",
+        "rich-fb-1",
+        {
+            "user_id": USER_ACTIVE,
+            "type": "global",
+            "rating": 4,
+            "selected_options": ["tutor"],
+            "comment": encrypt_if_present("The tutor cited the wrong lecture."),
+            "topic": encrypt_if_present("chat"),
+        },
+    )
+    h.insert_if_absent(
+        "issue_reports",
+        "rich-issue-1",
+        {
+            "user_id": USER_ACTIVE,
+            "topic": encrypt_if_present("Upload stuck"),
+            "description": encrypt_if_present("Syllabus upload spins forever."),
+            "screenshot_urls": [],
+        },
+    )
 
 
 SESS_CS_RECURSION = "rich-sess-cs-recursion"
@@ -725,8 +782,9 @@ _SUMMARY_ORDER = [
     "schools", "courses", "course_offerings", "users", "user_profiles", "user_roles",
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
-    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "sessions",
-    "messages",
+    "room_summaries",
+    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
+    "sessions", "messages", "feedback", "issue_reports",
 ]
 
 
@@ -744,7 +802,9 @@ def main() -> None:
     seed_notes_documents()
     seed_flashcards()
     seed_study_guides()
+    seed_room_summaries()
     seed_quiz()
+    seed_feedback()
     seed_sessions()
     h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
 

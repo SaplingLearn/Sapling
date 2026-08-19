@@ -1,15 +1,4 @@
 {
-  "src/app/(public)/page.tsx": {
-    "@next/next/no-html-link-for-pages": {
-      "count": 1
-    },
-    "prefer-const": {
-      "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "src/components/CustomSelect.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
@@ -85,7 +74,7 @@
   },
   "src/components/screens/Admin.tsx": {
     "react-hooks/exhaustive-deps": {
-      "count": 3
+      "count": 2
     },
     "react/no-unescaped-entities": {
       "count": 2

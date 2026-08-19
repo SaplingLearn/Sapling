@@ -100,3 +100,26 @@ def get_mastery_tier(score: float) -> str:
     elif score >= 0.1:
         return "struggling"
     return "unexplored"
+
+
+def build_commit() -> str:
+    """Short git SHA of the running build, or "unknown".
+
+    The promotion runner (#516) polls /api/health until this matches the commit
+    it just promoted, which is what lets it distinguish "the deploy has not
+    landed yet" from "the deploy landed and the app is broken". Railway injects
+    RAILWAY_GIT_COMMIT_SHA; GIT_COMMIT_SHA is the generic fallback for any other
+    host. Local, Docker and E2E runs set neither and report "unknown", which the
+    runner degrades on rather than hanging.
+
+    Read at call time, not import time, so a test can set the env var.
+    """
+    # Strip each candidate independently before picking one: `A or B` picks
+    # A whenever it is non-empty, and a whitespace-only string IS non-empty
+    # (truthy), so a blank RAILWAY_GIT_COMMIT_SHA would win over a real
+    # GIT_COMMIT_SHA and then strip down to "" — silently reporting
+    # "unknown" instead of the SHA that was actually available.
+    railway = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "").strip()
+    generic = (os.getenv("GIT_COMMIT_SHA") or "").strip()
+    raw = railway or generic
+    return raw[:7].lower() or "unknown"
