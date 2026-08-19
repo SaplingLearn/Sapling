@@ -80,6 +80,15 @@ their documents and notes across sections.
 Ordering by `section.asc` first makes the pick stable. `''` sorts before `A1`, so
 wherever a hollow offering still exists the pre-#280 behaviour is preserved.
 
+All three of `resolve_offering`'s reads carry that order, not just the
+term-filtered one: the post-409 re-select (which would otherwise be the single
+path able to return a row the steady-state reader would not) and the cross-term
+fallback. The fallback matters most — it is unfiltered by term, so it picks among
+*every* section of the course in *every* term. That is latent only while
+`current_term()` resolves to the newest seeded term; seeding a later term (terms
+are maintained — see `0032_retire_summer_2026.sql`) makes it live for every
+fallback caller (`routes/study_guide.py`, `routes/notes.py`, `routes/flashcards.py`).
+
 This resolves *determinism*, not *correctness of section choice* — a student
 enrolling in CAS CS 330 lands in A1 regardless of the section they actually
 registered for. Letting students pick a section belongs with the API/frontend
