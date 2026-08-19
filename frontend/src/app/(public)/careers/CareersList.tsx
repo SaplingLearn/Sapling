@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { JOBS, DEPT_COLORS } from './jobs';
 
@@ -48,10 +49,15 @@ export default function CareersList() {
             href="/"
             style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}
           >
-            <img
+            {/* next/image, matching CompanionShell: the raw <img> here tripped
+                @next/next/no-img-element and skipped the asset pipeline. An SVG
+                still needs explicit width/height so it reserves its box. */}
+            <Image
               src="/sapling-icon.svg"
               alt="Sapling"
-              style={{ width: 26, height: 26, flexShrink: 0, position: 'relative', top: -2 }}
+              width={26}
+              height={26}
+              style={{ flexShrink: 0, position: 'relative', top: -2 }}
             />
             <span
               style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 20, color: 'var(--brand-forest)', letterSpacing: '-0.02em', lineHeight: 1.1 }}
@@ -214,6 +220,13 @@ export default function CareersList() {
                   </svg>
                 </button>
 
+                {/* `visibility` is what keeps the collapsed panel out of the tab
+                    order. maxHeight 0 + overflow hidden hides it visually and
+                    pointerEvents:none stops the mouse, but neither takes the
+                    "Apply for this role" link out of the sequential focus order —
+                    a keyboard user tabbed into an invisible link for every
+                    collapsed role. Transitioned so it flips after the collapse
+                    finishes rather than cutting the animation short. */}
                 <div
                   style={{
                     borderTop: isOpen ? '1px solid var(--border)' : 'none',
@@ -222,8 +235,9 @@ export default function CareersList() {
                     opacity: isOpen ? 1 : 0,
                     overflow: 'hidden',
                     pointerEvents: isOpen ? 'auto' : 'none',
+                    visibility: isOpen ? 'visible' : 'hidden',
                     transition:
-                      'max-height 700ms var(--ease), opacity 600ms ease, padding 700ms var(--ease)',
+                      'max-height 700ms var(--ease), opacity 600ms ease, padding 700ms var(--ease), visibility 700ms var(--ease)',
                   }}
                 >
                   <p
@@ -363,7 +377,7 @@ export default function CareersList() {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
+            <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
             <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>Sapling · © 2026</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>

@@ -15,9 +15,14 @@ export async function generateMetadata({
   const { slug } = await params;
   const job = JOBS.find(j => j.slug === slug);
   if (!job) return { title: 'Role not found' };
+  // The ellipsis is conditional: appended unconditionally it claimed every
+  // short description was truncated, so a 90-character role blurb read as a
+  // cut-off fragment in search results and link previews.
+  const blurb =
+    job.description.length > 155 ? `${job.description.slice(0, 155)}…` : job.description;
   return {
     title: `${job.title} — Careers`,
-    description: `${job.department} · ${job.location} · ${job.type}. ${job.description.slice(0, 155)}…`,
+    description: `${job.department} · ${job.location} · ${job.type}. ${blurb}`,
     alternates: { canonical: `/careers/${job.slug}` },
   };
 }

@@ -29,32 +29,45 @@ import { useLanding } from '@/components/landing/useLanding';
 import { galIndexOf } from '@/lib/landing/content';
 
 /**
- * The auth error code the visitor arrived with, e.g. `/?error=session_expired`
- * from `src/middleware.ts` when it bounces an expired session off a protected
- * route, or from the OAuth callback. Without this read the visitor lands on the
- * marketing page with no explanation and `SignInModal`'s entire `ERROR_COPY`
- * table is dead code.
+ * Two URL params ask this page to open the sign-in modal:
  *
- * Read through `useSyncExternalStore` rather than an effect or
+ *   ?error=<code>  `src/middleware.ts` bounces an expired/rejected session off
+ *                  a protected route to `/?error=session_expired`, and the
+ *                  OAuth callback uses the same shape. Without this read the
+ *                  visitor lands on the marketing page with no explanation and
+ *                  `SignInModal`'s entire `ERROR_COPY` table is dead code.
+ *   ?signin=1      the companion pages' header "Sign In" link
+ *                  (components/companion/CompanionShell.tsx) — they have no
+ *                  modal of their own, so they navigate here and ask for it.
+ *                  Unread, that link silently did nothing.
+ *
+ * Both are read through `useSyncExternalStore` rather than an effect or
  * `useSearchParams()`, both of which are wrong here:
  *   - an effect that calls setState on mount is what react-hooks/set-state-in-effect
  *     rejects, and it paints one frame of the page without the modal first;
  *   - `useSearchParams()` in a client component at the route root forces the
  *     whole landing to be wrapped in Suspense or rendered dynamically, and a
  *     Suspense hole with a null fallback would prerender an empty marketing page.
- * `getServerSnapshot` returns null so the prerendered HTML matches hydration;
- * React then re-renders with the real value.
+ * `getServerSnapshot` returns the closed state so the prerendered HTML matches
+ * hydration; React then re-renders with the real value.
+ *
+ * Each snapshot returns a primitive. An object would be a new identity on every
+ * call, which useSyncExternalStore treats as a change — an infinite render loop.
  */
 function readAuthErrorParam(): string | null {
   return new URLSearchParams(window.location.search).get('error');
 }
 
+function readSignInRequestParam(): boolean {
+  return new URLSearchParams(window.location.search).get('signin') === '1';
+}
+
 /**
  * `popstate` covers back/forward. `history.replaceState` (used by
- * `clearAuthErrorParam` below) does NOT fire it, so that helper dispatches a
- * synthetic one — that is how dismissing the modal makes this store re-read.
+ * `clearSignInParams` below) does NOT fire it, so that helper dispatches a
+ * synthetic one — that is how dismissing the modal makes these stores re-read.
  */
-function subscribeToAuthErrorParam(onChange: () => void): () => void {
+function subscribeToLocationSearch(onChange: () => void): () => void {
   window.addEventListener('popstate', onChange);
   return () => window.removeEventListener('popstate', onChange);
 }
@@ -63,15 +76,20 @@ function serverAuthErrorParam(): null {
   return null;
 }
 
+function serverSignInRequestParam(): boolean {
+  return false;
+}
+
 /**
- * Strip `?error=` and notify the store. Dismissing the modal is therefore also
- * what cleans the URL, so a reload or a copied link doesn't resurrect a stale
- * "your session expired".
+ * Strip both params and notify the stores. Dismissing the modal is therefore
+ * also what cleans the URL, so a reload or a copied link doesn't resurrect a
+ * stale "your session expired" or reopen the dialog.
  */
-function clearAuthErrorParam(): void {
+function clearSignInParams(): void {
   const params = new URLSearchParams(window.location.search);
-  if (!params.has('error')) return;
+  if (!params.has('error') && !params.has('signin')) return;
   params.delete('error');
+  params.delete('signin');
   const qs = params.toString();
   window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
   window.dispatchEvent(new PopStateEvent('popstate'));
@@ -92,16 +110,21 @@ export default function LandingPage() {
   const [betaOpen, setBetaOpen] = useState(false);
 
   const signInError = useSyncExternalStore(
-    subscribeToAuthErrorParam,
+    subscribeToLocationSearch,
     readAuthErrorParam,
     serverAuthErrorParam,
   );
+  const signInRequestedByUrl = useSyncExternalStore(
+    subscribeToLocationSearch,
+    readSignInRequestParam,
+    serverSignInRequestParam,
+  );
   // An inbound error code opens the modal on its own — the visitor didn't ask
   // for it, the middleware did, and the message only exists inside the modal.
-  const signInOpen = signInRequested || signInError !== null;
+  const signInOpen = signInRequested || signInRequestedByUrl || signInError !== null;
   const closeSignIn = useCallback(() => {
     setSignInRequested(false);
-    clearAuthErrorParam();
+    clearSignInParams();
   }, []);
 
   // The source builds this table then pins it to light with `wantDark = false`.

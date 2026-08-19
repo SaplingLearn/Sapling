@@ -19,6 +19,7 @@ export const metadata: Metadata = {
   title: 'Meet the team',
   description:
     'A small team out of Boston University who got tired of study tools that did not know what they were studying.',
+  alternates: { canonical: '/team' },
 };
 
 const MONO = "'JetBrains Mono',monospace";

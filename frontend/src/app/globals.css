@@ -850,9 +850,17 @@ input[type="reset"]:disabled {
   .landing-dc .floating-card { display: none !important; }
   .landing-dc .drag-field    { display: none !important; }
 }
+/* Deliberately NOT scoped to .landing-dc. `.nav-tabs` / `.nav-compact` are worn
+   by two navs: landing-v5/Navbar.tsx, which does sit inside .landing-dc, and
+   companion/CompanionShell.tsx, whose root carries the WARM companion palette
+   and must never wear .landing-dc. While these rules were scoped, the companion
+   pages below 1180px kept the overflowing tab row visible and left the compact
+   disclosure at its inline display:none — the !important flags made that look
+   deliberate rather than broken. Both classes are used nowhere else, so the
+   unscoped selector has no wider reach than the scoped one had intent. */
 @media (max-width: 1180px) {
-  .landing-dc .nav-tabs    { display: none !important; }
-  .landing-dc .nav-compact { display: flex !important; }
+  .nav-tabs    { display: none !important; }
+  .nav-compact { display: flex !important; }
 }
 
 .landing-dc ::-webkit-scrollbar       { width: 6px; }

@@ -77,10 +77,23 @@ export default function AboutPage() {
             </ul>
           </div>
 
+          {/* The copy used to send readers to "a feedback button in the navbar".
+              CompanionShell renders no such control — the in-app feedback flow is
+              behind sign-in — so it pointed at nothing. The GitHub link it names
+              is in both the header and the footer of this very page. */}
           <p style={{ ...PROSE, animation: 'fadeUp 700ms ease 320ms both' }}>
             Sapling is actively developed and we&#8217;re always building. If something&#8217;s
-            broken or you have an idea, there&#8217;s a feedback button in the navbar and we
-            actually read those.
+            broken or you have an idea,{' '}
+            <a
+              href="https://github.com/SaplingLearn/Sapling/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#1B6C42', fontWeight: 500 }}
+            >
+              open an issue on GitHub
+            </a>{' '}
+            — or use the feedback control inside the app once you&#8217;re signed in. We actually
+            read those.
           </p>
         </div>
 

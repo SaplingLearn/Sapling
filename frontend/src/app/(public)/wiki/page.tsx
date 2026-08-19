@@ -19,6 +19,7 @@ export const metadata: Metadata = {
   title: 'Wiki',
   description:
     'Exact definitions for the terms and numbers Sapling puts on screen. Every value here is the one the product actually uses.',
+  alternates: { canonical: '/wiki' },
 };
 
 const MONO = "'JetBrains Mono',monospace";
@@ -27,8 +28,15 @@ const DISPLAY = "'Playfair Display',Georgia,serif";
 
 const H2: React.CSSProperties = {
   margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 26,
-  lineHeight: 1.2, letterSpacing: '-0.015em', scrollMarginTop: 84,
+  lineHeight: 1.2, letterSpacing: '-0.015em',
 };
+/**
+ * The offset belongs on the <section>, not the <h2>: the TOC fragments
+ * (#graph, #mastery, …) target the sections, so a scroll-margin on the heading
+ * is never consulted and every anchor landed under CompanionShell's sticky
+ * ~92px header. 100px clears the scrim with a little air.
+ */
+const SECTION: React.CSSProperties = { scrollMarginTop: 100 };
 const LEDE: React.CSSProperties = {
   margin: '12px 0 0', fontFamily: SERIF, fontSize: 15, lineHeight: 1.6,
   color: '#3f3b31', maxWidth: '64ch',
@@ -37,11 +45,6 @@ const LEDE: React.CSSProperties = {
 const DEF: React.CSSProperties = { fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.6, color: '#3f3b31' };
 /** The hairline that separates rows within a section. */
 const ROW_TOP = '1px solid rgba(42,39,31,0.08)';
-
-/** `dot`/`tone` come from the source as CSS declaration strings. */
-function cssColor(decl: string): string {
-  return decl.replace(/^(background|color):/, '').replace(/;$/, '').trim();
-}
 
 export default function WikiPage() {
   return (
@@ -71,7 +74,7 @@ export default function WikiPage() {
           </aside>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 52 }}>
-            <section id="graph">
+            <section id="graph" style={SECTION}>
               <h2 style={H2}>Knowledge graph</h2>
               <p style={LEDE}>
                 One node per concept in a course, joined by an edge when learning one depends on the
@@ -88,7 +91,7 @@ export default function WikiPage() {
               </div>
             </section>
 
-            <section id="mastery">
+            <section id="mastery" style={SECTION}>
               <h2 style={H2}>Mastery tiers</h2>
               <p style={LEDE}>
                 Every node carries a mastery score from 0 to 1, drawn as a ring around it. The score
@@ -97,7 +100,7 @@ export default function WikiPage() {
               <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 0 }}>
                 {WIKI_TIERS.map((t) => (
                   <div key={t.name} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0,104px) minmax(0,86px) minmax(0,1fr)', gap: 14, alignItems: 'baseline', padding: '13px 0', borderTop: ROW_TOP }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 99, background: cssColor(t.dot) }} />
+                    <span style={{ width: 10, height: 10, borderRadius: 99, background: t.dot }} />
                     <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1814' }}>{t.name}</span>
                     <span style={{ fontFamily: MONO, fontSize: 11, lineHeight: 1.5, color: '#6f6857', whiteSpace: 'nowrap' }}>{t.range}</span>
                     <span style={DEF}>{t.meaning}</span>
@@ -106,7 +109,7 @@ export default function WikiPage() {
               </div>
             </section>
 
-            <section id="review">
+            <section id="review" style={SECTION}>
               <h2 style={H2}>Spaced review</h2>
               <p style={LEDE}>
                 After each card you rate your recall, and that rating sets when the card comes back.
@@ -119,13 +122,13 @@ export default function WikiPage() {
                       <span style={{ fontSize: 14.5, fontWeight: 600, color: '#1a1814' }}>{r.label}</span>
                       <span style={{ fontFamily: MONO, fontSize: 10, color: '#6f6857' }}>KEY {r.key}</span>
                     </span>
-                    <span style={{ fontFamily: MONO, fontSize: 12, color: cssColor(r.tone) }}>next in {r.due}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 12, color: r.tone }}>next in {r.due}</span>
                   </div>
                 ))}
               </div>
             </section>
 
-            <section id="tutor">
+            <section id="tutor" style={SECTION}>
               <h2 style={H2}>Tutor modes</h2>
               <p style={LEDE}>
                 Three ways to work the same concept. All three are grounded in documents you
@@ -141,7 +144,7 @@ export default function WikiPage() {
               </div>
             </section>
 
-            <section id="ingestion">
+            <section id="ingestion" style={SECTION}>
               <h2 style={H2}>Ingestion</h2>
               <p style={LEDE}>
                 What happens to a file after you drop it in. Each step is visible in the product, so
@@ -160,7 +163,7 @@ export default function WikiPage() {
               </div>
             </section>
 
-            <section id="grades">
+            <section id="grades" style={SECTION}>
               <h2 style={H2}>Grade scale</h2>
               <p style={LEDE}>
                 Category weights come from your syllabus, and every score rolls into one weighted
@@ -176,7 +179,7 @@ export default function WikiPage() {
               </div>
             </section>
 
-            <section id="privacy">
+            <section id="privacy" style={SECTION}>
               <h2 style={H2}>Your data</h2>
               <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {WIKI_DATA_FACTS.map((d) => (

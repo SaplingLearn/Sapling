@@ -55,10 +55,12 @@ export default function FaqPage() {
               </span>
               {g.items.map((item) => {
                 const isOpen = open === item.i;
+                const panelId = `faq-panel-${item.i}`;
                 return (
                   <div key={item.q} style={{ borderBottom: '1px solid rgba(42,39,31,0.10)' }}>
                     <button
                       data-faq={item.i}
+                      aria-controls={panelId}
                       onClick={() => setOpen(isOpen ? -1 : item.i)}
                       aria-expanded={isOpen}
                       type="button"
@@ -82,7 +84,22 @@ export default function FaqPage() {
                         </svg>
                       </span>
                     </button>
-                    <div style={{ overflow: 'hidden', transition: 'max-height 380ms cubic-bezier(0.22,1,0.36,1), opacity 300ms ease', maxHeight: isOpen ? 420 : 0, opacity: isOpen ? 1 : 0 }}>
+                    {/* `visibility` is what takes the collapsed answer out of the
+                        tab order: max-height 0 + overflow hidden still leaves the
+                        text focusable and readable to a screen reader, so every
+                        collapsed answer was announced as if it were open. It is
+                        listed in the transition so it flips only after the
+                        collapse finishes and doesn't cut the animation short. */}
+                    <div
+                      id={panelId}
+                      style={{
+                        overflow: 'hidden',
+                        transition: 'max-height 380ms cubic-bezier(0.22,1,0.36,1), opacity 300ms ease, visibility 380ms',
+                        maxHeight: isOpen ? 420 : 0,
+                        opacity: isOpen ? 1 : 0,
+                        visibility: isOpen ? 'visible' : 'hidden',
+                      }}
+                    >
                       <p style={{ margin: '0 0 20px', paddingRight: 44, fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.7, color: '#3f3b31' }}>
                         {item.a}
                       </p>

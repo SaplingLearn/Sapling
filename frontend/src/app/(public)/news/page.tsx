@@ -16,7 +16,7 @@
  * six posts.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
@@ -37,6 +37,16 @@ export default function NewsPage() {
   const [filter, setFilter] = useState('all');
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Closing the menu has to hand focus back to the trigger. Without it a
+  // keyboard user who dismisses the listbox loses their place entirely: the
+  // option they were on is display:none'd and focus falls to <body>, so the
+  // next Tab restarts from the top of the document.
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    triggerRef.current?.focus();
+  }, []);
 
   // close the category menu on an outside click, like the source's away handler
   useEffect(() => {
@@ -46,6 +56,21 @@ export default function NewsPage() {
     document.addEventListener('pointerdown', away);
     return () => document.removeEventListener('pointerdown', away);
   }, []);
+
+  // Escape is the other half of the dismiss contract the source never wired
+  // (WAI-ARIA listbox pattern): a popup opened from a button must close on
+  // Escape. Bound only while open so it can't swallow Escape from anything
+  // else on the page.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      closeMenu();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [menuOpen, closeMenu]);
 
   const q = query.trim().toLowerCase();
   const posts = NEWS_POSTS.filter((p) => {
@@ -110,7 +135,8 @@ export default function NewsPage() {
 
           <div ref={menuRef} style={{ flex: '0 0 auto', position: 'relative' }}>
             <button
-              onClick={() => setMenuOpen((o) => !o)}
+              ref={triggerRef}
+              onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
               type="button"
               aria-haspopup="listbox"
               aria-expanded={menuOpen}
@@ -134,7 +160,7 @@ export default function NewsPage() {
               {NEWS_FILTERS.map((f) => (
                 <button
                   key={f.key}
-                  onClick={() => { setFilter(f.key); setMenuOpen(false); }}
+                  onClick={() => { setFilter(f.key); closeMenu(); }}
                   type="button"
                   role="option"
                   aria-selected={f.key === filter}
@@ -177,7 +203,11 @@ export default function NewsPage() {
             return (
               <Link
                 key={p.title}
+                // Every card points at the Journal sign-up, not an article page —
+                // none of these posts is published yet. The label below has to say
+                // so, or the card promises a read it cannot deliver.
                 href="/#newsletter"
+                aria-label={`${p.title} — get notified when this article is published`}
                 className="cp-newscard"
                 style={{ display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', color: 'inherit', transition: 'border-color 220ms, transform 220ms' }}
               >
@@ -192,7 +222,7 @@ export default function NewsPage() {
                   <h2 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 21, lineHeight: 1.24, letterSpacing: '-0.015em', color: '#1a1814' }}>{p.title}</h2>
                   <p style={{ margin: 0, fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.62, color: '#3f3b31' }}>{p.excerpt}</p>
                   <span style={{ marginTop: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, lineHeight: 1 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1, color: '#1B6C42' }}>Read article →</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1, color: '#1B6C42' }}>Get notified →</span>
                     <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', color: '#6f6857' }}>{p.time}</span>
                   </span>
                 </div>

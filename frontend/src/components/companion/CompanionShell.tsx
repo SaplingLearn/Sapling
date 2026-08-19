@@ -81,7 +81,11 @@ export function CompanionShell({
             </span>
           </Link>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'nowrap', minWidth: 0 }}>
+          {/* A real <nav> landmark, not a bare <div>: the header carries the only
+              route list on these pages, so without it a screen-reader user has no
+              landmark to jump to and has to Tab through the whole thing. The label
+              omits the word "navigation" — the role already announces that. */}
+          <nav aria-label="Primary" style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'nowrap', minWidth: 0 }}>
             {/* below 1180px the tab row is swapped for this native disclosure */}
             <details className="nav-compact" style={{ display: 'none', position: 'relative', flex: '0 0 auto' }}>
               <summary style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', listStyle: 'none', color: '#6f6857', fontFamily: SANS, fontWeight: 500, fontSize: 13.5 }}>
@@ -138,7 +142,7 @@ export function CompanionShell({
             >
               Get Started
             </Link>
-          </div>
+          </nav>
         </div>
       </header>
 
@@ -150,7 +154,10 @@ export function CompanionShell({
             <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
             <span style={{ fontSize: 14, color: '#6f6857' }}>Sapling · © 2026</span>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
+          {/* Its own labelled landmark, separate from "Primary": this row is the
+              only route to /careers and the legal pages, and two identically
+              unlabelled navs would be indistinguishable in a landmark list. */}
+          <nav aria-label="Footer" style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
             {COMPANION_NAV.map((n) => (
               <Link key={n.href} href={n.href} className="cp-navlink" style={{ fontSize: 14, color: '#6f6857' }}>{n.label}</Link>
             ))}
@@ -164,7 +171,7 @@ export function CompanionShell({
             <Link href="/careers" className="cp-navlink" style={FOOTER_LINK}>Careers</Link>
             <Link href="/terms" className="cp-navlink" style={FOOTER_LINK}>Terms of Service</Link>
             <Link href="/privacy" className="cp-navlink" style={FOOTER_LINK}>Privacy Policy</Link>
-          </div>
+          </nav>
         </div>
       </footer>
     </div>
