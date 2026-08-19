@@ -78,28 +78,6 @@ let zoomToFitSpy = vi.fn();
 // `getGraphBboxMock.mockReturnValueOnce(...)`/`mockReturnValue(...)`.
 let getGraphBboxMock = vi.fn<() => unknown>();
 
-vi.mock("react-force-graph-3d", () => ({
-  // A NAMED function inside forwardRef so the component has a display name,
-  // and props are recorded in an EFFECT rather than in the render body:
-  // reassigning a module-scope variable during render is a render-phase side
-  // effect (react-hooks/globals) that tears under a discarded concurrent
-  // render. Testing Library's render/rerender/act all flush passive effects
-  // before returning, so tests still observe the props synchronously.
-  default: React.forwardRef(function ForceGraph3DMock(
-    props: CapturedProps,
-    ref: React.Ref<unknown>,
-  ) {
-    React.useImperativeHandle(ref, () => ({
-      zoomToFit: zoomToFitSpy,
-      getGraphBbox: getGraphBboxMock,
-    }));
-    React.useEffect(() => {
-      lastProps = props;
-    });
-    return null;
-  }),
-}));
-
 // jsdom has no canvas 2D context, and the real SpriteText paints text
 // onto a canvas texture at construction; extending the real
 // THREE.Object3D keeps `group.add(...)` happy.
@@ -125,6 +103,28 @@ vi.mock("three-spritetext", async () => {
   }
   return { default: SpriteTextMock };
 });
+
+vi.mock("react-force-graph-3d", () => ({
+  // A NAMED function inside forwardRef so the component has a display name,
+  // and props are recorded in an EFFECT rather than in the render body:
+  // reassigning a module-scope variable during render is a render-phase side
+  // effect (react-hooks/globals) that tears under a discarded concurrent
+  // render. Testing Library's render/rerender/act all flush passive effects
+  // before returning, so tests still observe the props synchronously.
+  default: React.forwardRef(function ForceGraph3DMock(
+    props: CapturedProps,
+    ref: React.Ref<unknown>,
+  ) {
+    React.useImperativeHandle(ref, () => ({
+      zoomToFit: zoomToFitSpy,
+      getGraphBbox: getGraphBboxMock,
+    }));
+    React.useEffect(() => {
+      lastProps = props;
+    });
+    return null;
+  }),
+}));
 
 // next/dynamic is used to client-only-load react-force-graph-3d; the
 // shared passthrough renders the (hoisted, already-resolved) mock module
