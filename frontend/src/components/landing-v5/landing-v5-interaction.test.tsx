@@ -1,9 +1,26 @@
 // @vitest-environment jsdom
-// TEMPORARY smoke check — deleted after running. Not part of the suite.
+/**
+ * The keyboard and assistive-tech contracts of the v5 landing surface.
+ *
+ * Every assertion here pins a defect that shipped in the first port, and each
+ * one is invisible in review and in a screenshot: a card that only opens on
+ * click, a navbar that is clickable while transparent, an accordion whose
+ * closed answers are still in the tab order, a `role="radiogroup"` with no
+ * radios in it. They look correct on screen, which is exactly why they need a
+ * test rather than an eye.
+ *
+ * The lab-demo cases are the same shape but for state rather than markup:
+ * a reply that names a different partner than the typing indicator, and a
+ * "1 concepts" footer counting an empty-result sentinel.
+ *
+ * jsdom is enough for all of it — these are attributes, event wiring and
+ * rendered text, none of which needs layout.
+ */
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { Gallery } from './Gallery';
+import { RoomsDemo } from './lab/RoomsDemo';
 import { Faq } from './Faq';
 import { Navbar } from './Navbar';
 import { NAV_LIGHT } from './navTheme';
@@ -15,11 +32,23 @@ import { NotesDemo } from './lab/NotesDemo';
 import { GUIDES } from './lab/labData';
 import { galIndexOf, GAL } from '@/lib/landing/content';
 
-describe('contract', () => {
+// This project's vitest run does not inject globals, so RTL's automatic
+// per-test cleanup never registers. Without it every render accumulates in
+// `document.body` and a `screen.getBy*` query resolves against the wrong
+// component.
+afterEach(() => cleanup());
+
+describe('gallery index contract', () => {
   it('galIndexOf resolves every kind to its GAL slot', () => {
+    // GAL's order is a positional contract that callers used to hard-code.
     expect(galIndexOf('quiz')).toBe(0);
     expect(galIndexOf('tutor')).toBe(7);
     GAL.forEach((c, i) => expect(galIndexOf(c.kind)).toBe(i));
+  });
+
+  it('throws on an unknown kind rather than returning -1', () => {
+    // A silent -1 would surface as an `undefined` card far from the mistake.
+    expect(() => galIndexOf('nope' as never)).toThrow(/unknown gallery kind/);
   });
 });
 
@@ -136,11 +165,33 @@ describe('lab demos', () => {
       render(<NotesDemo />);
       const body = document.querySelector('textarea')!;
       fireEvent.change(body, { target: { value: 'nothing recognisable here at all' } });
-      fireEvent.click(screen.getByText(/extract concepts/i));
-      await vi.advanceTimersByTimeAsync(800);
+      const btn = Array.from(document.querySelectorAll('button')).find((b) => /extract concepts/i.test(b.textContent || ''))!;
+      fireEvent.click(btn);
+      await act(async () => { await vi.advanceTimersByTimeAsync(800); });
       expect(document.body.textContent).toContain('No concepts found');
       expect(document.body.textContent).not.toContain('1 concepts');
       expect(document.body.textContent).toContain('Concepts you extract are linked');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('rooms demo', () => {
+  it('the typing indicator and the reply name the same partner', async () => {
+
+    vi.useFakeTimers();
+    try {
+      render(<RoomsDemo />);
+      const input = document.querySelector('input')!;
+      fireEvent.change(input, { target: { value: 'hello' } });
+      fireEvent.click(screen.getByText('Send'));
+      // Change the select mid-flight: the old code showed priya typing and
+      // then delivered a message from maya.
+      fireEvent.change(document.querySelector('select')!, { target: { value: 'priya' } });
+      expect(document.body.textContent).toContain('maya is typing');
+      await act(async () => { await vi.advanceTimersByTimeAsync(1700); });
+      expect(document.body.textContent).toContain('my Maya graph');
     } finally {
       vi.useRealTimers();
     }
