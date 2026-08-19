@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deltaPlaceholderEdges, mergeGraphDelta, mergeGraphEdges, quizHref, resolveAddConceptCourseId, resolveCardCourseId } from './Learn';
-import type { GraphDelta } from '@/lib/api';
+import { deltaPlaceholderEdges, mergeGraphDelta, mergeGraphEdges, quizHref, resolveAddConceptCourseId, resolveCardCourseId, shouldRestoreFailedDelete } from './Learn';
+import { ApiError, type GraphDelta } from '@/lib/api';
 import type { GraphEdge, GraphNode } from '@/lib/data';
 
 /**
@@ -140,6 +140,14 @@ describe('delete a concept, then add it back under the same name', () => {
    * null, and addConcept's `if (!label || !cardCourseId) return` bailed out
    * before doing anything at all — no request, no toast, no rollback. The
    * composer just sat there with the name typed in.
+   *
+   * NOTE (fix pass 2): the resolver below is necessary but was NOT sufficient,
+   * and the tests in this describe could not see the difference. `addConcept`
+   * only runs from a composer that was itself gated on `cardCourseId`, so the
+   * fallback could never fire — the whole affordance unmounted on the delete.
+   * The gate now reads the same resolved value `addConcept` does, and
+   * Learn.addConcept.test.tsx asserts that wiring through the rendered rail,
+   * which is the only level at which the gap was visible.
    */
   it('still resolves a course when focus was just cleared by the delete', () => {
     // Before the delete: the focused node supplies the course.
@@ -163,8 +171,48 @@ describe('delete a concept, then add it back under the same name', () => {
     expect(resolveAddConceptCourseId('bio', 'chem')).toBe('bio');
   });
 
-  it('returns null only when no course has EVER resolved — the one case worth an error', () => {
+  it('returns null only when no course has EVER resolved — the one case that hides the affordance', () => {
     expect(resolveAddConceptCourseId(null, '')).toBeNull();
+  });
+});
+
+describe('shouldRestoreFailedDelete', () => {
+  /**
+   * DELETE /api/graph/{user}/nodes/{id} answers 404 for "that row is already
+   * gone" (routes/graph.py::remove_node, from graph_service.delete_node's
+   * {"error": "Node not found"}). Restoring on it put a concept back on the
+   * map that exists nowhere, under a toast asserting it was "still on your
+   * map" — and after the student re-added the same name, TWO of them.
+   */
+  const node: GraphNode = {
+    id: 'n1', name: 'Markov Chains', subject: 'CS 132', color: '#000',
+    mastery_tier: 'unexplored', mastery_score: 0, course_id: 'cs132',
+  };
+
+  it('does not restore on 404 — the row is already gone, which is what was asked for', () => {
+    expect(shouldRestoreFailedDelete('n1', node, new ApiError('{"detail":"Node not found"}', 404)))
+      .toBe(false);
+  });
+
+  it('restores on a genuine server failure — the row is still there', () => {
+    expect(shouldRestoreFailedDelete('n1', node, new ApiError('Internal Server Error', 500)))
+      .toBe(true);
+  });
+
+  it('restores when the request never reached a status at all (dead backend, offline)', () => {
+    expect(shouldRestoreFailedDelete('n1', node, new TypeError('Failed to fetch'))).toBe(true);
+  });
+
+  it('never restores a client-side id — the server has never seen it', () => {
+    const optimistic = { ...node, id: 'node-new-1723459200000-3' };
+    const streamed = { ...node, id: 'stream-markov chains' };
+    const boom = new ApiError('Internal Server Error', 500);
+    expect(shouldRestoreFailedDelete(optimistic.id, optimistic, boom)).toBe(false);
+    expect(shouldRestoreFailedDelete(streamed.id, streamed, boom)).toBe(false);
+  });
+
+  it('has nothing to restore when the node was already off the map', () => {
+    expect(shouldRestoreFailedDelete('n1', undefined, new ApiError('boom', 500))).toBe(false);
   });
 });
 

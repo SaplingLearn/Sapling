@@ -38,7 +38,6 @@ import {
   deleteGraphNode,
   describeConcept,
   shouldFallBackToJson,
-  ApiError,
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
@@ -46,6 +45,11 @@ import {
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
+// The one place error copy is allowed to come from. `ApiError.message` is the
+// RAW response body (see lib/api.ts), so building a toast out of it printed
+// `{"detail":"Not Found"}` — or 160 characters of a proxy's HTML error page —
+// at the student. `humanizeError` is what every other screen already uses.
+import { humanizeError, isNotFound } from "@/lib/errorMessage";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
@@ -296,24 +300,61 @@ export function quizHref(
   return name ? `/quiz?topic=${encodeURIComponent(name)}` : "/quiz";
 }
 
-// Course for a manually-added concept. Strictly weaker than
-// `resolveCardCourseId`: it accepts the last course we managed to resolve
-// when nothing resolves right now.
+// Course for a manually-added concept, and — critically — for the render gate
+// on the "＋ Add concept" affordance itself. Strictly weaker than
+// `resolveCardCourseId`: it accepts the last course we managed to resolve when
+// nothing resolves right now.
 //
 // The focus card wants the live answer and should go blank when focus is
-// lost. `addConcept` must NOT — for anyone who hasn't touched the optional
+// lost. The add path must NOT — for anyone who hasn't touched the optional
 // course picker, `cardCourseId` comes entirely from the focused node, and
 // deleting a concept clears the focus. That made "delete a concept, then add
-// it back under the same name" impossible: the delete removed the only
-// source of the course id and the add then bailed out silently.
+// it back under the same name" impossible.
+//
+// The first attempt at this fix was unreachable: `addConcept` called this, but
+// the composer that calls `addConcept` was itself gated on `cardCourseId` —
+// the exact value the fallback exists to work around — so the fallback never
+// got to fire and the whole affordance unmounted on delete. Both the gate and
+// `addConcept` now read ONE value (`addCourseId` in LearnInner), so the two
+// cannot disagree again.
 //
 // Exported (like resolveCardCourseId) so Learn.graph.test.ts exercises the
-// resolution `addConcept` actually calls, rather than a mirror of it.
+// resolution the component actually calls, rather than a mirror of it.
 export function resolveAddConceptCourseId(
   cardCourseId: string | null,
   lastResolvedCourseId: string,
 ): string | null {
   return cardCourseId || lastResolvedCourseId || null;
+}
+
+// Whether a failed DELETE /api/graph/{user}/nodes/{id} should put the node
+// back on the map. A type guard so the caller gets `removedNode` narrowed to
+// non-undefined in the restore branch.
+//
+// A 404 must NOT restore. That status is the endpoint's answer for "that row
+// is already gone": routes/graph.py::remove_node raises HTTPException(404)
+// whenever services/graph_service.py::delete_node reports
+// {"error": "Node not found", "deleted": False}, which is what its
+// owner-scoped select returns when there is no row to delete. So a second
+// tab, an already-stale client node, or a delete that in fact succeeded
+// server-side would each resurrect a phantom concept under a toast claiming
+// "it's still on your map" about something that is not. It compounds: delete
+// X → 404 → the student re-adds X (a fresh row, new id) → this catch appends
+// the old node object under its dead id, and the map shows two "X", one of
+// which exists nowhere.
+//
+// Client-side ids never reached the server either, so there is nothing to
+// restore and nothing the user can act on.
+//
+// Exported for Learn.graph.test.ts.
+export function shouldRestoreFailedDelete(
+  nodeId: string,
+  removedNode: GraphNode | undefined,
+  err: unknown,
+): removedNode is GraphNode {
+  if (!removedNode) return false;
+  if (/^(node-new-|stream-)/.test(nodeId)) return false;
+  return !isNotFound(err);
 }
 
 // The actual call-site assembly `applyGraphDelta` (LearnInner, below) runs on
@@ -462,19 +503,31 @@ function LearnInner() {
   // directly testable — see Learn.graph.test.ts.
   const cardCourseId = resolveCardCourseId(topicNode, selectedCourseId);
 
-  // Last course we could actually resolve, kept so `addConcept` survives
-  // losing its focus. The picker is "Course (optional)" and defaults to ""
-  // ("No course"), so for anyone who hasn't chosen one, `cardCourseId` comes
-  // ENTIRELY from the focused node — and deleting a concept clears the focus.
-  // That made "delete a concept, add it back" impossible: the delete removed
-  // the only thing supplying the course id, and addConcept's `!cardCourseId`
-  // guard then returned silently, leaving the composer sitting there with the
-  // typed name and no error. A ref, not state: this is read at click time and
-  // must never itself trigger a re-render or re-order the focus card.
-  const lastCourseIdRef = useRef<string>("");
+  // Last course we could actually resolve. The picker is "Course (optional)"
+  // and defaults to "" ("No course"), so for anyone who hasn't chosen one
+  // `cardCourseId` comes ENTIRELY from the focused node — and deleting a
+  // concept clears the focus. Remembering the last one is what lets the add
+  // path survive that.
+  //
+  // STATE, not a ref (which is what the first attempt used): the render gate
+  // on the add-concept affordance below reads this, and a ref mutated in an
+  // effect produces no re-render, so the composer would stay unmounted until
+  // some unrelated state change happened to repaint the rail. The functional
+  // update keeps the effect's dep list at `[cardCourseId]` alone and lets
+  // React bail out when the value hasn't changed, so this can't loop.
+  const [lastCourseId, setLastCourseId] = useState<string>("");
   useEffect(() => {
-    if (cardCourseId) lastCourseIdRef.current = cardCourseId;
+    if (cardCourseId) setLastCourseId(prev => (prev === cardCourseId ? prev : cardCourseId));
   }, [cardCourseId]);
+
+  // THE resolved course for adding a concept — the single value read by both
+  // `addConcept` and the "＋ Add concept" render gate. Keeping these two in
+  // one variable is the actual fix for the reported bug: gating the composer
+  // on `cardCourseId` while `addConcept` used the fallback meant the
+  // affordance unmounted on the very delete the fallback existed to survive,
+  // so the fallback was unreachable and the student could not type the name
+  // back in at all.
+  const addCourseId = resolveAddConceptCourseId(cardCourseId, lastCourseId);
 
   // Streamed graph_update handler (#74) — see mergeGraphDelta above for why
   // the match key falls back to concept name. The course fallback is
@@ -1117,6 +1170,20 @@ function LearnInner() {
     [courses, cardCourseId],
   );
 
+  // Where a new concept will actually land, in words. The add path can resolve
+  // a course the live focus card no longer shows (see `addCourseId`), so
+  // leaving that implicit would mean a silent fallback: the student deletes a
+  // concept, types a new name, and has no way to know which course it went
+  // into. Prefers the enrolled course's code, falls back to the subject on
+  // that course's root node (a graph loaded for a course the enrollment list
+  // doesn't carry), and never renders an empty label.
+  const addCourseLabel = useMemo(() => {
+    const enrolled = courses.find(c => c.course_id === addCourseId);
+    if (enrolled) return enrolled.course_code || enrolled.course_name;
+    const rootNode = graphNodes.find(n => n.is_subject_root && n.course_id === addCourseId);
+    return rootNode?.subject || rootNode?.name || "this course";
+  }, [courses, graphNodes, addCourseId]);
+
   const progressItems = useMemo(() => {
     if (topicNode && neighborIds.size > 0) {
       return graphNodes
@@ -1218,16 +1285,13 @@ function LearnInner() {
   const addConcept = (name: string) => {
     const label = name.trim();
     if (!label) return;
-    // Falls back to the last course we resolved (see lastCourseIdRef) so the
-    // add still works right after a delete has cleared the focus. Only when
-    // there has never been one — no focus, no picker choice, nothing added
-    // this session — is there genuinely nothing to attach the concept to,
-    // and then we SAY so rather than no-op'ing.
-    const courseId = resolveAddConceptCourseId(cardCourseId, lastCourseIdRef.current);
-    if (!courseId) {
-      toast.error("Pick a course first — a concept has to belong to one.");
-      return;
-    }
+    // `addCourseId` is the SAME value the composer's render gate uses, so this
+    // is unreachable in practice — it narrows `string | null` to `string` and
+    // guards a future caller that isn't behind that gate. Deliberately not a
+    // toast: a "pick a course first" message here could never be read, because
+    // with no course resolved there is no composer on screen to type into.
+    const courseId = addCourseId;
+    if (!courseId) return;
     const root = graphNodes.find(n => n.is_subject_root && n.course_id === courseId);
     const anchorId = focusConcept?.id ?? root?.id;
     // Monotonic suffix: Date.now() alone is ms-resolution, and this path has
@@ -1270,19 +1334,15 @@ function LearnInner() {
         setGraphNodes(prev => dropOptimisticConcept(prev, [], id).nodes);
         setGraphEdges(prev => dropOptimisticConcept([], prev, id).edges);
         setFocusedNodeId(cur => (cur === id ? null : cur));
-        // Say WHY. The bare "it was removed" swallowed the ApiError and left
-        // the same message for a 401, a 500 and a dead backend — three
-        // different problems with three different fixes, none of them
-        // guessable from the toast. The status is what makes this
-        // actionable; the request_id in the body is what ties it to a log.
+        // Say WHY. The bare "it was removed" swallowed the error and left the
+        // same message for a 401, a 500 and a dead backend — three different
+        // problems with three different fixes, none of them guessable from the
+        // toast. The status and body go to the console (that's what ties it to
+        // a request_id in the logs); the student gets `humanizeError`, which
+        // never puts a raw JSON body or an HTML error page in a toast the way
+        // interpolating `ApiError.message` did.
         console.error("[addConcept] failed", { concept: label, courseId, err });
-        const reason =
-          err instanceof ApiError
-            ? `${err.status}${err.message ? ` — ${err.message.slice(0, 160)}` : ""}`
-            : err instanceof Error && err.message
-              ? err.message.slice(0, 160)
-              : "the request never completed";
-        toast.error(`Couldn't save “${label}” (${reason}).`);
+        toast.error(`Couldn't save “${label}” — ${humanizeError(err, "the request never completed.")}`);
       });
   };
 
@@ -1294,19 +1354,31 @@ function LearnInner() {
   // the row survives, so re-adding the same name quietly MERGES into the
   // undeleted row and toasts "Merged into your existing X" for a concept
   // they watched themselves delete. Put the node back and say what happened.
+  //
+  // "What happened" is not the same for every rejection, though — a 404 means
+  // the row was already gone, which is the state the delete was asking for.
+  // `shouldRestoreFailedDelete` draws that line; restoring on a 404 put a
+  // phantom concept back on the map.
   const removeConcept = (nodeId: string) => {
     const removedNode = graphNodes.find(n => n.id === nodeId);
     const removedEdges = graphEdges.filter(e => e.source === nodeId || e.target === nodeId);
+    // Whether the delete is what cleared the focus. Restoring the node without
+    // restoring this left the concept back on the map with the rail's focus
+    // card — and therefore the Add composer and the Remove button — gone, so
+    // the student could see the failed delete but not retry it.
+    const wasFocused = focusedNodeId === nodeId;
     setGraphNodes(prev => prev.filter(n => n.id !== nodeId));
     setGraphEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
     setFocusedNodeId(cur => (cur === nodeId ? null : cur));
     if (!userId) return;
     deleteGraphNode(userId, nodeId).catch((err: unknown) => {
       console.error("[removeConcept] failed", { nodeId, err });
-      // Optimistic ids never reached the server, so there is nothing to
-      // restore and nothing the user can act on — only a real row's delete
-      // failing is worth surfacing.
-      if (!removedNode || /^(node-new-|stream-)/.test(nodeId)) return;
+      // A 404 means the row is already gone, which is what was asked for — see
+      // shouldRestoreFailedDelete for why restoring on it produces a phantom
+      // concept and a toast that states something false.
+      if (!shouldRestoreFailedDelete(nodeId, removedNode, err)) return;
+      // The `prev.some` check keeps a genuine failure from double-inserting
+      // when the same node is retried or arrives back from a refetch first.
       setGraphNodes(prev => (prev.some(n => n.id === nodeId) ? prev : [...prev, removedNode]));
       setGraphEdges(prev => [
         ...prev,
@@ -1314,8 +1386,14 @@ function LearnInner() {
           e => !prev.some(p => p.source === e.source && p.target === e.target),
         ),
       ]);
-      const reason = err instanceof ApiError ? ` (${err.status})` : "";
-      toast.error(`Couldn't delete “${removedNode.name}”${reason} — it's still on your map.`);
+      // Only re-focus if nothing else has been focused since — the request is
+      // async and the student may well have clicked another node while it was
+      // in flight.
+      if (wasFocused) setFocusedNodeId(cur => (cur === null ? nodeId : cur));
+      toast.error(
+        `Couldn't delete “${removedNode.name}” — it's still on your map. ` +
+        humanizeError(err, "Try again in a moment."),
+      );
     });
   };
 
@@ -1750,52 +1828,74 @@ function LearnInner() {
                 </div>
               )}
 
-              {/* Add concept */}
-              {cardCourseId && (
+              {/* Add concept.
+
+                  Gated on `addCourseId`, NOT on `cardCourseId`. That is the
+                  headline fix: `cardCourseId` goes null the moment a delete
+                  clears the focus (the course picker is optional and defaults
+                  to "No course"), so gating on it unmounted this whole block
+                  exactly when the student wanted to type the deleted name back
+                  in — and made `addConcept`'s last-course fallback
+                  unreachable, since it could only ever run while
+                  `cardCourseId` was already truthy. */}
+              {addCourseId && (
                 <div style={{ padding: "4px 22px 24px" }}>
                   {addingConcept ? (
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <input
-                        autoFocus
-                        value={newConceptName}
-                        onChange={e => setNewConceptName(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === "Enter") addConcept(newConceptName);
-                          if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
-                        }}
-                        placeholder="New concept name…"
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          padding: "7px 10px",
-                          fontSize: 12.5,
-                          border: "1px solid var(--border-strong)",
-                          borderRadius: "var(--r-sm)",
-                          background: "var(--bg-panel)",
-                          color: "var(--text)",
-                          outline: "none",
-                        }}
-                      />
-                      <button
-                        onClick={() => addConcept(newConceptName)}
-                        disabled={!newConceptName.trim()}
-                        style={{
-                          padding: "7px 12px",
-                          fontSize: 12.5,
-                          fontWeight: 600,
-                          borderRadius: "var(--r-sm)",
-                          border: "none",
-                          background: newConceptName.trim() ? "var(--brand-forest)" : "var(--bg-soft)",
-                          color: newConceptName.trim() ? "var(--accent-fg)" : "var(--text-muted)",
-                          cursor: newConceptName.trim() ? "pointer" : "not-allowed",
-                        }}
+                    <>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <input
+                          autoFocus
+                          value={newConceptName}
+                          onChange={e => setNewConceptName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") addConcept(newConceptName);
+                            if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
+                          }}
+                          placeholder="New concept name…"
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            padding: "7px 10px",
+                            fontSize: 12.5,
+                            border: "1px solid var(--border-strong)",
+                            borderRadius: "var(--r-sm)",
+                            background: "var(--bg-panel)",
+                            color: "var(--text)",
+                            outline: "none",
+                          }}
+                        />
+                        <button
+                          onClick={() => addConcept(newConceptName)}
+                          disabled={!newConceptName.trim()}
+                          style={{
+                            padding: "7px 12px",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            borderRadius: "var(--r-sm)",
+                            border: "none",
+                            background: newConceptName.trim() ? "var(--brand-forest)" : "var(--bg-soft)",
+                            color: newConceptName.trim() ? "var(--accent-fg)" : "var(--text-muted)",
+                            cursor: newConceptName.trim() ? "pointer" : "not-allowed",
+                          }}
+                        >
+                          Add
+                        </button>
+                      </div>
+                      {/* Which course this lands in. `addCourseId` can be the
+                          remembered fallback rather than what the focus card
+                          shows, so without this the destination would be a
+                          silent guess from the student's point of view. */}
+                      <div
+                        data-testid="tutor-add-concept-course"
+                        style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}
                       >
-                        Add
-                      </button>
-                    </div>
+                        Adds to {addCourseLabel}
+                      </div>
+                    </>
                   ) : (
                     <button
                       onClick={() => setAddingConcept(true)}
+                      title={`Add a concept to ${addCourseLabel}`}
                       style={{
                         width: "100%",
                         padding: "8px 12px",
