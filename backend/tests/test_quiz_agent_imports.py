@@ -51,8 +51,11 @@ class TestPracticalQuestionMix:
 
         assert "PRACTICAL OVER CONCEPTUAL" in _SYSTEM_PROMPT
         assert "NEARLY EVERY QUESTION MUST BE A WORKED PROBLEM" in _SYSTEM_PROMPT
-        # The ratio the user asked for, stated as the concrete counts the
-        # UI can actually request (QuizPanel offers 5 / 10 / 15).
+        # The ratio the user asked for, spelled out as concrete counts because
+        # the model got "at least ceil(2N/3)" wrong. QuizPanel offers 5 / 10
+        # and the API bounds num_questions to 10, so the "13 of 15" row is
+        # illustrative only — it keeps the three-example pattern the model
+        # generalises from, and costs nothing to carry.
         assert "4 of 5, 9 of 10, 13 of 15" in _SYSTEM_PROMPT
         assert "AT MOST ONE question may be purely conceptual" in _SYSTEM_PROMPT
 
@@ -152,7 +155,7 @@ class TestOverGenerateAndSelect:
         assert notes == []
 
     def test_drops_unanswerable_questions_using_the_surplus(self):
-        from agents.quiz import is_worked_problem, select_quiz_questions
+        from agents.quiz import select_quiz_questions
 
         # correct_answer matches no option — the 'vP = [0.25, 0.75]' case.
         broken = _q("broken", correct="zzz-not-an-option")
@@ -176,7 +179,7 @@ class TestOverGenerateAndSelect:
         assert any("over the allowance" in n for n in notes)
 
     def test_reports_a_genuine_shortfall_instead_of_padding(self):
-        from agents.quiz import is_worked_problem, select_quiz_questions
+        from agents.quiz import select_quiz_questions
 
         chosen, notes = select_quiz_questions([_q("w1"), _q("w2")], 10)
         assert len(chosen) == 2
@@ -185,7 +188,7 @@ class TestOverGenerateAndSelect:
     def test_keeps_the_model_s_ordering(self):
         """Selection groups by kind; without restoring order every quiz would
         front-load the worked problems and park the definition last."""
-        from agents.quiz import is_worked_problem, select_quiz_questions
+        from agents.quiz import select_quiz_questions
 
         questions = [
             _q("w1"), _q("c1", kind="conceptual"), _q("w2"), _q("w3"),
@@ -224,6 +227,26 @@ class TestOverGenerateAndSelect:
 
         assert [conceptual_allowance(n) for n in (3, 5, 10)] == [1, 1, 1]
         assert [conceptual_allowance(n) for n in (11, 15)] == [2, 2]
+
+    def test_field_identical_conceptual_questions_both_count(self):
+        """The model really does emit duplicates: RULE 1 tells it to keep going
+        when it "runs out of distinct angles around question 6".
+
+        Two field-identical conceptual questions are two usable questions. The
+        backfill used value equality (`q not in chosen`, Pydantic's field
+        __eq__), so the second one looked already-chosen, got dropped, and the
+        student was served a SHORT quiz with a usable question left unused —
+        while every other membership decision in the function keys on id().
+        """
+        from agents.quiz import select_quiz_questions
+
+        twins = [_q("c1", kind="conceptual"), _q("c1", kind="conceptual")]
+        assert twins[0] == twins[1], "fixture must be field-identical"
+        assert twins[0] is not twins[1], "…but two distinct objects"
+
+        chosen, notes = select_quiz_questions([_q("w1")] + twins, 3)
+        assert len(chosen) == 3
+        assert any("over the allowance" in n for n in notes)
 
 
 class TestSelectionValidator:
@@ -304,7 +327,17 @@ class TestSelectionValidator:
             out = _select_requested_quiz(self._ctx(2), quiz)
         assert out is quiz and len(out.questions) == 3
 
-    def test_budget_is_read_from_the_run_context(self):
+    def test_the_agent_carries_the_declared_output_retry_budget(self):
         from agents.quiz import _OUTPUT_RETRIES, quiz_agent
 
-        assert quiz_agent._max_output_retries == _OUTPUT_RETRIES
+        # Version-portable read, same as tests/test_agent_output_schemas.py::
+        # _output_retry_budget: the attribute is `_max_result_retries` on
+        # pydantic-ai 1.89 (the version floor this repo pins) and
+        # `_max_output_retries` on 1.107+. Naming only one of them makes this
+        # test fail on the pinned version rather than on a real regression.
+        budget = next(
+            getattr(quiz_agent, attr)
+            for attr in ("_max_output_retries", "_max_result_retries")
+            if getattr(quiz_agent, attr, None) is not None
+        )
+        assert budget == _OUTPUT_RETRIES

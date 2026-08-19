@@ -17,7 +17,6 @@ import logging
 from difflib import SequenceMatcher
 from typing import Literal
 
-from google.genai.types import ThinkingConfig
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.google import GoogleModelSettings
@@ -33,16 +32,19 @@ from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 logger = logging.getLogger(__name__)
 
-# Output-validation retry budget, read back by _on_final_attempt so the
-# gates below know when they are out of moves.
+# Output-validation retry budget. Nothing in this module raises ModelRetry:
+# the single output validator (_select_requested_quiz) SELECTS a quiz out of
+# what the model produced instead of sending it back, so this budget is
+# spent only on pydantic-ai's own retries for output that fails schema
+# validation outright.
 #
 # Stays at the codebase-wide OUTPUT_RETRY_BUDGET (tests/
 # test_agent_output_schemas.py pins every structured agent to it).
-# Raising it to 3 to give the three gates more room was tried and
+# Raising it to 3 to give output validation more room was tried and
 # reverted: ORCHESTRATOR_LIMITS caps the quiz run at 8 model requests,
 # and a tool-calling run plus four generation attempts sits right on that
 # ceiling — trading "quiz is a bit definitional" for "UsageLimitExceeded
-# 502" is a bad trade. The gates degrade on the last attempt instead.
+# 502" is a bad trade. The validator degrades instead of re-asking.
 _OUTPUT_RETRIES = 2
 
 
@@ -274,21 +276,23 @@ _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 # generates for a long time and then errors" report. The same request with
 # thinking off returns in ~18s.
 #
-# There is nothing for thinking to do here: the workflow is fixed by the
-# system prompt, the concept selection comes from tool results, and the
-# output shape is constrained by the schema. flash-lite accepts
-# thinking_budget=0 (unlike Pro). 8192 is the cap flashcard.py has used
-# in production and comfortably fits the largest quiz the UI can ask for
-# (15 requested → 17 generated, a few hundred tokens each); a truncated
-# structured output would fail validation and cost a whole retry.
+# Only `max_tokens` is pinned HERE. Agent-level model_settings apply to
+# EVERY run, including a run whose `model=` kwarg swaps in gemini-2.5-pro
+# for the "smart" preference — and Pro rejects thinking_budget=0 (see
+# agents/flashcard.py). So the thinking config is chosen per run at the
+# route layer instead, by routes/quiz.py::_build_quiz_model_settings, for
+# the same reason agents/chat_tutor.py keeps its Pro thinking cap out of
+# the agent: one agent instance serves both tiers.
 #
-# Mirrors agents/flashcard.py, which pinned the same settings for the same
-# reason. temperature stays at the provider default — quiz variety is
-# wanted, and it was never the cost problem.
-_QUIZ_SETTINGS = GoogleModelSettings(
-    max_tokens=8192,
-    google_thinking_config=ThinkingConfig(thinking_budget=0),
-)
+# 8192 is the cap flashcard.py has used in production and comfortably fits
+# the largest quiz this route can generate (10 questions — quiz_ask_size
+# clamps the ask to Quiz.questions' own max_length of 10 — at a few hundred
+# tokens each); a truncated structured output would fail validation and
+# cost a whole retry.
+#
+# temperature stays at the provider default — quiz variety is wanted, and
+# it was never the cost problem.
+_QUIZ_SETTINGS = GoogleModelSettings(max_tokens=8192)
 
 quiz_agent = Agent[SaplingDeps, Quiz](
     model=model_for("quiz"),
@@ -484,7 +488,17 @@ def select_quiz_questions(
 
     if len(chosen) < wanted:
         shortfall = wanted - len(chosen)
-        extra = [q for q in conceptual if q not in chosen][:shortfall]
+        # Identity, not value equality. `q not in chosen` compares QuizQuestion
+        # by field values (Pydantic's __eq__), and the model genuinely does
+        # emit duplicates — RULE 1 of the system prompt tells it to keep going
+        # when it "runs out of distinct angles around question 6". Two
+        # field-identical conceptual questions would then look like one
+        # already-chosen question, the backfill would drop the second, and the
+        # student would get a SHORT quiz with a usable question left unused.
+        # Every other membership decision in this function (and the reordering
+        # below) keys on id(), so this one does too.
+        already = {id(q) for q in chosen}
+        extra = [q for q in conceptual if id(q) not in already][:shortfall]
         chosen += extra
         if extra:
             notes.append(
