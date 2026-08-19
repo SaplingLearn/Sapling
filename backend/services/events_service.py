@@ -44,9 +44,11 @@ session.started               usage     session_id, mode, offering_id (+ content
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
 rag.chunks_dropped            error     doc_id, dropped, total
+document.dedup_lookup_failed  error     error_type
 ============================  ========  =====================================================
 
-Note on the two ``rag.*`` rows (#482): they are ``category="error"``, but
+Note on the ``rag.*`` and ``document.dedup_lookup_failed`` rows (#482): they
+are ``category="error"``, but
 ``/api/admin/analytics/errors`` filters on ``event_type like error.*`` and
 projects an HTTP shape (path / method / status_code / duration_ms), so these
 surface through ``/usage/summary``'s ``by_event_type`` breakdown instead of
@@ -96,6 +98,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "session.ended",
     "rag.retrieval_failed",
     "rag.chunks_dropped",
+    "document.dedup_lookup_failed",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

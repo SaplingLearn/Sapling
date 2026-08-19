@@ -182,6 +182,12 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("documents", "id", "summary"),
     ("documents", "id", "concept_notes"),
     ("documents", "id", "extracted_text"),
+    # Every column routes/documents.py::_persist_document encrypts belongs
+    # here, and this one carries the whole pipeline result — summary text,
+    # concept descriptions, and syllabus contents. This manifest is what
+    # enforces the encrypted-column set at rest on every lane run, so a
+    # regression that wrote it in plaintext would otherwise ship undetected.
+    ("documents", "id", "agent_result"),
     ("notes", "id", "title"),
     ("notes", "id", "body"),
     ("notes", "id", "last_summary"),
