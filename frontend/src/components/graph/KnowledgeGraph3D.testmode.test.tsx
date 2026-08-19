@@ -20,36 +20,47 @@ import type { GraphNode } from "@/lib/data";
 
 vi.stubEnv("NEXT_PUBLIC_TEST_MODE", "1");
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let lastProps: Record<string, any> | null = null;
+// Exactly the props these tests read — spelled out so the capture needs no
+// `any` (and therefore no eslint suppression). No index signature: forwardRef
+// runs its props type through `PropsWithoutRef`, and `Omit` collapses an
+// index-signature type down to just the index signature, losing every key.
+type CapturedProps = {
+  cooldownTicks: number;
+  warmupTicks: number;
+};
+let lastProps: CapturedProps | null = null;
 let zoomToFitSpy = vi.fn();
 
 vi.mock("react-force-graph-3d", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default: React.forwardRef((props: any, ref: React.Ref<unknown>) => {
-    lastProps = props;
+  // A NAMED function inside forwardRef so the component has a display name,
+  // and props are recorded in an EFFECT rather than in the render body:
+  // reassigning a module-scope variable during render is a render-phase side
+  // effect (react-hooks/globals) that tears under a discarded concurrent
+  // render. Testing Library's render/rerender/act all flush passive effects
+  // before returning, so tests still observe the props synchronously.
+  default: React.forwardRef(function ForceGraph3DMock(
+    props: CapturedProps,
+    ref: React.Ref<unknown>,
+  ) {
     React.useImperativeHandle(ref, () => ({ zoomToFit: zoomToFitSpy }));
+    React.useEffect(() => {
+      lastProps = props;
+    });
     return null;
   }),
 }));
 
-vi.mock("next/dynamic", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default: (loader: any) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let Resolved: any = () => null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Promise.resolve(loader()).then((mod: any) => {
-      Resolved = mod?.default ?? mod;
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const Wrapper = (props: any) => {
-      const C = Resolved;
-      return C ? C(props) : null;
-    };
-    return Wrapper;
-  },
-}));
+// Shared passthrough (#538) — it renders the resolved component via
+// createElement instead of calling it, so the stub's hooks land in their own
+// fiber, and it accepts this component's loader, which resolves to a bare
+// function component rather than a module namespace.
+//
+// `await import` rather than a static import because vitest hoists vi.mock
+// factories above every import in the file — a static binding would still be
+// uninitialised when the factory runs.
+vi.mock("next/dynamic", async () =>
+  (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
+);
 
 let KnowledgeGraph3D: (typeof import("./KnowledgeGraph3D"))["KnowledgeGraph3D"];
 

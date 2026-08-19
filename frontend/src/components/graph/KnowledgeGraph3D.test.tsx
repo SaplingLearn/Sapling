@@ -48,9 +48,30 @@ import {
   BASE_LINK_ALPHA,
 } from "./graph3dHelpers";
 
+// Exactly the props these tests read. Spelling them out is what lets the
+// capture be a precise type instead of the `Record<string, any>` it replaces
+// (and that type's @typescript-eslint/no-explicit-any suppression). No index
+// signature on purpose: `forwardRef` runs its props type through
+// `PropsWithoutRef`, and `Omit` collapses an index-signature type down to
+// just the index signature, losing every named key.
+type CapturedProps = {
+  graphData: {
+    nodes: (GraphNode & { x?: number; y?: number; z?: number })[];
+    links: { source: unknown; target: unknown; strength: number }[];
+  };
+  nodeThreeObject: (n: object) => THREE.Group;
+  linkColor: (l: object) => string;
+  linkWidth: (l: object) => number;
+  onNodeClick: (raw: object) => void;
+  onNodeHover: (raw: object | null) => void;
+  onEngineStop: () => void;
+  cooldownTicks: number;
+  warmupTicks: number;
+};
+
 // Capture the props the component passes to ForceGraph3D so tests can
 // drive its callbacks. Reset in beforeEach.
-let lastProps: Record<string, any> | null = null;
+let lastProps: CapturedProps | null = null;
 let zoomToFitSpy = vi.fn();
 // Drives the auto-fit's bbox-stabilization poll (see handleEngineStop in
 // KnowledgeGraph3D.tsx) — tests configure a per-call return sequence via
@@ -58,13 +79,23 @@ let zoomToFitSpy = vi.fn();
 let getGraphBboxMock = vi.fn<() => unknown>();
 
 vi.mock("react-force-graph-3d", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default: React.forwardRef((props: any, ref: React.Ref<unknown>) => {
-    lastProps = props;
+  // A NAMED function inside forwardRef so the component has a display name,
+  // and props are recorded in an EFFECT rather than in the render body:
+  // reassigning a module-scope variable during render is a render-phase side
+  // effect (react-hooks/globals) that tears under a discarded concurrent
+  // render. Testing Library's render/rerender/act all flush passive effects
+  // before returning, so tests still observe the props synchronously.
+  default: React.forwardRef(function ForceGraph3DMock(
+    props: CapturedProps,
+    ref: React.Ref<unknown>,
+  ) {
     React.useImperativeHandle(ref, () => ({
       zoomToFit: zoomToFitSpy,
       getGraphBbox: getGraphBboxMock,
     }));
+    React.useEffect(() => {
+      lastProps = props;
+    });
     return null;
   }),
 }));
@@ -74,46 +105,41 @@ vi.mock("react-force-graph-3d", () => ({
 // THREE.Object3D keeps `group.add(...)` happy.
 vi.mock("three-spritetext", async () => {
   const three = await vi.importActual<typeof import("three")>("three");
+  // Mirrors the real (text, textHeight, color) constructor. The component
+  // passes all three there rather than through setters on purpose: every
+  // three-spritetext setter re-runs _genCanvas, so the setter form rasterised
+  // each label five times.
   class SpriteTextMock extends three.Object3D {
     text: string;
-    textHeight = 2;
-    color = "";
+    textHeight: number;
+    color: string;
     fontFace = "";
     fontWeight = "";
     material = { opacity: 1, transparent: false };
-    constructor(text: string) {
+    constructor(text: string, textHeight = 2, color = "") {
       super();
       this.text = text;
+      this.textHeight = textHeight;
+      this.color = color;
     }
   }
   return { default: SpriteTextMock };
 });
 
-// next/dynamic is used to client-only-load react-force-graph-3d. In
-// tests we want the mock module above to render synchronously, so we
-// replace `dynamic(loader)` with a component that calls the resolved
-// module's default export directly. Because the mock for
-// react-force-graph-3d is hoisted, `loader()` resolves immediately and
-// our require fallback grabs the same object the runtime would.
-vi.mock("next/dynamic", () => ({
-  default: (loader: any) => {
-    // Resolve the loader once, synchronously where possible. Vitest's
-    // module mocks resolve as already-fulfilled promises, so we read
-    // the .then callback synchronously via `.then()` and stash the
-    // component. The wrapper below renders whatever's been resolved.
-    let Resolved: any = () => null;
-    Promise.resolve(loader()).then((mod: any) => {
-      Resolved = mod?.default ?? mod;
-    });
-    const Wrapper = (props: any) => {
-      // Re-resolve at render time too — covers the (rare) case where
-      // the microtask hasn't flushed yet on first paint.
-      const C = Resolved;
-      return C ? C(props) : null;
-    };
-    return Wrapper;
-  },
-}));
+// next/dynamic is used to client-only-load react-force-graph-3d; in tests we
+// want the mock module above to render synchronously. The shared #538 helper
+// does that for every component test: it renders the resolved component via
+// createElement instead of calling it as a plain function (so the stub's
+// hooks land in their own fiber rather than being spliced into the wrapper's
+// hook order), and it accepts this component's loader, which resolves to a
+// bare function component rather than a module namespace.
+//
+// `await import` rather than a static import because vitest hoists vi.mock
+// factories above every import in the file — a static binding would still be
+// uninitialised when the factory runs.
+vi.mock("next/dynamic", async () =>
+  (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
+);
 
 import { KnowledgeGraph3D } from "./KnowledgeGraph3D";
 import type { GraphEdge, GraphNode } from "@/lib/data";
@@ -173,12 +199,22 @@ beforeEach(() => {
  * (mirrors src/components/marketing/graph/KnowledgeGraphDemo.test.tsx). */
 function captureAnimationFrames() {
   const queue: FrameRequestCallback[] = [];
+  // Ids handed out per scheduled frame, 1-based. The component stores the
+  // most recent one in pollRafIdRef so its unmount cleanup can cancel it —
+  // `ids` plus the `cancel` spy is what lets a test assert that.
+  const ids: number[] = [];
   const raf = vi
     .spyOn(window, "requestAnimationFrame")
-    .mockImplementation((cb: FrameRequestCallback) => queue.push(cb));
-  const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    .mockImplementation((cb: FrameRequestCallback) => {
+      const id = queue.push(cb);
+      ids.push(id);
+      return id;
+    });
+  const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
   return {
     queue,
+    ids,
+    cancel,
     /** Run the next queued frame inside `act`. */
     step() {
       const cb = queue.shift();
@@ -187,7 +223,7 @@ function captureAnimationFrames() {
     },
     restore() {
       raf.mockRestore();
-      caf.mockRestore();
+      cancel.mockRestore();
     },
   };
 }
@@ -486,7 +522,10 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
 
     // No hover: uniform base alpha.
     let linkColor = lastProps!.linkColor as (l: object) => string;
-    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(138, 131, 114, ${BASE_LINK_ALPHA})`);
+    // Resting and dimmed edges are both built from theme.link (--ink-400),
+    // never from a hand-copied rgb triplet (final-review P3).
+    const baseRgb = hexToRgbTriplet(FALLBACK_THEME.link);
+    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(${baseRgb}, ${BASE_LINK_ALPHA})`);
 
     act(() => {
       (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
@@ -499,7 +538,7 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     const litRgb = hexToRgbTriplet(FALLBACK_THEME.accent);
     linkColor = lastProps!.linkColor as (l: object) => string; // re-keyed accessor
     expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(${litRgb}, ${LIT_LINK_ALPHA})`);
-    expect(linkColor({ source: "b", target: "c" })).toBe(`rgba(138, 131, 114, ${DIM_LINK_ALPHA})`);
+    expect(linkColor({ source: "b", target: "c" })).toBe(`rgba(${baseRgb}, ${DIM_LINK_ALPHA})`);
     // The library swaps ids for node-object refs once the simulation runs.
     expect(linkColor({ source: { id: "a" }, target: { id: "b" } })).toBe(
       `rgba(${litRgb}, ${LIT_LINK_ALPHA})`,
@@ -608,23 +647,56 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     // Safety net: a bbox that keeps changing every frame (never two
     // consecutive equal reads) must not poll forever — it still fits once
     // the frame cap trips, using whatever bbox was last read.
-    getGraphBboxMock.mockImplementation(() => ({ x: [0, Math.random()], y: [0, 0], z: [0, 0] }));
+    //
+    // A monotonic counter, not Math.random(): random values can repeat and
+    // stabilize the poll early, and the read-count assertion below pins the
+    // stop to the cap itself — with only "zoomToFit fired once", a MAX_FRAMES
+    // regression from 60 to 2 would still pass.
+    const MAX_FRAMES = 60; // mirrors handleEngineStop's own cap
+    let bboxCounter = 0;
+    getGraphBboxMock.mockImplementation(() => ({ x: [0, ++bboxCounter], y: [0, 0], z: [0, 0] }));
 
     const raf = captureAnimationFrames();
     render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
-    const onEngineStop = lastProps!.onEngineStop as () => void;
+    const onEngineStop = lastProps!.onEngineStop;
 
     act(() => onEngineStop());
     // Drain every frame the poll schedules (each step may enqueue the next
     // one) until the queue empties — bounded well above the component's own
     // internal frame cap so the test fails loudly instead of hanging if the
-    // cap regresses.
-    for (let i = 0; i < 200 && raf.queue.length > 0; i++) {
+    // cap regresses upward.
+    for (let i = 0; i < MAX_FRAMES * 4 && raf.queue.length > 0; i++) {
       raf.step();
     }
     expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
     expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+    // Exactly one bbox read per frame and exactly MAX_FRAMES frames: the poll
+    // stopped at the cap, not at an accidental early stabilization.
+    expect(getGraphBboxMock).toHaveBeenCalledTimes(MAX_FRAMES);
     expect(raf.queue.length).toBe(0); // no frame scheduled after the cap-triggered fit
+
+    raf.restore();
+  });
+
+  it("cancels the pending bbox-poll frame on unmount", () => {
+    // The poll spans up to MAX_FRAMES (~1s at 60fps). Unmounting mid-poll
+    // must cancel the scheduled frame rather than leave it to fire against a
+    // torn-down instance — pollRafIdRef exists solely so the unmount cleanup
+    // can do this, and nothing asserted it until now.
+    getGraphBboxMock.mockReturnValue({ x: [0, 1], y: [0, 1], z: [0, 1] });
+
+    const raf = captureAnimationFrames();
+    const { unmount } = render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    act(() => lastProps!.onEngineStop());
+
+    // One frame scheduled and never run — the poll is mid-flight.
+    expect(raf.ids).toEqual([1]);
+    expect(raf.cancel).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(raf.cancel).toHaveBeenCalledTimes(1);
+    expect(raf.cancel).toHaveBeenCalledWith(raf.ids[0]);
 
     raf.restore();
   });
@@ -670,5 +742,88 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     expect(zoomToFitSpy).not.toHaveBeenCalled();
 
     raf.restore();
+  });
+
+  it("keeps the linkWidth accessor identity stable across a hover", () => {
+    // three-forcegraph treats linkWidth as object-invalidating for links:
+    // `if (state._flushObjects || hasAnyPropChanged(['linkThreeObject',
+    // 'linkThreeObjectExtend', 'linkWidth'])) state.linkDataMapper.clear();`
+    // clear() is digest([]) — it scene.remove()s and disposes EVERY link
+    // mesh (all CylinderGeometry here, since the widths are never zero) and
+    // rebuilds them all. A hoverId-keyed accessor handed the library a new
+    // identity on every pointer enter AND leave, i.e. two full teardowns of
+    // the link layer per hover. The spec asks for "no per-hover geometry
+    // rebuilds".
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "b" }), makeNode({ id: "c" })];
+    const edges: GraphEdge[] = [
+      { source: "a", target: "b", strength: 1 },
+      { source: "b", target: "c", strength: 1 },
+    ];
+    render(<KnowledgeGraph3D nodes={nodes} edges={edges} />);
+
+    const linkWidth = lastProps!.linkWidth;
+    const linkColorBefore = lastProps!.linkColor;
+    const resting = linkWidth({ source: "a", target: "b", strength: 1 });
+
+    act(() => {
+      lastProps!.onNodeHover({ id: "a" });
+    });
+
+    // Same function object: the library sees no linkWidth change at all.
+    expect(lastProps!.linkWidth).toBe(linkWidth);
+    // linkColor's identity DID change — that is what triggers the link
+    // digest whose onUpdateObj re-reads the width accessor per link, so
+    // widths still follow the hover without the clear().
+    expect(lastProps!.linkColor).not.toBe(linkColorBefore);
+    expect(linkWidth({ source: "a", target: "b", strength: 1 })).toBeCloseTo(resting + 0.6);
+    expect(linkWidth({ source: "b", target: "c", strength: 1 })).toBeCloseTo(resting);
+
+    act(() => {
+      lastProps!.onNodeHover(null);
+    });
+
+    expect(lastProps!.linkWidth).toBe(linkWidth);
+    expect(linkWidth({ source: "a", target: "b", strength: 1 })).toBeCloseTo(resting);
+  });
+
+  it("nodeThreeObject applies the live focus state to nodes it builds mid-hover", () => {
+    // The composition tests above build node objects BEFORE driving
+    // onNodeHover, which is the opposite of the real order. In production a
+    // dataset refresh while the pointer rests on a node (a tutor
+    // graph_update refreshing the Learn rail, a /tree filter change) makes
+    // the library rebuild every node object with hover already active, so
+    // nodeThreeObject must hand back already-focused objects — otherwise the
+    // hovered node keeps its halo while nothing dims, until the pointer
+    // moves. The [applyFocus, highlightId] re-assert effect cannot cover it:
+    // it runs at commit, before the library rebuilds.
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "b" }), makeNode({ id: "c" })];
+    const edges: GraphEdge[] = [{ source: "a", target: "b", strength: 1 }];
+    render(<KnowledgeGraph3D nodes={nodes} edges={edges} highlightId="c" />);
+
+    act(() => {
+      lastProps!.onNodeHover({ id: "a" });
+    });
+
+    // Rebuild AFTER the hover landed — the order the library actually uses.
+    const build = lastProps!.nodeThreeObject;
+    const gA = partsOf(build({ ...nodes[0] }));
+    const gB = partsOf(build({ ...nodes[1] }));
+    const gC = partsOf(build({ ...nodes[2] }));
+
+    expect((gA.sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect(gA.halo.visible).toBe(true); // hovered
+    // Neighbor stays lit, no halo.
+    expect((gB.sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect(gB.halo.visible).toBe(false);
+    // The stranger is born dimmed — sphere color, sphere opacity and label
+    // opacity all applied, not just the halo.
+    const cMat = gC.sphere.material as THREE.MeshLambertMaterial;
+    expect(cMat.opacity).toBeCloseTo(DIM_NODE_OPACITY);
+    expect(`#${cMat.color.getHexString()}`).toBe(FALLBACK_THEME.dim);
+    expect(gC.label.material.opacity).toBeCloseTo(DIM_LABEL_OPACITY);
+    // ...while still keeping its persistent highlightId halo, which also
+    // pins that highlightRef is mirrored (in an effect) before the library
+    // ever calls nodeThreeObject.
+    expect(gC.halo.visible).toBe(true);
   });
 });

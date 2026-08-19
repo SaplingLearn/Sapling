@@ -78,30 +78,6 @@
       "count": 12
     }
   },
-  "src/components/graph/KnowledgeGraph3D.test.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    },
-    "react-hooks/globals": {
-      "count": 1
-    },
-    "react/display-name": {
-      "count": 1
-    }
-  },
-  "src/components/graph/KnowledgeGraph3D.testmode.test.tsx": {
-    "react-hooks/globals": {
-      "count": 1
-    },
-    "react/display-name": {
-      "count": 1
-    }
-  },
-  "src/components/graph/KnowledgeGraph3D.tsx": {
-    "react-hooks/refs": {
-      "count": 2
-    }
-  },
   "src/components/marketing/SignInModal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1

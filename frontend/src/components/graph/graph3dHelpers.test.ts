@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import type { GraphNode } from "@/lib/data";
 import {
   buildAdjacency,
+  hexToRgbTriplet,
   mixHex,
   baseNodeColor,
   labelSpec,
@@ -91,5 +92,24 @@ describe("labelSpec", () => {
 describe("resolveGraphTheme", () => {
   it("falls back to the hex constants when CSS vars are absent (jsdom)", () => {
     expect(resolveGraphTheme()).toEqual(FALLBACK_THEME);
+  });
+});
+
+describe("hexToRgbTriplet", () => {
+  it("converts #rrggbb to the comma-separated triplet rgba() needs", () => {
+    expect(hexToRgbTriplet("#2d8f5c")).toBe("45, 143, 92");
+    expect(hexToRgbTriplet("#000000")).toBe("0, 0, 0");
+    expect(hexToRgbTriplet("#ffffff")).toBe("255, 255, 255");
+  });
+  it("accepts the hash-less form and surrounding whitespace", () => {
+    expect(hexToRgbTriplet("8a8372")).toBe("138, 131, 114");
+    expect(hexToRgbTriplet("  #8A8372 ")).toBe("138, 131, 114");
+  });
+  it("falls back to black on anything that is not 6-digit hex", () => {
+    // Not a throw: this feeds a CSS string, so an unparseable token must
+    // degrade to a visible color rather than emit `rgba(undefined, …)`.
+    expect(hexToRgbTriplet("nope")).toBe("0, 0, 0");
+    expect(hexToRgbTriplet("#abc")).toBe("0, 0, 0");
+    expect(hexToRgbTriplet("rgb(1,2,3)")).toBe("0, 0, 0");
   });
 });
