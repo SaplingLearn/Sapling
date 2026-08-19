@@ -28,6 +28,7 @@ from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
 from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
+from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
@@ -146,6 +147,11 @@ app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
 # _drop_request_arguments; request/response headers are not captured
 # (capture_headers=False); and the separate arguments/endpoint spans are off
 # (extra_spans=False). No student content leaves the process on request spans.
+# Must run BEFORE instrument_fastapi: on FastAPI >= 0.138 the otel route
+# resolver raises AttributeError on any wrong-method request, turning every
+# 405 into a 500. See services/otel_fastapi_compat.py for the full analysis.
+otel_fastapi_compat.install_route_details_guard()
+
 logfire.instrument_fastapi(
     app,
     capture_headers=False,
