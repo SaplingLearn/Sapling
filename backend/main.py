@@ -330,18 +330,61 @@ def _refuse_if_port_taken(port: int) -> None:
     to succeed. Whoever hits this next should be told, not left to infer it
     from an impossible 404.
 
+    Both loopback families are probed (see below): the guard's whole value is
+    telling the next person, and it can only do that if it actually finds the
+    other server.
+
     Dev-entrypoint only (`python main.py`). Containers and Railway import
     `main:app` directly and never reach this.
     """
     import socket
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.settimeout(0.4)
-        if probe.connect_ex(("127.0.0.1", port)) != 0:
-            return
+    # Probe BOTH loopback families. `localhost` resolves to 127.0.0.1 *and*
+    # ::1 on any dual-stack box, and uvicorn binds whichever the --host it was
+    # given resolves to — so an AF_INET-only probe of 127.0.0.1 walks straight
+    # past a stale server on ::1 and this guard silently reports "port free"
+    # for exactly the situation it exists to name. `localhost:8000` in the
+    # browser would then still reach the old server.
+    #
+    # The two literals are always probed, and getaddrinfo's answer is folded
+    # in on top of them so a host whose `localhost` maps somewhere unusual
+    # (a trimmed /etc/hosts, an IPv6-only resolver) is still covered.
+    try:
+        resolved = [
+            (info[0], info[4])
+            for info in socket.getaddrinfo("localhost", port, type=socket.SOCK_STREAM)
+        ]
+    except socket.gaierror:
+        resolved = []
+
+    answering: str | None = None
+    seen: set[tuple[int, str]] = set()
+    for family, sockaddr in [
+        (socket.AF_INET, ("127.0.0.1", port)),
+        (socket.AF_INET6, ("::1", port)),
+        *resolved,
+    ]:
+        key = (family, str(sockaddr[0]))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.4)
+                if probe.connect_ex(sockaddr) == 0:
+                    answering = str(sockaddr[0])
+                    break
+        except OSError:
+            # The host doesn't support this family at all (an IPv6-less
+            # container). Nothing can be listening on an address the kernel
+            # can't even create a socket for, so it isn't the stale server.
+            continue
+
+    if answering is None:
+        return
 
     raise SystemExit(
-        f"\nPort {port} is already serving.\n\n"
+        f"\nPort {port} is already serving — something answers on {answering}.\n\n"
         f"On Windows a second bind SUCCEEDS but receives no traffic — this\n"
         f"process would start, look healthy, and serve nobody, while the\n"
         f"existing server (possibly from another worktree, on older code)\n"
