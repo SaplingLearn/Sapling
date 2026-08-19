@@ -790,25 +790,42 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
             "reason": upd.get("reason", ""),
             "created_at": now,
         }
-        # E7: the caller's categorical read of WHY mastery moved
-        # (quiz submit computes correct/partial/confusion from the score
-        # ratio). It was computed and then dropped here for months, so the
-        # event log recorded how much mastery moved but never what kind of
-        # evidence moved it.
+        # E7: the caller's categorical read of WHY mastery moved. It was
+        # computed and then dropped here for months, so the event log
+        # recorded how much mastery moved but never what kind of evidence
+        # moved it.
         #
-        # Omitted rather than written as an explicit null when absent: every
-        # non-quiz caller (tutor tools, the document pipeline, manual adds)
-        # supplies none, and naming a column PostgREST's schema cache doesn't
-        # have is a hard 400 — so omitting keeps THOSE paths working on an
+        # TWO producers supply one, and both namespace their values by
+        # producer because the column has no CHECK and their vocabularies
+        # are otherwise disjoint-but-confusable:
+        #   * routes/quiz.py::submit_quiz — quiz_correct / quiz_partial /
+        #     quiz_confusion, from the score ratio;
+        #   * agents/tools/graph.py::update_mastery_tool (the chat tutor) —
+        #     tutor_interaction / tutor_correction / tutor_quiz, and only
+        #     when the model actually classified the turn (the tool's field
+        #     is nullable and the key is omitted when it is None).
+        # Callers that classify nothing at all (the document pipeline, notes
+        # extraction, manual adds via add_node) supply no key, and NULL is
+        # the honest value for "this writer doesn't classify".
+        #
+        # Omitted rather than written as an explicit null when absent because
+        # naming a column PostgREST's schema cache doesn't have is a hard
+        # 400 — so omitting keeps the non-classifying paths working on an
         # environment that took this code before the migration.
         #
-        # It does NOT make the quiz path safe there, and the failure is not
-        # cosmetic: submit_quiz always supplies an event_type, so a
-        # code-before-migration deploy 400s this insert, the exception
-        # propagates out of apply_graph_update (submit does not wrap it),
-        # and the 500 lands AFTER the atomic completed_at claim but BEFORE
-        # score/answers are written — losing the graded attempt, not just
-        # its mastery event. The migration
+        # It does NOT make the two classifying paths safe there, and the
+        # blast radius is not cosmetic:
+        #   * the TUTOR is the highest-volume writer here (a mastery update
+        #     can land on every conversational turn), and it takes the
+        #     `_insert_mastery_event` retry — one wasted 400 plus a warning
+        #     per classified turn until the migration lands;
+        #   * submit_quiz always supplies one, and a code-before-migration
+        #     deploy 400s that insert. The retry is what keeps it from
+        #     propagating out of apply_graph_update (submit does not wrap the
+        #     call), which would land a 500 AFTER the atomic completed_at
+        #     claim but BEFORE score/answers are written — losing the graded
+        #     attempt, not just its mastery event.
+        # The migration
         # (20260814051517_node_mastery_events_event_type.sql) must be
         # applied strictly before this code ships to any environment.
         event_type = upd.get("event_type")

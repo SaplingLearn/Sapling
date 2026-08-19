@@ -497,19 +497,41 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
-def _resolve_bu_code(course_id: str | None) -> str | None:
+class BuCodeLookup(NamedTuple):
+    """Tri-state result of course id -> BU course_code resolution (E8).
+
+    `code` set                  — resolved.
+    `code=None, failed=False`   — this course genuinely has no BU code.
+    `code=None, failed=True`    — the read raised; we do not know.
+
+    The last two were one bare `None` until E8 started reporting reasons, and
+    collapsing them made a Supabase outage report as `course_unresolved` —
+    "this course has no BU code", a statement about the data. E8 exists to
+    tell problems apart, so the can't-tell case has to stay separable.
+    """
+
+    code: str | None = None
+    failed: bool = False
+
+
+def _resolve_bu_code(course_id: str | None) -> BuCodeLookup:
     """Resolve a Sapling course UUID to its BU course_code (course_chunks
-    partition key). None if unresolvable OR if the lookup fails — grounding
-    must never break quiz generation."""
+    partition key). Never raises — grounding must never break quiz
+    generation — so a failed read comes back as `failed=True` rather than as
+    an exception or an indistinguishable None."""
     if not course_id:
-        return None
+        return BuCodeLookup()
     try:
         rows = table("courses").select(
             "course_code", filters={"id": f"eq.{course_id}"}, limit=1
         )
     except Exception:
-        return None
-    return (rows[0].get("course_code") if rows else None) or None
+        logger.warning(
+            "quiz: course_code lookup failed for course=%s; grounding "
+            "coverage is unknown, not absent", course_id, exc_info=True,
+        )
+        return BuCodeLookup(failed=True)
+    return BuCodeLookup(code=(rows[0].get("course_code") if rows else None) or None)
 
 
 class CourseMaterial(NamedTuple):
@@ -541,6 +563,13 @@ class CourseMaterial(NamedTuple):
     course_chunks: int | None = None
     #: The BU course_code partition key, or None when unresolvable.
     bu_code: str | None = None
+    #: Whether assembling this material FAILED rather than found nothing:
+    #: the course_code read raised, or `_course_material` itself blew up and
+    #: the caller degraded. Distinct from `bu_code is None` because E8's whole
+    #: job is telling problems apart, and "we could not look" is a different
+    #: problem from "this course has no BU code" — the honest label for the
+    #: former is `coverage_unknown`, not `course_unresolved`.
+    resolution_failed: bool = False
 
     @property
     def chunk_count(self) -> int:
@@ -568,6 +597,10 @@ class CourseMaterial(NamedTuple):
 
 
 _EMPTY_MATERIAL = CourseMaterial()
+# Grounding could not be assessed at all (an unexpected raise out of
+# `_course_material`). Distinct from _EMPTY_MATERIAL, which means "we looked
+# and there was nothing".
+_UNKNOWN_MATERIAL = CourseMaterial(resolution_failed=True)
 
 # k for concept-scoped retrieval. Named because E8 reports it and the audit's
 # proposed budget wants to trim it from 5 to 4 once the numbers are measured
@@ -614,11 +647,14 @@ def _course_material(course_id: str | None, concept_name: str) -> CourseMaterial
 
     Returns an empty CourseMaterial if nothing is available (no course, no
     bu_code, no chunks) or if retrieval raises — grounding must never break
-    quiz generation.
+    quiz generation. A course_code read that FAILED is reported as such
+    (`resolution_failed`) rather than as an absent bu_code, so E8 can tell
+    "we could not look" from "there is nothing to look up".
     """
-    bu_code = _resolve_bu_code(course_id)
+    lookup = _resolve_bu_code(course_id)
+    bu_code = lookup.code
     if not bu_code:
-        return _EMPTY_MATERIAL
+        return _UNKNOWN_MATERIAL if lookup.failed else _EMPTY_MATERIAL
     blocks: list[str] = []
     try:
         catalog = _get_catalog_chunk(bu_code)
@@ -668,12 +704,19 @@ def _log_rag_uncovered(
     Generation is NOT blocked on this — a course with nothing indexed is a
     legitimate mode, and refusing to quiz a student because their class
     hasn't uploaded slides would be worse than a general-knowledge quiz.
-    But it stops being invisible: the three reasons below are three
-    different problems, and telling them apart is the whole point.
+    But it stops being invisible: the reasons below are four different
+    problems, and telling them apart is the whole point.
     """
     if material.rag_grounded:
         return
-    if material.bu_code is None:
+    if material.resolution_failed:
+        # The course_code read raised, or assembly blew up entirely. We never
+        # learned whether this course has material, so `course_unresolved`
+        # ("it has no BU code") would be an assertion about data we never
+        # read. `coverage_unknown` is the honest can't-tell label, and it
+        # already exists for exactly this shape of ignorance.
+        reason = "coverage_unknown"
+    elif material.bu_code is None:
         reason = "course_unresolved"
     elif material.course_chunks is None:
         reason = "coverage_unknown"
@@ -823,7 +866,10 @@ async def _quiz_via_agent(
             "quiz: course-material assembly failed (%s); generating ungrounded",
             type(material).__name__, exc_info=material,
         )
-        material = _EMPTY_MATERIAL
+        # _UNKNOWN_MATERIAL, not _EMPTY_MATERIAL: assembly raised, so we know
+        # nothing about this course's coverage. E8 must report
+        # `coverage_unknown` rather than claiming the course has no BU code.
+        material = _UNKNOWN_MATERIAL
     if isinstance(recent, BaseException):
         logger.warning(
             "quiz: recently-asked read failed (%s); generating without a "
@@ -1599,13 +1645,19 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     mastery_score_after = mastery_after(mastery_before, score=score, total=total)
     mastery_delta = mastery_score_after - mastery_before
 
+    # E7: the categorical reading of the attempt, namespaced by producer.
+    # `node_mastery_events.event_type` has two independent writers and no
+    # CHECK constraint — this route and the tutor's `update_mastery_tool`
+    # (tutor_interaction / tutor_correction / tutor_quiz) — so an unprefixed
+    # "quiz" or "correct" would leave the column carrying two disjoint
+    # vocabularies with no way to tell which producer wrote a given row.
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
-        event_type = "correct"
+        event_type = "quiz_correct"
     elif score_ratio >= 0.4:
-        event_type = "partial"
+        event_type = "quiz_partial"
     else:
-        event_type = "confusion"
+        event_type = "quiz_confusion"
 
     # Route the mastery write through the sanctioned graph path. The graph
     # keys on the ABSTRACT course id; apply_graph_update looks the node up by

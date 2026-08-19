@@ -593,7 +593,7 @@ def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
         patch(
             "routes.quiz._course_material",
             return_value=CourseMaterial(
-                block="COURSE STUFF", chunk_ids=("c1", "c2"),
+                block="COURSE STUFF", chunk_ids=("c1", "c2"), k_chunks=2,
                 has_catalog=True, bu_code="CAS CS 330",
             ),
         ),
@@ -730,6 +730,53 @@ def test_rag_uncovered_distinguishes_no_match_from_no_material(sink):
     ev = _of_type(sink, "quiz.rag_uncovered")[0]
     assert ev["payload"]["reason"] == "no_match_for_concept"
     assert ev["payload"]["course_chunks"] == 42
+
+
+def test_rag_uncovered_calls_a_failed_lookup_unknown_not_unresolved(sink):
+    """E8's whole job is telling problems apart, and `_resolve_bu_code`
+    returns nothing both for "this course has no BU code" and for "the read
+    threw". Reporting the second as `course_unresolved` asserts something
+    about data we never read; `coverage_unknown` is the honest label."""
+    from agents.quiz import Quiz, QuizQuestion
+
+    fake_quiz = Quiz(questions=[
+        QuizQuestion(
+            question="Q?", type="multiple_choice", difficulty="easy",
+            options=["a", "b", "c", "d"], correct_answer="a",
+            explanation="x", concept="X",
+        ),
+    ])
+
+    def factory(name):
+        mock = MagicMock()
+        if name == "courses":
+            # The failure E8 used to mislabel: a transient PostgREST error on
+            # the course_code read, not a course without one.
+            mock.select.side_effect = RuntimeError("postgrest 503")
+        else:
+            mock.select.return_value = (
+                [_quiz_node_row()] if name == "graph_nodes" else []
+            )
+        mock.insert.return_value = []
+        return mock
+
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch(
+            "routes.quiz.quiz_agent.run",
+            new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+        ),
+    ):
+        r = client.post("/api/quiz/generate", json={
+            "user_id": "user_andres", "concept_node_id": "node1",
+            "num_questions": 1, "difficulty": "easy",
+            "use_shared_context": False,
+        })
+    assert r.status_code == 200
+
+    ev = _of_type(sink, "quiz.rag_uncovered")[0]
+    assert ev["payload"]["reason"] == "coverage_unknown"
 
 
 SAMPLE_QUESTIONS = [
