@@ -22,10 +22,11 @@ export type GraphTheme = {
   ink: string; // label text
   dim: string; // dimmed node / unexplored wash
   accent: string; // focus halo + highlighted node
+  link: string; // base + dimmed edge color
 };
 
 // Hex mirrors of the app-shell tokens (globals.css): --ink-600,
-// --ink-200, --accent. Used verbatim under SSR/jsdom where
+// --ink-200, --accent, --ink-400. Used verbatim under SSR/jsdom where
 // getComputedStyle can't resolve them.
 //
 // --accent is currently var(--brand-forest-bright) = #2d8f5c (globals.css:69
@@ -34,10 +35,17 @@ export type GraphTheme = {
 // other consumer (the focus halo, the lit-link color) must derive from
 // `theme.accent` — never hardcode the accent hex/rgb a second time, or the
 // two will drift again the next time the token changes.
+//
+// `link` is --ink-400 (#8a8372), the warm gray both the resting and the
+// dimmed edge colors are built from. It lives here for exactly the same
+// reason: linkColor used to inline `rgba(138, 131, 114, …)` twice, which is
+// this token's rgb hand-copied — a second and third hardcoded site that
+// silently outlives any change to --ink-400 (final-review P3).
 export const FALLBACK_THEME: GraphTheme = {
   ink: "#3f3b31",
   dim: "#ddd6c6",
   accent: "#2d8f5c",
+  link: "#8a8372",
 };
 
 /** Resolve theme tokens to hex once per mount; hex fallbacks otherwise. */
@@ -52,6 +60,7 @@ export function resolveGraphTheme(): GraphTheme {
     ink: read("--ink-600", FALLBACK_THEME.ink),
     dim: read("--ink-200", FALLBACK_THEME.dim),
     accent: read("--accent", FALLBACK_THEME.accent),
+    link: read("--ink-400", FALLBACK_THEME.link),
   };
 }
 

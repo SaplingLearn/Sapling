@@ -7,14 +7,19 @@
  * handles physics, camera, and picking; we provide the data adapter
  * and custom node objects — a matte sphere + a hidden focus halo +
  * an always-visible SpriteText label per node, built by
- * `nodeThreeObject` and registered in a mutable visuals registry
- * (`visualsRef`) that later tasks mutate directly for hover/highlight
- * styling without rebuilding geometry.
+ * `nodeThreeObject` and registered in a per-dataset visuals registry
+ * that the hover/highlight focus pass mutates in place, so restyling
+ * never rebuilds geometry.
  *
  * SSR: `react-force-graph-3d` calls `document` and `window` at module
  * load. We `dynamic`-import it with `ssr: false` so Next.js doesn't
  * try to render it on the server. Layout-shift is avoided by sizing
  * the wrapper div explicitly to `width × height`.
+ *
+ * #538: NEVER mount this component outside the `KnowledgeGraph`
+ * wrapper — three r163+ throws from the WebGLRenderer constructor when
+ * WebGL2 is unavailable, and the wrapper owns both the capability gate
+ * that prevents that mount and the error boundary that contains it.
  */
 
 import React from "react";
@@ -100,6 +105,61 @@ const SR_ONLY: React.CSSProperties = {
   border: 0,
 };
 
+// Every restylable part of one node's Three.js group.
+type NodeVisual = {
+  sphereMat: THREE.MeshLambertMaterial;
+  label: SpriteText;
+  halo: THREE.Mesh;
+  baseColor: string;
+};
+
+// Everything whose lifetime is exactly one dataset: the arrays handed to the
+// library, the visuals registry the library fills through nodeThreeObject,
+// and the halo geometry+material every node in that dataset shares. A single
+// useMemo produces all of it (see `epoch` below) so the parts can never
+// disagree about which dataset they belong to.
+type GraphEpoch = {
+  graphData: { nodes: FG3DNode[]; links: FG3DLink[] };
+  visuals: Map<string, NodeVisual>;
+  haloGeometry: THREE.SphereGeometry;
+  haloMaterial: THREE.MeshBasicMaterial;
+};
+
+/**
+ * Is this node inside the current focus neighborhood? No hover → everything
+ * is lit. Shared by the focus pass (restyling live objects) and by
+ * nodeThreeObject (building fresh ones) so a node rebuilt while the pointer
+ * is already resting on a neighbor cannot disagree with one that was merely
+ * restyled.
+ */
+function isLitUnderFocus(
+  id: string,
+  hover: string | null,
+  adjacency: Map<string, Set<string>>,
+): boolean {
+  if (!hover) return true;
+  return id === hover || (adjacency.get(hover)?.has(id) ?? false);
+}
+
+/**
+ * Write one node's focus state onto its existing materials. Pure mutation —
+ * no geometry, no allocation. The single writer of the focus look, called
+ * both from the focus pass and from nodeThreeObject immediately after it
+ * builds a node, so a mid-hover rebuild lands fully styled instead of
+ * half-applied.
+ */
+function applyVisualState(
+  v: NodeVisual,
+  lit: boolean,
+  focused: boolean,
+  dimColor: string,
+): void {
+  v.sphereMat.color.set(lit ? v.baseColor : dimColor);
+  v.sphereMat.opacity = lit ? NODE_OPACITY : DIM_NODE_OPACITY;
+  v.label.material.opacity = lit ? 1 : DIM_LABEL_OPACITY;
+  v.halo.visible = focused;
+}
+
 export function KnowledgeGraph3D({
   nodes,
   edges,
@@ -136,15 +196,6 @@ export function KnowledgeGraph3D({
   // CSS vars). Client-only: this component is dynamic({ssr:false}).
   const theme: GraphTheme = React.useMemo(() => resolveGraphTheme(), []);
 
-  type NodeVisual = {
-    sphereMat: THREE.MeshLambertMaterial;
-    label: SpriteText;
-    halo: THREE.Mesh;
-    baseColor: string;
-  };
-  // Mutable registry of every node's restylable parts. Hover/highlight
-  // mutate materials through this map — never by rebuilding objects.
-  const visualsRef = React.useRef<Map<string, NodeVisual>>(new Map());
   // Imperative handle to the mounted lib instance — bridged in via the
   // dynamic wrapper's `fgRef` prop (next/dynamic strips real refs).
   const fgRef = React.useRef<ForceGraphMethods | undefined>(undefined);
@@ -170,24 +221,70 @@ export function KnowledgeGraph3D({
   // re-created — re-creating it would rebuild every node's geometry.
   const hoverRef = React.useRef<string | null>(null);
   const highlightRef = React.useRef<string | undefined>(highlightId);
-  highlightRef.current = highlightId;
+  // highlightId is mirrored in an EFFECT, never in the render body.
+  // Assigning `highlightRef.current` during render is a react-hooks/refs
+  // violation with real teeth under React 19: a render React starts and
+  // then discards would still have written, so the ref could describe a
+  // tree that never committed. Ordering is safe by a wide margin —
+  // react-kapsule pushes props into the kapsule during its own render, but
+  // kapsule's digest is `debounce(fn, 1)` (kapsule.mjs), so the library
+  // cannot call nodeThreeObject until a macrotask after every effect in
+  // this commit has run. First mount is covered by the initializer above.
+  React.useEffect(() => {
+    highlightRef.current = highlightId;
+  }, [highlightId]);
 
-  const graphData = React.useMemo(() => {
-    // New data → new registry. Entries repopulate as the library calls
-    // nodeThreeObject for each node. (Benign under StrictMode double-
-    // invoke: the second call just swaps in another empty map.)
-    visualsRef.current = new Map();
-    const fgNodes: FG3DNode[] = nodes.map((n) => ({ ...n }));
-    const fgLinks: FG3DLink[] = edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      strength: e.strength,
-    }));
-    return { nodes: fgNodes, links: fgLinks };
-  }, [nodes, edges]);
+  const adjacency = React.useMemo(() => buildAdjacency(edges), [edges]);
+
+  // ONE memo owns every object whose lifetime is this dataset.
+  //
+  // The visuals registry used to be a ref cleared inside this memo. That is
+  // a render-phase ref mutation, and under React 19 concurrent rendering a
+  // render that starts and is then thrown away still clears it — leaving
+  // the COMMITTED tree holding an empty registry, with hover focus a silent
+  // no-op until the next dataset change. Deriving the registry from the
+  // memo removes the failure mode by construction: whichever render
+  // commits, its nodeThreeObject and its focus pass close over the SAME
+  // map, and its graphData/nodeThreeObject identities are fresh, so the
+  // library rebuilds every node object and repopulates that map.
+  //
+  // The shared halo geometry/material belong here rather than at module
+  // scope because three-forcegraph's node digest calls
+  // nodeDataMapper.clear() whenever `nodeThreeObject`'s identity changes
+  // (three-forcegraph.mjs:1129) — which is exactly when this memo
+  // recomputes. Every node object built from epoch N is therefore
+  // deallocated (its geometries and materials disposed) before any epoch
+  // N+1 object exists, so no surviving object can be left pointing at a
+  // disposed shared resource.
+  const epoch = React.useMemo<GraphEpoch>(
+    () => ({
+      graphData: {
+        nodes: nodes.map((n) => ({ ...n })),
+        links: edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          strength: e.strength,
+        })),
+      },
+      visuals: new Map<string, NodeVisual>(),
+      // A unit sphere scaled per node instead of a per-node
+      // SphereGeometry + MeshBasicMaterial pair: at most two halos (the
+      // hovered node and highlightId) are ever visible, so the per-node
+      // version carried N-2 dead geometry/material pairs for the dataset's
+      // whole lifetime and re-allocated all N on every refresh.
+      haloGeometry: new THREE.SphereGeometry(1, 16, 16),
+      haloMaterial: new THREE.MeshBasicMaterial({
+        color: theme.accent,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+      }),
+    }),
+    [nodes, edges, theme],
+  );
 
   // Reset the auto-fit once-guard whenever the dataset changes. Runs after
-  // the render that produced the new graphData commits — well before the
+  // the render that produced the new epoch commits — well before the
   // library's next onEngineStop for these nodes/edges can fire — so the
   // camera is re-fit exactly once for each new dataset. Bumping
   // pollEpochRef here invalidates any in-flight poll from the PREVIOUS
@@ -206,24 +303,25 @@ export function KnowledgeGraph3D({
     };
   }, []);
 
-  const adjacency = React.useMemo(() => buildAdjacency(edges), [edges]);
-  // hoverId lives in state ONLY to re-key the link accessors below; the
-  // node/label/halo restyle happens imperatively via visualsRef.
+  // hoverId lives in state ONLY to re-key linkColor below; the
+  // node/label/halo restyle happens imperatively through epoch.visuals, and
+  // linkWidth deliberately reads hoverRef instead so its identity never
+  // changes (see the comment on linkWidth).
   const [hoverId, setHoverId] = React.useState<string | null>(null);
 
   const applyFocus = React.useCallback(
     (hover: string | null) => {
       hoverRef.current = hover;
-      const neighbors = hover ? adjacency.get(hover) : undefined;
-      for (const [id, v] of visualsRef.current) {
-        const lit = !hover || id === hover || (neighbors?.has(id) ?? false);
-        v.sphereMat.color.set(lit ? v.baseColor : theme.dim);
-        v.sphereMat.opacity = lit ? NODE_OPACITY : DIM_NODE_OPACITY;
-        v.label.material.opacity = lit ? 1 : DIM_LABEL_OPACITY;
-        v.halo.visible = id === hover || id === highlightRef.current;
+      for (const [id, v] of epoch.visuals) {
+        applyVisualState(
+          v,
+          isLitUnderFocus(id, hover, adjacency),
+          id === hover || id === highlightRef.current,
+          theme.dim,
+        );
       }
     },
-    [adjacency, theme],
+    [adjacency, epoch, theme],
   );
 
   const handleNodeHover = React.useCallback(
@@ -236,7 +334,9 @@ export function KnowledgeGraph3D({
   );
 
   // Re-assert focus when highlightId/adjacency/theme change (e.g. the
-  // tutor moves the discussed node while the user isn't hovering).
+  // tutor moves the discussed node while the user isn't hovering). Declared
+  // AFTER the highlightRef mirror effect above, so it reads the fresh
+  // value: effects in one component run in declaration order.
   React.useEffect(() => {
     applyFocus(hoverRef.current);
   }, [applyFocus, highlightId]);
@@ -253,36 +353,53 @@ export function KnowledgeGraph3D({
         transparent: true,
         opacity: NODE_OPACITY,
       });
-      group.add(new THREE.Mesh(new THREE.SphereGeometry(r, 24, 24), sphereMat));
+      // 16 segments matches the library's own nodeResolution default. 24
+      // was 2.25x the triangles per node for a sphere this small on screen,
+      // and the design spec never asked for the extra tessellation.
+      group.add(new THREE.Mesh(new THREE.SphereGeometry(r, 16, 16), sphereMat));
 
-      // Focus halo: slightly larger translucent accent sphere, hidden
-      // until this node is hovered or is the persistent highlightId.
-      const halo = new THREE.Mesh(
-        new THREE.SphereGeometry(r * 1.4, 16, 16),
-        new THREE.MeshBasicMaterial({
-          color: theme.accent,
-          transparent: true,
-          opacity: 0.28,
-          depthWrite: false,
-        }),
-      );
-      halo.visible = n.id === hoverRef.current || n.id === highlightRef.current;
+      // Focus halo: slightly larger translucent accent sphere, hidden until
+      // this node is hovered or is the persistent highlightId. Geometry and
+      // material are the dataset-shared pair; only the scale is per node.
+      const halo = new THREE.Mesh(epoch.haloGeometry, epoch.haloMaterial);
+      halo.scale.setScalar(r * 1.4);
       group.add(halo);
 
       const spec = labelSpec(n);
-      const label = new SpriteText(n.name);
-      label.textHeight = spec.textHeight;
+      // Constructor args, not setters: every three-spritetext setter re-runs
+      // _genCanvas (measure -> resize canvas -> repaint -> new
+      // CanvasTexture), so `new SpriteText(name)` plus four setters
+      // rasterised each label FIVE times and allocated five textures — paid
+      // again for the whole graph on every dataset refresh. The
+      // (text, textHeight, color) constructor folds three of the five into
+      // the one rasterisation that has to happen anyway.
+      const label = new SpriteText(n.name, spec.textHeight, theme.ink);
       label.fontWeight = spec.fontWeight;
-      label.color = theme.ink;
       label.fontFace = '"JetBrains Mono", monospace';
       label.material.transparent = true;
       label.position.set(0, -(r + spec.textHeight + 1.5), 0);
       group.add(label);
 
-      visualsRef.current.set(n.id, { sphereMat, label, halo, baseColor: color });
+      const visual: NodeVisual = { sphereMat, label, halo, baseColor: color };
+      epoch.visuals.set(n.id, visual);
+      // Apply the CURRENT focus state to the node we just built. Any
+      // nodes/edges identity change makes the library rebuild every node
+      // object (a tutor graph_update refreshing the Learn rail, a filter
+      // change on /tree). If the pointer is still resting on a node at that
+      // moment, a freshly built graph would otherwise render half-focused —
+      // the hovered node keeps its halo but nothing dims — until the
+      // pointer moved. The [applyFocus, highlightId] re-assert effect
+      // cannot cover it: that runs at commit, a kapsule debounce tick
+      // before the library gets here, when the registry is still empty.
+      applyVisualState(
+        visual,
+        isLitUnderFocus(n.id, hoverRef.current, adjacency),
+        n.id === hoverRef.current || n.id === highlightRef.current,
+        theme.dim,
+      );
       return group;
     },
-    [theme],
+    [theme, epoch, adjacency],
   );
 
   const nodesById = React.useMemo(() => {
@@ -306,33 +423,53 @@ export function KnowledgeGraph3D({
   // the halo and its own lit edges can silently drift apart (found in the
   // final-review pass: the halo already read theme.accent, but linkColor
   // still hardcoded the retired sage rgb, so production rendered a forest
-  // halo next to sage-colored lit edges).
-  const litLinkRgbTriplet = React.useMemo(() => hexToRgbTriplet(theme.accent), [theme]);
+  // halo next to sage-colored lit edges). Same reasoning for the resting
+  // and dimmed rgb, which used to inline --ink-400's rgb by hand, twice.
+  const litLinkRgb = React.useMemo(() => hexToRgbTriplet(theme.accent), [theme]);
+  const baseLinkRgb = React.useMemo(() => hexToRgbTriplet(theme.link), [theme]);
 
   const linkColor = React.useCallback(
     (l: object) => {
       const link = l as FG3DLink;
-      if (!hoverId) return `rgba(138, 131, 114, ${BASE_LINK_ALPHA})`;
+      if (!hoverId) return `rgba(${baseLinkRgb}, ${BASE_LINK_ALPHA})`;
       const lit = linkEndId(link.source) === hoverId || linkEndId(link.target) === hoverId;
       // Lit links take the theme accent; dimmed links fade to near-invisible
       // warm gray.
       return lit
-        ? `rgba(${litLinkRgbTriplet}, ${LIT_LINK_ALPHA})`
-        : `rgba(138, 131, 114, ${DIM_LINK_ALPHA})`;
+        ? `rgba(${litLinkRgb}, ${LIT_LINK_ALPHA})`
+        : `rgba(${baseLinkRgb}, ${DIM_LINK_ALPHA})`;
     },
-    [hoverId, litLinkRgbTriplet],
+    [hoverId, litLinkRgb, baseLinkRgb],
   );
 
-  const linkWidth = React.useCallback(
-    (l: object) => {
-      const link = l as FG3DLink;
-      const base = 0.4 + (link.strength || 0) * 0.6;
-      if (!hoverId) return base;
-      const lit = linkEndId(link.source) === hoverId || linkEndId(link.target) === hoverId;
-      return lit ? base + 0.6 : base;
-    },
-    [hoverId],
-  );
+  // STABLE IDENTITY, DELIBERATELY: this reads hoverRef, not the hoverId
+  // state, and its dep array is empty.
+  //
+  // `linkWidth` is one of the three props three-forcegraph treats as
+  // object-invalidating for links: `if (state._flushObjects ||
+  // hasAnyPropChanged(['linkThreeObject', 'linkThreeObjectExtend',
+  // 'linkWidth'])) state.linkDataMapper.clear();` (three-forcegraph.mjs
+  // :1199). clear() is digest([]) — it scene.remove()s and _deallocate()s
+  // every link object and then recreates all of them; and because our
+  // widths are always non-zero, `useCylinder` is always true, so each link
+  // is a CylinderGeometry mesh. A hoverId-keyed useCallback handed the
+  // library a NEW function identity on every pointer enter AND leave, i.e.
+  // a full teardown/rebuild of the whole link layer twice per hover on a
+  // few-hundred-edge graph. The design spec asks for the opposite: "Hover
+  // mechanics — no per-hover geometry rebuilds".
+  //
+  // Widths still track the hover: linkColor's own identity change already
+  // triggers the link digest, and that digest's onUpdateObj re-reads
+  // `widthAccessor(link)` for every link and swaps in the wider cylinder
+  // geometry (three-forcegraph.mjs:1256) — all without clear().
+  const linkWidth = React.useCallback((l: object) => {
+    const link = l as FG3DLink;
+    const base = 0.4 + (link.strength || 0) * 0.6;
+    const hover = hoverRef.current;
+    if (!hover) return base;
+    const lit = linkEndId(link.source) === hover || linkEndId(link.target) === hover;
+    return lit ? base + 0.6 : base;
+  }, []);
 
   // Auto-fit the camera the first time the force engine settles for this
   // dataset — otherwise the initial camera distance never frames the graph
@@ -399,7 +536,7 @@ export function KnowledgeGraph3D({
         fgRef={fgRef}
         width={width}
         height={height}
-        graphData={graphData}
+        graphData={epoch.graphData}
         nodeId="id"
         nodeThreeObject={nodeThreeObject}
         linkColor={linkColor}
