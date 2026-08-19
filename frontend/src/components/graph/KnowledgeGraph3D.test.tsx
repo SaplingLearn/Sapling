@@ -826,4 +826,36 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     // ever calls nodeThreeObject.
     expect(gC.halo.visible).toBe(true);
   });
+
+  it("moves the persistent halo when highlightId changes on a live graph", () => {
+    // highlightId is mirrored onto highlightRef in an EFFECT rather than
+    // assigned in the render body (react-hooks/refs). The useRef initializer
+    // covers first mount, so only a CHANGE while mounted exercises the
+    // mirror — which is exactly what the tutor does when it starts
+    // discussing a different node mid-conversation. This also pins the
+    // ordering: the re-assert effect below is declared after the mirror
+    // effect, so it must see the new value, not the old one.
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "b" })];
+    // Same array identities on both renders: a caller handing over fresh
+    // literals is a dataset change as far as the component is concerned, and
+    // that path (full rebuild) is covered by the mid-hover rebuild test
+    // above. Here only highlightId moves.
+    const edges: GraphEdge[] = [];
+    const { rerender } = render(
+      <KnowledgeGraph3D nodes={nodes} edges={edges} highlightId="a" />,
+    );
+    const build = lastProps!.nodeThreeObject;
+    const gA = partsOf(build({ ...nodes[0] }));
+    const gB = partsOf(build({ ...nodes[1] }));
+    expect(gA.halo.visible).toBe(true);
+    expect(gB.halo.visible).toBe(false);
+
+    rerender(<KnowledgeGraph3D nodes={nodes} edges={edges} highlightId="b" />);
+
+    // Same objects — a highlightId change must not rebuild geometry, it must
+    // restyle what is already in the scene.
+    expect(lastProps!.nodeThreeObject).toBe(build);
+    expect(gA.halo.visible).toBe(false);
+    expect(gB.halo.visible).toBe(true);
+  });
 });
