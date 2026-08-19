@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-05-3d-graph-focused-minimal-design.md`
 
+**Review-round amendments (this plan's code sketches are superseded on five points).** The sketches below were written before review; the shipped `KnowledgeGraph3D.tsx` deliberately differs, and reverting to the sketched shape reintroduces a real defect each time:
+
+- `linkWidth` is NOT re-keyed on hover state. three-forcegraph treats `linkWidth` as object-invalidating (`linkDataMapper.clear()` → `digest([])` → teardown and rebuild of every link mesh), so a hover-keyed accessor rebuilt the whole link layer on every pointer enter and leave. It reads `hoverRef` with an empty dep array; `linkColor`'s identity change already triggers the digest that re-reads widths.
+- There is no `visualsRef`. The visuals registry, `graphData`, and the shared halo geometry/material all come out of one dataset-scoped `useMemo`. Clearing a ref inside a memo is a render-phase mutation: a discarded concurrent render clears it and leaves the committed tree with an empty registry.
+- `nodeThreeObject` applies the current focus state to every node it builds, via the same `applyVisualState` writer the focus pass uses — otherwise a dataset refresh under an active hover renders half-focused.
+- One unit-sphere halo geometry + material per dataset, scaled per node, not one pair per node; main sphere stays at 16 segments.
+- `linkColor` derives its resting/dim rgb from `GraphTheme.link` (`--ink-400`), so the `rgba(138, 131, 114, …)` literals in the sketches (and in the Task 3 test snippets) are gone.
+
 ## Global Constraints
 
 - **Branch/tree**: work on `feat/3d-graph-focused-minimal` in the primary checkout `/home/andresl/Projects/sapling` (worktrees lack `frontend/node_modules`; `next build` breaks on symlinked node_modules). The tree carries unrelated uncommitted flashcard edits (`backend/routes/flashcards.py`, `backend/services/flashcard_import_service.py`, `backend/tests/test_flashcard*`) — NEVER stage or commit them; always `git add` explicit paths.
