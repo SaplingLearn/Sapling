@@ -24,6 +24,49 @@ or a **cassette** changes. CI gates on *regression below a committed baseline*
 (`baselines.json`), not on "< 1.0" — the harness measures accuracy, it does not
 assume perfection.
 
+## What replay does NOT cover (read before trusting a green run)
+
+Replay scores **frozen cassettes**, so it can only ever tell you whether the
+committed transcripts still satisfy the evaluators. It cannot tell you whether
+the current prompt still produces those transcripts. Concretely: delete the
+`SCOPE:` paragraph from `agents/chat_tutor.py` and
+`NoCourseScopeRefusalEvaluator` / `OffSyllabusTopicEngagedEvaluator` still
+return 1.0 — the path filter in `.github/workflows/evals.yml` fires the job on
+`backend/agents/**`, so the job runs, it just has nothing new to observe.
+
+So for any evaluator that scores a *prompt behaviour* rather than an
+extraction shape, treat the replay lane as **documentation plus a
+hand-edited-cassette tripwire**, not as a behavioural gate. The gates with
+teeth are elsewhere:
+
+- Prompt text itself: plain `pytest` (e.g.
+  `tests/test_chat_tutor_imports.py::TestScopeRule`,
+  `tests/test_learn_routes.py::TestChatContextBlockFraming`).
+- Actual model behaviour: a lane that RUNS the model against the current
+  prompt. `evals.yml` declares one — the scheduled, non-blocking `behavioral`
+  job (`SAPLING_EVAL_MODE=live`, chat_tutor only, pinned to the Lite tier
+  because that is where the refusal bug was reported). It is deliberately not
+  a required PR check: a live model is nondeterministic and would flake the
+  merge queue.
+
+A behaviour-scoring evaluator should say which of the two it is in its
+docstring. `chat_tutor.py` carries that note above its scope evaluators.
+
+## Baselines are floors, not averages to relax
+
+A baseline is a floor to hold, and a dropping score means the run got worse —
+the fix is the regression, never the number. `MasteryUpdateEmittedEvaluator`
+is the cautionary tale: it once scored all 17 chat_tutor cases even though
+only 10 asserted anything, so 7 genuine failures averaged out to 0.588 and got
+committed as the new "baseline" — a floor low enough for real emission to fall
+from 100% to 60% and still pass. An evaluator that has no opinion about a case
+should return `{}` (an empty mapping records no score) rather than a vacuous
+1.0, so its aggregate stays a floor over the cases it actually judges.
+
+`baselines.json` cannot hold a comment (it is `json.loads`-parsed and rewritten
+wholesale by `SAPLING_EVAL_UPDATE_BASELINES=1`), so document a surprising
+number next to the evaluator that produces it.
+
 ## Running
 
 ```bash

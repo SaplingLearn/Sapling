@@ -144,6 +144,145 @@ class NoToolMisuseEvaluator(Evaluator[ChatInput, ChatReply]):
         return 1.0
 
 
+# ── Course-scope evaluators: replay documentation, NOT a behavioural gate ───
+#
+# Read this before trusting the two evaluators below (and their 1.0 baselines)
+# as protection for the scope guardrail.
+#
+# `.github/workflows/evals.yml` runs the PR lane with SAPLING_EVAL_MODE=replay,
+# and both evaluators score the frozen cassette JSON committed alongside the
+# prompt they are supposed to be checking. Delete the `SCOPE:` paragraph from
+# `agents/chat_tutor.py` and both still return 1.0: the cassettes do not change
+# when the prompt does. The path filter DOES fire the job on `backend/agents/**`
+# and `backend/routes/learn.py` — the job runs, it just cannot observe a prompt
+# edit. What these evaluators actually give you is a permanent, diffable record
+# of what the model did on the prompt that was live at record time, plus a
+# tripwire for anyone editing a cassette by hand.
+#
+# The complements that do have teeth:
+# - `tests/test_chat_tutor_imports.py::TestScopeRule` pins the prompt text
+#   itself, so deleting the rule fails the standard pytest suite.
+# - `tests/test_learn_routes.py::TestChatContextBlockFraming` pins the block
+#   framing the refusal actually emerged from.
+#
+# A real behavioural gate needs a lane that RUNS the model against the current
+# prompt (SAPLING_EVAL_MODE=record or live, a Gemini key, and — since the
+# reported failure was on Fast — the Lite tier via SAPLING_MODEL_CHAT_TUTOR),
+# and it cannot be a required PR check: a live model is nondeterministic and
+# would flake the merge queue. evals.yml declares that as a scheduled,
+# non-blocking `behavioral` job. Until its output is watched, treat a green
+# replay run as "the frozen transcripts still satisfy the rule", nothing more.
+@dataclass
+class NoCourseScopeRefusalEvaluator(Evaluator[ChatInput, ChatReply]):
+    """The tutor must never decline a topic on course-scope grounds.
+
+    Regression for the CS132 report: asked about Markov chains, the tutor
+    answered "I can only find information about geometric algorithms.
+    Markov chains are not in the course description." Course context is
+    enrichment, never a limit on what may be taught.
+
+    Two review findings shaped the current form:
+
+    1. The stems `i can only help with` / `i can only assist with` were
+       dropped. They are SAFETY/INTEGRITY refusal stems, not course-scope
+       ones — `_ACADEMIC_INTEGRITY` ("I can only help you get there, not
+       hand you the answer") renders straight into them. Banning them
+       aimed the baseline at a tutor that never refuses anything, which is
+       not the property this evaluator exists to protect. What is left is
+       course/syllabus language plus the two verbatim stems from the
+       report.
+    2. Cases tagged `asks_about_course` are SKIPPED rather than scored.
+       `SCOPE` itself carves out "unless the student asks about the course
+       itself", and `_CATALOG_HEADER` tells the model to use the catalog
+       when "the student directly asks about the course itself" — so for
+       "does this course cover Markov chains?" the CORRECT reply is "no,
+       it's not in the course description", which an ungated blocklist
+       scores 0.0. Tag such a case and this evaluator contributes no score
+       for it at all (an empty mapping records no score, so the aggregate
+       is not diluted either); `OffSyllabusTopicEngagedEvaluator` is the
+       one that still has something to say there.
+    """
+
+    BANNED_SUBSTRINGS = (
+        "not in the course description",
+        "not in the course",
+        "not part of the course",
+        "not covered in the course",
+        "outside the course",
+        "not in the syllabus",
+        "i can only find information about",
+        "i can only discuss",
+    )
+
+    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float | dict:
+        if (ctx.metadata or {}).get("asks_about_course"):
+            return {}
+        reply = (ctx.output.text if ctx.output else "").lower()
+        for banned in self.BANNED_SUBSTRINGS:
+            if banned in reply:
+                return 0.0
+        return 1.0
+
+
+@dataclass
+class OffSyllabusTopicEngagedEvaluator(Evaluator[ChatInput, ChatReply]):
+    """Positive counterpart to NoCourseScopeRefusalEvaluator.
+
+    The banned-substring check only catches the BLUNT form of the CS132
+    bug ("not in the course description"). It scores 1.0 on the polite
+    deflection observed pre-fix on `socratic_history_themes` — "That's a
+    fascinating historical question. However, it seems like we're focused
+    on topics like Calculus, Computer Science, and Biology in this
+    course... would you like to tackle one of the concepts we're
+    tracking?" — which redirects to course material without using any
+    banned phrase. A substring blocklist can always be walked around by a
+    newer model's phrasing; this evaluator instead asserts the reply
+    actually engages the topic asked, which is much harder to evade.
+
+    Cases tagged `off_syllabus` must carry `expected_topic_terms` in their
+    metadata (a tuple of lowercase strings); the reply text OR the
+    concept args of any tool call the model made must contain at least
+    one. The tool-call args count as engagement too: on
+    `socratic_history_themes` the reply itself says "the collapse" (never
+    "Rome"/"Roman" literally) but `apply_graph_update_tool` is called with
+    concepts=["Fall of the Roman Empire", "Barbarian invasions", ...] and
+    `update_mastery_tool` tracks "Fall of the Roman Empire" — that's the
+    model demonstrably engaging and grounding the real topic, just not in
+    the prose. Checking only `ctx.output.text` made this evaluator blind
+    on the one case it was written to catch. Untagged cases pass
+    vacuously (score 1.0)."""
+
+    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float:
+        metadata = ctx.metadata or {}
+        if not metadata.get("off_syllabus"):
+            return 1.0
+        terms = metadata.get("expected_topic_terms") or ()
+        if not terms:
+            # Fail closed: an off_syllabus case with no expected terms is a
+            # test-authoring bug, not something that should silently pass.
+            return 0.0
+        reply = (ctx.output.text if ctx.output else "").lower()
+        if any(term.lower() in reply for term in terms):
+            return 1.0
+        tool_calls = (ctx.output.tool_calls if ctx.output else []) or []
+        args_text = " ".join(_flatten_strings(call.args) for call in tool_calls).lower()
+        return 1.0 if any(term.lower() in args_text for term in terms) else 0.0
+
+
+def _flatten_strings(value: object) -> str:
+    """Recursively collect every string found in a (possibly nested)
+    tool-call args structure into one space-joined haystack, so an
+    evaluator can substring-match against concept names, reasons, etc.
+    regardless of which arg key they live under."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_flatten_strings(v) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(_flatten_strings(v) for v in value)
+    return ""
+
+
 # ── #149 tool-behavior evaluators (scored off cassette tool_calls) ──────────
 
 # The two read-only graph tools' wire names (chat_tutor._build_tools).
@@ -187,16 +326,43 @@ class GraphToolUsedEvaluator(Evaluator[ChatInput, ChatReply]):
         return 1.0 if used & set(GRAPH_READ_TOOLS) else 0.0
 
 
+# ── BASELINE NOTE (baselines.json → chat_tutor.MasteryUpdateEmittedEvaluator)
+#
+# baselines.json cannot carry this comment: it is parsed with `json.loads`
+# and rewritten wholesale by `_replay._write_baselines`, so anything added
+# there is either a parse error or erased on the next
+# SAPLING_EVAL_UPDATE_BASELINES pass. It lives here, next to the evaluator
+# the baseline gates, instead.
+#
+# The baseline is 1.0 and MUST STAY 1.0 — a floor over the tagged set, not
+# an average over every case. It got to 0.588235 (= 10/17, i.e. seven of the
+# ten cases carrying `expects_mastery_update` no longer emitting one) because
+# the evaluator scored all 17 cases: the untagged thirteen passed vacuously
+# and diluted three genuine failures into a number that still looked like a
+# gate. It wasn't one — at 0.588 a future change dropping real emission from
+# 100% to 60% passes. Two things fix that: the evaluator now records a score
+# ONLY for cases it actually has an opinion about, and the tag now reflects
+# the recordings (see MASTERY_DRIFT_CASES below for the drift and why the
+# tags moved).
 @dataclass
 class MasteryUpdateEmittedEvaluator(Evaluator[ChatInput, ChatReply]):
     """Cases tagged `expects_mastery_update` must emit at least one
     update_mastery_tool call; and EVERY emitted delta (tagged or not)
-    must sit inside the band the tool schema instructs
-    ([-0.1, +0.3])."""
+    must sit inside the band the tool schema instructs ([-0.1, +0.3]).
 
-    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float:
+    Scored set: cases tagged `expects_mastery_update`, plus any untagged
+    case that emitted an update anyway (its deltas still have to be in
+    band). A case that is neither tagged nor emitting returns an empty
+    mapping — pydantic-evals records no score for it, so it neither passes
+    vacuously nor dilutes the aggregate. Without that, thirteen vacuous
+    1.0s hid three real failures behind a 0.588 "baseline"."""
+
+    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float | dict:
         updates = _mastery_updates(ctx.output)
-        if (ctx.metadata or {}).get("expects_mastery_update") and not updates:
+        expected = bool((ctx.metadata or {}).get("expects_mastery_update"))
+        if not expected and not updates:
+            return {}
+        if expected and not updates:
             return 0.0
         for u in updates:
             try:
@@ -235,6 +401,47 @@ class GroundedConceptEvaluator(Evaluator[ChatInput, ChatReply]):
         return 0.0
 
 
+# ── Mastery-emission drift (P1 review) ──────────────────────────────────────
+#
+# `expects_mastery_update` is a claim about the RECORDING, and the ebd6a60
+# re-record broke it: on origin/main 12 of 16 cassettes called
+# update_mastery_tool, after the re-record 4 of 17 do — and all five TeachBack
+# cassettes came back with `"tool_calls": []`, the mode where mastery deltas
+# matter most. The tag stayed on all ten of the cases that carried it, so
+# seven of them asserted something their own cassette contradicts, and
+# MasteryUpdateEmittedEvaluator averaged those failures away against thirteen
+# vacuous passes (0.588 = 10/17) instead of failing.
+#
+# The tag now sits only where the recording actually emits — and
+# `socratic_history_themes`, which emits but was never tagged, gained it.
+# Listed below are the seven cases the tag came OFF. This is a live
+# regression, not a resolved one: update_mastery_tool is the tutor's only
+# write path into the knowledge graph, so the next
+# `SAPLING_EVAL_MODE=record` pass has to check whether emission came back.
+# The cross-check under CASES keeps the bookkeeping honest in both
+# directions.
+MASTERY_DRIFT_CASES = frozenset({
+    "expository_explain_photosynthesis",
+    "expository_explain_supply_demand",
+    "teachback_advanced",
+    "teachback_correct_concept",
+    "teachback_minimal",
+    "teachback_misconception",
+    "teachback_partial_correct",
+})
+
+
+def _cassette_emits_mastery(case_name: str) -> bool:
+    """True when the committed cassette for `case_name` contains an
+    update_mastery_tool call. Reads the frozen JSON directly so the
+    tag/recording cross-check needs no model run."""
+    body = load_cassette("chat_tutor", case_name) or {}
+    return any(
+        (call or {}).get("tool_name") == "update_mastery_tool"
+        for call in body.get("tool_calls") or []
+    )
+
+
 # ── Cases (5 per mode = 15 total) ───────────────────────────────────────────
 
 CASES: list[Case[ChatInput, ChatReply]] = [
@@ -269,7 +476,23 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "socratic",
             "Why did the Roman Empire fall?",
         ),
-        metadata={"mode": "socratic"},
+        # Task 5 report / final-review Finding 2: under the old prompt this
+        # case deflected in polite form ("it seems like we're focused on
+        # topics like Calculus, Computer Science, and Biology in this
+        # course... would you like to tackle one of the concepts we're
+        # tracking?") — no banned substring, so NoCourseScopeRefusalEvaluator
+        # scored it 1.0 anyway. off_syllabus + expected_topic_terms lets
+        # OffSyllabusTopicEngagedEvaluator catch that polite form too.
+        # `expects_mastery_update` because the cassette DOES emit one
+        # (update_mastery_tool on "Fall of the Roman Empire"). It was untagged,
+        # so the emission was unguarded — one of the four cases that now carry
+        # the P1 review's re-scoped tag.
+        metadata={
+            "mode": "socratic",
+            "off_syllabus": True,
+            "expected_topic_terms": ("rome", "roman"),
+            "expects_mastery_update": True,
+        },
     ),
     Case(
         name="socratic_open_followup",
@@ -294,6 +517,35 @@ CASES: list[Case[ChatInput, ChatReply]] = [
         ),
         metadata={"mode": "socratic", "grounded": True, "expects_graph_read": True},
     ),
+    Case(
+        # Task 5 / CS132 regression: a topic genuinely outside the course
+        # catalog. The tutor must teach it anyway — course context is
+        # enrichment, never a limit on what may be taught.
+        #
+        # Lite-tier (gemini-2.5-flash-lite) confirmation, run ad hoc against
+        # this exact input via the harness's own deps/message assembly with
+        # SAPLING_MODEL_CHAT_TUTOR overridden. Not committed as a cassette —
+        # the harness has no tier-scoped case slot — so the reply is preserved
+        # verbatim here instead:
+        #
+        #   Yes, we can!
+        #
+        #   To start, what do you already know about Markov chains, or what
+        #   makes you curious about them?
+        #
+        # No tool calls, no course/syllabus mention, engages the topic by
+        # name — the fix holds on the weakest tier, not just Pro.
+        name="socratic_off_syllabus_markov_chains",
+        inputs=(
+            "socratic",
+            "can we talk about markov chains",
+        ),
+        metadata={
+            "mode": "socratic",
+            "off_syllabus": True,
+            "expected_topic_terms": ("markov",),
+        },
+    ),
 
     # ── EXPOSITORY ──────────────────────────────────────────────────────────
     Case(
@@ -310,7 +562,9 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain photosynthesis at the cellular level.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        # No expects_mastery_update: this cassette records no tool calls at
+        # all. See MASTERY_DRIFT_CASES.
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_dependency_injection",
@@ -326,7 +580,8 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain how supply and demand determine price.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        # No expects_mastery_update — see MASTERY_DRIFT_CASES.
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_kantian_ethics",
@@ -338,6 +593,13 @@ CASES: list[Case[ChatInput, ChatReply]] = [
     ),
 
     # ── TEACHBACK ──────────────────────────────────────────────────────────
+    # None of the five carries `expects_mastery_update` any more: every
+    # TeachBack cassette came back from the ebd6a60 re-record with
+    # `"tool_calls": []`. That is the drift MASTERY_DRIFT_CASES documents and
+    # the thing to re-check on the next record pass — TeachBack is where the
+    # student demonstrates understanding, so it is where the prompt's "call
+    # update_mastery_tool in EVERY turn where the student demonstrated
+    # understanding" should bite hardest.
     Case(
         name="teachback_correct_concept",
         inputs=(
@@ -346,7 +608,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "splits into two identical daughter cells. Each one has the "
             "same chromosomes as the original.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_partial_correct",
@@ -355,7 +617,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "OK so a closure is a function that has variables. Like, "
             "you can use them inside it.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_misconception",
@@ -364,7 +626,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "Newton's first law says objects in motion stay in motion "
             "unless you push them. Force makes things keep moving.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_advanced",
@@ -374,7 +636,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "showing that strings of length p can be split such that "
             "the middle can be repeated and stay in the language.",
         ),
-        metadata={"mode": "teachback", "expects_mastery_update": True},
+        metadata={"mode": "teachback"},
     ),
     Case(
         name="teachback_minimal",
@@ -382,19 +644,57 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "teachback",
             "Recursion is when a function calls itself.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
 ]
 
-assert len(CASES) == 16, f"Expected 16 cases (5/5/5 + the #149 graph-read case), got {len(CASES)}"
+assert len(CASES) == 17, (
+    f"Expected 17 cases (5/5/5 + the #149 graph-read case + the Task 5 "
+    f"off-syllabus case), got {len(CASES)}"
+)
 
-# Per-mode breakdown sanity check (6 / 5 / 5 — #149 added a socratic case).
+# Per-mode breakdown sanity check (7 / 5 / 5 — #149 and Task 5 both added a
+# socratic case).
 _MODE_COUNTS: dict[str, int] = {"socratic": 0, "expository": 0, "teachback": 0}
 for _c in CASES:
     _MODE_COUNTS[_c.inputs[0]] = _MODE_COUNTS.get(_c.inputs[0], 0) + 1
-assert _MODE_COUNTS == {"socratic": 6, "expository": 5, "teachback": 5}, (
-    f"Expected 6/5/5 cases per mode, got {_MODE_COUNTS}"
+assert _MODE_COUNTS == {"socratic": 7, "expository": 5, "teachback": 5}, (
+    f"Expected 7/5/5 cases per mode, got {_MODE_COUNTS}"
 )
+
+# Tag/recording cross-check for `expects_mastery_update`. Replay only: in
+# record mode the cassettes on disk are the PREVIOUS run's and get overwritten
+# after this module imports, so checking them here would fire on stale data.
+# This is what stops the tag from drifting away from the recordings a second
+# time — it fails the run instead of letting the evaluator average the lie
+# away (see MASTERY_DRIFT_CASES).
+if MODE == "replay":
+    _CASE_NAMES = {c.name for c in CASES}
+    _TAGGED_MASTERY = {
+        c.name for c in CASES if (c.metadata or {}).get("expects_mastery_update")
+    }
+    assert MASTERY_DRIFT_CASES <= _CASE_NAMES, (
+        f"MASTERY_DRIFT_CASES names cases that no longer exist: "
+        f"{sorted(MASTERY_DRIFT_CASES - _CASE_NAMES)}"
+    )
+    assert not (_TAGGED_MASTERY & MASTERY_DRIFT_CASES), (
+        f"a case cannot be both tagged and listed as drift: "
+        f"{sorted(_TAGGED_MASTERY & MASTERY_DRIFT_CASES)}"
+    )
+    _UNBACKED_TAGS = sorted(n for n in _TAGGED_MASTERY if not _cassette_emits_mastery(n))
+    assert not _UNBACKED_TAGS, (
+        f"expects_mastery_update is a claim about the cassette, and these "
+        f"cassettes contain no update_mastery_tool call: {_UNBACKED_TAGS}. "
+        f"Either re-record, or drop the tag and add the case to "
+        f"MASTERY_DRIFT_CASES — do NOT lower the baseline instead."
+    )
+    _RECOVERED = sorted(n for n in MASTERY_DRIFT_CASES if _cassette_emits_mastery(n))
+    assert not _RECOVERED, (
+        f"these cases are listed as mastery-emission drift but their cassettes "
+        f"emit update_mastery_tool again: {_RECOVERED}. Restore "
+        f"expects_mastery_update on them and drop them from "
+        f"MASTERY_DRIFT_CASES."
+    )
 
 
 # ── Adapter (replay layer) ──────────────────────────────────────────────────
@@ -569,6 +869,8 @@ def make_dataset() -> Dataset[ChatInput, ChatReply]:
             ExpositoryHasStructureEvaluator(),
             TeachBackProbesEvaluator(),
             NoToolMisuseEvaluator(),
+            NoCourseScopeRefusalEvaluator(),
+            OffSyllabusTopicEngagedEvaluator(),
             GraphToolUsedEvaluator(),
             MasteryUpdateEmittedEvaluator(),
             GroundedConceptEvaluator(),

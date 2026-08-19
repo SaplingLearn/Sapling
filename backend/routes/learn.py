@@ -504,6 +504,30 @@ async def start_session(body: StartSessionBody, request: Request):
     }
 
 
+# Framing for the context blocks injected into every chat turn.
+#
+# These labels are load-bearing. They previously read as authoritative
+# boundaries ("COURSE CATALOG INFO (official BU course data)"), and a model
+# handed a labelled context wall with no instruction defaults to closed-book
+# RAG behavior — it declined to teach Markov chains to a CS132 student on the
+# grounds that they were "not in the course description". Each header now
+# states the block's purpose AND what to do when it does not cover the
+# question. See docs/superpowers/specs/2026-08-10-tutor-course-scope-design.md.
+_CATALOG_HEADER = (
+    "COURSE REFERENCE (administrative data about this course). Use ONLY if "
+    "the student directly asks about the course itself — what it covers, "
+    "prerequisites, credits, schedule. Never volunteer it. Never use it to "
+    "decide whether a topic may be discussed."
+)
+
+_RAG_HEADER = (
+    "COURSE MATERIAL (excerpts from this course's documents). Use as "
+    "teaching substance when it is relevant to the question. If it does not "
+    "cover the question, ignore it silently and answer from your own "
+    "knowledge."
+)
+
+
 def _prepare_chat_run(
     *,
     user_id: str,
@@ -538,15 +562,16 @@ def _prepare_chat_run(
     if bu_code:
         # Always inject the course catalog (prerequisites, description, credits)
         # so the agent can answer factual questions about the course without
-        # relying on semantic similarity crossing a threshold.
+        # relying on semantic similarity crossing a threshold. _CATALOG_HEADER
+        # is what keeps "always present" from meaning "always relevant".
         catalog_text = _get_catalog_chunk(bu_code)
         if catalog_text:
-            context_blocks.append("COURSE CATALOG INFO (official BU course data):\n\n" + catalog_text)
+            context_blocks.append(_CATALOG_HEADER + "\n\n" + catalog_text)
 
         # Semantic RAG: per-message retrieval for concept-level context
         from services.rag_service import retrieve_chunks, format_rag_context
         rag_chunks = retrieve_chunks(user_message, course_id=bu_code, k=5)
-        rag_block = format_rag_context(rag_chunks)
+        rag_block = format_rag_context(rag_chunks, header=_RAG_HEADER)
         if rag_block:
             context_blocks.append(rag_block)
 

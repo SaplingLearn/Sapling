@@ -1,4 +1,4 @@
 {
-  "text": "Of course. In your own words, what do you think recursion is?",
+  "text": "Of course. Let's start with a simple example.\n\nHere is a Python function that calls itself:\n```python\ndef countdown(n):\n  if n <= 0:\n    print(\"Blastoff!\")\n    return\n  print(n)\n  countdown(n-1)\n```\n\nWhat do you think this function prints if you call it with `countdown(3)`?",
   "tool_calls": []
 }

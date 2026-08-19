@@ -1,16 +1,11 @@
 {
-  "text": "Of course. I can explain Kantian ethics.\n\n### Overview\n\nKantian ethics is a deontological moral theory developed by the philosopher Immanuel Kant. This means it judges the morality of an action based on rules and duties, rather than the consequences of the action. The core idea is that some actions are morally right or wrong in themselves, regardless of the outcome.\n\n### Key Concepts\n\nThe foundation of Kantian ethics is the **Categorical Imperative**, a supreme moral law that Kant believed was rational and universal to all people. He formulated it in a few different ways, but the two most famous are:\n\n1.  **The Principle of Universalizability**: \"Act only according to that maxim whereby you can at the same time will that it should become a universal law.\"\n    *   **In simpler terms**: Before you act, think about the rule (maxim) you're following. If that rule were to become a universal law that everyone had to follow, would it still work? If it leads to a contradiction, the action is morally forbidden.\n\n2.  **The Principle of Humanity**: \"Act in such a way that you treat humanity, whether in your own person or in the person of any other, never merely as a means to an end, but always at the same time as an end.\"\n    *   **In simpler terms**: Don't use people. It's wrong to treat others as mere tools to achieve your own goals. You must respect them as rational beings with their own goals and values.\n\n### Worked Example: Lying\n\nLet's test the act of making a false promise to get a loan, using Kant's framework.\n\n*   **The Maxim (Rule)**: \"When I need money, I will make a false promise to repay a loan in order to get it.\"\n\n*   **Universalizability Test**: Could this become a universal law? If everyone made false promises to get loans, the very institution of promising would collapse. No one would believe promises anymore, and the rule would become self-defeating. Therefore, it fails the test.\n\n*   **Humanity Test**: Are you treating the lender as a means or an end? By lying, you are using the lender as a mere tool to get money. You are not respecting their rationality or their ability to make an informed decision. You are deceiving them, which fails the test.\n\nBecause the maxim fails both tests, Kant would argue that lying is always morally wrong.",
+  "text": "Kantian ethics is a theory of morality developed by the philosopher Immanuel Kant. It's a form of **deontology**, which means it judges the morality of an action based on rules or duties, rather than the action's consequences.\n\nThe central idea is that the moral worth of an act is determined by the principle or motive behind it, not by the outcome it produces. Kant believed that moral principles are derived from reason.\n\n### The Categorical Imperative\n\nThe core of Kant's ethics is the **Categorical Imperative**, a fundamental principle that all moral duties are derived from. It's \"categorical\" because it applies universally, to all rational beings, in all situations, without exception.\n\nKant formulated the Categorical Imperative in a few different ways. The two most famous are:\n\n:::definition{title=\"The Formula of Universal Law\"}\n\"Act only according to that maxim whereby you can at the same time will that it should become a universal law.\"\n:::\n\nA **maxim** is the personal rule or intention behind your action. This formulation says you should only do something if you could rationally want *everyone* to do it.\n\n:::definition{title=\"The Formula of Humanity\"}\n\"Act in such a way that you treat humanity, whether in your own person or in the person of any other, never merely as a means to an end, but always at the same time as an end.\"\n:::\n\nThis means you should not use people as mere tools to achieve your own goals. You must respect them as rational, autonomous beings with their own goals.\n\n### An Example: Lying\n\nLet's see how this works with the act of making a false promise (lying) to get a loan.\n\n1.  **Identify the Maxim:** \"When I need money, I will borrow it and promise to pay it back, even though I have no intention of doing so.\"\n\n2.  **Test with the Universal Law Formula:**\n    *   Can I will this maxim to be a universal law?\n    *   If everyone made false promises to get money, the institution of promising would collapse. Nobody would believe promises anymore.\n    *   The maxim becomes self-defeating if universalized. Therefore, it is morally forbidden.\n\n3.  **Test with the Humanity Formula:**\n    *   By making a false promise, you are deceiving the lender.\n    *   You are using them as a **means** to your goal (getting money) and not respecting them as an **end**\u2014a rational person who has a right to make an informed decision.\n    *   This violates their autonomy, so it is morally forbidden.\n\nAccording to Kant, lying is always wrong, regardless of the potential good that might come from it. The focus is on the inherent rightness or wrongness of the act itself.",
   "tool_calls": [
-    {
-      "args": {
-        "query": "Kantian ethics"
-      },
-      "tool_name": "search_course_materials"
-    },
     {
       "args": {
         "concepts": [
           "Kantian Ethics",
+          "Deontology",
           "Categorical Imperative"
         ]
       },
@@ -22,12 +17,7 @@
           {
             "concept_name": "Kantian Ethics",
             "mastery_delta": 0.1,
-            "reason": "Explained the core principles."
-          },
-          {
-            "concept_name": "Categorical Imperative",
-            "mastery_delta": 0.1,
-            "reason": "Explained as a core part of Kantian Ethics."
+            "reason": "Student asked for an explanation."
           }
         ]
       },
