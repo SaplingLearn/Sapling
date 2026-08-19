@@ -126,17 +126,9 @@ vi.mock("three-spritetext", async () => {
   return { default: SpriteTextMock };
 });
 
-// next/dynamic is used to client-only-load react-force-graph-3d; in tests we
-// want the mock module above to render synchronously. The shared #538 helper
-// does that for every component test: it renders the resolved component via
-// createElement instead of calling it as a plain function (so the stub's
-// hooks land in their own fiber rather than being spliced into the wrapper's
-// hook order), and it accepts this component's loader, which resolves to a
-// bare function component rather than a module namespace.
-//
-// `await import` rather than a static import because vitest hoists vi.mock
-// factories above every import in the file — a static binding would still be
-// uninitialised when the factory runs.
+// next/dynamic is used to client-only-load react-force-graph-3d; the
+// shared passthrough renders the (hoisted, already-resolved) mock module
+// synchronously.
 vi.mock("next/dynamic", async () =>
   (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
 );

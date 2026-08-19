@@ -50,14 +50,6 @@ vi.mock("react-force-graph-3d", () => ({
   }),
 }));
 
-// Shared passthrough (#538) — it renders the resolved component via
-// createElement instead of calling it, so the stub's hooks land in their own
-// fiber, and it accepts this component's loader, which resolves to a bare
-// function component rather than a module namespace.
-//
-// `await import` rather than a static import because vitest hoists vi.mock
-// factories above every import in the file — a static binding would still be
-// uninitialised when the factory runs.
 vi.mock("next/dynamic", async () =>
   (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
 );
