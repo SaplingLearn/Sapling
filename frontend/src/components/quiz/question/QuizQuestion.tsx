@@ -49,6 +49,17 @@ export interface QuizQuestionProps {
   concept: QuizConceptSummary;
   userId: string;
   courseId: string | null;
+  /**
+   * A quiz call is in flight (`useQuizSession`'s `pending`).
+   *
+   * The phase cannot say this: it stays `active` for the whole `/answer` round
+   * trip, so `phase !== "active"` is false exactly when the request IS running.
+   * Submit needs this to show its in-flight state honestly. It is not a
+   * correctness guard — the hook already refuses a second `/answer` for the same
+   * item, and the reducer drops a duplicate response (#537 A2 fix round 2).
+   * Optional so the current render keeps compiling until it reads this.
+   */
+  pending?: boolean;
 }
 
 /** The header mark, at the size §3 pins for a `dot`. */

@@ -51,7 +51,7 @@ export function QuizScreen() {
   const entry = useMemo(() => parseEntry(new URLSearchParams(query)), [query]);
 
   const home = useQuizHome(userId ?? "", semesterHydrated ? activeSemester : null);
-  const { session, config, actions } = useQuizSession(userId ?? "", entry);
+  const { session, pending, config, actions } = useQuizSession(userId ?? "", entry);
 
   // `?concept=<id>` / `?topic=<name>` resolved against the SCOPED graph, so a
   // link into a term the student isn't looking at reads as unresolved rather
@@ -159,6 +159,7 @@ export function QuizScreen() {
           concept={concept}
           userId={userId}
           courseId={activeNode?.course_id ?? null}
+          pending={pending}
         />
       );
     }
