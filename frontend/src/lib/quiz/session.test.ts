@@ -107,12 +107,27 @@ describe("persistSession", () => {
     }
   });
 
-  it("clears on home, configuring and results", () => {
+  it("does not save on home, configuring or results", () => {
     for (const phase of ["home", "configuring", "results"] as Phase[]) {
       expect(shouldPersist(session(phase)), phase).toBe(false);
-      saveSession(session("active"));
+      window.localStorage.clear();
       persistSession(session(phase));
       expect(loadSession(), phase).toBeNull();
+    }
+  });
+
+  it("LEAVES a paused record alone instead of clearing it", () => {
+    // The regression the browser lane found: quiz home mounts a fresh
+    // `home`-phase session and its config effect persists it, which used to
+    // delete the paused attempt the resume strip was about to offer. Storage is
+    // cleared at exactly two moments (SUBMITTED and EXIT), both by an explicit
+    // `clearSession()` — never as a side effect of a phase.
+    const paused = { ...session("paused"), cursor: 2 };
+    saveSession(paused);
+
+    for (const phase of ["home", "configuring", "results"] as Phase[]) {
+      persistSession(session(phase));
+      expect(loadSession(), phase).toEqual(paused);
     }
   });
 });

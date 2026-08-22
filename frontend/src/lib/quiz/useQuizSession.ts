@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { answerQuestion, generateQuiz, getAttempt, submitQuiz } from "./api";
 import { QUIZ_ERROR_COPY, describeQuizError, type QuizError } from "./errors";
 import { returnToSource } from "./exits";
@@ -69,6 +69,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+/** The path part of a destination, without its query or hash. */
+function pathnameOf(href: string): string {
+  return href.split(/[?#]/, 1)[0];
+}
+
 /**
  * Tell any mounted graph that mastery just moved.
  *
@@ -115,6 +120,7 @@ async function withNetworkRetry<T>(call: () => Promise<T>): Promise<T> {
 
 export function useQuizSession(userId: string, entry: EntryRequest): QuizSessionHandle {
   const router = useRouter();
+  const pathname = usePathname();
   const { config } = useQuizConfig();
   const gamification = useGamificationDelta(userId);
 
@@ -398,9 +404,21 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       exit: target => {
         const current = sessionRef.current;
         if (!canExit(current)) return;
-        const next = apply({ type: "EXIT" });
+        // Read the destination BEFORE the reset: `returnToSource` falls back to
+        // the tree focused on `conceptId`, which EXIT clears.
+        const destination = target ?? returnToSource(current);
+        apply({ type: "EXIT" });
         clearSession();
-        router.push(target ?? returnToSource(next));
+        // A same-route exit — "Done" from `/quiz?concept=…` to `/quiz` — is a
+        // query change, and `router.push` does not take for one: the browser
+        // lane measured Done leaving the URL at `/quiz?concept=…`, so the deep
+        // link kept pinning the card to the concept just finished and a reload
+        // reopened it. `replace` is what the rest of the app already uses to
+        // drop a query in place (Dashboard's suggest-dismiss, Calendar's
+        // filters), and it is the right history semantics here anyway: Back
+        // must not return to the results of a quiz whose session is gone.
+        if (pathnameOf(destination) === pathname) router.replace(destination);
+        else router.push(destination);
       },
 
       flag: () => {
@@ -432,7 +450,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         } else if (back === "active") void submitAnswer();
       },
     };
-  }, [apply, config, router, runGenerate, runResume, runSubmit, submitAnswer]);
+  }, [apply, config, pathname, router, runGenerate, runResume, runSubmit, submitAnswer]);
 
   return { session, pending, config, actions };
 }

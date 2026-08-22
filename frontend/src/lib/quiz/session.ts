@@ -108,10 +108,24 @@ export function shouldPersist(session: QuizSession): boolean {
   return PERSISTED_PHASES.has(session.phase);
 }
 
-/** Save or clear, whichever this phase calls for. Called on every transition. */
+/**
+ * Save if this phase is worth remembering, and otherwise LEAVE THE RECORD ALONE.
+ *
+ * It used to clear on any non-live phase, which quietly deleted the very thing
+ * quiz home exists to offer: mounting home starts a fresh `home`-phase session,
+ * the config effect applies `SET_CONFIG` the moment `/api/quiz/config` resolves,
+ * and every accepted event is persisted — so the first thing the resume strip
+ * did was destroy the paused attempt's verdicts, scope and origin, all of which
+ * live nowhere else (R-3; the wire's resume payload has `is_correct` but no
+ * `correct_index` and no explanation). The browser lane caught it: a resumed
+ * quiz showed question one as unanswered, and a dashboard-sourced quiz exited to
+ * the tree.
+ *
+ * Clearing is not a phase's business. §4 names exactly two moments — SUBMITTED
+ * and EXIT — and `useQuizSession` calls `clearSession()` explicitly at both.
+ */
 export function persistSession(session: QuizSession): void {
   if (shouldPersist(session)) saveSession(session);
-  else clearSession();
 }
 
 // ── Discarded attempts ─────────────────────────────────────────────────────

@@ -12,9 +12,14 @@ import { ApiError } from "@/lib/api";
 import type { AnswerResult, AttemptDetail, GenerateResult, SubmitResult } from "./types";
 
 const push = vi.fn();
+const replace = vi.fn();
+// The route the hook believes it is on. `exit` compares the destination against
+// it to decide push vs replace, so tests that care set it.
+let pathname = "/quiz";
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({ push, replace, back: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => pathname,
 }));
 
 const quizApi = vi.hoisted(() => ({
@@ -113,7 +118,9 @@ const START = {
 beforeEach(() => {
   resetQuizConfigCache();
   window.localStorage.clear();
+  pathname = "/quiz";
   push.mockClear();
+  replace.mockClear();
   quizApi.fetchQuizConfig.mockResolvedValue(CONFIG);
   quizApi.generateQuiz.mockResolvedValue(generated(2));
   quizApi.answerQuestion.mockImplementation(
@@ -225,6 +232,125 @@ describe("start → answer → answer → submit", () => {
     expect(result.current.session.error?.message).toBe(
       "That answer didn't line up with the question. Reload and try again.",
     );
+  });
+});
+
+/**
+ * The two defects the Chapter-1 lane found, ridden in as `test.fixme` in
+ * `e2e/quiz-journeys.spec.ts`. Both are unit-reproducible; these are the guards
+ * that keep them fixed once those journeys are un-fixme'd.
+ */
+describe("#537 browser-lane regressions", () => {
+  const DASHBOARD: EntryRequest = {
+    source: { kind: "dashboard", returnTo: "/dashboard" },
+  };
+
+  it("quiz home no longer deletes the paused attempt it is about to offer", async () => {
+    // Leave a quiz mid-flight, from the DASHBOARD — a tree origin is
+    // indistinguishable from the `returnToSource` fallback, which is what
+    // masked this in the green leave-and-return journey.
+    const first = mount(DASHBOARD);
+    await waitFor(() => expect(first.result.current.config).not.toBeNull());
+    act(() =>
+      first.result.current.actions.setConfig({
+        count: 5, difficulty: "medium", feedback: "as-you-go",
+      }),
+    );
+    act(() => first.result.current.actions.start(START));
+    await waitFor(() => expect(first.result.current.session.phase).toBe("active"));
+    act(() => first.result.current.actions.select(1));
+    await act(async () => {
+      first.result.current.actions.submitAnswer();
+    });
+    await waitFor(() => expect(first.result.current.session.phase).toBe("answered"));
+    act(() => first.result.current.actions.requestLeave());
+    act(() => first.result.current.actions.confirmLeave());
+    expect(first.result.current.session.phase).toBe("paused");
+
+    const parked = loadSession();
+    expect(parked?.items[0].verdict).not.toBeNull();
+    expect(parked?.source.kind).toBe("dashboard");
+    first.unmount();
+
+    // Now mount quiz home the way a student reaches it: no deep link. Its
+    // config effect fires `SET_CONFIG` as soon as `/api/quiz/config` resolves,
+    // and every accepted event is persisted. That used to wipe the record.
+    const second = mount({ source: { kind: "nav" } });
+    await waitFor(() => expect(second.result.current.config).not.toBeNull());
+    await waitFor(() =>
+      expect(second.result.current.session.config.count).toBe(5));
+    expect(loadSession()).toEqual(parked);
+
+    // …so Resume gets the verdicts and the origin back.
+    quizApi.getAttempt.mockResolvedValue({
+      quiz_id: "attempt-1", status: "in_progress", resumable: true, difficulty: "medium",
+      concept_node_id: "c1", questions: [question(1), question(2)],
+      responses: [
+        { question_index: 0, selected_index: 1, is_correct: true, answered_at: "2026-08-22T10:00:00Z" },
+      ],
+      score: null, total: null, created_at: "2026-08-22T09:00:00Z",
+    } satisfies AttemptDetail);
+
+    await act(async () => {
+      second.result.current.actions.resume("attempt-1");
+    });
+    await waitFor(() => expect(second.result.current.session.phase).toBe("active"));
+    expect(second.result.current.session.items[0].verdict).toEqual({
+      isCorrect: true, correctIndex: 1, explanation: "because 0",
+    });
+    expect(second.result.current.session.source.kind).toBe("dashboard");
+    expect(second.result.current.session.cursor).toBe(1);
+  });
+
+  it("Done drops the deep link instead of leaving home pinned to it", async () => {
+    pathname = "/quiz";
+    quizApi.generateQuiz.mockResolvedValue(generated(1));
+    const { result } = mount({
+      concept: "c1",
+      source: { kind: "link", conceptId: "c1" },
+    });
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+    act(() => result.current.actions.select(1));
+    await act(async () => {
+      result.current.actions.submitAnswer();
+    });
+    await waitFor(() => expect(result.current.session.phase).toBe("results"));
+
+    act(() => result.current.actions.exit("/quiz"));
+
+    // `push` does not take for a query-only change on the same route — the lane
+    // measured Done leaving the URL at `/quiz?concept=…`.
+    expect(replace).toHaveBeenCalledWith("/quiz");
+    expect(push).not.toHaveBeenCalled();
+
+    // And the session stops pointing at the concept that was just finished, so
+    // nothing that prefers the session over the proposal stays pinned to it.
+    expect(result.current.session.phase).toBe("home");
+    expect(result.current.session.conceptId).toBe("");
+    expect(result.current.session.scope).toEqual({ kind: "concept", conceptId: "" });
+    expect(result.current.session.result).toBeNull();
+  });
+
+  it("still pushes for an exit that really changes route", async () => {
+    pathname = "/quiz";
+    quizApi.generateQuiz.mockResolvedValue(generated(1));
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+    act(() => result.current.actions.select(1));
+    await act(async () => {
+      result.current.actions.submitAnswer();
+    });
+    await waitFor(() => expect(result.current.session.phase).toBe("results"));
+
+    // No target: "Back to your tree" resolves through `returnToSource`, which
+    // needs the conceptId EXIT clears — so it has to be read before the reset.
+    act(() => result.current.actions.exit());
+    expect(push).toHaveBeenCalledWith("/tree?node=c1");
+    expect(replace).not.toHaveBeenCalled();
   });
 });
 
@@ -538,7 +664,8 @@ describe("exits and persistence", () => {
 
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(result.current.session));
     act(() => result.current.actions.exit("/quiz"));
-    expect(push).toHaveBeenCalledWith("/quiz");
+    // Same route, so it replaces rather than pushes — see the Done block below.
+    expect(replace).toHaveBeenCalledWith("/quiz");
     expect(loadSession()).toBeNull();
   });
 

@@ -423,11 +423,20 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
 
     case "EXIT": {
       if (!canExit(session)) return session;
-      // Back to a clean home session so a remount can't show stale results.
-      // `source`, `scope` and `config` survive (invariant 2).
+      // A genuinely clean home session. `source` survives (invariant 2) and so
+      // do the student's config choices; the TARGET does not. "Done" stays on
+      // /quiz, so a session still pointing at the concept just finished would
+      // keep the accent — and anything else that prefers the session over the
+      // proposal — pinned to a quiz that is over.
+      //
+      // Callers must therefore read the exit destination from the session
+      // BEFORE dispatching this (`returnToSource` needs `conceptId`).
       return {
         ...session,
         phase: "home",
+        scope: { kind: "concept", conceptId: "" },
+        conceptId: "",
+        courseId: null,
         attemptId: null,
         items: [],
         cursor: 0,
