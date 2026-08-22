@@ -46,8 +46,12 @@ export function PickList({ groups, onPick, onBack }: PickListProps) {
         return (
           <section key={course.course_id}>
             <div className="quiz-home__pick-group">
+              {/* `dot`, not the default `node`: the design's course mark is a
+                  flat circle, and the glow the node variant adds reads as a
+                  halo the drawing doesn't have. */}
               <ConceptNode
                 size={COURSE_DOT}
+                variant={{ kind: "dot" }}
                 isRoot
                 nodeId={`subject_root__${course.course_id}`}
                 mastery={0}

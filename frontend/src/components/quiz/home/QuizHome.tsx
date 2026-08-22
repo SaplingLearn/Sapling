@@ -208,13 +208,14 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       ? DEEP_LINK_RATIONALE[entry.source.kind] ?? DEFAULT_DEEP_LINK_RATIONALE
       : null;
 
-  // R-8's sentence is fetched for `home.primary` only, so it is shown only when
-  // the card IS that proposal — a deep link to another concept would otherwise
-  // be captioned with somebody else's definition.
+  // R-8's sentence, fetched by the hook for the concept the CARD shows — a deep
+  // link included (A2 fix round 5). The built sentence stands in while the call
+  // is in flight or after it fails. The two queued shapes show no definition at
+  // all: it describes one concept and would read as a caption for the wrong
+  // thing under "Practice CS101".
   const definition = queued
     ? null
-    : (card && card.node.id === home.primary?.node.id ? home.primaryDescription : null)
-      ?? (card ? fallbackDefinition(card, connectedTo(card.node.id)) : "");
+    : home.cardDescription ?? (card ? fallbackDefinition(card, connectedTo(card.node.id)) : "");
 
   const feedbackSuffix = session.config.feedback === "as-you-go" ? " · answers as you go" : "";
   const configLine = queued
@@ -310,31 +311,33 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     ? resumable.attempt.questions.length || resumable.attempt.total || 0
     : 0;
 
+  // A true full-bleed band: it renders OUTSIDE the content column (A2's
+  // `.quiz-body--home` is padding-free for exactly this), so `InlineBanner`'s
+  // own page padding and bottom rule reach both edges under the TopBar with
+  // nothing here overriding them.
   const resumeStrip = resumable ? (
-    <div className="quiz-home__resume">
-      <InlineBanner
-        testid="quiz-resume-strip"
-        actions={
-          <>
-            <Button data-testid="quiz-resume" onClick={() => actions.resume(resumable.attempt.quiz_id)}>
-              Resume
-            </Button>
-            <Button
-              variant="link"
-              data-testid="quiz-resume-discard"
-              onClick={() => {
-                dismissAttempt(resumable.attempt.quiz_id);
-                home.refresh();
-              }}
-            >
-              Discard
-            </Button>
-          </>
-        }
-      >
-        {`You left a quiz on ${resumeName} — ${resumable.answered} of ${resumeTotal} answered`}
-      </InlineBanner>
-    </div>
+    <InlineBanner
+      testid="quiz-resume-strip"
+      actions={
+        <>
+          <Button data-testid="quiz-resume" onClick={() => actions.resume(resumable.attempt.quiz_id)}>
+            Resume
+          </Button>
+          <Button
+            variant="link"
+            data-testid="quiz-resume-discard"
+            onClick={() => {
+              dismissAttempt(resumable.attempt.quiz_id);
+              home.refresh();
+            }}
+          >
+            Discard
+          </Button>
+        </>
+      }
+    >
+      {`You left a quiz on ${resumeName} — ${resumable.answered} of ${resumeTotal} answered`}
+    </InlineBanner>
   ) : null;
 
   const conceptCount = React.useMemo(
@@ -342,19 +345,28 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     [home.nodes],
   );
 
+  /**
+   * The eyebrow-and-Cancel row (§5 B1.8). It sits above whatever the body turns
+   * out to be rather than inside the proposal, so the three no-card states —
+   * empty tree, no courses, everything mastered, a failed load — still have a
+   * way back to wherever the student came from, and nothing below it moves as
+   * the load resolves.
+   */
+  const cardHead = (eyebrow: string | null) => (
+    <div className="quiz-home__card-head">
+      {eyebrow && <div className="label-micro quiz-eyebrow">{eyebrow}</div>}
+      <Button
+        variant="link"
+        data-testid="quiz-cancel"
+        onClick={() => actions.exit(cancelTarget(session))}
+      >
+        Cancel
+      </Button>
+    </div>
+  );
+
   const proposal = card ? (
     <section data-testid="quiz-proposal">
-      <div className="quiz-home__card-head">
-        <div className="label-micro quiz-eyebrow">Ready for you</div>
-        <Button
-          variant="link"
-          data-testid="quiz-cancel"
-          onClick={() => actions.exit(cancelTarget(session))}
-        >
-          Cancel
-        </Button>
-      </div>
-
       <div className="quiz-home__card">
         <div className="quiz-home__card-main">
           <div className="quiz-home__name">
@@ -507,11 +519,31 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     </div>
   );
 
-  const body = () => {
-    if (home.status === "error") return errorCard;
-    if (home.status === "loading") return skeleton;
+  /** Which arrival the screen is rendering. Named once so the head row above
+   *  the body can know whether it has an eyebrow to carry. */
+  const view =
+    home.status === "error"
+      ? "error"
+      : home.status === "loading"
+        ? "loading"
+        : home.courses.length === 0
+          ? "no-courses"
+          : conceptCount === 0
+            ? "empty-tree"
+            : picking
+              ? "picking"
+              : "home";
 
-    if (home.courses.length === 0) {
+  // "Also worth a look" is a heading for the rows under it; with no
+  // alternatives AND nothing due (a deep link to a mastered concept, say) it
+  // would sit between two rules with nothing in between.
+  const hasMore = home.alternatives.length > 0 || home.due.count > 0;
+
+  const body = () => {
+    if (view === "error") return errorCard;
+    if (view === "loading") return skeleton;
+
+    if (view === "no-courses") {
       return (
         <EmptyState
           testid="quiz-empty-state"
@@ -522,7 +554,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       );
     }
 
-    if (conceptCount === 0) {
+    if (view === "empty-tree") {
       return (
         <EmptyState
           testid="quiz-empty-state"
@@ -542,7 +574,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       );
     }
 
-    if (picking) {
+    if (view === "picking") {
       return <PickList groups={home.byCourse} onPick={openConcept} onBack={() => setPicking(false)} />;
     }
 
@@ -552,9 +584,15 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
         {card && (
           <>
             <hr className="quiz-home__rule" />
-            <div className="label-micro quiz-eyebrow">Also worth a look</div>
-            {alternatives}
-            <hr className="quiz-home__rule quiz-home__rule--tight" />
+            {hasMore && (
+              <>
+                <div className="label-micro quiz-eyebrow quiz-home__section-eyebrow">
+                  Also worth a look
+                </div>
+                {alternatives}
+                <hr className="quiz-home__rule quiz-home__rule--tight" />
+              </>
+            )}
             <div className="quiz-home__pick-open">
               <Button variant="link" data-testid="quiz-pick-open" onClick={() => setPicking(true)}>
                 Pick something specific →
@@ -569,7 +607,21 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   return (
     <div className="quiz-home" data-testid="quiz-home" style={accentStyle(accent)}>
       {resumeStrip}
-      {body()}
+
+      {/* A2's `.quiz-body--home` is padding-free so the strip above can bleed;
+          everything else gets the column and the page padding back here. The
+          two are NESTED rather than stacked on one element: `box-sizing:
+          border-box` is global, so a single div carrying both would eat the
+          64px of page padding out of the 780px measure and set the card at 716.
+          The design puts the padding outside the column. */}
+      <div className="quiz-inset--home">
+        <div className="quiz-col quiz-col--home">
+          {/* The pick list has its own `← Back`; a Cancel beside it would be a
+              second escape from a screen the student just navigated INTO. */}
+          {view !== "picking" && cardHead(view === "home" && card ? "Ready for you" : null)}
+          {body()}
+        </div>
+      </div>
 
       {dialogCandidate && (
         <ConceptDialog

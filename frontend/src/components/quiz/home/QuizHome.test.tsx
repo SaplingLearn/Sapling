@@ -244,7 +244,15 @@ function buildActions(): QuizActions {
   };
 }
 
-function mount(over: { home?: Partial<QuizHomeData>; entry?: EntryRequest; config?: QuizConfig | null } = {}) {
+function mount(
+  over: {
+    home?: Partial<QuizHomeData>;
+    entry?: EntryRequest;
+    config?: QuizConfig | null;
+    /** The live session. Cancel reads `session.source`, NOT the entry's. */
+    session?: QuizSession;
+  } = {},
+) {
   const home = buildHome(over.home);
   const actions = buildActions();
   const view = render(
@@ -254,7 +262,7 @@ function mount(over: { home?: Partial<QuizHomeData>; entry?: EntryRequest; confi
       config={over.config === undefined ? CONFIG : over.config}
       prefs={{ count: null, difficulty: null, feedback: "at-end" }}
       entry={over.entry ?? entry()}
-      session={session()}
+      session={over.session ?? session()}
       actions={actions}
     />,
   );
@@ -290,26 +298,54 @@ describe("QuizHome — the proposal", () => {
     );
   });
 
-  it("uses the built definition when the AI sentence is for another concept", () => {
-    // `primaryDescription` is tagged to `home.primary`; a deep link to a
-    // different concept must not inherit it.
+  it("captions a deep-linked card with the sentence fetched for THAT concept", () => {
+    // The hook describes the concept the CARD shows, deep link included (A2 fix
+    // round 5) — so the paragraph belongs to Matrices, not to the ranked primary.
     mount({
-      home: { primaryDescription: "A function that calls itself." },
+      home: { cardConceptId: "matrices", cardDescription: "A rectangular array of numbers." },
       entry: entry({ concept: "matrices", source: { kind: "tree" } }),
     });
 
     const proposal = screen.getByTestId("quiz-proposal");
     expect(proposal).toHaveTextContent("Matrices");
-    expect(proposal).not.toHaveTextContent("A function that calls itself.");
-    expect(proposal).toHaveTextContent("MATH210 · struggling · 1 connected concept");
+    expect(proposal).toHaveTextContent("A rectangular array of numbers.");
   });
 
-  it("cancels back to the source", () => {
+  it("falls back to the built sentence while the description is in flight", () => {
+    mount({ home: { cardDescription: null } });
+
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent(
+      "CS101 · struggling · 3 connected concepts",
+    );
+  });
+
+  it("cancels back to the session's source", () => {
+    // `cancelTarget` reads `session.source.returnTo`. A session that carries one
+    // must land there — not on the fallback the no-source case uses.
     const { actions } = mount({
-      entry: entry({ source: { kind: "dashboard", returnTo: "/dashboard" } }),
+      session: session({ source: { kind: "tree", returnTo: "/tree?node=recursion" } }),
     });
     fireEvent.click(screen.getByTestId("quiz-cancel"));
+    expect(actions.exit).toHaveBeenCalledWith("/tree?node=recursion");
+  });
+
+  it("cancels to the dashboard when the session has no source", () => {
+    // The fixture session is `{kind:"nav"}` with no `returnTo` (§5 B1.8).
+    const { actions } = mount();
+    fireEvent.click(screen.getByTestId("quiz-cancel"));
     expect(actions.exit).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("keeps Cancel reachable when there is nothing to propose", () => {
+    // The three no-card states are still a way back to wherever you came from.
+    const { actions } = mount({
+      home: { nodes: [], edges: [] },
+      session: session({ source: { kind: "tree", returnTo: "/tree?node=recursion" } }),
+    });
+
+    expect(screen.getByTestId("quiz-empty-state")).toHaveTextContent("Your tree is empty");
+    fireEvent.click(screen.getByTestId("quiz-cancel"));
+    expect(actions.exit).toHaveBeenCalledWith("/tree?node=recursion");
   });
 });
 
@@ -417,6 +453,19 @@ describe("QuizHome — the concept dialog", () => {
     expect(screen.getByTestId("quiz-concept-dialog")).toHaveTextContent("Base cases");
   });
 
+  it("does not restate the meta line in the stand-in definition", () => {
+    // The dialog's meta already opens with the course code and carries the
+    // tier; the built sentence used to repeat both back (M6).
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-open"));
+    fireEvent.click(within(screen.getByTestId("quiz-pick-list")).getByTestId("quiz-pick-base-cases"));
+
+    const dialog = screen.getByTestId("quiz-concept-dialog");
+    expect(dialog).toHaveTextContent("CS101 · 52% · learning");
+    expect(dialog).toHaveTextContent("1 connected concept on your tree.");
+    expect(dialog).not.toHaveTextContent("CS101 · learning · 1 connected concept");
+  });
+
   it("collapses the pick list again", () => {
     mount();
     fireEvent.click(screen.getByTestId("quiz-pick-open"));
@@ -492,6 +541,45 @@ describe("QuizHome — arrival", () => {
       expect.objectContaining({ conceptId: "matrices", courseId: "c-math" }),
       SESSION_CONFIG,
     );
+  });
+
+  it("resolves a legacy `?topic=` name the same way", () => {
+    // The other half of the deep-link path: `topic` is a concept NAME, matched
+    // case-insensitively (the tree's and dashboard's old links).
+    const { actions } = mount({
+      entry: entry({ topic: "matrices", source: { kind: "link" } }),
+    });
+
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Matrices");
+    expect(toast.info).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(actions.start).toHaveBeenCalledWith(
+      expect.objectContaining({ conceptId: "matrices", courseId: "c-math" }),
+      SESSION_CONFIG,
+    );
+  });
+
+  it("says where a note's concept came from", () => {
+    mount({
+      entry: entry({ concept: "matrices", source: { kind: "notes", noteId: "n1" } }),
+    });
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("From your note");
+  });
+
+  it("drops the 'Also worth a look' heading when there is nothing under it", () => {
+    // A deep link onto a tree with nothing left to review: the card stands, but
+    // there are no alternatives and nothing is due.
+    const mastered = NODES.map(n => ({ ...n, mastery_tier: "mastered" as const }));
+    mount({
+      home: { nodes: mastered },
+      entry: entry({ concept: "matrices", source: { kind: "tree" } }),
+    });
+
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Matrices");
+    expect(screen.queryByText("Also worth a look")).toBeNull();
+    // …and the way out of the dead end is still there.
+    expect(screen.getByTestId("quiz-pick-open")).toBeInTheDocument();
   });
 
   it("says so once when the link names something outside the semester", () => {

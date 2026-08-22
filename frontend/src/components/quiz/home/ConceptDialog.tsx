@@ -11,9 +11,9 @@
  * does discard.
  *
  * The definition is R-8 for THIS concept: `concept-description` is fetched on
- * open (the hook `useQuizHome` only describes the primary proposal), with the
- * built sentence showing while it is in flight and after a failure. The dialog
- * never blocks on it.
+ * open (the hook `useQuizHome` describes only the concept the card shows), with
+ * a built sentence showing while it is in flight and after a failure. The
+ * dialog never blocks on it.
  */
 
 import React from "react";
@@ -25,12 +25,27 @@ import { describeConcept } from "@/lib/quiz/api";
 import type { SessionConfig } from "@/lib/quiz/machine";
 import { metaLine, type Candidate } from "@/lib/quiz/proposals";
 import type { QuizConfig } from "@/lib/quiz/types";
-import { fallbackDefinition } from "@/lib/quiz/useQuizHome";
 import { QuizSettings } from "./QuizSettings";
 import { accentStyle } from "./accent";
 
 /** The dialog's canvas, per §3. */
 const CANVAS = { width: 300, height: 200, scale: 2 } as const;
+
+/**
+ * The stand-in definition, minus everything the meta line directly above it
+ * already says.
+ *
+ * `useQuizHome.fallbackDefinition` is "{CODE} · {tier} · {n} connected
+ * concepts", which on the card sits under a meta line that carries neither the
+ * code nor (visibly) the tier. In the dialog the meta IS "{CODE} · {pct}% ·
+ * {tier} · {when}", so the built sentence opened the panel by repeating its own
+ * first two thirds. Only the connection count is new, so only the connection
+ * count is said.
+ */
+function connectionsLine(connected: number): string {
+  if (connected === 0) return "Not yet connected to anything else on your tree.";
+  return `${connected} connected ${connected === 1 ? "concept" : "concepts"} on your tree.`;
+}
 
 export interface ConceptDialogProps {
   open: boolean;
@@ -95,7 +110,7 @@ export function ConceptDialog({
 
   const { node, course, color } = candidate;
   const description = useConceptDescription(userId, open, node.concept_name, course?.course_code);
-  const definition = description ?? fallbackDefinition(candidate, connected);
+  const definition = description ?? connectionsLine(connected);
 
   // The design prefixes the concept's meta with its course code; `metaLine`
   // itself is unchanged.
