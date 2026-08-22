@@ -310,6 +310,43 @@ describe("the card definition (R-8)", () => {
     await new Promise(r => setTimeout(r, 0));
     expect(result.current.cardDescription).toBeNull();
   });
+
+  // The two queue-shaped cards are headed "Practice {CODE}" / "Review everything
+  // due" over a queue summary (§5 B1.2). There is no definition slot on either,
+  // so a description for the queue's first concept is an LLM call for text
+  // nothing renders.
+  it("does not describe a ?course= card — it has no definition slot", async () => {
+    const { result } = renderHook(() =>
+      useQuizHome("u1", "", { source: { kind: "tree" }, course: "course-a" }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await new Promise(r => setTimeout(r, 0));
+
+    // The concept id is still resolved — Start generates on it, and the accent
+    // comes from it. Only the paragraph is skipped.
+    expect(result.current.cardConceptId).toBe("n-new");
+    expect(result.current.cardDescription).toBeNull();
+    expect(quizApi.describeConcept).not.toHaveBeenCalled();
+  });
+
+  it("does not describe a ?scope=due card either", async () => {
+    const { result } = renderHook(() =>
+      useQuizHome("u1", "", { source: { kind: "dashboard" }, scope: "due" }));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(result.current.cardConceptId).toBe("n-new");
+    expect(result.current.cardDescription).toBeNull();
+    expect(quizApi.describeConcept).not.toHaveBeenCalled();
+  });
+
+  it("still describes when an unusable ?course= falls back to the primary card", async () => {
+    const { result } = renderHook(() =>
+      useQuizHome("u1", "", { source: { kind: "tree" }, course: "no-such-course" }));
+    await waitFor(() => expect(result.current.cardDescription).not.toBeNull());
+    expect(result.current.cardConceptId).toBe("n1");
+    expect(quizApi.describeConcept).toHaveBeenCalledTimes(1);
+    expect(quizApi.describeConcept).toHaveBeenCalledWith("u1", "n1", "CS 330");
+  });
 });
 
 describe("fallbackDefinition", () => {

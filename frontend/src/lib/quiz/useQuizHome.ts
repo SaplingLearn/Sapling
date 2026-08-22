@@ -65,10 +65,18 @@ export interface QuizHome {
    * has loaded, or when there is nothing to propose.
    */
   cardConceptId: string | null;
-  /** The AI one-liner for the CARD's concept (R-8) — one call, for the one card
-   *  that shows a paragraph. `null` while it is in flight or after a failure:
-   *  the card falls back to a built sentence rather than blocking or showing an
-   *  empty paragraph. */
+  /**
+   * The AI one-liner for the CARD's concept (R-8) — one call, for the one card
+   * that shows a paragraph. `null` while it is in flight or after a failure: the
+   * card falls back to a built sentence rather than blocking or showing an empty
+   * paragraph.
+   *
+   * Also `null`, and never fetched, for the two queue-shaped entries. A
+   * `?course=` or `?scope=due` card is headed "Practice {CODE}" / "Review
+   * everything due" over a queue summary (§5 B1.2) — it has no definition slot,
+   * so describing its first concept would be an LLM call for text nothing
+   * renders.
+   */
   cardDescription: string | null;
   /** @deprecated Alias of `cardDescription`, kept so the current home render
    *  keeps compiling. Read `cardDescription` — it is right for a deep-linked
@@ -250,19 +258,28 @@ export function useQuizHome(
   // paragraph at all. An entry that can't be resolved (a link into a term the
   // student isn't viewing) falls through to the ranking rather than showing
   // nothing.
-  const cardConceptId = useMemo(() => {
+  //
+  // `describable` rides along because the two queue-shaped entries produce a
+  // card with no definition slot at all — the concept id is still needed (it is
+  // what Start generates on, and what the accent comes from), but a paragraph
+  // about the first concept in a queue is text nothing renders.
+  const card = useMemo<{ conceptId: string | null; describable: boolean }>(() => {
     if (entry?.concept || entry?.topic) {
       const resolved = entrySelection(entry, scopedNodes, scopedCourses).conceptId;
-      if (resolved) return resolved;
+      if (resolved) return { conceptId: resolved, describable: true };
     } else if (entry?.course) {
       const first = queueFor("course", scopedNodes, entry.course)[0];
-      if (first) return first;
+      if (first) return { conceptId: first, describable: false };
     } else if (entry?.scope === "due") {
       const first = queueFor("due", scopedNodes)[0];
-      if (first) return first;
+      if (first) return { conceptId: first, describable: false };
     }
-    return primary?.node.id ?? null;
+    // An entry that resolved to nothing lands here too, so an unusable
+    // `?course=` degrades to an ordinary primary card — description and all.
+    return { conceptId: primary?.node.id ?? null, describable: true };
   }, [entry, scopedNodes, scopedCourses, primary]);
+  const cardConceptId = card.conceptId;
+  const describable = card.describable;
 
   // One LLM call per home visit, for the one card that shows a paragraph (R-8).
   // `graph_nodes` has no `description` column, so there is nothing stored to
@@ -281,7 +298,7 @@ export function useQuizHome(
     : undefined;
 
   useEffect(() => {
-    if (!userId || !cardConceptId || !cardName) return;
+    if (!userId || !cardConceptId || !cardName || !describable) return;
     let cancelled = false;
     describeConcept(userId, cardName, cardCourseLabel).then(
       description => {
@@ -296,9 +313,10 @@ export function useQuizHome(
     return () => {
       cancelled = true;
     };
-  }, [userId, cardConceptId, cardName, cardCourseLabel]);
+  }, [userId, cardConceptId, cardName, cardCourseLabel, describable]);
 
-  const cardDescription = described?.id === cardConceptId ? described.text : null;
+  const cardDescription =
+    describable && described?.id === cardConceptId ? described.text : null;
 
   return {
     status,

@@ -50,14 +50,29 @@
 /* Home is the exception: `QuizScreen` renders it WITHOUT the centred column so
    the resume strip can span the full width under the TopBar, which it cannot do
    inside a padded, max-width parent. That makes the home screen responsible for
-   its own layout — wrap the block below the strip in
-   `quiz-col quiz-col--home quiz-inset--home` to get the column and the page
-   padding back. Question and results are unchanged. */
+   its own layout, and it gets the column and the page padding back by NESTING
+   the two:
+
+     <div class="quiz-inset--home">          <- page padding, full width
+       <div class="quiz-col quiz-col--home"> <- the 780px measure
+         ...everything below the resume strip
+       </div>
+     </div>
+
+   Nested, not stacked on one element. `box-sizing: border-box` is global, so a
+   single div carrying both classes resolves `max-width: 780px` INCLUSIVE of the
+   64px of page padding and the card measures 716px instead of 780px. The design
+   puts the padding outside the column, so the DOM has to as well.
+
+   Question and results are unchanged: `QuizScreen` still wraps those in
+   `.quiz-col` itself and the padding lives on `.quiz-body--*`, where it is on a
+   different element for the same reason. */
 .quiz-body--home { padding: 0; display: block; }
 .quiz-body--question { padding: var(--quiz-pad-question); }
 .quiz-body--results { padding: var(--quiz-pad-results); }
 
-/* The page padding home would have had, for the screen to apply itself. */
+/* The page padding home would have had. Must be the PARENT of
+   `.quiz-col--home`, never a sibling class on it — see above. */
 .quiz-inset--home { padding: var(--quiz-pad-home); }
 
 .quiz-col {
