@@ -13,14 +13,17 @@ import type { AnswerResult, AttemptDetail, GenerateResult, SubmitResult } from "
 
 const push = vi.fn();
 const replace = vi.fn();
-// The route the hook believes it is on. `exit` compares the destination against
-// it to decide push vs replace, so tests that care set it.
-let pathname = "/quiz";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace, back: vi.fn(), prefetch: vi.fn() }),
-  usePathname: () => pathname,
 }));
+
+/** Where the browser is, as `pathname + search`. `exit` reads
+ *  `window.location.pathname` to tell a same-route URL edit from a real
+ *  navigation, so the tests put jsdom on the quiz route the way a student is. */
+function locationNow(): string {
+  return window.location.pathname + window.location.search;
+}
 
 const quizApi = vi.hoisted(() => ({
   fetchQuizConfig: vi.fn(),
@@ -118,7 +121,7 @@ const START = {
 beforeEach(() => {
   resetQuizConfigCache();
   window.localStorage.clear();
-  pathname = "/quiz";
+  window.history.replaceState(null, "", "/quiz");
   push.mockClear();
   replace.mockClear();
   quizApi.fetchQuizConfig.mockResolvedValue(CONFIG);
@@ -302,8 +305,71 @@ describe("#537 browser-lane regressions", () => {
     expect(second.result.current.session.cursor).toBe(1);
   });
 
+  it("a resume that fails leaves the paused record it was trying to open intact", async () => {
+    // The same loss as above, reached through the other door. `error` is a
+    // persisted phase, so a resume that cannot be verified used to write its
+    // own attempt-less session over the paused record — and the verdicts, the
+    // scope and the origin only exist there.
+    const first = mount(DASHBOARD);
+    await waitFor(() => expect(first.result.current.config).not.toBeNull());
+    act(() => first.result.current.actions.start(START));
+    await waitFor(() => expect(first.result.current.session.phase).toBe("active"));
+    act(() => first.result.current.actions.select(1));
+    await act(async () => {
+      first.result.current.actions.submitAnswer();
+    });
+    await waitFor(() => expect(first.result.current.session.cursor).toBe(1));
+    act(() => first.result.current.actions.requestLeave());
+    act(() => first.result.current.actions.confirmLeave());
+    const parked = loadSession();
+    expect(parked?.attemptId).toBe("attempt-1");
+    expect(parked?.items[0].verdict).not.toBeNull();
+    first.unmount();
+
+    // The verification call never answers — a dropped connection, a 401 after a
+    // token refresh, a 5xx.
+    quizApi.getAttempt.mockRejectedValue(new TypeError("Failed to fetch"));
+    const second = mount({ attempt: "attempt-1", source: { kind: "quiz" } });
+    await waitFor(() => expect(second.result.current.session.phase).toBe("error"));
+    expect(second.result.current.session.attemptId).toBeNull();
+    expect(loadSession()).toEqual(parked);
+
+    // Still true after the failed screen goes away — the unmount flush persists
+    // whatever the hook last held, which is the attempt-less error session.
+    second.unmount();
+    expect(loadSession()).toEqual(parked);
+  });
+
+  it("a fresh quiz that fails to generate leaves the paused record intact", async () => {
+    const first = mount(DASHBOARD);
+    await waitFor(() => expect(first.result.current.config).not.toBeNull());
+    act(() => first.result.current.actions.start(START));
+    await waitFor(() => expect(first.result.current.session.phase).toBe("active"));
+    act(() => first.result.current.actions.select(1));
+    await act(async () => {
+      first.result.current.actions.submitAnswer();
+    });
+    await waitFor(() => expect(first.result.current.session.cursor).toBe(1));
+    act(() => first.result.current.actions.requestLeave());
+    act(() => first.result.current.actions.confirmLeave());
+    const parked = loadSession();
+    expect(parked?.attemptId).toBe("attempt-1");
+    first.unmount();
+
+    // A different quiz, started from home while the old one is still parked.
+    // `generating` is persisted too, and this one never gets an attempt id.
+    quizApi.generateQuiz.mockRejectedValue(
+      new ApiError("timeout", 502, { code: "QUIZ_GENERATION_TIMEOUT" }),
+    );
+    const second = mount({ source: { kind: "nav" } });
+    await waitFor(() => expect(second.result.current.config).not.toBeNull());
+    act(() => second.result.current.actions.start(START));
+    await waitFor(() => expect(second.result.current.session.phase).toBe("error"));
+    expect(loadSession()).toEqual(parked);
+  });
+
   it("Done drops the deep link instead of leaving home pinned to it", async () => {
-    pathname = "/quiz";
+    window.history.replaceState(null, "", "/quiz?concept=c1&from=link");
     quizApi.generateQuiz.mockResolvedValue(generated(1));
     const { result } = mount({
       concept: "c1",
@@ -318,12 +384,15 @@ describe("#537 browser-lane regressions", () => {
     });
     await waitFor(() => expect(result.current.session.phase).toBe("results"));
 
+    expect(locationNow()).toBe("/quiz?concept=c1&from=link");
     act(() => result.current.actions.exit("/quiz"));
 
-    // `push` does not take for a query-only change on the same route — the lane
-    // measured Done leaving the URL at `/quiz?concept=…`.
-    expect(replace).toHaveBeenCalledWith("/quiz");
+    // Neither `push` nor `replace` moves the address bar for a query-only change
+    // on the route the app is already on — the lane measured both leaving the
+    // URL at `/quiz?concept=…`. The URL edit goes through the History API.
+    expect(locationNow()).toBe("/quiz");
     expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
 
     // And the session stops pointing at the concept that was just finished, so
     // nothing that prefers the session over the proposal stays pinned to it.
@@ -334,7 +403,6 @@ describe("#537 browser-lane regressions", () => {
   });
 
   it("still pushes for an exit that really changes route", async () => {
-    pathname = "/quiz";
     quizApi.generateQuiz.mockResolvedValue(generated(1));
     const { result } = mount();
     await waitFor(() => expect(result.current.config).not.toBeNull());
@@ -351,6 +419,8 @@ describe("#537 browser-lane regressions", () => {
     act(() => result.current.actions.exit());
     expect(push).toHaveBeenCalledWith("/tree?node=c1");
     expect(replace).not.toHaveBeenCalled();
+    // …and the History API is not used to fake a cross-route move.
+    expect(locationNow()).toBe("/quiz");
   });
 });
 
@@ -493,6 +563,7 @@ describe("leave and resume", () => {
     act(() => result.current.actions.confirmLeave());
 
     expect(result.current.session.phase).toBe("paused");
+    // A different route, so still a router navigation.
     expect(push).toHaveBeenCalledWith("/tree?node=c1");
     expect(loadSession()?.attemptId).toBe("attempt-1");
     unmount();
@@ -663,9 +734,10 @@ describe("exits and persistence", () => {
     await waitFor(() => expect(result.current.session.phase).toBe("results"));
 
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(result.current.session));
+    window.history.replaceState(null, "", "/quiz?concept=c1");
     act(() => result.current.actions.exit("/quiz"));
-    // Same route, so it replaces rather than pushes — see the Done block below.
-    expect(replace).toHaveBeenCalledWith("/quiz");
+    // Same route: a URL edit, not a navigation — see the Done block below.
+    expect(locationNow()).toBe("/quiz");
     expect(loadSession()).toBeNull();
   });
 

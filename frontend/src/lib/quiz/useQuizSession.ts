@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { answerQuestion, generateQuiz, getAttempt, submitQuiz } from "./api";
 import { QUIZ_ERROR_COPY, describeQuizError, type QuizError } from "./errors";
 import { returnToSource } from "./exits";
@@ -75,6 +75,42 @@ function pathnameOf(href: string): string {
 }
 
 /**
+ * Send the student to `destination`, by the mechanism that destination actually
+ * needs.
+ *
+ * A different route is a NAVIGATION: the router's job, and it works.
+ *
+ * The same route with a different query is NOT a navigation — the route tree is
+ * identical and only client-side search params differ. Asking the App Router for
+ * one is a no-op it never commits: `router.push` was tried, then
+ * `router.replace`, and the browser lane measured the address bar unchanged
+ * twenty seconds after Done both times, while every other effect of the exit
+ * (the phase reset, the cleared storage, the ranked card back on screen) landed
+ * exactly as written. A QuizScreen-level test pins the same thing from the other
+ * side: one router call, correct target, nothing re-issuing the deep link — the
+ * call simply does not move the URL.
+ *
+ * Changing search params in place is what the History API is for, and Next 15+
+ * supports it explicitly for this case, threading the change back into
+ * `usePathname`/`useSearchParams`. Using the navigation API for navigations and
+ * the URL API for URL edits is the fix; reaching for `history` to force a
+ * navigation the router refused would have been the hack.
+ *
+ * `window.location.pathname` is the ground truth for "where am I", deliberately
+ * in place of `usePathname()` — a hook value that is one render stale, or null
+ * outside the App Router, would silently route us back to the broken branch.
+ */
+function goTo(destination: string, router: { push(href: string): void }): void {
+  const here = typeof window === "undefined" ? null : window.location.pathname;
+  if (here !== null && pathnameOf(destination) === here) {
+    // Keep Next's own router state object; only the URL changes.
+    window.history.replaceState(window.history.state, "", destination);
+    return;
+  }
+  router.push(destination);
+}
+
+/**
  * Tell any mounted graph that mastery just moved.
  *
  * Refreshing the tree after a quiz has always been purely navigational — leave
@@ -120,7 +156,6 @@ async function withNetworkRetry<T>(call: () => Promise<T>): Promise<T> {
 
 export function useQuizSession(userId: string, entry: EntryRequest): QuizSessionHandle {
   const router = useRouter();
-  const pathname = usePathname();
   const { config } = useQuizConfig();
   const gamification = useGamificationDelta(userId);
 
@@ -372,9 +407,9 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       confirmLeave: () => {
         const next = apply({ type: "CONFIRM_LEAVE" });
         if (next.phase !== "paused") return;
-        // `apply` already persisted it; the push is what makes the answers
+        // `apply` already persisted it; the navigation is what makes the answers
         // recoverable from anywhere the student lands next.
-        router.push(returnToSource(next));
+        goTo(returnToSource(next), router);
       },
 
       resume: attemptId => {
@@ -409,16 +444,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         const destination = target ?? returnToSource(current);
         apply({ type: "EXIT" });
         clearSession();
-        // A same-route exit — "Done" from `/quiz?concept=…` to `/quiz` — is a
-        // query change, and `router.push` does not take for one: the browser
-        // lane measured Done leaving the URL at `/quiz?concept=…`, so the deep
-        // link kept pinning the card to the concept just finished and a reload
-        // reopened it. `replace` is what the rest of the app already uses to
-        // drop a query in place (Dashboard's suggest-dismiss, Calendar's
-        // filters), and it is the right history semantics here anyway: Back
-        // must not return to the results of a quiz whose session is gone.
-        if (pathnameOf(destination) === pathname) router.replace(destination);
-        else router.push(destination);
+        goTo(destination, router);
       },
 
       flag: () => {
@@ -450,7 +476,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         } else if (back === "active") void submitAnswer();
       },
     };
-  }, [apply, config, pathname, router, runGenerate, runResume, runSubmit, submitAnswer]);
+  }, [apply, config, router, runGenerate, runResume, runSubmit, submitAnswer]);
 
   return { session, pending, config, actions };
 }
