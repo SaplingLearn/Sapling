@@ -41,7 +41,7 @@
  *
  *   Back to your tree  → the leave-and-return journey
  *   Back to dashboard  → the ask-without-abandoning journey
- *   Done → /quiz       → the keyboard journey (route; the query is the fixme)
+ *   Done → /quiz       → the keyboard journey (route) + the Done test (query)
  *   Cancel             → its own test (quiz home only, no generation)
  *
  * Fixture constants, the function-mode contract note and the shared gestures
@@ -188,8 +188,8 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
   // The rail agrees: three questions, and "here" is the second one.
   // `ProgressDots` gives the dots no testids (they are a picture of the aria
   // label); its class names are the primitive's public API, contract §3.
-  // What the rail does NOT yet show is question one as ANSWERED — see the
-  // fixme below, which owns that expectation.
+  // Question one's ANSWERED state is deliberately not asserted here — the
+  // dedicated resume test below owns that expectation.
   const rail = page.getByTestId("quiz-progress");
   await expect(rail).toHaveAttribute("aria-label", `Question 2 of ${QUIZ_LENGTH}`);
   const dots = rail.locator(".progress-dots__dot");
@@ -652,8 +652,7 @@ test("keyboard: the whole quiz is playable without a mouse", async ({ page }) =>
 
   // This run also carries the "Done" exit (R-10): back to quiz home, with no
   // stale results underneath. The ROUTE is asserted here; that the deep link's
-  // query is dropped with it is a separate, still-unmet claim — see the fixme
-  // below.
+  // query is dropped with it is a separate claim, owned by the test below.
   await tabUntilFocused(page, "quiz-done");
   await page.keyboard.press("Enter");
   await expectPathname(page, "/quiz");
@@ -662,37 +661,56 @@ test("keyboard: the whole quiz is playable without a mouse", async ({ page }) =>
 });
 
 /**
- * KNOWN DEFECT — "Done" still leaves the deep link in the address bar.
- * STILL OPEN after `c3580e95` (#537 A2), which fixed the other half of that
- * commit (the resume test above is green and no longer `fixme`). Owner: A2,
- * `lib/quiz/useQuizSession.ts`'s `exit`.
+ * REGRESSION GUARD — "Done" used to leave the deep link behind. It took three
+ * attempts, and each one failed HERE, on this lane, in a different way; the two
+ * assertions below are one per failure mode, which is why both are kept.
  *
- * R-10 is "Done → `/quiz`". `exit` used to call `router.push("/quiz")`, which
- * did not take for a query-only change on the same route; `c3580e95` switched
- * a same-route exit to `router.replace(destination)`. Re-measured on the full
- * lane after that commit: `replace` does not take EITHER. From
- * `/quiz?concept=rich-node-cs-recursion` the address bar still reads
- * `/quiz?concept=rich-node-cs-recursion` twenty seconds after the click.
+ * R-10 is "Done → `/quiz`".
  *
- * What DID change, and is worth knowing before someone re-diagnoses this: the
- * screen underneath is now correct. The failing run's page snapshot shows the
- * ordinary ranked proposal — eyebrow "Ready for you", rationale "Suggested for
- * you" — not the deep-linked card. `EXIT` clearing `conceptId`/`scope` is what
- * bought that. So the residual defect is the URL alone, and its one observable
- * consequence is that a RELOAD reopens the deep link instead of quiz home.
+ *  1. `router.push("/quiz")` — no movement. `/quiz?concept=<id>` → `/quiz` is
+ *     route-tree-identical (only client-side search params differ), which App
+ *     Router resolves to a no-op and never commits.
+ *  2. `router.replace(...)` (`c3580e95`) — no movement either, same reason.
+ *  3. `window.history.replaceState(window.history.state, …)` (`4a80da2d`) —
+ *     URL clean, CARD still pinned to the finished concept. Next patches the
+ *     History API and bails out of its own hook on its own state:
  *
- * Candidates for the next attempt (untried): drop the query with the native
- * history API (`window.history.replaceState(null, "", "/quiz")`, which Next 15+
- * threads back into router state) rather than through `router`; or make
- * `QuizScreen` stop trusting `concept=` once a session has exited, which fixes
- * the reload symptom without depending on a navigation taking at all.
+ *         if (data?.__NA || data?._N) return originalReplaceState(data, _, url)
  *
- * Riding as `fixme` per docs/e2e-exploration.md §8. It spends a real
- * generation when un-fixme'd (fine — the E2E stacks raise the limiter).
+ *     (`next/dist/client/components/app-router.js`, 16.2.9 — the guard that
+ *     stops Next's internal navigations looping.) `window.history.state` is the
+ *     state Next itself wrote, `__NA: true` and all, so the address bar moved
+ *     while `applyUrlFromHistoryPushReplace(url)` never ran and
+ *     `useSearchParams()` kept returning `?concept=`. `QuizScreen:49-50` derives
+ *     `entry` from `searchParams.toString()`, so the card stayed on the concept
+ *     just finished.
+ *  4. `window.history.replaceState(null, …)` (`4048a793`) — green, both halves.
+ *     `copyNextJsInternalHistoryState` copies `__NA` and
+ *     `__PRIVATE_NEXTJS_INTERNALS_TREE` off the current entry itself, so passing
+ *     null preserves exactly what passing the live state was trying to preserve
+ *     by hand — and the router sync runs.
+ *
+ * So: assert the URL (fails for #1-#2) AND the card (fails for #3). A future
+ * regression in either half is then named rather than guessed at.
+ *
+ * ON COMPARING THE CARD TO THE DATABASE — two assertions were tried here and
+ * both were unsound, so they are written down rather than repeated. A 3/3 run
+ * moves the quizzed concept's mastery AND its `times_studied`, and the ranking
+ * rule on both sides (`proposals.ts::primaryOf`, this file's `proposalsFromDb`)
+ * is "weakest STUDIED concept, else weakest overall". So:
+ *
+ *   - reading the ranking BEFORE the quiz compares the screen against a
+ *     snapshot the quiz has since invalidated;
+ *   - "the card is not the concept just finished" is false by design — once
+ *     the student studies it, that concept legitimately becomes the primary;
+ *   - reading the ranking after the quiz but WITHOUT a reload compares fresh
+ *     DB rows against a screen still rendering the graph copy it fetched at
+ *     mount, before the quiz.
+ *
+ * The reload settles all three: it remounts, so both sides rank the same rows.
  */
-test.fixme("#537: Done drops the deep link and returns a clean quiz home", async ({ page }) => {
+test("#537: Done drops the deep link and returns a clean quiz home", async ({ page }) => {
   test.setTimeout(180_000);
-  const ranking = await proposalsFromDb();
   await preAckDisclaimer(page);
   await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
   await startQuiz(page);
@@ -701,6 +719,23 @@ test.fixme("#537: Done drops the deep link and returns a clean quiz home", async
 
   await page.getByTestId("quiz-done").click();
   await expectLocation(page, "/quiz");
-  // …and home is home again, not the finished concept's card.
-  await expect(page.getByTestId("quiz-proposal")).toContainText(ranking.primary.concept_name);
+  await expect(page.getByTestId("quiz-home")).toBeVisible();
+  await expect(page.getByTestId("quiz-results")).toHaveCount(0);
+
+  // Then RELOAD, which is the harm the deep link actually did: home used to
+  // come back on the finished concept because the query was still in the URL.
+  // It is also the only honest place to compare the card against the database —
+  // a reload remounts, so home re-fetches the graph and both sides then rank
+  // the SAME rows. (Without it they cannot agree: home is still showing the
+  // copy it fetched before the quiz, where nothing was studied yet, while the
+  // DB now has `times_studied = 1` on the concept just finished. Both use the
+  // same rule — `primaryOf` / this file's mirror, "weakest studied, else
+  // weakest" — so the disagreement is purely which snapshot each one read.)
+  await page.reload();
+  await expectLocation(page, "/quiz");
+  const ranking = await proposalsFromDb();
+  await expect(page.getByTestId("quiz-proposal")).toContainText(ranking.primary.concept_name, {
+    timeout: SUBMIT_TIMEOUT,
+  });
+  await expect(page.getByTestId("quiz-results")).toHaveCount(0);
 });
