@@ -18,16 +18,20 @@ type Size = "sm" | "md" | "lg" | "xl";
 // underlines it in the accent, which is how the quiz shows "this link's dialog
 // is open". Leave `size` at its default on a link: `.btn--sm`/`--lg`/`--xl`
 // still apply their padding, which is the shape `link` exists to shed.
-export function Button({
-  variant = "secondary",
-  size = "md",
-  className,
-  type = "button",
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+//
+// The ref is forwarded so callers can hold the DOM node: the quiz's question
+// screen needs "Ask about this" as a return-focus target when its Sheet
+// closes, and was otherwise forced to drop to a raw `<button className="btn">`
+// to get one. Nothing else about the component changes.
+export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant;
   size?: Size;
-}) {
+};
+
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = "secondary", size = "md", className, type = "button", ...props },
+  ref,
+) {
   const cls = [
     "btn",
     variant !== "secondary" && `btn--${variant}`,
@@ -36,5 +40,5 @@ export function Button({
   ]
     .filter(Boolean)
     .join(" ");
-  return <button type={type} className={cls} {...props} />;
-}
+  return <button ref={ref} type={type} className={cls} {...props} />;
+});

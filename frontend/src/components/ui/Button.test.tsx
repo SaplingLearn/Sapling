@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import React from "react";
 import { Button } from "./Button";
+import { Sheet } from "./Sheet";
 
 afterEach(cleanup);
 
@@ -52,6 +53,37 @@ describe("Button — the link variant (#537)", () => {
       expect(screen.getByRole("button", { name })).toHaveClass("btn", "btn--primary");
       expect(screen.getByRole("button", { name })).toBeVisible();
     }
+  });
+
+  it("forwards its ref to the button element, so it can be a return-focus target", () => {
+    const ref = React.createRef<HTMLButtonElement>();
+    render(
+      <Button ref={ref} variant="secondary">
+        Ask about this
+      </Button>,
+    );
+    expect(ref.current).toBe(screen.getByRole("button", { name: "Ask about this" }));
+    expect(ref.current).toBeInstanceOf(HTMLButtonElement);
+  });
+
+  it("is a usable initialFocusRef for an overlay, which is why the ref exists", () => {
+    function Harness() {
+      const ref = React.useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <Button ref={ref}>Ask about this</Button>
+          <Sheet open onClose={() => {}} title="Ask about this" initialFocusRef={ref}>
+            <p>body</p>
+          </Sheet>
+        </>
+      );
+    }
+    render(<Harness />);
+    // The overlay only ever reads `.current`; proving the ref is populated with
+    // the real node is what makes it a legal target.
+    expect(screen.getByRole("button", { name: "Ask about this" })).toBeInstanceOf(
+      HTMLButtonElement,
+    );
   });
 
   it("exposes the open-dialog state the quiz's `adjust` link needs", () => {
