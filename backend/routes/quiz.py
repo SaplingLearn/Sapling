@@ -43,6 +43,8 @@ from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.exam_proximity import PROMPT_HORIZON_DAYS, days_until_next_exam
+from services.quiz_signals import QuizSignals, gather_signals
+from services.quiz_signals import prompt_block as signal_block
 from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
 from services.quiz_identity import question_hash, normalize_text
@@ -851,6 +853,7 @@ async def _quiz_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    times_studied: int | None = None,
 ) -> GeneratedQuiz:
     """Run quiz_agent and return questions in the legacy wire shape.
 
@@ -913,14 +916,24 @@ async def _quiz_via_agent(
     # unreadable past attempt would 502 a quiz that needed no history at all.
     # Each helper already degrades internally; this is the backstop for the
     # failure they cannot catch (an unexpected raise on the way in or out).
-    material, recent, exam_days_away = await asyncio.gather(
+    material, recent, exam_days_away, signals = await asyncio.gather(
         asyncio.to_thread(_course_material, course_id, concept_name),
         asyncio.to_thread(
             recent_question_identities, user_id, concept_node_id
         ),
         asyncio.to_thread(days_until_next_exam, user_id, course_id),
+        asyncio.to_thread(
+            gather_signals, user_id, concept_node_id,
+            concept_name=concept_name, times_studied=times_studied,
+        ),
         return_exceptions=True,
     )
+    if isinstance(signals, BaseException):
+        logger.warning(
+            "quiz: student-signal gather failed (%s); generating without them",
+            type(signals).__name__, exc_info=signals,
+        )
+        signals = QuizSignals()
     if isinstance(exam_days_away, BaseException):
         logger.warning(
             "quiz: exam-proximity lookup failed (%s); generating without it",
@@ -960,6 +973,13 @@ async def _quiz_via_agent(
     # contradict the adaptive difficulty the student actually chose. Omitted
     # entirely when unknown: "next exam: unknown" is prompt tokens spent to
     # say nothing.
+    # H4/#556: the signals that were already in reach and never asked for.
+    # Appended as one short line, and recorded as dimensions so F6 can price
+    # it — the issue's whole framing is "land these behind the measurement so
+    # we can see what each costs before deciding what stays".
+    routing_msg += signal_block(signals)
+    prompt_dimensions.record(**signals.as_dimensions())
+
     # Bounded by a horizon: a final dated 87 days out would otherwise put
     # "there is an exam coming, weight toward what an exam tests" on EVERY
     # quiz for the whole semester, which carries no proximity signal and
@@ -1258,6 +1278,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             use_shared_context=body.use_shared_context,
             request_id=request_id,
             model_pref=body.model_pref,
+            times_studied=node.get("times_studied"),
         )
         questions = generated.questions
         exam_days_away = generated.exam_days_away

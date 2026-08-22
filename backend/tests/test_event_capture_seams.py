@@ -559,6 +559,13 @@ def test_quiz_generate_emits_quiz_started(sink):
         "recent_asked": 0,
         "routing_chars": ev["payload"]["routing_chars"],
         "adaptive": False,
+        # H4/#556: the cheap signals, each attributable in its own right —
+        # the issue's condition for landing them was that F6 could price
+        # them before anyone decides what stays.
+        "signal_times_studied": ev["payload"]["signal_times_studied"],
+        "signal_velocity": ev["payload"]["signal_velocity"],
+        "signal_in_flight": 0,
+        "signal_flashcards": 0,
     }
     # Ids/counts/enums only, per the #117 payload rule — no prompt text.
     assert isinstance(ev["payload"]["routing_chars"], int)
