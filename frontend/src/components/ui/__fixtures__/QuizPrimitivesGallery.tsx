@@ -28,6 +28,8 @@ import { InlineBanner } from "../InlineBanner";
 import { ProgressDots } from "../ProgressDots";
 import { SegmentedControl } from "../SegmentedControl";
 import { Sheet } from "../Sheet";
+// The harness's own layout, co-located rather than shipped in globals.css.
+import "./quizPrimitivesGallery.css";
 
 /** The prototype's CS101 purple, so the gallery matches the design's screens. */
 const COURSE_COLOR = "#7b4b99";
@@ -322,8 +324,10 @@ export function QuizPrimitivesGallery() {
         </Row>
       </Section>
 
+      {/* The composition (`compact` +8px nudge vs `wide` dead-centre) is picked
+          from the canvas width, so these four rows show both without asking. */}
       <Section title="ConceptNeighbourhood — the three presets">
-        <Row label="quiz home · 320×204">
+        <Row label="quiz home · 320×204 · compact">
           <ConceptNeighbourhood
             centre={CENTRE}
             siblings={SIBLINGS}
@@ -334,7 +338,7 @@ export function QuizPrimitivesGallery() {
             ariaLabel="Recursion and its neighbours on your knowledge tree"
           />
         </Row>
-        <Row label="concept dialog · 300×200">
+        <Row label="concept dialog · 300×200 · compact">
           <ConceptNeighbourhood
             centre={CENTRE}
             siblings={SIBLINGS}
@@ -345,7 +349,7 @@ export function QuizPrimitivesGallery() {
             ariaLabel="Recursion and its neighbours on your knowledge tree"
           />
         </Row>
-        <Row label="results · 640×212, growth centre">
+        <Row label="results · 640×212 · wide, growth centre">
           <ConceptNeighbourhood
             centre={CENTRE}
             siblings={SIBLINGS}
@@ -357,7 +361,7 @@ export function QuizPrimitivesGallery() {
             ariaLabel="Recursion node grew from 29% to 46% mastery"
           />
         </Row>
-        <Row label="one sibling, and none">
+        <Row label="one sibling, and none · compact">
           <ConceptNeighbourhood
             centre={CENTRE}
             siblings={SIBLINGS.slice(0, 1)}
