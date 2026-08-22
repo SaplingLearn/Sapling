@@ -228,6 +228,64 @@ describe("start → answer → answer → submit", () => {
   });
 });
 
+describe('the "sapling:graph-changed" announcement', () => {
+  it("fires exactly once per submit, carrying the mastery move", async () => {
+    const seen: CustomEvent[] = [];
+    const listener = (e: Event) => seen.push(e as CustomEvent);
+    window.addEventListener("sapling:graph-changed", listener);
+
+    try {
+      quizApi.generateQuiz.mockResolvedValue(generated(1));
+      const { result } = mount();
+      await waitFor(() => expect(result.current.config).not.toBeNull());
+      act(() => result.current.actions.start(START));
+      await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+      act(() => result.current.actions.select(1));
+      await act(async () => {
+        result.current.actions.submitAnswer();
+      });
+      await waitFor(() => expect(result.current.session.phase).toBe("results"));
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0].detail).toEqual({
+        conceptId: "c1",
+        masteryBefore: 0.25,
+        masteryAfter: 0.31,
+      });
+    } finally {
+      window.removeEventListener("sapling:graph-changed", listener);
+    }
+  });
+
+  it("stays silent when the submit failed", async () => {
+    const seen: Event[] = [];
+    const listener = (e: Event) => seen.push(e);
+    window.addEventListener("sapling:graph-changed", listener);
+
+    try {
+      quizApi.generateQuiz.mockResolvedValue(generated(1));
+      quizApi.submitQuiz.mockRejectedValue(
+        new ApiError("done", 409, { code: "QUIZ_ATTEMPT_ALREADY_COMPLETED" }),
+      );
+      const { result } = mount();
+      await waitFor(() => expect(result.current.config).not.toBeNull());
+      act(() => result.current.actions.start(START));
+      await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+      act(() => result.current.actions.select(1));
+      await act(async () => {
+        result.current.actions.submitAnswer();
+      });
+      await waitFor(() => expect(result.current.session.phase).toBe("error"));
+
+      expect(seen).toHaveLength(0);
+    } finally {
+      window.removeEventListener("sapling:graph-changed", listener);
+    }
+  });
+});
+
 describe("leave and resume", () => {
   it("parks the session, navigates back to the source, and picks it up again", async () => {
     const { result, unmount } = mount();

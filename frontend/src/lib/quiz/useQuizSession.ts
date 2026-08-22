@@ -34,7 +34,7 @@ import { clearSession, persistSession, loadSession } from "./session";
 import type { EntryRequest } from "./source";
 import { useGamificationDelta } from "./useGamificationDelta";
 import { useQuizConfig } from "./useQuizConfig";
-import type { QuizConfig, QuizSession } from "./types";
+import type { QuizConfig, QuizSession, SubmitResult } from "./types";
 
 export interface QuizActions {
   configure(open: boolean): void;
@@ -67,6 +67,32 @@ export interface QuizSessionHandle {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Tell any mounted graph that mastery just moved.
+ *
+ * Refreshing the tree after a quiz has always been purely navigational — leave
+ * the quiz, land on `/tree`, and its own mount-time `getGraph` picks up the new
+ * score (R5 §C). That still works, but it is nothing for a graph already on
+ * screen, so submit announces itself. Cheap and advisory: nothing listens today
+ * and nothing has to.
+ *
+ * Dispatched here rather than from the results screen because this is the one
+ * place that knows a submit actually LANDED — a component firing it on render
+ * would repeat it on every re-render of the same result.
+ */
+function announceGraphChanged(conceptId: string, result: SubmitResult): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent("sapling:graph-changed", {
+      detail: {
+        conceptId,
+        masteryBefore: result.mastery_before,
+        masteryAfter: result.mastery_after,
+      },
+    }),
+  );
 }
 
 /**
@@ -197,6 +223,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         const xp = await gamification.deltaAfterSubmit();
         apply({ type: "SUBMITTED", result, xp });
         clearSession();
+        announceGraphChanged(from.conceptId, result);
       } catch (err) {
         apply({ type: "SUBMIT_FAILED", error: describeQuizError(err) });
       } finally {
