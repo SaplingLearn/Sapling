@@ -50,7 +50,6 @@ export interface QuizResultsProps {
    * `null` means "no name available", which covers a finished queue AND a next
    * id that isn't in the scoped graph. It is a LABEL only: whether that exit
    * renders at all stays `queueOf(session.scope).length > session.queueIndex + 1`.
-   * Optional so the current render keeps compiling until it reads this.
    */
   nextConcept?: { id: string; name: string } | null;
 }
@@ -63,6 +62,7 @@ export function QuizResults({
   concept,
   neighbourhood,
   prefersReducedMotion,
+  nextConcept,
 }: QuizResultsProps) {
   // AskPanel needs the viewer's id and the seam (`QuizResultsProps`) is fixed,
   // so it comes off the same context `QuizScreen` reads. The context has a
@@ -121,6 +121,9 @@ export function QuizResults({
           scale={CANVAS.scale}
           centreVariant={{ kind: "growth", before, after }}
           animate={!prefersReducedMotion}
+          // The name is set below the canvas in the display serif; captioning
+          // the centre too would say it twice. The siblings stay captioned.
+          showCentreLabel={false}
           ariaLabel={growthLabel}
           testid="quiz-results-graph"
         />
@@ -166,18 +169,17 @@ export function QuizResults({
 
       <hr className="quiz-results__divider" />
 
-      <div className="quiz-results__exits" data-testid="quiz-results-exits">
+      <div className="quiz-results__exits">
         {hasNext ? (
           <Button
             variant="primary"
             data-testid="quiz-next-concept"
             onClick={() => actions.nextInQueue()}
           >
-            {/* The queue holds concept ids and this screen is given only the
-                concept it just quizzed, so the next one cannot be named from
-                here. TODO(#537-followup: pass the queue's resolved names into
-                QuizResults so this reads "Next: {concept} →"). */}
-            Next concept →
+            {/* `nextConcept` is a LABEL: whether this exit renders at all is the
+                queue-length check above. An id the scoped graph can't name gets
+                the unnamed button rather than an invented name. */}
+            {nextConcept ? `Next: ${nextConcept.name} →` : "Next concept →"}
           </Button>
         ) : missed.length > 0 ? (
           <Button
@@ -185,9 +187,11 @@ export function QuizResults({
             data-testid="quiz-practise-missed"
             onClick={() => actions.practiseMissed()}
           >
+            {/* The prototype's `practiseLabel`: an uncounted plural. The count
+                is already on the eyebrow above ("3 to look at"). */}
             {missed.length === 1
               ? "Practise the one you missed"
-              : `Practise the ${missed.length} you missed`}
+              : "Practise the ones you missed"}
           </Button>
         ) : (
           <Button

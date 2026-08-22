@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 import { markRadius } from "@/components/graph/ConceptNode";
 import { __resetReducedMotionStoreForTests } from "@/lib/usePrefersReducedMotion";
@@ -141,7 +141,11 @@ function actions(): QuizActions {
 
 function renderResults(
   over: Partial<QuizSession> = {},
-  opts: { prefersReducedMotion?: boolean; acts?: QuizActions } = {},
+  opts: {
+    prefersReducedMotion?: boolean;
+    acts?: QuizActions;
+    nextConcept?: { id: string; name: string } | null;
+  } = {},
 ) {
   const acts = opts.acts ?? actions();
   const view = render(
@@ -155,9 +159,19 @@ function renderResults(
         ],
       }}
       prefersReducedMotion={opts.prefersReducedMotion ?? true}
+      nextConcept={opts.nextConcept}
     />,
   );
   return { ...view, acts };
+}
+
+/** The growth circle's drawn radius and its scale ratio — 1 once grown. */
+function growthMark(container: HTMLElement) {
+  const body = container.querySelector(".concept-node__body--growth")!;
+  return {
+    r: Number(body.getAttribute("r")),
+    grow: Number(body.getAttribute("style")?.match(/--concept-grow:\s*([\d.]+)/)?.[1]),
+  };
 }
 
 const PERFECT: Partial<QuizSession> = {
@@ -232,22 +246,28 @@ describe("QuizResults", () => {
   it("toggles the explanation disclosure and reveals the text", () => {
     renderResults();
     const toggle = screen.getByTestId("quiz-missed-explain-102");
+    // The panel is always in the DOM (so `aria-controls` resolves) and hidden
+    // until asked for, so visibility — not presence — is the assertion.
+    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(panel).toHaveTextContent("Without a base case the recursion never stops.");
+
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByText("Without a base case the recursion never stops."),
-    ).toBeNull();
+    expect(panel).not.toBeVisible();
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByText("Without a base case the recursion never stops."),
-    ).toBeInTheDocument();
+    expect(panel).toBeVisible();
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByText("Without a base case the recursion never stops."),
-    ).toBeNull();
+    expect(panel).not.toBeVisible();
+  });
+
+  it("names the missed region from its eyebrow", () => {
+    renderResults();
+    const list = screen.getByTestId("quiz-missed-list");
+    const heading = document.getElementById(list.getAttribute("aria-labelledby")!);
+    expect(heading).toHaveTextContent("One to look at");
   });
 
   it("opens the AskPanel seeded from the row that asked", () => {
@@ -277,6 +297,21 @@ describe("QuizResults", () => {
     expect(screen.queryByTestId("quiz-practise-missed")).toBeNull();
   });
 
+  it("restarts the same concept on the session's own config", () => {
+    const { acts } = renderResults(PERFECT);
+    fireEvent.click(screen.getByTestId("quiz-again"));
+    // No config override: `useQuizSession.start` defaults it to the live
+    // session's config, so omitting it IS "the same quiz again" — passing
+    // prefs here would silently change the length or difficulty.
+    expect(acts.start).toHaveBeenCalledTimes(1);
+    expect(acts.start).toHaveBeenCalledWith({
+      intent: "practice",
+      scope: { kind: "concept", conceptId: "recursion" },
+      conceptId: "recursion",
+      courseId: "cs101",
+    });
+  });
+
   it("offers the next concept while the queue has more, and calls nextInQueue", () => {
     const { acts } = renderResults({
       scope: { kind: "course", courseId: "cs101", queue: ["recursion", "base-cases"] },
@@ -287,6 +322,30 @@ describe("QuizResults", () => {
     expect(acts.nextInQueue).toHaveBeenCalledTimes(1);
   });
 
+  it("names the next concept when the graph could resolve it", () => {
+    renderResults(
+      {
+        scope: { kind: "course", courseId: "cs101", queue: ["recursion", "base-cases"] },
+        queueIndex: 0,
+      },
+      { nextConcept: { id: "base-cases", name: "Base cases" } },
+    );
+    expect(screen.getByTestId("quiz-next-concept")).toHaveTextContent("Next: Base cases →");
+  });
+
+  it("still offers the queue exit unnamed when the next id can't be named", () => {
+    // `nextConcept` is a LABEL: a next id outside the scoped graph must not
+    // hide the exit, and must not get an invented name.
+    renderResults(
+      {
+        scope: { kind: "due", queue: ["recursion", "off-graph"] },
+        queueIndex: 0,
+      },
+      { nextConcept: null },
+    );
+    expect(screen.getByTestId("quiz-next-concept")).toHaveTextContent("Next concept →");
+  });
+
   it("falls back to practising the missed questions, and calls practiseMissed", () => {
     const { acts } = renderResults();
     const button = screen.getByTestId("quiz-practise-missed");
@@ -295,7 +354,9 @@ describe("QuizResults", () => {
     expect(acts.practiseMissed).toHaveBeenCalledTimes(1);
   });
 
-  it("counts the missed questions in the practise label", () => {
+  it("says 'ones' — uncounted — when more than one was missed", () => {
+    // The prototype's `practiseLabel`: never a count. The count is already the
+    // eyebrow above the list.
     renderResults({
       result: {
         ...RESULT,
@@ -303,9 +364,32 @@ describe("QuizResults", () => {
         results: RESULT.results.map((r, i) => (i === 0 ? { ...r, correct: false } : r)),
       },
     });
+    expect(screen.getByTestId("quiz-missed-list")).toHaveTextContent("2 to look at");
     expect(screen.getByTestId("quiz-practise-missed")).toHaveTextContent(
-      "Practise the 2 you missed",
+      "Practise the ones you missed",
     );
+  });
+
+  it("says so when an item was submitted unanswered", () => {
+    // `selected` is "" on the wire for a skipped item; "You chose  · …" would
+    // read as a rendering bug.
+    const missed = buildMissedItems(
+      session({
+        result: {
+          ...RESULT,
+          results: RESULT.results.map((r, i) => (i === 1 ? { ...r, selected: "" } : r)),
+        },
+      }),
+    );
+    expect(missed[0]).toMatchObject({ chosenLabel: "", chosenText: "" });
+
+    renderResults({
+      result: {
+        ...RESULT,
+        results: RESULT.results.map((r, i) => (i === 1 ? { ...r, selected: "" } : r)),
+      },
+    });
+    expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent("No answer · the answer is B");
   });
 
   it("labels the secondary exit from the source and calls exit()", () => {
@@ -332,10 +416,29 @@ describe("QuizResults", () => {
 
   it("renders the grown node at its end state immediately under reduced motion", () => {
     const { container } = renderResults({}, { prefersReducedMotion: true });
-    const body = container.querySelector(".concept-node__body--growth")!;
     // The end state, first paint: the after-radius, at full scale — no
     // transition to run.
-    expect(Number(body.getAttribute("r"))).toBeCloseTo(markRadius(0.46, false, 2.5), 5);
-    expect(Number(body.getAttribute("style")?.match(/--concept-grow:\s*([\d.]+)/)?.[1])).toBe(1);
+    const mark = growthMark(container);
+    expect(mark.r).toBeCloseTo(markRadius(0.46, false, 2.5), 5);
+    expect(mark.grow).toBe(1);
+  });
+
+  it("grows once and does not replay when the screen re-renders", async () => {
+    // With motion on, the mark starts at the BEFORE ratio and grows to 1. The
+    // headline behaviour of this screen is that it then stays there: a
+    // disclosure toggle (or opening the AskPanel) must not restart it.
+    const { container } = renderResults({}, { prefersReducedMotion: false });
+    expect(growthMark(container).grow).toBeCloseTo(
+      markRadius(0.29, false, 2.5) / markRadius(0.46, false, 2.5),
+      3,
+    );
+    await waitFor(() => expect(growthMark(container).grow).toBe(1));
+
+    fireEvent.click(screen.getByTestId("quiz-missed-explain-102"));
+    expect(screen.getByTestId("quiz-missed-explain-102")).toHaveAttribute("aria-expanded", "true");
+
+    const after = growthMark(container);
+    expect(after.grow).toBe(1);
+    expect(after.r).toBeCloseTo(markRadius(0.46, false, 2.5), 5);
   });
 });

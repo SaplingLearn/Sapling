@@ -177,14 +177,3 @@
   margin: var(--quiz-results-line-gap) 0 0;
   text-wrap: pretty;
 }
-
-/* The design's results canvas captions the SIBLINGS but not the centre — the
-   concept name is set below it in the display serif, and drawing it twice reads
-   as a bug. `ConceptNeighbourhood` (A1) has one `showLabels` switch for both,
-   and turning it off would drop the sibling captions the design does draw, so
-   the centre caption — always the last <text> on the canvas — is hidden here
-   instead. TODO(#537-followup: a `showCentreLabel` prop on ConceptNeighbourhood
-   would retire this rule). */
-.quiz-results__graph .concept-neighbourhood__label:last-of-type {
-  display: none;
-}

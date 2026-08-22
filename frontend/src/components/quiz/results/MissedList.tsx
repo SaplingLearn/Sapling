@@ -88,9 +88,16 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
 
   if (items.length === 0) return null;
 
+  // The eyebrow doubles as the region's accessible name: a `<section>` without
+  // one is not exposed as a landmark, which would leave "One to look at" as
+  // loose text rather than the heading of the block it introduces.
+  const headingId = `${testid}-heading`;
+
   return (
-    <section className="quiz-missed" data-testid={testid}>
-      <div className="label-micro">{missedLabel(items.length)}</div>
+    <section className="quiz-missed" data-testid={testid} aria-labelledby={headingId}>
+      <div className="label-micro" id={headingId}>
+        {missedLabel(items.length)}
+      </div>
       {items.map(item => {
         const open = expanded[item.questionId] === true;
         const panelId = `quiz-missed-explanation-${item.questionId}`;
@@ -113,8 +120,14 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
                   aria-expanded={open}
                   aria-controls={panelId}
                   data-testid={`quiz-missed-explain-${item.questionId}`}
+                  // Flipped off `prev`, not off `open`: `open` is captured from
+                  // the render that attached this handler, so two clicks
+                  // batched into one render would collapse into one toggle.
                   onClick={() =>
-                    setExpanded(prev => ({ ...prev, [item.questionId]: !open }))
+                    setExpanded(prev => ({
+                      ...prev,
+                      [item.questionId]: prev[item.questionId] !== true,
+                    }))
                   }
                 >
                   {open ? "Hide explanation" : "Show explanation"}
@@ -128,8 +141,12 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
                 Ask about this
               </Button>
             </div>
-            {item.explanation && open && (
-              <p id={panelId} className="body-serif quiz-missed__explanation">
+            {/* Always in the DOM so `aria-controls` never points at nothing —
+                an IDREF to a missing element is invalid ARIA and some screen
+                readers announce the control as broken. `hidden` occupies no
+                space, so the expand behaves exactly as before. */}
+            {item.explanation && (
+              <p id={panelId} hidden={!open} className="body-serif quiz-missed__explanation">
                 {item.explanation}
               </p>
             )}
