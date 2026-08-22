@@ -205,7 +205,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-proposal` | the "Ready for you" primary proposal card |
 | `quiz-start` | "Start" on that card |
 | `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
-| `quiz-adjust` | "adjust" link on the card — opens the adjust dialog |
+| `quiz-adjust` | "adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
 | `quiz-alternative-{nodeId}` | one "Also worth a look" row |
 | `quiz-review-due` | "Review everything due" row |
 | `quiz-pick-open` | "Pick something specific →" |
