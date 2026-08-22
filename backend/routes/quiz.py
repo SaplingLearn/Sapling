@@ -42,6 +42,7 @@ from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
 from services.quiz_identity import question_hash, normalize_text
 from services.quiz_repetition import RecentQuestion, recent_question_identities
@@ -1752,6 +1753,15 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         .replace("{score}", str(score))
         .replace("{total}", str(total))
         .replace("{quiz_results_json}", json.dumps(results, indent=2))
+        # H2/#554: the wrong answers in WORDS. `results` carries labels only
+        # ("picked B, answer was C"), which is not something a model can turn
+        # into a misconception — it can only guess one. The option text lives
+        # in questions_json, one join away, and has been sitting unread since
+        # answers_json existed.
+        .replace(
+            "{distractor_profile_json}",
+            json.dumps(build_distractor_profile(questions, results), indent=2),
+        )
     )
 
     # Correlate the background write with this request's trace.
