@@ -103,8 +103,25 @@ function pathnameOf(href: string): string {
 function goTo(destination: string, router: { push(href: string): void }): void {
   const here = typeof window === "undefined" ? null : window.location.pathname;
   if (here !== null && pathnameOf(destination) === here) {
-    // Keep Next's own router state object; only the URL changes.
-    window.history.replaceState(window.history.state, "", destination);
+    // The state argument MUST be null, and that is the whole integration.
+    //
+    // Next patches `history.replaceState` (app-router.js, 16.2.9) and bails out
+    // of its own hook before doing anything:
+    //
+    //     if (data?.__NA || data?._N) return originalReplaceState(data, _, url)
+    //
+    // — the guard that stops Next's internal navigations from looping. Passing
+    // `window.history.state` hands it the state Next itself wrote, `__NA: true`
+    // and all, so it takes that branch: the address bar changes and
+    // `applyUrlFromHistoryPushReplace(url)` never runs, which is exactly the
+    // half-fixed symptom the lane saw — URL clean, `useSearchParams()` still
+    // holding `?concept=`, card still pinned.
+    //
+    // Nothing is lost by passing null: `copyNextJsInternalHistoryState` starts
+    // from `{}` and copies `__NA` and `__PRIVATE_NEXTJS_INTERNALS_TREE` off the
+    // CURRENT entry, so the router state is preserved by Next rather than by us.
+    // Preserving it ourselves is what broke it.
+    window.history.replaceState(null, "", destination);
     return;
   }
   router.push(destination);

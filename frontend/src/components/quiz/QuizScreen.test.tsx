@@ -113,7 +113,7 @@ const SUBMITTED: SubmitResult = {
  * `replaceState` is caught too — the point of the test is that we do not care
  * WHICH mechanism moved the URL, only that it moved once and landed clean.
  */
-let navigations: { via: string; url: string }[] = [];
+let navigations: { via: string; url: string; state?: unknown; stateBefore?: unknown }[] = [];
 const realReplaceState = window.history.replaceState.bind(window.history);
 const realPushState = window.history.pushState.bind(window.history);
 
@@ -122,7 +122,17 @@ beforeEach(() => {
   // `window.location.pathname` to tell "same route" from "real navigation", so a
   // test left on jsdom's default "/" would exercise the wrong branch. Done
   // before the spies go on, so this setup is not counted as a navigation.
-  window.history.replaceState(null, "", "/quiz?concept=c1&from=link");
+  //
+  // The state object carries `__NA`, as a real App Router entry does. That is
+  // load-bearing, not decoration: Next's patched `replaceState` early-returns on
+  // a state carrying `__NA`, so without it here `window.history.state` and
+  // `null` would be indistinguishable and the null-state assertion below would
+  // pass whatever the code did.
+  window.history.replaceState(
+    { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: ["quiz"] },
+    "",
+    "/quiz?concept=c1&from=link",
+  );
 
   navigations = [];
   searchParams = new URLSearchParams("concept=c1&from=link");
@@ -133,7 +143,13 @@ beforeEach(() => {
   push.mockReset().mockImplementation((url: string) => navigations.push({ via: "push", url }));
   replace.mockReset().mockImplementation((url: string) => navigations.push({ via: "replace", url }));
   vi.spyOn(window.history, "replaceState").mockImplementation((s, t, url) => {
-    if (typeof url === "string") navigations.push({ via: "history.replaceState", url });
+    if (typeof url === "string") {
+      // `stateBefore` is the entry being replaced — recorded here because the
+      // call itself overwrites it.
+      navigations.push({
+        via: "history.replaceState", url, state: s, stateBefore: window.history.state,
+      });
+    }
     return realReplaceState(s, t, url as string);
   });
   vi.spyOn(window.history, "pushState").mockImplementation((s, t, url) => {
@@ -244,6 +260,33 @@ describe("QuizScreen — Done drops the deep link (#537)", () => {
     expect(push).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
     expect(navigations.map(n => n.via)).toEqual(["history.replaceState"]);
+  });
+
+  it("passes a NULL history state, or Next's patch skips its own URL sync", async () => {
+    // Next patches `history.replaceState` and early-returns when the state
+    // object carries its own `__NA` marker (app-router.js, 16.2.9) — the guard
+    // against internal navigations looping. Handing it `window.history.state`
+    // therefore moved the address bar while leaving `useSearchParams()` on the
+    // old query, which is why the card stayed pinned after the URL was already
+    // clean. `null` is what lets Next run `applyUrlFromHistoryPushReplace`, and
+    // it loses nothing: `copyNextJsInternalHistoryState` copies `__NA` and the
+    // private tree off the current entry itself.
+    //
+    // The sync itself cannot be observed here — jsdom has no Next router — so
+    // this pins the one input that decides whether it happens. The e2e Done
+    // journey covers the outcome.
+    await playToResults();
+    await act(async () => {
+      screen.getByTestId("quiz-done").click();
+    });
+
+    expect(navigations).toHaveLength(1);
+    expect(navigations[0].via).toBe("history.replaceState");
+    expect(navigations[0].state).toBeNull();
+    // …and the entry it replaced really was a Next one, so `null` and
+    // `window.history.state` were distinguishable at the call site. Without
+    // this, both spellings record `null` and the assertion above is vacuous.
+    expect(navigations[0].stateBefore).toMatchObject({ __NA: true });
   });
 
   it("lands back on quiz home with no results on screen", async () => {
