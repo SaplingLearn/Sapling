@@ -120,15 +120,6 @@ def test_schema_version_is_declared_and_positive():
     assert DIGEST_SCHEMA_VERSION >= 1
 
 
-def test_the_digest_model_stamps_the_version_by_default():
-    """The version has to land in `context_json` without the model being asked
-    for it — a field the LLM must remember to set is a field that goes missing.
-    """
-    from agents.quiz_context import QuizContext
-
-    assert QuizContext().model_dump()["schema_version"] == DIGEST_SCHEMA_VERSION
-
-
 def test_the_prompt_template_has_a_slot_for_the_profile():
     """Guards the wiring, not the words: a renamed placeholder would leave the
     profile computed, stringified and dropped on the floor — silently, since
@@ -139,3 +130,70 @@ def test_the_prompt_template_has_a_slot_for_the_profile():
         Path(__file__).resolve().parents[1] / "prompts/quiz_context_update.txt"
     ).read_text()
     assert "{distractor_profile_json}" in tpl
+
+
+# ── digest schema version, reader side (#554 review findings 1 and 3) ────────
+
+
+def test_the_version_is_stamped_by_the_server_not_by_the_model():
+    """It must NOT be a field on the agent's output schema.
+
+    The digest prompt feeds the previous context back in under "update your
+    notes", so a model that helpfully bumped a field named "version" would
+    trip the reader's unknown-shape warning on every later read for that
+    (user, concept) — forever, with no real drift. One that lowered it would
+    kill the guard just as quietly. So the model never sees the field, and
+    `save_quiz_context` stamps it.
+    """
+    from unittest.mock import patch as _patch
+
+    from agents.quiz_context import QuizContext
+    from services import quiz_context_service
+
+    assert "schema_version" not in QuizContext.model_fields
+
+    with _patch.object(quiz_context_service, "table") as t, \
+            _patch.object(quiz_context_service, "encrypt_json", side_effect=lambda v: v):
+        quiz_context_service.save_quiz_context("u1", "n1", {"notes": "x"})
+
+    written = t.return_value.upsert.call_args[0][0]["context_json"]
+    assert written["schema_version"] == DIGEST_SCHEMA_VERSION
+    assert written["notes"] == "x"
+
+
+def test_a_versioned_digest_that_reads_as_nothing_is_flagged(caplog):
+    """The drift #554 actually cites: a key RENAME at the SAME version. A
+    version comparison cannot see that — it needs someone to remember to bump
+    the version in the same commit as the rename, which is the discipline that
+    failed in #548. Catch it by outcome instead."""
+    from agents.tools.quiz_history import _coerce_summary
+
+    with caplog.at_level("WARNING"):
+        out = _coerce_summary(
+            {"schema_version": DIGEST_SCHEMA_VERSION, "renamed_key": "content"}
+        )
+
+    assert out is None
+    assert "renamed out from under this coercer" in caplog.text
+
+
+def test_a_healthy_digest_is_silent(caplog):
+    from agents.tools.quiz_history import _coerce_summary
+
+    with caplog.at_level("WARNING"):
+        out = _coerce_summary(
+            {"schema_version": DIGEST_SCHEMA_VERSION, "notes": "they confuse base cases"}
+        )
+
+    assert out == "they confuse base cases"
+    assert caplog.text == ""
+
+
+def test_an_unversioned_legacy_digest_is_not_a_discrepancy(caplog):
+    """Every row written before #554 lacks the field. Warning on those would
+    fire on the entire existing corpus."""
+    from agents.tools.quiz_history import _coerce_summary
+
+    with caplog.at_level("WARNING"):
+        assert _coerce_summary({"unknown": "shape"}) is None
+    assert caplog.text == ""

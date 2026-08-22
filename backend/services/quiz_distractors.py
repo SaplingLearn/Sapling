@@ -8,10 +8,17 @@ it can only guess one. The option TEXT is what makes a wrong answer mean
 something, and it lives in `questions_json`, one join away.
 
 This module does that join and hands the digest agent the wrong answers in
-words. Deliberately dumb: no model call, no I/O, pure data. It runs in the
-post-submit BackgroundTask, after the attempt is graded and written, so it
-must never raise — a crash here would cost the student their digest for a
-quiz they already finished.
+words. Deliberately dumb: no model call, no I/O, pure data.
+
+It must never raise, and the reason is worse than it looks. Despite feeding a
+BackgroundTask, this runs INLINE on the request path — `submit_quiz` builds
+the whole prompt string synchronously and only hands the finished string to
+`background_tasks.add_task`. So an escaping exception 500s
+`POST /api/quiz/submit` AFTER the atomic `completed_at` claim, the
+`apply_graph_update` mastery write and the score update have all landed: the
+student sees a failed submit for a quiz that actually scored, and their retry
+gets a 409 with the score never returned. Do not remove the guard as "cheap
+background-task failure" — it is not one.
 """
 
 from __future__ import annotations
@@ -50,6 +57,7 @@ def build_distractor_profile(
     try:
         return _build(questions, results)
     except Exception:  # pragma: no cover - defensive; see module docstring
+        # Degrade to no profile rather than 500 a submit that already scored.
         logger.warning("build_distractor_profile failed; digest loses the profile",
                        exc_info=True)
         return []

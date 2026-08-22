@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from agents._providers import model_for
-from services.quiz_distractors import DIGEST_SCHEMA_VERSION
 
 
 class QuizContext(BaseModel):
@@ -43,13 +42,6 @@ class QuizContext(BaseModel):
     notes: str = Field(
         default="",
         description="Free-form observations to help generate a better next quiz.",
-    )
-    schema_version: int = Field(
-        default=DIGEST_SCHEMA_VERSION,
-        description=(
-            "Digest shape version. Set by the server, not by you — leave it "
-            "at its default."
-        ),
     )
 
 

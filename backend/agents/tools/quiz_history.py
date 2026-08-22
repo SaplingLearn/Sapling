@@ -112,28 +112,52 @@ def _coerce_summary(ctx: Any) -> str | None:
             ]
             if items:
                 parts.append(label + ":\n" + "\n".join(f"- {i}" for i in items))
-        # H2/#554: a digest written by a shape this reader doesn't know is
-        # the signature of the drift class that hid #548's key mismatch — the
-        # coercer looked for `common_errors` while the agent wrote
-        # `common_mistakes`, and the result was simply an empty digest, which
-        # is indistinguishable from a new student. Log it rather than let a
-        # future rename go quiet again. Unversioned rows are pre-#554 and
-        # expected, not a discrepancy.
-        version = ctx.get("schema_version")
-        if isinstance(version, int) and version > DIGEST_SCHEMA_VERSION:
-            logger.warning(
-                "quiz digest carries schema_version=%s but this reader "
-                "understands %s — fields added since may be silently unread",
-                version, DIGEST_SCHEMA_VERSION,
-            )
         rec = ctx.get("recommended_difficulty")
         if isinstance(rec, str) and rec.strip():
             # The post-submit agent's difficulty recommendation — surfaced
             # here or it rots encrypted-and-unread (its only other mention
             # is the dead legacy prompt template).
             parts.append(f"Recommended next difficulty: {rec.strip()}")
+        _warn_if_digest_read_nothing(ctx, parts)
         return "\n\n".join(parts) or None
     return None
+
+
+def _warn_if_digest_read_nothing(ctx: dict, parts: list[str]) -> None:
+    """A digest that exists but coerces to NOTHING is the drift signature.
+
+    #554 asked for a schema version so the next key drift would be caught.
+    A version alone does not catch the drift it was asked about: #548's bug
+    was a RENAME at the same version — the coercer looked for `common_errors`
+    while the agent wrote `common_mistakes` — and catching that with a version
+    requires remembering to bump it in the same commit as the rename, which is
+    exactly the discipline that failed the first time.
+
+    So the version is used for what it can actually prove (a writer newer than
+    this reader), and the rename case is caught by its OUTCOME instead: the
+    row is present, the writer stamped a version this reader claims to
+    understand, and yet every key it knows came back empty. For a real digest
+    that combination cannot happen — the agent always writes at least
+    `questions_seen_summary` or `notes` — so it means the keys moved.
+    """
+    version = ctx.get("schema_version")
+    if not isinstance(version, int):
+        # Pre-#554 row. Unversioned is expected, not a discrepancy.
+        return
+    if version > DIGEST_SCHEMA_VERSION:
+        logger.warning(
+            "quiz digest carries schema_version=%s but this reader understands "
+            "%s — fields added since are silently unread (mixed deploy?)",
+            version, DIGEST_SCHEMA_VERSION,
+        )
+        return
+    if not parts:
+        logger.warning(
+            "quiz digest at schema_version=%s yielded NOTHING readable "
+            "(keys present: %s) — the digest keys have most likely been "
+            "renamed out from under this coercer, which is #548 repeating",
+            version, sorted(ctx.keys()),
+        )
 
 
 async def read_recent_quiz_attempts(
