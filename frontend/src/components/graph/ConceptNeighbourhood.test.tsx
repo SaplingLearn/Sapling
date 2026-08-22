@@ -125,6 +125,33 @@ describe("ConceptNeighbourhood", () => {
     expect(num(topLeft, "y")).toBeGreaterThan(num(bodies[0], "cy"));
   });
 
+  it("drops only the centre caption under showCentreLabel={false}", () => {
+    // Every screen prints the concept's name in HTML below the canvas, so the
+    // SVG copy would say it twice — the siblings still need theirs.
+    const { container } = renderHome({ showCentreLabel: false });
+    const labels = Array.from(container.querySelectorAll(".concept-neighbourhood__label")).map(
+      (t) => t.textContent,
+    );
+    expect(labels).toEqual(["Base cases", "Tail recursion"]);
+    expect(labels).not.toContain("Recursion");
+    // …and nothing else moves: the marks and edges are untouched.
+    expect(container.querySelectorAll(".concept-node__body")).toHaveLength(4);
+    expect(container.querySelectorAll(".concept-neighbourhood__edge")).toHaveLength(3);
+  });
+
+  it("captions the centre by default, so no existing caller changes", () => {
+    const { container } = renderHome();
+    const labels = Array.from(container.querySelectorAll(".concept-neighbourhood__label")).map(
+      (t) => t.textContent,
+    );
+    expect(labels).toContain("Recursion");
+  });
+
+  it("still drops the centre caption when showLabels is false, whatever showCentreLabel says", () => {
+    const { container } = renderHome({ showLabels: false, showCentreLabel: true });
+    expect(container.querySelectorAll(".concept-neighbourhood__label")).toHaveLength(0);
+  });
+
   it("drops every caption when showLabels is false", () => {
     const { container } = renderHome({ showLabels: false });
     expect(container.querySelectorAll(".concept-neighbourhood__label")).toHaveLength(0);

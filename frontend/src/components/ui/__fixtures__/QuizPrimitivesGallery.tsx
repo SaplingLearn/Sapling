@@ -349,7 +349,9 @@ export function QuizPrimitivesGallery() {
             ariaLabel="Recursion and its neighbours on your knowledge tree"
           />
         </Row>
-        <Row label="results · 640×212 · wide, growth centre">
+        {/* The results screen prints the concept's name below the canvas, so
+            the centre caption is dropped rather than said twice. */}
+        <Row label="results · 640×212 · wide, growth centre, no centre caption">
           <ConceptNeighbourhood
             centre={CENTRE}
             siblings={SIBLINGS}
@@ -358,6 +360,7 @@ export function QuizPrimitivesGallery() {
             height={212}
             scale={2.5}
             centreVariant={{ kind: "growth", before: 0.29, after: 0.46 }}
+            showCentreLabel={false}
             ariaLabel="Recursion node grew from 29% to 46% mastery"
           />
         </Row>

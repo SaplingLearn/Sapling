@@ -24,6 +24,11 @@
  *
  * The top-right slot sits on the canvas edge, so it never gets a caption — it
  * would clip. That matches the design, which drops that label in every preset.
+ *
+ * The CENTRE's caption is optional for a different reason: every screen the
+ * design draws already sets the concept's name in HTML below the canvas, so
+ * repeating it inside the SVG says it twice. `showCentreLabel={false}` drops
+ * the SVG copy and leaves the siblings captioned.
  */
 
 import React from "react";
@@ -88,6 +93,11 @@ export interface ConceptNeighbourhoodProps {
   scale: number;
   centreVariant?: ConceptNodeVariant;
   showLabels?: boolean;
+  /**
+   * Caption the centre mark. Default `true`. Screens that already print the
+   * concept's name below the canvas pass `false` — the siblings stay labelled.
+   */
+  showCentreLabel?: boolean;
   /** Required: the whole fragment is one image to a screen reader. */
   ariaLabel: string;
   /** Growth only. `prefers-reduced-motion` overrides a `true` here. */
@@ -109,6 +119,7 @@ export function ConceptNeighbourhood({
   scale,
   centreVariant = { kind: "node" },
   showLabels = true,
+  showCentreLabel = true,
   ariaLabel,
   animate = true,
   composition = width >= WIDE_CANVAS_MIN_WIDTH ? "wide" : "compact",
@@ -203,7 +214,7 @@ export function ConceptNeighbourhood({
         glowFilterId={filterId}
         grown={grown}
       />
-      {showLabels && (
+      {showLabels && showCentreLabel && (
         <text
           className="concept-neighbourhood__label"
           x={cx}
