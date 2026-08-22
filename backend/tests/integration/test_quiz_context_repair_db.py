@@ -75,4 +75,12 @@ def test_save_quiz_context_upserts_one_row_and_encrypts(db_conn):
     assert isinstance(raw, str), f"context_json at rest should be ciphertext str, got {type(raw)}"
     assert "second write" not in raw
 
-    assert get_quiz_context(USER, node_id) == {"weak_areas": ["second write"]}
+    # The caller's payload round-trips, plus the server-stamped digest
+    # version (#554). Stamped in save_quiz_context rather than on the agent's
+    # output schema, so it is present on every write regardless of writer.
+    from services.quiz_distractors import DIGEST_SCHEMA_VERSION
+
+    assert get_quiz_context(USER, node_id) == {
+        "weak_areas": ["second write"],
+        "schema_version": DIGEST_SCHEMA_VERSION,
+    }
