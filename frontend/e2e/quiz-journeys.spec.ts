@@ -21,27 +21,28 @@
  *
  * ── THE GENERATION BUDGET (read before adding a test) ─────────────────────
  *
- * `POST /api/quiz/generate` is rate limited to **8 calls per 300 seconds per
- * user**, in-process (`services/quiz_config.py::QUIZ_GENERATE_RATE_LIMIT`,
- * enforced at routes/quiz.py via `services/request_limits.check_rate_limit`).
- * The limiter is a module-level dict, so the per-test TRUNCATE + re-seed does
- * NOT reset it and the whole lane shares one window.
+ * `POST /api/quiz/generate` is rate limited per user, in-process
+ * (`services/quiz_config.py::QUIZ_GENERATE_RATE_LIMIT`, enforced at
+ * routes/quiz.py via `services/request_limits.check_rate_limit`). The limiter
+ * is a module-level dict, so the per-test TRUNCATE + re-seed does NOT reset it
+ * and the whole lane — every spec, every worker — shares ONE window that only
+ * a backend restart clears.
  *
- * This file and `quiz.spec.ts` therefore run **exactly 8 real generations
- * between them** — five here, three there — and every additional one is a
- * `page.route` stub. A ninth makes the lane fail with a 429 that reads as
- * "answer options never appeared", which is what the first run of this suite
- * did. That is why the four exit destinations are asserted from the runs that
- * already reach those screens rather than from four runs of their own:
+ * Production allows 8 per 300s, which the combined quiz lane blew through in
+ * its first full run: D3's specs sort before this one, so the last four tests
+ * here 429'd with a failure that reads as "answer options never appeared".
+ * `scripts/e2e-up.sh` and `e2e.yml` now export `QUIZ_GENERATE_RATE_LIMIT=1000`
+ * for the E2E stacks (#537) — a function-mode generation is a scripted
+ * constant that costs nothing — so the ceiling is no longer the binding
+ * constraint. Keep real generations deliberate anyway: each one is a full
+ * round trip, and a stubbed `page.route` response is seconds faster. That is
+ * why the four exit destinations are still asserted from the runs that already
+ * reach those screens rather than from four runs of their own:
  *
  *   Back to your tree  → the leave-and-return journey
  *   Back to dashboard  → the ask-without-abandoning journey
- *   Done → /quiz       → the keyboard journey
+ *   Done → /quiz       → the keyboard journey (route; the query is the fixme)
  *   Cancel             → its own test (quiz home only, no generation)
- *
- * Lifting the ceiling is a backend change (make the constant env-overridable
- * and raise it in `make e2e-up`) and is reported to the lead; until then, a
- * new journey that needs a real quiz has to take a slot from an existing one.
  *
  * Fixture constants, the function-mode contract note and the shared gestures
  * live in `support/quiz.ts`.
@@ -211,40 +212,41 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
 });
 
 /**
- * KNOWN DEFECT — a resumed quiz forgets everything the server does not store.
+ * REGRESSION GUARD — a resumed quiz used to forget everything the server does
+ * not store. Fixed by `c3580e95` (#537 A2); this rode in as `test.fixme` and
+ * is now live. The diagnosis is kept because it is what the test is watching.
  *
  * R-3 makes localStorage the only home for the half of a session the backend
  * has never heard of: the verdicts (the resume payload carries `is_correct`
  * but no `correct_index` and no explanation), the scope and queue, and the
  * ORIGIN. `machine.ts::resumeFrom` reads all of it off the stored record.
  *
- * The record is gone by the time Resume is pressed. Mounting quiz home starts
- * a fresh `home`-phase session, and `useQuizSession`'s config effect applies
- * `SET_CONFIG` as soon as `GET /api/quiz/config` resolves; `apply` persists
- * every accepted event, and `session.ts::persistSession` CLEARS storage for
- * any phase outside the live set — `home` included. So the first thing quiz
- * home does is delete the resume record it is about to offer.
+ * The record used to be gone by the time Resume was pressed. Mounting quiz
+ * home starts a fresh `home`-phase session, and `useQuizSession`'s config
+ * effect applies `SET_CONFIG` as soon as `GET /api/quiz/config` resolves;
+ * `apply` persists every accepted event, and `session.ts::persistSession`
+ * CLEARED storage for any phase outside the live set — `home` included. So the
+ * first thing quiz home did was delete the resume record it was about to
+ * offer. `persistSession` now saves or does nothing; only SUBMITTED and EXIT
+ * clear (§4).
  *
- * What still works (and is asserted green above) is everything the server
+ * What never broke (and is asserted green above) is everything the server
  * knows: the attempt is found through `GET /api/quiz/attempts`, the strip
  * counts the recorded responses, and Resume lands on the first unanswered
- * question. What is lost is invisible until you look for it — which is what
+ * question. What was lost is invisible until you look for it — which is what
  * this test does, on the two symptoms that are actually observable:
  *
  *   1. the rail shows question one as unanswered (no verdict came back);
  *   2. the origin falls back to the URL, so a quiz launched from the
  *      dashboard exits to the tree.
  *
- * Symptom 2 is currently MASKED on a tree-sourced quiz, because the nav
- * fallback (`exits.ts::returnToSource` → `/tree?node=<conceptId>`) happens to
- * produce the same label and the same destination the tree entry would have.
- * A dashboard entry is the case that tells them apart, which is why this test
+ * Symptom 2 is MASKED on a tree-sourced quiz, because the nav fallback
+ * (`exits.ts::returnToSource` → `/tree?node=<conceptId>`) happens to produce
+ * the same label and the same destination the tree entry would have. A
+ * dashboard entry is the case that tells them apart, which is why this test
  * uses one.
- *
- * Riding in as `fixme` per docs/e2e-exploration.md §8 — the same lifecycle
- * graph.spec.ts used for #355. Un-fixme when the fix lands.
  */
-test.fixme(
+test(
   "#537: a resumed quiz restores the verdicts and the origin it was left with",
   async ({ page }) => {
     test.setTimeout(180_000);
@@ -312,9 +314,9 @@ test("leave-and-return: leaving saves the attempt, lands on the entry source, an
 
   // This run also carries the "Back to your tree" EXIT (R-10): the secondary
   // exit names the tree and lands on the concept that was quizzed. NOTE it
-  // does not, today, prove the tree ORIGIN survived the round trip — the nav
-  // fallback produces the identical label and destination. The fixme above
-  // owns that distinction.
+  // does not prove the tree ORIGIN survived the round trip — the nav fallback
+  // produces the identical label and destination. The dashboard-entry resume
+  // test above owns that distinction.
   const backToSource = page.getByTestId("quiz-back-to-source");
   await expect(backToSource).toHaveText("Back to your tree");
   await backToSource.click();
@@ -650,8 +652,8 @@ test("keyboard: the whole quiz is playable without a mouse", async ({ page }) =>
 
   // This run also carries the "Done" exit (R-10): back to quiz home, with no
   // stale results underneath. The ROUTE is asserted here; that the deep link's
-  // query is dropped with it is a separate, currently unmet claim — see the
-  // fixme below.
+  // query is dropped with it is a separate, still-unmet claim — see the fixme
+  // below.
   await tabUntilFocused(page, "quiz-done");
   await page.keyboard.press("Enter");
   await expectPathname(page, "/quiz");
@@ -660,24 +662,33 @@ test("keyboard: the whole quiz is playable without a mouse", async ({ page }) =>
 });
 
 /**
- * KNOWN DEFECT — "Done" leaves the deep link in the address bar.
+ * KNOWN DEFECT — "Done" still leaves the deep link in the address bar.
+ * STILL OPEN after `c3580e95` (#537 A2), which fixed the other half of that
+ * commit (the resume test above is green and no longer `fixme`). Owner: A2,
+ * `lib/quiz/useQuizSession.ts`'s `exit`.
  *
- * R-10 is "Done → `/quiz`", and `useQuizSession`'s `exit` does call
- * `router.push("/quiz")`. It does not take: from `/quiz?concept=<id>` the
- * browser stays on `/quiz?concept=<id>` (measured — the poll's received value
- * was exactly that). Next's App Router is pushing to the route it is already
- * on, and the query survives.
+ * R-10 is "Done → `/quiz`". `exit` used to call `router.push("/quiz")`, which
+ * did not take for a query-only change on the same route; `c3580e95` switched
+ * a same-route exit to `router.replace(destination)`. Re-measured on the full
+ * lane after that commit: `replace` does not take EITHER. From
+ * `/quiz?concept=rich-node-cs-recursion` the address bar still reads
+ * `/quiz?concept=rich-node-cs-recursion` twenty seconds after the click.
  *
- * The phase reducer still resets, so the student DOES land on quiz home and
- * the keyboard journey above asserts that. What is wrong is what home then
- * shows: `parseEntry` still reads `concept=`, so the "Ready for you" card is
- * pinned to the concept just finished instead of returning to the ranked
- * proposal — and a reload reopens the deep link rather than a clean home.
- * "Done" is the exit that means "I'm finished with this one".
+ * What DID change, and is worth knowing before someone re-diagnoses this: the
+ * screen underneath is now correct. The failing run's page snapshot shows the
+ * ordinary ranked proposal — eyebrow "Ready for you", rationale "Suggested for
+ * you" — not the deep-linked card. `EXIT` clearing `conceptId`/`scope` is what
+ * bought that. So the residual defect is the URL alone, and its one observable
+ * consequence is that a RELOAD reopens the deep link instead of quiz home.
  *
- * Owner: A2 (`lib/quiz/useQuizSession.ts`'s `exit`). Riding in as `fixme` per
- * docs/e2e-exploration.md §8. NOTE it spends a real generation when un-fixme'd
- * — see the budget in this file's header.
+ * Candidates for the next attempt (untried): drop the query with the native
+ * history API (`window.history.replaceState(null, "", "/quiz")`, which Next 15+
+ * threads back into router state) rather than through `router`; or make
+ * `QuizScreen` stop trusting `concept=` once a session has exited, which fixes
+ * the reload symptom without depending on a navigation taking at all.
+ *
+ * Riding as `fixme` per docs/e2e-exploration.md §8. NOTE it spends a real
+ * generation when un-fixme'd — see the budget in this file's header.
  */
 test.fixme("#537: Done drops the deep link and returns a clean quiz home", async ({ page }) => {
   test.setTimeout(180_000);
