@@ -487,10 +487,10 @@ test("missed review: the results screen explains the wrong answer and asks for a
   // one question, same difficulty. (No endpoint re-serves a specific question
   // — gap G5 — so what the client ASKS FOR is the whole of the contract.)
   //
-  // The request is stubbed rather than served: this is the lane's ninth real
-  // generation and the budget in the header has no room for it. The assertion
-  // is on the request the client makes, which is where R-5 actually lives; the
-  // stubbed 502 then exercises the mapped-copy path on the way out.
+  // The request is stubbed rather than served: the assertion is on the request
+  // the client makes, which is where R-5 actually lives, and the stubbed 502
+  // then exercises the mapped-copy path on the way out. (The E2E stacks raise
+  // the generate limiter — see the header — so this is hermeticity, not budget.)
   await page.route("**/api/quiz/generate", route =>
     route.fulfill({
       status: 502,
@@ -579,8 +579,8 @@ test("entry points: each link shape arrives in the state it promised", async ({ 
 
 // ── 6. Exits ───────────────────────────────────────────────────────────────
 //
-// The other three destinations ride on the runs that already reach them (see
-// the generation budget in the header): "Back to your tree" on
+// The other three destinations ride on the runs that already reach them (one
+// journey per destination keeps the lane short): "Back to your tree" on
 // leave-and-return, "Back to dashboard" on ask-without-abandoning, and
 // "Done → /quiz" on the keyboard pass. Cancel is the one that needs no quiz.
 
@@ -687,8 +687,8 @@ test("keyboard: the whole quiz is playable without a mouse", async ({ page }) =>
  * `QuizScreen` stop trusting `concept=` once a session has exited, which fixes
  * the reload symptom without depending on a navigation taking at all.
  *
- * Riding as `fixme` per docs/e2e-exploration.md §8. NOTE it spends a real
- * generation when un-fixme'd — see the budget in this file's header.
+ * Riding as `fixme` per docs/e2e-exploration.md §8. It spends a real
+ * generation when un-fixme'd (fine — the E2E stacks raise the limiter).
  */
 test.fixme("#537: Done drops the deep link and returns a clean quiz home", async ({ page }) => {
   test.setTimeout(180_000);
