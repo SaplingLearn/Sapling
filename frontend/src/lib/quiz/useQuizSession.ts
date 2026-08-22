@@ -162,11 +162,17 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   const [session, setSession] = useState<QuizSession>(() =>
     initialSession(entry, null, loadPrefs()),
   );
-  const [pending, setPending] = useState(false);
+  const [pending, setPendingState] = useState(false);
 
   // The async chains read the session through this ref: a closure captured at
   // render time is one event behind by the time an await resolves.
   const sessionRef = useRef(session);
+  // False once the screen is gone. The chains below are deliberately NOT
+  // cancelled on unmount — an `/answer` that was already sent must still reach
+  // `/submit`, or the student's last answer is scored as missing — but the
+  // state they set on the way is nobody's, so this makes "the screen left, the
+  // request didn't" explicit instead of relying on React 18 no longer warning.
+  const mountedRef = useRef(true);
   const submittingRef = useRef<string | null>(null);
   // The item whose `/answer` is in flight, as `attemptId:index`. Without it a
   // double-click fires the request twice: the phase stays `active` for the whole
@@ -177,13 +183,20 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   const configAppliedRef = useRef(false);
   const autoResumedRef = useRef(false);
 
+  const setPending = useCallback((value: boolean) => {
+    if (mountedRef.current) setPendingState(value);
+  }, []);
+
   /** Apply one event, persist the outcome, and hand it back so the caller can
    *  decide what the new phase requires. */
   const apply = useCallback((event: QuizEvent): QuizSession => {
     const next = reduce(sessionRef.current, event);
     if (next !== sessionRef.current) {
       sessionRef.current = next;
-      setSession(next);
+      // The ref and the record are updated either way: a chain that outlives
+      // the screen still has to leave a resumable session behind. Only the
+      // render is skipped.
+      if (mountedRef.current) setSession(next);
       persistSession(next);
     }
     return next;
@@ -208,9 +221,11 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   // Persist on unmount and on a tab close, so "answered then navigated away" is
   // resumable even though no transition fired on the way out.
   useEffect(() => {
+    mountedRef.current = true;
     const flush = () => persistSession(sessionRef.current);
     window.addEventListener("beforeunload", flush);
     return () => {
+      mountedRef.current = false;
       window.removeEventListener("beforeunload", flush);
       flush();
     };
@@ -253,7 +268,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         if (generationRef.current === token) setPending(false);
       }
     },
-    [apply, gamification, userId],
+    [apply, gamification, setPending, userId],
   );
 
   const runSubmit = useCallback(
@@ -284,7 +299,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         setPending(false);
       }
     },
-    [apply, gamification],
+    [apply, gamification, setPending],
   );
 
   const runResume = useCallback(
@@ -312,7 +327,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         setPending(false);
       }
     },
-    [apply, gamification],
+    [apply, gamification, setPending],
   );
 
   const submitAnswer = useCallback(async () => {
@@ -344,7 +359,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       answeringRef.current = null;
       setPending(false);
     }
-  }, [apply, runSubmit]);
+  }, [apply, runSubmit, setPending]);
 
   // A `?attempt=<id>` entry (the resume strip, or a leave-and-return link) picks
   // the quiz back up without a stop on home.
