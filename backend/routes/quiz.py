@@ -42,7 +42,7 @@ from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
-from services.exam_proximity import days_until_next_exam
+from services.exam_proximity import PROMPT_HORIZON_DAYS, days_until_next_exam
 from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
 from services.quiz_identity import question_hash, normalize_text
@@ -796,6 +796,50 @@ def _do_not_repeat_block(recent: list[RecentQuestion]) -> str:
     )
 
 
+def _insert_attempt(attempt_row: dict) -> None:
+    """Write the attempt, surviving a schema that predates `exam_days_away`.
+
+    The omit-when-None rule alone does NOT make a pre-migration environment
+    safe, and the failure is nastier than it looks: it strikes exactly the
+    students the feature is FOR (the ones with a dated upcoming exam), so it
+    presents as a random partial outage rather than an obvious missing
+    migration. And it strikes late — the agent has already run and been
+    billed — so an unhandled 400 here loses the generated quiz, writes no
+    attempt row, emits no `quiz.generation_failed`, and never refunds the
+    rate-limit slot.
+    #
+    Ordering is still the rule (migration before code, as with
+    20260814051517). This is the seatbelt for the window where PostgREST has
+    not yet reloaded its schema cache, not a licence to deploy first.
+    """
+    try:
+        table("quiz_attempts").insert(attempt_row)
+        return
+    except Exception:
+        if "exam_days_away" not in attempt_row:
+            raise
+    retry = {k: v for k, v in attempt_row.items() if k != "exam_days_away"}
+    logger.warning(
+        "quiz: attempt insert failed with exam_days_away present; retrying "
+        "without it (is 20260822090747 applied?) quiz_id=%s",
+        attempt_row.get("id"),
+    )
+    table("quiz_attempts").insert(retry)
+
+
+class GeneratedQuiz(NamedTuple):
+    """What one generation produced.
+
+    `exam_days_away` rides back with the questions rather than being resolved
+    again by the caller: it is used for the prompt here and stored on the
+    attempt there, and two lookups could disagree if an exam were entered
+    between them.
+    """
+
+    questions: list[dict]
+    exam_days_away: int | None = None
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -807,8 +851,7 @@ async def _quiz_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
-    exam_days_away: int | None = None,
-) -> list[dict]:
+) -> GeneratedQuiz:
     """Run quiz_agent and return questions in the legacy wire shape.
 
     The agent's tools (read_concepts_for_user, read_misconceptions_for_course)
@@ -851,6 +894,55 @@ async def _quiz_via_agent(
         difficulty_clause = (
             f"Generate {num_questions} {difficulty} questions for the student."
         )
+
+    # Course-material grounding does blocking network I/O (a Gemini
+    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
+    # worker thread so a slow/stalled retrieval can't freeze this worker's
+    # event loop for every other in-flight request. Matches the
+    # asyncio.to_thread pattern used by the agent read tools.
+    #
+    # E6's recently-asked read and H3's exam-proximity lookup are independent
+    # Supabase reads, so all three run CONCURRENTLY rather than in sequence —
+    # they have nothing to say to each other, and serializing them would add
+    # every one of their latencies to every generation. Proximity costs
+    # several round-trips on its own, so running it before this block made it
+    # fully additive.
+    #
+    # return_exceptions=True because ALL THREE are best-effort context, and a
+    # bare gather propagates the first failure straight out of generation: an
+    # unreadable past attempt would 502 a quiz that needed no history at all.
+    # Each helper already degrades internally; this is the backstop for the
+    # failure they cannot catch (an unexpected raise on the way in or out).
+    material, recent, exam_days_away = await asyncio.gather(
+        asyncio.to_thread(_course_material, course_id, concept_name),
+        asyncio.to_thread(
+            recent_question_identities, user_id, concept_node_id
+        ),
+        asyncio.to_thread(days_until_next_exam, user_id, course_id),
+        return_exceptions=True,
+    )
+    if isinstance(exam_days_away, BaseException):
+        logger.warning(
+            "quiz: exam-proximity lookup failed (%s); generating without it",
+            type(exam_days_away).__name__, exc_info=exam_days_away,
+        )
+        exam_days_away = None
+    if isinstance(material, BaseException):
+        logger.warning(
+            "quiz: course-material assembly failed (%s); generating ungrounded",
+            type(material).__name__, exc_info=material,
+        )
+        # _UNKNOWN_MATERIAL, not _EMPTY_MATERIAL: assembly raised, so we know
+        # nothing about this course's coverage. E8 must report
+        # `coverage_unknown` rather than claiming the course has no BU code.
+        material = _UNKNOWN_MATERIAL
+    if isinstance(recent, BaseException):
+        logger.warning(
+            "quiz: recently-asked read failed (%s); generating without a "
+            "do-not-repeat list", type(recent).__name__, exc_info=recent,
+        )
+        recent = []
+
     routing_msg = (
         f"{difficulty_clause} "
         f"The target concept is '{concept_name}' "
@@ -868,7 +960,13 @@ async def _quiz_via_agent(
     # contradict the adaptive difficulty the student actually chose. Omitted
     # entirely when unknown: "next exam: unknown" is prompt tokens spent to
     # say nothing.
-    if exam_days_away is not None:
+    # Bounded by a horizon: a final dated 87 days out would otherwise put
+    # "there is an exam coming, weight toward what an exam tests" on EVERY
+    # quiz for the whole semester, which carries no proximity signal and
+    # steers week-two practice toward exam-style questions — the opposite of
+    # what this line is for. The stored `exam_days_away` is NOT clamped: the
+    # analytics want the real distance, including the far ones.
+    if exam_days_away is not None and exam_days_away <= PROMPT_HORIZON_DAYS:
         when = (
             "TODAY" if exam_days_away == 0
             else "tomorrow" if exam_days_away == 1
@@ -878,45 +976,6 @@ async def _quiz_via_agent(
             f" The student's next exam in this course is {when}. Weight the"
             " questions toward what an exam would actually test."
         )
-
-    # Course-material grounding does blocking network I/O (a Gemini
-    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
-    # worker thread so a slow/stalled retrieval can't freeze this worker's
-    # event loop for every other in-flight request. Matches the
-    # asyncio.to_thread pattern used by the agent read tools.
-    #
-    # E6's recently-asked read is an independent Supabase read + decrypt, so
-    # it runs CONCURRENTLY with grounding rather than after it — the two have
-    # nothing to say to each other and serializing them would add the slower
-    # one's latency to every generation.
-    #
-    # return_exceptions=True because BOTH are best-effort context, and a bare
-    # gather propagates the first failure straight out of generation: an
-    # unreadable past attempt would 502 a quiz that needed no history at all.
-    # Each helper already degrades internally; this is the backstop for the
-    # failure they cannot catch (an unexpected raise on the way in or out).
-    material, recent = await asyncio.gather(
-        asyncio.to_thread(_course_material, course_id, concept_name),
-        asyncio.to_thread(
-            recent_question_identities, user_id, concept_node_id
-        ),
-        return_exceptions=True,
-    )
-    if isinstance(material, BaseException):
-        logger.warning(
-            "quiz: course-material assembly failed (%s); generating ungrounded",
-            type(material).__name__, exc_info=material,
-        )
-        # _UNKNOWN_MATERIAL, not _EMPTY_MATERIAL: assembly raised, so we know
-        # nothing about this course's coverage. E8 must report
-        # `coverage_unknown` rather than claiming the course has no BU code.
-        material = _UNKNOWN_MATERIAL
-    if isinstance(recent, BaseException):
-        logger.warning(
-            "quiz: recently-asked read failed (%s); generating without a "
-            "do-not-repeat list", type(recent).__name__, exc_info=recent,
-        )
-        recent = []
     _log_rag_uncovered(
         material,
         user_id=user_id,
@@ -1095,7 +1154,10 @@ async def _quiz_via_agent(
             "quiz_agent produced no valid questions after wire-format validation"
         )
     # Never serve more than asked for (a generous top-up run can overshoot).
-    return wire_questions[:num_questions]
+    return GeneratedQuiz(
+        questions=wire_questions[:num_questions],
+        exam_days_away=exam_days_away,
+    )
 
 @router.get("/config")
 def quiz_config():
@@ -1181,22 +1243,14 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # quiz.started, which shares this request_id with the llm_usage row.
     prompt_dimensions.start_capture()
 
-    # H3/#555: resolved ONCE here, then both prompted and stored — computing
-    # it twice could report one number to the model and a different one to the
-    # analytics row if an exam were entered between the two reads.
-    exam_days_away = await asyncio.to_thread(
-        days_until_next_exam, body.user_id, course_id
-    )
-
     try:
         # Each agent run inside is individually bounded by
         # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
         # coroutine here would discard a partial quiz the top-up handler
         # is designed to serve.
-        questions = await _quiz_via_agent(
+        generated = await _quiz_via_agent(
             user_id=body.user_id,
             course_id=course_id,
-            exam_days_away=exam_days_away,
             concept_node_id=body.concept_node_id,
             concept_name=concept_name,
             num_questions=body.num_questions,
@@ -1205,6 +1259,8 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             request_id=request_id,
             model_pref=body.model_pref,
         )
+        questions = generated.questions
+        exam_days_away = generated.exam_days_away
     except HTTPException:
         # The 404 for an unknown concept node is raised before the agent call;
         # never swallow a known HTTP state.
@@ -1263,7 +1319,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # instead of 400ing on a column PostgREST's schema cache doesn't have.
     if exam_days_away is not None:
         attempt_row["exam_days_away"] = exam_days_away
-    table("quiz_attempts").insert(attempt_row)
+    _insert_attempt(attempt_row)
     # #117: quiz.started once the attempt row exists. num_questions is the
     # actual generated count (the agent may return fewer than requested).
     events_service.log_event(

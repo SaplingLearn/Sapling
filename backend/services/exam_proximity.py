@@ -19,45 +19,88 @@ spent a workstream undoing one issue earlier.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+import re
+from datetime import date, datetime, timezone
 from typing import Any
 
 from db.connection import table
-from services.academics import user_offering_ids_for_course
+from services.academics import user_enrollment_ids, user_offering_ids_for_course
 
 logger = logging.getLogger(__name__)
 
 #: Titles that mean "exam" even when `assignment_type` says otherwise —
 #: instructors type these into the title far more reliably than they set the
-#: type field. "quiz" is included because a graded in-class quiz is the same
-#: kind of deadline pressure, which is the signal this module exists to catch.
+#: type field.
 _EXAM_KEYWORDS = ("exam", "midterm", "final", "quiz")
+
+#: The SAME words, but anchored, for the decision path. See `is_exam_strict`.
+_STRICT_EXAM_PATTERN = re.compile(
+    r"\b(exam|midterm|final(?!\s+draft)|finals)\b", re.IGNORECASE
+)
+
+#: Only say something about an exam that is actually near. Beyond this, the
+#: sentence carries no proximity signal — see `days_until_next_exam`.
+PROMPT_HORIZON_DAYS = 14
 
 
 def is_exam(assignment: dict[str, Any]) -> bool:
-    """Whether one assignment row reads as an exam.
+    """Whether one assignment row reads as an exam, LOOSELY.
 
-    THE definition. `routes/study_guide.py` calls this; do not re-derive it.
+    THE definition for the study-guide picker, which is a user-visible list
+    where a false positive costs the student one extra row to look at.
+    `routes/study_guide.py` calls this; do not re-derive it.
     """
     atype = (assignment.get("assignment_type") or "").lower()
     title = (assignment.get("title") or "").lower()
     return atype == "exam" or any(kw in title for kw in _EXAM_KEYWORDS)
 
 
+def is_exam_strict(assignment: dict[str, Any]) -> bool:
+    """Whether one row is an exam, for a DECISION rather than a list.
+
+    Deliberately tighter than `is_exam`, because the cost of a false positive
+    is different here. The picker shows an extra row; this drives a prompt and
+    writes `quiz_attempts.exam_days_away`, which exists to answer "do
+    deadline-aware quizzes perform differently?". Loose matching poisons that
+    question at the source: a course with weekly "Quiz 3"/"Quiz 4" rows has an
+    "exam" within a week all semester, so the treatment group silently becomes
+    "any course with weekly quizzes".
+
+    Two changes from the loose form:
+      * "quiz" is not a keyword. A graded weekly quiz is not the deadline this
+        feature is about, and `assignment_type == "exam"` still catches one
+        that genuinely is.
+      * word-anchored, so "Final draft - essay 2" is no longer a final.
+    """
+    if (assignment.get("assignment_type") or "").lower() == "exam":
+        return True
+    return bool(_STRICT_EXAM_PATTERN.search(assignment.get("title") or ""))
+
+
 def _today() -> date:
-    """Seam so tests can pin "now" without freezing the process clock."""
-    return datetime.now().date()
+    """Seam so tests can pin "now" without freezing the process clock.
+
+    UTC, matching every other date boundary in the codebase
+    (`routes/study_guide.py`, `routes/calendar.py`). A naive local date would
+    put this module a day out from the study-guide filter on any deployment
+    whose process TZ is not UTC — the same exam "today" in one surface and
+    "tomorrow" in the other, and `exam_days_away` off by one for the very
+    analytics the column exists to enable.
+    """
+    return datetime.now(timezone.utc).date()
 
 
 def _enrollment_ids(offering_ids: list[str], user_id: str) -> list[str]:
-    rows = table("enrollments").select(
-        "id",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "offering_id": f"in.({','.join(offering_ids)})",
-        },
-    ) or []
-    return [r["id"] for r in rows if r.get("id")]
+    """Enrollment resolution via `services/academics.py`, which CLAUDE.md
+    names as its single home — and which has already read this user's
+    enrollments inside `user_offering_ids_for_course`. Intersecting in memory
+    costs nothing and keeps the resolution in one place."""
+    wanted = set(offering_ids)
+    return [
+        r["id"]
+        for r in user_enrollment_ids(user_id)
+        if r.get("id") and r.get("offering_id") in wanted
+    ]
 
 
 def days_until_next_exam(user_id: str, course_id: str | None) -> int | None:
@@ -112,7 +155,7 @@ def _resolve(user_id: str, course_id: str) -> int | None:
     upcoming = [
         (due - today).days
         for row in rows
-        if is_exam(row)
+        if is_exam_strict(row)
         and (due := _parse_date(row.get("due_date"))) is not None
         and due >= today
     ]
@@ -122,6 +165,12 @@ def _resolve(user_id: str, course_id: str) -> int | None:
 def _parse_date(raw: Any) -> date | None:
     """`due_date` is DATE in 0021 but TEXT in the 0001 baseline, so rows in the
     wild can be either. An unparseable one is skipped, never fatal."""
+    # datetime BEFORE date: datetime subclasses date, so the obvious order
+    # returns a datetime unconverted and the later `due - today` raises
+    # TypeError into the outer catch — degrading the whole lookup to None for
+    # that student, silently.
+    if isinstance(raw, datetime):
+        return raw.date()
     if isinstance(raw, date):
         return raw
     if not isinstance(raw, str) or not raw.strip():

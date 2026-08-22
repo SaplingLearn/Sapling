@@ -107,24 +107,31 @@ class TestDaysUntilNextExam:
 
 # ── wiring into generation (#555) ───────────────────────────────────────────
 
+
+def _agent_run():
+    """A quiz_agent.run stand-in returning one valid question."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from agents.quiz import Quiz, QuizQuestion
+
+    return AsyncMock(return_value=SimpleNamespace(output=Quiz(questions=[
+        QuizQuestion(question="Q?", type="multiple_choice", difficulty="easy",
+                     options=["a", "b", "c", "d"], correct_answer="a",
+                     explanation="x", concept="X")])))
+
+
 class TestExamProximityReachesGeneration:
     """The service being right is half of it; the other half is that its
     answer actually reaches the model AND the attempt row. Both are one
     keyword away from being silently dropped."""
 
     def _generate(self, days, agent_run):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import MagicMock
         from fastapi.testclient import TestClient
 
-        from agents.quiz import Quiz, QuizQuestion
         from main import app
 
-        quiz = Quiz(questions=[QuizQuestion(
-            question="Q?", type="multiple_choice", difficulty="easy",
-            options=["a", "b", "c", "d"], correct_answer="a",
-            explanation="x", concept="X",
-        )])
         inserted: list = []
 
         def factory(name):
@@ -153,31 +160,13 @@ class TestExamProximityReachesGeneration:
         return agent_run.call_args[0][0], attempt
 
     def test_a_near_exam_reaches_the_prompt_and_the_attempt_row(self):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        from agents.quiz import Quiz, QuizQuestion
-
-        run = AsyncMock(return_value=SimpleNamespace(output=Quiz(questions=[
-            QuizQuestion(question="Q?", type="multiple_choice", difficulty="easy",
-                         options=["a", "b", "c", "d"], correct_answer="a",
-                         explanation="x", concept="X")])))
-        msg, attempt = self._generate(3, run)
+        msg, attempt = self._generate(3, _agent_run())
 
         assert "next exam in this course is in 3 days" in msg
         assert attempt["exam_days_away"] == 3
 
     def test_an_exam_today_says_TODAY(self):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        from agents.quiz import Quiz, QuizQuestion
-
-        run = AsyncMock(return_value=SimpleNamespace(output=Quiz(questions=[
-            QuizQuestion(question="Q?", type="multiple_choice", difficulty="easy",
-                         options=["a", "b", "c", "d"], correct_answer="a",
-                         explanation="x", concept="X")])))
-        msg, attempt = self._generate(0, run)
+        msg, attempt = self._generate(0, _agent_run())
 
         assert "next exam in this course is TODAY" in msg
         # 0 must survive to the row: `if exam_days_away:` would drop exam day,
@@ -188,16 +177,112 @@ class TestExamProximityReachesGeneration:
         """'next exam: unknown' is prompt tokens spent to say nothing, and
         omitting the key (rather than sending null) keeps generation working
         on an environment that took this code before the migration."""
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        from agents.quiz import Quiz, QuizQuestion
-
-        run = AsyncMock(return_value=SimpleNamespace(output=Quiz(questions=[
-            QuizQuestion(question="Q?", type="multiple_choice", difficulty="easy",
-                         options=["a", "b", "c", "d"], correct_answer="a",
-                         explanation="x", concept="X")])))
-        msg, attempt = self._generate(None, run)
+        msg, attempt = self._generate(None, _agent_run())
 
         assert "next exam" not in msg
         assert "exam_days_away" not in attempt
+
+
+# ── review findings: strictness, horizon, pre-migration insert ──────────────
+
+
+class TestStrictnessOnTheDecisionPath:
+    """`is_exam` drives a user-visible LIST, where a false positive costs one
+    extra row. `is_exam_strict` drives a PROMPT and a stored analytics column,
+    where a false positive poisons the question the column exists to answer."""
+
+    def test_a_weekly_quiz_is_not_an_exam_deadline(self):
+        from services.exam_proximity import is_exam, is_exam_strict
+
+        row = {"assignment_type": "homework", "title": "Quiz 4"}
+        assert is_exam(row), "the picker still lists it"
+        assert not is_exam_strict(row), (
+            "a course with weekly quizzes would otherwise have an 'exam' "
+            "within a week all semester, making the treatment group for "
+            "'do deadline-aware quizzes perform differently' meaningless"
+        )
+
+    def test_a_final_draft_is_not_a_final(self):
+        from services.exam_proximity import is_exam_strict
+
+        assert not is_exam_strict(
+            {"assignment_type": "homework", "title": "Final draft - essay 2"}
+        )
+
+    def test_a_real_exam_still_counts_both_ways(self):
+        from services.exam_proximity import is_exam, is_exam_strict
+
+        for row in (
+            {"assignment_type": "exam", "title": "Week 4"},
+            {"assignment_type": "homework", "title": "Midterm 2"},
+            {"assignment_type": "homework", "title": "Final Exam"},
+        ):
+            assert is_exam(row) and is_exam_strict(row), row
+
+
+class TestPromptHorizon:
+    """A final dated 87 days out would otherwise put 'there is an exam coming'
+    on every quiz for the whole semester — no proximity signal at all, and it
+    steers week-two practice toward exam-style questions."""
+
+    def test_a_distant_exam_is_stored_but_not_prompted(self):
+        from services.exam_proximity import PROMPT_HORIZON_DAYS
+
+        far = PROMPT_HORIZON_DAYS + 30
+        msg, attempt = TestExamProximityReachesGeneration()._generate(far, _agent_run())
+
+        assert "next exam" not in msg
+        # The COLUMN is not clamped: the analytics want the real distance.
+        assert attempt["exam_days_away"] == far
+
+    def test_an_exam_on_the_horizon_boundary_is_still_prompted(self):
+        from services.exam_proximity import PROMPT_HORIZON_DAYS
+
+        msg, _ = TestExamProximityReachesGeneration()._generate(
+            PROMPT_HORIZON_DAYS, _agent_run()
+        )
+        assert f"in {PROMPT_HORIZON_DAYS} days" in msg
+
+
+def test_the_attempt_insert_survives_a_schema_without_the_column():
+    """Pre-migration (or before PostgREST reloads its schema cache) the column
+    is unknown and the insert 400s — and it strikes exactly the students who
+    HAVE an upcoming exam, so it looks like a random partial outage. It would
+    land after the agent already ran and was billed: quiz lost, no attempt
+    row, no failure event, no rate-limit refund. Retry without the key."""
+    from unittest.mock import MagicMock, patch as _patch
+
+    from routes.quiz import _insert_attempt
+
+    calls: list = []
+    tbl = MagicMock()
+
+    def _insert(row):
+        calls.append(row)
+        if "exam_days_away" in row:
+            raise RuntimeError("PGRST204: column not found")
+        return []
+
+    tbl.insert.side_effect = _insert
+    with _patch("routes.quiz.table", return_value=tbl):
+        _insert_attempt({"id": "q1", "user_id": "u1", "exam_days_away": 3})
+
+    assert len(calls) == 2
+    assert "exam_days_away" not in calls[1]
+    assert calls[1]["id"] == "q1"
+
+
+def test_an_insert_failure_unrelated_to_the_column_still_raises():
+    """The retry must not become a blanket swallow — a genuine write failure
+    has to keep surfacing."""
+    from unittest.mock import MagicMock, patch as _patch
+
+    import pytest as _pytest
+
+    from routes.quiz import _insert_attempt
+
+    tbl = MagicMock()
+    tbl.insert.side_effect = RuntimeError("connection refused")
+    with _patch("routes.quiz.table", return_value=tbl):
+        with _pytest.raises(RuntimeError):
+            _insert_attempt({"id": "q1", "user_id": "u1"})
