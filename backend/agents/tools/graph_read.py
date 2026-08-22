@@ -17,6 +17,9 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services import prompt_dimensions
+from services.academics import user_offering_ids_for_course
+from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +105,27 @@ async def read_concepts_for_user_tool(
 
     rows = await resolve_retrieval(ctx.deps).concept_mastery(
         ctx.deps.user_id, ctx.deps.course_id
+    )
+    # F5: a student with a populated graph whose concept read comes back
+    # empty is a discrepancy, not a new student. Shared with the tutor,
+    # which registers this same tool — the fourth instance of this bug class
+    # is as likely to land there as in the quiz, hence `feature` off deps
+    # rather than a hardcoded name.
+    #
+    # The probe is scoped to the SAME course the read was scoped to. Probing
+    # the whole graph would flag every student who has concepts in one course
+    # and none in another — the ordinary case for anyone taking more than one
+    # class, and enough false alarms to make the signal worthless.
+    await report_empty_result_async(
+        "read_concepts_for_user",
+        user_id=ctx.deps.user_id,
+        count=len(rows),
+        expect=Expect.HAS_GRAPH,
+        feature=getattr(ctx.deps, "feature", "unknown"),
+        scope=(
+            {"course_id": f"eq.{ctx.deps.course_id}"} if ctx.deps.course_id else None
+        ),
+        payload={"course_id": ctx.deps.course_id},
     )
     n = max(0, int(limit))
     # #150 (PR #471 review): concept names are student-derived text — the
@@ -410,6 +434,50 @@ async def read_misconceptions_for_course_tool(
     from services.prompt_safety import neutralize_delimiters
 
     out = await read_misconceptions_for_course(ctx.deps.course_id)
+    # F5: THE canonical instance of this bug class. This tool passed the
+    # abstract course id where the query filters `offering_id` — a different
+    # keyspace, so it returned zero rows for every student, indefinitely,
+    # and looked exactly like a class that simply had no misconceptions yet.
+    # (#553 carries the fix; this makes the next one impossible to miss.)
+    # The probe asks whether aggregates exist for THIS student's offerings of
+    # THIS course — not merely whether they are enrolled in something.
+    # "Enrolled somewhere" would fire on every generation in a course whose
+    # class simply has no aggregated misconceptions yet, which is the normal
+    # state for the first weeks of any term.
+    #
+    # Scoped this way it detects the real failure instead: aggregates exist
+    # for the class, but this tool's read returned none — the signature of a
+    # keyspace mismatch, which is precisely how #553 (abstract course id used
+    # where an offering id is expected) presents.
+    #
+    # Gated on the result being EMPTY, not merely on having a course id.
+    # `user_offering_ids_for_course` is uncached and issues two unbounded
+    # PostgREST reads (enrollments -> offerings), and this runs on the quiz
+    # generation request path — resolving it whenever a course id exists made
+    # every generation pay both round-trips even when the tool returned rows,
+    # contradicting tool_signals' own documented contract ("one owner-scoped
+    # indexed read, only on the empty path"). `report_empty_result` would
+    # short-circuit on a non-zero count anyway, so the work was pure waste.
+    if not out and ctx.deps.course_id:
+        offering_ids: list[str] = []
+        try:
+            offering_ids = await asyncio.to_thread(
+                user_offering_ids_for_course, ctx.deps.user_id, ctx.deps.course_id
+            )
+        except Exception:
+            logger.debug("misconceptions probe: offering resolution failed", exc_info=True)
+        if offering_ids:
+            await report_empty_result_async(
+                "read_misconceptions_for_course",
+                user_id=ctx.deps.user_id,
+                count=len(out),
+                expect=Expect.COURSE_HAS_AGGREGATES,
+                feature=getattr(ctx.deps, "feature", "unknown"),
+                scope={"offering_id": f"in.({','.join(offering_ids)})"},
+                payload={"course_id": ctx.deps.course_id},
+            )
+    # F6: this block's contribution to the prompt.
+    prompt_dimensions.record(misconceptions=len(out))
     return [
         Misconception(
             text=neutralize_delimiters(m.text),

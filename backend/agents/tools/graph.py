@@ -20,6 +20,23 @@ from pydantic_ai import RunContext
 from agents.deps import SaplingDeps
 from services.graph_service import _normalize_concept, apply_graph_update
 
+# Wire vocabulary (what the model may emit) -> the value that lands in
+# `node_mastery_events.event_type`.
+#
+# Namespaced by PRODUCER because the column has two independent writers and
+# no CHECK constraint: this tool, and `routes/quiz.py::submit_quiz` (which
+# writes quiz_correct / quiz_partial / quiz_confusion). Both classify "how
+# much confidence does this mastery move carry", and a bare `quiz` from the
+# tutor — meaning "I quizzed the student mid-conversation" — would be
+# indistinguishable in the column from a graded quiz submission, which is a
+# different event with a different provenance. Prefixing makes every stored
+# value say who wrote it, so the two vocabularies can never be read as one.
+TUTOR_EVENT_TYPES: dict[str, str] = {
+    "interaction": "tutor_interaction",
+    "correction": "tutor_correction",
+    "quiz": "tutor_quiz",
+}
+
 
 class GraphUpdateInput(BaseModel):
     """Typed input shape for the apply_graph_update tool."""
@@ -52,9 +69,22 @@ class ConceptMasteryUpdate(BaseModel):
         default="",
         description="Short phrase shown in the mastery-event log (e.g. 'answered correctly').",
     )
-    event_type: Literal["interaction", "correction", "quiz"] = Field(
-        default="interaction",
-        description="Event category for the mastery-event log.",
+    # Nullable on purpose, and NOT defaulted to a real category. A default
+    # of "interaction" made every mastery event the tutor ever wrote look
+    # deliberately classified, including the turns the model never thought
+    # about — which is exactly the "un-categorised events indistinguishable
+    # from confident ones" outcome that migration
+    # 20260814051517_node_mastery_events_event_type.sql refuses. None means
+    # "this turn was not classified", and `update_mastery_tool` omits the key
+    # entirely so the column stays NULL rather than carrying a guess.
+    event_type: Literal["interaction", "correction", "quiz"] | None = Field(
+        default=None,
+        description=(
+            "Optional event category for the mastery-event log. Omit it "
+            "unless the turn genuinely fits one: 'interaction' for ordinary "
+            "engagement, 'correction' when you corrected a misconception, "
+            "'quiz' when you quizzed the student."
+        ),
     )
 
 
@@ -133,16 +163,22 @@ async def update_mastery_tool(
     negative (e.g. −0.08) when they reveal a gap. Concepts must already
     exist in the graph — call apply_graph_update_tool first if needed.
     """
-    updated_nodes = [
-        {
+    updated_nodes: list[dict] = []
+    for u in update.updates:
+        if not (u.concept_name and u.concept_name.strip()):
+            continue
+        node = {
             "concept_name": u.concept_name.strip(),
             "mastery_delta": u.mastery_delta,
             "reason": u.reason,
-            "event_type": u.event_type,
         }
-        for u in update.updates
-        if u.concept_name and u.concept_name.strip()
-    ]
+        # Omitted rather than written as None when the model didn't classify
+        # the turn, mirroring `apply_graph_update`'s own omit-on-absent rule:
+        # a NULL column says "this writer didn't classify", an explicit key
+        # says "it did, and the value is nothing".
+        if u.event_type is not None:
+            node["event_type"] = TUTOR_EVENT_TYPES[u.event_type]
+        updated_nodes.append(node)
     if not updated_nodes:
         return "Mastery update skipped: no concepts provided."
 

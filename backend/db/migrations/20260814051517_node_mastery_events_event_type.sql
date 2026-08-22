@@ -1,0 +1,46 @@
+-- E7 (#543 addendum Part 2): stop dropping event_type.
+--
+-- Two writers classify WHY mastery moved and both had it discarded here.
+-- routes/quiz.py::submit_quiz derives a reading of the attempt from the score
+-- ratio (>=0.7 / >=0.4 / below), and the chat tutor's update_mastery_tool has
+-- always passed its own category too; apply_graph_update wrote `delta` and
+-- `reason` and silently dropped both. The mastery log therefore recorded how
+-- far a concept moved but never what kind of evidence moved it, so
+-- "recovering from confusion" and "drifting down from partial credit" are the
+-- same row.
+--
+-- Deliberately a bare nullable TEXT, with no CHECK.
+--
+-- The values written today, namespaced by PRODUCER:
+--
+--   routes/quiz.py::submit_quiz           quiz_correct | quiz_partial |
+--                                         quiz_confusion   (from the score ratio)
+--   agents/tools/graph.py::               tutor_interaction | tutor_correction |
+--     update_mastery_tool (chat tutor)    tutor_quiz       (model-classified, optional)
+--
+-- The prefixes are load-bearing: two independent writers share this column,
+-- and a bare `quiz` from the tutor ("I quizzed the student mid-conversation")
+-- would be indistinguishable from a graded submission. Prefixing makes every
+-- stored value name its own producer.
+--
+-- Why no CHECK and no DEFAULT:
+--
+--   * writers that classify NOTHING (the document pipeline, notes
+--     extraction, manual adds via graph_service.add_node) supply no key at
+--     all, and NULL is the honest value for "this writer doesn't classify" —
+--     not a default that would make un-categorised events indistinguishable
+--     from confident ones. The tutor's own field is nullable for the same
+--     reason: an unclassified turn is genuinely absent, not "interaction".
+--   * a CHECK would pin today's six labels into DDL, and the next writer to
+--     classify its own events would need a migration to add a value. The
+--     vocabulary belongs to the callers while it is still moving;
+--     graph_service normalises and omits blanks.
+--
+-- Append-only table, additive column: existing rows keep NULL and every
+-- existing reader (get_graph's 14-day learning_velocity + last-5 echo)
+-- projects named columns, so none of them see a shape change.
+
+-- IF NOT EXISTS per the repo's idempotent-DDL rule: a migration that half
+-- applied must be re-runnable without hand-editing the ledger.
+ALTER TABLE node_mastery_events
+    ADD COLUMN IF NOT EXISTS event_type TEXT;

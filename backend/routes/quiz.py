@@ -4,6 +4,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -12,11 +13,11 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 import config
 from agents import ORCHESTRATOR_LIMITS, TOPUP_LIMITS
 from agents._providers import UnregisteredHandlerError
-from agents.quiz import quiz_agent, Quiz, QuizQuestion
+from agents.quiz import quiz_agent, Quiz, QuizQuestion, PROMPT_VERSION
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
-from agents.usage import record_agent_usage
+from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
@@ -42,7 +43,10 @@ from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
-from services.rag_service import retrieve_chunks, format_rag_context
+from services.quiz_identity import question_hash, normalize_text
+from services.quiz_repetition import RecentQuestion, recent_question_identities
+from services import prompt_dimensions
+from services.rag_service import retrieve_chunks_detailed, format_rag_context
 from services.xp_service import award_xp_safe
 from services.request_context import current_request_id
 
@@ -162,6 +166,10 @@ def _log_generation_failed(body, request_id: str | None, reason: str) -> None:
             "difficulty": body.difficulty,
             "num_questions": body.num_questions,
             "reason": reason,
+            # F6: whatever the prompt had managed to assemble before it
+            # failed. An ungrounded timeout and a grounded one are different
+            # diagnoses, and the failure path is where that matters most.
+            **prompt_dimensions.snapshot(),
         },
     )
 
@@ -418,7 +426,35 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
         "explanation": q.explanation,
         "concept_tested": q.concept,
         "difficulty": q.difficulty,
+        # E5: stable identity, computed from the same normalized stem +
+        # option set every future reader will derive it from. `id` is only
+        # unique WITHIN an attempt; this is what survives across attempts
+        # (E6's repetition guard) and, later, across students (item stats).
+        "question_hash": question_hash(q.question, q.options),
     }
+
+
+# Keys that exist for the server's benefit and are never part of the client
+# contract. `_strip_answer_key`'s allowlist already excludes them on the
+# keyless path; this is the same exclusion for the still-default keyed path,
+# so provenance can't leak into a browser payload just because #546 hasn't
+# flipped `include_answer_key` yet.
+#
+# `question_hash` sits here too — not because it is sensitive (it is the
+# student's own question) but because nothing client-side consumes it yet.
+# Per-question feedback (#26) is the change that should surface it, and it
+# should do so by adding it to the keyless allowlist, deliberately.
+_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash")
+
+
+def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> list[dict]:
+    """The questions as the client may see them."""
+    if not include_answer_key:
+        return _strip_answer_key(wire_questions)
+    return [
+        {k: v for k, v in q.items() if k not in _INTERNAL_QUESTION_KEYS}
+        for q in wire_questions
+    ]
 
 
 # Per-request model override map. Mirrors the chat tutor's
@@ -461,30 +497,172 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
-def _resolve_bu_code(course_id: str | None) -> str | None:
+class BuCodeLookup(NamedTuple):
+    """Tri-state result of course id -> BU course_code resolution (E8).
+
+    `code` set                  — resolved.
+    `code=None, failed=False`   — this course genuinely has no BU code.
+    `code=None, failed=True`    — the read raised; we do not know.
+
+    The last two were one bare `None` until E8 started reporting reasons, and
+    collapsing them made a Supabase outage report as `course_unresolved` —
+    "this course has no BU code", a statement about the data. E8 exists to
+    tell problems apart, so the can't-tell case has to stay separable.
+    """
+
+    code: str | None = None
+    failed: bool = False
+
+
+def _resolve_bu_code(course_id: str | None) -> BuCodeLookup:
     """Resolve a Sapling course UUID to its BU course_code (course_chunks
-    partition key). None if unresolvable OR if the lookup fails — grounding
-    must never break quiz generation."""
+    partition key). Never raises — grounding must never break quiz
+    generation — so a failed read comes back as `failed=True` rather than as
+    an exception or an indistinguishable None."""
     if not course_id:
-        return None
+        return BuCodeLookup()
     try:
         rows = table("courses").select(
             "course_code", filters={"id": f"eq.{course_id}"}, limit=1
         )
     except Exception:
+        logger.warning(
+            "quiz: course_code lookup failed for course=%s; grounding "
+            "coverage is unknown, not absent", course_id, exc_info=True,
+        )
+        return BuCodeLookup(failed=True)
+    return BuCodeLookup(code=(rows[0].get("course_code") if rows else None) or None)
+
+
+class CourseMaterial(NamedTuple):
+    """What grounding produced for one generation (E5 + E8).
+
+    Before E5 this was a bare string: the chunk ids that grounded a question
+    were resolved, formatted into the prompt, and dropped on the floor. That
+    made two things impossible — saying which source a stored question came
+    from, and telling an ungrounded generation apart from a grounded one.
+    """
+
+    #: The assembled prompt text ("" when there is nothing to ground on).
+    block: str = ""
+    #: Ids of the `course_chunks` rows in `block`, in rank order.
+    chunk_ids: tuple[str, ...] = ()
+    #: How many chunks are IN the prompt. Tracked separately from
+    #: len(chunk_ids) because groundedness is a property of the text the
+    #: model saw, not of our ability to name its sources: a row missing an
+    #: id still grounded the question, and reporting that generation as
+    #: ungrounded would be a lie in the direction that matters.
+    k_chunks: int = 0
+    #: Whether the official catalog chunk was included.
+    has_catalog: bool = False
+    #: Total chunks indexed for this course. Resolved ONLY when retrieval
+    #: came back empty — it is the difference between "this course has no
+    #: material at all" and "it has material, none of it matched this
+    #: concept", which are different problems with different fixes. None
+    #: means not asked, or the count read failed.
+    course_chunks: int | None = None
+    #: The BU course_code partition key, or None when unresolvable.
+    bu_code: str | None = None
+    #: Whether assembling this material FAILED rather than found nothing:
+    #: the course_code read raised, or `_course_material` itself blew up and
+    #: the caller degraded. Distinct from `bu_code is None` because E8's whole
+    #: job is telling problems apart, and "we could not look" is a different
+    #: problem from "this course has no BU code" — the honest label for the
+    #: former is `coverage_unknown`, not `course_unresolved`.
+    resolution_failed: bool = False
+    #: Whether concept-scoped RETRIEVAL raised (as opposed to cleanly matching
+    #: nothing). `retrieve_chunks` degrades to [] on failure, which is
+    #: indistinguishable from a clean miss — so without this, a course with
+    #: material indexed whose retrieval broke was reported as
+    #: `no_match_for_concept`: "it has material, none covers this concept".
+    #: That is a claim about data we never read. Same reasoning as
+    #: `resolution_failed`, one layer down.
+    retrieval_failed: bool = False
+
+    @property
+    def chunk_count(self) -> int:
+        """Chunks in the prompt.
+
+        Falls back to the id count so a partially-specified instance can
+        never read as ungrounded while visibly carrying sources — the two
+        fields disagreeing should be impossible, not merely unlikely.
+        """
+        return max(self.k_chunks, len(self.chunk_ids))
+
+    @property
+    def rag_grounded(self) -> bool:
+        """Whether retrieved DOCUMENT chunks are in the prompt.
+
+        Deliberately not named `grounded`: the catalog block is course
+        material too, and a course with catalog data but nothing indexed
+        does put real material in front of the model. Calling that
+        "ungrounded" would write a false record into every stored
+        question's provenance — the same class of lie `chunk_count` exists
+        to prevent. `has_catalog` carries the other half, and both are
+        stamped separately.
+        """
+        return self.chunk_count > 0
+
+
+_EMPTY_MATERIAL = CourseMaterial()
+# Grounding could not be assessed at all (an unexpected raise out of
+# `_course_material`). Distinct from _EMPTY_MATERIAL, which means "we looked
+# and there was nothing".
+_UNKNOWN_MATERIAL = CourseMaterial(resolution_failed=True)
+
+# k for concept-scoped retrieval. Named because E8 reports it and the audit's
+# proposed budget wants to trim it from 5 to 4 once the numbers are measured
+# (F6) rather than estimated.
+_RAG_K = 5
+
+
+def _course_chunk_coverage(bu_code: str) -> int | None:
+    """How many chunks are indexed for this course, or None if unknown.
+
+    Cheap: PostgREST's exact count with a one-row window — never pulls the
+    table. Only called when retrieval returned nothing, so the common
+    (grounded) path pays for no extra query at all.
+
+    A count of 0 is only reported when it is TRUSTWORTHY.
+    `select_with_count` returns `total = 0` both for a genuinely empty table
+    and for a missing or unparseable `Content-Range` header
+    (db/connection.py) — and those two mean opposite things here. Reporting a
+    degraded count as 0 would have E8 assert "this course has nothing
+    indexed" about a course that may be fully indexed, destroying the exact
+    distinction the reason taxonomy exists to draw. So a zero count with rows
+    actually returned is treated as unknown.
+    """
+    try:
+        rows, total = table("course_chunks").select_with_count(
+            "id", filters={"course_id": f"eq.{bu_code}"}, limit=1,
+        )
+        if total == 0 and rows:
+            logger.warning(
+                "quiz: course-chunk count came back 0 while rows exist for "
+                "course_code=%s — treating coverage as unknown", bu_code,
+            )
+            return None
+        return total
+    except Exception:
+        logger.warning(
+            "quiz: course-chunk coverage read failed for course_code=%s", bu_code,
+        )
         return None
-    return (rows[0].get("course_code") if rows else None) or None
 
 
-def _course_material_block(course_id: str | None, concept_name: str) -> str:
+def _course_material(course_id: str | None, concept_name: str) -> CourseMaterial:
     """Best-effort catalog + document-chunk context for a concept.
 
-    Returns "" if nothing is available (no course, no bu_code, no chunks) or
-    if retrieval raises — grounding must never break quiz generation.
+    Returns an empty CourseMaterial if nothing is available (no course, no
+    bu_code, no chunks) or if retrieval raises — grounding must never break
+    quiz generation. A course_code read that FAILED is reported as such
+    (`resolution_failed`) rather than as an absent bu_code, so E8 can tell
+    "we could not look" from "there is nothing to look up".
     """
-    bu_code = _resolve_bu_code(course_id)
+    lookup = _resolve_bu_code(course_id)
+    bu_code = lookup.code
     if not bu_code:
-        return ""
+        return _UNKNOWN_MATERIAL if lookup.failed else _EMPTY_MATERIAL
     blocks: list[str] = []
     try:
         catalog = _get_catalog_chunk(bu_code)
@@ -492,10 +670,11 @@ def _course_material_block(course_id: str | None, concept_name: str) -> str:
         catalog = ""
     if catalog:
         blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
-    try:
-        chunks = retrieve_chunks(concept_name, course_id=bu_code, k=5)
-    except Exception:
-        chunks = []
+    # `_detailed` because [] alone cannot say whether retrieval ran: it is
+    # both "nothing matched" and "the index was unreachable". E8 reports on
+    # that difference, so it has to be carried rather than inferred.
+    retrieval = retrieve_chunks_detailed(concept_name, course_id=bu_code, k=_RAG_K)
+    chunks = retrieval.chunks
     # Drop any retrieved chunk that merely repeats the catalog block already
     # injected above — catalog chunks share the course_chunks store and can
     # rank into the semantic results, which would send the same
@@ -506,7 +685,113 @@ def _course_material_block(course_id: str | None, concept_name: str) -> str:
     rag_block = format_rag_context(chunks)
     if rag_block:
         blocks.append(rag_block)
-    return "\n\n".join(blocks)
+    # Ids are what make a stored question traceable back to its source. Rows
+    # without one are still usable as prompt text, so they are kept in the
+    # block and simply absent from the provenance list.
+    chunk_ids = tuple(
+        str(c.get("id")) for c in chunks if isinstance(c, dict) and c.get("id")
+    )
+    return CourseMaterial(
+        block="\n\n".join(blocks),
+        chunk_ids=chunk_ids,
+        k_chunks=len(chunks),
+        has_catalog=bool(catalog),
+        course_chunks=None if chunks else _course_chunk_coverage(bu_code),
+        bu_code=bu_code,
+        retrieval_failed=retrieval.failed,
+    )
+
+
+def _log_rag_uncovered(
+    material: CourseMaterial,
+    *,
+    user_id: str,
+    concept_node_id: str,
+    request_id: str | None,
+) -> None:
+    """E8: make an ungrounded generation a decision, not an accident.
+
+    Generation is NOT blocked on this — a course with nothing indexed is a
+    legitimate mode, and refusing to quiz a student because their class
+    hasn't uploaded slides would be worse than a general-knowledge quiz.
+    But it stops being invisible: the reasons below are different
+    problems, and telling them apart is the whole point.
+    """
+    if material.rag_grounded:
+        return
+    if material.resolution_failed:
+        # The course_code read raised, or assembly blew up entirely. We never
+        # learned whether this course has material, so `course_unresolved`
+        # ("it has no BU code") would be an assertion about data we never
+        # read. `coverage_unknown` is the honest can't-tell label, and it
+        # already exists for exactly this shape of ignorance.
+        reason = "coverage_unknown"
+    elif material.retrieval_failed:
+        # Retrieval raised, so we never learned whether this course's material
+        # covers the concept. `no_match_for_concept` would assert that it
+        # doesn't. `rag.retrieval_failed` carries the cause under the same
+        # request_id; this event's job is only to stop claiming more than we
+        # know.
+        reason = "coverage_unknown"
+    elif material.bu_code is None:
+        reason = "course_unresolved"
+    elif material.course_chunks is None:
+        reason = "coverage_unknown"
+    elif material.course_chunks == 0:
+        reason = "no_chunks_for_course"
+    else:
+        reason = "no_match_for_concept"
+    # INFO, not WARNING: in function mode the embedding seam is disabled by
+    # design (#439), so every E2E generation lands here. A warning per run
+    # would train readers to ignore the one that matters.
+    logger.info(
+        "quiz: generating without course grounding (reason=%s course_chunks=%s "
+        "request_id=%s)", reason, material.course_chunks, request_id,
+    )
+    events_service.log_event(
+        "quiz.rag_uncovered",
+        # category="usage", NOT "error". Ungrounded generation is a
+        # legitimate mode — this event exists to make it countable, not to
+        # report a failure — and /api/admin/analytics/errors scans
+        # `category = error` newest-first (B re-keyed it off the error.*
+        # name prefix precisely so non-HTTP failures would surface). Since
+        # this fires on EVERY generation for any unindexed course, and on
+        # every function-mode run, filing it as an error would bury
+        # quiz.context_write_failed and rag.retrieval_failed under routine
+        # traffic and inflate the error series — degrading the surface that
+        # workstream B just repaired. `rag.retrieval_failed` stays an error
+        # because retrieval FAILING is one; nothing failed here.
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "concept_node_id": concept_node_id,
+            "reason": reason,
+            "course_chunks": material.course_chunks,
+            "k_chunks": material.chunk_count,
+        },
+    )
+
+
+def _do_not_repeat_block(recent: list[RecentQuestion]) -> str:
+    """E6: name the questions this student has already been served.
+
+    Stems, not hashes — "do not repeat 9f3a2c…" is unactionable for a model.
+    Neutralized at this boundary because a stem is LLM-written text derived
+    from student-uploaded course material, so it re-enters a prompt as
+    untrusted content (#150), exactly like the top-up's already-asked list.
+    """
+    if not recent:
+        return ""
+    from services.prompt_safety import neutralize_delimiters
+
+    lines = "\n".join(f"- {neutralize_delimiters(r.stem)}" for r in recent)
+    return (
+        "\n\n[RECENTLY ASKED] This student has already been served the "
+        "questions below on this concept. Do NOT repeat them or trivially "
+        "reword them — write new questions, on the same concept, that probe "
+        "it differently:\n" + lines
+    )
 
 
 async def _quiz_via_agent(
@@ -536,6 +821,7 @@ async def _quiz_via_agent(
         course_id=course_id,
         supabase=None,
         request_id=request_id,
+        feature="quiz",
     )
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
@@ -574,21 +860,82 @@ async def _quiz_via_agent(
     # worker thread so a slow/stalled retrieval can't freeze this worker's
     # event loop for every other in-flight request. Matches the
     # asyncio.to_thread pattern used by the agent read tools.
-    material = await asyncio.to_thread(_course_material_block, course_id, concept_name)
-    if material:
+    #
+    # E6's recently-asked read is an independent Supabase read + decrypt, so
+    # it runs CONCURRENTLY with grounding rather than after it — the two have
+    # nothing to say to each other and serializing them would add the slower
+    # one's latency to every generation.
+    #
+    # return_exceptions=True because BOTH are best-effort context, and a bare
+    # gather propagates the first failure straight out of generation: an
+    # unreadable past attempt would 502 a quiz that needed no history at all.
+    # Each helper already degrades internally; this is the backstop for the
+    # failure they cannot catch (an unexpected raise on the way in or out).
+    material, recent = await asyncio.gather(
+        asyncio.to_thread(_course_material, course_id, concept_name),
+        asyncio.to_thread(
+            recent_question_identities, user_id, concept_node_id
+        ),
+        return_exceptions=True,
+    )
+    if isinstance(material, BaseException):
+        logger.warning(
+            "quiz: course-material assembly failed (%s); generating ungrounded",
+            type(material).__name__, exc_info=material,
+        )
+        # _UNKNOWN_MATERIAL, not _EMPTY_MATERIAL: assembly raised, so we know
+        # nothing about this course's coverage. E8 must report
+        # `coverage_unknown` rather than claiming the course has no BU code.
+        material = _UNKNOWN_MATERIAL
+    if isinstance(recent, BaseException):
+        logger.warning(
+            "quiz: recently-asked read failed (%s); generating without a "
+            "do-not-repeat list", type(recent).__name__, exc_info=recent,
+        )
+        recent = []
+    _log_rag_uncovered(
+        material,
+        user_id=user_id,
+        concept_node_id=concept_node_id,
+        request_id=request_id,
+    )
+    routing_msg += _do_not_repeat_block(recent)
+
+    if material.block:
         user_message = (
-            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material
+            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material.block
             + "\n\n[GENERATE QUIZ]\n" + routing_msg
         )
     else:
         user_message = routing_msg
+
+    # F6: what this prompt is made of, so `llm_usage.prompt_tokens` (same
+    # request_id) becomes attributable to sections instead of estimated.
+    # Recorded BEFORE the run so a failed generation still reports its
+    # composition — an ungrounded timeout is a different diagnosis from a
+    # grounded one.
+    prompt_dimensions.record(
+        blocks=sorted(
+            b for b, present in (
+                ("catalog", material.has_catalog),
+                ("rag", material.rag_grounded),
+                ("recently_asked", bool(recent)),
+                ("misconceptions_requested", use_shared_context),
+            ) if present
+        ),
+        k_chunks=material.chunk_count,
+        material_chars=len(material.block),
+        recent_asked=len(recent),
+        routing_chars=len(routing_msg),
+        adaptive=difficulty == "adaptive",
+    )
 
     model_override = _resolve_model_pref(model_pref)
     run_kwargs: dict = {"deps": deps}
     if model_override is not None:
         run_kwargs["model"] = model_override
 
-    async def _run(message: str, limits) -> Quiz:
+    async def _run(message: str, limits) -> tuple[Quiz, str]:
         # #544 F2: bound EACH agent run rather than the whole function.
         # Wrapping the outer coroutine cancelled it mid-flight, and
         # CancelledError is a BaseException — it flew straight past the
@@ -602,7 +949,12 @@ async def _quiz_via_agent(
             ),
             feature="quiz", task="quiz", user_id=deps.user_id,
         )
-        return result.output
+        # Returned per-run, not resolved once for the function: a top-up is
+        # a SEPARATE model call and can be served by a different model than
+        # the first run (a provider-side reroute, or a future retry that
+        # escalates tiers). Stamping one model over all of them would make
+        # provenance quietly wrong in exactly the case it exists to record.
+        return result.output, served_model_name(result, "quiz")
 
     # Filter out questions the agent got wrong (correct_answer not among
     # the options, duplicate/insufficient options, no single correct
@@ -618,15 +970,40 @@ async def _quiz_via_agent(
     # generation on perfectly good responses.
     wire_questions: list[dict] = []
     seen_stems: set[str] = set()
+    seen_hashes: set[str] = set()
     dropped = 0
 
-    def _absorb(quiz: Quiz) -> None:
+    # E5 provenance shared by every question this generation produces. The
+    # chunk ids are attempt-level, not per-item: they are the sources that
+    # were in the prompt when the question was written, which is the honest
+    # claim — the model never tells us which chunk it drew any single
+    # question from.
+    provenance_base = {
+        "prompt_version": PROMPT_VERSION,
+        "chunk_ids": list(material.chunk_ids),
+        # Two separate facts, not one fuzzy one: whether retrieved document
+        # chunks grounded the question, and whether the official catalog
+        # block was present. Collapsing them into a single `grounded` made
+        # a catalog-only course record every question as ungrounded.
+        "rag_grounded": material.rag_grounded,
+        "catalog": material.has_catalog,
+    }
+
+    def _absorb(quiz: Quiz, model: str) -> None:
         nonlocal dropped
         for q in quiz.questions:
-            stem = q.question.strip().casefold()
-            if stem in seen_stems:
+            # E5: identity is the dedupe key now. The stem check is kept
+            # alongside it and is the COARSER of the two — a hash covers the
+            # stem AND the options, so a model re-emitting one stem with
+            # reworded options passes the hash check and is caught here.
+            # Dropping it would have narrowed #543's duplicate-question
+            # guard, which is not a trade E5 needs to make.
+            stem = normalize_text(q.question)
+            qhash = question_hash(q.question, q.options)
+            if qhash in seen_hashes or stem in seen_stems:
                 logger.warning(
-                    "quiz: dropping duplicate question stem (len=%d)", len(stem)
+                    "quiz: dropping duplicate question (hash=%s, stem_len=%d)",
+                    qhash, len(stem),
                 )
                 dropped += 1
                 continue
@@ -634,10 +1011,12 @@ async def _quiz_via_agent(
             if mapped is None:
                 dropped += 1
                 continue
+            mapped["provenance"] = {**provenance_base, "model": model}
             seen_stems.add(stem)
+            seen_hashes.add(qhash)
             wire_questions.append(mapped)
 
-    _absorb(await _run(user_message, ORCHESTRATOR_LIMITS))
+    _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
 
     # #543 E2: one bounded top-up when DRIFT cost us a big share of the
     # quiz. Gated on questions actually dropped (never on a clean short
@@ -669,7 +1048,7 @@ async def _quiz_via_agent(
                     f"already in the quiz:\n{already}"
                 )
             try:
-                _absorb(await _run(topup_msg, TOPUP_LIMITS))
+                _absorb(*await _run(topup_msg, TOPUP_LIMITS))
             except (Exception, asyncio.TimeoutError) as e:
                 # The request deliberately SUCCEEDS from here — serve the
                 # short quiz with an honest count. No traceback: the E2E
@@ -773,6 +1152,11 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             ),
         )
 
+    # F6: open the prompt-composition capture for this request. Both the
+    # route and the agent's read tools contribute; the snapshot rides into
+    # quiz.started, which shares this request_id with the llm_usage row.
+    prompt_dimensions.start_capture()
+
     try:
         # Each agent run inside is individually bounded by
         # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
@@ -852,8 +1236,15 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             "concept_node_id": body.concept_node_id,
             "num_questions": len(questions),
             "difficulty": body.difficulty,
+            # F6: the prompt's composition, carried on the event that
+            # already shares a request_id with this generation's llm_usage
+            # row — so prompt_tokens becomes attributable to sections
+            # rather than estimated. Ids/counts/enums only, per the #117
+            # payload rule; no prompt text goes anywhere near this.
+            **prompt_dimensions.snapshot(),
         },
     )
+    prompt_dimensions.clear()
     # #541 C3: the answer key (per-option `correct` booleans) ships to the
     # client only behind the deprecated include_answer_key flag — default
     # true for the current QuizPanel, removed with #546 once the #537
@@ -864,9 +1255,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             "quiz: generate served the client-side answer key "
             "(include_answer_key=true, deprecated — #546) quiz_id=%s", quiz_id,
         )
-        response_questions = questions
-    else:
-        response_questions = _strip_answer_key(questions)
+    response_questions = _client_questions(questions, body.include_answer_key)
 
     # #540 A1: echo what generation actually chose. requested_difficulty
     # is what the student asked for (may be 'adaptive');
@@ -1273,13 +1662,19 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     mastery_score_after = mastery_after(mastery_before, score=score, total=total)
     mastery_delta = mastery_score_after - mastery_before
 
+    # E7: the categorical reading of the attempt, namespaced by producer.
+    # `node_mastery_events.event_type` has two independent writers and no
+    # CHECK constraint — this route and the tutor's `update_mastery_tool`
+    # (tutor_interaction / tutor_correction / tutor_quiz) — so an unprefixed
+    # "quiz" or "correct" would leave the column carrying two disjoint
+    # vocabularies with no way to tell which producer wrote a given row.
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
-        event_type = "correct"
+        event_type = "quiz_correct"
     elif score_ratio >= 0.4:
-        event_type = "partial"
+        event_type = "quiz_partial"
     else:
-        event_type = "confusion"
+        event_type = "quiz_confusion"
 
     # Route the mastery write through the sanctioned graph path. The graph
     # keys on the ABSTRACT course id; apply_graph_update looks the node up by
