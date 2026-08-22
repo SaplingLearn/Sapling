@@ -28,7 +28,7 @@ import { siblingsFor } from "@/lib/graph/neighbourhood";
 import { apiToGraphNode } from "@/lib/data";
 import { parseEntry } from "@/lib/quiz/source";
 import { loadPrefs } from "@/lib/quiz/prefs";
-import { colorFor } from "@/lib/quiz/proposals";
+import { colorFor, entrySelection } from "@/lib/quiz/proposals";
 import { useQuizHome } from "@/lib/quiz/useQuizHome";
 import { useQuizSession } from "@/lib/quiz/useQuizSession";
 import { QuizHome } from "./home/QuizHome";
@@ -53,14 +53,21 @@ export function QuizScreen() {
   const home = useQuizHome(userId ?? "", semesterHydrated ? activeSemester : null);
   const { session, config, actions } = useQuizSession(userId ?? "", entry);
 
-  // The concept the screens are about: whatever the session is running, falling
-  // back to the proposal on offer.
+  // `?concept=<id>` / `?topic=<name>` resolved against the SCOPED graph, so a
+  // link into a term the student isn't looking at reads as unresolved rather
+  // than quietly quizzing something off-screen (§6).
+  const selection = useMemo(
+    () => entrySelection(entry, home.nodes, home.courses),
+    [entry, home.nodes, home.courses],
+  );
+
+  // The concept the screens are about: whatever the session is running, else the
+  // deep link, else the proposal on offer.
   const activeNode = useMemo(() => {
-    const byId = session.conceptId
-      ? home.nodes.find(n => n.id === session.conceptId)
-      : undefined;
+    const wanted = session.conceptId || selection.conceptId;
+    const byId = wanted ? home.nodes.find(n => n.id === wanted) : undefined;
     return byId ?? home.primary?.node ?? null;
-  }, [home.nodes, home.primary, session.conceptId]);
+  }, [home.nodes, home.primary, session.conceptId, selection.conceptId]);
 
   const activeCourse = useMemo(
     () => home.courses.find(c => c.course_id === activeNode?.course_id) ?? null,

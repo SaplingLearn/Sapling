@@ -29,6 +29,7 @@
  */
 
 import { paletteFor } from "@/lib/data";
+import { resolveInitialSelection, type QuizConcept } from "@/lib/quizSelection";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/types";
 import { daysAgo, relativeStudied } from "./relativeTime";
@@ -208,6 +209,61 @@ export function queueFor(
     ? nodes.filter(n => n.course_id === courseId)
     : nodes;
   return scoped.filter(isDue).sort(byMasteryAsc).slice(0, QUEUE_MAX).map(n => n.id);
+}
+
+/** What a deep link actually points at, once resolved against the loaded graph. */
+export interface EntrySelection {
+  conceptId: string | null;
+  courseId: string | null;
+  /** The link named a concept or topic that isn't in the current scope. §6 wants
+   *  a toast and an ordinary home, not a silently ignored link. */
+  unresolved: boolean;
+}
+
+/**
+ * Resolves `?concept=<nodeId>` / `?topic=<name>` against the scoped graph.
+ *
+ * The id path goes through `quizSelection.resolveInitialSelection` — the same
+ * resolver the old picker used, which already answers "unknown id → nothing
+ * selected" rather than pre-selecting a node that isn't there. `topic` is the
+ * fuzzy legacy form (a concept NAME, from the tree's and dashboard's old links),
+ * matched case-insensitively; `concept` wins when both are present.
+ */
+export function entrySelection(
+  entry: { concept?: string; topic?: string; course?: string },
+  nodes: GraphNode[],
+  courses: EnrolledCourse[] = [],
+): EntrySelection {
+  const byCourseId = new Map(courses.map(c => [c.course_id, c]));
+  const concepts: QuizConcept[] = nodes
+    .filter(n => !n.is_subject_root)
+    .map(n => ({
+      id: n.id,
+      name: n.concept_name,
+      course_id: n.course_id ?? null,
+      course_code: n.course_id ? byCourseId.get(n.course_id)?.course_code ?? null : null,
+    }));
+
+  if (entry.concept) {
+    const resolved = resolveInitialSelection(concepts, entry.concept);
+    return {
+      conceptId: resolved.conceptId,
+      courseId: resolved.courseId ?? entry.course ?? null,
+      unresolved: resolved.conceptId === null,
+    };
+  }
+
+  if (entry.topic) {
+    const wanted = entry.topic.trim().toLowerCase();
+    const match = concepts.find(c => c.name.trim().toLowerCase() === wanted);
+    return {
+      conceptId: match?.id ?? null,
+      courseId: match?.course_id ?? entry.course ?? null,
+      unresolved: !match,
+    };
+  }
+
+  return { conceptId: null, courseId: entry.course ?? null, unresolved: false };
 }
 
 /**

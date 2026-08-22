@@ -6,6 +6,7 @@ import {
   alternativesOf,
   colorFor,
   dueSet,
+  entrySelection,
   groupByCourse,
   isDue,
   latestCompletedAttempt,
@@ -313,6 +314,49 @@ describe("groupByCourse", () => {
     const groups = groupByCourse(nodes, courses);
     expect(groups.flatMap(g => g.nodes).map(n => n.id)).not.toContain("root");
     expect(groups.map(g => g.course.course_id)).not.toContain("course-empty");
+  });
+});
+
+describe("entrySelection", () => {
+  const nodes = [
+    node({ id: "n1", concept_name: "Recursion", course_id: "course-a" }),
+    node({ id: "n2", concept_name: "Big-O", course_id: "course-b" }),
+    node({ id: "root", concept_name: "Recursion", course_id: "course-a", is_subject_root: true }),
+  ];
+  const courses = [course({ course_id: "course-a" }), course({ course_id: "course-b" })];
+
+  it("resolves a concept id and its course", () => {
+    expect(entrySelection({ concept: "n2" }, nodes, courses))
+      .toEqual({ conceptId: "n2", courseId: "course-b", unresolved: false });
+  });
+
+  it("resolves the legacy topic form by name, case-insensitively", () => {
+    expect(entrySelection({ topic: "  recursion " }, nodes, courses))
+      .toEqual({ conceptId: "n1", courseId: "course-a", unresolved: false });
+  });
+
+  it("flags a link pointing outside the current scope rather than ignoring it", () => {
+    expect(entrySelection({ concept: "gone" }, nodes, courses))
+      .toEqual({ conceptId: null, courseId: null, unresolved: true });
+    expect(entrySelection({ topic: "Monads" }, nodes, courses).unresolved).toBe(true);
+  });
+
+  it("prefers the precise concept id over the fuzzy topic", () => {
+    expect(entrySelection({ concept: "n2", topic: "Recursion" }, nodes, courses).conceptId)
+      .toBe("n2");
+  });
+
+  it("passes a course-only entry straight through", () => {
+    expect(entrySelection({ course: "course-b" }, nodes, courses))
+      .toEqual({ conceptId: null, courseId: "course-b", unresolved: false });
+    expect(entrySelection({}, nodes, courses))
+      .toEqual({ conceptId: null, courseId: null, unresolved: false });
+  });
+
+  it("never resolves to a subject root", () => {
+    // Both the root and a real concept are called "Recursion"; the leaf wins.
+    expect(entrySelection({ topic: "Recursion" }, nodes, courses).conceptId).toBe("n1");
+    expect(entrySelection({ concept: "root" }, nodes, courses).unresolved).toBe(true);
   });
 });
 
