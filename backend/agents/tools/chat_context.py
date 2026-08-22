@@ -44,6 +44,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
+from config import is_mastered, is_weak
 from db.connection import table
 from services.encryption import decrypt_if_present, decrypt_json
 
@@ -388,12 +389,13 @@ async def read_session_history_tool(
 # read_user_progress
 
 
-# Mastery thresholds — duplicated here (rather than imported from
-# graph_service) so the tool stays self-contained and the agent's
-# definitions of 'mastered' / 'weak' can evolve independently from the
-# spaced-repetition scheduling logic.
-_MASTERED_THRESHOLD = 0.7
-_WEAK_THRESHOLD = 0.4
+# Mastery thresholds come from config (#557). They used to be duplicated
+# here — 0.7/0.4 against the canonical 0.75/0.45 — on the stated rationale
+# that "the agent's definitions can evolve independently". They didn't
+# evolve; they drifted, and the result was a student reading "Struggling"
+# on the Tree while this tool counted them as in-progress in the same
+# session. If the tutor ever needs a genuinely different cut, it gets a
+# named constant in config.py, not a literal here.
 
 
 class CourseProgress(BaseModel):
@@ -402,9 +404,11 @@ class CourseProgress(BaseModel):
     clamped to [0, 1] and is 0.0 when there are no concepts."""
 
     total_concepts: int = Field(ge=0)
-    mastered_count: int = Field(ge=0)  # mastery >= 0.7
-    weak_count: int = Field(ge=0)  # mastery < 0.4
-    in_progress_count: int = Field(ge=0)  # 0.4 <= mastery < 0.7
+    # Tiers per config.get_mastery_tier (#557): "mastered", "struggling" +
+    # "unexplored" (together: weak), and "learning" (in progress).
+    mastered_count: int = Field(ge=0)
+    weak_count: int = Field(ge=0)
+    in_progress_count: int = Field(ge=0)
     avg_mastery: float = Field(ge=0.0, le=1.0)
 
 
@@ -470,9 +474,9 @@ async def read_user_progress(
         m = max(0.0, min(1.0, m))
         total += 1
         mastery_sum += m
-        if m >= _MASTERED_THRESHOLD:
+        if is_mastered(m):
             mastered += 1
-        elif m < _WEAK_THRESHOLD:
+        elif is_weak(m):
             weak += 1
         else:
             in_progress += 1
