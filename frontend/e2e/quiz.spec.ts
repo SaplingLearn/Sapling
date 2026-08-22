@@ -22,13 +22,16 @@
  * different layer than the one that wrote, so these prove the write hit the
  * database, not the echo.
  *
- * GENERATION BUDGET: `/api/quiz/generate` is rate limited to 8 calls per 300
- * seconds per user, in-process, and the whole lane shares one window (the
- * per-test truncate does not reset it). This file spends THREE of the eight —
- * the mastery journey, the resubmit journey and the adaptive round trip. The
- * failed-generation test spends none (both calls are stubbed). The full
- * accounting, and what to do when a new journey needs a slot, is in
- * `quiz-journeys.spec.ts`'s header.
+ * GENERATIONS: `/api/quiz/generate` is rate limited per user, in-process, and
+ * the whole lane shares one window that only a backend restart clears — but
+ * the E2E stacks now export `QUIZ_GENERATE_RATE_LIMIT=1000`
+ * (`scripts/e2e-up.sh` and `e2e.yml`, #537), so the limiter is no longer what
+ * constrains a new test. Wall-clock is: this file spends THREE real
+ * generations (the mastery journey, the resubmit journey, the adaptive round
+ * trip), each a full round trip, while a stubbed `page.route` response is
+ * seconds faster — which is why the failed-generation test stubs both of its
+ * calls. The single accounting of which journeys spend a real one, and why,
+ * stays in `quiz-journeys.spec.ts`'s header.
  */
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
@@ -227,9 +230,10 @@ test("a failed generation shows the mapped copy and Retry re-attempts it (#184 s
 
   // Retry really re-runs generation from the same concept — it does not merely
   // dismiss the card. The fault is deliberately left in place: proving that the
-  // recovered quiz then RUNS would cost a real generation, and the lane's
-  // budget (see quiz-journeys.spec.ts's header — 8 per 300s, shared) has none
-  // spare. The request going back out is the property #184 was about.
+  // recovered quiz then RUNS would cost a real generation, and this test stays
+  // fully stubbed so it costs seconds rather than a round trip (the limiter
+  // itself is raised for the E2E stacks — see the header). The request going
+  // back out is the property #184 was about.
   const retryRequest = page.waitForRequest(
     r => r.url().includes("/api/quiz/generate") && r.method() === "POST",
   );

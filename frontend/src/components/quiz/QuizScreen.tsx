@@ -27,7 +27,6 @@ import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
 import { apiToGraphNode } from "@/lib/data";
 import { parseEntry } from "@/lib/quiz/source";
-import { loadPrefs } from "@/lib/quiz/prefs";
 import { colorFor, entrySelection, nextConceptInQueue } from "@/lib/quiz/proposals";
 import { useQuizHome } from "@/lib/quiz/useQuizHome";
 import { useQuizSession } from "@/lib/quiz/useQuizSession";
@@ -108,7 +107,6 @@ export function QuizScreen() {
   );
 
   const prefersReducedMotion = usePrefersReducedMotion();
-  const prefs = useMemo(() => loadPrefs(config), [config]);
 
   // The accent is the one runtime-bound value; an unset one falls through to
   // `var(--accent)` wherever it is read.
@@ -184,7 +182,6 @@ export function QuizScreen() {
         userId={userId}
         home={home}
         config={config}
-        prefs={prefs}
         entry={entry}
         session={session}
         actions={actions}

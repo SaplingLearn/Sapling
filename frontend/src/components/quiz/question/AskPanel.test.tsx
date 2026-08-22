@@ -216,6 +216,70 @@ describe("AskPanel", () => {
     expect(signal!.aborted).toBe(true);
   });
 
+  it("aborts an in-flight stream when the panel is closed, and re-asks on reopen", async () => {
+    // Nobody is reading a stream behind a closed sheet, and its reply would
+    // land in state on a panel that is gone.
+    let signal: AbortSignal | undefined;
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      signal = (args[6] as { signal?: AbortSignal }).signal;
+      return new Promise(() => {}); // still mid-sentence when the sheet closes
+    });
+
+    const onClose = vi.fn();
+    const props = {
+      onClose,
+      userId: "user-1",
+      conceptName: "Recursion",
+      courseId: "course-cs101",
+      courseLabel: "CS101",
+      seed: SEED,
+    };
+    const { rerender } = render(<AskPanel open {...props} />);
+    await waitFor(() => expect(signal).toBeDefined());
+    expect(signal!.aborted).toBe(false);
+
+    await act(async () => {
+      rerender(<AskPanel open={false} {...props} />);
+    });
+    expect(signal!.aborted).toBe(true);
+
+    // The turn never produced an answer, so reopening the SAME question asks it
+    // again rather than showing an empty thread with no way to get one.
+    await act(async () => {
+      rerender(<AskPanel open {...props} />);
+    });
+    await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(2));
+    expect(api.streamChat.mock.calls[1][2]).toBe(composeAskMessage(SEED));
+    await screen.findByText("The base case is the exit.");
+  });
+
+  it("leaves a finished turn alone when the panel closes and reopens", async () => {
+    const onClose = vi.fn();
+    const props = {
+      onClose,
+      userId: "user-1",
+      conceptName: "Recursion",
+      courseId: "course-cs101",
+      courseLabel: "CS101",
+      seed: SEED,
+    };
+    const { rerender } = render(<AskPanel open {...props} />);
+    await screen.findByText("The base case is the exit.");
+
+    await act(async () => {
+      rerender(<AskPanel open={false} {...props} />);
+    });
+    await act(async () => {
+      rerender(<AskPanel open {...props} />);
+    });
+
+    // Nothing was in flight to abort, so the conversation is where it was — no
+    // second session, no repeated question.
+    expect(api.startSessionStream).toHaveBeenCalledTimes(1);
+    expect(api.streamChat).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("The base case is the exit.")).toBeInTheDocument();
+  });
+
   it("uses the JSON start route when the streamed one falls over", async () => {
     api.startSessionStream.mockRejectedValueOnce(new Error("no stream"));
     renderPanel();

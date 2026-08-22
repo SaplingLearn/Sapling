@@ -54,6 +54,24 @@ export function AdjustDialog({
   const titleId = React.useId();
   const [draft, setDraft] = React.useState<SessionConfig>(initialConfig);
 
+  // Re-seed the draft when the dialog is (re)opened, and when the config it was
+  // opened against changes underneath it. The initial state alone is a
+  // one-shot: `GET /api/quiz/config` can resolve after this mounted, and the
+  // `SET_CONFIG` that lands then moves `session.config` while the draft keeps
+  // the pre-config scalar — Start would run settings the card behind the dialog
+  // stopped showing.
+  //
+  // Keyed on the three VALUES rather than on `initialConfig`: a queued card
+  // rebuilds that object on every render, so an identity-keyed effect would
+  // re-seed constantly and wipe the choice being made. Nothing else moves
+  // `session.config` while this is open (the machine refuses `SET_CONFIG`
+  // mid-quiz, and Done closes the dialog), so a value change here really is
+  // "the defaults finally arrived".
+  const { count, difficulty, feedback } = initialConfig;
+  React.useEffect(() => {
+    if (open) setDraft({ count, difficulty, feedback });
+  }, [open, count, difficulty, feedback]);
+
   return (
     <Dialog
       open={open}

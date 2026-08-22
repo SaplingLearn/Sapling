@@ -42,7 +42,7 @@ import {
 } from "@/lib/quiz/proposals";
 import { QUEUE_COUNT, QUEUE_MAX, dismissAttempt } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
-import type { QuizConfig, QuizPrefs, QuizSession, SourceKind } from "@/lib/quiz/types";
+import type { QuizConfig, QuizSession, SourceKind } from "@/lib/quiz/types";
 import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { AdjustDialog } from "./AdjustDialog";
@@ -55,7 +55,6 @@ export interface QuizHomeProps {
   userId: string;
   home: QuizHomeData;
   config: QuizConfig | null;
-  prefs: QuizPrefs;
   entry: EntryRequest;
   session: QuizSession;
   actions: QuizActions;

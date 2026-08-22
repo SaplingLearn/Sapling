@@ -33,6 +33,14 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
 
+  // Twice Playwright's 30 s default, because inner waits here go up to 30 s
+  // (generation and submit round trips) and the auto `resetDb` fixture spends
+  // part of the budget before a test body starts. An inner wait equal to the
+  // whole test budget can never elapse: a slow boot turns a diagnosable
+  // "locator never appeared" into an undiagnosable whole-test timeout. Tests
+  // that need longer still raise their own with `test.setTimeout`.
+  timeout: 60_000,
+
   // Retries in CI only. The JSON report (below) records every retry per test
   // in machine-readable form — the feed for #390 flake tracking.
   retries: process.env.CI ? 2 : 0,

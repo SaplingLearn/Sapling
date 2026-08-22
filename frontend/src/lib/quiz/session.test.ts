@@ -130,6 +130,30 @@ describe("persistSession", () => {
       expect(loadSession(), phase).toEqual(paused);
     }
   });
+
+  it("never persists a session that has no attempt to come back to", () => {
+    // The second door into the same loss: a resume whose GET /attempts/{id}
+    // fails, and a START whose generation fails, both land on a phase that IS
+    // in the persisted set while `attemptId` is still null.
+    for (const phase of ["generating", "error"] as Phase[]) {
+      const attemptless = { ...session(phase), attemptId: null, items: [] };
+      expect(shouldPersist(attemptless), phase).toBe(false);
+    }
+  });
+
+  it("leaves the paused record intact when a resume fails before it has an attempt", () => {
+    const paused = { ...session("paused"), cursor: 2 };
+    saveSession(paused);
+
+    // What `runResume`'s catch produces: FAILED applied to the fresh mount's
+    // home-phase session, which has no attempt of its own.
+    persistSession({ ...session("error"), attemptId: null, items: [] });
+    expect(loadSession()).toEqual(paused);
+
+    // …and what a fresh START that never got an attempt id produces.
+    persistSession({ ...session("generating"), attemptId: null, items: [] });
+    expect(loadSession()).toEqual(paused);
+  });
 });
 
 describe("dismissed attempts", () => {

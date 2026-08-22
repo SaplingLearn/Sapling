@@ -260,7 +260,6 @@ function mount(
       userId="u1"
       home={home}
       config={over.config === undefined ? CONFIG : over.config}
-      prefs={{ count: null, difficulty: null, feedback: "at-end" }}
       entry={over.entry ?? entry()}
       session={over.session ?? session()}
       actions={actions}
@@ -524,6 +523,61 @@ describe("QuizHome — the adjust dialog", () => {
       { count: 4, difficulty: "gentle", feedback: "at-end" },
     );
   });
+
+  it("picks up settings that land after it was opened, instead of starting stale ones", () => {
+    // Open Adjust before `GET /api/quiz/config` resolves and the `SET_CONFIG`
+    // that follows moves `session.config` underneath the dialog. The draft used
+    // to keep the pre-config values, so Start ran a quiz the card behind it had
+    // already stopped describing.
+    const home = buildHome();
+    const actions = buildActions();
+    const screenFor = (s: QuizSession) => (
+      <QuizHome
+        userId="u1"
+        home={home}
+        config={CONFIG}
+        entry={entry()}
+        session={s}
+        actions={actions}
+      />
+    );
+    const { rerender } = render(screenFor(session()));
+
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    expect(screen.getByTestId("quiz-adjust-start")).toHaveTextContent("Start · 2 gentle");
+
+    rerender(
+      screenFor(session({ config: { count: 4, difficulty: "fierce", feedback: "at-end" } })),
+    );
+    expect(screen.getByTestId("quiz-adjust-start")).toHaveTextContent("Start · 4 fierce");
+
+    fireEvent.click(screen.getByTestId("quiz-adjust-start"));
+    expect(actions.start).toHaveBeenCalledWith(expect.objectContaining({ conceptId: "recursion" }), {
+      count: 4,
+      difficulty: "fierce",
+      feedback: "at-end",
+    });
+  });
+
+  it("keeps a choice made in the dialog when nothing outside it moved", () => {
+    // The other half of the effect above: re-seeding must not fire on a plain
+    // re-render, or the settings row would snap back while it is being used.
+    const { actions, home, view } = mount();
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    fireEvent.click(within(screen.getByTestId("quiz-adjust-dialog")).getByTestId("quiz-seg-count-4"));
+
+    view.rerender(
+      <QuizHome
+        userId="u1"
+        home={home}
+        config={CONFIG}
+        entry={entry()}
+        session={session()}
+        actions={actions}
+      />,
+    );
+    expect(screen.getByTestId("quiz-adjust-start")).toHaveTextContent("Start · 4 gentle");
+  });
 });
 
 describe("QuizHome — arrival", () => {
@@ -597,8 +651,7 @@ describe("QuizHome — arrival", () => {
         userId="u1"
         home={buildHome()}
         config={CONFIG}
-        prefs={{ count: null, difficulty: null, feedback: "at-end" }}
-        entry={entry({ concept: "not-in-this-term", source: { kind: "link" } })}
+          entry={entry({ concept: "not-in-this-term", source: { kind: "link" } })}
         session={session()}
         actions={buildActions()}
       />,

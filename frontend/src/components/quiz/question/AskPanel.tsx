@@ -125,6 +125,14 @@ export function AskPanel({
   // fired from a stale closure must still reach the session that was opened.
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Whether a turn is still running. The `busy` state can't answer that for the
+  // close effect below: an effect reads the value from the render that closed
+  // the panel, and a turn can settle between the two.
+  const inFlightRef = useRef(false);
+  // False from the unmount cleanup onward. Aborting stops the request; this
+  // stops the settle path that follows an abort from writing state into a
+  // component that is already gone.
+  const mountedRef = useRef(true);
   // Monotonic run token — a superseded turn's late resolution is dropped.
   const runRef = useRef(0);
   const idRef = useRef(0);
@@ -145,6 +153,7 @@ export function AskPanel({
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      inFlightRef.current = true;
       lastMessageRef.current = message;
       setBusy(true);
       setError(null);
@@ -213,10 +222,10 @@ export function AskPanel({
           reply = res.reply || "";
         }
 
-        if (runRef.current !== token) return;
+        if (runRef.current !== token || !mountedRef.current) return;
         setTurns(t => [...t, { id: nextId(), role: "assistant", text: reply }]);
       } catch (err) {
-        if (controller.signal.aborted || runRef.current !== token) return;
+        if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
         // ADR 0020, and the whole reason `partial` exists: half an answer the
         // student was already reading must not blink out and be replaced by an
         // error strip. It stays in the thread, marked unfinished. Retry drops
@@ -230,8 +239,11 @@ export function AskPanel({
         setError(err instanceof Error ? err.message : "The tutor is unavailable.");
       } finally {
         if (runRef.current === token) {
-          setBusy(false);
-          setStreaming(null);
+          inFlightRef.current = false;
+          if (mountedRef.current) {
+            setBusy(false);
+            setStreaming(null);
+          }
         }
       }
     },
@@ -253,10 +265,39 @@ export function AskPanel({
     void runTurn(seedMessage);
   }, [open, seedMessage, runTurn]);
 
-  // Only on unmount. A stream is NOT aborted on close: the student can shut
-  // the panel while the tutor is mid-sentence and find the finished answer
-  // waiting when they reopen it.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // Closing the sheet ends the turn it was showing.
+  //
+  // The stream used to be left running ("shut the panel mid-sentence and find
+  // the finished answer waiting"), but nobody is reading it: the tokens are
+  // still generated and paid for, and the reply lands in state behind a closed
+  // sheet. Bumping the run token first means the aborted turn's late
+  // resolution is dropped rather than appended. Dropping the seed marker is the
+  // other half — an unfinished turn left no answer, so reopening the same
+  // question must ASK it again rather than show an empty thread with no way to
+  // get one. A turn that already finished is untouched: close and reopen still
+  // finds the conversation exactly where it was.
+  useEffect(() => {
+    if (open || !inFlightRef.current) return;
+    runRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    inFlightRef.current = false;
+    lastSeededRef.current = null;
+    setBusy(false);
+    setStreaming(null);
+  }, [open]);
+
+  // Unmount: the same stop, plus the latch that keeps the settle path from
+  // setting state on a component that no longer exists. Assigning `true` in the
+  // effect body (rather than relying on the ref's initial value) is what makes
+  // it survive StrictMode's mount → cleanup → mount.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   // Focus returns to whatever opened the panel. `Sheet`'s own restore already
   // does this for a trigger that stays mounted; this effect runs after that

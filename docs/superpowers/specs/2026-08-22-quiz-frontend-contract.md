@@ -364,7 +364,7 @@ Retry/Back. Stubs for the three screens are created by A2 with the props below; 
 
 Screen props (the seam between A2 and B1–B3):
 ```ts
-QuizHome({ userId, home: ReturnType<typeof useQuizHome>, config, prefs, entry, session, actions })
+QuizHome({ userId, home: ReturnType<typeof useQuizHome>, config, entry, session, actions })
 QuizQuestion({ session, actions, config, concept: { id; name; courseCode; color; tier; mastery }, userId, courseId })
 QuizResults({ session, actions, concept, neighbourhood: { siblings }, prefersReducedMotion })
 ```
@@ -386,6 +386,7 @@ export interface AskPanelProps { open: boolean; onClose: () => void; userId: str
 ```
   B3 may mock it in unit tests until B2 lands; the prop shape above is fixed.
 - `EmptyState` size values are `"md" | "hero"` (A1 built `md`, not `default`).
+- `QuizHome` does NOT take `prefs`: prefs reach the screen already resolved, as `session.config` (`useQuizSession` applies `defaultConfigFor(config, loadPrefs(config))` once `/config` lands), and the dialogs write back through `savePrefs`. The prop was declared, passed and never read — dropped in the final review wave rather than left as a seam that lies.
 - `QuizScreen`'s error card carries `quiz-error`, `quiz-error-retry`, `quiz-error-back` (A2).
 - Wave 3 screens import primitives from `@/components/ui` and node marks from `@/components/graph/ConceptNode` /
   `ConceptNeighbourhood`; hooks/types from `@/lib/quiz/*`. Screens own ONLY their directory; new primitives or CSS outside it go

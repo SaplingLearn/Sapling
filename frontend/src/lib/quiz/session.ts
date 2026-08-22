@@ -104,8 +104,26 @@ const PERSISTED_PHASES: ReadonlySet<QuizSession["phase"]> = new Set([
   "error",
 ]);
 
+/**
+ * …and only once there is an attempt to come back to.
+ *
+ * The phase set alone is not enough. `error` is in it (a failure mid-quiz must
+ * still be resumable), but a session can reach `error` with no attempt at all:
+ * a resume whose `GET /attempts/{id}` never answered (dropped connection, a 401
+ * after a token refresh, a 5xx) applies FAILED to the freshly-mounted
+ * `home`-phase session, and a `START` that fails generation does the same from
+ * `generating`. Both would then write `{phase:"error", attemptId:null, items:[]}`
+ * over the paused record they were trying to open — the verdicts, scope,
+ * feedback mode and origin that live nowhere else, destroyed by the failure to
+ * read them. The attempt is still `in_progress` server-side, so the strip
+ * re-finds the row and the student resumes into a quiz with question one blank.
+ *
+ * A session with no attempt has nothing to resume, so skipping the write costs
+ * nothing and keeps the stored record the property of whichever session
+ * actually owns an attempt.
+ */
 export function shouldPersist(session: QuizSession): boolean {
-  return PERSISTED_PHASES.has(session.phase);
+  return PERSISTED_PHASES.has(session.phase) && session.attemptId !== null;
 }
 
 /**

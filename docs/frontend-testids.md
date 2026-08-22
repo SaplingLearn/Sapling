@@ -376,6 +376,7 @@ inside the `role="grid"` "Courses" grid.
 | testid | element |
 | --- | --- |
 | `gradebook-term-gpa` | landing: the selected term's credit-weighted GPA next to the chips (absent while the term has no graded work) |
+| `gradebook-upload-syllabus` | landing: the blank-semester empty state's "Upload syllabus" CTA (`ui/EmptyState` action slot) |
 | `gradebook-transcript-open` | landing: "Transcript" button opening the transcript modal |
 | `gradebook-transcript-gpa` | transcript modal: the cumulative GPA value |
 | `gradebook-transcript-retry` | transcript modal: inline "Try again" after a failed load (#463 catch+toast pattern) |
