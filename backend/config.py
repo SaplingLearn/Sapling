@@ -94,11 +94,19 @@ def validate_config() -> None:
 
 # ── Mastery tiers (#557) ────────────────────────────────────────────────────
 #
-# THE thresholds. Every surface that classifies a mastery score reads them
-# from here — the Tree, the tutor's progress tool, flashcard selection, the
-# seeds. Three sets used to exist (this one, the tutor's 0.7/0.4, and
-# flashcards' ad-hoc <0.4), which meant a student could read "Struggling" on
-# the Tree and be counted as in-progress by the tutor in the same session.
+# THE thresholds. Every Python surface that classifies a mastery score reads
+# them from here — the graph writes that denormalize `mastery_tier`, the
+# tutor's progress tool, flashcard selection, the seeds. Three sets used to
+# exist (this one, the tutor's 0.7/0.4, and flashcards' ad-hoc <0.4), which
+# meant a student could read "Struggling" on the Tree and be counted as
+# in-progress by the tutor in the same session.
+#
+# ONE mirror is unavoidable and is therefore pinned by test rather than by
+# hope: `frontend/src/components/screens/Learn.tsx::tierForScore` re-declares
+# these to classify a STREAMED mastery delta client-side, so the live Tree
+# agrees with the refetch that follows it. It cannot import from here, so
+# `tests/test_mastery_tier_unification.py` reads that file and asserts the
+# numbers match. Change these and that test tells you what else to change.
 #
 # If a surface ever needs a genuinely different cut, name it HERE as its own
 # constant with the reason. A local literal is how the last three diverged.

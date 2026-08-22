@@ -195,12 +195,17 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
                 "concept_name,mastery_score",
                 filters={"user_id": f"eq.{user_id}"},
             )
-        weak = [
-            r["concept_name"]
-            for r in (rows or [])
-            if is_weak(r.get("mastery_score") or 0)
-        ]
-        return weak[:15]  # cap to keep prompt reasonable
+        weak = sorted(
+            (r for r in (rows or []) if is_weak(r.get("mastery_score") or 0)),
+            key=lambda r: r.get("mastery_score") or 0,
+        )
+        # Weakest first, THEN cap. The cap used to truncate in PostgREST row
+        # order, which was survivable while the floor was 0.4 and is not now
+        # that #557 widened it to 0.45: the newly-admitted [0.4, 0.45)
+        # concepts could displace 0.0-0.1 ones purely on row order, leaving
+        # the surface whose job is drilling the weakest concepts drilling the
+        # least-weak of the weak.
+        return [r["concept_name"] for r in weak[:15]]
     except Exception:
         return []
 
