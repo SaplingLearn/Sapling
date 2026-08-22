@@ -1,84 +1,60 @@
 /**
- * Journey (#393): answer a quiz through the UI → mastery updates in the UI
- * AND in the database.
+ * The four BACKEND contracts the quiz lane pins, driven through the #537 UI.
  *
- * Mastery is the append-only `node_mastery_events` table since migration
- * 0023 (never a `mastery_events` column): submitting a quiz routes through
- * services/graph_service.py::apply_graph_update, which bumps
- * `graph_nodes.mastery_score` and INSERTs one event row. The UI writes
- * through the real routes; every DB assertion here reads back over the
- * raw-SQL seam (support/db.ts::queryRows) — a different layer than the one
- * that wrote, so the test proves the write hit the database, not the echo.
+ * The screens were rewritten wholesale (`components/quiz/**` replaced
+ * `QuizPanel.tsx` + `screens/Quiz.tsx`), so every anchor here moved with them —
+ * but what these tests are FOR did not:
  *
- * MONOTONICITY — the property no mocked test can falsify: a correct answer
- * never lowers a score. The scoring math in routes/quiz.py is
- * `delta = score*0.03 - (total-score)*0.02`; an all-correct submission must
- * therefore never decrease mastery. Asserted three ways below: on the UI's
- * rendered before→after, on `graph_nodes.mastery_score`, and on the event's
- * `delta` sign.
+ *   1. #393 — answering a quiz raises mastery in the UI and in the database,
+ *      monotonically, and writes exactly one append-only mastery event.
+ *   2. #184's successor — a generation that fails leaves the student on a
+ *      readable, recoverable screen rather than a blank one.
+ *   3. #129 — replaying a completed submission 409s and re-applies nothing.
+ *   4. #540 — the option lists are `GET /api/quiz/config`'s, and an adaptive
+ *      request reports the concrete difficulty generation actually chose.
  *
- * Determinism: the stack boots with SAPLING_MODEL_MODE=function and
- * SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (#391/#392 /
- * ADR 0019), so /api/quiz/generate runs the real quiz_agent against the
- * scripted handler in backend/agents/function_handlers_e2e.py — a fixed
- * three-question quiz whose correct labels are B, C, A
- * (E2E_QUIZ_CORRECT_LABELS). That sequence is pinned by
- * backend/tests/test_e2e_function_handlers.py; KEEP IN SYNC.
+ * The redesign's own behaviours (resume, leave-and-return, ask-without-
+ * abandoning, missed review, entry points, exits, keyboard) live next door in
+ * `quiz-journeys.spec.ts`. Shared fixture constants and gestures are in
+ * `support/quiz.ts`, which also carries the function-mode contract note.
+ *
+ * Every DB assertion reads back over the raw-SQL seam (`support/db.ts`) — a
+ * different layer than the one that wrote, so these prove the write hit the
+ * database, not the echo.
+ *
+ * GENERATION BUDGET: `/api/quiz/generate` is rate limited to 8 calls per 300
+ * seconds per user, in-process, and the whole lane shares one window (the
+ * per-test truncate does not reset it). This file spends THREE of the eight —
+ * the mastery journey, the resubmit journey and the adaptive round trip. The
+ * failed-generation test spends none (both calls are stubbed). The full
+ * accounting, and what to do when a new journey needs a slot, is in
+ * `quiz-journeys.spec.ts`'s header.
  */
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
-
-/** db/seed_local_rich.py: "Recursion" for rich-user-active on CS101 —
- * seeded at mastery 0.25 with NO seeded mastery events, so the baseline
- * event count is exactly zero after the per-test reset. */
-const NODE_ID = "rich-node-cs-recursion";
-const SEEDED_MASTERY = 0.25;
-
-/** Correct option labels, in question order — the e2e_function_handlers.py
- * contract (correct options at indexes 1, 2, 0 → wire labels B, C, A). */
-const CORRECT_LABELS = ["B", "C", "A"] as const;
+import {
+  CORRECT_LABELS,
+  GENERATE_TIMEOUT,
+  NODE_ID,
+  QUIZ_LENGTH,
+  SEEDED_MASTERY,
+  SUBMIT_TIMEOUT,
+  answerAtEnd,
+  appAttempts,
+  expectOnQuestion,
+  expectResults,
+  masteryAfter,
+  masteryOf,
+  openQuizHome,
+  preAckDisclaimer,
+  startQuiz,
+} from "./support/quiz";
 
 /** routes/quiz.py: 3 correct of 3 → delta = 3 × 0.03 = +0.09. */
-const EXPECTED_DELTA = 3 * 0.03;
+const EXPECTED_DELTA = masteryAfter(0, QUIZ_LENGTH, QUIZ_LENGTH);
 
-/**
- * Journey (#184): a generation that returns ZERO questions must not strand
- * the user on a blank, control-less panel. Before the fix, start() flipped
- * to the active phase unconditionally; with an empty array the entire
- * active branch (including quiz-exit) rendered nothing — a dead end.
- *
- * The empty response is forced at the network layer (route interception),
- * NOT via the function-mode seam: the seam's quiz handler is deliberately a
- * fixed 3-question quiz shared by the mastery journey above, and the guard
- * under test is purely client-side.
- */
-test("a zero-question generation stays on the select phase with a warning (#184)", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem("sapling_disclaimer_ack", "true");
-  });
-  await page.route("**/api/quiz/generate", route =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ quiz_id: "e2e-empty-quiz", questions: [] }),
-    }),
-  );
-
-  await page.goto(`/quiz?concept=${NODE_ID}`);
-  const start = page.getByTestId("quiz-start");
-  await expect(start).toBeEnabled();
-  await start.click();
-
-  // The warning surfaces and the select phase survives: Start is still
-  // there, and the active phase never rendered.
-  await expect(
-    page.getByText("No questions were generated", { exact: false }),
-  ).toBeVisible();
-  await expect(page.getByTestId("quiz-start")).toBeVisible();
-  await expect(page.getByTestId("quiz-answer-options")).toHaveCount(0);
-});
+/** The whole scripted quiz, answered correctly, in `at-end` order. */
+const ALL_CORRECT = CORRECT_LABELS.map((label, i) => ({ n: i + 1, label }));
 
 test("quiz journey: all-correct answers raise mastery in UI and DB, monotonically", async ({
   page,
@@ -104,61 +80,43 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
   expect(eventsBefore).toHaveLength(0);
 
   // ── Take the quiz through the UI ────────────────────────────────────────
-  // The AI-disclaimer modal (DisclaimerModal.tsx) opens over /quiz for any
-  // browser that has never acknowledged it and intercepts every click.
-  // Pre-ack it exactly the way a returning user's browser carries the ack —
-  // the disclaimer is unrelated chrome, not part of this journey's scope.
-  // (Scoped here rather than in global-setup.ts, which stays verbatim-
-  // identical to the #386 branch by sibling-convergence agreement.)
-  await page.addInitScript(() => {
-    window.localStorage.setItem("sapling_disclaimer_ack", "true");
-  });
+  await preAckDisclaimer(page);
 
-  // Deep link preselects the course AND the concept (quizSelection.ts), so
-  // the select phase arrives ready to start.
-  await page.goto(`/quiz?concept=${NODE_ID}`);
-  await expect(page.getByTestId("quiz-panel")).toBeVisible();
+  // The deep link decides which concept the card is about (§6): quiz home
+  // arrives already proposing Recursion, one press from starting.
+  await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
+  const proposal = page.getByTestId("quiz-proposal");
+  await expect(proposal).toContainText("Recursion");
+  // A bare `?concept=` carries no `from`, so it is a legacy link (§6).
+  await expect(proposal).toContainText("Suggested for you");
 
-  const start = page.getByTestId("quiz-start");
-  await expect(start).toBeEnabled();
-  await start.click();
+  await startQuiz(page);
 
-  // /api/quiz/generate round trip (agent + attempt insert) → active phase.
-  await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
-    timeout: 60_000,
-  });
+  // ── R-2: in `at-end` (the default) nothing is revealed mid-quiz ─────────
+  // Every answer is still RECORDED as it happens via /attempts/{id}/answer —
+  // the feedback mode only decides when the verdict is shown. The proof that
+  // it was recorded is the score below, which the server computes from the
+  // recorded rows.
+  await answerAtEnd(page, [ALL_CORRECT[0]]);
+  await expectOnQuestion(page, 2);
+  await expect(page.getByTestId("quiz-review-verdict")).toBeEmpty();
+  await answerAtEnd(page, ALL_CORRECT.slice(1));
 
-  // Loud mode guard: the scripted fixture's question text proves the backend
-  // booted with SAPLING_MODEL_MODE=function. A stack accidentally in `real`
-  // mode would serve a live-Gemini quiz and fail HERE with a clear signal,
-  // not three steps later on a coin-flip verdict.
-  await expect(page.getByTestId("quiz-panel")).toContainText(
-    "E2E deterministic question 1",
+  // Recording the LAST answer goes straight to `submitting`, so the results
+  // screen renders only after /api/quiz/submit returned — once the score is
+  // visible the synchronous mastery write (apply_graph_update) has committed.
+  await expectResults(page);
+  await expect(page.getByTestId("quiz-results-score")).toHaveText(
+    `${QUIZ_LENGTH} of ${QUIZ_LENGTH} correct`,
+    { timeout: SUBMIT_TIMEOUT },
   );
-
-  for (const label of CORRECT_LABELS) {
-    await page.getByTestId(`quiz-answer-option-${label}`).click();
-    await page.getByTestId("quiz-submit-answer").click();
-    // The scripted quiz makes every chosen label the correct one — a
-    // "Not quite." here means the handler/spec label contract drifted.
-    await expect(page.getByTestId("quiz-review-verdict")).toHaveText(
-      "Correct.",
-    );
-    await page.getByTestId("quiz-next").click();
-  }
-
-  // The final "See results" click fires /api/quiz/submit; the results phase
-  // renders only after the response, so once the score is visible the
-  // synchronous mastery write (apply_graph_update) has been committed.
-  await expect(page.getByTestId("quiz-results-score")).toHaveText("100%", {
-    timeout: 30_000,
-  });
+  // A clean sweep has nothing to review.
+  await expect(page.getByTestId("quiz-results-perfect")).toBeVisible();
 
   // ── UI mastery: parse the rendered before → after ───────────────────────
   const masteryLine = page.getByTestId("quiz-results-mastery");
-  await expect(masteryLine).toContainText("3 / 3 correct");
   const lineText = (await masteryLine.textContent()) ?? "";
-  const match = lineText.match(/mastery\s+(\d+)%\s*→\s*(\d+)%/);
+  const match = lineText.match(/(\d+)%\s*→\s*(\d+)%\s*·\s*(\w+)\s*→\s*(\w+)/);
   expect(match, `unparsable mastery line: ${JSON.stringify(lineText)}`).not.toBeNull();
   const uiBefore = Number(match![1]);
   const uiAfter = Number(match![2]);
@@ -173,14 +131,14 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
     [NODE_ID],
   );
   expect(nodeAfter).toHaveLength(1);
-  const masteryAfter = Number(nodeAfter[0].mastery_score);
+  const masteryAfterDb = Number(nodeAfter[0].mastery_score);
 
   // MONOTONICITY (DB): the persisted score did not drop…
-  expect(masteryAfter).toBeGreaterThanOrEqual(masteryBefore);
+  expect(masteryAfterDb).toBeGreaterThanOrEqual(masteryBefore);
   // …and moved by exactly the all-correct delta (0.25 → 0.34, no clamp).
-  expect(masteryAfter).toBeCloseTo(SEEDED_MASTERY + EXPECTED_DELTA, 10);
+  expect(masteryAfterDb).toBeCloseTo(SEEDED_MASTERY + EXPECTED_DELTA, 10);
   // UI ↔ DB agreement: the percentages the student saw are the DB state.
-  expect(uiAfter).toBe(Math.round(masteryAfter * 100));
+  expect(uiAfter).toBe(Math.round(masteryAfterDb * 100));
 
   // apply_graph_update also bumps the study counters.
   expect(Number(nodeAfter[0].times_studied)).toBe(1);
@@ -195,21 +153,95 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
   // MONOTONICITY (event): a correct-only submission records a delta ≥ 0.
   expect(Number(eventsAfter[0].delta)).toBeGreaterThanOrEqual(0);
   expect(Number(eventsAfter[0].delta)).toBeCloseTo(EXPECTED_DELTA, 10);
-  expect(eventsAfter[0].reason).toBe("Quiz: 3/3 correct");
+  expect(eventsAfter[0].reason).toBe(`Quiz: ${QUIZ_LENGTH}/${QUIZ_LENGTH} correct`);
 
   // ── DB: the attempt row was completed through the app ───────────────────
-  // Scoped to rows the JOURNEY created: the rich seed also has a completed
-  // baseline attempt on this node (rich-qa-cs-recursion-1). Seeded ids are
-  // namespaced rich-*; the route mints uuid4 ids, so the NOT LIKE filter
-  // isolates the app-written row.
-  const attempts = await queryRaw(
-    "SELECT score, total, completed_at FROM quiz_attempts WHERE concept_node_id = $1 AND id NOT LIKE 'rich-%'",
-    [NODE_ID],
-  );
+  const attempts = await appAttempts();
   expect(attempts).toHaveLength(1);
-  expect(Number(attempts[0].score)).toBe(3);
-  expect(Number(attempts[0].total)).toBe(3);
+  expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH);
+  expect(Number(attempts[0].total)).toBe(QUIZ_LENGTH);
   expect(attempts[0].completed_at).not.toBeNull();
+});
+
+/**
+ * Successor to the #184 journey ("a zero-question generation must not strand
+ * the user on a blank, control-less panel").
+ *
+ * The original case is no longer reachable: `/api/quiz/generate` 502s with
+ * `QUIZ_GENERATION_FAILED` rather than serving an empty quiz (R1 §C), and the
+ * reducer maps a zero-question payload onto the same error for belt and braces
+ * (machine.ts, GENERATED). What still has to hold is the property #184 was
+ * really about — a failed generation leaves a READABLE, RECOVERABLE screen —
+ * so the failure is forced at the network layer in the shape the backend
+ * actually ships (`{error: {code, message, request_id}}`,
+ * services/quiz_errors.py::quiz_error_body) and the mapped copy is asserted
+ * verbatim against `QUIZ_ERROR_COPY`.
+ *
+ * Route interception, not the function-mode seam: the seam's quiz handler is
+ * the fixed three-question fixture the mastery journey above depends on, and
+ * the mapping under test is purely client-side.
+ */
+test("a failed generation shows the mapped copy and Retry re-attempts it (#184 successor)", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+
+  const REQUEST_ID = "e2e-req-generation-failed";
+  await preAckDisclaimer(page);
+  await page.route("**/api/quiz/generate", route =>
+    route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: "QUIZ_GENERATION_FAILED",
+          message: "The quiz agent returned nothing usable.",
+          request_id: REQUEST_ID,
+        },
+        detail: "The quiz agent returned nothing usable.",
+        request_id: REQUEST_ID,
+      }),
+    }),
+  );
+
+  await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
+  await page.getByTestId("quiz-start").click();
+
+  // The mapped human sentence — NOT the server's own wording, which for this
+  // code is an internal description (§4's copy table).
+  const errorCard = page.getByTestId("quiz-error");
+  await expect(errorCard).toBeVisible({ timeout: GENERATE_TIMEOUT });
+  await expect(errorCard).toContainText(
+    "We couldn't put a quiz together for this concept right now. Try again in a moment.",
+  );
+  // The envelope's request id is surfaced, so a student can quote it.
+  await expect(errorCard).toContainText(`Reference ${REQUEST_ID}`);
+  // Recoverable, and never a blank panel: a retryable code offers Retry, and
+  // Back is always there.
+  await expect(page.getByTestId("quiz-error-retry")).toBeVisible();
+  await expect(page.getByTestId("quiz-error-back")).toBeVisible();
+  // Nothing of the question screen leaked through.
+  await expect(page.getByTestId("quiz-answer-options")).toHaveCount(0);
+  // The interception never reached the backend, so no attempt row exists.
+  expect(await appAttempts()).toHaveLength(0);
+
+  // Retry really re-runs generation from the same concept — it does not merely
+  // dismiss the card. The fault is deliberately left in place: proving that the
+  // recovered quiz then RUNS would cost a real generation, and the lane's
+  // budget (see quiz-journeys.spec.ts's header — 8 per 300s, shared) has none
+  // spare. The request going back out is the property #184 was about.
+  const retryRequest = page.waitForRequest(
+    r => r.url().includes("/api/quiz/generate") && r.method() === "POST",
+  );
+  await page.getByTestId("quiz-error-retry").click();
+  const retryBody = (await retryRequest).postDataJSON() as { concept_node_id: string };
+  expect(retryBody.concept_node_id).toBe(NODE_ID);
+
+  // Still the same failure, still readable, still offering the way out — never
+  // a blank panel.
+  await expect(errorCard).toBeVisible();
+  await expect(page.getByTestId("quiz-error-retry")).toBeVisible();
+  expect(await appAttempts()).toHaveLength(0);
 });
 
 /**
@@ -225,65 +257,41 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
  * backend/models::SubmitQuizBody), then replay it via page.request.post
  * (same-origin, so the sapling_session cookie rides along). The replay must
  * 409, and the DB must be byte-for-byte where the first submit left it.
+ *
+ * The UI itself has no resubmit affordance to drive (the reducer clears the
+ * session on SUBMITTED and refuses EXIT-then-resubmit), so the request-level
+ * replay stays the honest way to pin the route's guard.
  */
 test("quiz resubmit: replaying a completed submission returns 409 and re-applies no mastery", async ({
   page,
 }) => {
   test.setTimeout(180_000);
 
-  // Same pre-ack as the journey above — the disclaimer is unrelated chrome.
-  await page.addInitScript(() => {
-    window.localStorage.setItem("sapling_disclaimer_ack", "true");
-  });
+  await preAckDisclaimer(page);
+  await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
+  await startQuiz(page);
 
-  await page.goto(`/quiz?concept=${NODE_ID}`);
-  await expect(page.getByTestId("quiz-panel")).toBeVisible();
-
-  const start = page.getByTestId("quiz-start");
-  await expect(start).toBeEnabled();
-  await start.click();
-
-  await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
-    timeout: 60_000,
-  });
-  // Mode guard, same as above: scripted fixture text proves function mode.
-  await expect(page.getByTestId("quiz-panel")).toContainText(
-    "E2E deterministic question 1",
-  );
-
-  // Arm the capture BEFORE the final click fires /api/quiz/submit.
+  // Arm the capture BEFORE the last answer, which is what fires /submit.
   const submitRequestPromise = page.waitForRequest(
-    (req) => req.url().includes("/api/quiz/submit") && req.method() === "POST",
+    req => req.url().includes("/api/quiz/submit") && req.method() === "POST",
   );
 
-  for (const label of CORRECT_LABELS) {
-    await page.getByTestId(`quiz-answer-option-${label}`).click();
-    await page.getByTestId("quiz-submit-answer").click();
-    await expect(page.getByTestId("quiz-review-verdict")).toHaveText(
-      "Correct.",
-    );
-    await page.getByTestId("quiz-next").click();
-  }
-
-  // Results rendered ⇒ the first submit's synchronous mastery write landed.
-  await expect(page.getByTestId("quiz-results-score")).toHaveText("100%", {
-    timeout: 30_000,
-  });
+  await answerAtEnd(page, ALL_CORRECT);
+  await expectResults(page);
+  await expect(page.getByTestId("quiz-results-score")).toHaveText(
+    `${QUIZ_LENGTH} of ${QUIZ_LENGTH} correct`,
+    { timeout: SUBMIT_TIMEOUT },
+  );
 
   const wireBody = (await submitRequestPromise).postDataJSON() as {
     quiz_id: string;
     answers: Array<{ question_id: number | string; selected_label: string }>;
   };
   expect(wireBody.quiz_id).toBeTruthy();
-  expect(wireBody.answers).toHaveLength(CORRECT_LABELS.length);
+  expect(wireBody.answers).toHaveLength(QUIZ_LENGTH);
 
   // First submit's DB state — the baseline the replay must not move.
-  const nodeAfterFirst = await queryRaw(
-    "SELECT mastery_score FROM graph_nodes WHERE id = $1",
-    [NODE_ID],
-  );
-  expect(nodeAfterFirst).toHaveLength(1);
-  const masteryAfterFirst = Number(nodeAfterFirst[0].mastery_score);
+  const masteryAfterFirst = await masteryOf();
   expect(masteryAfterFirst).toBeCloseTo(SEEDED_MASTERY + EXPECTED_DELTA, 10);
 
   const eventsAfterFirst = await queryRaw(
@@ -293,10 +301,11 @@ test("quiz resubmit: replaying a completed submission returns 409 and re-applies
   expect(eventsAfterFirst).toHaveLength(1);
 
   // Replay the SAME submission over the page's cookie jar → 409, not 200.
-  const replay = await page.request.post("/api/quiz/submit", {
-    data: wireBody,
-  });
+  const replay = await page.request.post("/api/quiz/submit", { data: wireBody });
   expect(replay.status()).toBe(409);
+  // The coded envelope the client would map to "This quiz was already scored."
+  const replayBody = (await replay.json()) as { error?: { code?: string } };
+  expect(replayBody.error?.code).toBe("QUIZ_ATTEMPT_ALREADY_COMPLETED");
 
   // The replay re-applied nothing: still exactly ONE mastery event…
   const eventsAfterReplay = await queryRaw(
@@ -306,35 +315,33 @@ test("quiz resubmit: replaying a completed submission returns 409 and re-applies
   expect(eventsAfterReplay).toHaveLength(1);
 
   // …and the node's score is unchanged from the first submit.
-  const nodeAfterReplay = await queryRaw(
-    "SELECT mastery_score FROM graph_nodes WHERE id = $1",
-    [NODE_ID],
-  );
-  expect(nodeAfterReplay).toHaveLength(1);
-  expect(Number(nodeAfterReplay[0].mastery_score)).toBeCloseTo(
-    masteryAfterFirst,
-    10,
-  );
+  expect(await masteryOf()).toBeCloseTo(masteryAfterFirst, 10);
 });
 
 /**
- * Journey (#540 A1/A2): the select phase is config-driven and adaptive
- * difficulty reports what generation actually chose.
+ * Journey (#540 A1/A2, re-anchored on the #537 Adjust dialog): the option
+ * lists are config-driven and adaptive difficulty reports what generation
+ * actually chose.
  *
- * The class of bug this pins: the old static UI lists offered values the
- * route rejects ("15 questions" against le=10, "Adaptive" against a
- * concrete-only difficulty check). The selects must now mirror
- * GET /api/quiz/config, and an adaptive generate must echo
- * requested_difficulty="adaptive" + a concrete resolved_difficulty —
- * "medium" here, pinned to the all-medium fixture questions in
- * agents/function_handlers_e2e.py (KEEP IN SYNC).
+ * The class of bug this pins: a static UI offering values the route rejects
+ * ("15 questions" against le=10, "Adaptive" against a concrete-only difficulty
+ * check). The two segmented controls must mirror `GET /api/quiz/config` — both
+ * the values (their testids are `${testid}-${value}`) and the rendered labels —
+ * and an adaptive generate must echo `requested_difficulty: "adaptive"` plus a
+ * concrete `resolved_difficulty`: "medium" here, pinned to the all-medium
+ * fixture questions in agents/function_handlers_e2e.py (KEEP IN SYNC).
  */
-test("selects mirror /api/quiz/config; adaptive reports its resolved difficulty (#540)", async ({
+test("the Adjust dialog mirrors /api/quiz/config; adaptive reports its resolved difficulty (#540)", async ({
   page,
 }) => {
+  test.setTimeout(180_000);
+
   const cfgResponse = await page.request.get("/api/quiz/config");
   expect(cfgResponse.ok()).toBe(true);
-  const cfg = await cfgResponse.json();
+  const cfg = (await cfgResponse.json()) as {
+    num_questions: { min: number; max: number; options: number[] };
+    difficulties: string[];
+  };
   expect(cfg.num_questions.options.length).toBeGreaterThan(0);
   for (const n of cfg.num_questions.options) {
     expect(n).toBeGreaterThanOrEqual(cfg.num_questions.min);
@@ -342,30 +349,40 @@ test("selects mirror /api/quiz/config; adaptive reports its resolved difficulty 
   }
   expect(cfg.difficulties).toContain("adaptive");
 
-  await page.addInitScript(() => {
-    window.localStorage.setItem("sapling_disclaimer_ack", "true");
-  });
-  await page.goto(`/quiz?concept=${NODE_ID}`);
-  await expect(page.getByTestId("quiz-start")).toBeEnabled();
+  await preAckDisclaimer(page);
+  await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
 
-  // The count select offers exactly the config's options — an out-of-range
-  // value here is the #540 regression.
-  await page.getByRole("button", { name: "Number of questions" }).click();
-  const countOptions = page.getByRole("option");
-  // The selected option carries a trailing ✓ marker — match on the label.
-  await expect(countOptions).toHaveText(
-    cfg.num_questions.options.map((n: number) => new RegExp(`^${n} questions`)),
+  await page.getByTestId("quiz-adjust").click();
+  const dialog = page.getByTestId("quiz-adjust-dialog");
+  await expect(dialog).toBeVisible();
+
+  // Length: exactly the config's options, in order, labelled "{n} questions".
+  // An out-of-range value here is the #540 regression.
+  const countGroup = page.getByTestId("quiz-seg-count");
+  await expect(countGroup.getByRole("radio")).toHaveText(
+    cfg.num_questions.options.map(n => `${n} questions`),
   );
-  // Close by committing the current default (5 questions).
-  await page.getByRole("option", { name: "5 questions" }).click();
+  for (const n of cfg.num_questions.options) {
+    await expect(page.getByTestId(`quiz-seg-count-${n}`)).toBeVisible();
+  }
 
-  // Pick Adaptive and start; capture the real wire round trip.
-  await page.getByRole("button", { name: "Difficulty" }).click();
-  await page.getByRole("option", { name: "Adaptive" }).click();
+  // Difficulty: exactly the config's list, values as labels.
+  const difficultyGroup = page.getByTestId("quiz-seg-difficulty");
+  await expect(difficultyGroup.getByRole("radio")).toHaveText(cfg.difficulties);
+  for (const d of cfg.difficulties) {
+    await expect(page.getByTestId(`quiz-seg-difficulty-${d}`)).toBeVisible();
+  }
+
+  // Pick Adaptive and start from the dialog; capture the real wire round trip.
+  await page.getByTestId("quiz-seg-difficulty-adaptive").click();
+  await expect(page.getByTestId("quiz-seg-difficulty-adaptive")).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
   const responsePromise = page.waitForResponse(
     r => r.url().includes("/api/quiz/generate") && r.request().method() === "POST",
   );
-  await page.getByTestId("quiz-start").click();
+  await page.getByTestId("quiz-adjust-start").click();
   const response = await responsePromise;
   expect(response.status()).toBe(200);
   expect(response.request().postDataJSON().difficulty).toBe("adaptive");
@@ -373,8 +390,18 @@ test("selects mirror /api/quiz/config; adaptive reports its resolved difficulty 
   expect(body.requested_difficulty).toBe("adaptive");
   expect(body.resolved_difficulty).toBe("medium");
 
-  // The pick is surfaced to the student, not just returned on the wire.
-  await expect(page.getByTestId("quiz-resolved-difficulty")).toHaveText(
-    /adaptive · medium/i,
+  // The pick is surfaced to the student, not just returned on the wire: the
+  // question header's chip carries the item's own concrete difficulty.
+  await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
+    timeout: GENERATE_TIMEOUT,
+  });
+  await expect(page.getByTestId("quiz-panel")).toContainText("MEDIUM");
+
+  // …and the attempt the route wrote records the requested value.
+  const attempts = await queryRaw(
+    "SELECT difficulty FROM quiz_attempts WHERE concept_node_id = $1 AND id NOT LIKE 'rich-%'",
+    [NODE_ID],
   );
+  expect(attempts).toHaveLength(1);
+  expect(attempts[0].difficulty).toBe("adaptive");
 });
