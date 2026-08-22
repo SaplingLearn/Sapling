@@ -167,7 +167,9 @@ interface ConceptNodeProps { size: number; mastery: number; tier: string; course
 ```ts
 interface ConceptNeighbourhoodProps { centre: { id: string; name: string; mastery: number; tier: string };
   siblings: NeighbourNode[]; courseColor: string; width: number; height: number; scale: number;   // scale 2 | 2.5 (×radiusFor)
-  centreVariant?: ConceptNodeVariant; showLabels?: boolean; ariaLabel: string; testid?: string }
+  centreVariant?: ConceptNodeVariant; showLabels?: boolean; showCentreLabel?: boolean;   // default true; results passes false (the name sits below the canvas)
+  composition?: "wide" | "compact";   // defaults by width (≥ wide threshold → "wide"): the two sibling layouts the prototype draws
+  ariaLabel: string; testid?: string }
 ```
 Layout: centre at (w/2 − small offset, h/2) per the prototype's three fixed sibling positions (top-left, top-right, bottom-left);
 edges `stroke: var(--text-muted)` at opacity .2 and width `edgeWidthFor(strength)`; labels `font-size: var(--fs-xs)`,
@@ -176,6 +178,7 @@ edges `stroke: var(--text-muted)` at opacity .2 and width `edgeWidthFor(strength
 ### `<Button variant="link">` (addition to `ui/Button.tsx`)
 Bare text button: no padding/border/background, `color: var(--text-muted)`, hover `var(--text)`, `aria-pressed`/`data-active="true"` →
 `border-bottom: 1px solid var(--quiz-accent, var(--accent))`. Class `.btn--link`.
+`Button` forwards its ref (`forwardRef<HTMLButtonElement>`, amended A1) so a screen can return focus to it.
 Also (amended A1): `.btn--primary:disabled, .btn--primary[aria-disabled="true"] { opacity: .55; cursor: not-allowed }` — the system had no disabled treatment for primary buttons; B2's Submit relies on it.
 
 ### `<SegmentedControl>` — `ui/SegmentedControl.tsx`
@@ -228,7 +231,7 @@ aria-modal="true" aria-labelledby`. Header = title + close button (`Icon name="x
 ### `<EmptyState>` — `ui/EmptyState.tsx`
 ```ts
 interface EmptyStateProps { title: string; body?: string; action?: { label: string; href: string } | ReactNode; icon?: string;
-  eyebrow?: string; size?: "default" | "hero"; testid?: string }   // eyebrow/size=hero keep Gradebook's promoted instance identical (amended A1)
+  eyebrow?: string; size?: "md" | "hero"; testid?: string }   // eyebrow/size=hero keep Gradebook's promoted instance identical (amended A1; shipped as "md", not "default")
 ```
 Promoted from `Gradebook/Landing.tsx` (which must now import it).
 
