@@ -374,6 +374,20 @@ QuizResults({ session, actions, concept, neighbourhood: { siblings }, prefersRed
 - `lib/quiz/proposals.ts` also exports `entrySelection(entry, nodes, courses)` which resolves `?concept=`/`?topic=` against the scoped graph (reusing `quizSelection.resolveInitialSelection`) and returns `{ conceptId | null, unresolved: boolean }` — B1 shows the §6 toast when `unresolved`.
 - The `sapling:graph-changed` CustomEvent (§5 B3) is dispatched by `useQuizSession` on SUBMITTED (`detail: { conceptId, masteryBefore, masteryAfter }`), not by the results screen.
 
+### Wave 3 seam additions (binding)
+- `components/quiz/question/AskPanel.tsx` (B2 builds it; B3 imports it from `../question/AskPanel`):
+```ts
+export interface AskSeed { stem: string; chosenLabel: string; chosenText: string; correctLabel: string; correctText: string; explanation: string }
+export interface AskPanelProps { open: boolean; onClose: () => void; userId: string; conceptName: string; courseId: string | null;
+  courseLabel?: string; seed: AskSeed; returnFocusTo?: RefObject<HTMLElement>; testid?: string }   // default testid "quiz-ask-panel"
+```
+  B3 may mock it in unit tests until B2 lands; the prop shape above is fixed.
+- `EmptyState` size values are `"md" | "hero"` (A1 built `md`, not `default`).
+- `QuizScreen`'s error card carries `quiz-error`, `quiz-error-retry`, `quiz-error-back` (A2).
+- Wave 3 screens import primitives from `@/components/ui` and node marks from `@/components/graph/ConceptNode` /
+  `ConceptNeighbourhood`; hooks/types from `@/lib/quiz/*`. Screens own ONLY their directory; new primitives or CSS outside it go
+  to the lead.
+
 ---
 
 ## 5. Screen specs (B1–B3) — the prototype is the visual authority; this is the behavioural one
