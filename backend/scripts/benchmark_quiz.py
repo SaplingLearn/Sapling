@@ -147,7 +147,10 @@ async def _generate_quiz_for_async(concept_name: str) -> list[dict]:
     so this exercises the real production grounding path rather than
     generating an ungrounded quiz.
     """
-    return await _quiz_via_agent(
+    # `.questions`: _quiz_via_agent returns a GeneratedQuiz (#555) so the
+    # exam-proximity value it resolved can reach the attempt row. This bench
+    # only wants the questions.
+    generated = await _quiz_via_agent(
         user_id="quizfix-user-0001",
         course_id=FIXTURE_COURSE_ID,
         concept_node_id="quizfix-node-0001",
@@ -157,6 +160,7 @@ async def _generate_quiz_for_async(concept_name: str) -> list[dict]:
         use_shared_context=False,
         request_id="quizfix-bench",
     )
+    return generated.questions
 
 
 def generate_quiz_for(concept_name: str) -> list[dict]:
