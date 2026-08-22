@@ -4,7 +4,8 @@ import React from "react";
 /**
  * AnswerOption — one row of a multiple-choice question (#537).
  *
- * Three things the current QuizPanel gets wrong that this fixes:
+ * The radio row the quiz question screen builds its answer list from. Three
+ * things it guarantees:
  *   1. Selection is a 2px LEFT bar, not a full border — and the resting state
  *      reserves the same 2px transparent, so picking an answer never nudges
  *      the text.
