@@ -69,6 +69,11 @@ async function openLanding(page: Page): Promise<number> {
  * nothing left to autoscroll into and a 300px scroll assertion cannot be met.
  */
 const CLUSTER = "4";
+/**
+ * The section that cluster lives in, so the journeys can ask the page what
+ * the cluster is welded to rather than assuming it is welded to nothing.
+ */
+const CLUSTER_SECTION = "faq";
 /** A satellite, not the course puck: the link spring pulls hardest on these. */
 const SATELLITE = 1;
 
@@ -118,6 +123,30 @@ async function probe(page: Page): Promise<Probe> {
     const b = document.querySelector("[data-e2e-probe]")!.getBoundingClientRect();
     return { x: b.left + b.width / 2, y: b.top + b.height / 2, scrollY: window.scrollY };
   });
+}
+
+/**
+ * Where the page content a cluster is welded to currently sits on screen.
+ *
+ * A field names its weld target in `data-drag-track` (DragField.tsx's
+ * `TRACKS`), and `engine/sim.ts` translates the cluster so that it holds a
+ * fixed offset from it. `faq` is the one section that has one: its question
+ * column is `sticky; top:110`, so the section can scroll 300px while the copy
+ * the clusters belong to moves only ~202 and the clusters go with the copy.
+ *
+ * Read from the attribute rather than naming the column here, so this stays
+ * in step with the product: if the weld is ever dropped, this falls back to
+ * the field itself, which is the plain 1:1 page-scroll reference.
+ */
+async function weldTop(page: Page, section = CLUSTER_SECTION): Promise<number> {
+  return page.evaluate((s) => {
+    const field = document.querySelector(`#${s} .drag-field`);
+    if (!field) throw new Error(`no drag field in #${s}`);
+    const sel = field.getAttribute("data-drag-track");
+    const el = sel ? document.querySelector(sel) : field;
+    if (!el) throw new Error(`weld target ${sel} is not in the document`);
+    return el.getBoundingClientRect().top;
+  }, section);
 }
 
 test("nodes do not move of their own accord while the page scrolls", async ({ page }) => {
@@ -347,10 +376,27 @@ test("a dropped node stays where it was put, and scrolls with the page", async (
   expect(Math.hypot(settled.x - dropped.x, settled.y - dropped.y)).toBeLessThan(SWAY_PX);
 
   // Placed, not detached: it belongs to the page and moves with it.
+  //
+  // "The page" is the copy its cluster is welded to, NOT raw scrollY. The faq
+  // question column is `sticky; top:110`, so scrolling 300px moves the
+  // section 300px and the copy only as far as the pin allows — and the
+  // clusters go with the copy, which is the whole point of `TRACKS`.
+  // Measuring against scrollY asserted the one coupling this section
+  // deliberately does not have, and cost the node ~98px it never owed.
+  const weldBefore = await weldTop(page);
   await page.evaluate(() => window.scrollBy(0, 300));
   await page.waitForTimeout(600);
   const scrolled = await probe(page);
-  expect(Math.hypot(scrolled.x - settled.x, scrolled.y - (settled.y - 300)))
+  const travelled = (await weldTop(page)) - weldBefore;
+
+  // Not a fixed overlay floating over the site: the copy it is welded to
+  // really did move under it. Without this the assertion below would pass on
+  // a node that is pinned to the screen and a page that never scrolled.
+  expect(Math.abs(travelled), "the weld target should have moved").toBeGreaterThan(100);
+  expect(scrolled.scrollY - settled.scrollY, "the page should have scrolled").toBe(300);
+
+  // ...and the node went exactly that far, inside its sway.
+  expect(Math.hypot(scrolled.x - settled.x, scrolled.y - (settled.y + travelled)))
     .toBeLessThan(SWAY_PX);
 });
 
