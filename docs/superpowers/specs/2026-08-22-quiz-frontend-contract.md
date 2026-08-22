@@ -366,6 +366,14 @@ QuizQuestion({ session, actions, config, concept: { id; name; courseCode; color;
 QuizResults({ session, actions, concept, neighbourhood: { siblings }, prefersReducedMotion })
 ```
 
+### §4 amendments accepted from A2 (binding)
+- Machine events also include `FAILED(err)` (a resume/answer failure with nowhere else to land) and `SET_CONFIG(config)` (Adjust "Done" changes settings without starting). `error(from)` is derived by `errorReturnPhase(session)`, not stored.
+- `useQuizSession` returns `{ session, actions, pending, config }` — `pending` is true while a client call is in flight (B2 uses it for "Scoring…"/disabled Submit).
+- `describeConcept(userId, conceptName, courseLabel?)` — third arg is the course LABEL the backend's `concept-description` route expects, not an id.
+- `lib/quiz/exits.ts` also exports `cancelTarget(session)` (returnTo → `/dashboard`); B1's Cancel calls `actions.exit(cancelTarget(session))`.
+- `lib/quiz/proposals.ts` also exports `entrySelection(entry, nodes, courses)` which resolves `?concept=`/`?topic=` against the scoped graph (reusing `quizSelection.resolveInitialSelection`) and returns `{ conceptId | null, unresolved: boolean }` — B1 shows the §6 toast when `unresolved`.
+- The `sapling:graph-changed` CustomEvent (§5 B3) is dispatched by `useQuizSession` on SUBMITTED (`detail: { conceptId, masteryBefore, masteryAfter }`), not by the results screen.
+
 ---
 
 ## 5. Screen specs (B1–B3) — the prototype is the visual authority; this is the behavioural one
