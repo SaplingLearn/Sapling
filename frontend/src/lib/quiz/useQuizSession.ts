@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { answerQuestion, generateQuiz, getAttempt, submitQuiz } from "./api";
-import { describeQuizError, type QuizError } from "./errors";
+import { QUIZ_ERROR_COPY, describeQuizError, type QuizError } from "./errors";
 import { returnToSource } from "./exits";
 import {
   canExit,
@@ -140,9 +140,16 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   const runGenerate = useCallback(
     async (from: QuizSession) => {
       if (!from.conceptId) {
+        // Defensive: every start affordance names a concept. If one ever
+        // doesn't, say something true rather than "something went wrong on our
+        // side" — the student's move is to pick a different concept.
         apply({
           type: "GENERATE_FAILED",
-          error: describeQuizError(new Error("no concept selected")),
+          error: {
+            code: "QUIZ_CONCEPT_NOT_FOUND",
+            message: QUIZ_ERROR_COPY.QUIZ_CONCEPT_NOT_FOUND,
+            retryable: false,
+          },
         });
         return;
       }
@@ -229,7 +236,11 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   );
 
   const submitAnswer = useCallback(async () => {
-    const current = sessionRef.current;
+    // SUBMIT_ANSWER is the machine's own guard against a submit with nothing
+    // selected; dispatching it keeps the transition table honest even though it
+    // is state-neutral, and `canSubmitAnswer` is the same predicate the footer
+    // button disables on.
+    const current = apply({ type: "SUBMIT_ANSWER" });
     if (!canSubmitAnswer(current) || !current.attemptId) return;
     const item = current.items[current.cursor];
     const attemptId = current.attemptId;
