@@ -62,7 +62,23 @@ export type QuizEvent =
   | { type: "NEXT_IN_QUEUE"; courseId?: string | null }
   | { type: "EXIT" }
   | { type: "FLAG" }
-  | { type: "DISMISS_ERROR" };
+  | { type: "DISMISS_ERROR" }
+  // ── Two events beyond §4's list, both forced by effects that have nowhere
+  //    else to land. Documented as such rather than smuggled in.
+  /**
+   * A failure with no phase of its own: `resume` 409s on an attempt the 24h
+   * sweep abandoned, or the initial load falls over. §4 lists a failure event
+   * for generate, answer and submit but not for these, and swallowing a
+   * `QUIZ_ATTEMPT_ABANDONED` would leave the resume strip permanently broken
+   * with no explanation. Only accepted from a phase with nothing live.
+   */
+  | { type: "FAILED"; error: QuizError }
+  /**
+   * The Adjust dialog's "Done" (§5 B1.6) changes length/difficulty/feedback
+   * WITHOUT starting a quiz, so the choice has to live somewhere before the
+   * next `START` carries it. Only accepted where no attempt is in flight.
+   */
+  | { type: "SET_CONFIG"; config: SessionConfig };
 
 /**
  * The count used before `GET /api/quiz/config` resolves. Not an option list —
@@ -417,6 +433,21 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
     case "DISMISS_ERROR": {
       if (session.phase !== "error") return session;
       return { ...session, phase: errorReturnPhase(session), error: null };
+    }
+
+    case "FAILED": {
+      // Never over a live attempt — an in-flight quiz has ANSWER_FAILED /
+      // SUBMIT_FAILED, which keep the items so DISMISS_ERROR can go back to them.
+      if (!canExit(session)) return session;
+      if (session.phase === "error") return session;
+      return { ...session, phase: "error", error: event.error };
+    }
+
+    case "SET_CONFIG": {
+      if (session.phase !== "home" && session.phase !== "configuring" && session.phase !== "results") {
+        return session;
+      }
+      return { ...session, config: event.config };
     }
 
     default:

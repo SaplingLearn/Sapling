@@ -503,6 +503,59 @@ describe("FINISH", () => {
   });
 });
 
+describe("FAILED and SET_CONFIG (the two events beyond §4's list)", () => {
+  const ABANDONED = {
+    code: "QUIZ_ATTEMPT_ABANDONED" as const,
+    message: "expired",
+    retryable: false,
+  };
+
+  it("FAILED surfaces a resume failure on quiz home", () => {
+    const home = initialSession(entry(), CONFIG, PREFS);
+    const failed = reduce(home, { type: "FAILED", error: ABANDONED });
+    expect(failed.phase).toBe("error");
+    expect(failed.error).toEqual(ABANDONED);
+    expect(reduce(failed, { type: "DISMISS_ERROR" }).phase).toBe("home");
+  });
+
+  it("FAILED never clobbers a live attempt", () => {
+    const active = activeSession(3);
+    expect(reduce(active, { type: "FAILED", error: ABANDONED })).toBe(active);
+    const confirming = reduce(active, { type: "REQUEST_LEAVE" });
+    expect(reduce(confirming, { type: "FAILED", error: ABANDONED })).toBe(confirming);
+  });
+
+  it("FAILED does not overwrite an error already on screen", () => {
+    const home = initialSession(entry(), CONFIG, PREFS);
+    const first = reduce(home, { type: "FAILED", error: ABANDONED });
+    const second = reduce(first, {
+      type: "FAILED",
+      error: { code: "NETWORK", message: "offline", retryable: true },
+    });
+    expect(second).toBe(first);
+  });
+
+  it("SET_CONFIG holds an Adjust-dialog choice made without starting", () => {
+    const home = initialSession(entry(), CONFIG, PREFS);
+    const tuned = reduce(home, {
+      type: "SET_CONFIG",
+      config: { count: 10, difficulty: "hard", feedback: "as-you-go" },
+    });
+    expect(tuned.config).toEqual({ count: 10, difficulty: "hard", feedback: "as-you-go" });
+    expect(tuned.phase).toBe("home");
+  });
+
+  it("SET_CONFIG is ignored mid-quiz — the attempt is already generated", () => {
+    const active = activeSession(3);
+    expect(
+      reduce(active, {
+        type: "SET_CONFIG",
+        config: { count: 10, difficulty: "hard", feedback: "as-you-go" },
+      }),
+    ).toBe(active);
+  });
+});
+
 // ── The six invariants (§4) ────────────────────────────────────────────────
 
 describe("invariant 1 — nothing walks out of a live quiz by accident", () => {
@@ -516,6 +569,8 @@ describe("invariant 1 — nothing walks out of a live quiz by accident", () => {
     { type: "SUBMITTED", result: SUBMITTED, xp: null },
     { type: "DISMISS_ERROR" },
     { type: "CANCEL_LEAVE" },
+    { type: "FAILED", error: { code: "NETWORK", message: "offline", retryable: true } },
+    { type: "SET_CONFIG", config: { count: 10, difficulty: "hard", feedback: "as-you-go" } },
   ];
 
   it("no event takes active to home or to an exit", () => {

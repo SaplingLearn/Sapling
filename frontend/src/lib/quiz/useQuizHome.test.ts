@@ -1,0 +1,253 @@
+// @vitest-environment jsdom
+import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
+import type { GraphNode } from "@/lib/types";
+
+const quizApi = vi.hoisted(() => ({
+  fetchQuizConfig: vi.fn(),
+  generateQuiz: vi.fn(),
+  answerQuestion: vi.fn(),
+  submitQuiz: vi.fn(),
+  getAttempt: vi.fn(),
+  listAttempts: vi.fn(),
+  describeConcept: vi.fn(),
+}));
+vi.mock("./api", () => quizApi);
+
+const coreApi = vi.hoisted(() => ({ getCourses: vi.fn(), getGraph: vi.fn() }));
+vi.mock("@/lib/api", async importActual => {
+  const actual = await importActual<typeof import("@/lib/api")>();
+  return { ...actual, getCourses: coreApi.getCourses, getGraph: coreApi.getGraph };
+});
+
+import { fallbackDefinition, useQuizHome } from "./useQuizHome";
+import { dismissAttempt, saveSession } from "./session";
+import { initialSession } from "./machine";
+import { DEFAULT_PREFS } from "./prefs";
+import type { AttemptSummary } from "./types";
+
+function node(over: Partial<GraphNode> & { id: string }): GraphNode {
+  return {
+    concept_name: over.id,
+    mastery_score: 0.3,
+    mastery_tier: "struggling",
+    times_studied: 1,
+    last_studied_at: null,
+    subject: "CS",
+    course_id: "course-a",
+    ...over,
+  };
+}
+
+const COURSES = [
+  {
+    enrollment_id: "e1", course_id: "course-a", course_code: "CS 330", course_name: "Algorithms",
+    school: "BU", department: "CS", color: "#123456", nickname: null, node_count: 3,
+    enrolled_at: "2026-01-01T00:00:00Z", term: "Fall 2026", terms: ["Fall 2026"],
+  },
+];
+
+function attempt(over: Partial<AttemptSummary> & { quiz_id: string }): AttemptSummary {
+  return {
+    status: "in_progress",
+    concept_node_id: "n1",
+    concept_name: "n1",
+    course_id: "course-a",
+    score: null,
+    total: null,
+    difficulty: "medium",
+    mastery_before: null,
+    mastery_after: null,
+    mastery_delta: null,
+    created_at: "2026-08-22T09:00:00Z",
+    completed_at: null,
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+  coreApi.getCourses.mockResolvedValue({ courses: COURSES });
+  coreApi.getGraph.mockResolvedValue({
+    nodes: [
+      node({ id: "n-new", mastery_score: 0, mastery_tier: "unexplored", times_studied: 0 }),
+      node({ id: "n1", mastery_score: 0.29, times_studied: 3 }),
+      node({ id: "n2", mastery_score: 0.44, mastery_tier: "learning" }),
+      node({ id: "n-done", mastery_score: 0.9, mastery_tier: "mastered" }),
+    ],
+    edges: [],
+    stats: {},
+  });
+  quizApi.listAttempts.mockResolvedValue({ total: 0, limit: 20, offset: 0, attempts: [] });
+  quizApi.getAttempt.mockResolvedValue({ resumable: false });
+  quizApi.describeConcept.mockResolvedValue("Recursion is a function calling itself.");
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+  window.localStorage.clear();
+});
+
+describe("bootstrap", () => {
+  it("waits for the active semester to hydrate before fetching", async () => {
+    renderHook(() => useQuizHome("u1", null));
+    await new Promise(r => setTimeout(r, 0));
+    expect(coreApi.getGraph).not.toHaveBeenCalled();
+  });
+
+  it("fetches unscoped for 'All semesters' and scoped for a term", async () => {
+    const { rerender } = renderHook(({ s }: { s: string }) => useQuizHome("u1", s), {
+      initialProps: { s: "" },
+    });
+    await waitFor(() => expect(coreApi.getGraph).toHaveBeenCalledWith("u1", undefined));
+
+    rerender({ s: "Fall 2026" });
+    await waitFor(() => expect(coreApi.getGraph).toHaveBeenCalledWith("u1", "Fall 2026"));
+  });
+
+  it("ranks candidates, picks a studied primary, and counts the due set", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    expect(result.current.candidates.map(c => c.node.id)).toEqual(["n-new", "n1", "n2"]);
+    // R-7: the primary prefers the weakest concept actually studied.
+    expect(result.current.primary?.node.id).toBe("n1");
+    expect(result.current.alternatives.map(c => c.node.id)).toEqual(["n-new", "n2"]);
+    expect(result.current.due.count).toBe(3);
+    expect(result.current.due.courseCount).toBe(1);
+    expect(result.current.byCourse[0].course.course_code).toBe("CS 330");
+  });
+
+  it("keeps the home screen when only the history read fails", async () => {
+    quizApi.listAttempts.mockRejectedValue(new ApiError("boom", 500));
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.attempts).toEqual([]);
+  });
+
+  it("reports an error when the graph read fails", async () => {
+    coreApi.getGraph.mockRejectedValue(new ApiError("boom", 500, { code: "QUIZ_INTERNAL_ERROR" }));
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.error?.message).toBe(
+      "Something went wrong on our side. Try again in a moment.",
+    );
+  });
+});
+
+describe("resume discovery (R-3)", () => {
+  it("verifies the stored attempt id against the wire before offering it", async () => {
+    const stored = {
+      ...initialSession({ source: { kind: "tree" }, concept: "n1" }, null, DEFAULT_PREFS),
+      attemptId: "attempt-stored",
+      phase: "paused" as const,
+    };
+    saveSession(stored);
+    quizApi.getAttempt.mockResolvedValue({
+      quiz_id: "attempt-stored",
+      status: "in_progress",
+      resumable: true,
+      difficulty: "medium",
+      concept_node_id: "n1",
+      questions: [],
+      responses: [{ question_index: 0, selected_index: 1, is_correct: true, answered_at: "x" }],
+      score: null,
+      total: null,
+      created_at: "2026-08-22T09:00:00Z",
+    });
+
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.resumable).not.toBeNull());
+    expect(quizApi.getAttempt).toHaveBeenCalledWith("attempt-stored");
+    expect(result.current.resumable?.answered).toBe(1);
+    expect(result.current.resumable?.session?.attemptId).toBe("attempt-stored");
+  });
+
+  it("finds an in_progress attempt started on another device", async () => {
+    quizApi.listAttempts.mockResolvedValue({
+      total: 2,
+      limit: 20,
+      offset: 0,
+      attempts: [
+        attempt({ quiz_id: "done", status: "completed", score: 3, total: 3 }),
+        attempt({ quiz_id: "open" }),
+      ],
+    });
+    quizApi.getAttempt.mockResolvedValue({
+      quiz_id: "open", status: "in_progress", resumable: true, difficulty: "medium",
+      concept_node_id: "n1", questions: [], responses: [], score: null, total: null,
+      created_at: "2026-08-22T09:00:00Z",
+    });
+
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.resumable?.attempt.quiz_id).toBe("open"));
+    // No local record for it, so there is no stored session to restore.
+    expect(result.current.resumable?.session).toBeNull();
+    expect(quizApi.getAttempt).toHaveBeenCalledTimes(1);
+    expect(quizApi.getAttempt).toHaveBeenCalledWith("open");
+  });
+
+  it("skips a discarded attempt (there is no abandon endpoint — G4)", async () => {
+    dismissAttempt("open");
+    quizApi.listAttempts.mockResolvedValue({
+      total: 1, limit: 20, offset: 0, attempts: [attempt({ quiz_id: "open" })],
+    });
+
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await new Promise(r => setTimeout(r, 0));
+    expect(quizApi.getAttempt).not.toHaveBeenCalled();
+    expect(result.current.resumable).toBeNull();
+  });
+
+  it("moves on when the wire says an attempt is no longer resumable", async () => {
+    quizApi.listAttempts.mockResolvedValue({
+      total: 2, limit: 20, offset: 0,
+      attempts: [attempt({ quiz_id: "stale" }), attempt({ quiz_id: "live" })],
+    });
+    quizApi.getAttempt.mockImplementation((id: string) =>
+      id === "stale"
+        ? Promise.reject(new ApiError("gone", 409, { code: "QUIZ_ATTEMPT_ABANDONED" }))
+        : Promise.resolve({
+          quiz_id: "live", status: "in_progress", resumable: true, difficulty: "medium",
+          concept_node_id: "n1", questions: [], responses: [], score: null, total: null,
+          created_at: "2026-08-22T09:00:00Z",
+        }),
+    );
+
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.resumable?.attempt.quiz_id).toBe("live"));
+  });
+});
+
+describe("the primary definition (R-8)", () => {
+  it("asks for exactly one concept description — the primary's", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.primaryDescription).not.toBeNull());
+    expect(quizApi.describeConcept).toHaveBeenCalledTimes(1);
+    expect(quizApi.describeConcept).toHaveBeenCalledWith("u1", "n1", "CS 330");
+  });
+
+  it("leaves the description null when the call fails, so the card falls back", async () => {
+    quizApi.describeConcept.mockRejectedValue(new ApiError("agent down", 502));
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await new Promise(r => setTimeout(r, 0));
+    expect(result.current.primaryDescription).toBeNull();
+  });
+});
+
+describe("fallbackDefinition", () => {
+  it("builds the sentence the card shows while the description loads", () => {
+    const candidate = {
+      node: node({ id: "n1", mastery_tier: "struggling" }),
+      course: COURSES[0],
+      color: "#123456",
+      rationale: "",
+    };
+    expect(fallbackDefinition(candidate, 4)).toBe("CS 330 · struggling · 4 connected concepts");
+    expect(fallbackDefinition(candidate, 1)).toBe("CS 330 · struggling · 1 connected concept");
+    expect(fallbackDefinition(null, 3)).toBe("");
+  });
+});
