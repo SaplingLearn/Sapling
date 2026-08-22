@@ -59,7 +59,7 @@ export type QuizEvent =
   /** `numQuestions` is already clamped to `/config`'s min/max by the caller —
    *  the reducer must never know those bounds. */
   | { type: "PRACTISE_MISSED"; missedCount: number; numQuestions: number }
-  | { type: "NEXT_IN_QUEUE"; courseId?: string | null }
+  | { type: "NEXT_IN_QUEUE" }
   | { type: "EXIT" }
   | { type: "FLAG" }
   | { type: "DISMISS_ERROR" }
@@ -163,8 +163,9 @@ export function isLastItem(session: QuizSession, index = session.cursor): boolea
 
 /** Submitting an answer needs a live question with a chosen option. */
 export function canSubmitAnswer(session: QuizSession): boolean {
-  return session.phase === "active" && session.items[session.cursor]?.selectedIndex !== null
-    && session.items[session.cursor] !== undefined;
+  if (session.phase !== "active") return false;
+  const item = session.items[session.cursor];
+  return item !== undefined && item.selectedIndex !== null;
 }
 
 /** Leaving for another screen. False for every phase where an attempt is live —
@@ -306,15 +307,24 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
     }
 
     case "SUBMIT_ANSWER": {
-      // A guard, not a transition: the network call is the hook's job and the
-      // "pending" look is local to the footer button.
-      return canSubmitAnswer(session) ? session : session;
+      // State-neutral by design: the network call is the hook's job and the
+      // "pending" look is local to the footer button. `canSubmitAnswer` is the
+      // predicate that actually gates it, in the hook and on the button alike.
+      return session;
     }
 
     case "ANSWER_RECORDED": {
       if (session.phase !== "active") return session;
       const index = event.result.question_index;
-      if (!session.items[index]) return session;
+      const target = session.items[index];
+      if (!target) return session;
+      // A response for an item already left behind can only be a duplicate or a
+      // late arrival. `advanceAfterAnswer` positions the cursor from the
+      // RESPONDED index, so honouring one would drag the quiz backwards under
+      // the student — re-revealing an old verdict in as-you-go, or re-asking a
+      // question in at-end. `/answer` is idempotent server-side, so there is
+      // nothing to reconcile: drop it.
+      if (index < session.cursor || target.verdict !== null) return session;
       // `recorded: false` is an idempotent replay or a lost race — the answer
       // still stands, so it advances exactly like a fresh record (invariant 6).
       const scored = withItem(session, index, {
@@ -402,7 +412,12 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
       return generatingFrom(session, {
         queueIndex: next,
         conceptId: queue[next],
-        courseId: event.courseId !== undefined ? event.courseId : session.courseId,
+        // A `course` queue stays inside its course. A `due` queue spans them,
+        // and the reducer has no node list to look the new one up in — so the
+        // honest answer is "unknown" rather than the previous concept's course.
+        // Nothing on screen reads this: the screens resolve the course (and the
+        // accent) from the graph by concept id.
+        courseId: session.scope.kind === "course" ? session.courseId : null,
       });
     }
 

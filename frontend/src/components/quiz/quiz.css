@@ -29,8 +29,9 @@
      so the content column stays optically centred. */
   --quiz-rail: 64px;
 
-  display: flex;
-  flex-direction: column;
+  /* `display` and `flex-direction` are NOT set here: `FullHeightScreen` writes
+     both inline and inline wins, so restating them would be a rule that never
+     applies. This class carries the tokens and the sizing only. */
   flex: 1;
   min-height: 0;
 }

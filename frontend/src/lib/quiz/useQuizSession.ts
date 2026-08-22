@@ -49,7 +49,7 @@ export interface QuizActions {
   confirmLeave(): void;
   resume(attemptId: string): void;
   practiseMissed(): void;
-  nextInQueue(courseId?: string | null): void;
+  nextInQueue(): void;
   exit(target?: string): void;
   flag(): void;
   dismissError(): void;
@@ -127,6 +127,11 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   // render time is one event behind by the time an await resolves.
   const sessionRef = useRef(session);
   const submittingRef = useRef<string | null>(null);
+  // The item whose `/answer` is in flight, as `attemptId:index`. Without it a
+  // double-click fires the request twice: the phase stays `active` for the whole
+  // round trip, so neither `canSubmitAnswer` nor a `phase !== "active"` disabled
+  // check rules the second press out.
+  const answeringRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const configAppliedRef = useRef(false);
   const autoResumedRef = useRef(false);
@@ -146,11 +151,18 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   // Once `/config` lands, adopt its defaults — but only while nothing is in
   // flight and only if the student hasn't already chosen. The first paint uses
   // the pre-config scalar so the "5 questions, medium" line isn't blank.
+  //
+  // `SET_CONFIG` is refused mid-quiz, so the flag is set only once the machine
+  // ACCEPTED it and the effect re-runs on the phase: a `/config` that resolves
+  // during a fast start or a `?attempt=` auto-resume would otherwise mark itself
+  // applied while being dropped, and the defaults would never land.
   useEffect(() => {
     if (!config || configAppliedRef.current) return;
-    configAppliedRef.current = true;
-    apply({ type: "SET_CONFIG", config: defaultConfigFor(config, loadPrefs(config)) });
-  }, [config, apply]);
+    const desired = defaultConfigFor(config, loadPrefs(config));
+    if (apply({ type: "SET_CONFIG", config: desired }).config === desired) {
+      configAppliedRef.current = true;
+    }
+  }, [config, apply, session.phase]);
 
   // Persist on unmount and on a tab close, so "answered then navigated away" is
   // resumable even though no transition fired on the way out.
@@ -244,7 +256,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
             type: "FAILED",
             error: {
               code: "QUIZ_ATTEMPT_NOT_RESUMABLE",
-              message: "This quiz can't be resumed. Start a new one.",
+              message: QUIZ_ERROR_COPY.QUIZ_ATTEMPT_NOT_RESUMABLE,
               retryable: false,
             } satisfies QuizError,
           });
@@ -271,6 +283,9 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
     if (!canSubmitAnswer(current) || !current.attemptId) return;
     const item = current.items[current.cursor];
     const attemptId = current.attemptId;
+    const inFlight = `${attemptId}:${item.index}`;
+    if (answeringRef.current === inFlight) return;
+    answeringRef.current = inFlight;
     setPending(true);
     try {
       const result = await withNetworkRetry(() =>
@@ -285,6 +300,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
     } catch (err) {
       apply({ type: "ANSWER_FAILED", error: describeQuizError(err) });
     } finally {
+      answeringRef.current = null;
       setPending(false);
     }
   }, [apply, runSubmit]);
@@ -374,8 +390,8 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         if (next.phase === "generating") void runGenerate(next);
       },
 
-      nextInQueue: courseId => {
-        const next = apply({ type: "NEXT_IN_QUEUE", courseId });
+      nextInQueue: () => {
+        const next = apply({ type: "NEXT_IN_QUEUE" });
         if (next.phase === "generating") void runGenerate(next);
       },
 

@@ -228,6 +228,69 @@ describe("start → answer → answer → submit", () => {
   });
 });
 
+describe("a double-pressed Submit only answers once", () => {
+  it("fires exactly one /answer for the item while the first is in flight", async () => {
+    // The phase stays `active` for the whole round trip, so neither
+    // canSubmitAnswer nor a `phase !== "active"` disabled check rules the second
+    // press out — only the hook's in-flight guard does.
+    let release: (value: AnswerResult) => void = () => {};
+    quizApi.answerQuestion.mockImplementationOnce(
+      () => new Promise<AnswerResult>(resolve => {
+        release = resolve;
+      }),
+    );
+
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+    act(() => result.current.actions.select(1));
+    act(() => {
+      result.current.actions.submitAnswer();
+      result.current.actions.submitAnswer();
+      result.current.actions.submitAnswer();
+    });
+    expect(quizApi.answerQuestion).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      release(answerResult(0));
+    });
+    await waitFor(() => expect(result.current.session.cursor).toBe(1));
+    expect(quizApi.answerQuestion).toHaveBeenCalledTimes(1);
+
+    // The guard is per item, not a one-shot latch: the next question submits.
+    act(() => result.current.actions.select(2));
+    await act(async () => {
+      result.current.actions.submitAnswer();
+    });
+    expect(quizApi.answerQuestion).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the guard after a failure, so retrying is possible", async () => {
+    quizApi.answerQuestion.mockRejectedValueOnce(
+      new ApiError("bad", 400, { code: "QUIZ_QUESTION_INVALID" }),
+    );
+
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    act(() => result.current.actions.start(START));
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+    act(() => result.current.actions.select(1));
+    await act(async () => {
+      result.current.actions.submitAnswer();
+    });
+    await waitFor(() => expect(result.current.session.phase).toBe("error"));
+
+    await act(async () => {
+      result.current.actions.retry();
+    });
+    await waitFor(() => expect(result.current.session.cursor).toBe(1));
+    expect(quizApi.answerQuestion).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('the "sapling:graph-changed" announcement', () => {
   it("fires exactly once per submit, carrying the mastery move", async () => {
     const seen: CustomEvent[] = [];

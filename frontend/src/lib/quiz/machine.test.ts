@@ -571,6 +571,9 @@ describe("invariant 1 — nothing walks out of a live quiz by accident", () => {
     { type: "CANCEL_LEAVE" },
     { type: "FAILED", error: { code: "NETWORK", message: "offline", retryable: true } },
     { type: "SET_CONFIG", config: { count: 10, difficulty: "hard", feedback: "as-you-go" } },
+    { type: "START", start: startOf("c9"), config: { count: 3, difficulty: "easy", feedback: "at-end" } },
+    { type: "NEXT" },
+    { type: "FINISH" },
   ];
 
   it("no event takes active to home or to an exit", () => {
@@ -586,7 +589,9 @@ describe("invariant 1 — nothing walks out of a live quiz by accident", () => {
     s = reduce(s, { type: "ANSWER_RECORDED", result: answered(0) });
     expect(s.phase).toBe("answered");
     for (const event of LEAVERS) {
-      if (event.type === "CANCEL_LEAVE") continue;
+      // NEXT is the submit path out of `answered`, not a way to walk out — its
+      // own transitions are pinned in "answering — as-you-go" above.
+      if (event.type === "NEXT") continue;
       expect(reduce(s, event).phase, `${event.type} from answered`).toBe("answered");
     }
   });
@@ -705,13 +710,56 @@ describe("invariant 4 — SELECT is ignored once the verdict is showing", () => 
     expect(after.items[0].selectedIndex).toBe(1);
   });
 
-  it("SUBMIT_ANSWER without a selection is ignored", () => {
+  it("SUBMIT_ANSWER is gated by canSubmitAnswer, and never moves the session", () => {
     const s = activeSession(3);
     expect(canSubmitAnswer(s)).toBe(false);
-    expect(reduce(s, { type: "SUBMIT_ANSWER" })).toBe(s);
 
     const selected = reduce(s, { type: "SELECT", index: 0 });
     expect(canSubmitAnswer(selected)).toBe(true);
+
+    // SUBMIT_ANSWER is state-neutral BY DESIGN (the request is the hook's job),
+    // so it must not move the session in either direction.
+    expect(reduce(s, { type: "SUBMIT_ANSWER" })).toBe(s);
+    expect(reduce(selected, { type: "SUBMIT_ANSWER" })).toBe(selected);
+  });
+
+  it("canSubmitAnswer is false when the cursor points at no item at all", () => {
+    const empty = { ...activeSession(1), items: [], cursor: 0 };
+    expect(canSubmitAnswer(empty)).toBe(false);
+    const past = { ...activeSession(1), cursor: 9 };
+    expect(canSubmitAnswer(past)).toBe(false);
+  });
+});
+
+describe("a stale or duplicate ANSWER_RECORDED never drags the cursor backwards", () => {
+    it("ignores a response for an item the student has already passed", () => {
+    let s = reduce(activeSession(3, "at-end"), { type: "SELECT", index: 1 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(0) });
+    expect(s.cursor).toBe(1);
+
+    // The duplicate from a double-click lands late. At-end would otherwise put
+    // the cursor back to index 0 + 1, re-asking a question already answered.
+    const after = reduce(s, { type: "ANSWER_RECORDED", result: answered(0) });
+    expect(after).toBe(s);
+    expect(after.cursor).toBe(1);
+  });
+
+  it("ignores a second response for the CURRENT item once it has a verdict", () => {
+    let s = reduce(activeSession(3, "at-end"), { type: "SELECT", index: 1 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(0) });
+    s = reduce(s, { type: "SELECT", index: 2 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(1) });
+    expect(s.cursor).toBe(2);
+
+    const replay = reduce(s, { type: "ANSWER_RECORDED", result: answered(1, false) });
+    expect(replay).toBe(s);
+    expect(s.items[1].verdict?.isCorrect).toBe(true);
+  });
+
+  it("still advances a first response with recorded:false (invariant 6 intact)", () => {
+    let s = reduce(activeSession(3, "at-end"), { type: "SELECT", index: 1 });
+    s = reduce(s, { type: "ANSWER_RECORDED", result: answered(0, true, false) });
+    expect(s.cursor).toBe(1);
   });
 });
 

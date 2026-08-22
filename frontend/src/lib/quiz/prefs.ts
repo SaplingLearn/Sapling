@@ -70,11 +70,3 @@ export function savePrefs(prefs: QuizPrefs): void {
     // A forgotten preference is a downgrade, never a failure.
   }
 }
-
-export function clearPrefs(): void {
-  try {
-    if (typeof window !== "undefined") window.localStorage.removeItem(PREFS_KEY);
-  } catch {
-    // See above.
-  }
-}
