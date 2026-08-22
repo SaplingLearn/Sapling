@@ -24,26 +24,51 @@ import os
 
 import pytest
 
+from agents.function_handlers_e2e import E2E_QUIZ_CORRECT_LABELS
+
 pytestmark = pytest.mark.integration
 
 USER_ACTIVE = "rich-user-active"
 CONCEPT_NODE = "rich-node-cs-recursion"
 
-#: The function-mode seam's fixed answer key. Kept as a literal so a drift
-#: between it and `agents/function_handlers_e2e.py` fails here loudly rather
-#: than turning these assertions into whatever the seam happens to return.
-E2E_LABELS = ("B", "C", "A")
+#: The function-mode seam's fixed answer key, IMPORTED from the seam that
+#: exports it as the named contract. Re-declaring it as a literal would make a
+#: drift surface as "recorded answers must outrank an empty payload" — a
+#: failure pointing at the reconciliation logic rather than at the constant
+#: that moved.
+E2E_LABELS = E2E_QUIZ_CORRECT_LABELS
 
 
 @pytest.fixture(autouse=True)
 def _requires_function_mode():
-    if os.getenv("SAPLING_MODEL_MODE") != "function":
-        pytest.skip(
-            "quiz subcutaneous tests need SAPLING_MODEL_MODE=function "
-            "(export it with SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e, "
-            "as e2e.yml and the documented flock'd cycle do) — refusing to "
-            "call live Gemini from a test"
+    """RAISE, never skip — the same rule `_require_local_stack` and
+    `_require_local_db_url` follow in this lane's conftest, and for the same
+    reason: a silent skip reads as "safe" while the gate reports green having
+    run nothing. That is how the #265 drift survived the one lane built to
+    catch it. The documented invocation (`RUN_INTEGRATION=1 pytest -m
+    integration`) does not set these, so a skip here would quietly disable
+    every test in the file.
+
+    Raising still never bills Gemini, which is the actual thing to avoid.
+    """
+    mode = os.getenv("SAPLING_MODEL_MODE")
+    handlers = os.getenv("SAPLING_FUNCTION_HANDLERS")
+    if mode != "function" or not handlers:
+        raise RuntimeError(
+            "quiz subcutaneous tests need SAPLING_MODEL_MODE=function and "
+            "SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (as e2e.yml "
+            f"and the documented flock'd cycle set them); got mode={mode!r} "
+            f"handlers={handlers!r}. Refusing to skip silently — the gate would "
+            "report green having run nothing."
         )
+
+
+def _advertised_difficulties():
+    """Read at collection time, straight from the source of truth the route
+    and the client both bind to."""
+    from services.quiz_config import quiz_config_payload
+
+    return quiz_config_payload()["difficulties"]
 
 
 def _generate(client, **overrides):
@@ -56,6 +81,24 @@ def _generate(client, **overrides):
     }
     body.update(overrides)
     return client.post("/api/quiz/generate", json=body)
+
+
+#: `rich-node-cs-recursion` in db/seed_local_rich.py. Asserted before use, so
+#: a seed change fails loudly instead of silently re-baselining the delta.
+SEEDED_MASTERY = 0.25
+
+
+def _mastery(db_conn) -> float:
+    return db_conn.execute(
+        "SELECT mastery_score FROM graph_nodes WHERE id = %s", (CONCEPT_NODE,)
+    ).fetchone()["mastery_score"]
+
+
+def _mastery_event_count(db_conn) -> int:
+    return db_conn.execute(
+        "SELECT count(*) AS n FROM node_mastery_events WHERE node_id = %s",
+        (CONCEPT_NODE,),
+    ).fetchone()["n"]
 
 
 def _attempt_row(db_conn, quiz_id, columns="*"):
@@ -87,18 +130,19 @@ def test_generate_writes_a_real_attempt_row_with_ciphertext_questions(
     assert "recursion" not in row["questions_json"].lower()
 
 
-@pytest.mark.parametrize("difficulty", ["easy", "medium", "hard", "adaptive"])
+@pytest.mark.parametrize("difficulty", _advertised_difficulties())
 def test_generate_accepts_every_difficulty_the_config_advertises(
     authed_client, db_conn, difficulty
 ):
     """Including `adaptive` — #540's whole point was that the selector offered
-    a value the route 400'd. `/api/quiz/config` is the source of truth for
-    what the client may send, so everything it lists must round-trip."""
-    advertised = authed_client.get("/api/quiz/config").json()
-    assert difficulty in advertised["difficulties"], (
-        f"{difficulty} is asserted here but not advertised by /api/quiz/config"
-    )
+    a value the route 400'd.
 
+    Parametrized FROM the config payload, not from a literal list: a
+    hard-coded list only proves the values I happened to think of are
+    advertised, never the reverse, so a difficulty added to
+    REQUESTED_DIFFICULTIES would ship untested. This way adding one adds a
+    test case.
+    """
     r = _generate(authed_client, difficulty=difficulty)
     assert r.status_code == 200, r.text
     body = r.json()
@@ -112,10 +156,19 @@ def test_generate_rejects_counts_outside_the_advertised_bounds(authed_client):
     Bounds are asserted against what config advertises, not against literals,
     so widening the cap can't leave this test pinning the old one."""
     cfg = authed_client.get("/api/quiz/config").json()["num_questions"]
-    lo, hi = cfg["min"], cfg["max"]
+    hi = cfg["max"]
 
-    assert _generate(authed_client, num_questions=lo).status_code == 200
-    assert _generate(authed_client, num_questions=hi).status_code == 200
+    # EVERY advertised option, not just the bounds. `options` is the list the
+    # UI actually renders, and it is exactly where #540 lived: "15" sat in
+    # that list while the route capped at 10, so the selector offered a value
+    # that always 422'd. Checking min/max alone reproduces that bug happily.
+    for count in cfg["options"]:
+        r = _generate(authed_client, num_questions=count)
+        assert r.status_code == 200, (
+            f"/api/quiz/config advertises num_questions={count} but generate "
+            f"rejected it ({r.status_code}) — this is #540 verbatim: {r.text}"
+        )
+
     assert _generate(authed_client, num_questions=hi + 1).status_code == 422
     assert _generate(authed_client, num_questions=0).status_code == 422
 
@@ -139,11 +192,18 @@ def test_the_full_loop_generates_answers_submits_and_persists_what_it_graded(
         assert a.status_code == 200, a.text
 
     responses = db_conn.execute(
-        "SELECT question_index, selected_index FROM quiz_responses "
+        "SELECT question_index, selected_index, is_correct FROM quiz_responses "
         "WHERE attempt_id = %s ORDER BY question_index",
         (quiz_id,),
     ).fetchall()
     assert [r["question_index"] for r in responses] == [0, 1, 2]
+    # `is_correct` exists BECAUSE grading moved server-side (#541 C1), and
+    # nothing else in this file would notice it being wrong: submit re-derives
+    # the score from selected_index plus the stored key and never reads it. So
+    # inverting it would poison every response row and every future item
+    # statistic while the whole suite stayed green.
+    # Index 1 is label B; the seam's key is B, C, A — so only Q1 is correct.
+    assert [r["is_correct"] for r in responses] == [True, False, False]
 
     s = authed_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
     assert s.status_code == 200, s.text
@@ -151,10 +211,21 @@ def test_the_full_loop_generates_answers_submits_and_persists_what_it_graded(
     row = _attempt_row(db_conn, quiz_id, "score, total, completed_at, answers_json")
     assert row["total"] == 3
     assert row["completed_at"] is not None
-    assert row["score"] == s.json()["score"]
+    assert row["score"] == s.json()["score"] == 1
+
     # Submit persists WHAT IT GRADED, reconciled from quiz_responses — not the
-    # (here empty) payload.
+    # (here EMPTY) payload. `isinstance(..., str)` alone does not say that:
+    # `encrypt_json([])` is a str too, so storing the empty payload instead
+    # would pass. Decrypt and count.
+    from services.encryption import decrypt_json_column
+
     assert isinstance(row["answers_json"], str), "answers_json must be ciphertext"
+    graded = decrypt_json_column(row["answers_json"])
+    assert len(graded) == 3, (
+        "submit stored the request payload (empty) instead of the three "
+        "responses it actually graded"
+    )
+    assert {a["selected_label"] for a in graded} == {"B"}
 
 
 def test_answers_recorded_through_the_endpoint_beat_an_empty_payload(
@@ -189,19 +260,36 @@ def test_a_replayed_submit_is_a_409_and_re_applies_no_mastery(
     authed_client.post(f"/api/quiz/attempts/{quiz_id}/answer",
                        json={"question_index": 0, "selected_index": 1})
 
+    before = _mastery(db_conn)
+    assert before == pytest.approx(SEEDED_MASTERY), (
+        "the seed moved; this test's arithmetic anchors on it"
+    )
+
     first = authed_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
     assert first.status_code == 200, first.text
-    mastery_after = db_conn.execute(
-        "SELECT mastery_score FROM graph_nodes WHERE id = %s", (CONCEPT_NODE,)
-    ).fetchone()["mastery_score"]
+
+    # ANCHORED, not self-compared. Snapshotting after the first submit and
+    # comparing it to itself cannot tell "the replay applied nothing" from
+    # "nothing was ever applied" — so a no-op `apply_graph_update`, or a
+    # #553-shaped keyspace miss on the node lookup, would leave mastery at the
+    # seeded value through both calls and pass while claiming to guard #129.
+    # 1 correct (+0.03), 2 wrong (-0.02 each) => -0.01.
+    after_first = _mastery(db_conn)
+    assert after_first == pytest.approx(SEEDED_MASTERY - 0.01, abs=1e-6), (
+        "the first submit did not apply the mastery delta at all"
+    )
+    events_after_first = _mastery_event_count(db_conn)
+    assert events_after_first > 0, "no mastery event was journalled"
 
     replay = authed_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
     assert replay.status_code == 409, replay.text
 
-    unchanged = db_conn.execute(
-        "SELECT mastery_score FROM graph_nodes WHERE id = %s", (CONCEPT_NODE,)
-    ).fetchone()["mastery_score"]
-    assert unchanged == mastery_after, "the replay moved mastery a second time"
+    assert _mastery(db_conn) == pytest.approx(after_first, abs=1e-6), (
+        "the replay moved mastery a second time"
+    )
+    assert _mastery_event_count(db_conn) == events_after_first, (
+        "the replay journalled a second mastery event"
+    )
 
 
 # ── resume + history ────────────────────────────────────────────────────────
@@ -264,31 +352,51 @@ def test_another_student_can_neither_answer_nor_submit_this_attempt(
     ).fetchone()["n"] == 0
 
 
-# ── #529 regression guard, real DB ──────────────────────────────────────────
+# ── #555's column, actually asserted ────────────────────────────────────────
 
 
-def test_the_adaptive_context_write_actually_lands(authed_client, db_conn):
-    """#529's regression guard where it can actually fail. The write was
-    swallowed for 51 days because the only tests that exercised it mocked
-    `table()`; the constraint it needed had been dropped in 0025.
+def test_generate_persists_exam_days_away_when_an_exam_is_upcoming(
+    authed_client, db_conn
+):
+    """The claim this file's docstring makes, made true.
 
-    Submitting must leave a `quiz_context` row for this (user, concept) — and
-    a second submit must UPDATE it rather than 42P10 on the missing UNIQUE.
+    Nothing else here would notice `20260822090747` going missing, for two
+    independent reasons: every exam in the rich seed is in the PAST (the only
+    CS one is dated 2025-10-15), so `days_until_next_exam` returns None and
+    the column never enters the INSERT at all; and `_insert_attempt`
+    deliberately catches the unknown-column failure, retries without the key
+    and still returns 200. So the write has to be provoked and then read back
+    from Postgres.
     """
-    from services.quiz_context_service import save_quiz_context
+    from datetime import date, timedelta
 
-    # The digest itself is an LLM background task, deliberately unregistered
-    # in function mode so it can't race the next test's reseed. So this drives
-    # the WRITE the bug was in, directly, against the real constraint.
-    save_quiz_context(USER_ACTIVE, CONCEPT_NODE, {"weak_areas": ["first"]})
-    save_quiz_context(USER_ACTIVE, CONCEPT_NODE, {"weak_areas": ["second"]})
+    from db.connection import table
 
-    rows = db_conn.execute(
-        "SELECT context_json FROM quiz_context "
-        "WHERE user_id = %s AND concept_node_id = %s",
-        (USER_ACTIVE, CONCEPT_NODE),
-    ).fetchall()
-    assert len(rows) == 1, (
-        "two writes left more than one row — the (user_id, concept_node_id) "
-        "UNIQUE is gone again, which is #529"
+    due = date.today() + timedelta(days=5)
+    table("assignments").insert({
+        "id": "sub-exam-upcoming",
+        "enrollment_id": "rich-enr-active-cs101-f25",
+        "category_id": "rich-cat-cs-f25-exams",
+        "title": "Final Exam",
+        "due_date": due.isoformat(),
+        "assignment_type": "exam",
+        "source": "manual",
+    })
+
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+
+    stored = _attempt_row(db_conn, quiz_id, "exam_days_away")["exam_days_away"]
+    assert stored == 5, (
+        f"expected exam_days_away=5, got {stored!r}. None means the column was "
+        "dropped by _insert_attempt's fallback — i.e. the migration is not "
+        "applied here"
     )
+
+
+def test_a_past_exam_leaves_the_column_null(authed_client, db_conn):
+    """The seed's own state, pinned: CS's only exam is in the past, so there
+    is nothing upcoming and NULL is the honest answer. Without this, the test
+    above could pass against a `days_until_next_exam` that returned a constant.
+    """
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+    assert _attempt_row(db_conn, quiz_id, "exam_days_away")["exam_days_away"] is None
