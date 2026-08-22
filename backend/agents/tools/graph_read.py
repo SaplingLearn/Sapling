@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -367,11 +368,26 @@ class Misconception(BaseModel):
 
 
 async def read_misconceptions_for_course(
-    offering_id: str | None,
+    offering_ids: Sequence[str] | None,
 ) -> list[Misconception]:
-    """Return aggregated misconception strings for an offering (a class in a
-    term). Anonymized (sourced from class-wide patterns, not any single student).
-    Returns [] when offering_id is None or the underlying table is empty.
+    """Return aggregated misconception strings for one or more offerings (a
+    class in a term). Anonymized (sourced from class-wide patterns, not any
+    single student). Returns [] when no offerings are given or the underlying
+    table has nothing for them.
+
+    Takes OFFERING ids, plural, and the plural is load-bearing twice over.
+
+    Keyspace (#553): `offering_concept_stats.offering_id` holds
+    `course_offerings.id`, which is a different keyspace from the abstract
+    `courses.id` the graph and the HTTP boundary carry. This function used to
+    be handed the latter, so it matched nothing for every student
+    indefinitely. Callers resolve course -> offerings via
+    `services/academics.py`; that module owns the resolution.
+
+    Plural: a student can be enrolled in more than one offering of the same
+    course (a repeat, or a course spanning terms — the rich seed's active user
+    holds CS in two). Scoping to a single "current" offering would silently
+    drop the other class's aggregates.
 
     Source: `offering_concept_stats` rows for the offering. Each row
     represents one concept and carries a `common_misconceptions` array
@@ -382,7 +398,16 @@ async def read_misconceptions_for_course(
 
     The tool contract (returning Misconception[]) is unchanged.
     """
-    if not offering_id:
+    # A bare `str` IS a Sequence[str], so an un-guarded comprehension would
+    # iterate it PER CHARACTER and build `in.(c,a,s,-,c,s,...)` — a filter that
+    # matches nothing while looking entirely well-formed. The same shape
+    # already bit this batch once (the quiz_history coercer spraying "- r"/
+    # "- e"/"- c" into the prompt), and the whole point of #553 is that a
+    # silently-matching-nothing filter can survive for months.
+    if isinstance(offering_ids, str):
+        offering_ids = [offering_ids]
+    ids = [str(o) for o in (offering_ids or []) if o]
+    if not ids:
         return []
 
     def _fetch() -> list[dict[str, Any]]:
@@ -390,7 +415,7 @@ async def read_misconceptions_for_course(
             return (
                 table("offering_concept_stats").select(
                     "concept_name,common_misconceptions",
-                    filters={"offering_id": f"eq.{offering_id}"},
+                    filters={"offering_id": f"in.({','.join(ids)})"},
                     order="updated_at.desc",
                     limit=20,
                 )
@@ -398,8 +423,7 @@ async def read_misconceptions_for_course(
             )
         except Exception:
             logger.exception(
-                "read_misconceptions_for_course failed for offering=%s",
-                offering_id,
+                "read_misconceptions_for_course failed for offerings=%s", ids,
             )
             return []
 
@@ -433,49 +457,57 @@ async def read_misconceptions_for_course_tool(
     """
     from services.prompt_safety import neutralize_delimiters
 
-    out = await read_misconceptions_for_course(ctx.deps.course_id)
-    # F5: THE canonical instance of this bug class. This tool passed the
-    # abstract course id where the query filters `offering_id` — a different
-    # keyspace, so it returned zero rows for every student, indefinitely,
-    # and looked exactly like a class that simply had no misconceptions yet.
-    # (#553 carries the fix; this makes the next one impossible to miss.)
-    # The probe asks whether aggregates exist for THIS student's offerings of
-    # THIS course — not merely whether they are enrolled in something.
-    # "Enrolled somewhere" would fire on every generation in a course whose
-    # class simply has no aggregated misconceptions yet, which is the normal
-    # state for the first weeks of any term.
+    # #553: resolve course -> the student's offerings BEFORE reading. The
+    # stats table is keyed on `course_offerings.id`; `ctx.deps.course_id` is
+    # the abstract `courses.id` the graph carries. Handing the second to a
+    # filter expecting the first matched nothing for every student since the
+    # tool was written, and looked exactly like a class with no misconceptions
+    # yet. Verified live 2026-08-22: staging 72/72 stats rows key on an
+    # offering id and 0 on a course id (prod 73/73); filtering by course id
+    # returned 0 in both, filtering by the student's offerings returned 68+4
+    # and 73.
     #
-    # Scoped this way it detects the real failure instead: aggregates exist
-    # for the class, but this tool's read returned none — the signature of a
-    # keyspace mismatch, which is precisely how #553 (abstract course id used
-    # where an offering id is expected) presents.
-    #
-    # Gated on the result being EMPTY, not merely on having a course id.
-    # `user_offering_ids_for_course` is uncached and issues two unbounded
-    # PostgREST reads (enrollments -> offerings), and this runs on the quiz
-    # generation request path — resolving it whenever a course id exists made
-    # every generation pay both round-trips even when the tool returned rows,
-    # contradicting tool_signals' own documented contract ("one owner-scoped
-    # indexed read, only on the empty path"). `report_empty_result` would
-    # short-circuit on a non-zero count anyway, so the work was pure waste.
-    if not out and ctx.deps.course_id:
-        offering_ids: list[str] = []
+    # The resolution is now unconditional rather than probe-only: it is what
+    # the READ needs, not merely what the probe needs. It stays a single
+    # `academics` call whose two reads are the price of asking the right
+    # question at all.
+    offering_ids: list[str] = []
+    if ctx.deps.course_id:
         try:
             offering_ids = await asyncio.to_thread(
                 user_offering_ids_for_course, ctx.deps.user_id, ctx.deps.course_id
             )
         except Exception:
-            logger.debug("misconceptions probe: offering resolution failed", exc_info=True)
-        if offering_ids:
-            await report_empty_result_async(
-                "read_misconceptions_for_course",
-                user_id=ctx.deps.user_id,
-                count=len(out),
-                expect=Expect.COURSE_HAS_AGGREGATES,
-                feature=getattr(ctx.deps, "feature", "unknown"),
-                scope={"offering_id": f"in.({','.join(offering_ids)})"},
-                payload={"course_id": ctx.deps.course_id},
+            # Degrade to "no offerings" rather than raising: this is one
+            # optional personalization input, and the agent has others.
+            logger.warning(
+                "read_misconceptions_for_course: offering resolution failed; "
+                "returning no class misconceptions", exc_info=True,
             )
+
+    out = await read_misconceptions_for_course(offering_ids)
+    # F5: THE canonical instance of this bug class. The probe asks whether
+    # aggregates CARRYING MISCONCEPTION TEXT exist for this student's
+    # offerings of this course — not merely whether they are enrolled, and
+    # not merely whether stats rows exist.
+    #
+    # The text qualifier matters as much as the scope. Both live environments
+    # today hold stats rows whose `common_misconceptions` arrays are all
+    # empty (0 of 72 on staging, 0 of 73 on prod — the aggregation runs, the
+    # classes just have no misconception text yet). A probe that fired on
+    # "any stats row exists" would therefore report a discrepancy on EVERY
+    # generation for EVERY student the moment #553 was fixed — the precise
+    # alarm-fatigue failure F5 exists to prevent.
+    if not out and offering_ids:
+        await report_empty_result_async(
+            "read_misconceptions_for_course",
+            user_id=ctx.deps.user_id,
+            count=len(out),
+            expect=Expect.COURSE_HAS_AGGREGATES,
+            feature=getattr(ctx.deps, "feature", "unknown"),
+            scope={"offering_id": f"in.({','.join(offering_ids)})"},
+            payload={"course_id": ctx.deps.course_id},
+        )
     # F6: this block's contribution to the prompt.
     prompt_dimensions.record(misconceptions=len(out))
     return [

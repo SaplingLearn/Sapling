@@ -662,6 +662,66 @@ _QUIZ_ATTEMPTS = [
 ]
 
 
+# ── offering_concept_stats (#553) ─────────────────────────────────────────
+#
+# Class-level aggregates, keyed on `course_offerings.id` — a DIFFERENT
+# keyspace from the abstract `courses.id` the graph carries. #553 was the
+# quiz's misconceptions tool filtering this table's `offering_id` with a
+# course id, which matched nothing for every student indefinitely while
+# looking exactly like a class that had no misconceptions yet.
+#
+# The rows are shaped so a test can tell a real fix from a coincidence:
+#
+#   * OFF_CS_F25 and OFF_CS_S26 are BOTH offerings of the same abstract CS
+#     course, and the active user is enrolled in both — so a fix that
+#     resolves only one "current" offering still loses half the rows.
+#   * OFF_HIST_F25 belongs to a course the active user is NOT enrolled in.
+#     Its misconception text must never reach them; that is the negative
+#     half of the assertion, and it is what stops a fix from "working" by
+#     simply dropping the offering filter altogether.
+#   * One row carries an EMPTY array: the aggregation writes a stats row per
+#     concept as soon as a class has activity and only fills the array when
+#     it has something to say (0 of 72 rows on staging and 0 of 73 on prod
+#     carried text on 2026-08-22). Seeding that state keeps the empty-vs-
+#     absent distinction exercised.
+#
+# (stats_id, offering_id, concept_name, misconceptions)
+_OFFERING_CONCEPT_STATS = [
+    ("rich-ocs-cs-f25-recursion", OFF_CS_F25, "Recursion",
+     ["Recursion always costs more memory than a loop",
+      "A base case is optional if the input shrinks"]),
+    ("rich-ocs-cs-f25-pointers", OFF_CS_F25, "Pointers and Memory",
+     ["Freeing a pointer also clears the variable holding it"]),
+    ("rich-ocs-cs-s26-controlflow", OFF_CS_S26, "Control Flow",
+     ["`else if` evaluates every branch before choosing one"]),
+    # Same class, no text yet — a stats row is not the same as a finding.
+    ("rich-ocs-cs-s26-variables", OFF_CS_S26, "Variables and Types", []),
+    # A class the active user is NOT in. Must never leak into their prompt.
+    ("rich-ocs-hist-f25-sources", OFF_HIST_F25, "Primary Sources",
+     ["A primary source is any source written by a historian"]),
+]
+
+
+def seed_offering_concept_stats() -> None:
+    for stats_id, off_id, concept, misconceptions in _OFFERING_CONCEPT_STATS:
+        h.insert_if_absent(
+            "offering_concept_stats",
+            stats_id,
+            {
+                "offering_id": off_id,
+                "concept_name": concept,
+                "student_count": 4,
+                "avg_mastery_score": 0.55,
+                "pct_mastered": 0.25,
+                "pct_struggling": 0.5,
+                "pct_unexplored": 0.25,
+                "common_misconceptions": misconceptions,
+                "effective_explanations": [],
+                "prerequisite_gaps": [],
+            },
+        )
+
+
 def seed_quiz() -> None:
     for qa_id, node_id, difficulty, score, total, questions, answers, completed_at in _QUIZ_ATTEMPTS:
         h.insert_if_absent(
@@ -785,6 +845,7 @@ _SUMMARY_ORDER = [
     "room_summaries",
     "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
     "sessions", "messages", "feedback", "issue_reports",
+    "offering_concept_stats",
 ]
 
 
@@ -804,6 +865,7 @@ def main() -> None:
     seed_study_guides()
     seed_room_summaries()
     seed_quiz()
+    seed_offering_concept_stats()
     seed_feedback()
     seed_sessions()
     h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")

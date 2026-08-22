@@ -248,12 +248,14 @@ def test_misconceptions_tool_skips_the_probe_with_no_resolvable_offering(sink):
 
 
 def test_misconceptions_tool_is_silent_when_it_returns_rows(sink):
-    """And costs nothing: the offering resolution behind the probe is uncached
-    and issues two unbounded PostgREST reads, so gating it on "a course id
-    exists" instead of on the result being EMPTY made every quiz generation
-    pay both round-trips even when the tool had rows to return —
-    contradicting tool_signals' own contract (one owner-scoped indexed read,
-    only on the empty path)."""
+    """No event and no PROBE when the tool has rows to return.
+
+    The offering resolution itself is no longer probe-only: since #553 the
+    READ needs those ids (the stats table is keyed on `course_offerings.id`),
+    so it runs exactly once per call, on both paths. What must stay off the
+    non-empty path is the probe — `report_empty_result` would short-circuit
+    on a non-zero count anyway, and firing it here would put a discrepancy
+    event on a tool that just worked."""
     resolve = MagicMock(return_value=["off-1"])
     with (
         _probe(True) as probe,
@@ -267,7 +269,8 @@ def test_misconceptions_tool_is_silent_when_it_returns_rows(sink):
     events_service.flush_now()
     assert sink == []
     assert len(out) == 1
-    resolve.assert_not_called()
+    # Resolved once — the read's own input, not redundant probe work.
+    assert resolve.call_count == 1
     probe.assert_not_called()
 
 
@@ -343,3 +346,46 @@ def test_tools_work_outside_a_capture_scope(sink):
     ):
         asyncio.run(read_misconceptions_for_course_tool(_ctx()))
     assert prompt_dimensions.snapshot() == {}
+
+
+# ── #553: the misconceptions tool must query the OFFERING keyspace ──────────
+
+def test_misconceptions_tool_filters_by_the_students_offerings_not_the_course_id():
+    """H1/#553. `offering_concept_stats.offering_id` holds `course_offerings.id`;
+    `ctx.deps.course_id` is the ABSTRACT `courses.id`. Passing the second where
+    the first is expected matched nothing, for every student, forever — verified
+    live on 2026-08-22: staging 72/72 stats rows key on an offering id and 0 on a
+    course id, prod 73/73, and filtering by course id returned 0 rows in both.
+
+    So the tool must resolve the student's offerings of that course and filter on
+    those. A student can hold more than one offering of the same course (the rich
+    seed's active user has CS in two terms), so this is a set, not a scalar.
+    """
+    captured: dict = {}
+
+    def fake_table(name):
+        m = MagicMock()
+        if name == "offering_concept_stats":
+            def _select(cols, **kw):
+                captured["filters"] = kw.get("filters")
+                return [{"concept_name": "Recursion",
+                         "common_misconceptions": ["All recursion is infinite"]}]
+            m.select.side_effect = _select
+        else:
+            m.select.return_value = []
+        return m
+
+    with (
+        patch("agents.tools.graph_read.table", side_effect=fake_table),
+        patch(
+            "agents.tools.graph_read.user_offering_ids_for_course",
+            return_value=["off-cs-f25", "off-cs-s26"],
+        ),
+    ):
+        out = asyncio.run(read_misconceptions_for_course_tool(_ctx()))
+
+    assert [m.text for m in out] == ["All recursion is infinite"]
+    offering_filter = (captured.get("filters") or {}).get("offering_id")
+    assert offering_filter == "in.(off-cs-f25,off-cs-s26)", (
+        f"expected an offering-keyspace IN filter, got {offering_filter!r}"
+    )

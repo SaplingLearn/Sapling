@@ -87,7 +87,17 @@ _PROBES: dict[Expect, tuple[str, dict, bool]] = {
     # digesting, and counting one would flag every student mid-first-quiz.
     Expect.HAS_ATTEMPTS: ("quiz_attempts", {"completed_at": "not.is.null"}, True),
     Expect.HAS_GRAPH: ("graph_nodes", {}, True),
-    Expect.COURSE_HAS_AGGREGATES: ("offering_concept_stats", {}, False),
+    # `neq.{}` — rows whose misconception array actually has TEXT in it, not
+    # merely rows that exist. The aggregation writes a stats row per concept
+    # as soon as a class has any activity, and leaves `common_misconceptions`
+    # empty until it has something to say: on 2026-08-22 that was 0 of 72 rows
+    # on staging and 0 of 73 on prod. Probing for bare existence would then
+    # report a discrepancy on every generation for every student — the alarm
+    # fatigue this helper exists to avoid. The expectation is "this class has
+    # misconceptions to offer", so that is what the probe must ask.
+    Expect.COURSE_HAS_AGGREGATES: (
+        "offering_concept_stats", {"common_misconceptions": "neq.{}"}, False,
+    ),
 }
 
 
