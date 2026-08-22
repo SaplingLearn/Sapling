@@ -96,7 +96,13 @@ route:
   consumer (Learn), so tagging it there is unambiguous. The notetaker's chat is
   a separate `AIChatPanel` and is out of scope.
 - **Quiz.** `screens/Quiz.tsx` only fetches concepts and mounts `QuizPanel`;
-  every answer/submit control renders in `QuizPanel.tsx`.
+  every answer/submit control renders in `QuizPanel.tsx`. The redesign (#537)
+  ends that split — `components/quiz/QuizScreen.tsx` switches on phase between
+  `home/QuizHome.tsx`, `question/QuizQuestion.tsx` and `results/QuizResults.tsx`,
+  and each owns its own ids. Three shared `ui/` primitives
+  (`AnswerOption`, `SegmentedControl`, `Sheet`) are in the eslint file list too:
+  the controls render inside them, so a testid-less `<button>` there would
+  un-anchor the surface from outside the screen files.
 
 ## Current inventory
 
@@ -172,7 +178,10 @@ route:
 | `tutor-topic-search` | the search input inside the open topic dropdown; Enter picks the first match, or the typed text as a custom topic |
 | `tutor-start` | the entry screen's "Start learning" button — dispatches the streamed session opener (#151a greeting journey) |
 
-### `quiz`
+### `quiz` (legacy `QuizPanel`)
+
+Removed with `components/QuizPanel.tsx` in the last wave of #537. Until then the
+old surface and the redesigned one coexist, so both tables are live.
 
 | testid | element |
 | --- | --- |
@@ -190,6 +199,61 @@ route:
 | `quiz-results-mastery` | the "X / Y correct · mastery B% → A%" line |
 | `quiz-retake` | "Retake" |
 | `quiz-done` | "Done" |
+
+### `quiz` (redesign, #537)
+
+The redesigned quiz (`components/quiz/**`) replaces the `screens/Quiz.tsx` →
+`QuizPanel.tsx` chain: one `QuizScreen` switches on phase between `QuizHome`,
+`QuizQuestion` and `QuizResults`.
+
+Three ids are **renamed** rather than new — same role, clearer name:
+`quiz-exit` → `quiz-leave`, `quiz-retake` → `quiz-again`,
+`quiz-explain-concept` → `quiz-ask`. Eleven are **kept** verbatim so existing
+journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
+`quiz-answer-options`, `quiz-answer-option-{label}`, `quiz-submit-answer`,
+`quiz-next`, `quiz-review-verdict`, `quiz-results-score`,
+`quiz-results-mastery`, `quiz-done`.
+
+| testid | element |
+| --- | --- |
+| `quiz-home` | quiz-home root (`phase: home \| configuring`) |
+| `quiz-resume-strip` | the "you left a quiz on X" banner |
+| `quiz-resume` | "Resume" on that banner |
+| `quiz-resume-discard` | "Discard" — hides the attempt client-side; there is no abandon endpoint |
+| `quiz-proposal` | the "Ready for you" primary proposal card |
+| `quiz-adjust` | "adjust" link on the proposal — opens the adjust dialog |
+| `quiz-alternative-{nodeId}` | one "Also worth a look" row |
+| `quiz-review-due` | "Review everything due" row |
+| `quiz-pick-open` | "Pick something specific →" |
+| `quiz-pick-list` | the grouped concept list it reveals |
+| `quiz-pick-{nodeId}` | one concept row in that list |
+| `quiz-concept-dialog` | the concept dialog opened from an alternative or a pick row |
+| `quiz-concept-start` | "Start · {count} {difficulty}" inside it |
+| `quiz-adjust-dialog` | "Adjust this quiz" dialog |
+| `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the three `SegmentedControl`s; each option is `${testid}-${value}` |
+| `quiz-empty-state` | no courses / no concepts empty state |
+| `quiz-error` | the inline error card (mapped copy + Retry/Back) |
+| `quiz-error-retry` / `quiz-error-back` | its two controls |
+| `quiz-generating` | the skeleton question screen while a quiz is being written |
+| `quiz-progress` | the question rail's progress dots |
+| `quiz-leave` | "Leave" (was `quiz-exit`) |
+| `quiz-leave-dialog` / `quiz-leave-cancel` / `quiz-leave-confirm` | the leave confirmation |
+| `quiz-flag` | "This question is confusing" (toggles, `aria-pressed`) |
+| `quiz-ask` | "Ask about this" (was `quiz-explain-concept`) |
+| `quiz-ask-panel` / `quiz-ask-panel-close` / `quiz-ask-input` / `quiz-ask-send` | the tutor sheet |
+| `quiz-results` | results root |
+| `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
+| `quiz-missed-list` | the "to look at" section |
+| `quiz-missed-{questionId}` | one missed item |
+| `quiz-missed-explain-{questionId}` | its "Show explanation" disclosure |
+| `quiz-missed-ask-{questionId}` | its "Ask about this" |
+| `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
+| `quiz-practise-missed` | "Practise the one(s) you missed" |
+| `quiz-next-concept` | "Next: {concept} →" while the scope queue has more |
+| `quiz-again` | "Keep going — quiz again" (was `quiz-retake`) |
+| `quiz-back-to-source` | the secondary exit, labelled by where the quiz was entered from |
+| `tree-node-recent-quizzes` | the tree node panel's "Recent quizzes" block |
+| `tree-node-recent-quiz-{attemptId}` | one row in it |
 
 ### `graph`
 

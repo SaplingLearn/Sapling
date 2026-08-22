@@ -1,0 +1,126 @@
+/* Shared layout for every quiz screen (§5 "Common").
+ *
+ * Per-screen rules live beside their screen (`home/home.css`, `question/
+ * question.css`, `results/results.css`); this file holds only what all three
+ * share — the three content-column widths, the page paddings, and the root that
+ * binds the course accent.
+ *
+ * Every value is a token. The design's own geometry constants (the column
+ * widths and the three page paddings) are declared ONCE here as tokens and
+ * referenced everywhere else, so no screen carries a bare px measurement.
+ *
+ * `--quiz-accent` is the one thing bound at runtime: the screen root sets it
+ * from the active concept's course colour with an inline custom property (the
+ * single inline-style exemption in R-1). Everything downstream reads
+ * `var(--quiz-accent, var(--accent))`, so an unset accent degrades to the app's
+ * own, never to a hardcoded colour.
+ */
+
+.quiz-root {
+  --quiz-col-home: 780px;
+  --quiz-col-question: 680px;
+  --quiz-col-results: 640px;
+
+  --quiz-pad-home: 52px var(--pad-xl) 32px;
+  --quiz-pad-question: 56px var(--pad-xl) 36px;
+  --quiz-pad-results: 28px var(--pad-xl) 32px;
+
+  /* The rail the question screen's progress dots sit in, mirrored on the right
+     so the content column stays optically centred. */
+  --quiz-rail: 64px;
+
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The scrolling body under the TopBar. Each phase supplies its own padding
+   token; the column width is set by the screen inside. */
+.quiz-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.quiz-body--home { padding: var(--quiz-pad-home); }
+.quiz-body--question { padding: var(--quiz-pad-question); }
+.quiz-body--results { padding: var(--quiz-pad-results); }
+
+.quiz-col {
+  width: 100%;
+  margin: 0 auto;
+}
+
+.quiz-col--home { max-width: var(--quiz-col-home); }
+.quiz-col--question { max-width: var(--quiz-col-question); }
+.quiz-col--results { max-width: var(--quiz-col-results); }
+
+/* Section rule used between blocks on every screen. */
+.quiz-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--pad-lg) 0;
+}
+
+.quiz-eyebrow {
+  color: var(--text-muted);
+  margin-bottom: var(--pad-sm);
+}
+
+/* Nothing is signalled by colour alone, so the error card carries a heading as
+   well as its tint. */
+.quiz-error {
+  max-width: var(--quiz-col-question);
+  margin: 0 auto;
+  padding: var(--pad-lg);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--state-struggle);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+}
+
+.quiz-error__title {
+  font-size: var(--fs-lg);
+  margin: 0 0 var(--pad-sm);
+}
+
+.quiz-error__body {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  margin: 0 0 var(--pad-md);
+}
+
+.quiz-error__actions {
+  display: flex;
+  gap: var(--pad-sm);
+}
+
+.quiz-error__request-id {
+  display: block;
+  margin-top: var(--pad-sm);
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+}
+
+/* Placeholder scaffolding for the Wave 3 screens. These three rules exist so
+   the stubs are legible while the real screens are built; the screen CSS files
+   replace them. */
+.quiz-stub {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-md);
+}
+
+.quiz-stub__phase {
+  color: var(--text-muted);
+}
+
+.quiz-stub__actions {
+  display: flex;
+  gap: var(--pad-sm);
+  flex-wrap: wrap;
+}
