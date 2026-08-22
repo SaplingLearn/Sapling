@@ -117,6 +117,27 @@ describe("Sheet", () => {
     vi.useRealTimers();
   });
 
+  it("locks the scrolling container while open and releases it on close", () => {
+    // The lock is Dialog's, inherited through useOverlayBehaviour — but §3
+    // names it as a Sheet requirement, so it gets its own assertion.
+    const scroller = document.createElement("div");
+    scroller.setAttribute("data-scroll-container", "");
+    document.body.appendChild(scroller);
+    expect(scroller.style.getPropertyValue("overflow-y")).toBe("");
+
+    const { unmount } = render(
+      <Sheet open onClose={() => {}} title="Ask about this">
+        <p>body</p>
+      </Sheet>,
+    );
+    expect(scroller.style.getPropertyValue("overflow-y")).toBe("hidden");
+    expect(scroller.style.getPropertyValue("overflow-x")).toBe("hidden");
+
+    unmount();
+    expect(scroller.style.getPropertyValue("overflow-y")).toBe("");
+    scroller.remove();
+  });
+
   it("takes its width as a custom property so the rule stays in the stylesheet", () => {
     open({ width: 560 });
     expect(screen.getByRole("dialog").style.getPropertyValue("--sheet-width")).toBe("560px");

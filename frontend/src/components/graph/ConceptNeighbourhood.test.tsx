@@ -150,6 +150,49 @@ describe("ConceptNeighbourhood", () => {
     expect(container.querySelectorAll(".concept-neighbourhood__edge")).toHaveLength(3);
   });
 
+  it("draws the wide results canvas exactly where the design draws it", () => {
+    const { container } = render(
+      <ConceptNeighbourhood
+        centre={CENTRE}
+        siblings={SIBLINGS}
+        courseColor="#7b4b99"
+        width={640}
+        height={212}
+        scale={2.5}
+        ariaLabel="Recursion and its neighbours"
+      />,
+    );
+    const bodies = Array.from(container.querySelectorAll(".concept-node__body"));
+    const at = (el: Element) => [num(el, "cx"), num(el, "cy")];
+    // The design's own numbers: centre (320,106) with NO rightward nudge, and
+    // siblings at (96,34) / (628,48) / (86,208). Within a pixel on each.
+    expect(at(bodies[3])).toEqual([320, 106]);
+    const expected = [
+      [96, 34],
+      [628, 48],
+      [86, 208],
+    ];
+    expected.forEach(([x, y], i) => {
+      expect(at(bodies[i])[0]).toBeCloseTo(x, 0);
+      expect(at(bodies[i])[1]).toBeCloseTo(y, 0);
+    });
+  });
+
+  it("picks the composition from the width, and lets a caller override it", () => {
+    // 640 wide → wide → centred.
+    const wide = renderHome({ width: 640, height: 212, scale: 2.5 });
+    expect(num(wide.container.querySelectorAll(".concept-node__body")[3], "cx")).toBe(320);
+    cleanup();
+    // The same canvas, forced compact → the 8px nudge comes back.
+    const forced = renderHome({
+      width: 640,
+      height: 212,
+      scale: 2.5,
+      composition: "compact",
+    });
+    expect(num(forced.container.querySelectorAll(".concept-node__body")[3], "cx")).toBe(328);
+  });
+
   it("renders the results preset's growth centre at the after-radius with reduced motion", () => {
     const { container } = render(
       <ConceptNeighbourhood

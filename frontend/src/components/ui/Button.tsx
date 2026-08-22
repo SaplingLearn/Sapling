@@ -16,7 +16,8 @@ type Size = "sm" | "md" | "lg" | "xl";
 // and "Done" are text, not chrome, and `ghost` keeps button padding so it
 // still reads as a control (#537). `aria-pressed` / `data-active="true"`
 // underlines it in the accent, which is how the quiz shows "this link's dialog
-// is open". `size` is ignored by `link`: it has no padding to scale.
+// is open". Leave `size` at its default on a link: `.btn--sm`/`--lg`/`--xl`
+// still apply their padding, which is the shape `link` exists to shed.
 export function Button({
   variant = "secondary",
   size = "md",

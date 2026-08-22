@@ -36,8 +36,9 @@ export type ConceptNodeVariant =
   | { kind: "node" }
   | { kind: "growth"; before: number; after: number };
 
-/** Half the reference box. `radiusFor()`'s outputs are in these units. */
-export const NODE_REF_RADIUS = 15;
+/** Half the reference box. `radiusFor()`'s outputs are in these units.
+ *  Module-local: consumers want `NODE_REF_BOX` or `markRadius()`. */
+const NODE_REF_RADIUS = 15;
 /** The reference viewBox is square at twice the reference radius. */
 export const NODE_REF_BOX = NODE_REF_RADIUS * 2;
 /** Reference-unit gap between the mark and its caption — the tree's `r + 13`. */

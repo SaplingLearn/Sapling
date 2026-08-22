@@ -10,10 +10,17 @@
  * arithmetic feeds.
  *
  * LAYOUT. The three sibling slots are the design's own — top-left, top-right,
- * bottom-left — expressed as fractions of the canvas so the same arrangement
- * survives all three presets (home 320×204, concept dialog 300×200, results
- * 640×212). The centre is nudged right of true centre because two of the three
- * slots are on the left; without it the picture leans.
+ * bottom-left — expressed as fractions of the canvas.
+ *
+ * There are TWO compositions, not one, because the design has two. The small
+ * canvases (home 320×204, concept dialog 300×200) nudge the centre 8px right
+ * of true centre, balancing the two left-hand slots against the single right
+ * one. The wide results canvas (640×212) has room to spare and is drawn
+ * centred, with its siblings pushed outward; forcing the small canvases'
+ * fractions onto it left the top-left slot 19px adrift. `compact` and `wide`
+ * reproduce the design's own three canvases to the pixel, and the default is
+ * picked from `width`, so a caller passing the documented presets gets the
+ * right one without knowing this exists.
  *
  * The top-right slot sits on the canvas edge, so it never gets a caption — it
  * would clip. That matches the design, which drops that label in every preset.
@@ -30,16 +37,41 @@ import {
   type ConceptNodeVariant,
 } from "./ConceptNode";
 
-/** Sibling slots as (x, y) fractions of the canvas. Order matters: it is the
- *  order `siblingsFor` returns, strongest neighbour first. */
-const SLOTS: readonly (readonly [number, number])[] = [
-  [0.12, 0.14], // top-left
-  [0.975, 0.18], // top-right — on the edge, so never captioned
-  [0.15, 0.96], // bottom-left
-];
+export type NeighbourhoodComposition = "compact" | "wide";
 
-/** Rightward nudge of the centre, in px, balancing the two left-hand slots. */
-const CENTRE_OFFSET_X = 8;
+/**
+ * The two arrangements, each as (x, y) fractions of the canvas plus the
+ * centre's px nudge. Slot order is `siblingsFor`'s: strongest neighbour first.
+ *
+ * `compact` is the average of the design's two small canvases (it lands within
+ * ~6px on both); `wide` is the results canvas read off directly — centre
+ * (320, 106) and slots (96, 34) / (628, 48) / (86, 208) at 640×212, which
+ * these fractions reproduce to under a pixel.
+ */
+const COMPOSITIONS: Record<
+  NeighbourhoodComposition,
+  { centreOffsetX: number; slots: readonly (readonly [number, number])[] }
+> = {
+  compact: {
+    centreOffsetX: 8,
+    slots: [
+      [0.12, 0.14], // top-left
+      [0.975, 0.18], // top-right — on the edge, so never captioned
+      [0.15, 0.96], // bottom-left
+    ],
+  },
+  wide: {
+    centreOffsetX: 0,
+    slots: [
+      [0.15, 0.16],
+      [0.98125, 0.22642],
+      [0.134375, 0.98113],
+    ],
+  },
+};
+
+/** At or above this width the canvas is drawn as the results set piece. */
+const WIDE_CANVAS_MIN_WIDTH = 480;
 
 /** Edge opacity — the tree's resting value for the `organism` variant. */
 const EDGE_OPACITY = 0.2;
@@ -60,6 +92,11 @@ export interface ConceptNeighbourhoodProps {
   ariaLabel: string;
   /** Growth only. `prefers-reduced-motion` overrides a `true` here. */
   animate?: boolean;
+  /**
+   * Which of the design's two arrangements to draw. Defaults from `width`
+   * (>= 480 → `wide`), so the three documented presets need never pass it.
+   */
+  composition?: NeighbourhoodComposition;
   testid?: string;
 }
 
@@ -74,18 +111,20 @@ export function ConceptNeighbourhood({
   showLabels = true,
   ariaLabel,
   animate = true,
+  composition = width >= WIDE_CANVAS_MIN_WIDTH ? "wide" : "compact",
   testid,
 }: ConceptNeighbourhoodProps) {
   const filterId = `concept-neighbourhood-glow-${React.useId()}`;
   const [grown] = useGrowth(centreVariant, animate);
 
-  const cx = width / 2 + CENTRE_OFFSET_X;
+  const { centreOffsetX, slots } = COMPOSITIONS[composition];
+  const cx = width / 2 + centreOffsetX;
   const cy = height / 2;
 
-  const placed = siblings.slice(0, SLOTS.length).map((sibling, i) => ({
+  const placed = siblings.slice(0, slots.length).map((sibling, i) => ({
     sibling,
-    x: SLOTS[i][0] * width,
-    y: SLOTS[i][1] * height,
+    x: slots[i][0] * width,
+    y: slots[i][1] * height,
     // Only the two left-hand slots are captioned (see the header note).
     captioned: showLabels && i !== 1,
   }));
