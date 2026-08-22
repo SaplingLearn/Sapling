@@ -282,6 +282,34 @@ describe("QuizQuestion — keyboard", () => {
     expect(answered.next).toHaveBeenCalledTimes(1);
   });
 
+  it("listens on the screen root, not on window", () => {
+    const { actions } = renderScreen(makeSession());
+    // The same keypress that selects when it reaches the root must do nothing
+    // when the quiz doesn't own the focus.
+    fireEvent.keyDown(document.body, { key: "c" });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(actions.select).not.toHaveBeenCalled();
+    expect(actions.requestLeave).not.toHaveBeenCalled();
+  });
+
+  it("leaves Space to the answer row's own activation", () => {
+    const { actions } = renderScreen(
+      makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] }),
+    );
+    const row = screen.getByTestId("quiz-answer-option-C");
+
+    // `fireEvent` returns false when the handler called preventDefault. Enter
+    // is the footer's action and IS pre-empted; Space must not be, or the
+    // row's native button activation never runs.
+    expect(fireEvent.keyDown(row, { key: " " })).toBe(true);
+    expect(fireEvent.keyDown(row, { key: "Enter" })).toBe(false);
+    expect(actions.submitAnswer).toHaveBeenCalledTimes(1);
+
+    // ...and what the browser does on Space is a click.
+    fireEvent.click(row);
+    expect(actions.select).toHaveBeenCalledWith(2);
+  });
+
   it("Enter does nothing while no answer is chosen", () => {
     const { actions } = renderScreen(makeSession());
     fireEvent.keyDown(root(), { key: "Enter" });
@@ -411,6 +439,43 @@ describe("QuizQuestion — the verdict", () => {
     expect(screen.getByTestId("quiz-submit-answer")).toHaveTextContent("Scoring…");
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
   });
+
+  it("holds Submit while the hook says a call is in flight", () => {
+    const actions = makeActions();
+    const session = makeSession({ items: [item(0, { selectedIndex: 1 }), item(1), item(2)] });
+    const { rerender } = render(
+      <QuizQuestion
+        session={session}
+        actions={actions}
+        config={null}
+        concept={CONCEPT}
+        userId="user-1"
+        courseId="course-cs101"
+        pending={false}
+      />,
+    );
+    expect(screen.getByTestId("quiz-submit-answer")).toBeEnabled();
+
+    rerender(
+      <QuizQuestion
+        session={session}
+        actions={actions}
+        config={null}
+        concept={CONCEPT}
+        userId="user-1"
+        courseId="course-cs101"
+        pending
+      />,
+    );
+    // Same phase, same selection — only `pending` moved, and it is enough.
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    expect(screen.getByTestId("quiz-answer-option-A")).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.keyDown(root(), { key: "Enter" });
+    fireEvent.keyDown(root(), { key: "d" });
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+    expect(actions.select).not.toHaveBeenCalled();
+  });
 });
 
 describe("QuizQuestion — flag and generating", () => {
@@ -446,10 +511,33 @@ describe("QuizQuestion — flag and generating", () => {
     expect(screen.queryByTestId("quiz-answer-options")).toBeNull();
   });
 
-  it("says so once when fewer questions arrived than were asked for", () => {
-    renderScreen(makeSession({ deliveredShort: true, items: [item(0), item(1)] }));
-    expect(toastApi.show).toHaveBeenCalledWith(
-      "Only 2 questions were ready for this concept.",
+  it("says so exactly once when fewer questions arrived than were asked for", () => {
+    const short = makeSession({ deliveredShort: true, items: [item(0), item(1)] });
+    const { rerender } = renderScreen(short);
+    expect(toastApi.show).toHaveBeenCalledWith("Only 2 questions were ready for this concept.");
+    expect(toastApi.show).toHaveBeenCalledTimes(1);
+
+    // Every re-render of the same attempt — a selection, a verdict, a flag —
+    // must not re-announce it.
+    rerender(
+      <QuizQuestion
+        session={short}
+        actions={makeActions()}
+        config={null}
+        concept={CONCEPT}
+        userId="user-1"
+        courseId="course-cs101"
+      />,
+    );
+    rerender(
+      <QuizQuestion
+        session={{ ...short, items: [item(0, { selectedIndex: 1 }), item(1)] }}
+        actions={makeActions()}
+        config={null}
+        concept={CONCEPT}
+        userId="user-1"
+        courseId="course-cs101"
+      />,
     );
     expect(toastApi.show).toHaveBeenCalledTimes(1);
   });
@@ -528,9 +616,8 @@ describe("QuizQuestion — Ask about this never orphans the attempt", () => {
       expect(panel).toHaveTextContent("Because the base case is the exit."),
     );
 
-    // Nothing about the attempt moved.
-    expect(actions.requestLeave).not.toHaveBeenCalled();
-    expect(actions.next).not.toHaveBeenCalled();
+    // Nothing about the attempt moved — not one machine event, of any kind.
+    Object.values(actions).forEach(fn => expect(fn).not.toHaveBeenCalled());
     expect(screen.getByTestId("quiz-answer-options").innerHTML).toBe(optionsBefore);
 
     // Closing puts the student back exactly where they were.

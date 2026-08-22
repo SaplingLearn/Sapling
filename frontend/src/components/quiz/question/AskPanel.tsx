@@ -82,6 +82,9 @@ interface AskTurn {
   id: number;
   role: "user" | "assistant";
   text: string;
+  /** ADR 0020: the stream was cut off after producing this much. The partial
+   *  stays in the thread, marked; Retry drops it and starts the answer over. */
+  interrupted?: boolean;
 }
 
 /**
@@ -147,6 +150,10 @@ export function AskPanel({
       setError(null);
       setStreaming("");
       let sawToken = false;
+      // The partial reply so far. `streaming` state can't serve here: it is
+      // cleared before the JSON leg and again in `finally`, and ADR 0020 needs
+      // the text to outlive both.
+      let partial = "";
 
       try {
         let sid = sessionIdRef.current;
@@ -189,6 +196,7 @@ export function AskPanel({
           const res = await streamChat(sid, userId, message, TUTOR_MODE, true, undefined, {
             onToken: delta => {
               if (delta.trim()) sawToken = true;
+              partial += delta;
               setStreaming(prev => (prev ?? "") + delta);
             },
             signal: controller.signal,
@@ -198,6 +206,7 @@ export function AskPanel({
           if (controller.signal.aborted) return;
           // Tokens already on screen, or a failure the JSON route would repeat
           // identically (#151a) — surface it rather than silently re-running.
+          // The partial survives via the outer catch.
           if (sawToken || !shouldFallBackToJson(err)) throw err;
           setStreaming(null);
           const res = await sendChat(sid, userId, message, TUTOR_MODE, true);
@@ -208,6 +217,16 @@ export function AskPanel({
         setTurns(t => [...t, { id: nextId(), role: "assistant", text: reply }]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token) return;
+        // ADR 0020, and the whole reason `partial` exists: half an answer the
+        // student was already reading must not blink out and be replaced by an
+        // error strip. It stays in the thread, marked unfinished. Retry drops
+        // it (`retry` below) so the second attempt doesn't read as a sequel.
+        if (partial.trim()) {
+          setTurns(t => [
+            ...t,
+            { id: nextId(), role: "assistant", text: partial, interrupted: true },
+          ]);
+        }
         setError(err instanceof Error ? err.message : "The tutor is unavailable.");
       } finally {
         if (runRef.current === token) {
@@ -253,6 +272,16 @@ export function AskPanel({
     returnFocusTo?.current?.focus();
   }, [open, returnFocusTo]);
 
+  /**
+   * Re-send the turn that failed. The interrupted partial is dropped first:
+   * the retry produces a whole answer, and leaving the fragment above it would
+   * read as the first half of the same reply.
+   */
+  const retry = () => {
+    setTurns(t => (t.length > 0 && t[t.length - 1].interrupted ? t.slice(0, -1) : t));
+    void runTurn(lastMessageRef.current);
+  };
+
   const send = (e: React.FormEvent) => {
     e.preventDefault();
     const text = draft.trim();
@@ -280,7 +309,7 @@ export function AskPanel({
           {seed.explanation && (
             <p className="quiz-ask__seed-explanation body-serif">{seed.explanation}</p>
           )}
-          <span className="quiz-question__hint">Asking the tutor about {subtitle}.</span>
+          <span className="quiz-ask__sr">Asking the tutor about {subtitle}.</span>
         </div>
 
         <div className="quiz-ask__thread" aria-live="polite">
@@ -292,6 +321,9 @@ export function AskPanel({
             ) : (
               <div key={turn.id} className="quiz-ask__turn--assistant">
                 <MarkdownChat>{turn.text}</MarkdownChat>
+                {turn.interrupted && (
+                  <p className="quiz-ask__interrupted">Interrupted — the tutor didn&apos;t finish.</p>
+                )}
               </div>
             ),
           )}
@@ -311,7 +343,7 @@ export function AskPanel({
                 type="button"
                 className="btn btn--sm"
                 data-testid="quiz-ask-retry"
-                onClick={() => void runTurn(lastMessageRef.current)}
+                onClick={retry}
               >
                 Try again
               </button>

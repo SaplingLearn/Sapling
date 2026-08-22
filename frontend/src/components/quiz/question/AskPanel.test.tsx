@@ -172,6 +172,50 @@ describe("AskPanel", () => {
     expect(api.streamChat.mock.calls[1][2]).toBe(composeAskMessage(SEED));
   });
 
+  it("keeps a half-written answer when the stream dies mid-sentence (ADR 0020)", async () => {
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      const handlers = args[6] as { onToken?: (d: string) => void };
+      handlers.onToken?.("A base case is ");
+      handlers.onToken?.("the branch that");
+      throw new Error("the tutor was interrupted");
+    });
+
+    renderPanel();
+
+    // The partial the student was already reading stays on screen, marked. It
+    // is NOT blinked out and replaced by an error strip.
+    await screen.findByText("A base case is the branch that");
+    expect(screen.getByText(/Interrupted/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("the tutor was interrupted");
+    // Tokens appeared, so the JSON rung is skipped: never silently re-run a
+    // turn the student has already partly read.
+    expect(api.sendChat).not.toHaveBeenCalled();
+
+    // Retry drops the fragment rather than stacking a whole answer under it.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quiz-ask-retry"));
+    });
+    await screen.findByText("The base case is the exit.");
+    expect(screen.queryByText("A base case is the branch that")).toBeNull();
+    expect(screen.queryByText(/Interrupted/)).toBeNull();
+    expect(screen.queryByTestId("quiz-ask-retry")).toBeNull();
+  });
+
+  it("aborts an in-flight stream on unmount", async () => {
+    let signal: AbortSignal | undefined;
+    api.streamChat.mockImplementationOnce(async (...args: unknown[]) => {
+      signal = (args[6] as { signal?: AbortSignal }).signal;
+      return new Promise(() => {}); // never settles — the tab goes away first
+    });
+
+    const { unmount } = renderPanel();
+    await waitFor(() => expect(signal).toBeDefined());
+    expect(signal!.aborted).toBe(false);
+
+    unmount();
+    expect(signal!.aborted).toBe(true);
+  });
+
   it("uses the JSON start route when the streamed one falls over", async () => {
     api.startSessionStream.mockRejectedValueOnce(new Error("no stream"));
     renderPanel();

@@ -23,6 +23,11 @@
   --quiz-q-skeleton-row: 55px; /* one `AnswerOption` row, while generating */
   --quiz-q-skeleton-stem: 26px;
   --quiz-q-skeleton-line: 13px;
+  /* The skeleton row's left inset is `AnswerOption`'s own (`padding: 17px 16px
+     17px 14px`, globals.css), so the placeholder starts where the answer text
+     will. Not `--answer-letter-w`: that is the letter column's WIDTH, which is
+     the same number today by coincidence, not by construction. */
+  --quiz-q-skeleton-inset: 14px;
 
   display: flex;
   align-items: stretch;
@@ -145,7 +150,10 @@
   margin-top: var(--quiz-q-aside-mt);
 }
 
-.quiz-question__flag {
+/* The prototype's flag link is 12px, one step below the body text around it.
+   `.btn.btn--link` (0,2,0) sets 13px, so this has to be equally specific to
+   land — a bare `.quiz-question__flag` is a dead rule. */
+.btn.quiz-question__flag {
   font-size: var(--fs-sm);
 }
 
@@ -206,7 +214,7 @@
   display: flex;
   align-items: center;
   height: var(--quiz-q-skeleton-row);
-  padding: 0 var(--pad-md) 0 14px;
+  padding: 0 var(--pad-md) 0 var(--quiz-q-skeleton-inset);
   border-bottom: 1px solid var(--border);
 }
 
@@ -226,11 +234,36 @@
 
 /* ── Ask panel ──────────────────────────────────────────────────────── */
 
+/* The panel is portalled to <body>, so it is NOT inside `.quiz-question` and
+   inherits none of its tokens. Its own geometry is declared here, on its own
+   root, for the same reason. (`--quiz-accent` is likewise out of scope from
+   here and falls through to `--accent`, which is the honest degradation: the
+   sheet floats over the app, not inside the course-tinted screen.) */
 .quiz-ask {
+  --quiz-ask-label-gap: 6px;   /* between "You chose C ·" and the answer text */
+  --quiz-ask-input-pad-y: 8px; /* the composer's field, matching `.btn` height */
+
   display: flex;
   flex-direction: column;
   gap: var(--pad-md);
   min-height: 100%;
+}
+
+/* The panel's own visually-hidden line. Deliberately NOT
+   `.quiz-question__hint`: that one is the question screen's keyboard hint, and
+   restyling it must not silently restyle the sheet. Same canonical recipe —
+   the 1px/-1px here are what keep a node in the accessibility tree while
+   painting nothing, not design measurements. */
+.quiz-ask__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* The seeded context, restated as static cards so the student can see exactly
@@ -269,7 +302,7 @@
 
 .quiz-ask__seed-label {
   color: var(--text-muted);
-  margin-right: 6px;
+  margin-right: var(--quiz-ask-label-gap);
 }
 
 .quiz-ask__seed-explanation {
@@ -306,6 +339,14 @@
   color: var(--text-muted);
 }
 
+/* ADR 0020: a reply the student was already reading survives the failure that
+   cut it off, marked as unfinished rather than silently passed off as whole. */
+.quiz-ask__interrupted {
+  margin: var(--pad-sm) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
 .quiz-ask__error {
   display: flex;
   align-items: center;
@@ -331,7 +372,7 @@
 .quiz-ask__input {
   flex: 1;
   min-width: 0;
-  padding: 8px var(--pad-md);
+  padding: var(--quiz-ask-input-pad-y) var(--pad-md);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--bg-panel);

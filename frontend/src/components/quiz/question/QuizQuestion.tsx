@@ -90,7 +90,14 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
-export function QuizQuestion({ session, actions, concept, userId, courseId }: QuizQuestionProps) {
+export function QuizQuestion({
+  session,
+  actions,
+  concept,
+  userId,
+  courseId,
+  pending = false,
+}: QuizQuestionProps) {
   const toast = useToast();
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -105,21 +112,6 @@ export function QuizQuestion({ session, actions, concept, userId, courseId }: Qu
    * and carrying it across would be answering the wrong question.
    */
   const [askForCursor, setAskForCursor] = useState<number | null>(null);
-  /**
-   * The item whose `/answer` call is in flight, as a key that changes whenever
-   * the machine moves.
-   *
-   * `useQuizSession` exposes exactly this as `pending`, but `QuizQuestionProps`
-   * (the A2 seam) doesn't carry it and `QuizScreen` doesn't pass it, so the
-   * screen keeps its own latch rather than widening the seam unilaterally.
-   * The phase can't stand in: it stays `active` for the whole round trip, so
-   * without this the Submit button is live again the instant it is pressed.
-   *
-   * Stored as the key rather than a boolean cleared in an effect, so "the call
-   * landed" is DERIVED from the session that came back — no reset render, and
-   * no way for the latch to get stuck if a transition is missed.
-   */
-  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const { phase, cursor, items } = session;
   const item = items[cursor];
@@ -132,9 +124,16 @@ export function QuizQuestion({ session, actions, concept, userId, courseId }: Qu
   // only decides whether the verdict is ever shown.
   const showVerdict = session.config.feedback === "as-you-go" && item?.verdict != null;
 
-  // Both derived, so a session that moved is the only thing that clears them.
-  const answerKey = `${session.attemptId}:${cursor}:${phase}:${item?.verdict ? "scored" : "open"}`;
-  const busy = busyKey === answerKey;
+  /**
+   * A quiz call is in flight. Straight off the hook (`useQuizSession`'s
+   * `pending`, on the props since A2's fix round 4): the phase can't say it,
+   * because it stays `active` for the whole `/answer` round trip — and the
+   * hook is the only thing that knows about the calls it refuses (a missing
+   * `attemptId`, a duplicate press), so a screen-local latch would stay stuck
+   * on exactly those.
+   */
+  const busy = pending;
+  // Derived, so a new question is the only thing that closes the sheet.
   const askOpen = askForCursor === cursor;
   const selectable = phase === "active" && !busy;
 
@@ -174,9 +173,8 @@ export function QuizQuestion({ session, actions, concept, userId, courseId }: Qu
 
   const submit = useCallback(() => {
     if (phase !== "active" || busy || selectedIndex === null) return;
-    setBusyKey(answerKey);
     actions.submitAnswer();
-  }, [actions, answerKey, busy, phase, selectedIndex]);
+  }, [actions, busy, phase, selectedIndex]);
 
   const flag = () => {
     const wasFlagged = item?.flagged ?? false;
@@ -437,18 +435,14 @@ export function QuizQuestion({ session, actions, concept, userId, courseId }: Qu
             This question is confusing
           </Button>
           {phase === "answered" && (
-            // A raw <button> rather than <Button>: the panel needs a focus
-            // target to hand focus back to, and `Button` is a plain function
-            // component with no `ref` in its prop type. Same classes it renders.
-            <button
+            <Button
               ref={askRef}
-              type="button"
-              className="btn btn--sm"
+              size="sm"
               data-testid="quiz-ask"
               onClick={() => setAskForCursor(cursor)}
             >
               Ask about this
-            </button>
+            </Button>
           )}
         </div>
 
