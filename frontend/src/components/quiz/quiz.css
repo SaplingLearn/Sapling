@@ -116,21 +116,7 @@
   color: var(--text-muted);
 }
 
-/* Placeholder scaffolding for the Wave 3 screens. These three rules exist so
-   the stubs are legible while the real screens are built; the screen CSS files
-   replace them. */
-.quiz-stub {
-  display: flex;
-  flex-direction: column;
-  gap: var(--pad-md);
-}
-
+/* The signed-out line `QuizScreen` renders in place of the phase switch. */
 .quiz-stub__phase {
   color: var(--text-muted);
-}
-
-.quiz-stub__actions {
-  display: flex;
-  gap: var(--pad-sm);
-  flex-wrap: wrap;
 }

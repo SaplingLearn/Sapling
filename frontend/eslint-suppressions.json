@@ -136,7 +136,7 @@
   },
   "src/lib/api.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 26
+      "count": 23
     }
   },
   "src/lib/useActiveSemester.ts": {
