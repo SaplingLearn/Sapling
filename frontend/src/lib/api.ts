@@ -24,18 +24,88 @@ export const API_URL = '';
  *
  * `message` stays the raw body for backward compatibility: callers that
  * stringify the error, or read `.message`, behave exactly as they did before.
+ *
+ * Since #537 it also carries what the coded envelope told us. Quiz routes
+ * answer with `{error: {code, message, request_id}, detail, request_id}`
+ * (backend/services/quiz_errors.py::quiz_error_body) plus a `Retry-After`
+ * header on 429; `code`/`requestId`/`retryAfterSec`/`body` surface that so
+ * `lib/quiz/errors.ts` can tell a rate limit from a daily cap from a generation
+ * timeout. All four are optional — routes outside the quiz router still answer
+ * with the legacy `{detail, request_id}` shape and leave them undefined.
  */
+export interface ApiErrorFields {
+  /** `error.code` off the coded envelope, when the route sent one. */
+  code?: string;
+  /** `error.request_id` / top-level `request_id` — the support handle. */
+  requestId?: string;
+  /** Whole-seconds `Retry-After`, when the response carried the header. */
+  retryAfterSec?: number;
+  /** The parsed JSON body, when the body was JSON. */
+  body?: unknown;
+}
+
 export class ApiError extends Error {
   readonly status: number;
+  readonly code?: string;
+  readonly requestId?: string;
+  readonly retryAfterSec?: number;
+  readonly body?: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, fields: ApiErrorFields = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = fields.code;
+    this.requestId = fields.requestId;
+    this.retryAfterSec = fields.retryAfterSec;
+    this.body = fields.body;
   }
 }
 
-async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
+function parseErrorBody(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+/** `Retry-After` is either whole seconds or an HTTP date. Only the numeric form
+ *  is honoured — a date needs clock-skew handling nobody here wants, and the one
+ *  route that sets the header (quiz.py:1238) always sends seconds. */
+function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const trimmed = header.trim();
+  if (!trimmed) return undefined;
+  const seconds = Number(trimmed);
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : undefined;
+}
+
+/** Pulls the coded-envelope fields out of a parsed error body, tolerating both
+ *  the quiz shape and the legacy `{detail, request_id}` one. */
+function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
+  if (body === null || typeof body !== 'object') return {};
+  const record = body as Record<string, unknown>;
+  const nested = record.error;
+  const error = nested !== null && typeof nested === 'object'
+    ? (nested as Record<string, unknown>)
+    : null;
+  const code = error && typeof error.code === 'string' ? error.code : undefined;
+  const requestId = [error?.request_id, record.request_id].find(
+    (v): v is string => typeof v === 'string' && v.length > 0,
+  );
+  return { code, requestId };
+}
+
+/**
+ * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
+ * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
+ * 2026-06-30 onboarding-loop bug). Exported since #537 so feature-scoped clients
+ * (`lib/quiz/api.ts`) can be thin wrappers over it instead of growing this file.
+ */
+export async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -43,7 +113,12 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new ApiError(err || `HTTP ${res.status}`, res.status);
+    const body = parseErrorBody(err);
+    throw new ApiError(err || `HTTP ${res.status}`, res.status, {
+      ...errorFieldsFrom(body),
+      retryAfterSec: parseRetryAfter(res.headers.get('Retry-After')),
+      body,
+    });
   }
   return res.json();
 }
