@@ -365,7 +365,11 @@ function LoadingSkeleton() {
 
 // The empty state itself is now the shared `ui/EmptyState` (#537) — this
 // screen's private copy was the only one in the app, so the quiz's two would
-// have made three. `size="hero"` is this screen's display-scale treatment.
+// have made three. `size="hero"` is this screen's display-scale treatment,
+// and it reproduces what this screen used to draw inline exactly: 56px title,
+// 11px ss01 eyebrow, 17px body, and a plain `.btn--primary` at 10px/18px —
+// deliberately NOT `btn--lg`, which is 1px shorter and 100 heavier. The
+// values live as tokens in globals.css and are pinned in EmptyState.test.tsx.
 function GradebookEmptyState({
   semesterLabel,
   onUpload,
@@ -382,7 +386,7 @@ function GradebookEmptyState({
       action={
         <button
           type="button"
-          className="btn btn--primary btn--lg"
+          className="btn btn--primary"
           data-testid="gradebook-upload-syllabus"
           onClick={onUpload}
         >

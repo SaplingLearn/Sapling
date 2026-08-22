@@ -652,7 +652,17 @@ body { font-size: 14px; line-height: 1.5; }
   --progress-dot: 9px;
   --progress-dot-todo: 7px;
   --sheet-width: 480px;      /* default; <Sheet width> overrides per instance */
-  --empty-hero-fs: 56px;     /* promoted from Gradebook's blank-semester title */
+  /* The answer row's body size. The --fs-* scale has no 15px step and is
+     documented as derived-from-an-audit, not invented, so the design's own
+     value is pinned here rather than bolted onto the global type ramp. */
+  --answer-text-fs: 15px;
+  /* Gradebook's blank-semester screen, promoted verbatim with <EmptyState
+     size="hero">. These four are the values that screen was drawn at; the
+     hero rules below exist so the promotion renders it unchanged. */
+  --empty-hero-fs: 56px;
+  --empty-hero-eyebrow-fs: 11px;
+  --empty-hero-body-fs: 17px;
+  --empty-hero-cta-pad: 10px 18px;
 }
 
 /* ── Button, `link` variant ──────────────────────────────────────────
@@ -754,7 +764,7 @@ body { font-size: 14px; line-height: 1.5; }
 .answer-option__text {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-md);
+  font-size: var(--answer-text-fs);
   line-height: 1.55;
   color: var(--text-dim);
 }
@@ -939,7 +949,19 @@ body { font-size: 14px; line-height: 1.5; }
 }
 .empty-state--hero .empty-state__body {
   margin-bottom: 32px;
-  font-size: var(--fs-lg);
+  font-size: var(--empty-hero-body-fs);
+}
+/* `.label-micro` is 10px and drops ss01; the screen this was promoted from
+   used `.mono` at 11px, which keeps it. Restore both for the hero size. */
+.empty-state--hero .empty-state__eyebrow {
+  font-size: var(--empty-hero-eyebrow-fs);
+  font-feature-settings: "ss01";
+}
+/* The hero CTA is a plain `.btn--primary` at the promoted padding and size —
+   NOT `.btn--lg`, which is 1px shorter and 100 heavier. */
+.empty-state--hero .empty-state__action .btn {
+  padding: var(--empty-hero-cta-pad);
+  font-size: var(--fs-base);
 }
 
 /* ── ConceptNode / ConceptNeighbourhood ──────────────────────────────
@@ -979,50 +1001,6 @@ body { font-size: 14px; line-height: 1.5; }
   transform-box: fill-box;
   transform-origin: center;
   transition: transform var(--dur-slow) var(--ease);
-}
-
-/* ── QuizPrimitivesGallery ───────────────────────────────────────────
-   The harness at components/ui/__fixtures__ that shows every primitive in
-   every state at the shell's real content width. Not shipped in any route;
-   it lives here rather than inline so the fixture obeys the same
-   classes-and-tokens-only rule as the primitives it displays. */
-.quiz-gallery {
-  max-width: 900px;
-  padding: var(--pad-xl);
-  display: flex;
-  flex-direction: column;
-  gap: 44px;
-}
-.quiz-gallery__title { margin: 0; font-size: var(--fs-4xl); }
-.quiz-gallery__section {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
-}
-.quiz-gallery__heading { margin: 0; }
-.quiz-gallery__row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--pad-lg);
-}
-.quiz-gallery__caption {
-  width: 200px;
-  flex-shrink: 0;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-.quiz-gallery__specimens {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 18px;
-  min-width: 0;
-}
-.quiz-gallery__answers {
-  width: 100%;
-  border-top: 1px solid var(--border);
 }
 
 /* ══════════════════════════════════════════════════════════════════

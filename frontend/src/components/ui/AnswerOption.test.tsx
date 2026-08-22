@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import React from "react";
+import fs from "node:fs";
+import path from "node:path";
 import { AnswerOption, type AnswerState } from "./AnswerOption";
 
 afterEach(cleanup);
@@ -95,6 +97,14 @@ describe("AnswerOption", () => {
     const row = screen.getByRole("radio");
     expect(row.querySelector(".answer-option__letter")).toHaveAttribute("aria-hidden", "true");
     expect(row.querySelector(".answer-option__mark")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("draws its text at the design's 15px, which the --fs-* scale has no step for", () => {
+    const css = fs.readFileSync(path.resolve(__dirname, "../../app/globals.css"), "utf8");
+    expect(css).toMatch(/--answer-text-fs:\s*15px;/);
+    expect(css).toMatch(
+      /\.answer-option__text \{[^}]*font-size:\s*var\(--answer-text-fs\)[^}]*\}/,
+    );
   });
 
   it("defaults its tab stop to checked-only, and honours an explicit one", () => {
