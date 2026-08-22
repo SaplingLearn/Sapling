@@ -28,7 +28,7 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true, userName: "Ada" }),
 }));
 
-vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
+vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: vi.fn(() => false) }));
 
 // "topnav" renders the legacy Learn-next panel with the quiz CTA; the
 // third describe block flips this to "sidebar" to exercise the layout with
@@ -58,6 +58,7 @@ import {
   getSessions,
   getUpcomingAssignments,
 } from "@/lib/api";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 function course(code: string): EnrolledCourse {
   return {
@@ -101,6 +102,7 @@ beforeEach(() => {
     disconnect() {}
   };
 
+  vi.mocked(useIsMobile).mockReturnValue(false);
   vi.mocked(getUpcomingAssignments).mockResolvedValue({ assignments: [] });
   vi.mocked(getSessions).mockResolvedValue({ sessions: [] });
   vi.mocked(getRecommendations).mockResolvedValue({ recommendations: [] });
@@ -167,6 +169,22 @@ describe("Dashboard — review-what's-due CTA (default sidenav layout)", () => {
     expect(cta.textContent).toContain("Review what's due");
 
     fireEvent.click(cta);
+    expect(push).toHaveBeenCalledWith("/quiz?scope=due&from=dashboard&return=%2Fdashboard");
+  });
+
+  it("is reachable at mobile width too, as the single mounted instance", async () => {
+    layoutState.pref = "sidebar";
+    vi.mocked(useIsMobile).mockReturnValue(true);
+
+    render(<Dashboard />);
+
+    // Exactly one CTA in the DOM — the mobile row, not the (hidden)
+    // desktop quick-action row — so the shared testid never collides.
+    const ctas = await screen.findAllByTestId("dashboard-review-due");
+    expect(ctas).toHaveLength(1);
+    expect(ctas[0].textContent).toContain("Review what's due");
+
+    fireEvent.click(ctas[0]);
     expect(push).toHaveBeenCalledWith("/quiz?scope=due&from=dashboard&return=%2Fdashboard");
   });
 });

@@ -709,29 +709,48 @@ export function Dashboard() {
   );
 
   const mobileMetaRow = isMobile ? (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "flex-end",
-        gap: 8,
-        flexWrap: "wrap",
-      }}
-    >
-      <button
-        className="btn btn--sm"
-        onClick={() => router.push("/library")}
-        style={{ padding: "7px 14px", fontSize: 12 }}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* The sidenav (non-legacy) layout has no Learn-next panel to carry
+          this CTA into on mobile — rightPanel's own copy is `!isMobile`-gated
+          — so it gets its own full-width row here instead. The legacy
+          layout already has its copy inside the Learn-next panel (reachable
+          via the "Stats & More" mobile tab), so it's skipped here: exactly
+          one `dashboard-review-due` button ever mounts for a given
+          layout/viewport combination. */}
+      {!useLegacyPanels && (
+        <button
+          className="btn btn--sm"
+          data-testid="dashboard-review-due"
+          onClick={() => router.push(reviewDueHref)}
+          style={{ width: "100%", padding: "7px 14px", fontSize: 12 }}
+        >
+          <Icon name="bolt" size={13} /> {reviewDueLabel}
+        </button>
+      )}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
       >
-        <Icon name="search" size={13} /> Library
-      </button>
-      <button
-        className="btn btn--sm btn--primary"
-        onClick={() => router.push("/learn")}
-        style={{ padding: "7px 14px", fontSize: 12 }}
-      >
-        <Icon name="sparkle" size={13} /> Start learning
-      </button>
+        <button
+          className="btn btn--sm"
+          onClick={() => router.push("/library")}
+          style={{ padding: "7px 14px", fontSize: 12 }}
+        >
+          <Icon name="search" size={13} /> Library
+        </button>
+        <button
+          className="btn btn--sm btn--primary"
+          onClick={() => router.push("/learn")}
+          style={{ padding: "7px 14px", fontSize: 12 }}
+        >
+          <Icon name="sparkle" size={13} /> Start learning
+        </button>
+      </div>
     </div>
   ) : null;
 
@@ -746,7 +765,7 @@ export function Dashboard() {
         className="btn btn--sm btn--primary"
         onClick={() => router.push(
           buildQuizHref(
-            suggestNode ? { concept: suggestNode.id } : {},
+            { concept: suggestNode.id },
             { kind: "dashboard", returnTo: "/dashboard" },
           ),
         )}
