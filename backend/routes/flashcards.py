@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from config import is_weak
 from db.connection import table
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
@@ -175,8 +176,13 @@ def _get_course_documents(
 
 def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
     """
-    Return concept names where the student has low mastery (score < 0.4)
-    for the given course/subject.
+    Return concept names the student is weak on — below the "learning" floor
+    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored".
+
+    Was a local `< 0.4` (#557), which is not any tier boundary: concepts in
+    [0.4, 0.45) read as "struggling" on the Tree but were never offered for
+    practice here — the surface whose entire job is drilling weak concepts
+    silently skipped a slice of them.
     """
     try:
         rows = table("graph_nodes").select(
@@ -189,12 +195,17 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
                 "concept_name,mastery_score",
                 filters={"user_id": f"eq.{user_id}"},
             )
-        weak = [
-            r["concept_name"]
-            for r in (rows or [])
-            if (r.get("mastery_score") or 0) < 0.4
-        ]
-        return weak[:15]  # cap to keep prompt reasonable
+        weak = sorted(
+            (r for r in (rows or []) if is_weak(r.get("mastery_score") or 0)),
+            key=lambda r: r.get("mastery_score") or 0,
+        )
+        # Weakest first, THEN cap. The cap used to truncate in PostgREST row
+        # order, which was survivable while the floor was 0.4 and is not now
+        # that #557 widened it to 0.45: the newly-admitted [0.4, 0.45)
+        # concepts could displace 0.0-0.1 ones purely on row order, leaving
+        # the surface whose job is drilling the weakest concepts drilling the
+        # least-weak of the weak.
+        return [r["concept_name"] for r in weak[:15]]
     except Exception:
         return []
 
