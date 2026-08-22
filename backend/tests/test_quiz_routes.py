@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from agents.quiz import Quiz, QuizQuestion
+from services.rag_service import Retrieval
 
 client = TestClient(app)
 
@@ -1115,10 +1116,11 @@ class TestQuizGrounding:
             patch("routes.quiz.table", side_effect=self._table_factory()),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value="Course: CAS CS 330 ..."),
-            patch("routes.quiz.retrieve_chunks",
-                  return_value=[{"course_id": "CAS CS 330",
-                                 "chunk_text": "Memoization caches subproblem results.",
-                                 "similarity": 0.81}]),
+            patch("routes.quiz.retrieve_chunks_detailed",
+                  return_value=Retrieval(chunks=[
+                      {"course_id": "CAS CS 330",
+                       "chunk_text": "Memoization caches subproblem results.",
+                       "similarity": 0.81}])),
         ):
             client.post("/api/quiz/generate", json={
                 "user_id": "user_1", "concept_node_id": "node_x",
@@ -1136,7 +1138,7 @@ class TestQuizGrounding:
             patch("routes.quiz.table", side_effect=self._table_factory()),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value=""),
-            patch("routes.quiz.retrieve_chunks", return_value=[]),
+            patch("routes.quiz.retrieve_chunks_detailed", return_value=Retrieval()),
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_1", "concept_node_id": "node_x",
@@ -1147,12 +1149,16 @@ class TestQuizGrounding:
         assert r.status_code == 200
 
     def test_retrieval_exception_is_swallowed(self):
+        """`retrieve_chunks_detailed` catches its own failures, so this pins
+        the OUTER degrade: even if retrieval raised through, grounding is
+        best-effort and must never 502 a generation."""
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
             patch("routes.quiz.table", side_effect=self._table_factory()),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value=""),
-            patch("routes.quiz.retrieve_chunks", side_effect=RuntimeError("embed down")),
+            patch("routes.quiz.retrieve_chunks_detailed",
+                  side_effect=RuntimeError("embed down")),
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_1", "concept_node_id": "node_x",

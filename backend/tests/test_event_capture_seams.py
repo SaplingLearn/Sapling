@@ -732,6 +732,64 @@ def test_rag_uncovered_distinguishes_no_match_from_no_material(sink):
     assert ev["payload"]["course_chunks"] == 42
 
 
+def test_rag_uncovered_calls_a_failed_retrieval_unknown_not_no_match(sink):
+    """`retrieve_chunks` swallows its own failures and returns [] — the same
+    value "nothing matched" returns. So a course WITH indexed material whose
+    retrieval threw was reported as `no_match_for_concept`: "this course has
+    material, none of it covers this concept". That is an assertion about
+    data we never successfully read, which is precisely the claim E8's reason
+    taxonomy exists to stop us making."""
+    from agents.quiz import Quiz, QuizQuestion
+
+    fake_quiz = Quiz(questions=[
+        QuizQuestion(
+            question="Q?", type="multiple_choice", difficulty="easy",
+            options=["a", "b", "c", "d"], correct_answer="a",
+            explanation="x", concept="X",
+        ),
+    ])
+
+    def factory(name):
+        mock = MagicMock()
+        if name == "courses":
+            mock.select.return_value = [{"course_code": "CAS CS 330"}]
+        elif name == "course_chunks":
+            # The course IS indexed — 42 chunks. Only retrieval failed.
+            mock.select_with_count.return_value = ([{"id": "c1"}], 42)
+            mock.select.return_value = []
+        else:
+            mock.select.return_value = (
+                [_quiz_node_row()] if name == "graph_nodes" else []
+            )
+        mock.insert.return_value = []
+        return mock
+
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        # Fail inside rag_service, the way a real outage does: retrieve_chunks
+        # catches, emits rag.retrieval_failed, and hands back [].
+        patch(
+            "services.rag_service._embed_query",
+            side_effect=RuntimeError("embedding backend down"),
+        ),
+        patch("routes.quiz._get_catalog_chunk", return_value=""),
+        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch(
+            "routes.quiz.quiz_agent.run",
+            new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+        ),
+    ):
+        r = client.post("/api/quiz/generate", json={
+            "user_id": "user_andres", "concept_node_id": "node1",
+            "num_questions": 1, "difficulty": "easy",
+            "use_shared_context": False,
+        })
+    assert r.status_code == 200
+
+    ev = _of_type(sink, "quiz.rag_uncovered")[0]
+    assert ev["payload"]["reason"] == "coverage_unknown"
+
+
 def test_rag_uncovered_calls_a_failed_lookup_unknown_not_unresolved(sink):
     """E8's whole job is telling problems apart, and `_resolve_bu_code`
     returns nothing both for "this course has no BU code" and for "the read

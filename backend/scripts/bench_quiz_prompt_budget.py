@@ -76,11 +76,11 @@ def _get_client() -> genai.Client:
     `google.genai.Client` without a `model_mode()` gate (CLAUDE.md, #439), and
     this script is below it: it needs `count_tokens`, which is not reachable
     through a pydantic-ai agent. So it takes the same shape
-    `services/rag_service.py` does — lazy construction, real-mode only, dummy
-    key fallback — instead of building a live client at import time. In
-    function/cassette mode there is no transport to count against, and a
-    keyless run cannot count tokens at all; both fail loudly here rather than
-    producing numbers nobody should trust.
+    `services/rag_service.py` does — lazy, real-mode only — instead of
+    building a live client at import time. In function/cassette mode there is
+    no transport to count against, and a keyless run cannot count tokens at
+    all; both fail loudly HERE rather than producing numbers nobody should
+    trust, or dying later inside `count_tokens` on an opaque auth error.
     """
     global _client
     if model_mode() != "real":
@@ -89,9 +89,18 @@ def _get_client() -> genai.Client:
             "token counting needs the real Gemini transport. Unset the var "
             "(or set it to 'real') and re-run."
         )
+    if not GEMINI_API_KEY:
+        # No dummy-key fallback: rag_service needs one because it is imported
+        # on the request path and must not explode at import. This is an
+        # offline CLI whose only job is calling count_tokens, so a keyless
+        # run has nothing to do but fail — and it should say why.
+        raise SystemExit(
+            "bench_quiz_prompt_budget: GEMINI_API_KEY is not set — "
+            "count_tokens is a live API call. Export a real key and re-run."
+        )
     if _client is None:
         _client = genai.Client(
-            api_key=GEMINI_API_KEY or "dummy-key-for-import",
+            api_key=GEMINI_API_KEY,
             http_options=genai_types.HttpOptions(timeout=60_000),
         )
     return _client

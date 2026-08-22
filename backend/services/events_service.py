@@ -37,8 +37,12 @@ auth.permission_denied        audit     reason, route
 document.upload               usage     course_id, offering_id, char_count
 document.processed            usage     document_id, category, course_id, char_count
 quiz.started                  usage     quiz_id, concept_node_id, num_questions, difficulty,
-                                        + prompt dimensions (F6): blocks, k_chunks,
-                                        material_chars, digest_present, recent_asked
+                                        + prompt dimensions (F6) from the route: blocks,
+                                        k_chunks, material_chars, recent_asked,
+                                        routing_chars, adaptive; plus, ONLY when the agent
+                                        actually called the tool that records them,
+                                        digest_present, digest_chars, recent_attempts,
+                                        misconceptions (see docs/quiz-prompt-budget.md)
 quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
 quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks

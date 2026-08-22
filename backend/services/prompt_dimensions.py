@@ -79,17 +79,33 @@ def snapshot() -> dict:
     payload that the events worker serializes on another thread — handing
     out the live dict would race a tool still recording into it.
 
-    DEEP because the values are not all scalars: `blocks` is a list that the
-    route mutates as it assembles the prompt (append "rag", append
-    "recently_asked", ...). A shallow `dict(current)` shares that list, so the
-    "copy" would still hand the worker an object under active mutation — the
-    exact race this function exists to prevent, just one level down.
+    DEEP because the values are not all scalars — `blocks` is a list — and a
+    shallow `dict(current)` shares those containers with a tool that may still
+    be recording. No caller mutates a recorded list in place today (`record()`
+    only ever `update()`s whole values, and the route builds `blocks` once),
+    so this is defence against a future caller that does, not a live race.
+
+    A value that cannot be deep-copied costs that one dimension's isolation,
+    NOT the whole payload: this used to return `{}` on any failure, which
+    shipped `quiz.started` with no dimensions at all — measuring nothing while
+    looking exactly like a healthy event, which is the bug class F6 exists to
+    end.
     """
-    try:
-        current = _DIMS.get()
-        return copy.deepcopy(current) if current else {}
-    except Exception:  # pragma: no cover - defensive
+    current = _DIMS.get()
+    if not current:
         return {}
+    try:
+        return copy.deepcopy(current)
+    except Exception:
+        logger.warning(
+            "prompt_dimensions.snapshot could not deep-copy; falling back to a "
+            "shallow copy so the dimensions still ship",
+            exc_info=True,
+        )
+        try:
+            return dict(current)
+        except Exception:  # pragma: no cover - defensive
+            return {}
 
 
 def clear() -> None:

@@ -64,10 +64,11 @@ def test_snapshot_is_a_copy():
 
 
 def test_snapshot_is_a_DEEP_copy():
-    """The values aren't all scalars — `blocks` is a list the route appends to
-    as it assembles the prompt. A shallow copy shares that list, so the
-    "copy" still hands the events worker an object under active mutation,
-    which is the race snapshot() exists to prevent."""
+    """The values aren't all scalars — `blocks` is a list. A shallow copy
+    shares that list with the accumulator, so a future caller that mutates a
+    recorded list in place would reach through the "copy" into the live dict
+    the events worker is serializing. No caller does that today; this pins the
+    guarantee so one can be added without reintroducing the race."""
     pd.start_capture()
     pd.record(blocks=["rag"])
     snap = pd.snapshot()
@@ -144,3 +145,24 @@ def test_two_concurrent_requests_do_not_share_an_accumulator():
     a, b = asyncio.run(scenario())
     assert a == {"tag": "a", "k_chunks": 1}
     assert b == {"tag": "b", "k_chunks": 5}
+
+
+def test_snapshot_degrades_to_a_shallow_copy_rather_than_losing_everything():
+    """An un-deepcopyable value must cost us that one dimension's isolation,
+    not the whole payload.
+
+    `snapshot()` deep-copies inside a try whose except returns `{}`. F6 exists
+    so somebody can attribute prompt tokens to sections; silently shipping
+    `quiz.started` with NO dimensions is the same "looks fine, measures
+    nothing" failure the seam was built to end. Degrade, don't erase.
+    """
+    class Unclonable:
+        def __deepcopy__(self, memo):
+            raise TypeError("nope")
+
+    pd.start_capture()
+    pd.record(k_chunks=4, blocks=["rag"], weird=Unclonable())
+    snap = pd.snapshot()
+
+    assert snap["k_chunks"] == 4
+    assert snap["blocks"] == ["rag"]

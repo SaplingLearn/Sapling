@@ -46,7 +46,7 @@ from services.fingerprint import fingerprint
 from services.quiz_identity import question_hash, normalize_text
 from services.quiz_repetition import RecentQuestion, recent_question_identities
 from services import prompt_dimensions
-from services.rag_service import retrieve_chunks, format_rag_context
+from services.rag_service import retrieve_chunks_detailed, format_rag_context
 from services.xp_service import award_xp_safe
 from services.request_context import current_request_id
 
@@ -570,6 +570,14 @@ class CourseMaterial(NamedTuple):
     #: problem from "this course has no BU code" — the honest label for the
     #: former is `coverage_unknown`, not `course_unresolved`.
     resolution_failed: bool = False
+    #: Whether concept-scoped RETRIEVAL raised (as opposed to cleanly matching
+    #: nothing). `retrieve_chunks` degrades to [] on failure, which is
+    #: indistinguishable from a clean miss — so without this, a course with
+    #: material indexed whose retrieval broke was reported as
+    #: `no_match_for_concept`: "it has material, none covers this concept".
+    #: That is a claim about data we never read. Same reasoning as
+    #: `resolution_failed`, one layer down.
+    retrieval_failed: bool = False
 
     @property
     def chunk_count(self) -> int:
@@ -662,10 +670,11 @@ def _course_material(course_id: str | None, concept_name: str) -> CourseMaterial
         catalog = ""
     if catalog:
         blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
-    try:
-        chunks = retrieve_chunks(concept_name, course_id=bu_code, k=_RAG_K)
-    except Exception:
-        chunks = []
+    # `_detailed` because [] alone cannot say whether retrieval ran: it is
+    # both "nothing matched" and "the index was unreachable". E8 reports on
+    # that difference, so it has to be carried rather than inferred.
+    retrieval = retrieve_chunks_detailed(concept_name, course_id=bu_code, k=_RAG_K)
+    chunks = retrieval.chunks
     # Drop any retrieved chunk that merely repeats the catalog block already
     # injected above — catalog chunks share the course_chunks store and can
     # rank into the semantic results, which would send the same
@@ -689,6 +698,7 @@ def _course_material(course_id: str | None, concept_name: str) -> CourseMaterial
         has_catalog=bool(catalog),
         course_chunks=None if chunks else _course_chunk_coverage(bu_code),
         bu_code=bu_code,
+        retrieval_failed=retrieval.failed,
     )
 
 
@@ -704,7 +714,7 @@ def _log_rag_uncovered(
     Generation is NOT blocked on this — a course with nothing indexed is a
     legitimate mode, and refusing to quiz a student because their class
     hasn't uploaded slides would be worse than a general-knowledge quiz.
-    But it stops being invisible: the reasons below are four different
+    But it stops being invisible: the reasons below are different
     problems, and telling them apart is the whole point.
     """
     if material.rag_grounded:
@@ -715,6 +725,13 @@ def _log_rag_uncovered(
         # ("it has no BU code") would be an assertion about data we never
         # read. `coverage_unknown` is the honest can't-tell label, and it
         # already exists for exactly this shape of ignorance.
+        reason = "coverage_unknown"
+    elif material.retrieval_failed:
+        # Retrieval raised, so we never learned whether this course's material
+        # covers the concept. `no_match_for_concept` would assert that it
+        # doesn't. `rag.retrieval_failed` carries the cause under the same
+        # request_id; this event's job is only to stop claiming more than we
+        # know.
         reason = "coverage_unknown"
     elif material.bu_code is None:
         reason = "course_unresolved"
