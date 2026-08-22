@@ -36,9 +36,14 @@ def _dims():
     prompt_dimensions.clear()
 
 
-def _ctx(user_id="u1", course_id="c1", feature="quiz"):
+def _ctx(user_id="u1", course_id="c1", feature="quiz", share_class_context=True):
     return SimpleNamespace(
-        deps=SimpleNamespace(user_id=user_id, course_id=course_id, feature=feature)
+        deps=SimpleNamespace(
+            user_id=user_id,
+            course_id=course_id,
+            feature=feature,
+            share_class_context=share_class_context,
+        )
     )
 
 
@@ -361,15 +366,20 @@ def test_misconceptions_tool_filters_by_the_students_offerings_not_the_course_id
     those. A student can hold more than one offering of the same course (the rich
     seed's active user has CS in two terms), so this is a set, not a scalar.
     """
-    captured: dict = {}
+    seen_filters: list[dict] = []
 
     def fake_table(name):
         m = MagicMock()
         if name == "offering_concept_stats":
             def _select(cols, **kw):
-                captured["filters"] = kw.get("filters")
-                return [{"concept_name": "Recursion",
-                         "common_misconceptions": ["All recursion is infinite"]}]
+                f = kw.get("filters") or {}
+                seen_filters.append(f)
+                # Only the first offering has anything to say, which is also
+                # how a real pair of offerings usually looks.
+                if f.get("offering_id") == "eq.off-cs-f25":
+                    return [{"concept_name": "Recursion",
+                             "common_misconceptions": ["All recursion is infinite"]}]
+                return []
             m.select.side_effect = _select
         else:
             m.select.return_value = []
@@ -385,7 +395,76 @@ def test_misconceptions_tool_filters_by_the_students_offerings_not_the_course_id
         out = asyncio.run(read_misconceptions_for_course_tool(_ctx()))
 
     assert [m.text for m in out] == ["All recursion is infinite"]
-    offering_filter = (captured.get("filters") or {}).get("offering_id")
-    assert offering_filter == "in.(off-cs-f25,off-cs-s26)", (
-        f"expected an offering-keyspace IN filter, got {offering_filter!r}"
+
+    queried = [f.get("offering_id") for f in seen_filters]
+    # Every offering asked for, none skipped — a single shared LIMIT would let
+    # a full first offering starve the second.
+    assert queried == ["eq.off-cs-f25", "eq.off-cs-s26"], queried
+    # And the abstract course id never appears in the offering keyspace.
+    assert not any("eq.c1" == q for q in queried)
+
+
+def test_misconceptions_tool_honors_the_class_intel_opt_out():
+    """#553 review finding 4. `read_misconceptions_for_course_tool` is
+    registered on quiz_agent unconditionally and system-prompt step 2 tells the
+    model to call it on EVERY run; `use_shared_context` only ever APPENDED an
+    extra routing sentence when true. That looked fine only because the read
+    was keyspace-broken and always returned [] — fixing #553 would have started
+    feeding other students' aggregated misconceptions to a student who
+    explicitly opted out.
+
+    Enforced at the tool, not in the prompt: a system-prompt instruction is a
+    request to a model, and consent is not something to leave to one.
+    """
+    with (
+        patch("agents.tools.graph_read.table") as t,
+        patch(
+            "agents.tools.graph_read.user_offering_ids_for_course",
+            return_value=["off-1"],
+        ) as resolve,
+    ):
+        out = asyncio.run(
+            read_misconceptions_for_course_tool(_ctx(share_class_context=False))
+        )
+
+    assert out == []
+    # Not merely filtered afterwards — never read at all.
+    t.assert_not_called()
+    resolve.assert_not_called()
+
+
+def test_misconceptions_read_asks_only_for_rows_that_carry_text():
+    """#553 review finding 1. The read takes `updated_at.desc` LIMIT 20, and
+    `course_context_service` stamps every row of one aggregation pass with the
+    same timestamp — so the ordering among an offering's rows is arbitrary.
+    Text-bearing rows are the rare minority (0 of 72 on staging, 0 of 73 on
+    prod carried text), so an unfiltered 20-row window can easily contain none
+    of them and hand back [] for a class that genuinely has misconceptions —
+    the exact symptom #553 exists to fix, and a permanent false `tool_empty`
+    besides, since the probe DOES filter on text.
+    """
+    captured: dict = {}
+
+    def fake_table(name):
+        m = MagicMock()
+
+        def _select(cols, **kw):
+            captured["filters"] = kw.get("filters")
+            return []
+
+        m.select.side_effect = _select
+        return m
+
+    with (
+        patch("agents.tools.graph_read.table", side_effect=fake_table),
+        patch(
+            "agents.tools.graph_read.user_offering_ids_for_course",
+            return_value=["off-1"],
+        ),
+        _probe(False),
+    ):
+        asyncio.run(read_misconceptions_for_course_tool(_ctx()))
+
+    assert (captured.get("filters") or {}).get("common_misconceptions") == "neq.{}", (
+        "the read must spend its row budget on rows that actually carry text"
     )

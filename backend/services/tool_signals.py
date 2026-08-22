@@ -68,8 +68,14 @@ class Expect(str, Enum):
     HAS_ATTEMPTS = "has_attempts"
     #: Has at least one knowledge-graph node — so concept reads could return rows.
     HAS_GRAPH = "has_graph"
-    #: Class aggregates exist for the caller-supplied offerings. NOT
-    #: owner-scoped — `offering_concept_stats` has no user_id, by design
+    #: Class aggregates CARRYING MISCONCEPTION TEXT exist for the
+    #: caller-supplied offerings. Not merely "a stats row exists": the
+    #: aggregation writes a row per concept as soon as a class has any
+    #: activity and fills `common_misconceptions` only when it has something
+    #: to say, so bare existence is true for classes that have nothing to
+    #: offer and would fire on every generation (see the filter below).
+    #:
+    #: NOT owner-scoped — `offering_concept_stats` has no user_id, by design
     #: (it is anonymized class data), so the caller must supply the offering
     #: scope. This is the probe that catches a KEYSPACE mismatch: aggregates
     #: exist for this class, but the tool's own query found none — which is

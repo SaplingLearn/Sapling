@@ -41,8 +41,12 @@ def _read(offering_ids):
 
 
 def test_seed_stats_key_on_offerings_never_on_courses(db_conn):
-    """The premise. If this ever inverts, the rest of the file is testing a
-    keyspace that no longer exists."""
+    """The premise, documented rather than defended: migration 0022's FK from
+    `offering_concept_stats.offering_id` to `course_offerings(id)` already
+    guarantees this, so it cannot fail while that FK stands. It earns its place
+    by making the keyspace claim the rest of the file rests on explicit, and it
+    WOULD fail if that FK were ever dropped — which is the change that would
+    silently make everything below meaningless."""
     row = db_conn.execute(
         """
         SELECT count(*) FILTER (WHERE o.id IS NOT NULL) AS via_offering,
@@ -135,3 +139,56 @@ def test_a_student_in_a_different_offering_sees_their_own_class():
     assert not any("base case is optional" in t for t in texts), (
         "USER_SECOND is not enrolled in the F25 offering"
     )
+
+
+def test_the_probe_filter_selects_only_rows_that_carry_text(db_conn):
+    """#553 review finding 5. The F5 probe's `neq.{}` filter is what keeps a
+    legitimately quiet class from being reported as a broken one, and the
+    hermetic suite can only assert the filter STRING — the same blindness that
+    let #529 and #553 survive. So the filter is exercised against real
+    PostgREST here, where a typo would show up.
+
+    A broken filter degrades to `logger.warning` + "can't tell", which leaves
+    the whole seam inert while looking exactly like "no discrepancies found":
+    the module's own stated bug class, one layer up.
+    """
+    from db.connection import table
+
+    with_text = table("offering_concept_stats").select(
+        "id", filters={"common_misconceptions": "neq.{}"},
+    ) or []
+    all_rows = table("offering_concept_stats").select("id") or []
+
+    assert with_text, "the filter must not reject every row"
+    assert len(with_text) < len(all_rows), (
+        "the seed carries an empty-array row on purpose; if the filter keeps "
+        "everything it is not discriminating and the probe is inert"
+    )
+
+    # And it agrees with the database's own answer.
+    row = db_conn.execute(
+        "SELECT count(*) AS n FROM offering_concept_stats "
+        "WHERE common_misconceptions <> '{}'"
+    ).fetchone()
+    assert len(with_text) == row["n"]
+
+
+def test_probe_and_read_ask_the_same_question(db_conn):
+    """#553 review finding 3. If the probe filters on text-bearing rows and
+    the read does not, an offering whose text-bearing rows fall outside the
+    read's row window returns [] while the probe says data exists — a
+    `quiz.tool_empty` warning on EVERY generation for every student in that
+    class, indefinitely. They have to be answering the same question."""
+    from db.connection import table
+    from services.tool_signals import _PROBES, Expect
+
+    _table, probe_filters, _owner_scoped = _PROBES[Expect.COURSE_HAS_AGGREGATES]
+    assert probe_filters.get("common_misconceptions") == "neq.{}"
+
+    # The read applies it too: every offering the seed gives text for must
+    # come back non-empty through the tool.
+    assert _read([OFF_CS_F25]), "read must surface an offering the probe counts"
+    probe_rows = table("offering_concept_stats").select(
+        "id", filters={"offering_id": f"eq.{OFF_CS_F25}", **probe_filters},
+    ) or []
+    assert probe_rows

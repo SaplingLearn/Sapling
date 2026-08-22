@@ -367,6 +367,14 @@ class Misconception(BaseModel):
     related_concept: str | None = None
 
 
+#: Row budget per offering. Applied per-offering rather than shared, so one
+#: class cannot starve another when a student holds two offerings of a course.
+_ROWS_PER_OFFERING = 20
+#: Ceiling on the misconception STRINGS handed to the model. Rows are not the
+#: unit that costs prompt tokens; entries are.
+_MAX_MISCONCEPTIONS = 40
+
+
 async def read_misconceptions_for_course(
     offering_ids: Sequence[str] | None,
 ) -> list[Misconception]:
@@ -411,21 +419,48 @@ async def read_misconceptions_for_course(
         return []
 
     def _fetch() -> list[dict[str, Any]]:
-        try:
-            return (
-                table("offering_concept_stats").select(
-                    "concept_name,common_misconceptions",
-                    filters={"offering_id": f"in.({','.join(ids)})"},
-                    order="updated_at.desc",
-                    limit=20,
+        rows: list[dict[str, Any]] = []
+        # One read PER offering rather than one `in.(...)` read over all of
+        # them. A single query has to share one LIMIT, and the sort key does
+        # not break the tie usefully: `course_context_service` stamps every
+        # row of an aggregation pass with the same `updated_at`, so ordering
+        # within an offering is arbitrary. An offering with a full window of
+        # rows would then starve its sibling completely — reintroducing, per
+        # offering, exactly the silent drop that taking a LIST of offerings
+        # was meant to prevent. Students hold one or two offerings of a given
+        # course, so this is one or two indexed reads.
+        for offering_id in ids:
+            try:
+                rows.extend(
+                    table("offering_concept_stats").select(
+                        "concept_name,common_misconceptions",
+                        filters={
+                            "offering_id": f"eq.{offering_id}",
+                            # Spend the row budget only on rows that actually
+                            # carry text. The aggregation writes a stats row
+                            # per concept as soon as a class has activity and
+                            # fills this array only when it has something to
+                            # say, so text-bearing rows are the rare minority
+                            # (0 of 72 rows on staging, 0 of 73 on prod).
+                            # Unfiltered, the window fills with empty rows and
+                            # the tool returns [] for a class that genuinely
+                            # has misconceptions — the very symptom #553 is
+                            # about. It also keeps this read asking the same
+                            # question the F5 probe asks, so a legitimately
+                            # quiet class cannot look like a broken one.
+                            "common_misconceptions": "neq.{}",
+                        },
+                        order="updated_at.desc",
+                        limit=_ROWS_PER_OFFERING,
+                    )
+                    or []
                 )
-                or []
-            )
-        except Exception:
-            logger.exception(
-                "read_misconceptions_for_course failed for offerings=%s", ids,
-            )
-            return []
+            except Exception:
+                logger.exception(
+                    "read_misconceptions_for_course failed for offering=%s",
+                    offering_id,
+                )
+        return rows
 
     rows = await asyncio.to_thread(_fetch)
     out: list[Misconception] = []
@@ -441,6 +476,13 @@ async def read_misconceptions_for_course(
                 continue
             seen.add(key)
             out.append(Misconception(text=text, related_concept=concept))
+            # Cap what actually reaches the prompt. The old `limit=20` capped
+            # ROWS, and each row carries an unbounded array — so the block's
+            # real size was never bounded at all. F6 measured this tool's
+            # contribution to the prompt; bounding the unit that costs tokens
+            # is what makes that number hold.
+            if len(out) >= _MAX_MISCONCEPTIONS:
+                return out
     return out
 
 
@@ -456,6 +498,23 @@ async def read_misconceptions_for_course_tool(
     (typed short strings — no per-entry envelope).
     """
     from services.prompt_safety import neutralize_delimiters
+
+    # Class-intel consent, enforced at the tool (#553 review finding 4).
+    #
+    # This tool is registered on quiz_agent unconditionally and system-prompt
+    # step 2 tells the model to call it on EVERY run; `use_shared_context`
+    # only ever APPENDED an extra routing sentence when true. That looked
+    # correct for as long as the read was keyspace-broken and returned []
+    # for everyone — fixing #553 would have quietly started feeding other
+    # students' aggregated misconceptions to a student who opted out.
+    #
+    # Enforced here rather than by editing the prompt or the toolset: a
+    # system-prompt instruction is a request to a model, and consent is not
+    # something to leave to one. Returning [] (not raising) keeps an opted-out
+    # run identical to a class with nothing to share.
+    if not getattr(ctx.deps, "share_class_context", True):
+        prompt_dimensions.record(misconceptions=0)
+        return []
 
     # #553: resolve course -> the student's offerings BEFORE reading. The
     # stats table is keyed on `course_offerings.id`; `ctx.deps.course_id` is

@@ -47,6 +47,15 @@ class SaplingDeps:
             identical behavior. Evals inject a FixtureRetrieval here so
             record/live runs never touch a database. Typed Any to avoid
             the circular import deps → retrieval → chat_context → deps.
+        share_class_context: Whether this student consented to class-derived
+            data (the "Class intel" toggle, migration 0037). Tools that read
+            OTHER students' aggregated work — `read_misconceptions_for_course`
+            — must return nothing when it is False. It lives here rather than
+            in the prompt because a system-prompt instruction is a request to
+            a model, and consent is not something to leave to one: the tool is
+            registered on quiz_agent unconditionally and the prompt tells the
+            model to call it every run. Defaults True to match the column
+            default; an explicit False is the only thing that suppresses.
     """
 
     user_id: str
@@ -55,6 +64,7 @@ class SaplingDeps:
     request_id: str
     session_id: str | None = None
     feature: str = "unknown"
+    share_class_context: bool = True
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None
