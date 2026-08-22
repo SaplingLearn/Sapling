@@ -501,6 +501,10 @@ New: everything else named in §5/§6 (`quiz-home`, `quiz-resume-strip`, `quiz-r
 `quiz-missed-{id}`, `quiz-missed-explain-{id}`, `quiz-missed-ask-{id}`, `quiz-results-perfect`, `quiz-practise-missed`,
 `quiz-next-concept`, `quiz-back-to-source`, `tree-node-recent-quizzes`, `tree-node-recent-quiz-{attemptId}`).
 
+Added during Waves 3–4 (binding, register in `docs/frontend-testids.md`): `quiz-concept-cancel`, `quiz-adjust-done`, `quiz-adjust-start`,
+`quiz-pick-back`, `quiz-home-error`, `quiz-home-retry`, `quiz-ask-seed`, `quiz-ask-retry`, `quiz-results-graph`, `quiz-results-exits`,
+`quiz-error`, `quiz-error-retry`, `quiz-error-back`, `dashboard-review-due`.
+
 ---
 
 ## 8. Seams left (report at the end)
