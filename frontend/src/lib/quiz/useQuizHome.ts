@@ -5,11 +5,16 @@
  * history, the ranked proposals derived from all three, and whichever unfinished
  * quiz is waiting to be resumed.
  *
- * The bootstrap deliberately matches what `screens/Quiz.tsx` does today —
- * `getCourses` + `getGraph(userId, activeSemester || undefined)` in parallel,
- * held until the active semester has hydrated so returning users fetch scoped
- * once instead of unscoped-then-scoped — because the semester contract is the
- * same and re-deriving it would be a fourth divergent copy (R4 §4).
+ * The bootstrap is `getCourses` + `getGraph(userId, activeSemester || undefined)`
+ * in parallel, held until the active semester has hydrated from localStorage.
+ * That wait is the point: fetching before it resolves means a returning user
+ * fetches unscoped and then immediately re-fetches scoped, and briefly sees
+ * concepts from a term they are not looking at. The empty string means
+ * "All semesters" and fetches unscoped (#360).
+ *
+ * Tree, Learn and Dashboard each run the same pair for themselves (R4 §4); this
+ * is deliberately the same shape rather than a new one, so the semester contract
+ * has one behaviour across every surface that reads the graph.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

@@ -4,11 +4,11 @@
  *
  * Three of them had no frontend caller at all before #537: `GET /attempts`,
  * `GET /attempts/{id}` and `POST /attempts/{id}/answer` (R1 §H). They are what
- * make resume, history and server-side grading possible, so the redesign leans
- * on all three.
+ * make resume, history and server-side grading possible, so the quiz leans on
+ * all three.
  *
- * The legacy `fetchQuizConfig`/`generateQuiz`/`submitQuiz` in `lib/api.ts` stay
- * until the old `QuizPanel` is deleted; these are the shapes the new UI uses.
+ * This is the only quiz client. `lib/api.ts` carries the shared `fetchJSON` and
+ * the non-quiz routes; its own quiz wrappers went with `QuizPanel`.
  */
 
 import { fetchJSON, describeConcept as describeConceptRaw } from "@/lib/api";

@@ -116,7 +116,7 @@ export function QuizScreen() {
 
   const body = () => {
     if (!userReady) return null;
-    if (!userId) return <p className="quiz-stub__phase">Sign in to take a quiz.</p>;
+    if (!userId) return <p className="quiz-signin-note">Sign in to take a quiz.</p>;
 
     if (session.phase === "error" && session.error) {
       return (

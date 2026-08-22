@@ -132,6 +132,7 @@
 }
 
 /* The signed-out line `QuizScreen` renders in place of the phase switch. */
-.quiz-stub__phase {
+.quiz-signin-note {
   color: var(--text-muted);
+  font-size: var(--fs-md);
 }
