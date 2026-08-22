@@ -1,0 +1,190 @@
+/* The results screen (§5 B3).
+ *
+ * Class names only (R-1): the ONE inline style anywhere under
+ * `components/quiz/**` is `QuizScreen`'s `--quiz-accent` binding, and every
+ * colour below reads `var(--quiz-accent, var(--accent))` so an unset accent
+ * degrades to the app's own rather than to a literal.
+ *
+ * The design's own geometry — the vertical rhythm of the column, the missed
+ * item's accent bar and inset, the stem's 17px/1.45 — is declared ONCE here as
+ * tokens on `.quiz-results` and referenced below, so no rule carries a bare px
+ * measurement. Everything else is a `--fs-*` / `--pad-*` / colour token.
+ */
+
+.quiz-results {
+  /* Vertical rhythm, read off the prototype's RESULTS section. */
+  --quiz-results-gap-name: 18px;
+  --quiz-results-gap-delta: 8px;
+  --quiz-results-gap-rule: 26px;
+  --quiz-results-rule-pad-y: 13px;
+  --quiz-results-rule-pad-x: 4px;
+  --quiz-results-gap-block: 26px;
+  --quiz-results-gap-perfect: 34px;
+  --quiz-results-gap-divider: 30px;
+  --quiz-results-gap-exits: 18px;
+  --quiz-results-exits-gap: 10px;
+
+  /* The missed item: a 2px accent bar, its text inset past it. */
+  --quiz-results-bar: 2px;
+  --quiz-results-item-inset: 16px;
+  --quiz-results-item-pad-y: 2px;
+  --quiz-results-item-gap: 12px;
+  --quiz-results-line-gap: 6px;
+
+  /* The missed stem sits between --fs-xl (18) and --fs-lg (16); the design's
+     17px/1.45 is its own step, so it is a token rather than a rounded token. */
+  --quiz-results-stem: 17px;
+  --quiz-results-stem-lh: 1.45;
+
+  /* The perfect-run sentence is set narrow so it reads as a sentence, centred
+     under a 640px column. */
+  --quiz-results-perfect-w: 400px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+/* The neighbourhood canvas is 640px wide by preset — the same width as the
+   column — so it only ever needs to shrink, never to be scrolled. */
+.quiz-results__graph {
+  max-width: 100%;
+}
+
+.quiz-results__graph > svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* R-5: a review attempt says so, above the name it is about. */
+.quiz-results__eyebrow {
+  margin-top: var(--quiz-results-gap-name);
+}
+
+.quiz-results__name {
+  font-size: var(--fs-3xl);
+  color: var(--text);
+  margin: var(--quiz-results-gap-name) 0 0;
+  text-align: center;
+}
+
+.quiz-results__eyebrow + .quiz-results__name {
+  margin-top: var(--quiz-results-gap-delta);
+}
+
+.quiz-results__delta {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  margin: var(--quiz-results-gap-delta) 0 0;
+}
+
+/* The score rule: two plain text spans between two hairlines. Nothing is
+   signalled by colour alone — this is a sentence, not a badge. */
+.quiz-results__rule {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--pad-md);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: var(--quiz-results-rule-pad-y) var(--quiz-results-rule-pad-x);
+  margin-top: var(--quiz-results-gap-rule);
+}
+
+.quiz-results__score {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.quiz-results__xp {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.quiz-results__perfect {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  margin-top: var(--quiz-results-gap-perfect);
+  max-width: var(--quiz-results-perfect-w);
+  text-align: center;
+  text-wrap: pretty;
+}
+
+.quiz-results__divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border);
+  border: 0;
+  margin: var(--quiz-results-gap-divider) 0 0;
+}
+
+.quiz-results__exits {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--quiz-results-exits-gap);
+  padding-top: var(--quiz-results-gap-exits);
+}
+
+/* Pushes "Done" to the far right without giving it a different alignment
+   context from the two buttons on the left. */
+.quiz-results__exits-spacer {
+  flex: 1;
+}
+
+/* ── The missed list ──────────────────────────────────────────────── */
+
+.quiz-missed {
+  width: 100%;
+  margin-top: var(--quiz-results-gap-block);
+}
+
+.quiz-missed__item {
+  border-left: var(--quiz-results-bar) solid var(--quiz-accent, var(--accent));
+  padding: var(--quiz-results-item-pad-y) 0 var(--quiz-results-item-pad-y)
+    var(--quiz-results-item-inset);
+  margin-top: var(--quiz-results-item-gap);
+}
+
+.quiz-missed__stem {
+  font-size: var(--quiz-results-stem);
+  line-height: var(--quiz-results-stem-lh);
+  color: var(--text);
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.quiz-missed__line {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  margin: var(--quiz-results-line-gap) 0 0;
+}
+
+.quiz-missed__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-md);
+  margin-top: var(--quiz-results-item-gap);
+}
+
+/* The one intentional expand on this screen: nothing is reserved for it, so
+   the list is compact until a student asks for the reasoning. */
+.quiz-missed__explanation {
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  margin: var(--quiz-results-line-gap) 0 0;
+  text-wrap: pretty;
+}
+
+/* The design's results canvas captions the SIBLINGS but not the centre — the
+   concept name is set below it in the display serif, and drawing it twice reads
+   as a bug. `ConceptNeighbourhood` (A1) has one `showLabels` switch for both,
+   and turning it off would drop the sibling captions the design does draw, so
+   the centre caption — always the last <text> on the canvas — is hidden here
+   instead. TODO(#537-followup: a `showCentreLabel` prop on ConceptNeighbourhood
+   would retire this rule). */
+.quiz-results__graph .concept-neighbourhood__label:last-of-type {
+  display: none;
+}
