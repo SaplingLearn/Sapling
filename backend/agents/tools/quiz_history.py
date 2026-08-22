@@ -27,6 +27,7 @@ from agents.deps import SaplingDeps
 from db.connection import table
 from services import prompt_dimensions
 from services.encryption import decrypt_json_column
+from services.quiz_distractors import DIGEST_SCHEMA_VERSION
 from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,20 @@ def _coerce_summary(ctx: Any) -> str | None:
             ]
             if items:
                 parts.append(label + ":\n" + "\n".join(f"- {i}" for i in items))
+        # H2/#554: a digest written by a shape this reader doesn't know is
+        # the signature of the drift class that hid #548's key mismatch — the
+        # coercer looked for `common_errors` while the agent wrote
+        # `common_mistakes`, and the result was simply an empty digest, which
+        # is indistinguishable from a new student. Log it rather than let a
+        # future rename go quiet again. Unversioned rows are pre-#554 and
+        # expected, not a discrepancy.
+        version = ctx.get("schema_version")
+        if isinstance(version, int) and version > DIGEST_SCHEMA_VERSION:
+            logger.warning(
+                "quiz digest carries schema_version=%s but this reader "
+                "understands %s — fields added since may be silently unread",
+                version, DIGEST_SCHEMA_VERSION,
+            )
         rec = ctx.get("recommended_difficulty")
         if isinstance(rec, str) and rec.strip():
             # The post-submit agent's difficulty recommendation — surfaced
