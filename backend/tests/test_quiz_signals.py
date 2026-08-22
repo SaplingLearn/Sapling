@@ -11,9 +11,8 @@ class TestPromptBlock:
         assert prompt_block(QuizSignals()) == ""
 
     def test_only_the_signals_we_have_appear(self):
-        block = prompt_block(QuizSignals(times_studied=4, flashcards=12))
+        block = prompt_block(QuizSignals(times_studied=4))
         assert "studied 4x" in block
-        assert "12 flashcard(s)" in block
         assert "unfinished" not in block
         assert "mastery gain" not in block
 
@@ -34,10 +33,11 @@ class TestGatherSignals:
         def factory(name):
             m = MagicMock()
             m.select.return_value = tables.get(name, [])
+            m.select_with_count.return_value = (tables.get(name, []), len(tables.get(name, [])))
             return m
 
         with patch("services.quiz_signals.table", side_effect=factory):
-            return gather_signals("u1", "node1", concept_name="Recursion", **kw)
+            return gather_signals("u1", "node1", **kw)
 
     def test_times_studied_is_passed_in_not_re_read(self):
         """generate_quiz already fetches that row to resolve the concept name
@@ -52,18 +52,29 @@ class TestGatherSignals:
             c.args and c.args[0] == "graph_nodes" for c in t.call_args_list
         ), "times_studied must not cost a graph_nodes read"
 
-    def test_counts_only_unfinished_attempts(self):
-        s = self._gather({"quiz_attempts": [{"id": "a"}, {"id": "b"}]})
-        assert s.in_flight_attempts == 2
-
-    def test_counts_flashcards_without_reading_their_content(self):
+    def test_reports_the_true_count_not_a_saturated_page(self):
+        """`select_with_count` — `len(rows)` under a LIMIT would report the cap
+        as though it were a fact about the student."""
         with patch("services.quiz_signals.table") as t:
-            t.return_value.select.return_value = [{"id": "f1"}]
-            gather_signals("u1", "node1", concept_name="Recursion")
+            t.return_value.select_with_count.return_value = ([{"id": "a"}], 37)
+            t.return_value.select.return_value = []
+            s = gather_signals("u1", "node1")
 
-        cols = [c.args[0] for c in t.return_value.select.call_args_list]
-        assert all("front" not in c and "back" not in c for c in cols), (
-            "flashcard front/back are encrypted (#518) and this is a COUNT"
+        assert s.in_flight_attempts == 37
+
+    def test_in_flight_applies_the_abandonment_ttl(self):
+        """#542's `_attempt_status` calls an in-progress row past the TTL
+        abandoned even before the lazy sweep stamps it — and the sweep runs on
+        the history reads, not on generation. Checking only the NULL stamps
+        would report week-old attempts to the model as active."""
+        with patch("services.quiz_signals.table") as t:
+            t.return_value.select_with_count.return_value = ([], 0)
+            t.return_value.select.return_value = []
+            gather_signals("u1", "node1")
+
+        filters = t.return_value.select_with_count.call_args.kwargs["filters"]
+        assert filters["created_at"].startswith("gte."), (
+            "in-flight must share #542's TTL, not define 'unfinished' again"
         )
 
     def test_a_failing_read_degrades_to_unknown_not_zero(self):
@@ -72,13 +83,13 @@ class TestGatherSignals:
         def factory(name):
             m = MagicMock()
             m.select.side_effect = RuntimeError("db down")
+            m.select_with_count.side_effect = RuntimeError("db down")
             return m
 
         with patch("services.quiz_signals.table", side_effect=factory):
-            s = gather_signals("u1", "node1", concept_name="Recursion")
+            s = gather_signals("u1", "node1")
 
         assert s.in_flight_attempts is None
-        assert s.flashcards is None
         assert s.velocity_per_day is None
 
     def test_never_raises(self):
@@ -102,9 +113,41 @@ class TestGatherSignals:
 def test_dimensions_cover_every_signal():
     """F6: the issue asks for these to land BEHIND the measurement, so each
     signal has to be attributable in `llm_usage.prompt_tokens`."""
-    dims = QuizSignals(1, 2.0, 3, 4).as_dimensions()
+    dims = QuizSignals(1, 2.0, 3).as_dimensions()
     assert set(dims) == {
-        "signal_times_studied", "signal_velocity",
-        "signal_in_flight", "signal_flashcards",
+        "signal_times_studied", "signal_velocity", "signal_in_flight",
     }
-    assert list(dims.values()) == [1, 2.0, 3, 4]
+    assert list(dims.values()) == [1, 2.0, 3]
+
+
+def test_velocity_matches_what_the_graph_screen_shows():
+    """#556 review finding 1, and the exact failure the module set out to
+    avoid by importing `_compute_velocity` instead of copying it.
+
+    That function treats `recent[0]` as the OLDEST recent event — it derives
+    the window from it — and `graph_service.get_graph` therefore reads
+    `created_at.asc`. This module reads `desc` (correctly, so the LIMIT keeps
+    the NEWEST events rather than the oldest), which means the rows must be
+    reversed before they are handed over. Without that, `days` collapses to 1
+    and the velocity inflates by up to 14x, so the Tree and the quiz prompt
+    report different numbers for the same concept.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from services.graph_service import _compute_velocity
+
+    now = datetime.now(timezone.utc)
+    ascending = [
+        {"delta": 0.1, "created_at": (now - timedelta(days=d)).isoformat()}
+        for d in (10, 7, 4, 1)
+    ]
+    expected = _compute_velocity(ascending)
+
+    with patch("services.quiz_signals.table") as t:
+        # PostgREST hands them back newest-first, as this module asks.
+        t.return_value.select.return_value = list(reversed(ascending))
+        got = gather_signals("u1", "node1").velocity_per_day
+
+    assert got == expected, (
+        f"quiz prompt would report {got} where the graph screen shows {expected}"
+    )

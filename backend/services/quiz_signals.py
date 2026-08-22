@@ -10,8 +10,15 @@ none of it reached the prompt:
     second one (see #557 for how two copies of one number ends).
   * an in-flight attempt on this concept — trivially available since #542
     added derived status.
-  * flashcards for this concept — whether the student has drilled it another
-    way, and how recently.
+
+NOT included: flashcard review state, which the issue also lists. There is no
+concept-level flashcard data to read — `flashcards.topic` is free text and
+every writer sets it to the COURSE name (`routes/flashcards.py` stores
+`body.topic`; the only caller, `Study.tsx`, passes `course.course_name`). A
+concept-name match against it is a permanent zero, and shipping that would
+have F6 conclude the signal is worthless when it was simply never wired to
+real data — which defeats the point of landing these behind a measurement.
+Needs a concept↔card mapping first; see #556.
 
 Per the issue, these land BEHIND the F6 measurement: every signal records its
 own prompt dimension, so `llm_usage.prompt_tokens` can be attributed and the
@@ -48,7 +55,6 @@ class QuizSignals(NamedTuple):
     times_studied: int | None = None
     velocity_per_day: float | None = None
     in_flight_attempts: int | None = None
-    flashcards: int | None = None
 
     def as_dimensions(self) -> dict[str, Any]:
         """F6: what this block contributed, for token attribution."""
@@ -56,7 +62,6 @@ class QuizSignals(NamedTuple):
             "signal_times_studied": self.times_studied,
             "signal_velocity": self.velocity_per_day,
             "signal_in_flight": self.in_flight_attempts,
-            "signal_flashcards": self.flashcards,
         }
 
 
@@ -64,7 +69,6 @@ def gather_signals(
     user_id: str,
     concept_node_id: str,
     *,
-    concept_name: str = "",
     times_studied: Any = None,
 ) -> QuizSignals:
     """Collect the cheap signals for one (student, concept).
@@ -78,7 +82,6 @@ def gather_signals(
         times_studied=_coerce_int(times_studied),
         velocity_per_day=_velocity(concept_node_id),
         in_flight_attempts=_in_flight(user_id, concept_node_id),
-        flashcards=_flashcards(user_id, concept_name),
     )
 
 
@@ -100,62 +103,60 @@ def _velocity(concept_node_id: str) -> float | None:
         rows = table("node_mastery_events").select(
             "delta,created_at",
             filters={"node_id": f"eq.{concept_node_id}"},
+            # desc + limit so the cap keeps the NEWEST events; asc + limit
+            # would keep the oldest, which is the opposite of what a 14-day
+            # window wants.
             order="created_at.desc",
             limit=_EVENT_SCAN_LIMIT,
         ) or []
-        return _compute_velocity(rows)
+        # ...then REVERSED, because `_compute_velocity` derives its window
+        # from `recent[0]` as the OLDEST recent event — `get_graph` feeds it
+        # `created_at.asc` for exactly that reason. Handing it newest-first
+        # collapses `days` to 1 and inflates the result by up to 14x, so the
+        # Tree and the quiz prompt would report different velocities for the
+        # same concept. That is the "two copies of one number" failure this
+        # module cites #557 for, reintroduced through the argument instead of
+        # the algorithm.
+        return _compute_velocity(list(reversed(rows)))
     except Exception:
         logger.debug("quiz signals: velocity read failed", exc_info=True)
         return None
 
 
 def _in_flight(user_id: str, concept_node_id: str) -> int | None:
-    """Attempts on this concept the student started and never finished.
+    """Attempts on this concept the student started and has not finished.
 
-    Owner-scoped, and `completed_at IS NULL` is the same derived-status rule
-    #542 established rather than a second definition of "unfinished".
+    Owner-scoped, and it applies #542's TTL rather than only checking the two
+    NULL stamps. `_attempt_status` treats an in-progress row past the TTL as
+    abandoned EVEN BEFORE the lazy sweep stamps `abandoned_at` — and the sweep
+    runs on the history/list reads, not on generation. So a NULL-only check
+    would tell the model about attempts the rest of the app already calls
+    abandoned: a student who generated three quizzes last week and never
+    opened their history would be told they have three in flight.
     """
     if not user_id or not concept_node_id:
         return None
     try:
-        rows = table("quiz_attempts").select(
+        from routes.quiz import _abandon_cutoff
+
+        _rows, total = table("quiz_attempts").select_with_count(
             "id",
             filters={
                 "user_id": f"eq.{user_id}",
                 "concept_node_id": f"eq.{concept_node_id}",
                 "completed_at": "is.null",
                 "abandoned_at": "is.null",
+                "created_at": f"gte.{_abandon_cutoff().isoformat()}",
             },
-            limit=20,
-        ) or []
-        return len(rows)
+            limit=1,
+        )
+        # The exact count, not `len(rows)` under a cap: a saturated page would
+        # report "20" as though it were a fact about the student.
+        return total
     except Exception:
         logger.debug("quiz signals: in-flight read failed", exc_info=True)
         return None
 
-
-def _flashcards(user_id: str, concept_name: str) -> int | None:
-    """How many cards the student has for this concept.
-
-    Matched on `topic`, which is where the concept name lands for cards
-    generated from the graph. Front/back are encrypted (#518) and are neither
-    read nor needed — this is a COUNT, not content.
-    """
-    if not user_id or not concept_name:
-        return None
-    try:
-        rows = table("flashcards").select(
-            "id",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "topic": f"eq.{concept_name}",
-            },
-            limit=100,
-        ) or []
-        return len(rows)
-    except Exception:
-        logger.debug("quiz signals: flashcard read failed", exc_info=True)
-        return None
 
 
 def prompt_block(signals: QuizSignals) -> str:
@@ -176,8 +177,6 @@ def prompt_block(signals: QuizSignals) -> str:
         parts.append(
             f"{signals.in_flight_attempts} unfinished attempt(s) on this concept"
         )
-    if signals.flashcards:
-        parts.append(f"{signals.flashcards} flashcard(s) on this concept")
 
     if not parts:
         return ""

@@ -924,7 +924,7 @@ async def _quiz_via_agent(
         asyncio.to_thread(days_until_next_exam, user_id, course_id),
         asyncio.to_thread(
             gather_signals, user_id, concept_node_id,
-            concept_name=concept_name, times_studied=times_studied,
+            times_studied=times_studied,
         ),
         return_exceptions=True,
     )
@@ -973,13 +973,6 @@ async def _quiz_via_agent(
     # contradict the adaptive difficulty the student actually chose. Omitted
     # entirely when unknown: "next exam: unknown" is prompt tokens spent to
     # say nothing.
-    # H4/#556: the signals that were already in reach and never asked for.
-    # Appended as one short line, and recorded as dimensions so F6 can price
-    # it — the issue's whole framing is "land these behind the measurement so
-    # we can see what each costs before deciding what stays".
-    routing_msg += signal_block(signals)
-    prompt_dimensions.record(**signals.as_dimensions())
-
     # Bounded by a horizon: a final dated 87 days out would otherwise put
     # "there is an exam coming, weight toward what an exam tests" on EVERY
     # quiz for the whole semester, which carries no proximity signal and
@@ -996,6 +989,13 @@ async def _quiz_via_agent(
             f" The student's next exam in this course is {when}. Weight the"
             " questions toward what an exam would actually test."
         )
+
+    # H4/#556: the signals that were already in reach and never asked for.
+    # Appended as one short line, and recorded as dimensions so F6 can price
+    # it — the issue's whole framing is "land these behind the measurement so
+    # we can see what each costs before deciding what stays".
+    routing_msg += signal_block(signals)
+    prompt_dimensions.record(**signals.as_dimensions())
     _log_rag_uncovered(
         material,
         user_id=user_id,
