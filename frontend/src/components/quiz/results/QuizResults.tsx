@@ -42,6 +42,17 @@ export interface QuizResultsProps {
   concept: QuizConceptSummary;
   neighbourhood: { siblings: NeighbourNode[] };
   prefersReducedMotion: boolean;
+  /**
+   * The next concept in the scope queue, named — for the "Next: {concept}"
+   * primary exit. `QuizScreen` resolves it from the loaded graph
+   * (`proposals.nextConceptInQueue`), which is the only place that has one.
+   *
+   * `null` means "no name available", which covers a finished queue AND a next
+   * id that isn't in the scoped graph. It is a LABEL only: whether that exit
+   * renders at all stays `queueOf(session.scope).length > session.queueIndex + 1`.
+   * Optional so the current render keeps compiling until it reads this.
+   */
+  nextConcept?: { id: string; name: string } | null;
 }
 
 const pct = (value: number) => Math.round(value * 100);

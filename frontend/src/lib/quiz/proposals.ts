@@ -32,9 +32,10 @@ import { paletteFor } from "@/lib/data";
 import { resolveInitialSelection, type QuizConcept } from "@/lib/quizSelection";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphNode } from "@/lib/types";
+import { queueOf } from "./machine";
 import { daysAgo, relativeStudied } from "./relativeTime";
 import { QUEUE_MAX } from "./session";
-import type { AttemptSummary } from "./types";
+import type { AttemptSummary, QuizSession } from "./types";
 
 /** The tiers `get_recommendations` considers worth suggesting. `mastered` and
  *  `subject_root` are excluded by the same filter. */
@@ -209,6 +210,29 @@ export function queueFor(
     ? nodes.filter(n => n.course_id === courseId)
     : nodes;
   return scoped.filter(isDue).sort(byMasteryAsc).slice(0, QUEUE_MAX).map(n => n.id);
+}
+
+/**
+ * The concept a queued session moves to next, named.
+ *
+ * The queue holds ids and the results screen is handed only the concept it just
+ * quizzed, so "Next: {concept}" cannot be built from the session alone — this
+ * resolves the id against the loaded graph.
+ *
+ * `null` covers both "the queue is finished" and "the next id isn't in the
+ * loaded (scoped) graph, so we can't name it". That is deliberate: it is a LABEL,
+ * and a caller must never use it to decide whether the exit exists — that stays
+ * `queueOf(scope).length > queueIndex + 1`, which needs no graph. Guessing a name
+ * would be worse than an unnamed button.
+ */
+export function nextConceptInQueue(
+  session: QuizSession,
+  nodes: GraphNode[],
+): { id: string; name: string } | null {
+  const id = queueOf(session.scope)[session.queueIndex + 1];
+  if (!id) return null;
+  const name = nodes.find(n => n.id === id)?.concept_name?.trim();
+  return name ? { id, name } : null;
 }
 
 /** What a deep link actually points at, once resolved against the loaded graph. */

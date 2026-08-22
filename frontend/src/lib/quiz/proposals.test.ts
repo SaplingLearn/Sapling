@@ -11,13 +11,14 @@ import {
   isDue,
   latestCompletedAttempt,
   metaLine,
+  nextConceptInQueue,
   primaryOf,
   queueFor,
   rankCandidates,
   rationaleFor,
 } from "./proposals";
 import { QUEUE_MAX } from "./session";
-import type { AttemptSummary } from "./types";
+import type { AttemptSummary, QuizScope, QuizSession } from "./types";
 
 const NOW = new Date(2026, 7, 22, 9); // 22 Aug 2026, local
 
@@ -357,6 +358,50 @@ describe("entrySelection", () => {
     // Both the root and a real concept are called "Recursion"; the leaf wins.
     expect(entrySelection({ topic: "Recursion" }, nodes, courses).conceptId).toBe("n1");
     expect(entrySelection({ concept: "root" }, nodes, courses).unresolved).toBe(true);
+  });
+});
+
+describe("nextConceptInQueue", () => {
+  const nodes = [
+    node({ id: "n1", concept_name: "Recursion" }),
+    node({ id: "n2", concept_name: "Big-O" }),
+    node({ id: "n3", concept_name: "  Tail calls  " }),
+  ];
+
+  function session(scope: QuizScope, queueIndex: number): QuizSession {
+    return { scope, queueIndex } as QuizSession;
+  }
+
+  it("names the concept after the current one in a due queue", () => {
+    expect(nextConceptInQueue(session({ kind: "due", queue: ["n1", "n2"] }, 0), nodes))
+      .toEqual({ id: "n2", name: "Big-O" });
+  });
+
+  it("names it in a course queue too, and trims the label", () => {
+    const scope: QuizScope = { kind: "course", courseId: "course-a", queue: ["n1", "n3"] };
+    expect(nextConceptInQueue(session(scope, 0), nodes)).toEqual({ id: "n3", name: "Tail calls" });
+  });
+
+  it("returns null at the end of the queue", () => {
+    expect(nextConceptInQueue(session({ kind: "due", queue: ["n1", "n2"] }, 1), nodes)).toBeNull();
+    expect(nextConceptInQueue(session({ kind: "due", queue: [] }, 0), nodes)).toBeNull();
+  });
+
+  it("returns null for a scope that has no queue at all", () => {
+    expect(nextConceptInQueue(session({ kind: "concept", conceptId: "n1" }, 0), nodes)).toBeNull();
+    expect(nextConceptInQueue(session({ kind: "missed", conceptId: "n1", missedCount: 2 }, 0), nodes))
+      .toBeNull();
+  });
+
+  it("returns null rather than guessing when the next id is not in the loaded graph", () => {
+    // It is a LABEL. The exit's existence is decided from the queue, which needs
+    // no graph — so an unnamed button beats an invented name.
+    expect(nextConceptInQueue(session({ kind: "due", queue: ["n1", "off-scope"] }, 0), nodes))
+      .toBeNull();
+    expect(nextConceptInQueue(
+      session({ kind: "due", queue: ["n1", "blank"] }, 0),
+      [...nodes, node({ id: "blank", concept_name: "   " })],
+    )).toBeNull();
   });
 });
 

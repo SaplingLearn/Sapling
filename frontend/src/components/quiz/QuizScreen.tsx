@@ -28,7 +28,7 @@ import { siblingsFor } from "@/lib/graph/neighbourhood";
 import { apiToGraphNode } from "@/lib/data";
 import { parseEntry } from "@/lib/quiz/source";
 import { loadPrefs } from "@/lib/quiz/prefs";
-import { colorFor, entrySelection } from "@/lib/quiz/proposals";
+import { colorFor, entrySelection, nextConceptInQueue } from "@/lib/quiz/proposals";
 import { useQuizHome } from "@/lib/quiz/useQuizHome";
 import { useQuizSession } from "@/lib/quiz/useQuizSession";
 import { QuizHome } from "./home/QuizHome";
@@ -98,6 +98,13 @@ export function QuizScreen() {
     return siblingsFor(activeNode.id, adapted, home.edges);
   }, [activeNode, home.nodes, home.courses, home.edges]);
 
+  // The queue holds ids; only the loaded graph can turn the next one into a name
+  // for the results screen's "Next: {concept}" exit.
+  const nextConcept = useMemo(
+    () => nextConceptInQueue(session, home.nodes),
+    [session, home.nodes],
+  );
+
   const prefersReducedMotion = usePrefersReducedMotion();
   const prefs = useMemo(() => loadPrefs(config), [config]);
 
@@ -164,6 +171,7 @@ export function QuizScreen() {
           concept={concept}
           neighbourhood={{ siblings }}
           prefersReducedMotion={prefersReducedMotion}
+          nextConcept={nextConcept}
         />
       );
     }
