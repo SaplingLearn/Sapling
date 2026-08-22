@@ -212,6 +212,10 @@ function buildHome(over: Partial<QuizHomeData> = {}): QuizHomeData {
     due: dueSet(nodes),
     byCourse: groupByCourse(nodes, courses),
     resumable: null,
+    // A2 fix round 5: the hook now describes the concept the CARD shows, which a
+    // deep link overrides. `primaryDescription` is a deprecated alias.
+    cardConceptId: primary?.node.id ?? null,
+    cardDescription: null,
     primaryDescription: null,
     refresh: vi.fn(),
     ...over,

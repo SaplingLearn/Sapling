@@ -21,12 +21,15 @@ import { describeQuizError, type QuizError } from "./errors";
 import {
   alternativesOf,
   dueSet,
+  entrySelection,
   groupByCourse,
   primaryOf,
+  queueFor,
   rankCandidates,
   type Candidate,
 } from "./proposals";
 import { isDismissed, loadSession } from "./session";
+import type { EntryRequest } from "./source";
 import type { AttemptDetail, AttemptSummary, QuizSession } from "./types";
 
 /** One page of history is enough for both the resume sweep and the "missed N
@@ -54,9 +57,22 @@ export interface QuizHome {
   due: ReturnType<typeof dueSet>;
   byCourse: ReturnType<typeof groupByCourse>;
   resumable: ResumableQuiz | null;
-  /** The AI one-liner for the PRIMARY proposal only (R-8). `null` while it is
-   *  in flight or after a failure — the card falls back to a built sentence
-   *  rather than blocking or showing an empty paragraph. */
+  /**
+   * The concept the "Ready for you" card will actually show, which is NOT always
+   * the ranked primary: a `?concept=`/`?topic=` deep link names its own, a
+   * `?course=` entry opens on that course's weakest, and `?scope=due` opens on
+   * the weakest due overall (§5 B1.2 "Entry overrides"). `null` before the graph
+   * has loaded, or when there is nothing to propose.
+   */
+  cardConceptId: string | null;
+  /** The AI one-liner for the CARD's concept (R-8) — one call, for the one card
+   *  that shows a paragraph. `null` while it is in flight or after a failure:
+   *  the card falls back to a built sentence rather than blocking or showing an
+   *  empty paragraph. */
+  cardDescription: string | null;
+  /** @deprecated Alias of `cardDescription`, kept so the current home render
+   *  keeps compiling. Read `cardDescription` — it is right for a deep-linked
+   *  card too, which this name implies it is not. */
   primaryDescription: string | null;
   refresh(): void;
 }
@@ -130,7 +146,11 @@ const EMPTY_LOAD = {
  *   hydrating from localStorage — nothing is fetched until it resolves. The
  *   empty string means "All semesters" and fetches unscoped (#360).
  */
-export function useQuizHome(userId: string, semester: string | null): QuizHome {
+export function useQuizHome(
+  userId: string,
+  semester: string | null,
+  entry?: EntryRequest,
+): QuizHome {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [resumable, setResumable] = useState<{ key: string; value: ResumableQuiz | null } | null>(
     null,
@@ -224,24 +244,49 @@ export function useQuizHome(userId: string, semester: string | null): QuizHome {
     [scopedNodes, scopedCourses],
   );
 
+  // Which concept the card will show. The entry overrides the ranking (§5 B1.2),
+  // so describing the ranked primary would have paid for an LLM call about a
+  // concept nobody is looking at — and left the deep-linked card with no
+  // paragraph at all. An entry that can't be resolved (a link into a term the
+  // student isn't viewing) falls through to the ranking rather than showing
+  // nothing.
+  const cardConceptId = useMemo(() => {
+    if (entry?.concept || entry?.topic) {
+      const resolved = entrySelection(entry, scopedNodes, scopedCourses).conceptId;
+      if (resolved) return resolved;
+    } else if (entry?.course) {
+      const first = queueFor("course", scopedNodes, entry.course)[0];
+      if (first) return first;
+    } else if (entry?.scope === "due") {
+      const first = queueFor("due", scopedNodes)[0];
+      if (first) return first;
+    }
+    return primary?.node.id ?? null;
+  }, [entry, scopedNodes, scopedCourses, primary]);
+
   // One LLM call per home visit, for the one card that shows a paragraph (R-8).
   // `graph_nodes` has no `description` column, so there is nothing stored to
-  // read; fetching this for every card would multiply the cost by the number of
-  // rows on screen, which is exactly why it is scoped to the primary.
-  // Tagged with the concept it describes, so switching primaries drops the old
+  // read; fetching this for every row on screen would multiply the cost by the
+  // length of the list, which is exactly why it is scoped to the card.
+  // Tagged with the concept it describes, so changing cards drops the old
   // sentence without a synchronous reset in the effect body.
   const [described, setDescribed] = useState<{ id: string; text: string } | null>(null);
-  const primaryId = primary?.node.id ?? null;
-  const primaryName = primary?.node.concept_name ?? null;
-  const primaryCourseLabel = primary?.course?.course_code ?? undefined;
+  const cardNode = useMemo(
+    () => scopedNodes.find(n => n.id === cardConceptId) ?? null,
+    [scopedNodes, cardConceptId],
+  );
+  const cardName = cardNode?.concept_name ?? null;
+  const cardCourseLabel = cardNode?.course_id
+    ? scopedCourses.find(c => c.course_id === cardNode.course_id)?.course_code
+    : undefined;
 
   useEffect(() => {
-    if (!userId || !primaryId || !primaryName) return;
+    if (!userId || !cardConceptId || !cardName) return;
     let cancelled = false;
-    describeConcept(userId, primaryName, primaryCourseLabel).then(
+    describeConcept(userId, cardName, cardCourseLabel).then(
       description => {
         const text = description.trim();
-        if (!cancelled && text) setDescribed({ id: primaryId, text });
+        if (!cancelled && text) setDescribed({ id: cardConceptId, text });
       },
       () => {
         // The card renders the built fallback sentence instead. A missing
@@ -251,7 +296,9 @@ export function useQuizHome(userId: string, semester: string | null): QuizHome {
     return () => {
       cancelled = true;
     };
-  }, [userId, primaryId, primaryName, primaryCourseLabel]);
+  }, [userId, cardConceptId, cardName, cardCourseLabel]);
+
+  const cardDescription = described?.id === cardConceptId ? described.text : null;
 
   return {
     status,
@@ -266,7 +313,9 @@ export function useQuizHome(userId: string, semester: string | null): QuizHome {
     due,
     byCourse,
     resumable: resumable?.key === key ? resumable.value : null,
-    primaryDescription: described?.id === primaryId ? described.text : null,
+    cardConceptId,
+    cardDescription,
+    primaryDescription: cardDescription,
     refresh,
   };
 }

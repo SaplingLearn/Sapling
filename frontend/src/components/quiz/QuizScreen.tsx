@@ -50,7 +50,9 @@ export function QuizScreen() {
   const query = searchParams.toString();
   const entry = useMemo(() => parseEntry(new URLSearchParams(query)), [query]);
 
-  const home = useQuizHome(userId ?? "", semesterHydrated ? activeSemester : null);
+  // `entry` rides along so the home hook can describe the concept the CARD will
+  // show, which a deep link overrides (§5 B1.2).
+  const home = useQuizHome(userId ?? "", semesterHydrated ? activeSemester : null, entry);
   const { session, pending, config, actions } = useQuizSession(userId ?? "", entry);
 
   // `?concept=<id>` / `?topic=<name>` resolved against the SCOPED graph, so a
@@ -201,7 +203,13 @@ export function QuizScreen() {
       <DisclaimerModal />
       <TopBar title="Quiz" subtitle="Test what you know." actions={<AIDisclaimerChip />} />
       <div className={`quiz-body quiz-body--${layout}`}>
-        <div className={`quiz-col quiz-col--${layout}`}>{body()}</div>
+        {/* Home is full-bleed: its resume strip has to reach both edges under
+            the TopBar, so the screen wraps its own content (`.quiz-col--home`
+            + `.quiz-inset--home`, see quiz.css). Question and results keep the
+            centred column here. */}
+        {layout === "home"
+          ? body()
+          : <div className={`quiz-col quiz-col--${layout}`}>{body()}</div>}
       </div>
     </FullHeightScreen>
   );

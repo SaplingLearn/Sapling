@@ -25,6 +25,7 @@ import { fallbackDefinition, useQuizHome } from "./useQuizHome";
 import { dismissAttempt, saveSession } from "./session";
 import { initialSession } from "./machine";
 import { DEFAULT_PREFS } from "./prefs";
+import type { EntryRequest } from "./source";
 import type { AttemptSummary } from "./types";
 
 function node(over: Partial<GraphNode> & { id: string }): GraphNode {
@@ -221,12 +222,85 @@ describe("resume discovery (R-3)", () => {
   });
 });
 
-describe("the primary definition (R-8)", () => {
-  it("asks for exactly one concept description — the primary's", async () => {
+describe("the card's concept (§5 B1.2 entry overrides)", () => {
+  function entry(over: Partial<EntryRequest> = {}): EntryRequest {
+    return { source: { kind: "link" }, ...over };
+  }
+
+  it("is the ranked primary when nothing was deep-linked", async () => {
     const { result } = renderHook(() => useQuizHome("u1", ""));
-    await waitFor(() => expect(result.current.primaryDescription).not.toBeNull());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.cardConceptId).toBe("n1");
+    expect(result.current.primary?.node.id).toBe("n1");
+  });
+
+  it("follows a ?concept= deep link, even to a concept the ranking would not pick", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", "", entry({ concept: "n2" })));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.cardConceptId).toBe("n2");
+    // The ranking is untouched — only the card moved.
+    expect(result.current.primary?.node.id).toBe("n1");
+  });
+
+  it("follows a ?topic= name", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", "", entry({ topic: "n2" })));
+    await waitFor(() => expect(result.current.cardConceptId).toBe("n2"));
+  });
+
+  it("opens a ?course= entry on that course's weakest due concept", async () => {
+    coreApi.getGraph.mockResolvedValue({
+      nodes: [
+        node({ id: "a-strongish", mastery_score: 0.4, course_id: "course-a" }),
+        node({ id: "b-weak", mastery_score: 0.05, course_id: "course-b" }),
+        node({ id: "b-mid", mastery_score: 0.3, course_id: "course-b" }),
+      ],
+      edges: [],
+      stats: {},
+    });
+    const { result } = renderHook(() => useQuizHome("u1", "", entry({ course: "course-b" })));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.cardConceptId).toBe("b-weak");
+  });
+
+  it("opens a ?scope=due entry on the weakest due concept overall", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", "", entry({ scope: "due" })));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    // n-new scores 0.0 — the raw ranking order, not the studied-first tie-break.
+    expect(result.current.cardConceptId).toBe("n-new");
+  });
+
+  it("falls back to the ranking when the deep link points outside the scope", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", "", entry({ concept: "not-here" })));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.cardConceptId).toBe("n1");
+  });
+
+  it("is null before the graph has loaded", () => {
+    const { result } = renderHook(() => useQuizHome("u1", null, entry({ concept: "n2" })));
+    expect(result.current.cardConceptId).toBeNull();
+  });
+});
+
+describe("the card definition (R-8)", () => {
+  it("asks for exactly one description — the CARD's concept, not the primary's", async () => {
+    const deepLink: EntryRequest = { source: { kind: "tree" }, concept: "n2" };
+    const { result } = renderHook(() => useQuizHome("u1", "", deepLink));
+    await waitFor(() => expect(result.current.cardDescription).not.toBeNull());
+    expect(quizApi.describeConcept).toHaveBeenCalledTimes(1);
+    expect(quizApi.describeConcept).toHaveBeenCalledWith("u1", "n2", "CS 330");
+  });
+
+  it("describes the primary when there is no deep link", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.cardDescription).not.toBeNull());
     expect(quizApi.describeConcept).toHaveBeenCalledTimes(1);
     expect(quizApi.describeConcept).toHaveBeenCalledWith("u1", "n1", "CS 330");
+  });
+
+  it("keeps primaryDescription as an alias of the same value", async () => {
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.cardDescription).not.toBeNull());
+    expect(result.current.primaryDescription).toBe(result.current.cardDescription);
   });
 
   it("leaves the description null when the call fails, so the card falls back", async () => {
@@ -234,7 +308,7 @@ describe("the primary definition (R-8)", () => {
     const { result } = renderHook(() => useQuizHome("u1", ""));
     await waitFor(() => expect(result.current.status).toBe("ready"));
     await new Promise(r => setTimeout(r, 0));
-    expect(result.current.primaryDescription).toBeNull();
+    expect(result.current.cardDescription).toBeNull();
   });
 });
 
