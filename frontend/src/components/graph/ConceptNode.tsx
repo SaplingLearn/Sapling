@@ -204,7 +204,13 @@ export interface ConceptNodeProps {
   courseColor: string;
   /** The shade seed. MUST be the graph node id, not the concept name. */
   nodeId: string;
-  /** Optional caption under the mark, truncated like the tree's. */
+  /**
+   * Optional caption under the mark, truncated like the tree's. The box grows
+   * to fit it vertically, but the text can be wider than the mark and spills
+   * sideways (the SVG is `overflow: visible` for the glow) — exactly as the
+   * tree's own labels do inside the graph canvas. Marks laid out in a tight
+   * row should label themselves in HTML instead.
+   */
   label?: string;
   variant?: ConceptNodeVariant;
   isRoot?: boolean;

@@ -916,6 +916,8 @@ body { font-size: 14px; line-height: 1.5; }
   color: var(--text-dim);
 }
 .empty-state__action { display: flex; flex-wrap: wrap; gap: 12px; }
+/* The href form renders an <a class="btn">, and the app underlines anchors. */
+.empty-state__action .btn { text-decoration: none; }
 .empty-state--hero .empty-state__title {
   margin-bottom: 18px;
   font-size: var(--empty-hero-fs);
@@ -964,6 +966,50 @@ body { font-size: 14px; line-height: 1.5; }
   transform-box: fill-box;
   transform-origin: center;
   transition: transform var(--dur-slow) var(--ease);
+}
+
+/* ── QuizPrimitivesGallery ───────────────────────────────────────────
+   The harness at components/ui/__fixtures__ that shows every primitive in
+   every state at the shell's real content width. Not shipped in any route;
+   it lives here rather than inline so the fixture obeys the same
+   classes-and-tokens-only rule as the primitives it displays. */
+.quiz-gallery {
+  max-width: 900px;
+  padding: var(--pad-xl);
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+}
+.quiz-gallery__title { margin: 0; font-size: var(--fs-4xl); }
+.quiz-gallery__section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.quiz-gallery__heading { margin: 0; }
+.quiz-gallery__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pad-lg);
+}
+.quiz-gallery__caption {
+  width: 200px;
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.quiz-gallery__specimens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+.quiz-gallery__answers {
+  width: 100%;
+  border-top: 1px solid var(--border);
 }
 
 /* ══════════════════════════════════════════════════════════════════
