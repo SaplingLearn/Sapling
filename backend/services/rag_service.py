@@ -130,8 +130,12 @@ class Retrieval(NamedTuple):
     query that never reached the index.
     """
 
-    #: The matched chunks, best-first. Empty on failure or when nothing matched.
-    chunks: list[dict] = []
+    #: The matched chunks, best-first. Empty on failure or when nothing
+    #: matched. Deliberately has NO default: a `= []` on a NamedTuple field is
+    #: evaluated once at class creation, so every no-arg `Retrieval()` would
+    #: hand back the SAME list, and one caller mutating it in place would
+    #: poison every future empty retrieval in the process.
+    chunks: list[dict]
     #: True when retrieval RAISED. False for a clean empty result and for the
     #: #439 seam skip, which is a deliberate mode rather than a fault.
     failed: bool = False
@@ -180,7 +184,7 @@ def retrieve_chunks_detailed(
         # NOT `failed`: the seam being off is a configured mode, and marking
         # it as a fault would make every function-mode E2E run report broken
         # retrieval.
-        return Retrieval()
+        return Retrieval(chunks=[])
     except Exception as e:
         # Degrading to [] is deliberate (grounding is best-effort), but [] is
         # ALSO what "nothing relevant matched" returns — so without this the
@@ -192,7 +196,7 @@ def retrieve_chunks_detailed(
             category="error",
             payload={"course_id": course_id, "error_type": type(e).__name__},
         )
-        return Retrieval(failed=True)
+        return Retrieval(chunks=[], failed=True)
 
 
 def chunk_id(course_code: str, chunk_text: str) -> str:

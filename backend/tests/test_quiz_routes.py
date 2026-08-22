@@ -1138,7 +1138,7 @@ class TestQuizGrounding:
             patch("routes.quiz.table", side_effect=self._table_factory()),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._get_catalog_chunk", return_value=""),
-            patch("routes.quiz.retrieve_chunks_detailed", return_value=Retrieval()),
+            patch("routes.quiz.retrieve_chunks_detailed", return_value=Retrieval(chunks=[])),
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_1", "concept_node_id": "node_x",
