@@ -822,6 +822,12 @@ async def _quiz_via_agent(
         supabase=None,
         request_id=request_id,
         feature="quiz",
+        # The Class-intel opt-out reaches the misconceptions tool through
+        # deps, not through the prompt: the tool is registered on the agent
+        # unconditionally and step 2 of the system prompt tells the model to
+        # call it every run, so the routing sentence below can only ever ADD
+        # emphasis — it cannot withhold the data (#553 review).
+        share_class_context=use_shared_context,
     )
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
