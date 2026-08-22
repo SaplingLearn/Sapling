@@ -1,0 +1,29 @@
+-- H3 (#555): how many days away the student's next exam was when this quiz
+-- was generated.
+--
+-- Stored on the attempt, not merely used in the prompt, because the point of
+-- the issue is to be able to ASK LATER whether deadline-aware quizzes perform
+-- differently. A value that only ever reached a prompt leaves no way to
+-- compare a quiz taken three days before a midterm against one taken in week
+-- two — the measurement is the deliverable, not the prompt line.
+--
+-- Nullable with no default, and the distinction is load-bearing:
+--   NULL = we did not know (no course, no enrollment, no dated exams, or the
+--          lookup failed — `days_until_next_exam` degrades to None rather
+--          than failing a generation)
+--   0    = the exam is TODAY, which is the most actionable value the feature
+--          produces. A DEFAULT 0 would make every legacy row and every
+--          unknown look like exam day.
+--
+-- Dates only. This column is a day count derived from `assignments.due_date`,
+-- which is plaintext and indexed; no grade VALUE is read, stored or prompted
+-- anywhere on this path (points columns are encrypted per #521, and the audit
+-- flags that the current ToS does not clearly cover feeding grades to a
+-- model).
+--
+-- Additive and idempotent. Ordering still matters: PostgREST 400s on a column
+-- its schema cache doesn't have, and `generate_quiz` includes this key in the
+-- attempt INSERT — so this must be applied strictly before the code ships, as
+-- with 20260814051517.
+ALTER TABLE quiz_attempts
+    ADD COLUMN IF NOT EXISTS exam_days_away INTEGER;

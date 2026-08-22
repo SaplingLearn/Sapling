@@ -42,6 +42,7 @@ from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.exam_proximity import days_until_next_exam
 from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
 from services.quiz_identity import question_hash, normalize_text
@@ -806,6 +807,7 @@ async def _quiz_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    exam_days_away: int | None = None,
 ) -> list[dict]:
     """Run quiz_agent and return questions in the legacy wire shape.
 
@@ -860,6 +862,21 @@ async def _quiz_via_agent(
         routing_msg += (
             " Also call read_misconceptions_for_course and use those misconceptions "
             "as distractors and probes."
+        )
+    # H3/#555: one line, dates only. Says how near the deadline is and lets
+    # the model decide what that implies — not "make it harder", which would
+    # contradict the adaptive difficulty the student actually chose. Omitted
+    # entirely when unknown: "next exam: unknown" is prompt tokens spent to
+    # say nothing.
+    if exam_days_away is not None:
+        when = (
+            "TODAY" if exam_days_away == 0
+            else "tomorrow" if exam_days_away == 1
+            else f"in {exam_days_away} days"
+        )
+        routing_msg += (
+            f" The student's next exam in this course is {when}. Weight the"
+            " questions toward what an exam would actually test."
         )
 
     # Course-material grounding does blocking network I/O (a Gemini
@@ -1164,6 +1181,13 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # quiz.started, which shares this request_id with the llm_usage row.
     prompt_dimensions.start_capture()
 
+    # H3/#555: resolved ONCE here, then both prompted and stored — computing
+    # it twice could report one number to the model and a different one to the
+    # analytics row if an exam were entered between the two reads.
+    exam_days_away = await asyncio.to_thread(
+        days_until_next_exam, body.user_id, course_id
+    )
+
     try:
         # Each agent run inside is individually bounded by
         # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
@@ -1172,6 +1196,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         questions = await _quiz_via_agent(
             user_id=body.user_id,
             course_id=course_id,
+            exam_days_away=exam_days_away,
             concept_node_id=body.concept_node_id,
             concept_name=concept_name,
             num_questions=body.num_questions,
@@ -1224,13 +1249,21 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         ) from e
 
     quiz_id = str(uuid.uuid4())
-    table("quiz_attempts").insert({
+    attempt_row = {
         "id": quiz_id,
         "user_id": body.user_id,
         "concept_node_id": body.concept_node_id,
         "difficulty": body.difficulty,
         "questions_json": encrypt_json(questions),
-    })
+    }
+    # H3/#555: recorded so the question "do deadline-aware quizzes perform
+    # differently?" is answerable later. Omitted when unknown rather than
+    # written as an explicit null, mirroring apply_graph_update's rule: an
+    # environment that took this code before the migration keeps generating
+    # instead of 400ing on a column PostgREST's schema cache doesn't have.
+    if exam_days_away is not None:
+        attempt_row["exam_days_away"] = exam_days_away
+    table("quiz_attempts").insert(attempt_row)
     # #117: quiz.started once the attempt row exists. num_questions is the
     # actual generated count (the agent may return fewer than requested).
     events_service.log_event(
