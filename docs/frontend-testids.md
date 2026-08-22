@@ -241,7 +241,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-ask-input` / `quiz-ask-send` | the sheet's composer |
 | `quiz-results` | results root |
 | `quiz-results-graph` | the concept neighbourhood above the score (`graph/ConceptNeighbourhood`) |
-| `quiz-results-score` | the score percentage |
+| `quiz-results-score` | the "{n} of {total} correct" line — a count, not a percentage |
 | `quiz-results-mastery` | the "X / Y correct · mastery B% → A%" line |
 | `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
 | `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
