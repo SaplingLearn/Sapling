@@ -145,7 +145,7 @@ Proof: extend `KnowledgeGraph2D.testmode.test.tsx`'s `snapshot()` with `fill`/`o
 BEFORE the refactor, assert equality AFTER; KG3D's existing `nodeColor`/`nodeVal` tests keep passing; add a frozen
 `shadeFor` golden table (≥5 ids).
 
-### `lib/graph/neighbourhood.ts`
+### `lib/graph/neighbourhood.ts` — takes `lib/data.ts`'s view-model `GraphNode` (post `apiToGraphNode`), not the wire type (amended A1)
 ```ts
 export interface NeighbourNode { id: string; name: string; mastery: number; tier: string; strength: number }
 export function siblingsFor(centreId: string, nodes: GraphNode[], edges: GraphEdge[], n?: number): NeighbourNode[]
@@ -171,11 +171,12 @@ interface ConceptNeighbourhoodProps { centre: { id: string; name: string; master
 ```
 Layout: centre at (w/2 − small offset, h/2) per the prototype's three fixed sibling positions (top-left, top-right, bottom-left);
 edges `stroke: var(--text-muted)` at opacity .2 and width `edgeWidthFor(strength)`; labels `font-size: var(--fs-xs)`,
-`fill: var(--text-dim)`, truncated. Presets used: home 320×204 (scale 2.5), concept dialog 300×200 (scale 2), results 640×212 (scale 2.5, `centreVariant` growth).
+`fill: var(--text-dim)`, truncated. Presets used: home 320×204 (scale 2 — the prototype's r=23 for nodeR(0.29); amended A1), concept dialog 300×200 (scale 2), results 640×212 (scale 2.5, `centreVariant` growth).
 
 ### `<Button variant="link">` (addition to `ui/Button.tsx`)
 Bare text button: no padding/border/background, `color: var(--text-muted)`, hover `var(--text)`, `aria-pressed`/`data-active="true"` →
 `border-bottom: 1px solid var(--quiz-accent, var(--accent))`. Class `.btn--link`.
+Also (amended A1): `.btn--primary:disabled, .btn--primary[aria-disabled="true"] { opacity: .55; cursor: not-allowed }` — the system had no disabled treatment for primary buttons; B2's Submit relies on it.
 
 ### `<SegmentedControl>` — `ui/SegmentedControl.tsx`
 ```ts
@@ -190,13 +191,13 @@ others `var(--text-muted)` + transparent 2px border (no layout shift). Option te
 ```ts
 type AnswerState = "default" | "selected" | "correct" | "chosen-wrong" | "muted";   // muted = revealed, neither chosen nor correct
 interface AnswerOptionProps { letter: string; text: string; state: AnswerState; disabled?: boolean;
-  onSelect?: () => void; testid?: string }
+  onSelect?: () => void; tabIndex?: number; testid?: string }   // tabIndex: the screen gives the first row 0 while nothing is selected (roving tab stop)
 ```
 `role="radio"`, `aria-checked={state==="selected"||state==="chosen-wrong"}`, `tabIndex` per roving group; Enter/Space select.
 Row: mono letter (`.label-micro`, 14px wide), text (`font-size: var(--fs-md)`, line-height 1.55), **mark slot always reserved**
 (20px, right-aligned). States: `selected` → 2px left border `var(--quiz-accent)` + text `var(--text)`; `correct` → text 600 +
 mark "✓" + `aria-label` suffix "— correct answer"; `chosen-wrong` → left border `var(--state-struggle)` + mark "✕" + suffix
-"— your answer, incorrect"; `muted` → `var(--text-dim)`. Default left border is 2px transparent (no shift). Classes
+"— your answer, incorrect"; `muted` → `var(--text-muted)` (amended A1: `--text-dim` is the default row colour). Default left border is 2px transparent (no shift). Classes
 `.answer-option`, `.answer-option--{state}`, `.answer-option__letter|__text|__mark`.
 
 ### `<ProgressDots>` — `ui/ProgressDots.tsx`
@@ -226,7 +227,8 @@ aria-modal="true" aria-labelledby`. Header = title + close button (`Icon name="x
 
 ### `<EmptyState>` — `ui/EmptyState.tsx`
 ```ts
-interface EmptyStateProps { title: string; body?: string; action?: { label: string; href: string } | ReactNode; icon?: string; testid?: string }
+interface EmptyStateProps { title: string; body?: string; action?: { label: string; href: string } | ReactNode; icon?: string;
+  eyebrow?: string; size?: "default" | "hero"; testid?: string }   // eyebrow/size=hero keep Gradebook's promoted instance identical (amended A1)
 ```
 Promoted from `Gradebook/Landing.tsx` (which must now import it).
 
