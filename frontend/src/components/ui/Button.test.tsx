@@ -30,6 +30,30 @@ describe("Button — the link variant (#537)", () => {
     expect(screen.getByRole("button", { name: "ghost" })).toHaveClass("btn--ghost", "btn--sm");
   });
 
+  it("keeps a disabled primary in place, not hidden — the .btn--primary rule fades it", () => {
+    render(
+      <>
+        <Button variant="primary" disabled>
+          Submit
+        </Button>
+        <Button variant="primary" aria-disabled="true">
+          Score
+        </Button>
+      </>,
+    );
+    // Both forms must reach the CSS: :disabled for the DOM attribute, and
+    // [aria-disabled] for the controls that stay focusable while inert.
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Score" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    for (const name of ["Submit", "Score"]) {
+      expect(screen.getByRole("button", { name })).toHaveClass("btn", "btn--primary");
+      expect(screen.getByRole("button", { name })).toBeVisible();
+    }
+  });
+
   it("exposes the open-dialog state the quiz's `adjust` link needs", () => {
     render(
       <Button variant="link" aria-pressed data-active="true">

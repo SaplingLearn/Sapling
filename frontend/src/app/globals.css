@@ -682,6 +682,19 @@ body { font-size: 14px; line-height: 1.5; }
   border-bottom-color: var(--quiz-accent, var(--accent));
 }
 
+/* A disabled primary reads as unavailable rather than vanishing: the quiz's
+   Submit stays in place, at reduced contrast, until an answer is selected
+   (§5 B2 — "never hidden"). Scoped to `--primary` only; the bordered and
+   ghost variants already fade legibly on their own, and repainting every
+   disabled button in the app is not this PR's change to make. Both forms are
+   covered: the DOM attribute, and `aria-disabled` for the controls that must
+   stay focusable and announced while inert. There is no opacity token. */
+.btn--primary:disabled,
+.btn--primary[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* ── SegmentedControl ────────────────────────────────────────────────
    The underline mechanic four screens already re-implement, with the
    `.label-micro` type treatment none of them use. Not <Toggle>: that is the

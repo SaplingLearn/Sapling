@@ -107,10 +107,16 @@ export function QuizPrimitivesGallery() {
             xl
           </Button>
         </Row>
-        <Row label="disabled">
-          <Button variant="primary" aria-disabled disabled>
-            Submit
+        <Row label="disabled primary — both forms">
+          {/* The DOM attribute, and the aria-only form the quiz's Submit uses
+              so it stays focusable and announced while it can't be pressed. */}
+          <Button variant="primary" disabled>
+            Submit (disabled)
           </Button>
+          <Button variant="primary" aria-disabled="true">
+            Submit (aria-disabled)
+          </Button>
+          <Button variant="primary">Submit (enabled)</Button>
         </Row>
       </Section>
 
