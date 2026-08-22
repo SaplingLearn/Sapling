@@ -619,6 +619,353 @@ body { font-size: 14px; line-height: 1.5; }
 /* Hide the shared KnowledgeGraph's recenter/reset control on the Tutor
    session knowledge-map rail only (keeps it intact on Dashboard/Tree). */
 .learn-map-rail button[title="Reset view"] { display: none; }
+
+/* ══════════════════════════════════════════════════════════════════
+   ── ui primitives added for the quiz redesign (#537) ──
+
+   These back `components/ui/{SegmentedControl,AnswerOption,ProgressDots,
+   InlineBanner,Sheet,EmptyState}`, `Button`'s new `link` variant, and the
+   two still tree marks (`components/graph/Concept*`). They are SHARED, not
+   quiz-only: every one of them replaces a shape that was already
+   re-implemented privately somewhere else (four ad-hoc tab bars, two
+   answer-row treatments, Onboarding's step dots, Gradebook's lone empty
+   state), so the quiz gets its look by consolidating rather than adding a
+   fifth copy.
+
+   Classes rather than inline styles is the stricter bar the redesign
+   deliberately set (R-1): the fidelity-bar screens are token-pure but
+   inline-heavy, and these are primitives with a public CSS API. Every value
+   is a token; the handful of geometry constants the design fixes are
+   declared once below and referenced, never inlined at a call site.
+
+   Course accent: screens set `--quiz-accent` on their root from the active
+   course colour. Everything here falls back to `--accent`, so a primitive
+   used outside the quiz still looks right.
+   ══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Geometry the design pins. Declared once so a retune is one edit. */
+  --answer-letter-w: 14px;   /* the mono answer-key column */
+  --answer-mark-w: 20px;     /* the ✓/✕ slot — always reserved, never reflows */
+  --answer-bar-w: 2px;       /* selection bar; transparent at rest, so no shift */
+  --progress-rail: 196px;    /* the question rail's height */
+  --progress-dot: 9px;
+  --progress-dot-todo: 7px;
+  --sheet-width: 480px;      /* default; <Sheet width> overrides per instance */
+  --empty-hero-fs: 56px;     /* promoted from Gradebook's blank-semester title */
+}
+
+/* ── Button, `link` variant ──────────────────────────────────────────
+   A bare text button. `ghost` keeps button padding and still reads as
+   chrome; "adjust", "Discard" and "Done" are text. `aria-pressed` /
+   `data-active` underline it in the accent — the quiz's "this link's dialog
+   is open" state. Both selectors out-specify the `:hover` rule below them. */
+.btn.btn--link {
+  padding: 0;
+  gap: 4px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  font-weight: 400;
+}
+.btn.btn--link:hover {
+  background: none;
+  border-color: transparent;
+  color: var(--text);
+}
+.btn.btn--link[aria-pressed="true"],
+.btn.btn--link[data-active="true"] {
+  color: var(--text);
+  border-bottom-color: var(--quiz-accent, var(--accent));
+}
+
+/* ── SegmentedControl ────────────────────────────────────────────────
+   The underline mechanic four screens already re-implement, with the
+   `.label-micro` type treatment none of them use. Not <Toggle>: that is the
+   filled pill, a different language. The 2px transparent border on unselected
+   options is what keeps the row from shifting when the choice moves. */
+.seg {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.seg__opt {
+  padding: 6px 1px;
+  margin-right: var(--pad-lg);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.seg__opt:last-child { margin-right: 0; }
+.seg__opt:hover { color: var(--text); }
+.seg__opt[aria-checked="true"] {
+  color: var(--text);
+  border-bottom-color: var(--quiz-accent, var(--accent));
+}
+.seg__opt[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.seg__opt[aria-disabled="true"]:hover { color: var(--text-muted); }
+
+/* ── AnswerOption ────────────────────────────────────────────────────
+   Selection is a 2px LEFT bar, not a full border, and the mark slot is
+   always reserved: picking an answer and revealing the verdict both leave
+   every other pixel where it was. */
+.answer-option {
+  display: flex;
+  width: 100%;
+  gap: 18px;
+  align-items: baseline;
+  padding: 17px var(--pad-md) 17px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-left: var(--answer-bar-w) solid transparent;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.answer-option:hover { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.answer-option[aria-disabled="true"] { cursor: default; }
+.answer-option[aria-disabled="true"]:hover { background: none; }
+.answer-option__letter {
+  width: var(--answer-letter-w);
+  flex-shrink: 0;
+}
+.answer-option__text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.answer-option__mark {
+  width: var(--answer-mark-w);
+  flex-shrink: 0;
+  text-align: right;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+.answer-option--selected { border-left-color: var(--quiz-accent, var(--accent)); }
+.answer-option--selected .answer-option__text { color: var(--text); }
+/* Correct is never signalled by weight alone — the row also carries a ✓ and
+   an "— correct answer" suffix in its accessible name. */
+.answer-option--correct .answer-option__text { color: var(--text); font-weight: 600; }
+.answer-option--chosen-wrong { border-left-color: var(--state-struggle); }
+.answer-option--chosen-wrong .answer-option__text { color: var(--text); }
+.answer-option--muted .answer-option__text { color: var(--text-muted); }
+
+/* ── ProgressDots ────────────────────────────────────────────────────
+   Column = the design's "branch": a hairline rail behind evenly-spaced dots.
+   `space-between` rather than absolute tops so the rail works at any count. */
+.progress-dots { display: flex; align-items: center; }
+.progress-dots--column {
+  position: relative;
+  flex-direction: column;
+  justify-content: space-between;
+  height: var(--progress-rail);
+}
+.progress-dots--column::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--border);
+}
+.progress-dots--row { flex-direction: row; gap: 8px; }
+.progress-dots__dot {
+  position: relative;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+}
+.progress-dots__dot--current {
+  width: var(--progress-dot);
+  height: var(--progress-dot);
+  background: var(--bg);
+  border: 1.5px solid var(--quiz-accent, var(--accent));
+}
+.progress-dots__dot--done {
+  width: var(--progress-dot);
+  height: var(--progress-dot);
+  background: var(--quiz-accent, var(--accent));
+}
+.progress-dots__dot--todo {
+  width: var(--progress-dot-todo);
+  height: var(--progress-dot-todo);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+}
+
+/* ── InlineBanner ────────────────────────────────────────────────────
+   The tinted strip under a page header. No precedent existed anywhere. */
+.inline-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px var(--pad-xl);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+.inline-banner--accent {
+  background: color-mix(in srgb, var(--quiz-accent, var(--accent)) 6%, transparent);
+}
+.inline-banner--neutral { background: var(--bg-subtle); }
+.inline-banner__body { flex: 1; min-width: 0; }
+.inline-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* ── Sheet ───────────────────────────────────────────────────────────
+   Dialog's behaviour (portal, trap, scroll-lock, Escape, focus restore) with
+   a right-anchored panel instead of a centred card. The slide is a transform
+   so the app-wide prefers-reduced-motion reset above neutralises it. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--ink-900) 45%, transparent);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.sheet-backdrop[data-visible] { opacity: 1; }
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: var(--sheet-width);
+  max-width: min(100vw, calc(100vw - 32px));
+  height: 100%;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+  transition: transform var(--dur) var(--ease);
+}
+.sheet--right {
+  border-left: 1px solid var(--border);
+  transform: translateX(100%);
+}
+.sheet--right[data-visible] { transform: none; }
+.sheet__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px var(--pad-lg);
+  border-bottom: 1px solid var(--border);
+}
+.sheet__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-xl);
+  color: var(--text);
+}
+.sheet__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-right: -8px;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.sheet__close:hover { background: var(--bg-soft); color: var(--text); }
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--pad-lg);
+}
+
+/* ── EmptyState ──────────────────────────────────────────────────────
+   `hero` is Gradebook's display-scale blank-semester screen, promoted here
+   with it; `md` is the in-page version. An empty state always carries a way
+   out — the action slot is the point of the component. */
+.empty-state { max-width: 680px; }
+.empty-state--md { padding: 40px 8px 32px; }
+.empty-state--hero { padding: 64px 8px 40px; }
+.empty-state__icon {
+  display: inline-flex;
+  margin-bottom: 12px;
+  color: var(--text-muted);
+}
+.empty-state__eyebrow { margin-bottom: 14px; }
+.empty-state__title {
+  margin: 0 0 14px;
+  font-size: var(--fs-3xl);
+  color: var(--text);
+}
+.empty-state__body {
+  margin: 0 0 26px;
+  max-width: 540px;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+.empty-state__action { display: flex; flex-wrap: wrap; gap: 12px; }
+.empty-state--hero .empty-state__title {
+  margin-bottom: 18px;
+  font-size: var(--empty-hero-fs);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+.empty-state--hero .empty-state__body {
+  margin-bottom: 32px;
+  font-size: var(--fs-lg);
+}
+
+/* ── ConceptNode / ConceptNeighbourhood ──────────────────────────────
+   The still tree marks. Geometry is SVG attributes computed from
+   lib/graph/nodeStyle; only paint and motion live here.
+
+   `overflow: visible` is load-bearing: the glow is a blurred disc at r + 8
+   reference units, which reaches past the box on purpose. Clipped to the
+   viewport it would render as a soft square, which reads as a box, not a
+   halo. */
+.concept-node,
+.concept-neighbourhood {
+  display: block;
+  flex-shrink: 0;
+  overflow: visible;
+}
+.concept-node__label {
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xs);
+  fill: var(--text-dim);
+  opacity: 0.85;
+}
+.concept-neighbourhood__edge { stroke: var(--text-muted); }
+.concept-neighbourhood__label {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  fill: var(--text-dim);
+  opacity: 0.85;
+}
+/* The growth mark's one animation: it grows from its before-radius to its
+   after-radius, once, on mount. `--concept-grow` is the ratio between them,
+   bound by the component and 1 once grown (or from the first paint, when the
+   viewer prefers reduced motion). The app-wide reduced-motion reset also
+   zeroes the duration, so this is belt and braces. */
+.concept-node__body--growth {
+  transform: scale(var(--concept-grow, 1));
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform var(--dur-slow) var(--ease);
+}
+
 /* ══════════════════════════════════════════════════════════════════
    LANDING PAGE STYLES (ported from main branch)
    ══════════════════════════════════════════════════════════════════ */
