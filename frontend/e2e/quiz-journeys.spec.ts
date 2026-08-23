@@ -48,7 +48,7 @@
  * Fixture constants, the function-mode contract note and the shared gestures
  * live in `support/quiz.ts`.
  */
-import { type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
 import { USER_ACTIVE } from "./support/stack";
@@ -216,12 +216,22 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
   await openQuizHome(page, "/quiz");
   await expect(strip).toBeVisible({ timeout: SUBMIT_TIMEOUT });
 
-  await otherDeviceVisit(page);
+  const [{ id: attemptId }] = await appAttempts();
+  expect(statusOf(await otherDeviceVisit(page), attemptId)).toBe("in_progress");
   await expect(strip).toBeVisible({ timeout: SUBMIT_TIMEOUT });
 
+  // The DB read is synchronized to the abandon POST, not to the click: the
+  // strip vanishes optimistically (`useQuizHome::discard` hides it locally
+  // before the call resolves), so reading the row off the click would race
+  // the write it is checking for.
+  const abandoned = page.waitForResponse(
+    r => r.request().method() === "POST" && /\/api\/quiz\/attempts\/[^/]+\/abandon$/.test(r.url()),
+    { timeout: SUBMIT_TIMEOUT },
+  );
   await page.getByTestId("quiz-resume-discard").click();
   await expect(strip).toHaveCount(0);
   await expect(page.getByTestId("quiz-proposal")).toBeVisible();
+  expect((await abandoned).status()).toBe(200);
 
   const attempts = await appAttempts();
   expect(attempts).toHaveLength(1);
@@ -229,23 +239,37 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
   expect(attempts[0].completed_at).toBeNull();
   expect(attempts[0].abandoned_at).not.toBeNull();
 
-  // The same visit now finds nothing to offer: `_attempt_status` reports the
-  // row as `abandoned`, and `discoverResumable` only offers `in_progress`.
-  await otherDeviceVisit(page);
+  // The SERVER'S OWN WORD is what this journey exists to pin, and it is
+  // asserted on the listing payload rather than on the rendered strip.
+  // `discoverResumable` reaches the strip through a further `GET
+  // /attempts/{id}` round trip, so in the regressed case (listing still
+  // `in_progress`) the strip is merely LATE, not absent, and a count check
+  // taken here would pass roughly half the time. The status assertion has no
+  // such window.
+  expect(statusOf(await otherDeviceVisit(page), attemptId)).toBe("abandoned");
+  // Corroboration only, and retrying (`toHaveCount` polls to its timeout): a
+  // strip that appeared late anyway would mean the client is offering a row
+  // the server calls abandoned.
   await expect(strip).toHaveCount(0);
 });
+
+/** One page of `GET /api/quiz/attempts`, as much of it as this journey reads. */
+interface AttemptsListing {
+  attempts: { quiz_id: string; status: string }[];
+}
+
+/** The status the SERVER reports for one attempt on a listing page. */
+function statusOf(listing: AttemptsListing, attemptId: string): string | undefined {
+  return listing.attempts.find(a => a.quiz_id === attemptId)?.status;
+}
 
 /**
  * Reload quiz home as if this were a machine that had never seen the attempt:
  * both quiz localStorage keys gone, so only `GET /attempts` can put anything on
- * the resume strip.
- *
- * The listing response is awaited explicitly rather than inferred from the
- * proposal card. `discoverResumable` runs off that payload, so asserting the
- * strip's absence before it has arrived would pass on timing alone — the exact
- * way a "the discard stuck" test quietly stops testing anything.
+ * the resume strip. Returns that listing's payload — the deterministic thing to
+ * assert on, since every rendered consequence of it is a round trip further on.
  */
-async function otherDeviceVisit(page: Page): Promise<void> {
+async function otherDeviceVisit(page: Page): Promise<AttemptsListing> {
   await page.evaluate(() => {
     window.localStorage.removeItem("sapling_quiz_dismissed");
     window.localStorage.removeItem("sapling_quiz_session");
@@ -255,8 +279,9 @@ async function otherDeviceVisit(page: Page): Promise<void> {
     { timeout: SUBMIT_TIMEOUT },
   );
   await page.goto("/quiz");
-  await listing;
+  const body = (await (await listing).json()) as AttemptsListing;
   await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  return body;
 }
 
 /**

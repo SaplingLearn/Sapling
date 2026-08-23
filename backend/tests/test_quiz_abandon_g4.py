@@ -319,3 +319,103 @@ class TestAbandonIsVisibleToTheReadPaths:
 
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ABANDONED"
+
+    def test_submitting_an_abandoned_attempt_409s(self):
+        attempts = _Attempts(_attempt_row())
+        apply_mock = MagicMock()
+
+        with (
+            patch("routes.quiz.table", side_effect=_factory(attempts)),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            client.post("/api/quiz/attempts/quiz1/abandon")
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "B"}],
+            })
+
+        assert r.status_code == 409
+        assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ABANDONED"
+        apply_mock.assert_not_called()
+
+
+class TestSubmitAndAbandonCannotBothWin:
+    """Review round 1 (M3). G4 makes this interleaving reachable from the UI:
+    a quiz open mid-question in one tab, Discard pressed in another.
+
+    Submit's claim used to filter on `completed_at IS NULL` alone, with
+    `_refuse_if_abandoned` as a non-atomic PRE-READ in front of it — so a
+    stamp written in the window between the two slipped through and the row
+    ended up completed AND abandoned. Benign today (the derived status reads
+    `completed`) but asymmetric: abandon's claim already required both nulls.
+    """
+
+    def test_a_discard_landing_mid_submit_is_refused_by_the_claim(self):
+        attempts = _Attempts(_attempt_row())
+        apply_mock = MagicMock()
+        real_select = attempts.select
+
+        def _discarded_after_the_pre_read(columns="*", filters=None, **kw):
+            rows = real_select(columns, filters, **kw)
+            # The concurrent Discard lands here — after submit has read the
+            # row and decided it is open, before the claim runs. This is the
+            # exact window `_refuse_if_abandoned` cannot cover.
+            attempts.row["abandoned_at"] = STAMP
+            attempts.select = real_select
+            return rows
+
+        attempts.select = _discarded_after_the_pre_read
+
+        with (
+            patch("routes.quiz.table", side_effect=_factory(attempts)),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "B"}],
+            })
+
+        # Asserted FIRST so a regression names the actual defect: with the
+        # old single-null filter the claim wins and the request sails past
+        # this point, failing later on something unrelated.
+        assert attempts.row["completed_at"] is None, (
+            "the claim let a submit complete a row the student had discarded"
+        )
+        apply_mock.assert_not_called()
+        assert r.status_code == 409
+        # The 409 must say why. "Already submitted" would be a lie the client
+        # acts on — it maps this code to its own copy (quiz-errors.spec.ts).
+        assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ABANDONED"
+
+    def test_the_ordinary_double_submit_still_reads_as_already_completed(self):
+        """The re-read must not relabel the case it was always for."""
+        attempts = _Attempts(_attempt_row())
+        apply_mock = MagicMock()
+        real_select = attempts.select
+
+        def _submitted_after_the_pre_read(columns="*", filters=None, **kw):
+            rows = real_select(columns, filters, **kw)
+            attempts.row["completed_at"] = STAMP
+            attempts.select = real_select
+            return rows
+
+        attempts.select = _submitted_after_the_pre_read
+
+        with (
+            patch("routes.quiz.table", side_effect=_factory(attempts)),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "B"}],
+            })
+
+        assert r.status_code == 409
+        assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
+        apply_mock.assert_not_called()

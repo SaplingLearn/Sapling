@@ -1772,9 +1772,26 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # mastery. The final update further down fills score/total/answers_json.
     claimed = table("quiz_attempts").update(
         {"completed_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{body.quiz_id}", "completed_at": "is.null"},
+        filters={
+            "id": f"eq.{body.quiz_id}",
+            "completed_at": "is.null",
+            # Symmetric with abandon_attempt's claim (#537 G4). Without it the
+            # two claims can BOTH win — mid-quiz in one tab, Discard in
+            # another — and the row ends up completed AND abandoned.
+            # `_refuse_if_abandoned` above is only a pre-read; the filters are
+            # what actually arbitrate.
+            "abandoned_at": "is.null",
+        },
     )
     if not claimed:
+        # Two ways to lose the claim now, and they are different sentences to
+        # the student ("already submitted" vs "you discarded this"). The
+        # pre-read cannot see a stamp written since, so re-read rather than
+        # assume the completed case.
+        current = (table("quiz_attempts").select(
+            "abandoned_at", filters={"id": f"eq.{body.quiz_id}"},
+        ) or [{}])[0]
+        _refuse_if_abandoned(current)
         raise QuizAPIError(
             status_code=409,
             code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
