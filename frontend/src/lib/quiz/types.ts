@@ -123,6 +123,15 @@ export interface AttemptDetail {
   created_at: string;
 }
 
+/** `POST /api/quiz/attempts/{id}/abandon` (G4). Idempotent: a second call
+ *  answers with the stamp already on the row, so `status` is always
+ *  `"abandoned"` on a 2xx. */
+export interface AbandonResult {
+  quiz_id: string;
+  status: AttemptStatus;
+  abandoned_at: string;
+}
+
 export type SourceKind = "tree" | "dashboard" | "notes" | "nav" | "link" | "quiz";
 
 export interface QuizSource {

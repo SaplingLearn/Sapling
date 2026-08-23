@@ -148,11 +148,16 @@ export function persistSession(session: QuizSession): void {
 
 // ── Discarded attempts ─────────────────────────────────────────────────────
 //
-// There is no abandon endpoint (gap G4): an attempt only closes via submit or
-// the 24h TTL sweep. "Discard" therefore hides the row client-side and leaves
-// the server row to expire.
-// TODO(#537-followup: abandon endpoint) — replace this with a real
-// `POST /api/quiz/attempts/{id}/abandon` so a discard is visible on any device.
+// The OPTIMISTIC half of Discard. `POST /api/quiz/attempts/{id}/abandon` (G4,
+// closed) is what makes a discard durable — it stamps `abandoned_at`, so a
+// reload and every other device see the attempt as `abandoned` and stop
+// offering it. This key is what makes it INSTANT, and what keeps it honoured
+// in this browser when that call is slow or never lands: `useQuizHome::discard`
+// writes here first and treats a failed abandon as nothing to undo (the
+// backend's 24h TTL sweep is the backstop).
+//
+// So it is deliberately not redundant with the server state, and deliberately
+// not authoritative either: nothing here ever un-hides an attempt.
 
 function readDismissed(): string[] {
   const parsed = readJson<unknown>(DISMISSED_KEY);

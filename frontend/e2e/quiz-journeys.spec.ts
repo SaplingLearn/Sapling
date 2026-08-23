@@ -6,7 +6,8 @@
  * actually FOR — the things the old screen either could not do or did wrongly:
  *
  *   resume                  a quiz you walked away from is offered back, at the
- *                           question you left it on (R-3).
+ *                           question you left it on (R-3) — and Discard closes
+ *                           it server-side, on every device (G4).
  *   leave-and-return        the one door out saves the attempt and comes back
  *                           to where the quiz was launched from (R-10).
  *   ask-without-abandoning  the tutor opens OVER the question instead of
@@ -47,6 +48,7 @@
  * Fixture constants, the function-mode contract note and the shared gestures
  * live in `support/quiz.ts`.
  */
+import { type Page } from "@playwright/test";
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
 import { USER_ACTIVE } from "./support/stack";
@@ -160,7 +162,7 @@ async function proposalsFromDb() {
 
 // ── 1. Resume ──────────────────────────────────────────────────────────────
 
-test("resume: an unfinished quiz is offered back at the question it was left on, and Discard hides it", async ({
+test("resume: an unfinished quiz is offered back at the question it was left on, and Discard abandons it", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -197,19 +199,65 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
   await expect(dots.nth(1)).toHaveClass(/progress-dots__dot--current/);
   await expect(dots.nth(2)).toHaveClass(/progress-dots__dot--todo/);
 
-  // Discard is client-side only — there is no abandon endpoint (R-3, gap G4).
+  // ── Discard, which CLOSES the attempt server-side (G4) ────────────────────
+  //
+  // It used to be a localStorage flag, so the strip came back on every other
+  // device and the row sat open until the backend's 24h sweep found it. What
+  // proves the difference is a visit with this browser's two quiz keys wiped:
+  // no `dismissedAttempts` entry to skip and no stored session to resume from,
+  // so the strip's only remaining input is `GET /attempts`. That is the
+  // other-device path.
+  //
+  // The POSITIVE CONTROL comes first, deliberately. "The strip is absent" is a
+  // vacuous assertion on its own — a slow load, a renamed testid or a broken
+  // home screen all satisfy it. Showing that the very same visit DOES offer
+  // the attempt while the row is still open is what gives its absence
+  // afterwards any meaning.
   await openQuizHome(page, "/quiz");
   await expect(strip).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+
+  await otherDeviceVisit(page);
+  await expect(strip).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+
   await page.getByTestId("quiz-resume-discard").click();
   await expect(strip).toHaveCount(0);
   await expect(page.getByTestId("quiz-proposal")).toBeVisible();
 
   const attempts = await appAttempts();
   expect(attempts).toHaveLength(1);
-  // Hidden, not abandoned: the row is still open, waiting for the 24h sweep.
+  // Closed, not scored: a discard pays out no mastery and no XP.
   expect(attempts[0].completed_at).toBeNull();
-  expect(attempts[0].abandoned_at).toBeNull();
+  expect(attempts[0].abandoned_at).not.toBeNull();
+
+  // The same visit now finds nothing to offer: `_attempt_status` reports the
+  // row as `abandoned`, and `discoverResumable` only offers `in_progress`.
+  await otherDeviceVisit(page);
+  await expect(strip).toHaveCount(0);
 });
+
+/**
+ * Reload quiz home as if this were a machine that had never seen the attempt:
+ * both quiz localStorage keys gone, so only `GET /attempts` can put anything on
+ * the resume strip.
+ *
+ * The listing response is awaited explicitly rather than inferred from the
+ * proposal card. `discoverResumable` runs off that payload, so asserting the
+ * strip's absence before it has arrived would pass on timing alone — the exact
+ * way a "the discard stuck" test quietly stops testing anything.
+ */
+async function otherDeviceVisit(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    window.localStorage.removeItem("sapling_quiz_dismissed");
+    window.localStorage.removeItem("sapling_quiz_session");
+  });
+  const listing = page.waitForResponse(
+    r => r.request().method() === "GET" && r.url().includes("/api/quiz/attempts?"),
+    { timeout: SUBMIT_TIMEOUT },
+  );
+  await page.goto("/quiz");
+  await listing;
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+}
 
 /**
  * REGRESSION GUARD — a resumed quiz used to forget everything the server does
