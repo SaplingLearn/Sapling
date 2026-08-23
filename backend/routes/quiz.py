@@ -51,7 +51,8 @@ from services.quiz_identity import question_hash, normalize_text
 from services.quiz_repetition import RecentQuestion, recent_question_identities
 from services import prompt_dimensions
 from services.rag_service import retrieve_chunks_detailed, format_rag_context
-from services.xp_service import award_xp_safe
+from services.gamification_service import me_snapshot
+from services.xp_service import XpAward, award_xp_safe
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -1647,6 +1648,40 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
     }
 
 
+def _gamification_block(user_id: str, award: XpAward | None) -> dict | None:
+    """G8: the XP/streak numbers the results screen needs, in the submit reply.
+
+    Before this the close screen had to read `GET /api/gamification/me` once
+    before the session and once after the submit and subtract — two extra
+    round trips whose race or failure showed the student a blank where their
+    XP should be (`frontend/src/lib/quiz/useGamificationDelta.ts`). The
+    snapshot is built by `services/gamification_service.me_snapshot`, the same
+    function `/api/gamification/me` serves, so the inline numbers and the
+    endpoint can never disagree.
+
+    Two things can go wrong, and each is reported as itself rather than
+    papered over with a plausible number:
+
+    * the XP write failed (`award_xp_safe` swallowed it) → `xp_awarded` is
+      `None`. The client's rule is to omit the XP line rather than invent one.
+    * the snapshot read failed → the whole block is `None`. The client falls
+      back to its own `/me` read, i.e. exactly today's behaviour.
+
+    `xp_awarded` is what the `quiz_completed` award paid, which is the amount
+    written to the `xp_events` ledger. A badge earned by the same submit pays
+    its own XP separately; that is not in `xp_awarded` but IS in `total_xp`,
+    which is read after the achievement pass.
+    """
+    try:
+        snapshot = me_snapshot(user_id)
+    except Exception:
+        # Display data must never fail the action that earned it — the same
+        # rule `award_xp_safe` follows for the write itself.
+        logger.exception("quiz: gamification snapshot failed user=%s", user_id)
+        return None
+    return {"xp_awarded": award.awarded if award else None, **snapshot}
+
+
 @router.post("/submit")
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
     attempt_rows = table("quiz_attempts").select("*", filters={"id": f"eq.{body.quiz_id}"})
@@ -1925,7 +1960,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # a replay 409s before reaching here). source_id=body.quiz_id is the
     # attempt id, so a hypothetical double-invocation is a no-op via the
     # xp_events idempotency key rather than a double payout.
-    award_xp_safe(user_id, "quiz_completed", source_type="quiz", source_id=body.quiz_id)
+    award = award_xp_safe(user_id, "quiz_completed", source_type="quiz",
+                          source_id=body.quiz_id)
 
     # Check for achievements after quiz completion
     try:
@@ -1933,6 +1969,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         check_achievements(user_id, "quizzes_completed", {})
     except Exception:
         pass
+
+    # G8: read AFTER the achievement pass — a badge earned by this submit pays
+    # its own XP and moves earned_count, so a snapshot taken before it would
+    # be stale the moment it was serialized.
+    gamification = _gamification_block(user_id, award)
 
     # #117: quiz.completed on the success path only — a 409 replay (the
     # atomic completed_at claim above) or any earlier 4xx never reaches here.
@@ -1955,4 +1996,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         "mastery_before": mastery_before,
         "mastery_after": mastery_score_after,
         "results": results,
+        # G8, additive: `xp_awarded` plus the /api/gamification/me snapshot as
+        # of right now. `None` when the snapshot read failed.
+        "gamification": gamification,
     }

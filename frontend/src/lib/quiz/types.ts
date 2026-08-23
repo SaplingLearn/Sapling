@@ -7,6 +7,7 @@
  * session/scope model, the phase machine) is marked as a client concept.
  */
 
+import type { GamificationMe } from "@/lib/types";
 import type { QuizError } from "./errors";
 
 /** `GET /api/quiz/config` — the ONLY source of option lists (never enumerate
@@ -65,6 +66,15 @@ export interface AnswerResult {
   recorded: boolean;
 }
 
+/** G8: the XP line, inline in the submit reply — `xp_awarded` plus the same
+ *  `GET /api/gamification/me` snapshot, taken right after the award (both
+ *  built by `backend/services/gamification_service.py`, so they cannot
+ *  disagree). Never an invented number: `xp_awarded` is `null` when the XP
+ *  write failed, and the whole block is `null` when the snapshot read did. */
+export interface SubmitGamification extends GamificationMe {
+  xp_awarded: number | null;
+}
+
 export interface SubmitResult {
   score: number;
   total: number;
@@ -77,6 +87,9 @@ export interface SubmitResult {
     correct_answer: string;
     explanation: string;
   }[];
+  /** Optional while `useGamificationDelta` still reads `/me` around the
+   *  submit (R-9); the client migration to this field is a later pass. */
+  gamification?: SubmitGamification | null;
 }
 
 export type AttemptStatus = "completed" | "abandoned" | "in_progress";

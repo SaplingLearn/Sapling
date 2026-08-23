@@ -292,6 +292,51 @@ def test_a_replayed_submit_is_a_409_and_re_applies_no_mastery(
     )
 
 
+# ── G8: the XP line, inline ─────────────────────────────────────────────────
+
+
+def test_submit_returns_the_xp_it_paid_and_the_card_the_endpoint_would_serve(
+    authed_client, db_conn
+):
+    """G8 (#537): the results screen used to read `/api/gamification/me` twice
+    around the submit and subtract. Submit now carries the numbers itself.
+
+    Both halves are checked against something that is not the response:
+    `xp_awarded` against the `xp_events` row Postgres actually stored for this
+    attempt, and the snapshot against a live `GET /api/gamification/me`. The
+    hermetic lane can only prove the two callers share a function; only here
+    can it prove they agree on real rows — which is the whole claim G8 makes.
+    """
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+    authed_client.post(f"/api/quiz/attempts/{quiz_id}/answer",
+                       json={"question_index": 0, "selected_index": 1})
+
+    s = authed_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
+    assert s.status_code == 200, s.text
+
+    block = s.json()["gamification"]
+    assert block is not None, "the submit response carried no gamification block"
+
+    paid = db_conn.execute(
+        "SELECT amount FROM xp_events WHERE source_id = %s AND rule_key = %s",
+        (quiz_id, "quiz_completed"),
+    ).fetchall()
+    assert len(paid) == 1, f"expected exactly one quiz_completed award, got {paid!r}"
+    assert block["xp_awarded"] == paid[0]["amount"]
+
+    stored_total = db_conn.execute(
+        "SELECT total_xp FROM users WHERE id = %s", (USER_ACTIVE,)
+    ).fetchone()["total_xp"]
+    assert block["total_xp"] == stored_total
+
+    me = authed_client.get(f"/api/gamification/me?user_id={USER_ACTIVE}")
+    assert me.status_code == 200, me.text
+    assert {k: v for k, v in block.items() if k != "xp_awarded"} == me.json(), (
+        "the inline snapshot and /api/gamification/me disagree — the point of "
+        "both going through services/gamification_service.py"
+    )
+
+
 # ── resume + history ────────────────────────────────────────────────────────
 
 
