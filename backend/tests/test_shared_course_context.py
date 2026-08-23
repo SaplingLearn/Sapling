@@ -301,6 +301,75 @@ class TestUpdateCourseContext(unittest.TestCase):
         self.assertEqual(len(upsert_payload["common_misconceptions"]), 1)
         self.assertEqual(len(upsert_payload["prerequisite_gaps"]), 1)
 
+    @patch("services.academics.table")
+    @patch("services.course_context_service.table")
+    def test_effective_explanations_never_emitted_even_when_source_has_it(
+        self, mock_table, mock_ac_table
+    ):
+        """#572: `agents/quiz_context.py::QuizContext` never writes an
+        `effective_explanations` key into `context_json` — it only ever
+        writes `weak_areas`/`common_mistakes`/`questions_seen_summary`/
+        `recommended_difficulty`/`notes`. The rollup used to read that key
+        anyway, which meant `offering_concept_stats.effective_explanations`
+        always persisted an empty array (indistinguishable from "this class
+        produced no effective explanations"). Even if a stray row somehow
+        *did* carry the key (planted here to prove the read is really gone,
+        not just untested), the upsert payload must never include it — the
+        column stays on its own DB default, unwritten by this rollup."""
+        enrollment_rows = [{"user_id": "u1"}]
+        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
+        offering_rows = [{"course_id": "abstract-cs101"}]
+        node_rows = [
+            {"id": "n1", "concept_name": "Loops", "mastery_score": 0.3,
+             "mastery_tier": "learning", "user_id": "u1"},
+        ]
+        quiz_rows = [
+            {"concept_node_id": "n1",
+             "context_json": {
+                 "common_mistakes": ["Off-by-one error"],
+                 "weak_areas": ["boundary conditions"],
+                 "effective_explanations": ["A worked example with a number line"],
+             }},
+        ]
+
+        stats_tbl = MagicMock()
+        summary_tbl = MagicMock()
+        summary_tbl.select.return_value = []
+
+        def _table(name):
+            m = MagicMock()
+            if name == "enrollments":
+                m.select.return_value = enrollment_rows
+            elif name == "course_offerings":
+                m.select.return_value = offering_rows
+            elif name == "courses":
+                m.select.return_value = course_rows
+            elif name == "graph_nodes":
+                m.select.return_value = node_rows
+            elif name == "quiz_context":
+                m.select.return_value = quiz_rows
+            elif name == "offering_concept_stats":
+                return stats_tbl
+            elif name == "offering_summary":
+                return summary_tbl
+            else:
+                m.select.return_value = []
+            return m
+
+        mock_table.side_effect = _table
+        mock_ac_table.side_effect = _table
+
+        with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
+            from services.course_context_service import update_course_context
+            update_course_context("off-1")
+
+        stats_tbl.upsert.assert_called_once()
+        upsert_payload = stats_tbl.upsert.call_args[0][0]
+        self.assertNotIn("effective_explanations", upsert_payload)
+        # The legitimate siblings still come through unaffected.
+        self.assertEqual(upsert_payload["common_misconceptions"], ["Off-by-one error"])
+        self.assertEqual(upsert_payload["prerequisite_gaps"], ["boundary conditions"])
+
     # ── #72: the persisted Class Intel opt-out gates the WRITE path ──────────
 
     @staticmethod

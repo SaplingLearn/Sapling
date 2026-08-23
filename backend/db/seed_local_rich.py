@@ -716,7 +716,10 @@ def seed_offering_concept_stats() -> None:
                 "pct_struggling": 0.5,
                 "pct_unexplored": 0.25,
                 "common_misconceptions": misconceptions,
-                "effective_explanations": [],
+                # No `effective_explanations` key: #572 deleted the dead read
+                # that ever populated this column, so seeding an explicit `[]`
+                # here is noise the column's own DB default ('{}') already
+                # covers — omitted, not zeroed.
                 "prerequisite_gaps": [],
             },
         )
