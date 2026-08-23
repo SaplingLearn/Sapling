@@ -1,7 +1,14 @@
 name: integration (local supabase)
 
+# `pull_request` is deliberate and deliberately unfiltered. Until #574 this lane
+# ran only after a merge, so the one gate built to catch route/schema drift was
+# structurally incapable of failing a PR: #574 added a test file demanding env
+# this workflow did not set, merged green, and left main red for three pushes.
+# A paths filter would buy back ~5 minutes on frontend-only PRs at the cost of a
+# narrower version of the same blind spot, so the whole lane runs on every PR.
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [main]
 
@@ -33,5 +40,20 @@ jobs:
           SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres python -m db.migrate
           cp .env.local.example .env
           python -m db.seed_local_rich
+      # Function mode is a requirement of the lane, not a preference: the quiz
+      # subcutaneous tests (#545) drive `generate`/`answer`/`submit` through real
+      # HTTP, so without the seam they would call live Gemini. Their autouse
+      # fixture raises rather than skips when it is unset — a skip would report
+      # green having run nothing — which is what turned this step red. Set here
+      # rather than in the fixture so every test in the lane sees one mode, and
+      # mirroring e2e.yml, the other runner of these handlers.
+      #
+      # Safe to apply lane-wide: no other integration test constructs an agent,
+      # so nothing here can trip UnregisteredHandlerError. `.env.local.example`
+      # (copied to .env above) defines neither variable, so the integration
+      # conftest's load_dotenv(override=True) cannot clobber them.
       - name: Run integration tests
+        env:
+          SAPLING_MODEL_MODE: function
+          SAPLING_FUNCTION_HANDLERS: agents.function_handlers_e2e
         run: RUN_INTEGRATION=1 python -m pytest -m integration -q

@@ -178,11 +178,18 @@ The script refuses to run against a non-local `SUPABASE_URL`.
 
 With the local stack up and `backend/.env` active, from `backend/`:
 
-    RUN_INTEGRATION=1 python -m pytest -m integration -q
+    SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e \
+      RUN_INTEGRATION=1 python -m pytest -m integration -q
 
 These bypass the hermetic mocks and hit the real local Supabase (real Postgres,
 encryption round-trips, migrated schema). Skipped by default. The suite seeds the
 rich dataset (idempotent) on first run and never resets your DB.
+
+The function-mode variables are not optional. The quiz subcutaneous tests (#545)
+drive the write paths through real HTTP, so without the seam they would call live
+Gemini; their fixture raises rather than skips when it is unset, so the bare
+`RUN_INTEGRATION=1 …` invocation errors out. `.github/workflows/integration.yml`
+sets the same pair.
 
 ## Test-profile production build (`build:test` / `start:test`, #380)
 
