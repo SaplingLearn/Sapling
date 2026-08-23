@@ -21,7 +21,8 @@ from fastapi import APIRouter, HTTPException, Request
 from db.connection import table
 from services import academics
 from services.auth_guard import require_self
-from services.growth import stage_for_level, xp_into_level
+from services.gamification_service import events_since, me_payload, read_me_inputs
+from services.growth import stage_for_level
 from services.http_cache import (
     REVALIDATE_CACHE_CONTROL,
     cached_json,
@@ -34,49 +35,11 @@ router = APIRouter()
 
 SCOPES = ("everyone", "friends", "school")
 
-# supabase/config.toml sets PostgREST's `max_rows = 1000`. A page past that
-# cap doesn't error — PostgREST returns 206 Partial Content, which is a 2xx,
-# so db/connection.py's raise_for_status() never fires; the truncation is
-# silent by construction. _events_since backs the leaderboard's weekly-XP
-# aggregation (and /me and /activity), so an unbounded single call here would
-# silently corrupt totals and rank order once platform-wide weekly events
-# cross this cap. Keep this at or below max_rows and page to completion.
-_XP_EVENTS_PAGE = 1000
-
 
 def _parse_ts(value: str | None) -> datetime | None:
     if not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
-def _events_since(user_id: str | None, since: datetime) -> list[dict]:
-    """All xp_events at/after `since`, optionally scoped to one user.
-
-    Pages to completion via select_with_count rather than a single unbounded
-    select — see _XP_EVENTS_PAGE. The `created_at,id` order is required for
-    offset paging to be correct: without a stable sort, Postgres/PostgREST
-    can return rows in a different order across pages, silently skipping or
-    duplicating rows across the page boundary.
-    """
-    filters = {"created_at": f"gte.{since.isoformat()}"}
-    if user_id:
-        filters["user_id"] = f"eq.{user_id}"
-    out: list[dict] = []
-    offset = 0
-    while True:
-        rows, total = table("xp_events").select_with_count(
-            "user_id,amount,created_at",
-            filters=filters,
-            order="created_at.asc,id.asc",
-            limit=_XP_EVENTS_PAGE,
-            offset=offset,
-        )
-        out.extend(rows or [])
-        if not rows or len(out) >= total:
-            break
-        offset += _XP_EVENTS_PAGE
-    return out
 
 
 def _week_start(now: datetime) -> datetime:
@@ -87,51 +50,22 @@ def _week_start(now: datetime) -> datetime:
 
 @router.get("/me")
 def get_me(user_id: str, request: Request):
+    """The hero card. The payload itself is built by
+    `services/gamification_service.py` — POST /api/quiz/submit returns the same
+    snapshot inline (G8), and the two must never be able to disagree."""
     require_self(user_id, request)
-    rows = table("users").select(
-        "total_xp,level,streak_count,longest_streak,daily_goal_xp",
-        filters={"id": f"eq.{user_id}"},
-    )
-    u = rows[0] if rows else {}
-    total_xp = int(u.get("total_xp") or 0)
-    level = int(u.get("level") or 1)
-
-    earned = table("user_achievements").select(
-        "achievement_id", filters={"user_id": f"eq.{user_id}"}
-    ) or []
-    # Live only — a work-in-progress badge must not inflate "12 of 30".
-    catalog = table("achievements").select("id", filters={"status": "eq.live"}) or []
+    inputs = read_me_inputs(user_id)
 
     # NOTE: daily_goal_xp is echoed in this payload below but is not one of
     # the etag inputs. It's inert today — nothing writes users.daily_goal_xp
     # yet. If a settings path starts writing it, add it to make_etag's args
     # here or clients will keep serving a stale 304 after it changes.
-    etag = make_etag(user_id, total_xp, level, len(earned))
+    etag = make_etag(user_id, inputs.total_xp, inputs.level, inputs.earned_count)
     not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
         return not_mod
 
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_xp = sum(int(e.get("amount") or 0) for e in _events_since(user_id, today))
-
-    into, for_level = xp_into_level(total_xp)
-    stage = stage_for_level(level)
-    return cached_json({
-        "level": level,
-        "next_level": level + 1,
-        "stage": {"slug": stage.get("slug"), "name": stage.get("name"),
-                  "blurb": stage.get("blurb")},
-        "total_xp": total_xp,
-        "xp_into_level": into,
-        "xp_for_level": for_level,
-        "level_pct": round(into / for_level * 100) if for_level else 100,
-        "streak": int(u.get("streak_count") or 0),
-        "longest_streak": int(u.get("longest_streak") or 0),
-        "daily_goal_xp": int(u.get("daily_goal_xp") or 50),
-        "today_xp": today_xp,
-        "earned_count": len(earned),
-        "total_count": len(catalog),
-    }, etag, REVALIDATE_CACHE_CONTROL)
+    return cached_json(me_payload(user_id, inputs), etag, REVALIDATE_CACHE_CONTROL)
 
 
 def _scope_ids(user_id: str, scope: str) -> set[str] | None:
@@ -166,7 +100,7 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
 
     now = datetime.now(timezone.utc)
     start = _week_start(now)
-    events = _events_since(None, start)
+    events = events_since(None, start)
 
     weekly: dict[str, int] = {}
     for e in events:
@@ -240,7 +174,7 @@ def get_activity(user_id: str, request: Request):
     now = datetime.now(timezone.utc)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     since = today - timedelta(days=55)          # 8 weeks back
-    events = _events_since(user_id, since)
+    events = events_since(user_id, since)
 
     # NOTE: daily_goal_xp is echoed in this payload below but is not one of
     # the etag inputs. It's inert today — nothing writes users.daily_goal_xp
