@@ -56,10 +56,11 @@ def get_me(user_id: str, request: Request):
     require_self(user_id, request)
     inputs = read_me_inputs(user_id)
 
-    # NOTE: daily_goal_xp is echoed in this payload below but is not one of
-    # the etag inputs. It's inert today — nothing writes users.daily_goal_xp
-    # yet. If a settings path starts writing it, add it to make_etag's args
-    # here or clients will keep serving a stale 304 after it changes.
+    # NOTE: daily_goal_xp is echoed in the payload the service builds but is
+    # not one of the etag inputs. It's inert today — nothing writes
+    # users.daily_goal_xp yet. If a settings path starts writing it, add it to
+    # make_etag's args here or clients will keep serving a stale 304 after it
+    # changes.
     etag = make_etag(user_id, inputs.total_xp, inputs.level, inputs.earned_count)
     not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:

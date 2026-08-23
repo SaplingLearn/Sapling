@@ -1420,7 +1420,7 @@ def list_attempts(
         # `id` is the unique tiebreaker: without it two attempts sharing a
         # created_at have undefined relative order across the separate
         # queries serving page N and N+1, so a row can repeat or vanish.
-        # Same idiom as routes/gamification.py's xp_events paging.
+        # Same idiom as gamification_service.events_since's xp_events paging.
         order="created_at.desc,id.desc",
         limit=limit,
         offset=offset,

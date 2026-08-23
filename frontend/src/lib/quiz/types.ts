@@ -70,7 +70,18 @@ export interface AnswerResult {
  *  `GET /api/gamification/me` snapshot, taken right after the award (both
  *  built by `backend/services/gamification_service.py`, so they cannot
  *  disagree). Never an invented number: `xp_awarded` is `null` when the XP
- *  write failed, and the whole block is `null` when the snapshot read did. */
+ *  write failed, and the whole block is `null` when the snapshot read did.
+ *
+ *  READ THIS BEFORE MIGRATING OFF `useGamificationDelta` (R-9a).
+ *  `xp_awarded` is the `quiz_completed` ledger amount — NOT the student's
+ *  total XP change across the submit. A badge earned by the same quiz pays
+ *  its own `xp_reward`, which lands in `total_xp` here but not in
+ *  `xp_awarded`. Today's line renders `after - before` from two `/me` reads
+ *  and therefore INCLUDES that badge XP; a client that drops the pre-session
+ *  read and renders `xp_awarded` will show the smaller number on those
+ *  submits. Deliberate — the ledger amount is the one value the server can
+ *  name without guessing. If the badge delta must survive the migration, the
+ *  server needs an `xp_before` field; that call has not been made. */
 export interface SubmitGamification extends GamificationMe {
   xp_awarded: number | null;
 }

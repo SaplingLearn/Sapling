@@ -62,9 +62,9 @@ def _user_state(user_id: str) -> tuple[int, int]:
 # doesn't error — PostgREST returns 206 Partial Content, which is a 2xx, so
 # db/connection.py's raise_for_status() never fires and the truncation is
 # silent by construction. Same constant and same reasoning as
-# routes/gamification.py::_XP_EVENTS_PAGE; keep this at or below max_rows and
-# page to completion, or a heavy user's total_xp would silently collapse to
-# the first page's sum.
+# services/gamification_service.py::XP_EVENTS_PAGE; keep this at or below
+# max_rows and page to completion, or a heavy user's total_xp would silently
+# collapse to the first page's sum.
 _XP_EVENTS_PAGE = 1000
 
 
