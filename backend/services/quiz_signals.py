@@ -178,6 +178,12 @@ def gather_signals(
     route already makes in concurrent legs (see `CourseScope`). Omit it and
     this resolves the scope itself, so every other caller keeps working.
 
+    The `plausible=True` in `_report_dark_scope` rests on a precondition the
+    quiz route holds and any future caller must too: it reached here by way of
+    an owner-scoped `graph_nodes` read that produced this `course_id`, so the
+    student demonstrably has graph data in this course. It is a fact, not a
+    guess.
+
     Without a `course_id` the two course-keyed signals are SKIPPED rather than
     guessed at: there is no other key that finds this student's flashcards or
     tutor sessions, and a graph node with no course really does leave them
@@ -192,8 +198,14 @@ def gather_signals(
             # Resolved, and found none — a fact, and a suspicious one. `None`
             # (couldn't resolve) is a different situation and stays quiet.
             _report_dark_scope(user_id, course_id)
-        flashcards = _flashcards(user_id, scope)
-        tutor = _tutor_recency(user_id, scope, concept_name)
+        if scope.offering_ids is not None:
+            # BOTH signals need the offering leg, even the flashcard one that
+            # can also match on the course name: with the offerings unknown,
+            # a topic-only match would silently omit every imported deck and
+            # report the remainder as though it were the whole collection.
+            # A partial count presented as a fact is worse than no count.
+            flashcards = _flashcards(user_id, scope)
+            tutor = _tutor_recency(user_id, scope, concept_name)
 
     return QuizSignals(
         times_studied=_coerce_int(times_studied),
@@ -371,6 +383,26 @@ def _pg_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+#: LIKE's own metacharacters, plus its default escape character. Applied
+#: BEFORE `_pg_quote`, which then doubles the backslashes this introduces for
+#: PostgREST's grammar — the other order would emit a bare `\%` that PostgREST
+#: unescapes to `%` and hands to LIKE as a live wildcard.
+_LIKE_SPECIALS = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
+
+
+def _like_literal(value: str) -> str:
+    """Escape a value so `ilike` matches it verbatim rather than as a pattern.
+
+    `topic.ilike."Math_101"` would otherwise match "Math-101" and "Math 101"
+    too (`_` is LIKE's any-single-character wildcard), and a course with a `%`
+    in its name would match half the student's collection. Course names are
+    catalog data, so this is defence rather than a live bug — with one gap it
+    cannot close: PostgREST rewrites `*` to `%` in like/ilike values itself,
+    before Postgres ever sees the pattern, and offers no escape for it.
+    """
+    return value.translate(_LIKE_SPECIALS)
+
+
 def _flashcards(user_id: str, scope: CourseScope) -> _Flashcards:
     """This student's flashcards FOR THIS COURSE: how many, how many reviewed,
     and how long since the most recent review.
@@ -388,15 +420,21 @@ def _flashcards(user_id: str, scope: CourseScope) -> _Flashcards:
 
     `front`/`back` are column-encrypted and never selected: this signal has no
     use for the text.
+
+    The caller guarantees `scope.offering_ids is not None`: a topic-only tree
+    would silently omit every imported deck and report the remainder as the
+    whole collection.
     """
     clauses = []
     if scope.offering_ids:
         clauses.append(f"offering_id.in.({','.join(scope.offering_ids)})")
     if scope.course_name:
-        # `ilike` with no wildcards is case-insensitive equality, which is the
-        # drift worth tolerating: both writers store the same
+        # `ilike` over an escaped literal is case-insensitive EQUALITY, which
+        # is the drift worth tolerating: both writers store the same
         # `courses.course_name` string this scope was read from.
-        clauses.append(f"topic.ilike.{_pg_quote(scope.course_name)}")
+        clauses.append(
+            f"topic.ilike.{_pg_quote(_like_literal(scope.course_name))}"
+        )
     if not clauses:
         return _Flashcards()
 

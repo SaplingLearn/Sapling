@@ -347,7 +347,20 @@ class TestCourseScope:
         assert s.tutor_course_sessions_14d == 0
 
     def test_an_unresolvable_scope_is_unknown_not_zero(self):
-        reads = _Reads()
+        """A failed offering resolution leaves BOTH signals unknown — the
+        flashcard one included, even though it could still match on the
+        course name.
+
+        The course name and a matching card are deliberately present here:
+        with the offerings unknown, a topic-only `or=` tree would omit every
+        imported deck and report the remainder as though it were the whole
+        collection. A partial count presented as a fact is worse than no
+        count, and this is exactly the case the module calls unknown.
+        """
+        reads = _Reads({
+            "courses": ([{"course_name": "Machine Learning"}], 1),
+            "flashcards": ([{"times_reviewed": 4, "last_reviewed_at": None}], 1),
+        })
         with (
             patch("services.quiz_signals.table", side_effect=reads),
             patch(
@@ -360,7 +373,10 @@ class TestCourseScope:
             )
 
         assert s.flashcards_course_cards is None
+        assert s.flashcards_course_reviewed is None
         assert s.tutor_course_sessions_14d is None
+        # Not even attempted: there is no honest query to make.
+        assert "flashcards" not in reads.calls
 
 
 class TestFlashcardCourseState:
@@ -401,6 +417,22 @@ class TestFlashcardCourseState:
         clause = reads.calls["flashcards"][0]["filters"]["or"]
 
         assert clause.endswith(r'topic.ilike."Ethics, Law and \"Society\"")')
+
+    def test_like_metacharacters_in_a_course_name_are_not_wildcards(self):
+        """`ilike` is a PATTERN match: `_` is any single character and `%` is
+        any run of them, so "Math_101" would also match "Math-101" and a name
+        with a `%` would match half the student's collection. The LIKE escape
+        runs first and `_pg_quote` then doubles its backslashes for PostgREST
+        — the other order emits a bare `\\%` that PostgREST unescapes back to
+        a live wildcard."""
+        spec = {
+            "courses": ([{"course_name": "Math_101 100% Theory"}], 1),
+            "flashcards": ([], 0),
+        }
+        _, reads, _ = _gather(spec)
+        clause = reads.calls["flashcards"][0]["filters"]["or"]
+
+        assert clause.endswith(r'topic.ilike."Math\\_101 100\\% Theory")')
 
     def test_the_tally_comes_from_the_rows_the_filter_returned(self):
         cards = [

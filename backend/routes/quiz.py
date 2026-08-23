@@ -948,12 +948,39 @@ async def _quiz_via_agent(
     # is what stops one generation from asking the same three questions twice.
     #
     # These two are themselves independent, so they run concurrently with each
-    # other; the pair costs one round-trip of wall clock ahead of the gather
-    # and removes three from inside it.
+    # other: the pair costs the LONGER of them — one `courses` read, or the
+    # offering resolution's TWO sequential reads (`course_offerings` then
+    # `enrollments`) — ahead of the gather, and removes three from inside it.
+    #
+    # return_exceptions=True for the same reason the gather below uses it:
+    # both helpers already degrade internally, so this is the backstop for the
+    # failure they cannot catch — a raise from the to_thread machinery itself,
+    # or on the way in or out. Without it that raise leaves `_quiz_via_agent`
+    # for the generic handler and 502s a generation that only needed to run
+    # ungrounded.
     course_row, offering_ids = await asyncio.gather(
         asyncio.to_thread(_course_row, course_id),
         asyncio.to_thread(offering_scope, user_id, course_id),
+        return_exceptions=True,
     )
+    if isinstance(course_row, BaseException):
+        logger.warning(
+            "quiz: course lookup failed (%s); generating ungrounded and "
+            "without the course-scoped signals",
+            type(course_row).__name__, exc_info=course_row,
+        )
+        # failed=True rather than a bare empty row, so E8 reports
+        # `coverage_unknown` instead of claiming this course has no BU code.
+        course_row = CourseRow(failed=True)
+    if isinstance(offering_ids, BaseException):
+        logger.warning(
+            "quiz: offering resolution failed (%s); the course-scoped signals "
+            "report unknown", type(offering_ids).__name__, exc_info=offering_ids,
+        )
+        # None, not []: "could not tell". An empty list would assert the
+        # student is enrolled in no offering of this course, tripping the F5
+        # dark-scope report on what is really a transport failure.
+        offering_ids = None
     course_scope = CourseScope(offering_ids=offering_ids, course_name=course_row.name)
 
     # Course-material grounding does blocking network I/O (a Gemini

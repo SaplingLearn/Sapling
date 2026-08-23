@@ -1153,6 +1153,30 @@ class TestQuizGrounding:
         by_exam.assert_not_called()
         by_signals.assert_not_called()
 
+    def test_a_raise_from_the_shared_lookups_degrades_instead_of_502ing(self):
+        """Hoisting those two reads ahead of the gather also moved them out
+        from behind its `return_exceptions=True`. Both helpers swallow their
+        own failures, so this pins the backstop for the one they cannot catch
+        — a raise from the to_thread machinery, or on the way in or out. It
+        must generate ungrounded, not 502 QUIZ_GENERATION_FAILED."""
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._course_row", side_effect=RuntimeError("boom")),
+            patch("routes.quiz.offering_scope", side_effect=RuntimeError("boom")),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        # Ungrounded: with the course lookup failed there is no BU code to
+        # resolve, so no COURSE MATERIAL block — but the quiz still generated.
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
+
     def test_material_injected_when_chunks_exist(self):
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (
