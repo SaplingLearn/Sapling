@@ -1647,6 +1647,90 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
     }
 
 
+@router.post("/attempts/{attempt_id}/abandon")
+def abandon_attempt(attempt_id: str, request: Request):
+    """#537 G4: close an unfinished attempt ON PURPOSE.
+
+    Before this route, quiz home's "Discard" was a localStorage flag
+    (`lib/quiz/session.ts::dismissAttempt`): the row stayed in_progress until
+    D2's 24h sweep found it, so the resume strip came back on the student's
+    phone, in a second tab, and in this browser the moment the key was
+    cleared. Nothing new is stored — the client writes the same `abandoned_at`
+    stamp `_sweep_abandoned` writes; it is just allowed to say "now".
+
+    Idempotent by design: a second abandon is a 200 no-op carrying the stamp
+    already on the row. The client fires this and forgets it, so a retry after
+    a dropped response must not surface as an error. A COMPLETED attempt 409s
+    instead — the score, mastery and XP are already paid out, and there is
+    nothing here that could take them back.
+    """
+    attempt_rows = table("quiz_attempts").select(
+        # Not "*": the decision needs the owner and three timestamps, and
+        # there is no reason to drag the encrypted questions_json blob across
+        # the wire to write one column.
+        "id,user_id,created_at,completed_at,abandoned_at",
+        filters={"id": f"eq.{attempt_id}"},
+    )
+    if not attempt_rows:
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+            message="We couldn't find that quiz.",
+        )
+    attempt = attempt_rows[0]
+    require_self(attempt["user_id"], request)
+
+    if attempt.get("completed_at"):
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
+            message="This quiz has already been submitted.",
+        )
+
+    abandoned_at = attempt.get("abandoned_at")
+    if not abandoned_at:
+        now = datetime.now(timezone.utc).isoformat()
+        # The same conditional claim submit uses: the FILTERS arbitrate, so a
+        # concurrent submit and abandon cannot both win the row. The read
+        # above is only the fast path.
+        claimed = table("quiz_attempts").update(
+            {"abandoned_at": now},
+            filters={
+                "id": f"eq.{attempt_id}",
+                "completed_at": "is.null",
+                "abandoned_at": "is.null",
+            },
+        )
+        if claimed:
+            abandoned_at = claimed[0].get("abandoned_at") or now
+        else:
+            # Losing the claim is not an error on its own — it means the row
+            # moved between the read and the write. Re-read to find out which
+            # way: a submit that got there first must 409 rather than be
+            # reported back as a successful discard.
+            current = (table("quiz_attempts").select(
+                "completed_at,abandoned_at",
+                filters={"id": f"eq.{attempt_id}"},
+            ) or [{}])[0]
+            if current.get("completed_at"):
+                raise QuizAPIError(
+                    status_code=409,
+                    code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
+                    message="This quiz has already been submitted.",
+                )
+            # A concurrent abandon (or the sweep) won; its stamp is the answer.
+            abandoned_at = current.get("abandoned_at") or now
+
+    return {
+        "quiz_id": attempt_id,
+        # DERIVED like every other status the quiz routes report, never the
+        # literal "abandoned" — this endpoint must not be the one place that
+        # can disagree with the read paths.
+        "status": _attempt_status({**attempt, "abandoned_at": abandoned_at}),
+        "abandoned_at": abandoned_at,
+    }
+
+
 @router.post("/submit")
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
     attempt_rows = table("quiz_attempts").select("*", filters={"id": f"eq.{body.quiz_id}"})

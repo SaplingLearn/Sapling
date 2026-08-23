@@ -292,6 +292,52 @@ def test_a_replayed_submit_is_a_409_and_re_applies_no_mastery(
     )
 
 
+# ── abandon ─────────────────────────────────────────────────────────────────
+
+
+def test_abandon_stamps_the_real_row_and_the_listing_agrees(authed_client, db_conn):
+    """#537 G4. The point of the endpoint is that the DATABASE, not one
+    browser's localStorage, is what stops offering the attempt — so the stamp
+    is read back through psycopg rather than through the PostgREST layer that
+    wrote it, and the derived status is read back off the listing."""
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+
+    first = authed_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "abandoned"
+
+    row = _attempt_row(db_conn, quiz_id, "completed_at, abandoned_at")
+    assert row["abandoned_at"] is not None, "the discard never reached the row"
+    assert row["completed_at"] is None, (
+        "a discard must not complete the attempt — no score, no mastery, no XP"
+    )
+
+    # Idempotent: the client fires this and forgets it, so a retry after a
+    # dropped response answers with the stamp already stored.
+    again = authed_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert again.status_code == 200, again.text
+    assert again.json() == first.json()
+
+    listing = authed_client.get(f"/api/quiz/attempts?user_id={USER_ACTIVE}")
+    mine = next(a for a in listing.json()["attempts"] if a["quiz_id"] == quiz_id)
+    assert mine["status"] == "abandoned", (
+        "the history listing still calls it in_progress, so the resume strip "
+        "would offer it again on the next device"
+    )
+
+
+def test_abandoning_a_submitted_attempt_is_a_409(authed_client, db_conn):
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+    assert authed_client.post(
+        "/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []}
+    ).status_code == 200
+
+    r = authed_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
+    assert _attempt_row(db_conn, quiz_id, "abandoned_at")["abandoned_at"] is None
+
+
 # ── resume + history ────────────────────────────────────────────────────────
 
 
@@ -330,7 +376,7 @@ def test_history_lists_the_students_own_completed_attempts(authed_client):
     assert "questions" not in mine and "questions_json" not in mine
 
 
-def test_another_student_can_neither_answer_nor_submit_this_attempt(
+def test_another_student_can_neither_answer_submit_nor_abandon_this_attempt(
     authed_client, other_user_client, db_conn
 ):
     """The hermetic lane stubs `require_self` to a no-op, so it structurally
@@ -346,7 +392,14 @@ def test_another_student_can_neither_answer_nor_submit_this_attempt(
     s = other_user_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
     assert s.status_code in (403, 404), s.text
 
-    assert _attempt_row(db_conn, quiz_id, "completed_at")["completed_at"] is None
+    # #537 G4: a discard closes someone's quiz, so it is a write like the other
+    # two and needs the same owner check.
+    d = other_user_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert d.status_code in (403, 404), d.text
+
+    row = _attempt_row(db_conn, quiz_id, "completed_at, abandoned_at")
+    assert row["completed_at"] is None
+    assert row["abandoned_at"] is None
     assert db_conn.execute(
         "SELECT count(*) AS n FROM quiz_responses WHERE attempt_id = %s", (quiz_id,)
     ).fetchone()["n"] == 0
