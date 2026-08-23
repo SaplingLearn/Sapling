@@ -71,6 +71,50 @@ describe("generateQuiz", () => {
       include_answer_key: false,
     });
   });
+
+  it("names the source attempt when practising the ones you missed (G5)", async () => {
+    await generateQuiz({
+      userId: "u1",
+      conceptNodeId: "c1",
+      numQuestions: 2,
+      difficulty: "medium",
+      sourceAttemptId: "attempt-9",
+    });
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({
+      user_id: "u1",
+      concept_node_id: "c1",
+      num_questions: 2,
+      difficulty: "medium",
+      include_answer_key: false,
+      source_attempt_id: "attempt-9",
+    });
+  });
+
+  it("omits source_attempt_id entirely when there is nothing to practise from", async () => {
+    await generateQuiz({
+      userId: "u1",
+      conceptNodeId: "c1",
+      numQuestions: 5,
+      difficulty: "medium",
+      sourceAttemptId: null,
+    });
+    expect(JSON.parse(lastCall()[1].body as string)).not.toHaveProperty("source_attempt_id");
+  });
+
+  // The hashes are internal (`_INTERNAL_QUESTION_KEYS` strips them from every
+  // response), so the client cannot name items even if it wanted to — the
+  // server derives them from the attempt's own recorded answers.
+  it("never sends question hashes", async () => {
+    await generateQuiz({
+      userId: "u1",
+      conceptNodeId: "c1",
+      numQuestions: 2,
+      difficulty: "medium",
+      sourceAttemptId: "attempt-9",
+    });
+    expect(JSON.parse(lastCall()[1].body as string))
+      .not.toHaveProperty("missed_question_hashes");
+  });
 });
 
 describe("answerQuestion", () => {

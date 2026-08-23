@@ -275,6 +275,9 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
           conceptNodeId: from.conceptId,
           numQuestions: from.config.count,
           difficulty: from.config.difficulty,
+          // G5: set only by PRACTISE_MISSED, so an ordinary start sends
+          // nothing and the route behaves exactly as it always has.
+          sourceAttemptId: from.sourceAttemptId,
         });
         if (generationRef.current !== token) return;
         apply({ type: "GENERATED", result });

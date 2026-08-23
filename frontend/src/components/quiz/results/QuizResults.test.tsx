@@ -113,6 +113,8 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     result: RESULT,
     xp: { before: 300, after: 330, streak: 12 },
     deliveredShort: false,
+    sourceAttemptId: null,
+    reserved: null,
     ...over,
   };
 }
@@ -412,6 +414,42 @@ describe("QuizResults", () => {
       scope: { kind: "missed", conceptId: "recursion", missedCount: 1 },
     });
     expect(screen.getByText("Focused on what you missed")).toBeInTheDocument();
+  });
+
+  it("says the questions were the same ones when the server re-served them all (G5)", () => {
+    renderResults({
+      intent: "review",
+      scope: { kind: "missed", conceptId: "recursion", missedCount: 2 },
+      reserved: { reservedCount: 2, regeneratedCount: 0 },
+    });
+    expect(screen.getByText("The ones you missed, again")).toBeInTheDocument();
+  });
+
+  it("keeps the R-5 wording when the practice quiz was partly regenerated", () => {
+    renderResults({
+      intent: "review",
+      scope: { kind: "missed", conceptId: "recursion", missedCount: 3 },
+      reserved: { reservedCount: 1, regeneratedCount: 2 },
+    });
+    expect(screen.getByText("Focused on what you missed")).toBeInTheDocument();
+  });
+
+  it("keeps the R-5 wording when nothing could be re-served", () => {
+    renderResults({
+      intent: "review",
+      scope: { kind: "missed", conceptId: "recursion", missedCount: 2 },
+      reserved: { reservedCount: 0, regeneratedCount: 2 },
+    });
+    expect(screen.getByText("Focused on what you missed")).toBeInTheDocument();
+  });
+
+  it("never claims a re-serve outside a practise-missed scope", () => {
+    // Defensive: `reserved` is only ever set by a generate that named a source
+    // attempt, but the eyebrow is gated on the SCOPE and must stay that way —
+    // an ordinary quiz labelled "the ones you missed" would be a lie.
+    renderResults({ reserved: { reservedCount: 2, regeneratedCount: 0 } });
+    expect(screen.queryByText("The ones you missed, again")).toBeNull();
+    expect(screen.queryByText("Focused on what you missed")).toBeNull();
   });
 
   it("renders the grown node at its end state immediately under reduced motion", () => {

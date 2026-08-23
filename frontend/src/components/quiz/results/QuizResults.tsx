@@ -56,6 +56,23 @@ export interface QuizResultsProps {
 
 const pct = (value: number) => Math.round(value * 100);
 
+/**
+ * What a "practise the ones you missed" attempt actually was (G5).
+ *
+ * Backend #537 G5 re-serves the missed items verbatim when it can and
+ * generates the rest when it can't, and says which in the generate response.
+ * Only a quiz made ENTIRELY of the student's own missed items may claim to be
+ * those items; a partial or a full fallback keeps the wording R-5 shipped,
+ * which is true of both ("focused on" is not "the same questions"). Exported
+ * for its own test — the branch is copy, and copy that lies is the bug.
+ */
+export function missedEyebrow(reserved: QuizSession["reserved"]): string {
+  if (reserved && reserved.reservedCount > 0 && reserved.regeneratedCount === 0) {
+    return "The ones you missed, again";
+  }
+  return "Focused on what you missed";
+}
+
 export function QuizResults({
   session,
   actions,
@@ -129,10 +146,11 @@ export function QuizResults({
         />
       </div>
 
-      {/* R-5: the repetition guard means a "practise what you missed" attempt
-          asks different questions. Say so rather than let it read as a bug. */}
+      {/* R-5 / G5: a "practise what you missed" attempt either re-served the
+          exact items or wrote new ones, and the student should never have to
+          guess which. `missedEyebrow` reads the server's own account. */}
       {session.scope.kind === "missed" && (
-        <div className="label-micro quiz-results__eyebrow">Focused on what you missed</div>
+        <div className="label-micro quiz-results__eyebrow">{missedEyebrow(session.reserved)}</div>
       )}
 
       <h2 className="h-serif quiz-results__name">{concept.name}</h2>
