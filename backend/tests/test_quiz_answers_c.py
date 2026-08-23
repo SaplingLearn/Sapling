@@ -286,21 +286,29 @@ class TestIncludeAnswerKey:
         assert r.status_code == 200
         q = r.json()["questions"][0]
         assert all("correct" not in o for o in q["options"])
-        assert not any("answer key" in rec.message for rec in caplog.records), (
+        # Filtered by logger name (M6): caplog's handler captures every
+        # propagating logger, not just ours, so an unfiltered scan could
+        # pass by coincidence off an unrelated log line rather than
+        # actually proving routes.quiz stayed silent.
+        ours = [rec for rec in caplog.records if rec.name == "routes.quiz"]
+        assert not any("answer key" in rec.message for rec in ours), (
             "the keyless default path must not log the deprecated-key breadcrumb"
         )
 
     def test_default_response_is_the_keyless_projection_of_the_real_stored_key(self):
-        """The hermetic twin of the subcutaneous DB assertion in
-        tests/integration/test_quiz_subcutaneous_db.py — grounded against
-        the SAME encrypted questions_json a real Postgres row would hold
-        (round-tripped through the real encrypt_json/decrypt_json_column,
-        not a hand-built fixture), not just "the field named `correct` is
-        absent". Diffs the served response against the server's own
-        `_strip_answer_key` projection of that stored data, so any leak —
-        a renamed field, a restructuring, anything — shows up as a diff
-        instead of requiring the test to predict the leak's shape."""
-        from routes.quiz import _strip_answer_key
+        """Grounded against the SAME encrypted questions_json a real
+        Postgres row would hold (round-tripped through the real
+        encrypt_json/decrypt_json_column, not a hand-built fixture):
+        confirms a real answer key actually exists in storage, then pins
+        the served shape against a HARD-CODED expectation written HERE —
+        not imported from routes.quiz's own `_strip_answer_key`/
+        `_KEYLESS_*_KEYS`. Diffing the response against the very function
+        that produced it is circular: it can't catch a leak (or an
+        accidental widening of that allowlist) introduced inside the
+        projection itself, since both sides would move together. The
+        recursive key-name walk at the end is a heuristic backstop only —
+        it catches a leak that names itself obviously, nothing more; the
+        hard-coded key-set assertions above it are the actual anchor."""
         from services.encryption import decrypt_json_column
 
         factory, captured = _generate_factory()
@@ -311,21 +319,33 @@ class TestIncludeAnswerKey:
         ):
             r = self._post({})
         assert r.status_code == 200
-        served = r.json()["questions"]
+        body = r.json()
+        served = body["questions"]
 
         stored = decrypt_json_column(captured["payload"]["questions_json"])
         assert any(o.get("correct") for o in stored[0]["options"]), (
             "the fixture must actually mark an option correct, or the "
-            "grounding below is vacuous"
-        )
-        assert served == _strip_answer_key(stored), (
-            "generate's default response diverges from the server's own "
-            "keyless projection of the real stored answer key"
+            "grounding above is vacuous"
         )
 
-        # Belt and suspenders: walk the actual wire response and confirm no
-        # key anywhere spells out correctness, whatever it might be named —
-        # a structural check independent of the diff above.
+        # Non-circular anchor: this allowlist is a literal written in the
+        # test, not imported from routes.quiz — so a leak, or an
+        # accidental widening of the route's own allowlist, fails THIS
+        # assertion instead of passing by construction because both sides
+        # moved together.
+        allowed_question_keys = {"id", "question", "concept_tested", "difficulty", "options"}
+        for q in served:
+            leaked = set(q.keys()) - allowed_question_keys
+            assert not leaked, f"generate response question carries unexpected key(s): {leaked}"
+            for opt in q["options"]:
+                assert set(opt.keys()) == {"label", "text"}, (
+                    f"generate response option carries unexpected key(s): "
+                    f"{set(opt.keys()) - {'label', 'text'}}"
+                )
+
+        # Heuristic backstop: walk the WHOLE response, not just `questions`
+        # — a sibling top-level field (e.g. an `answer_key`) would sail
+        # past a walk scoped only to the questions list.
         def _walk(node, path=""):
             if isinstance(node, dict):
                 for k, v in node.items():
@@ -339,7 +359,7 @@ class TestIncludeAnswerKey:
                 for i, item in enumerate(node):
                     _walk(item, f"{path}[{i}]")
 
-        _walk({"questions": served})
+        _walk(body)
 
     def test_explicit_true_keeps_the_key_and_logs(self, caplog):
         """The flag stays accepted-but-logged for one release: an explicit
@@ -357,7 +377,8 @@ class TestIncludeAnswerKey:
         assert r.status_code == 200
         q = r.json()["questions"][0]
         assert any(o.get("correct") for o in q["options"])
-        assert any("answer key" in rec.message for rec in caplog.records), (
+        ours = [rec for rec in caplog.records if rec.name == "routes.quiz"]
+        assert any("answer key" in rec.message for rec in ours), (
             "every keyed response must leave a deprecation breadcrumb (#546)"
         )
 
