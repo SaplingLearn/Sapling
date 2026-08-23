@@ -707,6 +707,12 @@ class TestQuizAgentSuccess:
     """Happy path: quiz_agent.run returns a Quiz, route persists + responds."""
 
     def test_returns_agent_output_in_legacy_wire_shape(self):
+        """The full keyed shape submit_quiz expects, still reachable via
+        the opt-in `include_answer_key: true` (#546 flipped the *default*
+        to keyless — see tests/test_quiz_answers_c.py::TestIncludeAnswerKey
+        for that coverage — but the flag itself stays accepted-but-logged
+        for one release, and this pins what a caller that opts back in
+        still gets)."""
         fake_quiz = Quiz(questions=[
             QuizQuestion(
                 question="What is 2+2?",
@@ -731,6 +737,7 @@ class TestQuizAgentSuccess:
                 "num_questions": 1,
                 "difficulty": "easy",
                 "use_shared_context": False,
+                "include_answer_key": True,
             })
 
         assert r.status_code == 200

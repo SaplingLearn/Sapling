@@ -440,9 +440,10 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 
 # Keys that exist for the server's benefit and are never part of the client
 # contract. `_strip_answer_key`'s allowlist already excludes them on the
-# keyless path; this is the same exclusion for the still-default keyed path,
-# so provenance can't leak into a browser payload just because #546 hasn't
-# flipped `include_answer_key` yet.
+# keyless (now default, #546) path; this is the same exclusion for the
+# opt-in keyed path (`include_answer_key=true`, still accepted for one
+# release for stragglers), so provenance can't leak into a browser payload
+# just because a caller asked for the answer key too.
 #
 # `question_hash` sits here too — not because it is sensitive (it is the
 # student's own question) but because nothing client-side consumes it yet.
@@ -1362,11 +1363,13 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         },
     )
     prompt_dimensions.clear()
-    # #541 C3: the answer key (per-option `correct` booleans) ships to the
-    # client only behind the deprecated include_answer_key flag — default
-    # true for the current QuizPanel, removed with #546 once the #537
-    # client grades via /attempts/{id}/answer. Log every keyed response so
-    # zero-usage is observable before the default flips.
+    # #541 C3 / #546: the answer key (per-option `correct` booleans) ships
+    # to the client only behind the deprecated include_answer_key flag —
+    # default false since the #537 client grades via
+    # /attempts/{id}/answer and has sent `include_answer_key: false` on
+    # every generate since it shipped. The flag stays accepted-but-logged
+    # for one release for any straggler caller before it's deleted
+    # outright; every keyed response is logged so zero-usage is observable.
     if body.include_answer_key:
         logger.info(
             "quiz: generate served the client-side answer key "

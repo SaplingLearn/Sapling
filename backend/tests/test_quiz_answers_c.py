@@ -8,10 +8,12 @@ server-authoritative grading.
   response (no revision; the revamp decides if that changes).
 - C2: responses persist individually in quiz_responses (plaintext
   analytics scalars; nothing free-text).
-- C3: include_answer_key on generate (default true for the current
-  client, logged, deprecated by #546) — when false, the response strips
-  per-option `correct` booleans while the stored questions_json keeps
-  them for grading.
+- C3: include_answer_key on generate (default flipped false #546 — the
+  #537 client already grades via /attempts/{id}/answer and has sent
+  `include_answer_key: false` on every generate since it shipped;
+  explicit true is still accepted-but-logged for one release) — when
+  false, the response strips per-option `correct` booleans while the
+  stored questions_json keeps them for grading.
 - C4: submit prefers recorded quiz_responses and falls back to the
   payload per question; the atomic completed_at claim (PR #464) stays.
 """
@@ -266,7 +268,13 @@ class TestIncludeAnswerKey:
             **extra,
         })
 
-    def test_default_true_keeps_the_key_and_logs(self, caplog):
+    def test_default_now_strips_the_key(self, caplog):
+        """#546: the default flipped false tonight. Omitting the field
+        entirely — what the #537 client actually does before it started
+        sending the flag explicitly, and what any future caller that
+        doesn't know about the flag gets — must no longer leak the answer
+        key, and must not log the deprecation breadcrumb (that only fires
+        for a caller that explicitly opts back in)."""
         factory, _ = _generate_factory()
         with (
             patch("routes.quiz.table", side_effect=factory),
@@ -275,6 +283,77 @@ class TestIncludeAnswerKey:
         ):
             with caplog.at_level("INFO", logger="routes.quiz"):
                 r = self._post({})
+        assert r.status_code == 200
+        q = r.json()["questions"][0]
+        assert all("correct" not in o for o in q["options"])
+        assert not any("answer key" in rec.message for rec in caplog.records), (
+            "the keyless default path must not log the deprecated-key breadcrumb"
+        )
+
+    def test_default_response_is_the_keyless_projection_of_the_real_stored_key(self):
+        """The hermetic twin of the subcutaneous DB assertion in
+        tests/integration/test_quiz_subcutaneous_db.py — grounded against
+        the SAME encrypted questions_json a real Postgres row would hold
+        (round-tripped through the real encrypt_json/decrypt_json_column,
+        not a hand-built fixture), not just "the field named `correct` is
+        absent". Diffs the served response against the server's own
+        `_strip_answer_key` projection of that stored data, so any leak —
+        a renamed field, a restructuring, anything — shows up as a diff
+        instead of requiring the test to predict the leak's shape."""
+        from routes.quiz import _strip_answer_key
+        from services.encryption import decrypt_json_column
+
+        factory, captured = _generate_factory()
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run",
+                  new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
+        ):
+            r = self._post({})
+        assert r.status_code == 200
+        served = r.json()["questions"]
+
+        stored = decrypt_json_column(captured["payload"]["questions_json"])
+        assert any(o.get("correct") for o in stored[0]["options"]), (
+            "the fixture must actually mark an option correct, or the "
+            "grounding below is vacuous"
+        )
+        assert served == _strip_answer_key(stored), (
+            "generate's default response diverges from the server's own "
+            "keyless projection of the real stored answer key"
+        )
+
+        # Belt and suspenders: walk the actual wire response and confirm no
+        # key anywhere spells out correctness, whatever it might be named —
+        # a structural check independent of the diff above.
+        def _walk(node, path=""):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    lowered = k.lower()
+                    assert not any(
+                        tok in lowered
+                        for tok in ("correct", "answer", "explanation", "solution")
+                    ), f"generate response leaks the answer key via key {path}.{k!r}"
+                    _walk(v, f"{path}.{k}")
+            elif isinstance(node, list):
+                for i, item in enumerate(node):
+                    _walk(item, f"{path}[{i}]")
+
+        _walk({"questions": served})
+
+    def test_explicit_true_keeps_the_key_and_logs(self, caplog):
+        """The flag stays accepted-but-logged for one release: an explicit
+        `include_answer_key: true` still gets the full answer key, and
+        every such response leaves a deprecation breadcrumb so usage of
+        the opt-in path is observable before it's deleted outright."""
+        factory, _ = _generate_factory()
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run",
+                  new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
+        ):
+            with caplog.at_level("INFO", logger="routes.quiz"):
+                r = self._post({"include_answer_key": True})
         assert r.status_code == 200
         q = r.json()["questions"][0]
         assert any(o.get("correct") for o in q["options"])

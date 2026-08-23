@@ -130,6 +130,61 @@ def test_generate_writes_a_real_attempt_row_with_ciphertext_questions(
     assert "recursion" not in row["questions_json"].lower()
 
 
+def test_generate_default_response_never_reveals_the_correct_option(
+    authed_client, db_conn
+):
+    """#546: the default flipped false. With `include_answer_key` omitted
+    entirely — the shape every real caller now gets — nothing anywhere in
+    the response (question objects, option objects, any nested dict) may
+    let a client determine which option is correct.
+
+    Grounded against the attempt's REAL stored answer key, decrypted
+    straight from Postgres via the same helper the other tests in this
+    file use — not against a hand-built fixture, and not just "the field
+    named `correct` is absent" (a renamed or restructured leak would slip
+    past a check that narrow). Two independent checks: a diff against the
+    server's own `_strip_answer_key` projection of the real stored
+    questions_json, and a generic recursive walk of the actual wire
+    response for any key that spells out correctness under any name.
+    """
+    from routes.quiz import _strip_answer_key
+    from services.encryption import decrypt_json_column
+
+    r = _generate(authed_client)
+    assert r.status_code == 200, r.text
+    quiz_id = r.json()["quiz_id"]
+    served = r.json()["questions"]
+
+    stored = decrypt_json_column(
+        _attempt_row(db_conn, quiz_id, "questions_json")["questions_json"]
+    )
+    assert stored, "no questions were persisted — the grounding below is vacuous"
+    assert all(any(o.get("correct") for o in q["options"]) for q in stored), (
+        "every stored question must actually carry a marked-correct option, "
+        "or this test can't ground anything"
+    )
+
+    assert served == _strip_answer_key(stored), (
+        "generate's default response diverges from the server's own keyless "
+        "projection of the REAL stored answer key — something leaked"
+    )
+
+    def _walk(node, path=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                lowered = k.lower()
+                assert not any(
+                    tok in lowered
+                    for tok in ("correct", "answer", "explanation", "solution")
+                ), f"generate response leaks the answer key via key {path}.{k!r}"
+                _walk(v, f"{path}.{k}")
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                _walk(item, f"{path}[{i}]")
+
+    _walk({"questions": served})
+
+
 @pytest.mark.parametrize("difficulty", _advertised_difficulties())
 def test_generate_accepts_every_difficulty_the_config_advertises(
     authed_client, db_conn, difficulty
