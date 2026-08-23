@@ -1215,14 +1215,28 @@ def _missed_something(attempt: dict, found: MissedQuestions) -> bool:
 
     Three cases, in the order they resolve:
 
-    * wrong answers were recorded → yes, and recovering none of them is a
-      real discrepancy (drifted identities, an unrecognised stored shape);
-    * answers were recorded and all of them were right → NO. Nothing to
-      practise; silence;
+    * wrong answers were recorded AND at least one mapped to a stored item →
+      yes. Recovering none of them is then a real discrepancy: the item was
+      named and still could not be served, which today means a stored
+      question that no longer passes the wire-format check;
+    * answers were recorded and none of them produced a missed item → NO,
+      silence. Read that as "everything was right", which is what it means
+      in every case but the two named below;
     * nothing was recorded at all → fall back to the attempt's own score,
       the only remaining evidence. `score < total` means the student missed
       something we cannot name, which is exactly the pre-#537 degradation
       (an attempt graded only through /submit) worth counting.
+
+    KNOWN GAP (deliberate, N1 in the PR). Two shapes are silent that should
+    not be, and both land in the second case above. `missed_question_hashes`
+    skips a wrong row whose `question_index` is out of range, and one whose
+    stored question yields no `wire_question_hash` at all — so the row exists
+    and is wrong, but produces no hash. That leaves `hashes` empty with
+    `graded` True, which resolves as "everything was right", and `graded`
+    short-circuits before the score fallback could catch it. A wrong-row
+    COUNT on `MissedQuestions` instead of a bool would close it: "N wrong
+    rows, none of them mappable" is a discrepancy, and it is exactly the one
+    this function cannot currently see.
     """
     if found.hashes:
         return True
