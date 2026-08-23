@@ -925,6 +925,12 @@ async def _quiz_via_agent(
         asyncio.to_thread(
             gather_signals, user_id, concept_node_id,
             times_studied=times_studied,
+            # Both come off the `graph_nodes` row this route already read.
+            # The course-keyed signals (flashcards, tutor recency) resolve
+            # the OFFERING from `course_id`; the tutor scan matches the
+            # concept by name inside `graph_update_json`.
+            course_id=course_id,
+            concept_name=concept_name,
         ),
         return_exceptions=True,
     )

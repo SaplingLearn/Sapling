@@ -567,6 +567,16 @@ def test_quiz_generate_emits_quiz_started(sink):
         "signal_times_studied": 2,
         "signal_velocity": 0.0,
         "signal_in_flight": 0,
+        # The two course-keyed signals report UNKNOWN here rather than zero,
+        # and that distinction is the assertion: this fixture's course
+        # resolves to no offering and no name, so nothing can find this
+        # student's cards or tutor sessions. Zeros would claim they have
+        # none, which is a different — and unverified — statement.
+        "signal_flashcards_course_cards": None,
+        "signal_flashcards_course_reviewed": None,
+        "signal_flashcards_course_last_review_days": None,
+        "signal_tutor_course_sessions_14d": None,
+        "signal_tutor_concept_days_since": None,
     }
     # Ids/counts/enums only, per the #117 payload rule — no prompt text.
     assert isinstance(ev["payload"]["routing_chars"], int)

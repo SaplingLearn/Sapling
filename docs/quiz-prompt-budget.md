@@ -81,6 +81,31 @@ looking.**
   `read_misconceptions_for_course` — so treat those as present-when-called,
   not guaranteed, in a rollup.
 
+- The H4 student signals (`services/quiz_signals.py`, #556) each ride their own
+  dimension, which is the whole reason they were landed together: the routing
+  message gains at most one short sentence from all of them combined, so the
+  question "is this worth its tokens?" has to be answered per signal, not for
+  the block. They are, with the scope each one actually measures:
+
+  | Dimension | Measures | Scope |
+  | --- | --- | --- |
+  | `signal_times_studied` | `graph_nodes.times_studied` | this concept |
+  | `signal_velocity` | mastery gained per day over 14 days | this concept |
+  | `signal_in_flight` | unfinished, un-abandoned attempts | this concept |
+  | `signal_flashcards_course_cards` | cards the student has | **this course** |
+  | `signal_flashcards_course_reviewed` | of those, how many reviewed at least once | **this course** |
+  | `signal_flashcards_course_last_review_days` | days since the most recent card review | **this course** |
+  | `signal_tutor_course_sessions_14d` | tutor sessions in the last 14 days | **this course** |
+  | `signal_tutor_concept_days_since` | days since a tutor turn touched the concept | this concept |
+
+  The three flashcard dimensions are course-level because `flashcards` has no
+  concept link at all (`topic` is free text that every writer sets to the
+  course name). `NULL` means the read could not answer — a failed query, an
+  unresolvable course, or a scan that truncated — and is deliberately distinct
+  from `0`, which is a fact about the student. Filter on that when pricing:
+  averaging `NULL` as zero would make a signal look cheap by counting the runs
+  where it never reached the prompt.
+
 ## If trimming becomes necessary
 
 In measured order of return, not guessed order:

@@ -1,7 +1,67 @@
 """#556 (Workstream H4, epic #537): the cheap signals nobody was reading."""
+import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from services.quiz_signals import QuizSignals, gather_signals, prompt_block
+
+
+def _iso(days_ago: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+
+
+class _Reads:
+    """A per-table fake for `db.connection.table`.
+
+    `spec` maps a table name to ``(rows, total)``; an unnamed table reads
+    empty. Every call's arguments are captured because several of the
+    assertions below are about the QUERY, not the answer — "never selects the
+    encrypted column" and "is owner-scoped" have nothing else to check.
+    """
+
+    def __init__(self, spec: dict | None = None, raises=frozenset()):
+        self.spec = spec or {}
+        self.raises = set(raises)
+        self.calls: dict[str, list[dict]] = {}
+
+    def __call__(self, name: str):
+        outer = self
+
+        class _T:
+            def select(self, columns="*", filters=None, order=None, limit=None, offset=None):
+                return outer._answer(name, columns, filters, order, limit)[0]
+
+            def select_with_count(
+                self, columns="*", filters=None, order=None, limit=None, offset=None
+            ):
+                return outer._answer(name, columns, filters, order, limit)
+
+        return _T()
+
+    def _answer(self, name, columns, filters, order, limit):
+        self.calls.setdefault(name, []).append(
+            {"columns": columns, "filters": filters or {}, "order": order, "limit": limit}
+        )
+        if name in self.raises:
+            raise RuntimeError(f"{name} read failed")
+        return self.spec.get(name, ([], 0))
+
+
+def _gather(spec=None, *, offerings=("off-1",), raises=frozenset(), **kw):
+    """Run a full gather with the course scope resolved to `offerings`."""
+    reads = _Reads(spec, raises)
+    with (
+        patch("services.quiz_signals.table", side_effect=reads),
+        patch(
+            "services.quiz_signals.user_offering_ids_for_course",
+            return_value=list(offerings),
+        ) as resolve,
+    ):
+        signals = gather_signals(
+            "u1", "node1",
+            course_id="c1", concept_name="Gradient Descent", **kw,
+        )
+    return signals, reads, resolve
 
 
 class TestPromptBlock:
@@ -113,11 +173,20 @@ class TestGatherSignals:
 def test_dimensions_cover_every_signal():
     """F6: the issue asks for these to land BEHIND the measurement, so each
     signal has to be attributable in `llm_usage.prompt_tokens`."""
-    dims = QuizSignals(1, 2.0, 3).as_dimensions()
+    dims = QuizSignals(1, 2.0, 3, 12, 7, 3, 4, 5).as_dimensions()
     assert set(dims) == {
         "signal_times_studied", "signal_velocity", "signal_in_flight",
+        "signal_flashcards_course_cards",
+        "signal_flashcards_course_reviewed",
+        "signal_flashcards_course_last_review_days",
+        "signal_tutor_course_sessions_14d",
+        "signal_tutor_concept_days_since",
     }
-    assert list(dims.values()) == [1, 2.0, 3]
+    assert list(dims.values()) == [1, 2.0, 3, 12, 7, 3, 4, 5]
+    # Every field, not "the ones someone remembered": a signal that reaches
+    # the prompt without a dimension is a signal whose token cost the morning
+    # cannot attribute, which is the one thing this issue asked for.
+    assert len(dims) == len(QuizSignals._fields)
 
 
 def test_velocity_matches_what_the_graph_screen_shows():
@@ -151,3 +220,274 @@ def test_velocity_matches_what_the_graph_screen_shows():
     assert got == expected, (
         f"quiz prompt would report {got} where the graph screen shows {expected}"
     )
+
+
+class TestCourseScope:
+    """Both #556 signals key on the OFFERING (`flashcards.offering_id`,
+    `sessions.offering_id`), while the quiz route holds the abstract
+    `course_id`. Resolving that once, in one place, is the whole reason the
+    misconceptions tool spent months reading a foreign keyspace (#553)."""
+
+    def test_without_a_course_neither_new_signal_is_attempted(self):
+        reads = _Reads()
+        with (
+            patch("services.quiz_signals.table", side_effect=reads),
+            patch("services.quiz_signals.user_offering_ids_for_course") as resolve,
+        ):
+            s = gather_signals("u1", "node1", concept_name="Gradient Descent")
+
+        resolve.assert_not_called()
+        assert "flashcards" not in reads.calls
+        assert "sessions" not in reads.calls
+        assert s.flashcards_course_cards is None
+        assert s.tutor_course_sessions_14d is None
+
+    def test_the_offerings_are_resolved_once_for_both_signals(self):
+        _, _, resolve = _gather({"courses": ([{"course_name": "ML"}], 1)})
+        resolve.assert_called_once_with("u1", "c1")
+
+    def test_a_course_with_no_enrollment_is_reported_as_a_discrepancy(self):
+        """F5: the route just read a graph node for this user in this course,
+        so they plausibly have data — yet no offering of it resolves, which
+        leaves every offering-keyed input dark. That is the #553 keyspace
+        shape, not "this student has nothing yet"."""
+        reads = _Reads({"courses": ([{"course_name": "ML"}], 1)})
+        with (
+            patch("services.quiz_signals.table", side_effect=reads),
+            patch(
+                "services.quiz_signals.user_offering_ids_for_course",
+                return_value=[],
+            ),
+            patch("services.quiz_signals.report_empty_result") as report,
+        ):
+            s = gather_signals(
+                "u1", "node1", course_id="c1", concept_name="Gradient Descent",
+            )
+
+        assert report.call_count == 1
+        assert report.call_args.kwargs["feature"] == "quiz"
+        assert report.call_args.kwargs["count"] == 0
+        # Tutor recency is offering-only, so it goes dark...
+        assert s.tutor_course_sessions_14d is None
+        # ...but the flashcard read still has the course NAME to match on,
+        # which is the only thing that reaches AI-generated cards at all.
+        assert s.flashcards_course_cards == 0
+
+    def test_an_unresolvable_scope_is_unknown_not_zero(self):
+        reads = _Reads()
+        with (
+            patch("services.quiz_signals.table", side_effect=reads),
+            patch(
+                "services.quiz_signals.user_offering_ids_for_course",
+                side_effect=RuntimeError("db down"),
+            ),
+        ):
+            s = gather_signals(
+                "u1", "node1", course_id="c1", concept_name="Gradient Descent",
+            )
+
+        assert s.flashcards_course_cards is None
+        assert s.tutor_course_sessions_14d is None
+
+
+class TestFlashcardCourseState:
+    """COURSE-scoped by construction, and named so. `flashcards` carries no
+    concept link — `topic` is free text that every writer sets to the course
+    name — so a concept-level version of this signal would be a permanent
+    zero dressed up as a fact about the student."""
+
+    def _spec(self, cards, total=None):
+        return {
+            "courses": ([{"course_name": "Machine Learning"}], 1),
+            "flashcards": (cards, len(cards) if total is None else total),
+        }
+
+    def test_cards_are_reached_by_offering_AND_by_course_topic(self):
+        """Neither key alone sees the collection. Imported cards carry an
+        `offering_id` (`routes/flashcards.py` resolves one); AI-generated
+        cards never do, and take the COURSE NAME as their `topic` — which is
+        also how the Study screen itself decides a card belongs to a course.
+        Reading only the offering would under-report every generated deck."""
+        cards = [
+            {"offering_id": "off-1", "topic": "week 3", "times_reviewed": 3,
+             "last_reviewed_at": _iso(2)},
+            {"offering_id": None, "topic": "machine  LEARNING",
+             "times_reviewed": 0, "last_reviewed_at": None},
+            # A different course, reviewed more recently than either of ours.
+            {"offering_id": "off-9", "topic": "Organic Chemistry",
+             "times_reviewed": 5, "last_reviewed_at": _iso(1)},
+        ]
+        s, _, _ = _gather(self._spec(cards))
+
+        assert s.flashcards_course_cards == 2
+        assert s.flashcards_course_reviewed == 1
+        assert s.flashcards_course_last_review_days == 2
+
+    def test_no_cards_is_a_zero_not_an_unknown(self):
+        s, _, _ = _gather(self._spec([]))
+        assert s.flashcards_course_cards == 0
+        assert s.flashcards_course_reviewed == 0
+        # ...but "never reviewed" has no recency, and 0 days would read as
+        # "reviewed today".
+        assert s.flashcards_course_last_review_days is None
+
+    def test_a_truncated_read_is_unknown_rather_than_a_wrong_count(self):
+        """The scan is capped, so a collection past the cap would have its
+        count silently reported as the cap — a number the model would treat
+        as a fact about the student."""
+        cards = [{"offering_id": "off-1", "topic": "x", "times_reviewed": 1,
+                  "last_reviewed_at": _iso(1)}]
+        s, _, _ = _gather(self._spec(cards, total=9999))
+
+        assert s.flashcards_course_cards is None
+        assert s.flashcards_course_reviewed is None
+        assert s.flashcards_course_last_review_days is None
+
+    def test_the_encrypted_card_text_is_never_selected(self):
+        """`front`/`back` are column-encrypted and this signal never needs
+        them — selecting them would drag ciphertext across the wire on the
+        generation path for nothing."""
+        _, reads, _ = _gather(self._spec([]))
+        cols = reads.calls["flashcards"][0]["columns"]
+        assert "front" not in cols
+        assert "back" not in cols
+
+    def test_the_read_is_owner_scoped(self):
+        _, reads, _ = _gather(self._spec([]))
+        assert reads.calls["flashcards"][0]["filters"]["user_id"] == "eq.u1"
+
+    def test_a_failing_read_degrades_to_unknown(self):
+        s, _, _ = _gather(self._spec([]), raises={"flashcards"})
+        assert s.flashcards_course_cards is None
+        assert s.flashcards_course_reviewed is None
+
+
+class TestTutorRecency:
+    """`messages` has no `user_id` — it is session-scoped — so this is a
+    bounded owner-scoped `sessions` read followed by one `messages` read over
+    the ids it returned."""
+
+    def _spec(self, sessions, msgs, total=None):
+        return {
+            "courses": ([{"course_name": "Machine Learning"}], 1),
+            "sessions": (sessions, len(sessions) if total is None else total),
+            "messages": (msgs, len(msgs)),
+        }
+
+    def test_days_since_the_last_turn_that_touched_this_concept(self):
+        msgs = [  # newest first, as the read asks for
+            {"created_at": _iso(1), "graph_update_json":
+                {"updated_nodes": [{"concept_name": "Backpropagation"}]}},
+            {"created_at": _iso(4), "graph_update_json":
+                {"new_nodes": [{"concept_name": "gradient  DESCENT"}]}},
+            {"created_at": _iso(9), "graph_update_json":
+                {"updated_nodes": [{"concept_name": "Gradient Descent"}]}},
+        ]
+        s, _, _ = _gather(self._spec([{"id": "s1", "started_at": _iso(1)}], msgs))
+
+        # 4, not 9 — the newest match wins; and the tutor writes whatever the
+        # model spelled, so casing/spacing drift still has to match (the same
+        # normalization `apply_graph_update` dedups on).
+        assert s.tutor_concept_days_since == 4
+
+    def test_sessions_that_never_touched_it_leave_recency_unknown(self):
+        msgs = [{"created_at": _iso(1), "graph_update_json":
+                 {"updated_nodes": [{"concept_name": "Backpropagation"}]}}]
+        s, _, _ = _gather(self._spec([{"id": "s1", "started_at": _iso(1)}], msgs))
+
+        # Not 0 — "we tutored this concept today" is a very different claim
+        # from "we did not find it in the window we looked at".
+        assert s.tutor_concept_days_since is None
+        assert s.tutor_course_sessions_14d == 1
+
+    def test_the_session_count_is_the_exact_total_not_the_scan_cap(self):
+        sessions = [{"id": f"s{i}", "started_at": _iso(i)} for i in range(5)]
+        s, _, _ = _gather(self._spec(sessions, [], total=11))
+        assert s.tutor_course_sessions_14d == 11
+
+    def test_no_sessions_is_a_zero_not_an_unknown(self):
+        s, _, _ = _gather(self._spec([], []))
+        assert s.tutor_course_sessions_14d == 0
+        assert s.tutor_concept_days_since is None
+
+    def test_a_string_payload_is_parsed(self):
+        """`graph_update_json` is JSONB, but `end_session`'s own reader
+        tolerates a string shape, so this one does too."""
+        msgs = [{"created_at": _iso(3), "graph_update_json": json.dumps(
+            {"new_nodes": [{"concept_name": "Gradient Descent"}]})}]
+        s, _, _ = _gather(self._spec([{"id": "s1", "started_at": _iso(3)}], msgs))
+        assert s.tutor_concept_days_since == 3
+
+    def test_the_encrypted_message_content_is_never_selected(self):
+        _, reads, _ = _gather(self._spec([{"id": "s1", "started_at": _iso(1)}], []))
+        assert "content" not in reads.calls["messages"][0]["columns"]
+
+    def test_the_session_read_is_owner_scoped_offering_scoped_and_windowed(self):
+        _, reads, _ = _gather(self._spec([], []))
+        filters = reads.calls["sessions"][0]["filters"]
+
+        assert filters["user_id"] == "eq.u1"
+        # Offering, not course: `sessions` has no course_id, and passing one
+        # is exactly the #553 mismatch.
+        assert filters["offering_id"] == "in.(off-1)"
+        assert filters["started_at"].startswith("gte.")
+        assert reads.calls["sessions"][0]["limit"] is not None
+
+    def test_the_message_read_is_bounded_to_the_sessions_just_found(self):
+        sessions = [{"id": "s1", "started_at": _iso(1)},
+                    {"id": "s2", "started_at": _iso(2)}]
+        _, reads, _ = _gather(self._spec(sessions, []))
+        filters = reads.calls["messages"][0]["filters"]
+
+        assert filters["session_id"] == "in.(s1,s2)"
+        assert reads.calls["messages"][0]["limit"] is not None
+
+    def test_a_failing_session_read_degrades_to_unknown(self):
+        s, _, _ = _gather(self._spec([], []), raises={"sessions"})
+        assert s.tutor_course_sessions_14d is None
+        assert s.tutor_concept_days_since is None
+
+    def test_a_failing_message_read_keeps_the_session_count(self):
+        """Two reads, two independent facts: losing the concept scan is no
+        reason to throw away the count we already have."""
+        s, _, _ = _gather(
+            self._spec([{"id": "s1", "started_at": _iso(1)}], []),
+            raises={"messages"},
+        )
+        assert s.tutor_course_sessions_14d == 1
+        assert s.tutor_concept_days_since is None
+
+
+class TestPromptBlockForTheDeferredSignals:
+    def test_the_flashcard_line_states_its_course_scope(self):
+        block = prompt_block(QuizSignals(
+            flashcards_course_cards=12,
+            flashcards_course_reviewed=7,
+            flashcards_course_last_review_days=3,
+        ))
+        assert "12" in block and "7" in block and "3" in block
+        # Unmistakably course-level. There is no concept-level flashcard data,
+        # and a line the model reads as concept-level is a lie about the
+        # student — the reason this half of #556 was deferred in the first
+        # place.
+        assert "course" in block.lower()
+        assert "not this concept" in block.lower()
+
+    def test_a_student_with_no_cards_for_this_course_says_nothing(self):
+        assert prompt_block(QuizSignals(
+            flashcards_course_cards=0, flashcards_course_reviewed=0,
+        )) == ""
+
+    def test_tutor_lines_appear_only_when_known(self):
+        assert prompt_block(QuizSignals(tutor_course_sessions_14d=None)) == ""
+        assert prompt_block(QuizSignals(tutor_course_sessions_14d=0)) == ""
+        assert "tutor" in prompt_block(
+            QuizSignals(tutor_course_sessions_14d=3)
+        ).lower()
+
+    def test_tutored_today_is_reported_even_though_it_is_zero(self):
+        """Unlike a zero session count, 0 days is the strongest form of this
+        signal, not the absence of it."""
+        assert "concept" in prompt_block(
+            QuizSignals(tutor_concept_days_since=0)
+        ).lower()
