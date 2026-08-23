@@ -1110,6 +1110,49 @@ class TestQuizGrounding:
         assert lookup.code is None
         assert lookup.failed is True
 
+    def test_the_shared_lookups_happen_once_per_generation(self):
+        """#556 review finding: two answers are each wanted by two CONCURRENT
+        legs of the gather — this course's `courses` row (grounding wants
+        `course_code`, the H4 flashcard signal wants `course_name`) and this
+        student's offerings of it (exam proximity and the H4 tutor signal,
+        via the UNCACHED `user_offering_ids_for_course`, two reads a call).
+
+        Concurrent legs cannot share by accident, so the route resolves both
+        up front and injects them. This pins that neither is asked twice."""
+        factory = self._table_factory()
+        reads: list[str] = []
+
+        def counting(name):
+            reads.append(name)
+            return factory(name)
+
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=counting),
+            # Counted through BOTH module references, or the second `courses`
+            # read (the one the signals module used to make) is invisible here
+            # and the assertion below would pass either way.
+            patch("services.quiz_signals.table", side_effect=counting),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks_detailed",
+                  return_value=Retrieval(chunks=[])),
+            patch("routes.quiz.offering_scope", return_value=["off-1"]) as scope,
+            patch("services.exam_proximity.user_offering_ids_for_course") as by_exam,
+            patch("services.quiz_signals.user_offering_ids_for_course") as by_signals,
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        assert reads.count("courses") == 1
+        scope.assert_called_once_with("user_1", "course-uuid-1")
+        by_exam.assert_not_called()
+        by_signals.assert_not_called()
+
     def test_material_injected_when_chunks_exist(self):
         agent_run = AsyncMock(return_value=self._valid_quiz_result())
         with (

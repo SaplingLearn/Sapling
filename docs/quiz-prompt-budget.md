@@ -101,8 +101,9 @@ looking.**
   The three flashcard dimensions are course-level because `flashcards` has no
   concept link at all (`topic` is free text that every writer sets to the
   course name). `NULL` means the read could not answer — a failed query, an
-  unresolvable course, or a scan that truncated — and is deliberately distinct
-  from `0`, which is a fact about the student. Filter on that when pricing:
+  unresolvable course, or (for `signal_flashcards_course_reviewed` alone) a
+  card scan that hit its cap — and is deliberately distinct from `0`, which is
+  a fact about the student. Filter on that when pricing:
   averaging `NULL` as zero would make a signal look cheap by counting the runs
   where it never reached the prompt.
 

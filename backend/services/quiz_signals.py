@@ -33,10 +33,12 @@ actually supports rather than the one the issue's wording implied:
 
 Both of the new ones key on the OFFERING (`flashcards.offering_id`,
 `sessions.offering_id`) while the route holds the abstract `course_id`;
-`services/academics.py` bridges the two — ONCE, for both. Passing a course id
-where an offering id was expected is exactly how the misconceptions tool read
-a foreign keyspace for months (#553), which is why the scope resolution is one
-function with one caller rather than an inline filter repeated per signal.
+`services/academics.py` bridges the two. Passing a course id where an offering
+id was expected is exactly how the misconceptions tool read a foreign keyspace
+for months (#553), which is why that resolution is one `CourseScope` shared by
+both signals rather than an inline filter repeated per signal — and why the
+quiz route can resolve it ONCE and inject it, since two of its other
+concurrent legs already ask the identical (uncached) question.
 
 Per the issue, these land BEHIND the F6 measurement: every signal records its
 own prompt dimension, so `llm_usage.prompt_tokens` can be attributed and the
@@ -65,10 +67,11 @@ logger = logging.getLogger(__name__)
 #: only looks 14 days back, so an unbounded read is pure transfer cost.
 _EVENT_SCAN_LIMIT = 60
 
-#: Cap on the student's flashcard read. Attribution to a course happens in
-#: Python (two keys, see `_flashcards`), so the rows have to come back — and a
-#: collection past this cap reports UNKNOWN rather than the cap (see there).
-_FLASHCARD_SCAN_LIMIT = 400
+#: Cap on the flashcard read, which is already narrowed to ONE course by the
+#: `or=` tree in `_flashcards`. The card COUNT is exact regardless (it comes
+#: from Content-Range); the cap only bounds how many rows have to cross the
+#: wire to tally reviews.
+_FLASHCARD_SCAN_LIMIT = 200
 
 #: How far back "recently tutored" looks, matching the velocity window so the
 #: two signals in this block describe the same stretch of time.
@@ -81,16 +84,25 @@ _TUTOR_SESSION_SCAN = 5
 _TUTOR_MESSAGE_SCAN = 120
 
 
-class _CourseScope(NamedTuple):
+class CourseScope(NamedTuple):
     """How this student's course-keyed rows can be found.
 
     Two keys because neither alone finds the collection: imported flashcards
     carry an `offering_id`, AI-generated ones never do and take the course
     NAME as their topic.
+
+    `offering_ids=None` means the resolution itself could not be done, and is
+    distinct from `[]` — "resolved, and this student has no offering of this
+    course", which is a fact and a suspicious one (see `_report_dark_scope`).
+
+    Public because the caller can supply it: `user_offering_ids_for_course` is
+    two uncached reads and the `courses` row is a third, all of which the quiz
+    generation path already needs elsewhere. Resolving once and passing it in
+    is the difference between three reads and six.
     """
 
-    offering_ids: list[str]
-    course_name: str | None
+    offering_ids: list[str] | None = None
+    course_name: str | None = None
 
 
 class _Flashcards(NamedTuple):
@@ -152,6 +164,7 @@ def gather_signals(
     times_studied: Any = None,
     course_id: str | None = None,
     concept_name: str = "",
+    scope: CourseScope | None = None,
 ) -> QuizSignals:
     """Collect the cheap signals for one (student, concept).
 
@@ -161,6 +174,10 @@ def gather_signals(
     learn something we were already told. `course_id` and `concept_name` come
     from that same row for the same reason.
 
+    `scope` is the same idea one level up: its three reads are ones the quiz
+    route already makes in concurrent legs (see `CourseScope`). Omit it and
+    this resolves the scope itself, so every other caller keeps working.
+
     Without a `course_id` the two course-keyed signals are SKIPPED rather than
     guessed at: there is no other key that finds this student's flashcards or
     tutor sessions, and a graph node with no course really does leave them
@@ -169,10 +186,14 @@ def gather_signals(
     flashcards = _Flashcards()
     tutor = _Tutor()
     if course_id:
-        scope = _course_scope(user_id, course_id)
-        if scope is not None:
-            flashcards = _flashcards(user_id, scope)
-            tutor = _tutor_recency(user_id, scope, concept_name)
+        if scope is None:
+            scope = _course_scope(user_id, course_id)
+        if scope.offering_ids == []:
+            # Resolved, and found none — a fact, and a suspicious one. `None`
+            # (couldn't resolve) is a different situation and stays quiet.
+            _report_dark_scope(user_id, course_id)
+        flashcards = _flashcards(user_id, scope)
+        tutor = _tutor_recency(user_id, scope, concept_name)
 
     return QuizSignals(
         times_studied=_coerce_int(times_studied),
@@ -261,58 +282,43 @@ def _in_flight(user_id: str, concept_node_id: str) -> int | None:
 
 
 def _days_since(stamp: Any) -> int | None:
-    """Whole days since an ISO timestamp, tolerant of both shapes in the wild.
+    """Whole days since a stored timestamp, or None if it can't be read.
 
-    TIMESTAMPTZ comes back tz-aware through PostgREST, but naive strings
-    survive from the pre-#248 `utcnow()` writes and are UTC by construction.
-    A bare `now(tz) - fromisoformat(...)` raises TypeError on the naive shape —
-    the same trap `learn._elapsed_minutes` documents, where it silently
-    reported 0 for months.
+    Parsing goes through `routes.quiz._parse_ts` rather than a second
+    `fromisoformat` here: it already documents the trap (a naive value from an
+    out-of-band write compares against an aware `now()` with a TypeError that
+    an `except ValueError` does not catch) and already resolves it by assuming
+    UTC. Two copies of that rule is how one of them ends up without the fix.
     """
-    if not stamp:
+    from routes.quiz import _parse_ts
+
+    parsed = _parse_ts(stamp)
+    if parsed is None:
         return None
-    try:
-        parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
     elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
     # Clamped: clock skew on a just-written row would otherwise produce "-1
     # days ago", which reads as a data bug in the prompt.
     return max(0, int(elapsed // 86400))
 
 
-def _course_scope(user_id: str, course_id: str) -> _CourseScope | None:
-    """The keys that find this student's rows for this course, or None when
-    the scope itself couldn't be resolved.
+def offering_scope(user_id: str, course_id: str | None) -> list[str] | None:
+    """This student's offerings of `course_id`, or None if we couldn't tell.
 
-    None is NOT the same as an empty scope: a failed enrollment read means the
-    signals below are unknowable, while "enrolled in no offering of this
-    course" is a fact — and a suspicious one, hence the F5 report.
+    A never-raising wrapper so the quiz route can resolve the scope ONCE, up
+    front, and hand the same answer to every leg that needs it — the signals
+    here and `exam_proximity`, which asks the identical uncached question.
     """
+    if not course_id:
+        return None
     try:
-        offering_ids = list(user_offering_ids_for_course(user_id, course_id) or [])
+        return list(user_offering_ids_for_course(user_id, course_id) or [])
     except Exception:
         logger.debug("quiz signals: offering resolution failed", exc_info=True)
         return None
 
-    if not offering_ids:
-        # F5: the route just read a graph node for this user in this course,
-        # so they plausibly DO have data here — yet nothing keyed on the
-        # offering can be found for them. That leaves both signals below (and
-        # the class misconceptions, on the same key) silently dark, which is
-        # the #553 shape rather than "this student has nothing yet".
-        report_empty_result(
-            "quiz_signals.offerings_for_course",
-            user_id=user_id,
-            count=0,
-            expect=Expect.HAS_GRAPH,
-            feature="quiz",
-            scope={"course_id": f"eq.{course_id}"},
-            payload={"course_id": course_id},
-        )
 
+def _course_scope(user_id: str, course_id: str) -> CourseScope:
+    """Resolve the scope ourselves, for callers that don't supply one."""
     course_name = None
     try:
         rows = table("courses").select(
@@ -322,30 +328,88 @@ def _course_scope(user_id: str, course_id: str) -> _CourseScope | None:
     except Exception:
         logger.debug("quiz signals: course name read failed", exc_info=True)
 
-    return _CourseScope(offering_ids=offering_ids, course_name=course_name)
+    return CourseScope(
+        offering_ids=offering_scope(user_id, course_id), course_name=course_name,
+    )
 
 
-def _flashcards(user_id: str, scope: _CourseScope) -> _Flashcards:
+def _report_dark_scope(user_id: str, course_id: str) -> None:
+    """F5: this student has graph nodes in this course but no offering of it.
+
+    Everything keyed on the offering — both signals here, and the class
+    misconceptions on the same key — is therefore silently dark for them,
+    which is the #553 keyspace shape rather than "this student has nothing
+    yet".
+
+    `plausible=True` rather than letting the helper probe: the caller reached
+    this module by way of a `graph_nodes` row it read for this exact user and
+    course, so a `HAS_GRAPH` probe scoped to that course can only return what
+    the route already saw. Running it would be a guaranteed-True round trip on
+    the request path, once per generation, forever. The expectation still
+    ships in the event — it is what a rollup reads to know WHY this was
+    unexpected.
+    """
+    report_empty_result(
+        "quiz_signals.offerings_for_course",
+        user_id=user_id,
+        count=0,
+        expect=Expect.HAS_GRAPH,
+        feature="quiz",
+        plausible=True,
+        payload={"course_id": course_id},
+    )
+
+
+def _pg_quote(value: str) -> str:
+    """Double-quote a value for a PostgREST logic tree.
+
+    Inside `or=(…)` a bare value ends at the first comma or paren, so a course
+    named "Ethics, Law and Society" would parse as two broken operands.
+    Quoting fixes that; `"` and `\\` inside the value are backslash-escaped,
+    as PostgREST's grammar specifies.
+    """
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _flashcards(user_id: str, scope: CourseScope) -> _Flashcards:
     """This student's flashcards FOR THIS COURSE: how many, how many reviewed,
     and how long since the most recent review.
 
     Course-level on purpose (module docstring): there is no concept↔card link
     to read, so a concept-scoped version of this would return zero forever.
 
-    Attribution happens in Python over one owner-scoped read rather than in
-    two counted queries, because the two keys that reach a card are different
-    (`offering_id` for imported decks, the course NAME in `topic` for
-    generated ones) but not exclusive — a card can carry both, so summing two
-    counts would double-count the overlap. `front`/`back` are column-encrypted
-    and never selected: this signal has no use for the text.
+    The course filter is an `or=` logic tree because the two keys that reach a
+    card are different (`offering_id` for imported decks, the course NAME in
+    `topic` for generated ones, which carry no offering at all) and NOT
+    exclusive — a card can match both, so two counted reads would double-count
+    the overlap while a `user_id`-only scan would drag the student's whole
+    collection across the wire and cap the count of a course with three cards
+    behind a course with four hundred.
+
+    `front`/`back` are column-encrypted and never selected: this signal has no
+    use for the text.
     """
-    if not scope.offering_ids and not scope.course_name:
+    clauses = []
+    if scope.offering_ids:
+        clauses.append(f"offering_id.in.({','.join(scope.offering_ids)})")
+    if scope.course_name:
+        # `ilike` with no wildcards is case-insensitive equality, which is the
+        # drift worth tolerating: both writers store the same
+        # `courses.course_name` string this scope was read from.
+        clauses.append(f"topic.ilike.{_pg_quote(scope.course_name)}")
+    if not clauses:
         return _Flashcards()
+
     try:
         rows, total = table("flashcards").select_with_count(
-            "offering_id,topic,times_reviewed,last_reviewed_at",
-            filters={"user_id": f"eq.{user_id}"},
-            order="created_at.desc",
+            "times_reviewed,last_reviewed_at",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "or": f"({','.join(clauses)})",
+            },
+            # Newest review first, so a truncated page still holds the most
+            # recent one and the recency answer survives the cap.
+            order="last_reviewed_at.desc.nullslast",
             limit=_FLASHCARD_SCAN_LIMIT,
         )
     except Exception:
@@ -354,38 +418,45 @@ def _flashcards(user_id: str, scope: _CourseScope) -> _Flashcards:
 
     rows = rows or []
     if total > len(rows):
-        # The scan truncated, so every number below would be capped rather
-        # than counted — and the model would read the cap as a fact about the
-        # student. Unknown is the honest answer.
+        # The count is exact whatever the cap does — it comes from
+        # Content-Range, not from `len(rows)` — but "how many are reviewed"
+        # would be capped, and the model would read the cap as a fact. That
+        # one goes unknown; the other two do not have to.
         logger.debug(
-            "quiz signals: flashcard scan truncated at %s of %s; reporting "
-            "unknown", len(rows), total,
+            "quiz signals: flashcard scan truncated at %s of %s; the count "
+            "stands, the reviewed tally does not", len(rows), total,
         )
-        return _Flashcards()
+        return _Flashcards(
+            cards=total, last_review_days=_oldest_review(rows),
+        )
 
-    offerings = set(scope.offering_ids)
-    name_key = _normalize(scope.course_name) if scope.course_name else None
-    mine = [
-        r for r in rows
-        if r.get("offering_id") in offerings
-        or (name_key and _normalize(r.get("topic")) == name_key)
-    ]
-
-    reviewed = sum(1 for r in mine if (_coerce_int(r.get("times_reviewed")) or 0) > 0)
-    ages = [
-        d for d in (_days_since(r.get("last_reviewed_at")) for r in mine)
-        if d is not None
-    ]
     return _Flashcards(
-        cards=len(mine),
-        reviewed=reviewed,
-        # None, not 0: "never reviewed" has no recency, and 0 would read as
-        # "reviewed today".
-        last_review_days=min(ages) if ages else None,
+        cards=total,
+        reviewed=sum(
+            1 for r in rows if (_coerce_int(r.get("times_reviewed")) or 0) > 0
+        ),
+        last_review_days=_oldest_review(rows),
     )
 
 
-def _tutor_recency(user_id: str, scope: _CourseScope, concept_name: str) -> _Tutor:
+def _oldest_review(rows: list[dict]) -> int | None:
+    """Days since the most recent review among these cards, or None if none
+    has ever been reviewed — not 0, which would read as "reviewed today".
+
+    `min` rather than "take the first row": the query asks for
+    `last_reviewed_at.desc`, but relying on that makes the answer
+    wrong-and-silent if the ordering is ever dropped or degraded in transport.
+    It is computable here for nothing (`exam_proximity._resolve` makes the
+    same call for the same reason).
+    """
+    ages = [
+        d for d in (_days_since(r.get("last_reviewed_at")) for r in rows)
+        if d is not None
+    ]
+    return min(ages) if ages else None
+
+
+def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tutor:
     """When the tutor last covered THIS concept, and how busy this course has
     been in the tutor lately.
 

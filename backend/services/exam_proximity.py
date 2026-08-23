@@ -103,7 +103,12 @@ def _enrollment_ids(offering_ids: list[str], user_id: str) -> list[str]:
     ]
 
 
-def days_until_next_exam(user_id: str, course_id: str | None) -> int | None:
+def days_until_next_exam(
+    user_id: str,
+    course_id: str | None,
+    *,
+    offering_ids: list[str] | None = None,
+) -> int | None:
     """Whole days until this student's soonest UPCOMING exam in the course.
 
     `0` means "today" and is the most actionable value this produces — it is
@@ -111,13 +116,21 @@ def days_until_next_exam(user_id: str, course_id: str | None) -> int | None:
     could not tell". Collapsing the two would drop the exact case the feature
     exists for.
 
+    `offering_ids` injects a resolution the caller already paid for.
+    `user_offering_ids_for_course` is two UNCACHED reads, and the quiz
+    generation path now needs the same answer in a concurrent leg — passing it
+    in is the difference between asking once and asking twice. `None` means
+    "not supplied, resolve it yourself", so existing callers are unaffected;
+    it also covers "the caller's own resolution failed", where re-resolving
+    costs one read in an already-degraded request and keeps this honest.
+
     Never raises: this runs inline on the quiz generation path, and one
     optional prompt line is not worth failing a generation over.
     """
     if not course_id:
         return None
     try:
-        return _resolve(user_id, course_id)
+        return _resolve(user_id, course_id, offering_ids)
     except Exception:
         logger.warning(
             "exam proximity lookup failed; generating without it", exc_info=True
@@ -125,8 +138,11 @@ def days_until_next_exam(user_id: str, course_id: str | None) -> int | None:
         return None
 
 
-def _resolve(user_id: str, course_id: str) -> int | None:
-    offering_ids = user_offering_ids_for_course(user_id, course_id)
+def _resolve(
+    user_id: str, course_id: str, offering_ids: list[str] | None = None
+) -> int | None:
+    if offering_ids is None:
+        offering_ids = user_offering_ids_for_course(user_id, course_id)
     if not offering_ids:
         return None
     # `assignments` is enrollment-keyed — the gradebook table carries no

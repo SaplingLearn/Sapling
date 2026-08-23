@@ -43,7 +43,12 @@ from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.exam_proximity import PROMPT_HORIZON_DAYS, days_until_next_exam
-from services.quiz_signals import QuizSignals, gather_signals
+from services.quiz_signals import (
+    CourseScope,
+    QuizSignals,
+    gather_signals,
+    offering_scope,
+)
 from services.quiz_signals import prompt_block as signal_block
 from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
@@ -518,24 +523,56 @@ class BuCodeLookup(NamedTuple):
     failed: bool = False
 
 
-def _resolve_bu_code(course_id: str | None) -> BuCodeLookup:
-    """Resolve a Sapling course UUID to its BU course_code (course_chunks
-    partition key). Never raises — grounding must never break quiz
-    generation — so a failed read comes back as `failed=True` rather than as
-    an exception or an indistinguishable None."""
+class CourseRow(NamedTuple):
+    """The one `courses` read a generation needs, shared across its legs.
+
+    Two consumers want columns off the same row — grounding wants
+    `course_code`, the H4 flashcard signal wants `course_name` — and they run
+    in CONCURRENT legs of the gather below, so nothing can be shared by
+    accident. Reading it once here is what keeps that one read one read.
+
+    `failed` is tri-state exactly as `BuCodeLookup` is: a read that raised is
+    "we could not look", not "there is nothing to look up".
+    """
+
+    code: str | None = None
+    name: str | None = None
+    failed: bool = False
+
+
+def _course_row(course_id: str | None) -> CourseRow:
+    """The course's catalog code and display name. Never raises."""
     if not course_id:
-        return BuCodeLookup()
+        return CourseRow()
     try:
         rows = table("courses").select(
-            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+            "course_code,course_name", filters={"id": f"eq.{course_id}"}, limit=1
         )
     except Exception:
         logger.warning(
-            "quiz: course_code lookup failed for course=%s; grounding "
+            "quiz: course lookup failed for course=%s; grounding "
             "coverage is unknown, not absent", course_id, exc_info=True,
         )
-        return BuCodeLookup(failed=True)
-    return BuCodeLookup(code=(rows[0].get("course_code") if rows else None) or None)
+        return CourseRow(failed=True)
+    row = rows[0] if rows else {}
+    return CourseRow(
+        code=(row.get("course_code") or None),
+        name=(row.get("course_name") or None),
+    )
+
+
+def _resolve_bu_code(
+    course_id: str | None, *, course: CourseRow | None = None
+) -> BuCodeLookup:
+    """Resolve a Sapling course UUID to its BU course_code (course_chunks
+    partition key). Never raises — grounding must never break quiz
+    generation — so a failed read comes back as `failed=True` rather than as
+    an exception or an indistinguishable None.
+
+    `course` injects a row the caller already read, so a generation that
+    needs the same row for something else does not pay for it twice."""
+    row = course if course is not None else _course_row(course_id)
+    return BuCodeLookup(code=row.code, failed=row.failed)
 
 
 class CourseMaterial(NamedTuple):
@@ -654,7 +691,9 @@ def _course_chunk_coverage(bu_code: str) -> int | None:
         return None
 
 
-def _course_material(course_id: str | None, concept_name: str) -> CourseMaterial:
+def _course_material(
+    course_id: str | None, concept_name: str, *, course: CourseRow | None = None
+) -> CourseMaterial:
     """Best-effort catalog + document-chunk context for a concept.
 
     Returns an empty CourseMaterial if nothing is available (no course, no
@@ -662,8 +701,10 @@ def _course_material(course_id: str | None, concept_name: str) -> CourseMaterial
     quiz generation. A course_code read that FAILED is reported as such
     (`resolution_failed`) rather than as an absent bu_code, so E8 can tell
     "we could not look" from "there is nothing to look up".
+
+    `course` injects a `courses` row the caller already read (see `CourseRow`).
     """
-    lookup = _resolve_bu_code(course_id)
+    lookup = _resolve_bu_code(course_id, course=course)
     bu_code = lookup.code
     if not bu_code:
         return _UNKNOWN_MATERIAL if lookup.failed else _EMPTY_MATERIAL
@@ -898,6 +939,23 @@ async def _quiz_via_agent(
             f"Generate {num_questions} {difficulty} questions for the student."
         )
 
+    # ONE resolution of the two things the legs below share. Three of them
+    # want the same two answers — grounding wants this course's `course_code`,
+    # the H4 flashcard signal wants its `course_name` (same row), and both
+    # exam proximity and the H4 signals want this student's offerings of it
+    # (`user_offering_ids_for_course`, which is NOT cached). Because those
+    # legs run CONCURRENTLY they cannot share by accident, so resolving here
+    # is what stops one generation from asking the same three questions twice.
+    #
+    # These two are themselves independent, so they run concurrently with each
+    # other; the pair costs one round-trip of wall clock ahead of the gather
+    # and removes three from inside it.
+    course_row, offering_ids = await asyncio.gather(
+        asyncio.to_thread(_course_row, course_id),
+        asyncio.to_thread(offering_scope, user_id, course_id),
+    )
+    course_scope = CourseScope(offering_ids=offering_ids, course_name=course_row.name)
+
     # Course-material grounding does blocking network I/O (a Gemini
     # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
     # worker thread so a slow/stalled retrieval can't freeze this worker's
@@ -917,20 +975,25 @@ async def _quiz_via_agent(
     # Each helper already degrades internally; this is the backstop for the
     # failure they cannot catch (an unexpected raise on the way in or out).
     material, recent, exam_days_away, signals = await asyncio.gather(
-        asyncio.to_thread(_course_material, course_id, concept_name),
+        asyncio.to_thread(
+            _course_material, course_id, concept_name, course=course_row,
+        ),
         asyncio.to_thread(
             recent_question_identities, user_id, concept_node_id
         ),
-        asyncio.to_thread(days_until_next_exam, user_id, course_id),
+        asyncio.to_thread(
+            days_until_next_exam, user_id, course_id, offering_ids=offering_ids,
+        ),
         asyncio.to_thread(
             gather_signals, user_id, concept_node_id,
             times_studied=times_studied,
-            # Both come off the `graph_nodes` row this route already read.
-            # The course-keyed signals (flashcards, tutor recency) resolve
-            # the OFFERING from `course_id`; the tutor scan matches the
-            # concept by name inside `graph_update_json`.
+            # `concept_name` comes off the `graph_nodes` row this route already
+            # read; `scope` is the shared resolution above. The course-keyed
+            # signals (flashcards, tutor recency) key on the OFFERING, and the
+            # tutor scan matches the concept by name in `graph_update_json`.
             course_id=course_id,
             concept_name=concept_name,
+            scope=course_scope,
         ),
         return_exceptions=True,
     )

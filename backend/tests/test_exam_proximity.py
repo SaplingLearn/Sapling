@@ -51,11 +51,44 @@ class TestDaysUntilNextExam:
             t.return_value.select.return_value = rows
             return days_until_next_exam("u1", "course-1")
 
+    def test_injected_offerings_skip_the_uncached_resolution(self):
+        """#556 review: `user_offering_ids_for_course` is two UNCACHED reads,
+        and the quiz generation path asks the same question in a concurrent
+        leg. A caller holding the answer passes it in rather than paying
+        twice."""
+        rows = [{"title": "Midterm", "assignment_type": "exam", "due_date": _due(3)}]
+        with (
+            patch("services.exam_proximity.user_offering_ids_for_course") as resolve,
+            patch("services.exam_proximity._enrollment_ids", return_value=["enr-1"]),
+            patch("services.exam_proximity.table") as t,
+            patch("services.exam_proximity._today", return_value=date(2026, 8, 22)),
+        ):
+            t.return_value.select.return_value = rows
+            got = days_until_next_exam("u1", "course-1", offering_ids=["off-1"])
+
+        assert got == 3
+        resolve.assert_not_called()
+
+    def test_an_injected_empty_scope_is_an_answer_not_a_missing_argument(self):
+        """`[]` means "this student has no offering of this course" — a fact
+        the caller already established. Re-resolving it would undo the saving
+        and, worse, could disagree with the scope the rest of the request used."""
+        with (
+            patch("services.exam_proximity.user_offering_ids_for_course") as resolve,
+            patch("services.exam_proximity.table") as t,
+        ):
+            got = days_until_next_exam("u1", "course-1", offering_ids=[])
+
+        assert got is None
+        resolve.assert_not_called()
+        t.assert_not_called()
+
     def test_returns_days_to_the_soonest_future_exam(self):
         rows = [
             {"title": "Final Exam", "assignment_type": "exam", "due_date": _due(30)},
             {"title": "Midterm", "assignment_type": "exam", "due_date": _due(3)},
         ]
+        # No `offering_ids`: every pre-existing caller resolves as before.
         assert self._run(rows) == 3
 
     def test_ignores_non_exams(self):

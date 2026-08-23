@@ -3,7 +3,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from services.quiz_signals import QuizSignals, gather_signals, prompt_block
+from services.quiz_signals import (
+    CourseScope,
+    QuizSignals,
+    gather_signals,
+    prompt_block,
+)
 
 
 def _iso(days_ago: float) -> str:
@@ -222,6 +227,41 @@ def test_velocity_matches_what_the_graph_screen_shows():
     )
 
 
+class TestSharedScope:
+    """The quiz route resolves the scope ONCE and hands it in — the same three
+    reads (`course_offerings` + `enrollments`, uncached, and the `courses`
+    row) are ones its other concurrent legs already make, and concurrent legs
+    cannot share by accident."""
+
+    def test_an_injected_scope_costs_no_resolution_reads(self):
+        reads = _Reads({
+            "flashcards": ([], 0),
+            "sessions": ([], 0),
+        })
+        with (
+            patch("services.quiz_signals.table", side_effect=reads),
+            patch("services.quiz_signals.user_offering_ids_for_course") as resolve,
+        ):
+            gather_signals(
+                "u1", "node1", course_id="c1", concept_name="Gradient Descent",
+                scope=CourseScope(offering_ids=["off-1"], course_name="ML"),
+            )
+
+        resolve.assert_not_called()
+        assert "courses" not in reads.calls
+        # Exactly the three reads that are genuinely new work for these two
+        # signals — plus the two the older three signals already made.
+        assert sorted(reads.calls) == [
+            "flashcards", "node_mastery_events", "quiz_attempts", "sessions",
+        ]
+
+    def test_an_omitted_scope_still_resolves_itself(self):
+        """Every other caller — and every existing test — passes no scope."""
+        _, reads, resolve = _gather({"courses": ([{"course_name": "ML"}], 1)})
+        resolve.assert_called_once_with("u1", "c1")
+        assert "courses" in reads.calls
+
+
 class TestCourseScope:
     """Both #556 signals key on the OFFERING (`flashcards.offering_id`,
     `sessions.offering_id`), while the quiz route holds the abstract
@@ -267,11 +307,44 @@ class TestCourseScope:
         assert report.call_count == 1
         assert report.call_args.kwargs["feature"] == "quiz"
         assert report.call_args.kwargs["count"] == 0
+        # The caller already read a graph node for this user and course, so a
+        # HAS_GRAPH probe could only return what it just saw. Asserting the
+        # fact is passed in keeps that guaranteed-True round trip off the
+        # generation path — where it would run once per quiz, forever.
+        assert report.call_args.kwargs["plausible"] is True
         # Tutor recency is offering-only, so it goes dark...
         assert s.tutor_course_sessions_14d is None
         # ...but the flashcard read still has the course NAME to match on,
         # which is the only thing that reaches AI-generated cards at all.
         assert s.flashcards_course_cards == 0
+
+    def test_the_ordinary_empty_path_raises_no_alarm(self):
+        """Zero flashcards and zero tutor sessions are what a first-week
+        student looks like. `tool_signals` exists to catch a silently BROKEN
+        input, and firing on ordinary emptiness is the alarm fatigue that
+        would train everyone to ignore it — so nothing is reported when the
+        scope resolves and the reads are simply empty."""
+        spec = {
+            "courses": ([{"course_name": "ML"}], 1),
+            "flashcards": ([], 0),
+            "sessions": ([], 0),
+        }
+        reads = _Reads(spec)
+        with (
+            patch("services.quiz_signals.table", side_effect=reads),
+            patch(
+                "services.quiz_signals.user_offering_ids_for_course",
+                return_value=["off-1"],
+            ),
+            patch("services.quiz_signals.report_empty_result") as report,
+        ):
+            s = gather_signals(
+                "u1", "node1", course_id="c1", concept_name="Gradient Descent",
+            )
+
+        report.assert_not_called()
+        assert s.flashcards_course_cards == 0
+        assert s.tutor_course_sessions_14d == 0
 
     def test_an_unresolvable_scope_is_unknown_not_zero(self):
         reads = _Reads()
@@ -302,20 +375,37 @@ class TestFlashcardCourseState:
             "flashcards": (cards, len(cards) if total is None else total),
         }
 
-    def test_cards_are_reached_by_offering_AND_by_course_topic(self):
+    def test_the_read_asks_for_this_course_by_offering_AND_by_topic(self):
         """Neither key alone sees the collection. Imported cards carry an
         `offering_id` (`routes/flashcards.py` resolves one); AI-generated
         cards never do, and take the COURSE NAME as their `topic` — which is
-        also how the Study screen itself decides a card belongs to a course.
-        Reading only the offering would under-report every generated deck."""
+        also how the Study screen decides a card belongs to a course. Reading
+        only the offering would under-report every generated deck.
+
+        The narrowing happens in PostgREST, not in Python: a `user_id`-only
+        scan would carry the student's whole collection across the wire and
+        cap a three-card course behind a four-hundred-card one."""
+        _, reads, _ = _gather(self._spec([]))
+        clause = reads.calls["flashcards"][0]["filters"]["or"]
+
+        assert clause == '(offering_id.in.(off-1),topic.ilike."Machine Learning")'
+
+    def test_a_course_name_with_a_comma_cannot_break_the_logic_tree(self):
+        """A bare value ends at the first comma inside `or=(…)`, so
+        "Ethics, Law and Society" would parse as two broken operands."""
+        spec = {
+            "courses": ([{"course_name": 'Ethics, Law and "Society"'}], 1),
+            "flashcards": ([], 0),
+        }
+        _, reads, _ = _gather(spec)
+        clause = reads.calls["flashcards"][0]["filters"]["or"]
+
+        assert clause.endswith(r'topic.ilike."Ethics, Law and \"Society\"")')
+
+    def test_the_tally_comes_from_the_rows_the_filter_returned(self):
         cards = [
-            {"offering_id": "off-1", "topic": "week 3", "times_reviewed": 3,
-             "last_reviewed_at": _iso(2)},
-            {"offering_id": None, "topic": "machine  LEARNING",
-             "times_reviewed": 0, "last_reviewed_at": None},
-            # A different course, reviewed more recently than either of ours.
-            {"offering_id": "off-9", "topic": "Organic Chemistry",
-             "times_reviewed": 5, "last_reviewed_at": _iso(1)},
+            {"times_reviewed": 3, "last_reviewed_at": _iso(2)},
+            {"times_reviewed": 0, "last_reviewed_at": None},
         ]
         s, _, _ = _gather(self._spec(cards))
 
@@ -331,17 +421,17 @@ class TestFlashcardCourseState:
         # "reviewed today".
         assert s.flashcards_course_last_review_days is None
 
-    def test_a_truncated_read_is_unknown_rather_than_a_wrong_count(self):
-        """The scan is capped, so a collection past the cap would have its
-        count silently reported as the cap — a number the model would treat
-        as a fact about the student."""
-        cards = [{"offering_id": "off-1", "topic": "x", "times_reviewed": 1,
-                  "last_reviewed_at": _iso(1)}]
+    def test_a_truncated_read_keeps_the_count_and_drops_only_the_tally(self):
+        """The count comes from Content-Range, so the cap cannot corrupt it,
+        and the newest-review ordering means the recency answer survives too.
+        Only "how many are reviewed" would be capped — and a cap the model
+        read as a fact is exactly what must not happen."""
+        cards = [{"times_reviewed": 1, "last_reviewed_at": _iso(1)}]
         s, _, _ = _gather(self._spec(cards, total=9999))
 
-        assert s.flashcards_course_cards is None
+        assert s.flashcards_course_cards == 9999
         assert s.flashcards_course_reviewed is None
-        assert s.flashcards_course_last_review_days is None
+        assert s.flashcards_course_last_review_days == 1
 
     def test_the_encrypted_card_text_is_never_selected(self):
         """`front`/`back` are column-encrypted and this signal never needs
