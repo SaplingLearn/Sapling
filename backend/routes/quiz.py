@@ -49,7 +49,11 @@ from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
 from services.quiz_identity import question_hash, normalize_text, wire_question_hash
 from services.quiz_repetition import RecentQuestion, recent_question_identities
-from services.quiz_reserve import missed_question_hashes, recover_questions
+from services.quiz_reserve import (
+    MissedQuestions,
+    missed_question_hashes,
+    recover_questions,
+)
 from services.tool_signals import Expect, report_empty_result_async
 from services import prompt_dimensions
 from services.rag_service import retrieve_chunks_detailed, format_rag_context
@@ -1200,6 +1204,38 @@ class ReservedMisses(NamedTuple):
     questions: list[dict]
 
 
+def _missed_something(attempt: dict, found: MissedQuestions) -> bool:
+    """Did this attempt miss anything at all? (G5's F5 guard.)
+
+    The question the silent-empty signal actually needs, and the one the
+    `HAS_ATTEMPTS` probe cannot answer: it asks "has this student completed an
+    attempt", which is true by construction for a source attempt, so every
+    zero-recovery would report a discrepancy — including the commonest and
+    most correct zero of all, a student who got everything right.
+
+    Three cases, in the order they resolve:
+
+    * wrong answers were recorded → yes, and recovering none of them is a
+      real discrepancy (drifted identities, an unrecognised stored shape);
+    * answers were recorded and all of them were right → NO. Nothing to
+      practise; silence;
+    * nothing was recorded at all → fall back to the attempt's own score,
+      the only remaining evidence. `score < total` means the student missed
+      something we cannot name, which is exactly the pre-#537 degradation
+      (an attempt graded only through /submit) worth counting.
+    """
+    if found.hashes:
+        return True
+    if found.graded:
+        return False
+    score, total = attempt.get("score"), attempt.get("total")
+    if not isinstance(score, (int, float)) or not isinstance(total, (int, float)):
+        # An unscored or unreadable attempt tells us nothing. "Can't tell" is
+        # silence, the same rule tool_signals' own probe follows.
+        return False
+    return score < total
+
+
 async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
     """Recover the questions this student missed on `body.source_attempt_id`.
 
@@ -1213,7 +1249,10 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
     if not body.source_attempt_id:
         return None
     rows = table("quiz_attempts").select(
-        "id,user_id,completed_at,questions_json",
+        # score/total are plaintext scalars (#521) and ride along for free:
+        # they are the only evidence that a pre-#537 attempt with no recorded
+        # responses missed anything at all (see _missed_something).
+        "id,user_id,completed_at,questions_json,score,total",
         filters={"id": f"eq.{body.source_attempt_id}"},
     )
     if not rows:
@@ -1263,9 +1302,15 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
 
     # An explicit list overrides the derivation; an empty one does not, so a
     # client that sends `[]` still gets its misses looked up.
-    hashes = body.missed_question_hashes or missed_question_hashes(
-        body.source_attempt_id, stored,
-    )
+    if body.missed_question_hashes:
+        hashes = list(body.missed_question_hashes)
+        # The caller asserted these items were missed, so recovering none of
+        # them is a discrepancy whoever sent the list wants to know about.
+        missed_something = True
+    else:
+        found = missed_question_hashes(body.source_attempt_id, stored)
+        hashes = found.hashes
+        missed_something = _missed_something(attempt, found)
     # Only questions in the CURRENT wire shape can be re-served: the client
     # projection, /answer and /submit all read that shape, and an unrecognised
     # stored row has no safe keyless projection at all (the same rule the
@@ -1288,13 +1333,19 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
             "reserved_from": body.source_attempt_id,
         }
 
-    if not recovered:
-        # F5: zero recovered from an attempt this student definitely completed
-        # is the silent-empty shape this seam exists for — the feature has
-        # quietly degraded to plain generation and nothing else would say so.
-        # The commonest cause is a legitimate one (an attempt graded only
-        # through /submit records no `quiz_responses` rows), which is exactly
-        # why it needs counting rather than guessing.
+    if not recovered and missed_something:
+        # F5: nothing recovered from an attempt that DID miss something is the
+        # silent-empty shape this seam exists for — the feature has quietly
+        # degraded to plain generation and nothing else would say so. The
+        # commonest cause is a legitimate one (an attempt graded only through
+        # /submit records no `quiz_responses` rows), which is exactly why it
+        # needs counting rather than guessing.
+        #
+        # `missed_something` is the whole guard: the probe below can only ask
+        # "did this student complete this attempt", which is true by
+        # construction here, so without it a perfect score would report a
+        # discrepancy on every practice request — alarm fatigue in the one
+        # place F5 exists to avoid it.
         await report_empty_result_async(
             "quiz_reserve.missed_questions",
             user_id=body.user_id,
@@ -1486,6 +1537,15 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         prompt_dimensions.record(reserved_count=len(recovered))
 
     questions = recovered
+    # H3/#555 caveat, deliberate: `days_until_next_exam` is resolved INSIDE
+    # _quiz_via_agent (one lookup serves both the prompt and the stored
+    # column), so a quiz that generates nothing records no `exam_days_away`.
+    # The column therefore means "exam proximity at generation time", and a
+    # fully re-served practice attempt leaves it NULL rather than repeating
+    # the source attempt's value — which would be a different day's answer.
+    # Analytics keying on it must read it as "generated quizzes only". Paying
+    # for the lookup on a path that makes no model call, purely to fill a
+    # column nothing reads back on the request path, is the trade not taken.
     exam_days_away = None
     if missing > 0:
         try:

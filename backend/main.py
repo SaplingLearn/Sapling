@@ -6,6 +6,7 @@ from pathlib import Path
 import logfire
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -223,15 +224,24 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     rid = getattr(request.state, "request_id", None) or current_request_id()
-    code, message = quiz_errors.validation_error_code(exc.errors())
+    # `jsonable_encoder`, exactly as FastAPI's own default handler does it, and
+    # for a reason that is invisible until it isn't: a Pydantic field or model
+    # validator raising ValueError puts the EXCEPTION OBJECT into the error's
+    # `ctx`, which `json.dumps` cannot serialize. Handing the raw list to
+    # JSONResponse turns any such 422 into a 500 — the enveloped 4xx contract
+    # (#540 A3) failing precisely when a route adds the kind of cross-field
+    # rule the envelope exists to report. Encoded ONCE and reused, so the
+    # payload and the machine detail can never disagree.
+    errors = jsonable_encoder(exc.errors())
+    code, message = quiz_errors.validation_error_code(errors)
     if code is quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE:
         message = (
             f"Quizzes can have between {quiz_config.QUIZ_MIN_QUESTIONS} "
             f"and {quiz_config.QUIZ_MAX_QUESTIONS} questions."
         )
     content = quiz_errors.error_content(
-        request.url.path, 422, exc.errors(), rid,
-        code=code, message=message, machine_detail=exc.errors(),
+        request.url.path, 422, errors, rid,
+        code=code, message=message, machine_detail=errors,
     )
     return JSONResponse(
         status_code=422,

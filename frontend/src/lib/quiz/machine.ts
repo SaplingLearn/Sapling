@@ -35,6 +35,14 @@ export interface StartRequest {
   scope: QuizScope;
   conceptId: string;
   courseId: string | null;
+  /**
+   * G5: the attempt whose misses this quiz re-serves. Omitted by every start
+   * affordance — a fresh quiz practises nothing — and set only by `retry()`
+   * re-issuing a practice run whose generation failed. `PRACTISE_MISSED` sets
+   * it from the session instead; this is the one path that has to restate it,
+   * because `START` deliberately clears it.
+   */
+  sourceAttemptId?: string | null;
 }
 
 export type SessionConfig = QuizSession["config"];
@@ -272,6 +280,10 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
         courseId: event.start.courseId,
         config: event.config,
         queueIndex: 0,
+        // `?? null`, never the bare optional: an explicit `undefined` in the
+        // patch would overwrite `generatingFrom`'s own null and put a value
+        // outside the type into the session.
+        sourceAttemptId: event.start.sourceAttemptId ?? null,
       });
     }
 

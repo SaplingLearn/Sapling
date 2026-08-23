@@ -66,7 +66,9 @@ def _agent_question(stem):
     )
 
 
-def _attempt(questions, *, completed=True, user_id="user_andres"):
+def _attempt(questions, *, completed=True, user_id="user_andres", score=None, total=None):
+    """A stored source attempt. Scored as "missed one" by default — the state
+    "practise the ones you missed" is reachable from."""
     row = {
         "id": SOURCE_ID,
         "user_id": user_id,
@@ -74,9 +76,23 @@ def _attempt(questions, *, completed=True, user_id="user_andres"):
         "difficulty": "easy",
         "questions_json": encrypt_json(questions),
         "created_at": "2026-08-22T10:00:00+00:00",
+        "total": len(questions) if total is None else total,
+        "score": (max(len(questions) - 1, 0)) if score is None else score,
     }
     row["completed_at"] = "2026-08-22T10:10:00+00:00" if completed else None
     return row
+
+
+def _missed(*indexes, of=()):
+    """`quiz_responses` rows: every index in `of` answered, the ones in
+    `indexes` answered WRONG. The read is unfiltered, so the right answers
+    have to be there too — they are how the route tells "nothing missed"
+    from "nothing recorded"."""
+    answered = of or indexes
+    return [
+        {"question_index": i, "is_correct": i not in indexes}
+        for i in answered
+    ]
 
 
 def _factory(captured, *, attempts=(), responses=()):
@@ -150,36 +166,63 @@ def _stored_questions(row):
 # ── services/quiz_reserve.py ────────────────────────────────────────────────
 
 
-def test_missed_hashes_come_back_in_the_order_they_were_asked():
-    """The rows arrive in whatever order PostgREST hands them over; the
-    practice quiz should follow the quiz the student actually sat."""
-    questions = [_stored("Q1", 1), _stored("Q2", 2), _stored("Q3", 3)]
-    rows = [{"question_index": 2}, {"question_index": 0}]
-
+def _lookup(rows, questions):
     def factory(name):
         m = MagicMock()
         m.select.return_value = rows
         return m
 
     with patch("services.quiz_reserve.table", side_effect=factory):
-        hashes = missed_question_hashes(SOURCE_ID, questions)
-    assert hashes == [questions[0]["question_hash"], questions[2]["question_hash"]]
+        return missed_question_hashes(SOURCE_ID, questions)
+
+
+def test_missed_hashes_come_back_in_the_order_they_were_asked():
+    """The rows arrive in whatever order PostgREST hands them over; the
+    practice quiz should follow the quiz the student actually sat."""
+    questions = [_stored("Q1", 1), _stored("Q2", 2), _stored("Q3", 3)]
+    found = _lookup(
+        [{"question_index": 2, "is_correct": False},
+         {"question_index": 1, "is_correct": True},
+         {"question_index": 0, "is_correct": False}],
+        questions,
+    )
+    assert found.hashes == [questions[0]["question_hash"], questions[2]["question_hash"]]
+    assert found.graded is True
+
+
+def test_a_perfect_attempt_is_graded_but_missed_nothing():
+    """The two facts that must not collapse into one: every answer recorded,
+    none of them wrong. `hashes` is empty and that is CORRECT, which is why
+    `graded` has to say so separately."""
+    questions = [_stored("Q1", 1), _stored("Q2", 2)]
+    found = _lookup(
+        [{"question_index": 0, "is_correct": True},
+         {"question_index": 1, "is_correct": True}],
+        questions,
+    )
+    assert found.hashes == []
+    assert found.graded is True
+
+
+def test_an_attempt_with_no_recorded_answers_is_not_graded():
+    """The pre-#537 shape: graded entirely through /submit, so nothing was
+    ever written to quiz_responses."""
+    found = _lookup([], [_stored("Q1", 1)])
+    assert found.hashes == []
+    assert found.graded is False
 
 
 def test_missed_hashes_ignore_indexes_that_are_not_in_the_attempt():
     """A response row pointing past the stored questions (a truncated
     re-write, a hand-edited row) must not index-error the whole practice."""
     questions = [_stored("Q1", 1)]
-
-    def factory(name):
-        m = MagicMock()
-        m.select.return_value = [{"question_index": 7}, {"question_index": None},
-                                 {"question_index": 0}]
-        return m
-
-    with patch("services.quiz_reserve.table", side_effect=factory):
-        hashes = missed_question_hashes(SOURCE_ID, questions)
-    assert hashes == [questions[0]["question_hash"]]
+    found = _lookup(
+        [{"question_index": 7, "is_correct": False},
+         {"question_index": None, "is_correct": False},
+         {"question_index": 0, "is_correct": False}],
+        questions,
+    )
+    assert found.hashes == [questions[0]["question_hash"]]
 
 
 def test_missed_hashes_degrade_to_nothing_when_the_read_fails():
@@ -189,7 +232,11 @@ def test_missed_hashes_degrade_to_nothing_when_the_read_fails():
         return m
 
     with patch("services.quiz_reserve.table", side_effect=factory):
-        assert missed_question_hashes(SOURCE_ID, [_stored("Q1", 1)]) == []
+        found = missed_question_hashes(SOURCE_ID, [_stored("Q1", 1)])
+    assert found.hashes == []
+    # "Can't tell", not "nothing was recorded" — a failed read must not
+    # manufacture a discrepancy downstream.
+    assert found.graded is False
 
 
 def test_recovered_questions_are_verbatim_copies():
@@ -227,7 +274,7 @@ def test_full_reserve_makes_no_model_call():
     source_questions = [_stored("Q1", 1), _stored("Q2", 2), _stored("Q3", 3)]
     r, row, agent = _generate(
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}, {"question_index": 2}],
+        responses=_missed(0, 2, of=(0, 1, 2)),
         num_questions=2,
         body_extra={"source_attempt_id": SOURCE_ID},
     )
@@ -250,7 +297,7 @@ def test_reserved_questions_keep_their_identity_and_take_new_positions():
     source_questions = [_stored("Q1", 1), _stored("Q2", 2), _stored("Q3", 3)]
     r, row, _ = _generate(
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 1}, {"question_index": 2}],
+        responses=_missed(1, 2, of=(0, 1, 2)),
         num_questions=2,
         body_extra={"source_attempt_id": SOURCE_ID},
     )
@@ -268,7 +315,7 @@ def test_reserved_questions_are_stripped_for_the_client_like_generated_ones():
     source_questions = [_stored("Q1", 1)]
     r, _, _ = _generate(
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}],
+        responses=_missed(0),
         num_questions=1,
         body_extra={"source_attempt_id": SOURCE_ID},
     )
@@ -284,7 +331,7 @@ def test_keyless_projection_also_strips_the_reserved_internals():
     source_questions = [_stored("Q1", 1)]
     r, _, _ = _generate(
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}],
+        responses=_missed(0),
         num_questions=1,
         body_extra={"source_attempt_id": SOURCE_ID, "include_answer_key": False},
     )
@@ -300,7 +347,7 @@ def test_explicit_hashes_win_over_the_recorded_responses():
     source_questions = [_stored("Q1", 1), _stored("Q2", 2)]
     r, _, agent = _generate(
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}],
+        responses=_missed(0),
         num_questions=1,
         body_extra={
             "source_attempt_id": SOURCE_ID,
@@ -322,7 +369,7 @@ def test_short_recovery_generates_only_the_remainder():
     r, row, agent = _generate(
         generated=[_agent_question("New A"), _agent_question("New B")],
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}],
+        responses=_missed(0),
         num_questions=3,
         body_extra={"source_attempt_id": SOURCE_ID},
     )
@@ -347,7 +394,7 @@ def test_a_regenerated_repeat_of_a_reserved_question_is_dropped():
     r, _, _ = _generate(
         generated=[_agent_question("Q1"), _agent_question("New B")],
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}],
+        responses=_missed(0),
         num_questions=3,
         body_extra={"source_attempt_id": SOURCE_ID},
     )
@@ -363,7 +410,7 @@ def test_a_failed_remainder_still_serves_what_was_recovered():
     source_questions = [_stored("Q1", 1)]
     r, _, _ = _generate(
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}],
+        responses=_missed(0),
         num_questions=3,
         body_extra={"source_attempt_id": SOURCE_ID},
         agent_side_effect=RuntimeError("Gemini is having a day"),
@@ -470,6 +517,18 @@ def test_more_hashes_than_a_quiz_can_hold_is_a_validation_error():
     assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
 
 
+def test_hashes_without_a_source_attempt_are_rejected():
+    """Identities are only ever resolved against the named attempt's own
+    questions, so hashes with no attempt could only ever be ignored. Say so
+    instead — a silently dropped field is a debugging session."""
+    r, _, agent = _generate(
+        body_extra={"missed_question_hashes": ["0123456789abcdef"]},
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+    agent.assert_not_awaited()
+
+
 # ── the route: guards and measurement ───────────────────────────────────────
 
 
@@ -481,7 +540,7 @@ def test_the_daily_spend_cap_does_not_block_a_pure_reserve():
     with patch("routes.quiz._daily_spend_exceeded", return_value=True):
         r, _, agent = _generate(
             attempts=[_attempt(source_questions)],
-            responses=[{"question_index": 0}],
+            responses=_missed(0),
             num_questions=1,
             body_extra={"source_attempt_id": SOURCE_ID},
         )
@@ -494,7 +553,7 @@ def test_the_daily_spend_cap_still_blocks_a_generated_remainder():
     with patch("routes.quiz._daily_spend_exceeded", return_value=True):
         r, _, agent = _generate(
             attempts=[_attempt(source_questions)],
-            responses=[{"question_index": 0}],
+            responses=_missed(0),
             num_questions=3,
             body_extra={"source_attempt_id": SOURCE_ID},
         )
@@ -510,7 +569,7 @@ def test_quiz_started_records_what_was_reserved(sink):
     r, _, _ = _generate(
         generated=[_agent_question("New A")],
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 0}],
+        responses=_missed(0),
         num_questions=2,
         body_extra={"source_attempt_id": SOURCE_ID},
     )
@@ -523,10 +582,9 @@ def test_quiz_started_records_what_was_reserved(sink):
     assert payload["regenerated_count"] == 1
 
 
-def test_nothing_recoverable_from_a_completed_attempt_is_reported(sink):
-    """F5: zero recovered from an attempt this student definitely completed
-    is the silent-empty shape — the re-serve degraded to generation and
-    nobody would otherwise know."""
+def _tool_empty_events(sink, **generate_kwargs):
+    """Drive a generation with the F5 probe answering "yes, this student has
+    completed attempts", and return the `quiz.tool_empty` events it emitted."""
     from services import events_service
 
     def probe(name):
@@ -535,18 +593,59 @@ def test_nothing_recoverable_from_a_completed_attempt_is_reported(sink):
         return m
 
     with patch("services.tool_signals.table", side_effect=probe):
-        r, _, _ = _generate(
-            generated=[_agent_question("New A")],
-            attempts=[_attempt([_stored("Q1", 1)])],
-            responses=[],
-            num_questions=1,
-            body_extra={"source_attempt_id": SOURCE_ID},
-        )
+        r, _, _ = _generate(**generate_kwargs)
     assert r.status_code == 200, r.text
     events_service.flush_now()
-    empties = [e for e in sink if e["event_type"] == "quiz.tool_empty"]
+    return [e for e in sink if e["event_type"] == "quiz.tool_empty"]
+
+
+def test_an_attempt_that_missed_something_but_recovered_nothing_is_reported(sink):
+    """F5: an attempt scored 0 of 1 with no recorded responses (the pre-#537
+    shape — graded entirely through /submit) missed something we cannot name.
+    The re-serve silently degraded to generation, and this is the only thing
+    that says so."""
+    empties = _tool_empty_events(
+        sink,
+        generated=[_agent_question("New A")],
+        attempts=[_attempt([_stored("Q1", 1)])],
+        responses=[],
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
     assert len(empties) == 1
     assert empties[0]["payload"]["source_attempt_id"] == SOURCE_ID
+
+
+def test_a_perfect_source_attempt_reports_no_discrepancy(sink):
+    """The false alarm the guard exists to prevent. The probe can only ask
+    "has this student completed an attempt", which is true by construction
+    here — so without knowing the attempt missed NOTHING, every practice
+    request on a clean sweep would file a discrepancy."""
+    questions = [_stored("Q1", 1), _stored("Q2", 2)]
+    empties = _tool_empty_events(
+        sink,
+        generated=[_agent_question("New A")],
+        attempts=[_attempt(questions, score=2, total=2)],
+        responses=_missed(of=(0, 1)),
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert empties == []
+
+
+def test_an_unscored_source_attempt_reports_no_discrepancy(sink):
+    """Neither responses nor a usable score: we cannot tell whether anything
+    was missed, and "can't tell" is silence — the same rule tool_signals'
+    own probe follows."""
+    empties = _tool_empty_events(
+        sink,
+        generated=[_agent_question("New A")],
+        attempts=[{**_attempt([_stored("Q1", 1)]), "score": None, "total": None}],
+        responses=[],
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert empties == []
 
 
 @pytest.mark.parametrize("hashes", [None, []])
@@ -557,7 +656,7 @@ def test_omitted_hashes_are_derived_from_the_recorded_responses(hashes):
         extra["missed_question_hashes"] = hashes
     r, _, agent = _generate(
         attempts=[_attempt(source_questions)],
-        responses=[{"question_index": 1}],
+        responses=_missed(1, of=(0, 1)),
         num_questions=1,
         body_extra=extra,
     )

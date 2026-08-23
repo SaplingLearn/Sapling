@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from typing import NamedTuple
 
 from db.connection import table
 from services.quiz_identity import wire_question_hash
@@ -45,38 +46,64 @@ from services.quiz_identity import wire_question_hash
 logger = logging.getLogger(__name__)
 
 
-def missed_question_hashes(attempt_id: str, questions: list[dict]) -> list[str]:
-    """Identities of the questions `attempt_id` got WRONG, in asked order.
+class MissedQuestions(NamedTuple):
+    """What one attempt's recorded answers say about which items were missed.
+
+    Two facts, not one, because an empty `hashes` has two opposite causes and
+    the caller has to tell them apart:
+
+    * the student answered everything correctly — nothing to practise, nothing
+      wrong;
+    * nothing was ever recorded (an attempt graded only through /submit, which
+      the pre-#537 client did for every quiz) — so we cannot say what was
+      missed even though something was.
+
+    `graded` separates them. Without it the route's silent-empty signal fires
+    on a perfect score, which is the loudest possible way to say nothing.
+    """
+
+    #: Identities of the items graded wrong, in the order they were asked.
+    hashes: list[str]
+    #: Whether the attempt had ANY graded response row at all.
+    graded: bool
+
+
+def missed_question_hashes(attempt_id: str, questions: list[dict]) -> MissedQuestions:
+    """Which questions `attempt_id` got WRONG, in asked order.
 
     Reads `quiz_responses` — the per-answer rows POST /attempts/{id}/answer
     writes — rather than the attempt's `answers_json`, because `is_correct`
     is already graded there and stored in plaintext.
 
-    An attempt graded ONLY through /submit (the pre-#537 client posted every
-    answer at the end) has no response rows at all, so it yields nothing
-    here. That is the honest answer: without them we cannot say which items
-    were missed, and the caller falls back to generating. The route reports
-    that case through `tool_signals.report_empty_result` so a re-serve that
-    silently degrades to generation is countable rather than invisible.
+    The read is deliberately UNFILTERED on `is_correct`: the wrong rows are
+    what we want, but whether there were any rows at all is the other half of
+    the answer (see `MissedQuestions`), and one read of at most a quiz's worth
+    of rows is cheaper than two.
+
+    An attempt graded ONLY through /submit has no response rows, so it yields
+    nothing here and `graded` is False. That is the honest answer: without
+    them we cannot say which items were missed, and the caller falls back to
+    generating. The route reports that case through
+    `tool_signals.report_empty_result` so a re-serve that silently degrades to
+    generation is countable rather than invisible.
     """
     if not attempt_id or not questions:
-        return []
+        return MissedQuestions(hashes=[], graded=False)
     try:
         rows = table("quiz_responses").select(
-            "question_index",
-            filters={
-                "attempt_id": f"eq.{attempt_id}",
-                "is_correct": "eq.false",
-            },
+            "question_index,is_correct",
+            filters={"attempt_id": f"eq.{attempt_id}"},
         ) or []
     except Exception:
         # No user id in the message (Engineering Style Guide) — the attempt
-        # is what identifies WHICH read failed.
+        # is what identifies WHICH read failed. `graded=False` is "we don't
+        # know", which is also what it has to mean: a failed read must not
+        # manufacture a discrepancy any more than it should hide one.
         logger.warning(
             "quiz reserve: response read failed for attempt %s; nothing to "
             "re-serve", attempt_id, exc_info=True,
         )
-        return []
+        return MissedQuestions(hashes=[], graded=False)
 
     indexes = []
     for row in rows:
@@ -85,6 +112,8 @@ def missed_question_hashes(attempt_id: str, questions: list[dict]) -> list[str]:
             # A row pointing past the stored questions is a shape we can't
             # resolve (a hand-edited row, a truncated re-write). Skipping it
             # costs one item; index-erroring would cost the whole practice.
+            continue
+        if row.get("is_correct"):
             continue
         indexes.append(index)
 
@@ -101,7 +130,7 @@ def missed_question_hashes(attempt_id: str, questions: list[dict]) -> list[str]:
             continue
         seen.add(qhash)
         out.append(qhash)
-    return out
+    return MissedQuestions(hashes=out, graded=bool(rows))
 
 
 def recover_questions(questions: list[dict], hashes: list[str]) -> list[dict]:

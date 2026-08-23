@@ -293,6 +293,36 @@ describe("practise the ones you missed (G5)", () => {
       regeneratedCount: 1,
     });
   });
+
+  it("keeps practising the same attempt when Try again retries a failed generate", async () => {
+    const result = await toResults();
+    quizApi.generateQuiz.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    act(() => result.current.actions.practiseMissed());
+    await waitFor(() => expect(result.current.session.phase).toBe("error"));
+
+    // `START` clears `sourceAttemptId` by design (a fresh quiz practises
+    // nothing), so unless the retry restates it, "Try again" quietly turns
+    // "the ones you missed" into an ordinary generation — and the honest
+    // label would then be honest about the wrong quiz.
+    quizApi.generateQuiz.mockClear();
+    quizApi.generateQuiz.mockResolvedValue({
+      ...generated(1),
+      quiz_id: "attempt-2",
+      source: { attempt_id: "attempt-1", reserved_count: 1, regenerated_count: 0 },
+    });
+    act(() => result.current.actions.retry());
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+    expect(quizApi.generateQuiz).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceAttemptId: "attempt-1" }),
+    );
+    expect(result.current.session.scope.kind).toBe("missed");
+    expect(result.current.session.reserved).toEqual({
+      reservedCount: 1,
+      regeneratedCount: 0,
+    });
+  });
 });
 
 /**

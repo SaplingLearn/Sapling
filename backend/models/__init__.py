@@ -1,5 +1,5 @@
 from typing import Optional, Union, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
@@ -82,6 +82,22 @@ class GenerateQuizBody(BaseModel):
     # through POST /api/quiz/attempts/{id}/answer instead. Every keyed
     # response is logged so we can see when usage reaches zero.
     include_answer_key: bool = True
+
+    @model_validator(mode="after")
+    def _hashes_need_a_source(self) -> "GenerateQuizBody":
+        """Hashes without a source attempt are a request that cannot mean
+        anything: identities are only ever resolved against the named
+        attempt's own stored questions, so with no attempt there is nothing
+        to resolve them against and every hash would be silently ignored.
+
+        Rejecting says so. Accepting-and-ignoring is how a caller ends up
+        debugging why its carefully chosen items were regenerated."""
+        if self.missed_question_hashes and not self.source_attempt_id:
+            raise ValueError(
+                "missed_question_hashes needs a source_attempt_id — hashes are "
+                "resolved against that attempt's own questions."
+            )
+        return self
 
 
 class AnswerQuestionBody(BaseModel):
