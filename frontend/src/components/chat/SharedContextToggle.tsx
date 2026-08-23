@@ -74,9 +74,21 @@ export function useSharedContext(): [boolean, (v: boolean) => void] {
 export function SharedContextToggle({
   enabled,
   onChange,
+  align = "right",
 }: {
   enabled: boolean;
   onChange: (v: boolean) => void;
+  /**
+   * Which edge of the button the tooltip is anchored to. The tooltip is 240px
+   * wide against a ~130px button, so the unanchored side always overhangs —
+   * anchoring must match where the toggle sits in its container or the panel
+   * renders off-card and gets clipped (#581).
+   *
+   * "right" (default) suits a toggle flush against the RIGHT edge of its
+   * container, e.g. the active-session TopBar actions. "left" suits one flush
+   * against the LEFT edge, e.g. the start-session card's space-between row.
+   */
+  align?: "left" | "right";
 }) {
   const [tooltip, setTooltip] = useState(false);
 
@@ -136,7 +148,7 @@ export function SharedContextToggle({
           style={{
             position: "absolute",
             top: "calc(100% + 6px)",
-            right: 0,
+            ...(align === "left" ? { left: 0 } : { right: 0 }),
             zIndex: 60,
             width: 240,
             padding: 10,
