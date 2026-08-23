@@ -76,8 +76,10 @@ export interface QuizPrefs { count: number | null; difficulty: string | null; fe
 
 export interface WireOption { label: string; text: string }                     // keyless
 export interface WireQuestion { id: number; question: string; options: WireOption[]; concept_tested?: string; difficulty: string }
+export interface GenerateSource { attempt_id: string; reserved_count: number; regenerated_count: number } // G5
 export interface GenerateResult { quiz_id: string; questions: WireQuestion[]; requested_difficulty: string;
-  resolved_difficulty: string; requested_count: number; delivered_count: number }
+  resolved_difficulty: string; requested_count: number; delivered_count: number;
+  source?: GenerateSource }                       // present iff the request named a source_attempt_id (R-5)
 export interface AnswerResult { question_index: number; question_id: number; is_correct: boolean; correct_index: number;
   explanation: string; next_question: WireQuestion | null; recorded: boolean }
 export interface SubmitResult { score: number; total: number; mastery_before: number; mastery_after: number;
@@ -113,6 +115,8 @@ export interface QuizSession {
   phase: Phase; error: QuizError | null;
   result: SubmitResult | null; xp: { before: number; after: number; streak: number } | null;
   deliveredShort: boolean;                                            // delivered_count < requested_count
+  sourceAttemptId: string | null;                                     // G5: the attempt whose misses this practises
+  reserved: { reservedCount: number; regeneratedCount: number } | null; // G5: what that generate actually did
 }
 ```
 
