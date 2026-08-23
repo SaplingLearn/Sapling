@@ -16,7 +16,7 @@ import { now } from "@/lib/testMode";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
 import { TranscriptModal } from "@/components/Gradebook/TranscriptModal";
-import { Button } from "@/components/ui";
+import { Button, EmptyState } from "@/components/ui";
 
 const SAMPLE_SEMESTERS = ["Spring 2026", "Fall 2025"];
 const SAMPLE_COURSES: Record<string, GradebookCourseSummary[]> = {
@@ -297,7 +297,7 @@ export function GradebookLanding() {
         {loading ? (
           <LoadingSkeleton />
         ) : courses.length === 0 ? (
-          <EmptyState semesterLabel={selected} onUpload={() => setUploadOpen(true)} />
+          <GradebookEmptyState semesterLabel={selected} onUpload={() => setUploadOpen(true)} />
         ) : (
           <div
             ref={gridRef}
@@ -363,7 +363,14 @@ function LoadingSkeleton() {
   );
 }
 
-function EmptyState({
+// The empty state itself is now the shared `ui/EmptyState` (#537) — this
+// screen's private copy was the only one in the app, so the quiz's two would
+// have made three. `size="hero"` is this screen's display-scale treatment,
+// and it reproduces what this screen used to draw inline exactly: 56px title,
+// 11px ss01 eyebrow, 17px body, and a plain `.btn--primary` at 10px/18px —
+// deliberately NOT `btn--lg`, which is 1px shorter and 100 heavier. The
+// values live as tokens in globals.css and are pinned in EmptyState.test.tsx.
+function GradebookEmptyState({
   semesterLabel,
   onUpload,
 }: {
@@ -371,53 +378,21 @@ function EmptyState({
   onUpload: () => void;
 }) {
   return (
-    <div style={{ padding: "64px 8px 40px", maxWidth: 680 }}>
-      <div
-        className="mono"
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
-          color: "var(--text-muted)",
-          marginBottom: 14,
-        }}
-      >
-        {semesterLabel || "This semester"}
-      </div>
-      <h2
-        style={{
-          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
-          fontWeight: 500,
-          fontSize: 56,
-          lineHeight: 1.05,
-          letterSpacing: "-0.02em",
-          color: "var(--text)",
-          margin: "0 0 18px",
-        }}
-      >
-        A blank semester, ready to plant.
-      </h2>
-      <p
-        style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
-          fontSize: 17,
-          lineHeight: 1.6,
-          color: "var(--text-dim)",
-          margin: "0 0 32px",
-          maxWidth: 540,
-        }}
-      >
-        Drop in a syllabus and Sapling lays out every assignment, due date, and
-        weight, so you can see what&apos;s coming, not just what already happened.
-      </p>
-      <button
-        type="button"
-        className="btn btn--primary"
-        onClick={onUpload}
-        style={{ padding: "10px 18px", fontSize: 14 }}
-      >
-        Upload syllabus
-      </button>
-    </div>
+    <EmptyState
+      size="hero"
+      eyebrow={semesterLabel || "This semester"}
+      title="A blank semester, ready to plant."
+      body="Drop in a syllabus and Sapling lays out every assignment, due date, and weight, so you can see what's coming, not just what already happened."
+      action={
+        <button
+          type="button"
+          className="btn btn--primary"
+          data-testid="gradebook-upload-syllabus"
+          onClick={onUpload}
+        >
+          Upload syllabus
+        </button>
+      }
+    />
   );
 }

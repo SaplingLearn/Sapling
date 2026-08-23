@@ -83,6 +83,12 @@ jobs:
           # Dummy on purpose: the below-seam RAG embed path (#439) must not
           # be able to bill; its failures are swallowed by design.
           GEMINI_API_KEY: e2e-dummy-key-no-billing
+          # #537: the quiz-generation guard keeps its sliding window in a
+          # process-local dict, so ONE Playwright run shares a single
+          # 8-per-300s budget across every spec and the quiz specs that run
+          # last 429. e2e-up.sh sets the same value; kept here so what the
+          # lane actually runs under is visible beside the rest of the seam.
+          QUIZ_GENERATE_RATE_LIMIT: "1000"
         run: make e2e-up
 
       - name: Run Playwright suite

@@ -1,0 +1,437 @@
+/* Quiz home (§5 B1) — the proposal card, the alternatives, the pick list and
+ * the two settings dialogs.
+ *
+ * R-1: class names only, tokens only. Every geometry constant the design draws
+ * — the measures, the three display sizes, and the whole vertical rhythm — is
+ * declared ONCE in the block below and referenced everywhere else. The only
+ * bare lengths further down are the 1px hairlines, which are the house idiom
+ * (`quiz.css`, `globals.css`).
+ *
+ * The rhythm tokens are FIXED rather than density-scaled `--pad-*`. An earlier
+ * pass took the 16px steps from `--pad-md` and left the 12/14/18/34px ones
+ * hardcoded, so the card half-responded to the density setting and half didn't
+ * — the worst of both. The prototype is a fixed-geometry drawing and the screen
+ * now reproduces it whole; if the lead would rather the screen breathe with
+ * density, these tokens are the one place to redefine.
+ *
+ * The token block is applied to BOTH roots: `.quiz-home` (in the page tree) and
+ * `.quiz-home-dialog` (portalled to <body> by `Dialog`, so it inherits nothing
+ * from the screen). That portal is also why the dialogs re-bind `--quiz-accent`
+ * themselves — outside `.quiz-root` the accent would fall all the way back to
+ * the app's own green and the underlines would stop being the course colour.
+ */
+
+.quiz-home,
+.quiz-home-dialog {
+  /* ── Measures ─────────────────────────────────────────────────────── */
+  /* The definition paragraph is set to a reading measure rather than the
+     column, exactly as the design draws it. */
+  --quiz-home-def-width: 380px;
+  --quiz-home-dialog-def-width: 340px;
+  --quiz-home-pick-width: 620px;
+  --quiz-home-card-min: 340px;
+  --quiz-home-dialog-card-min: 280px;
+  --quiz-home-setting-label-w: 96px;
+
+  /* ── Display sizes the --fs-* ramp has no step for ────────────────── */
+  /* Pinned here rather than bolted onto the global scale (that scale is
+     documented as derived from an audit, not invented — see globals.css). */
+  --quiz-home-name-fs: 28px;
+  --quiz-home-dialog-name-fs: 22px;
+  --quiz-home-pick-title-fs: 24px;
+  --quiz-home-def-fs: 13.5px;
+
+  /* ── The card's rhythm ────────────────────────────────────────────── */
+  --quiz-home-card-gap: 24px;
+  --quiz-home-head-gap: 16px;
+  --quiz-home-name-gap: 14px;
+  --quiz-home-name-top: 16px;
+  --quiz-home-meta-top: 12px;
+  --quiz-home-rationale-top: 2px;
+  --quiz-home-def-top: 14px;
+  --quiz-home-config-top: 16px;
+  --quiz-home-actions-gap: 18px;
+  --quiz-home-actions-top: 28px;
+  --quiz-home-skeleton-gap: 12px;
+
+  /* ── Sections and rows ────────────────────────────────────────────── */
+  --quiz-home-rule-top: 36px;
+  --quiz-home-rule-bottom: 26px;
+  --quiz-home-eyebrow-gap: 6px;
+  --quiz-home-row-pad: 13px 8px;
+  --quiz-home-row-bleed: -8px;
+  --quiz-home-row-gap: 12px;
+  --quiz-home-pick-open-top: 18px;
+
+  /* ── The pick list ────────────────────────────────────────────────── */
+  --quiz-home-pick-eyebrow-top: 24px;
+  --quiz-home-pick-title-top: 12px;
+  --quiz-home-group-gap: 8px;
+  --quiz-home-group-top: 34px;
+  --quiz-home-group-bottom: 2px;
+
+  /* ── The dialogs ──────────────────────────────────────────────────── */
+  --quiz-home-dialog-gap: 22px;
+  --quiz-home-dialog-main-top: 4px;
+  --quiz-home-dialog-subtitle-top: 4px;
+  --quiz-home-dialog-subtitle-gap: 18px;
+  --quiz-home-dialog-meta-top: 8px;
+  --quiz-home-settings-top: 20px;
+  --quiz-home-setting-gap: 8px;
+  --quiz-home-setting-pad: 12px 0 4px;
+  --quiz-home-note-min: 34px;
+  --quiz-home-note-top: 8px;
+  --quiz-home-footer-top: 20px;
+  --quiz-home-footer-pad: 18px;
+
+  /* The review-due row has no mastery, so its dot is the one mark drawn in CSS
+     rather than by <ConceptNode> (whose diameters are props, not tokens). The
+     ring is an 8px circle centred in the 11px box the other row dots occupy,
+     as the design draws it (r=4 in an 11-wide viewBox). */
+  --quiz-home-dot-sm: 11px;
+  --quiz-home-dot-hollow: 8px;
+
+  /* The inline course code on a row is tracked tighter than `.label-micro`. */
+  --quiz-home-code-tracking: 0.08em;
+}
+
+/* ── Shell ──────────────────────────────────────────────────────────── */
+
+.quiz-home {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The resume strip is a genuine full-bleed band under the TopBar: `QuizScreen`
+   renders home WITHOUT the centred column (`.quiz-body--home` is padding-free,
+   see quiz.css), so the strip reaches both edges on its own and everything
+   below it is wrapped by the screen in `.quiz-col--home .quiz-inset--home`.
+   `InlineBanner` brings its own `12px var(--pad-xl)` padding and bottom rule —
+   nothing here restyles it. */
+
+.quiz-home__rule {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--quiz-home-rule-top) 0 var(--quiz-home-rule-bottom);
+}
+
+.quiz-home__rule--tight {
+  margin: var(--quiz-home-rule-bottom) 0 0;
+}
+
+/* The eyebrow of a section that follows a rule; `.quiz-eyebrow`'s own gap is
+   the app's, the design's is tighter. */
+.quiz-home__section-eyebrow {
+  margin-bottom: var(--quiz-home-eyebrow-gap);
+}
+
+/* ── The proposal card ──────────────────────────────────────────────── */
+
+.quiz-home__card {
+  display: flex;
+  align-items: stretch;
+  gap: var(--quiz-home-card-gap);
+}
+
+.quiz-home__card-main {
+  flex: 1;
+  min-width: var(--quiz-home-card-min);
+}
+
+/* The eyebrow and Cancel span the WHOLE column, not just the card's text, so
+   Cancel sits at the top-right of the screen (§5 B1.8) rather than floating in
+   the gutter between the text and the neighbourhood. The row renders in every
+   state — proposal, loading, empty, error — so Cancel is never unreachable and
+   nothing below it shifts as the state resolves. */
+.quiz-home__card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--quiz-home-head-gap);
+}
+
+.quiz-home__card-head .quiz-eyebrow {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.quiz-home__name {
+  display: flex;
+  align-items: center;
+  gap: var(--quiz-home-name-gap);
+  margin-top: var(--quiz-home-name-top);
+}
+
+.quiz-home__name-text {
+  font-size: var(--quiz-home-name-fs);
+  color: var(--text);
+}
+
+.quiz-home__meta {
+  margin: var(--quiz-home-meta-top) 0 0;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.quiz-home__rationale {
+  margin: var(--quiz-home-rationale-top) 0 0;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.quiz-home__definition {
+  margin: var(--quiz-home-def-top) 0 0;
+  max-width: var(--quiz-home-def-width);
+  font-size: var(--quiz-home-def-fs);
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-wrap: pretty;
+}
+
+.quiz-home__config {
+  margin: var(--quiz-home-config-top) 0 0;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.quiz-home__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--quiz-home-actions-gap);
+  margin-top: var(--quiz-home-actions-top);
+}
+
+/* The vertical hairline between the card and its neighbourhood. */
+.quiz-home__card-divider {
+  width: 1px;
+  flex-shrink: 0;
+  background: var(--border);
+}
+
+.quiz-home__neighbourhood {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* ── Rows: alternatives, review-due, pick list ──────────────────────── */
+
+.quiz-home__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--quiz-home-row-gap);
+  padding: var(--quiz-home-row-pad);
+  /* The rows bleed 8px past the column so their hover/focus surface extends
+     under the text, exactly as the design draws it. */
+  margin: 0 var(--quiz-home-row-bleed);
+  width: calc(100% - 2 * var(--quiz-home-row-bleed));
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.quiz-home__row:hover {
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+/* A ruled row keeps its radius: the hover surface stays rounded against the
+   rule, which is what the design draws. */
+.quiz-home__row--ruled {
+  border-bottom: 1px solid var(--border);
+}
+
+.quiz-home__row-mark {
+  flex-shrink: 0;
+  align-self: center;
+  display: inline-flex;
+}
+
+/* The review-due row has no mastery to draw, so its dot is an outline — an 8px
+   ring centred in the same 11px box the other row dots fill. */
+.quiz-home__row-mark--hollow {
+  width: var(--quiz-home-dot-sm);
+  height: var(--quiz-home-dot-sm);
+  align-items: center;
+  justify-content: center;
+}
+
+.quiz-home__row-mark--hollow::before {
+  content: "";
+  width: var(--quiz-home-dot-hollow);
+  height: var(--quiz-home-dot-hollow);
+  border: 1px solid var(--text-muted);
+  border-radius: var(--r-full);
+}
+
+.quiz-home__row-name {
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
+
+.quiz-home__row-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--quiz-home-code-tracking);
+  color: var(--text-muted);
+}
+
+.quiz-home__row-spacer {
+  flex: 1;
+}
+
+.quiz-home__row-meta {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.quiz-home__pick-open {
+  margin-top: var(--quiz-home-pick-open-top);
+}
+
+/* ── Pick something specific ────────────────────────────────────────── */
+
+.quiz-home__pick {
+  max-width: var(--quiz-home-pick-width);
+}
+
+.quiz-home__pick-title {
+  margin: var(--quiz-home-pick-title-top) 0 0;
+  font-size: var(--quiz-home-pick-title-fs);
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.quiz-home__pick-eyebrow {
+  margin-top: var(--quiz-home-pick-eyebrow-top);
+}
+
+.quiz-home__pick-group {
+  display: flex;
+  align-items: center;
+  gap: var(--quiz-home-group-gap);
+  margin: var(--quiz-home-group-top) 0 var(--quiz-home-group-bottom);
+}
+
+/* ── Empty, loading and error ───────────────────────────────────────── */
+
+.quiz-home__skeleton {
+  display: flex;
+  align-items: stretch;
+  gap: var(--quiz-home-card-gap);
+}
+
+.quiz-home__skeleton-main {
+  flex: 1;
+  min-width: var(--quiz-home-card-min);
+  display: flex;
+  flex-direction: column;
+  gap: var(--quiz-home-skeleton-gap);
+}
+
+.quiz-home__skeleton-name {
+  display: flex;
+  align-items: center;
+  gap: var(--quiz-home-name-gap);
+}
+
+/* ── The two dialogs ────────────────────────────────────────────────── */
+
+.quiz-home-dialog__title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.quiz-home-dialog__subtitle {
+  margin: var(--quiz-home-dialog-subtitle-top) 0 var(--quiz-home-dialog-subtitle-gap);
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.quiz-home-dialog__card {
+  display: flex;
+  align-items: stretch;
+  gap: var(--quiz-home-dialog-gap);
+}
+
+.quiz-home-dialog__main {
+  flex: 1;
+  min-width: var(--quiz-home-dialog-card-min);
+  padding-top: var(--quiz-home-dialog-main-top);
+}
+
+.quiz-home-dialog__name {
+  margin: 0;
+  font-size: var(--quiz-home-dialog-name-fs);
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.quiz-home-dialog__meta {
+  margin: var(--quiz-home-dialog-meta-top) 0 0;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.quiz-home-dialog__rationale {
+  margin: var(--quiz-home-rationale-top) 0 0;
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+}
+
+.quiz-home-dialog__definition {
+  margin: var(--quiz-home-def-top) 0 0;
+  max-width: var(--quiz-home-dialog-def-width);
+  font-size: var(--quiz-home-def-fs);
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-wrap: pretty;
+}
+
+.quiz-home-dialog__note {
+  min-height: var(--quiz-home-note-min);
+  padding-top: var(--quiz-home-note-top);
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.quiz-home-dialog__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--quiz-home-footer-top);
+  padding-top: var(--quiz-home-footer-pad);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Settings rows (shared by both dialogs) ─────────────────────────── */
+
+.quiz-home-settings {
+  margin-top: var(--quiz-home-settings-top);
+  border-top: 1px solid var(--border);
+}
+
+/* Inside the adjust dialog the rows follow a subtitle, which already carries
+   the gap; the rule above them is the only separation needed. */
+.quiz-home-settings--flush {
+  margin-top: 0;
+}
+
+.quiz-home-settings__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--quiz-home-setting-gap);
+  padding: var(--quiz-home-setting-pad);
+}
+
+.quiz-home-settings__label {
+  width: var(--quiz-home-setting-label-w);
+  flex-shrink: 0;
+}

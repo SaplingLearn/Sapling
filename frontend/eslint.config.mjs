@@ -57,7 +57,24 @@ const eslintConfig = [
       "src/components/screens/Onboarding.tsx",
       "src/components/DocumentUploadModal.tsx",
       "src/components/chat/ChatPanel.tsx",
-      "src/components/QuizPanel.tsx",
+      // Quiz redesign (#537). The three screens carry every answer/submit/exit
+      // control the Playwright journeys drive; the three `ui/` primitives are
+      // listed because those controls render INSIDE them, so a testid-less
+      // <button> there would silently un-anchor the whole surface.
+      "src/components/quiz/QuizScreen.tsx",
+      "src/components/quiz/home/QuizHome.tsx",
+      "src/components/quiz/home/AdjustDialog.tsx",
+      "src/components/quiz/home/ConceptDialog.tsx",
+      "src/components/quiz/home/PickList.tsx",
+      "src/components/quiz/home/QuizSettings.tsx",
+      "src/components/quiz/question/QuizQuestion.tsx",
+      "src/components/quiz/question/AskPanel.tsx",
+      "src/components/quiz/question/LeaveDialog.tsx",
+      "src/components/quiz/results/QuizResults.tsx",
+      "src/components/quiz/results/MissedList.tsx",
+      "src/components/ui/AnswerOption.tsx",
+      "src/components/ui/SegmentedControl.tsx",
+      "src/components/ui/Sheet.tsx",
       "src/components/graph/KnowledgeGraph.tsx",
       "src/components/graph/KnowledgeGraph2D.tsx",
       "src/components/graph/KnowledgeGraph3D.tsx",

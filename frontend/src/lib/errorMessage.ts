@@ -50,6 +50,13 @@ function parseJson(text: string): unknown {
 }
 
 function detailOf(body: Body): string | undefined {
+  // The coded envelope wins. Quiz routes answer with
+  // `{error: {code, message, request_id}, detail, request_id}` — `error.message`
+  // is the student-readable sentence, while top-level `detail` is legacy and,
+  // for a 422, a list of Pydantic error dicts (#537 / backend quiz_errors.py).
+  const coded = asRecord(body.error)?.message;
+  if (typeof coded === "string" && coded.trim()) return coded.trim();
+
   const detail = body.detail;
   if (typeof detail === "string") return detail.trim() || undefined;
   // FastAPI request-validation failures nest the message under detail[].msg.
@@ -83,7 +90,13 @@ function statusFrom(err: unknown, body: Body | null): number | undefined {
 
 /** Pulls what the server actually told us out of a thrown error. */
 export function extractErrorDetail(err: unknown): ErrorDetail {
-  const body = (err instanceof Error ? null : asRecord(err))
+  // `ApiError.body` is the already-parsed response body (#537). Prefer it over
+  // re-parsing `message`, which is the same JSON as text.
+  const parsedBody = asRecord(err) && !Array.isArray(err)
+    ? asRecord((err as { body?: unknown }).body)
+    : null;
+  const body = parsedBody
+    ?? (err instanceof Error ? null : asRecord(err))
     ?? asRecord(parseJson(rawMessage(err)));
   const out: ErrorDetail = {};
   const detail = body ? detailOf(body) : undefined;

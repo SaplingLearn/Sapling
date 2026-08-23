@@ -208,3 +208,108 @@ describe('fetchJSON error shape', () => {
     expect((err as ApiError).message).toBe('HTTP 502');
   });
 });
+
+/**
+ * The coded envelope (#537). Quiz routes answer with
+ * `{error: {code, message, request_id}, detail, request_id}` and a `Retry-After`
+ * header on 429. Before this, fetchJSON kept only the body text and the status,
+ * so QUIZ_RATE_LIMITED / QUIZ_DAILY_LIMIT_REACHED / QUIZ_GENERATION_TIMEOUT were
+ * indistinguishable to the UI (R1 §H, gap G12).
+ */
+describe('fetchJSON coded-error envelope', () => {
+  function codedResponse(
+    body: unknown,
+    status: number,
+    headers: Record<string, string> = {},
+  ): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json', ...headers },
+    });
+  }
+
+  it('lifts error.code and error.request_id onto the ApiError', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      codedResponse(
+        {
+          error: {
+            code: 'QUIZ_GENERATION_TIMEOUT',
+            message: 'Quiz generation timed out.',
+            request_id: 'req-1',
+          },
+          detail: 'Quiz generation timed out.',
+          request_id: 'req-1',
+        },
+        502,
+      ),
+    );
+
+    const err = (await getCourses('u1').catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBe('QUIZ_GENERATION_TIMEOUT');
+    expect(err.requestId).toBe('req-1');
+    expect(err.status).toBe(502);
+    // The raw body still comes through as the message, unchanged.
+    expect(err.message).toContain('QUIZ_GENERATION_TIMEOUT');
+  });
+
+  it('parses the whole body onto ApiError.body', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      codedResponse(
+        { error: { code: 'QUIZ_COUNT_OUT_OF_RANGE', message: 'Between 1 and 10.' } },
+        422,
+      ),
+    );
+
+    const err = (await getCourses('u1').catch((e: unknown) => e)) as ApiError;
+    expect(err.body).toEqual({
+      error: { code: 'QUIZ_COUNT_OUT_OF_RANGE', message: 'Between 1 and 10.' },
+    });
+  });
+
+  it('reads whole-second Retry-After off a 429', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      codedResponse({ error: { code: 'QUIZ_RATE_LIMITED', message: 'Slow down.' } }, 429, {
+        'Retry-After': '37',
+      }),
+    );
+
+    const err = (await getCourses('u1').catch((e: unknown) => e)) as ApiError;
+    expect(err.retryAfterSec).toBe(37);
+  });
+
+  it('ignores an HTTP-date Retry-After rather than guessing', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      codedResponse({}, 429, { 'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT' }),
+    );
+
+    const err = (await getCourses('u1').catch((e: unknown) => e)) as ApiError;
+    expect(err.retryAfterSec).toBeUndefined();
+  });
+
+  it('leaves the coded fields undefined for a legacy {detail} body', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      codedResponse({ detail: 'Exam not found.', request_id: 'req-legacy' }, 404),
+    );
+
+    const err = (await getCourses('u1').catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBeUndefined();
+    expect(err.retryAfterSec).toBeUndefined();
+    // The legacy shape still carries a top-level request_id; keep it.
+    expect(err.requestId).toBe('req-legacy');
+  });
+
+  it('survives a non-JSON body (an HTML 502 from a proxy)', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(new Response('<html>502 Bad Gateway</html>', { status: 502 }));
+
+    const err = (await getCourses('u1').catch((e: unknown) => e)) as ApiError;
+    expect(err.body).toBeUndefined();
+    expect(err.code).toBeUndefined();
+    expect(err.message).toBe('<html>502 Bad Gateway</html>');
+  });
+});

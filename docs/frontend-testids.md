@@ -71,7 +71,7 @@ renders the element.
 | Onboarding | `onboarding` | `frontend/src/components/screens/Onboarding.tsx` (the first-run funnel, rendered bare outside `(shell)`) |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/chat/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
-| Quiz | `quiz` | `frontend/src/components/QuizPanel.tsx` (rendered by `screens/Quiz.tsx`) |
+| Quiz | `quiz` | `frontend/src/components/quiz/**` — `QuizScreen.tsx` (route root + error card) switching on phase between `home/QuizHome.tsx` (+ `ConceptDialog`/`AdjustDialog`/`PickList`/`QuizSettings`), `question/QuizQuestion.tsx` (+ `AskPanel`/`LeaveDialog`) and `results/QuizResults.tsx` (+ `MissedList`); the ids on the shared `ui/` primitives and `graph/ConceptNeighbourhood.tsx` are passed in from those files as a `testid` prop (#537) |
 | Knowledge graph | `graph` | `frontend/src/components/graph/KnowledgeGraph.tsx` (wrapper: container root + mode toggle) plus `KnowledgeGraph2D.tsx`/`KnowledgeGraph3D.tsx` (the render/data-layer seam — hidden a11y node list, SVG node/edge marks, zoom controls — added with the #395 graph-integrity journey) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
@@ -95,8 +95,16 @@ route:
   and the send `<button>` render in `ChatPanel.tsx`. `ChatPanel` has exactly one
   consumer (Learn), so tagging it there is unambiguous. The notetaker's chat is
   a separate `AIChatPanel` and is out of scope.
-- **Quiz.** `screens/Quiz.tsx` only fetches concepts and mounts `QuizPanel`;
-  every answer/submit control renders in `QuizPanel.tsx`.
+- **Quiz.** The route mounts one component, `components/quiz/QuizScreen.tsx`,
+  which switches on phase between `home/QuizHome.tsx`,
+  `question/QuizQuestion.tsx` and `results/QuizResults.tsx`; each of the three
+  owns its own ids and its own dialogs. Three shared `ui/` primitives
+  (`AnswerOption`, `SegmentedControl`, `Sheet`) are in the eslint file list too:
+  the controls render inside them, so a testid-less `<button>` there would
+  un-anchor the surface from outside the screen files. Those primitives — plus
+  `ui/EmptyState`, `ui/InlineBanner`, `ui/ProgressDots` and
+  `graph/ConceptNeighbourhood` — take the id as a `testid` prop, so the value is
+  always written at the quiz call site, never inside the primitive.
 
 ## Current inventory
 
@@ -174,22 +182,87 @@ route:
 
 ### `quiz`
 
+The quiz is one surface: `components/quiz/QuizScreen.tsx` reads the entry off
+the URL and switches on phase between `home/QuizHome.tsx`,
+`question/QuizQuestion.tsx` and `results/QuizResults.tsx`. The table is grouped
+in that order; the screen-level ids (the error card) come last, followed by the
+entry points the quiz wave added inside other surfaces' files.
+
+Three ids are **renamed** from the pre-#537 quiz — same role, clearer name:
+`quiz-exit` → `quiz-leave`, `quiz-retake` → `quiz-again`,
+`quiz-explain-concept` → `quiz-ask`. Eleven are **kept** verbatim so existing
+journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
+`quiz-answer-options`, `quiz-answer-option-{label}`, `quiz-submit-answer`,
+`quiz-next`, `quiz-review-verdict`, `quiz-results-score`,
+`quiz-results-mastery`, `quiz-done`.
+
 | testid | element |
 | --- | --- |
-| `quiz-panel` | panel root (all phases) |
-| `quiz-cancel` | "Cancel" (select phase) |
-| `quiz-start` | "Start quiz" |
+| `quiz-home` | quiz-home root (`phase: home \| configuring`) |
+| `quiz-resume-strip` | the "you left a quiz on X" banner (`ui/InlineBanner`) |
+| `quiz-resume` | "Resume" on that banner |
+| `quiz-resume-discard` | "Discard" — hides the attempt client-side; there is no abandon endpoint |
+| `quiz-proposal` | the "Ready for you" primary proposal card |
+| `quiz-start` | "Start" on that card |
+| `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
+| `quiz-adjust` | "adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
+| `quiz-alternative-{nodeId}` | one "Also worth a look" row |
+| `quiz-review-due` | "Review everything due" row |
+| `quiz-pick-open` | "Pick something specific →" |
+| `quiz-pick-list` | the grouped concept list it reveals |
+| `quiz-pick-{nodeId}` | one concept row in that list |
+| `quiz-pick-back` | "← Back" out of that list |
+| `quiz-empty-state` | the home's empty states (`ui/EmptyState`) — no courses, empty tree, or nothing left to propose; they are alternatives, so only one ever mounts |
+| `quiz-home-error` | the home's load-failure card |
+| `quiz-home-retry` | "Retry" inside it |
+| `quiz-concept-dialog` | the concept dialog opened from an alternative or a pick row |
+| `quiz-concept-start` | "Start · {count} {difficulty}" inside it |
+| `quiz-concept-cancel` | its "Cancel" |
+| `quiz-adjust-dialog` | "Adjust this quiz" dialog |
+| `quiz-adjust-done` | its "Done" — keeps the settings without starting |
+| `quiz-adjust-start` | its "Start · {count} {difficulty}" — saves and starts in one |
+| `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the three `ui/SegmentedControl`s both dialogs share; each option is `${testid}-${value}` |
+| `quiz-generating` | the skeleton question screen while a quiz is being written |
+| `quiz-panel` | question root (`phase: active \| answered`) |
+| `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-answer-options` | answer radiogroup |
-| `quiz-answer-option-{label}` | one answer choice, suffixed with its label (`A`…) |
-| `quiz-submit-answer` | "Submit answer" |
-| `quiz-exit` | "Exit" (active phase) |
+| `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
+| `quiz-submit-answer` | the footer's primary button while the answer is unrevealed |
+| `quiz-next` | the same footer button once the verdict is showing — "Next question" / "See results" |
 | `quiz-review-verdict` | "Correct." / "Not quite." banner |
-| `quiz-explain-concept` | "Explain this" |
-| `quiz-next` | "Next question" / "See results" |
-| `quiz-results-score` | the score percentage |
-| `quiz-results-mastery` | the "X / Y correct · mastery B% → A%" line |
-| `quiz-retake` | "Retake" |
-| `quiz-done` | "Done" |
+| `quiz-flag` | "This question is confusing" (toggles, `aria-pressed`; persists nothing) |
+| `quiz-ask` | "Ask about this" — opens the tutor sheet |
+| `quiz-leave` | "Leave" |
+| `quiz-leave-dialog` / `quiz-leave-cancel` / `quiz-leave-confirm` | the leave confirmation |
+| `quiz-ask-panel` | the tutor sheet (`ui/Sheet`) |
+| `quiz-ask-panel-close` | its × — the `Sheet` derives it as `${testid}-close` |
+| `quiz-ask-seed` | the composed first message shown at the top of the sheet |
+| `quiz-ask-retry` | "Try again" when the tutor stream failed |
+| `quiz-ask-input` / `quiz-ask-send` | the sheet's composer |
+| `quiz-results` | results root |
+| `quiz-results-graph` | the concept neighbourhood above the score (`graph/ConceptNeighbourhood`) |
+| `quiz-results-score` | the "{n} of {total} correct" line — a count, not a percentage |
+| `quiz-results-mastery` | the mastery delta line, "B% → A% · tier-before → tier-after" |
+| `quiz-results-xp` | "+{Δ} XP · {streak}-day streak" — absent when either gamification read failed |
+| `quiz-results-perfect` | the line shown instead of the missed list on a clean sweep |
+| `quiz-missed-list` | the "to look at" section |
+| `quiz-missed-{questionId}` | one missed item |
+| `quiz-missed-explain-{questionId}` | its "Show explanation" disclosure |
+| `quiz-missed-ask-{questionId}` | its "Ask about this" |
+| `quiz-practise-missed` | "Practise the one(s) you missed" |
+| `quiz-next-concept` | "Next: {concept} →" while the scope queue has more |
+| `quiz-again` | "Keep going — quiz again" (mounts in `quiz-practise-missed`'s place on a clean sweep) |
+| `quiz-back-to-source` | the secondary exit, labelled by where the quiz was entered from |
+| `quiz-done` | "Done" — back to `/quiz` |
+| `quiz-error` | the route-level error card (mapped copy + retry/back), rendered by `QuizScreen` in place of the phase |
+| `quiz-error-retry` / `quiz-error-back` | its "Try again" and "Back" |
+| `tree-node-recent-quizzes` | the tree node panel's "Recent quizzes" block (`screens/Tree.tsx`) |
+| `tree-node-recent-quiz-{attemptId}` | one row in it, suffixed with the attempt's `quiz_id` per the stable-domain-id rule |
+| `dashboard-review-due` | the "Review what's due" quiz entry point (`screens/Dashboard.tsx`) — three call sites, but exactly one mounts for a given layout/viewport |
+
+The last three carry another surface's prefix because they render in that
+surface's file. They are listed here because they are quiz entry points, and a
+quiz journey is what drives them.
 
 ### `graph`
 
@@ -279,6 +352,9 @@ never collide in the DOM.
 | `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
 | `dashboard-resume-{sessionId}` | a "Where you left off" card — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
 
+`dashboard-review-due` also lives in `screens/Dashboard.tsx`; it is documented
+with the `quiz` surface it links into.
+
 ### `calendar`
 
 Added with the #185 load-failure fix (a failed initial fetch must be
@@ -300,6 +376,7 @@ inside the `role="grid"` "Courses" grid.
 | testid | element |
 | --- | --- |
 | `gradebook-term-gpa` | landing: the selected term's credit-weighted GPA next to the chips (absent while the term has no graded work) |
+| `gradebook-upload-syllabus` | landing: the blank-semester empty state's "Upload syllabus" CTA (`ui/EmptyState` action slot) |
 | `gradebook-transcript-open` | landing: "Transcript" button opening the transcript modal |
 | `gradebook-transcript-gpa` | transcript modal: the cumulative GPA value |
 | `gradebook-transcript-retry` | transcript modal: inline "Try again" after a failed load (#463 catch+toast pattern) |
