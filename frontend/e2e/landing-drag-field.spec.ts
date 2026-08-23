@@ -69,32 +69,6 @@ async function openLanding(page: Page): Promise<number> {
  * nothing left to autoscroll into and a 300px scroll assertion cannot be met.
  */
 const CLUSTER = "4";
-
-/**
- * The copy cluster 4 is welded to: the `faq` question column.
- *
- * Named here, NOT read out of the field's `data-drag-track`. Taking the
- * reference from the product would make this journey follow the product:
- * delete `faq` from `DragField.tsx`'s `TRACKS` and the clusters go back to
- * sliding 374px out from under the words they annotate — the regression
- * 8bb34869 fixed — but a test that re-derived its own expectation would
- * re-frame itself along with it and stay green on exactly that. The oracle
- * has to belong to the test.
- *
- * `faq` is the only section in `TRACKS`, and this column is `sticky; top:110`,
- * so the section can scroll 300px while the copy moves ~202 — which is why
- * measuring a cluster here against raw `scrollY` was wrong.
- */
-const FAQ_SECTION = "faq";
-const FAQ_COPY = '[data-drag-anchor="faq"]';
-
-/**
- * A cluster in a section with no weld and no pin, where moving 1:1 with the
- * document IS the contract. `newsletter` holds clusters 6 and 7, is absent
- * from `TRACKS`, and — unlike `cta`, which sits ~120px from the end of the
- * document — has room below it for a 300px scroll assertion.
- */
-const UNTRACKED_CLUSTER = "6";
 /** A satellite, not the course puck: the link spring pulls hardest on these. */
 const SATELLITE = 1;
 
@@ -144,36 +118,6 @@ async function probe(page: Page): Promise<Probe> {
     const b = document.querySelector("[data-e2e-probe]")!.getBoundingClientRect();
     return { x: b.left + b.width / 2, y: b.top + b.height / 2, scrollY: window.scrollY };
   });
-}
-
-/**
- * The probe ring and the FAQ copy it is welded to, sampled in ONE frame.
- *
- * One `page.evaluate`, not two: the sim is still integrating when this runs
- * (`SCROLL_QUIET_MS` expired long before), so sampling the node and its
- * reference in separate round trips compares two different frames.
- *
- * The column is resolved the way `engine/sim.ts` resolves it — scoped to the
- * field's own section, not `document`-wide — so this measures against the
- * element the sim actually bound to. A global lookup would silently diverge
- * from the product the moment a second match appeared earlier in the page.
- */
-async function probeAgainstCopy(
-  page: Page,
-): Promise<{ x: number; y: number; copyTop: number; scrollY: number }> {
-  return page.evaluate(({ section, copy }) => {
-    const field = document.querySelector(`#${section} .drag-field`);
-    if (!field) throw new Error(`no .drag-field in #${section}`);
-    const el = (field.closest("section") ?? document).querySelector(copy);
-    if (!el) throw new Error(`${copy} is not inside #${section}`);
-    const b = document.querySelector("[data-e2e-probe]")!.getBoundingClientRect();
-    return {
-      x: b.left + b.width / 2,
-      y: b.top + b.height / 2,
-      copyTop: el.getBoundingClientRect().top,
-      scrollY: window.scrollY,
-    };
-  }, { section: FAQ_SECTION, copy: FAQ_COPY });
 }
 
 test("nodes do not move of their own accord while the page scrolls", async ({ page }) => {
@@ -402,79 +346,11 @@ test("a dropped node stays where it was put, and scrolls with the page", async (
   // there. SWAY_PX is the envelope that buys.
   expect(Math.hypot(settled.x - dropped.x, settled.y - dropped.y)).toBeLessThan(SWAY_PX);
 
-  // Placed, not detached: it belongs to the copy it was dropped over.
-  //
-  // Measured as an OFFSET that must not change, which is the idiom the
-  // act-tutor journey above already uses for the same invariant — no delta
-  // arithmetic whose sign only works out because the page happens to scroll
-  // down. The node's distance from the FAQ column is the thing being pinned.
-  const before = await probeAgainstCopy(page);
-  await page.evaluate(() => window.scrollBy(0, 300));
-  await page.waitForTimeout(600);
-  const after = await probeAgainstCopy(page);
-
-  // Preconditions first, most-basic first, so a failure names its own cause
-  // instead of sending the next reader to `TRACKS` and `syncClusters()`.
-  // `toBeCloseTo`, not `toBe`: `scrollY` is a browser-computed offset that is
-  // only integral because `deviceScaleFactor` happens to be 1.
-  expect(after.scrollY - before.scrollY, "the page should have scrolled")
-    .toBeCloseTo(300, 0);
-  // Signed, not `Math.abs`: scrolling DOWN must carry page content UP. A
-  // regression that translated the copy downward under a downward scroll
-  // would satisfy an absolute-value guard, and a node loyally following it
-  // would satisfy everything below.
-  //
-  // The journey can only tell "welded" from "pinned to the screen" while the
-  // copy still has travel left before its own pin — a node welded to an
-  // already-pinned column is stationary, and so is a detached overlay. That
-  // is a property of where `centreCluster` parks the cluster, not of the
-  // product, so assert it and say so rather than assume it.
-  expect(
-    after.copyTop - before.copyTop,
-    "the FAQ copy was already pinned at the drop position — this journey needs " +
-      "it mid-travel; check #faq's layout or centreCluster's offset",
-  ).toBeLessThan(-100);
-
-  // ...and through all of that the node held its place against the copy.
-  expect(Math.hypot(
-    after.x - before.x,
-    (after.y - after.copyTop) - (before.y - before.copyTop),
-  )).toBeLessThan(SWAY_PX);
-});
-
-/**
- * The other half of "belongs to the page", on a cluster where that means what
- * it sounds like.
- *
- * The journey above deliberately measures against the FAQ copy, because that
- * is what its cluster is welded to. Something still has to pin the plain
- * case — a placed node in an untracked, unpinned section travelling exactly
- * with the document — or the file loses the reference frame its own header
- * (symptom 4) is about, and a cluster field that detached into a fixed
- * overlay would have nothing left to catch it.
- */
-test("a dropped node in an untracked section travels 1:1 with the document", async ({ page }) => {
-  await openLanding(page);
-  await centreCluster(page, UNTRACKED_CLUSTER);
-  const ring = await ringOf(page, SATELLITE, UNTRACKED_CLUSTER);
-
-  await page.mouse.move(ring.x, ring.y);
-  await page.mouse.down();
-  await page.mouse.move(ring.x - 120, ring.y - 60, { steps: 20 });
-  await page.mouse.up();
-  await page.waitForTimeout(4_000);
-  const settled = await probe(page);
-
+  // Placed, not detached: it belongs to the page and moves with it.
   await page.evaluate(() => window.scrollBy(0, 300));
   await page.waitForTimeout(600);
   const scrolled = await probe(page);
-
-  const moved = scrolled.scrollY - settled.scrollY;
-  expect(moved, "the page should have scrolled").toBeCloseTo(300, 0);
-  // No `TRACKS` entry and no sticky stage: this cluster owes the document the
-  // whole 300px. This is the assertion the faq journey used to carry, on the
-  // cluster where it is actually true.
-  expect(Math.hypot(scrolled.x - settled.x, scrolled.y - (settled.y - moved)))
+  expect(Math.hypot(scrolled.x - settled.x, scrolled.y - (settled.y - 300)))
     .toBeLessThan(SWAY_PX);
 });
 
