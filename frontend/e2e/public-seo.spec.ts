@@ -57,44 +57,34 @@ test("landing page ships social cards and a canonical URL (#169)", async ({ requ
 });
 
 /**
- * The actual SSR guard (#344 review #5, retargeted for the v5 landing).
+ * The actual SSR guard (#344 review #5).
  *
  * The assertions above were previously described as "the guard on not breaking
  * SSR", but they aren't: og:image / twitter:card / canonical are emitted by the
- * Metadata API whether or not any component server-renders.
+ * Metadata API whether or not any component server-renders. The landing page
+ * mounts `KnowledgeGraphDemo` through `next/dynamic` with SSR left ON, and
+ * `ssr: false` is the first thing anyone will reach for the moment a hydration
+ * warning appears there — it would leave every other spec green while silently
+ * dropping the section's copy out of the crawled HTML, which is the entire
+ * reason that component carries the `usePrefersReducedMotion` machinery.
+ * `landing-graph.spec.ts` runs post-hydration and cannot see the difference.
  *
- * This test originally guarded `KnowledgeGraphDemo`, mounted through
- * `next/dynamic`, against someone reaching for `ssr: false` the moment a
- * hydration warning appeared — which would leave every other spec green while
- * silently dropping the section's copy out of the crawled HTML. The v5 landing
- * replaced that component, but the failure mode is unchanged and is in fact
- * sharper: v5 is a client component whose visuals are canvas and WebGL, so
- * essentially all of its crawlable payload is the prose asserted below. Wrap
- * the page (or the hero) in a `ssr: false` dynamic import and this is the only
- * spec that notices.
- *
- * Assert on the RAW response body, before any JS runs. Note what is NOT
- * asserted: the wordmark and tagline are empty on the server because they
- * scramble in on the client, so `aria-label` on the h1 carries the accessible
- * name and is checked here in its place.
+ * So assert on the RAW response body, before any JS runs. With `ssr: false`
+ * the dynamic import renders only its loading placeholder (an empty
+ * `<section id="knowledge-graph">`), and every assertion below fails.
  */
-test("the landing page's copy is in the server-rendered HTML (#344)", async ({ request }) => {
+test("the knowledge-graph section is in the server-rendered HTML (#344)", async ({ request }) => {
   const res = await request.get("/");
   expect(res.status()).toBe(200);
   const html = await res.text();
 
-  // the wordmark scrambles in client-side, so only its accessible name is server-rendered
-  expect(html, "the wordmark's accessible name must survive SSR").toContain('aria-label="Sapling"');
-
-  expect(html, "the lede is the page's primary SEO payload").toContain(
-    "Sapling reads your whole course",
+  expect(html, "graph section markup must be server-rendered").toContain(
+    'data-testid="landing-graph"',
   );
-  expect(html).toContain("It works from your own coursework, not the open web");
-
-  // the three key columns state what the product does
-  expect(html).toContain("Ingest");
-  expect(html).toContain("Recall");
-  expect(html).toContain("Every concept linked to the ones it rests on");
-
-  expect(html, "the beta offer must be crawlable").toContain("Free through beta.");
+  expect(html, "the section's copy must be crawlable").toContain(
+    "Pick a course. Watch it grow.",
+  );
+  // Concept labels are the section's actual SEO payload.
+  expect(html).toContain('data-testid="landing-graph-node-cs-root"');
+  expect(html).toContain("Recursion");
 });
