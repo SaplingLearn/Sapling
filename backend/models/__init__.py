@@ -60,6 +60,21 @@ class GenerateQuizBody(BaseModel):
     # through to whatever SAPLING_MODEL_QUIZ resolves to (default
     # gemini-2.5-flash-lite per ADR 0008).
     model_pref: Optional[Literal["fast", "smart"]] = None
+    # G5 (#537): "practise the ones you missed" — the attempt whose missed
+    # questions should be RE-SERVED verbatim instead of regenerated. The
+    # server derives which items those were from that attempt's own
+    # `quiz_responses` rows, so the client only has to name the attempt.
+    source_attempt_id: Optional[str] = None
+    # Optional override for that derivation: the identities
+    # (`services/quiz_identity.py::question_hash`) to re-serve. Hashes are
+    # internal — the client projection strips them — so nothing sends this
+    # today; it exists for a caller that has already decided which items it
+    # wants back. Validated against the source attempt (anything that
+    # attempt never held is simply not recoverable), and capped at one
+    # quiz's worth, which is the most an attempt can hold.
+    missed_question_hashes: Optional[list[str]] = Field(
+        default=None, max_length=QUIZ_MAX_QUESTIONS,
+    )
     # DEPRECATED (#541 C3, removal tracked in #546): when true (the default
     # the current QuizPanel needs), the response's per-option dicts carry
     # `correct` booleans — the full answer key, client-side. Removing the

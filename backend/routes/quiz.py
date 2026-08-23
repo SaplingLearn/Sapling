@@ -47,8 +47,10 @@ from services.quiz_signals import QuizSignals, gather_signals
 from services.quiz_signals import prompt_block as signal_block
 from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
-from services.quiz_identity import question_hash, normalize_text
+from services.quiz_identity import question_hash, normalize_text, wire_question_hash
 from services.quiz_repetition import RecentQuestion, recent_question_identities
+from services.quiz_reserve import missed_question_hashes, recover_questions
+from services.tool_signals import Expect, report_empty_result_async
 from services import prompt_dimensions
 from services.rag_service import retrieve_chunks_detailed, format_rag_context
 from services.xp_service import award_xp_safe
@@ -1188,6 +1190,213 @@ def quiz_config():
     return quiz_config_payload()
 
 
+class ReservedMisses(NamedTuple):
+    """What a source attempt can hand back verbatim (G5, #537)."""
+
+    #: The attempt the client asked to practise from.
+    attempt_id: str
+    #: Its missed questions, ready to serve — deep copies that still carry
+    #: their E5 `question_hash` and the provenance of the run that wrote them.
+    questions: list[dict]
+
+
+async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
+    """Recover the questions this student missed on `body.source_attempt_id`.
+
+    None when the request named no source attempt — the ordinary generate.
+
+    Raises for a source attempt that is missing, someone else's, or not
+    finished. Everything below that degrades to an EMPTY recovery rather
+    than an error: a re-serve that can't find its items is a quiz to
+    generate, not a request to fail.
+    """
+    if not body.source_attempt_id:
+        return None
+    rows = table("quiz_attempts").select(
+        "id,user_id,completed_at,questions_json",
+        filters={"id": f"eq.{body.source_attempt_id}"},
+    )
+    if not rows:
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+            message="We couldn't find the quiz you wanted to practise from.",
+        )
+    attempt = rows[0]
+    # `require_self(body.user_id, request)` at the top of generate_quiz has
+    # already proved body.user_id IS the signed-in user, so this comparison is
+    # the same ownership check the sibling attempt routes make with
+    # `require_self(attempt["user_id"], request)` — written out so it can carry
+    # a precise envelope code instead of the guard's bare "Forbidden".
+    if attempt.get("user_id") != body.user_id:
+        raise QuizAPIError(
+            status_code=403,
+            code=QuizErrorCode.QUIZ_NOT_AUTHORIZED,
+            message="That quiz isn't yours.",
+        )
+    if not attempt.get("completed_at"):
+        # 400 + QUIZ_VALIDATION_ERROR is the closest state the envelope
+        # supports. Nothing in the enum means "that attempt is still in
+        # progress", and both near neighbours would mislead a client that maps
+        # codes to copy: ALREADY_COMPLETED is the inverse state, NOT_RESUMABLE
+        # is about resuming — which this is not. "Practise the ones you
+        # missed" is only reachable from a results screen, so an unfinished
+        # source is a malformed request, not a state to work around.
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_VALIDATION_ERROR,
+            message=(
+                "That quiz isn't finished yet, so there's nothing to "
+                "practise from."
+            ),
+        )
+
+    try:
+        stored = decrypt_json_column(attempt.get("questions_json")) or []
+    except Exception:
+        logger.warning(
+            "quiz: source attempt %s did not decrypt; generating instead of "
+            "re-serving", body.source_attempt_id, exc_info=True,
+        )
+        stored = []
+    stored = [q for q in stored if isinstance(q, dict)]
+
+    # An explicit list overrides the derivation; an empty one does not, so a
+    # client that sends `[]` still gets its misses looked up.
+    hashes = body.missed_question_hashes or missed_question_hashes(
+        body.source_attempt_id, stored,
+    )
+    # Only questions in the CURRENT wire shape can be re-served: the client
+    # projection, /answer and /submit all read that shape, and an unrecognised
+    # stored row has no safe keyless projection at all (the same rule the
+    # resume path applies in get_attempt).
+    recovered = [
+        q for q in recover_questions(stored, hashes)
+        if _is_wire_question(q) and _validate_wire_question(q)
+    ][:body.num_questions]
+    for question in recovered:
+        # Make the stored row self-describing: this item was re-served, not
+        # written by a model for this attempt. The ORIGINAL provenance stays
+        # — it is still the truthful account of where the item came from —
+        # and this records where it came back from. Internal either way:
+        # `_INTERNAL_QUESTION_KEYS` strips provenance from every client
+        # payload, and `question_hash` is computed over stem + options, so
+        # nothing here touches the item's identity.
+        provenance = question.get("provenance")
+        question["provenance"] = {
+            **(provenance if isinstance(provenance, dict) else {}),
+            "reserved_from": body.source_attempt_id,
+        }
+
+    if not recovered:
+        # F5: zero recovered from an attempt this student definitely completed
+        # is the silent-empty shape this seam exists for — the feature has
+        # quietly degraded to plain generation and nothing else would say so.
+        # The commonest cause is a legitimate one (an attempt graded only
+        # through /submit records no `quiz_responses` rows), which is exactly
+        # why it needs counting rather than guessing.
+        await report_empty_result_async(
+            "quiz_reserve.missed_questions",
+            user_id=body.user_id,
+            count=0,
+            expect=Expect.HAS_ATTEMPTS,
+            feature="quiz",
+            scope={"id": f"eq.{body.source_attempt_id}"},
+            payload={"source_attempt_id": body.source_attempt_id},
+        )
+    return ReservedMisses(attempt_id=body.source_attempt_id, questions=recovered)
+
+
+def _renumber(questions: list[dict]) -> list[dict]:
+    """Give every question its 1-based position in THIS attempt.
+
+    `id` addresses a question inside one attempt and nothing wider: /answer
+    validates the client's `question_id` against
+    `questions[question_index]["id"]`, and /submit keys its answer map on it.
+    So a re-served question keeps its identity (`question_hash`, which is the
+    item) and takes a new id (which is only where it sits) — carrying the
+    source attempt's ids over would 400 the first answer.
+    """
+    for position, question in enumerate(questions, start=1):
+        question["id"] = position
+    return questions
+
+
+async def _generate_or_502(
+    body: GenerateQuizBody,
+    *,
+    request_id: str,
+    course_id: str | None,
+    concept_name: str,
+    times_studied: int | None,
+    count: int,
+) -> GeneratedQuiz:
+    """Run generation, or raise the error the client contract calls for.
+
+    `count` is what to generate NOW, which is not `body.num_questions` when
+    G5 recovered part of the quiz from a previous attempt.
+    """
+    try:
+        # Each agent run inside is individually bounded by
+        # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
+        # coroutine here would discard a partial quiz the top-up handler
+        # is designed to serve.
+        return await _quiz_via_agent(
+            user_id=body.user_id,
+            course_id=course_id,
+            concept_node_id=body.concept_node_id,
+            concept_name=concept_name,
+            num_questions=count,
+            difficulty=body.difficulty,
+            use_shared_context=body.use_shared_context,
+            request_id=request_id,
+            model_pref=body.model_pref,
+            times_studied=times_studied,
+        )
+    except HTTPException:
+        # The 404 for an unknown concept node is raised before the agent call;
+        # never swallow a known HTTP state.
+        _refund_generate_slot(body.user_id)
+        raise
+    except asyncio.TimeoutError as e:
+        # #544 F2: distinct from a generic failure — the client can say
+        # "that took too long" and offering a retry obviously makes sense.
+        # NB: only asyncio.TimeoutError. The builtin TimeoutError is in the
+        # OSError family, so catching it too would relabel a transport
+        # socket timeout as a wall-clock generation timeout.
+        logger.warning(
+            "quiz: generation timed out after %ss request_id=%s",
+            QUIZ_GENERATION_TIMEOUT_SEC, request_id,
+        )
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "timeout")
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_TIMEOUT,
+            message="Quiz generation took too long. Please try again.",
+        ) from e
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        # The raw-Gemini legacy fallback was retired in #145; degrade to 502
+        # rather than serving a quiz from a second LLM path.
+        logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "agent_guardrail")
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
+    except Exception as e:
+        logger.exception("Unexpected quiz-agent failure; returning 502")
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "agent_error")
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
+
+
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     require_self(body.user_id, request)
@@ -1244,7 +1453,16 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             ),
             headers={"Retry-After": str(retry_after)},
         )
-    if _daily_spend_exceeded(body.user_id):
+    # G5 (#537): "practise the ones you missed" re-serves the exact items the
+    # student got wrong on a previous attempt — verbatim, with no model call
+    # for them. Resolved BEFORE the spend cap because a quiz that is entirely
+    # re-served spends nothing: the cap's own message is about "AI-generated
+    # study material", and there is none here.
+    reserved = await _reserved_misses(body)
+    recovered = list(reserved.questions) if reserved else []
+    missing = body.num_questions - len(recovered)
+
+    if missing > 0 and _daily_spend_exceeded(body.user_id):
         logger.warning(
             "quiz: daily spend cap reached user=%s request_id=%s",
             body.user_id, request_id,
@@ -1262,68 +1480,51 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # route and the agent's read tools contribute; the snapshot rides into
     # quiz.started, which shares this request_id with the llm_usage row.
     prompt_dimensions.start_capture()
+    if reserved is not None:
+        # Recorded before the run, so a generation that then fails still
+        # reports how much of this quiz it was only topping up.
+        prompt_dimensions.record(reserved_count=len(recovered))
 
-    try:
-        # Each agent run inside is individually bounded by
-        # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
-        # coroutine here would discard a partial quiz the top-up handler
-        # is designed to serve.
-        generated = await _quiz_via_agent(
-            user_id=body.user_id,
-            course_id=course_id,
-            concept_node_id=body.concept_node_id,
-            concept_name=concept_name,
-            num_questions=body.num_questions,
-            difficulty=body.difficulty,
-            use_shared_context=body.use_shared_context,
-            request_id=request_id,
-            model_pref=body.model_pref,
-            times_studied=node.get("times_studied"),
-        )
-        questions = generated.questions
-        exam_days_away = generated.exam_days_away
-    except HTTPException:
-        # The 404 for an unknown concept node is raised before the agent call;
-        # never swallow a known HTTP state.
-        _refund_generate_slot(body.user_id)
-        raise
-    except asyncio.TimeoutError as e:
-        # #544 F2: distinct from a generic failure — the client can say
-        # "that took too long" and offering a retry obviously makes sense.
-        # NB: only asyncio.TimeoutError. The builtin TimeoutError is in the
-        # OSError family, so catching it too would relabel a transport
-        # socket timeout as a wall-clock generation timeout.
-        logger.warning(
-            "quiz: generation timed out after %ss request_id=%s",
-            QUIZ_GENERATION_TIMEOUT_SEC, request_id,
-        )
-        _refund_generate_slot(body.user_id)
-        _log_generation_failed(body, request_id, "timeout")
-        raise QuizAPIError(
-            status_code=502,
-            code=QuizErrorCode.QUIZ_GENERATION_TIMEOUT,
-            message="Quiz generation took too long. Please try again.",
-        ) from e
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-        # The raw-Gemini legacy fallback was retired in #145; degrade to 502
-        # rather than serving a quiz from a second LLM path.
-        logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
-        _refund_generate_slot(body.user_id)
-        _log_generation_failed(body, request_id, "agent_guardrail")
-        raise QuizAPIError(
-            status_code=502,
-            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
-            message="Quiz generation is temporarily unavailable. Please try again.",
-        ) from e
-    except Exception as e:
-        logger.exception("Unexpected quiz-agent failure; returning 502")
-        _refund_generate_slot(body.user_id)
-        _log_generation_failed(body, request_id, "agent_error")
-        raise QuizAPIError(
-            status_code=502,
-            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
-            message="Quiz generation is temporarily unavailable. Please try again.",
-        ) from e
+    questions = recovered
+    exam_days_away = None
+    if missing > 0:
+        try:
+            generated = await _generate_or_502(
+                body,
+                request_id=request_id,
+                course_id=course_id,
+                concept_name=concept_name,
+                times_studied=node.get("times_studied"),
+                count=missing,
+            )
+        except QuizAPIError:
+            if not recovered:
+                raise
+            # A quiz was recoverable and the top-up wasn't: serve the short
+            # quiz rather than deny the student practice they'd already
+            # earned. Same call the top-up handler makes one level down, and
+            # the response says exactly what it contains. The slot refund
+            # inside _generate_or_502 stands — that generation really did
+            # fail, whatever else we manage to serve.
+            logger.warning(
+                "quiz: remainder generation failed; serving the %d re-served "
+                "question(s) request_id=%s", len(recovered), request_id,
+            )
+        else:
+            # The do-not-repeat block should already keep generation off the
+            # re-served items (they were served on the source attempt, so E6
+            # names them), but a model that repeats one anyway must not put
+            # the same item in front of the student twice in one quiz.
+            reserved_hashes = {
+                h for h in (wire_question_hash(q) for q in recovered) if h
+            }
+            questions = recovered + [
+                q for q in generated.questions
+                if wire_question_hash(q) not in reserved_hashes
+            ]
+            exam_days_away = generated.exam_days_away
+    regenerated_count = len(questions) - len(recovered)
+    _renumber(questions)
 
     quiz_id = str(uuid.uuid4())
     attempt_row = {
@@ -1341,6 +1542,12 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     if exam_days_away is not None:
         attempt_row["exam_days_away"] = exam_days_away
     _insert_attempt(attempt_row)
+    if reserved is not None:
+        # G5, closing the pair opened before the run: how this quiz was
+        # actually assembled. Rides quiz.started on the F6 snapshot, which
+        # shares a request_id with the llm_usage row — so "this generation
+        # cost N prompt tokens for 2 of its 5 questions" is answerable.
+        prompt_dimensions.record(regenerated_count=regenerated_count)
     # #117: quiz.started once the attempt row exists. num_questions is the
     # actual generated count (the agent may return fewer than requested).
     events_service.log_event(
@@ -1390,6 +1597,23 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         # requested.
         "requested_count": body.num_questions,
         "delivered_count": len(questions),
+        # G5 (#537): present whenever the request named a source attempt, and
+        # then always — so the three outcomes stay distinguishable and the
+        # client can label each honestly: re-served everything
+        # (regenerated_count 0), re-served some (both non-zero), re-served
+        # nothing and fell back to generation (reserved_count 0). Additive: a
+        # request that isn't practising a past attempt never sees the key.
+        **(
+            {
+                "source": {
+                    "attempt_id": reserved.attempt_id,
+                    "reserved_count": len(recovered),
+                    "regenerated_count": regenerated_count,
+                }
+            }
+            if reserved is not None
+            else {}
+        ),
     }
 
 
