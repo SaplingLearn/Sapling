@@ -72,7 +72,8 @@ jobs:
           if [ -n "$leftovers" ]; then
             echo "preflight: removing leftover container(s) publishing Supabase ports:"
             printf '%s\n' "$leftovers" | sed 's/^/  /'
-            printf '%s\n' "$leftovers" | awk '{print $1}' | xargs -r docker rm -f
+            printf '%s\n' "$leftovers" | awk '{print $1}' | xargs -r docker rm -f \
+              || echo "preflight: WARNING - could not remove leftover container(s); the LISTEN check below names whatever survived"
           fi
 
           drain_timeout=30
