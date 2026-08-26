@@ -178,6 +178,69 @@ def _log_generation_failed(body, request_id: str | None, reason: str) -> None:
     )
 
 
+def _record_answer_key_flag(
+    body: GenerateQuizBody, quiz_id: str, request_id: str | None,
+) -> None:
+    """#546: make the deprecated `include_answer_key` flag's remaining
+    callers countable, not merely logged.
+
+    Deleting the parameter is gated on one number reaching zero — nobody
+    still asks for the client-side answer key — and a `logger.info` is not
+    a number: nothing rolls log lines up, and the grace window exists
+    precisely for callers nobody is watching the logs for. #375's admin
+    analytics aggregates the `events` table by event_type, so one event per
+    population is a count an admin can already read off the existing
+    endpoint, with no schema or endpoint work (#117 convention).
+
+    Three caller populations, told apart by whether the field was on the
+    wire at all (`model_fields_set`) rather than by its value — because the
+    default flip makes "omitted" and "explicit false" the same *response*
+    but very different *callers*:
+
+    * explicit true  → ``quiz.answer_key_served``. The straggler the grace
+      window is for; the response really carried the key. This is the count
+      that must be zero before the parameter is deleted.
+    * omitted        → ``quiz.answer_key_flag_omitted``. A flag-unaware
+      caller, already on the keyless shape. Deletion is a no-op for them,
+      but they are the population whose response shape silently changed at
+      the flip, and before this they had no telemetry at all.
+    * explicit false → nothing. Every shipped #537 client sends this on
+      every generate; an event here would be a row per quiz, swamping the
+      rollup it lands in to say something already known.
+
+    Two event types rather than one carrying a `flag` payload field: the
+    by_event_type rollup does not break payloads out, so a single type
+    would surface one number mixing the population that blocks deletion
+    with the one that doesn't — exactly the distinction the gate needs.
+
+    Fire-and-forget like the `quiz.started` emit below: `log_event` never
+    blocks and swallows its own failures, so telemetry can't fail a
+    generation that already succeeded.
+    """
+    if "include_answer_key" not in body.model_fields_set:
+        events_service.log_event(
+            "quiz.answer_key_flag_omitted",
+            category="usage",
+            user_id=body.user_id,
+            request_id=request_id,
+            payload={"quiz_id": quiz_id},
+        )
+        return
+    if not body.include_answer_key:
+        return
+    logger.info(
+        "quiz: generate served the client-side answer key "
+        "(include_answer_key=true, deprecated — #546) quiz_id=%s", quiz_id,
+    )
+    events_service.log_event(
+        "quiz.answer_key_served",
+        category="usage",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={"quiz_id": quiz_id},
+    )
+
+
 def _abandon_cutoff() -> datetime:
     return datetime.now(timezone.utc) - timedelta(
         hours=QUIZ_ATTEMPT_ABANDON_TTL_HOURS
@@ -440,9 +503,10 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 
 # Keys that exist for the server's benefit and are never part of the client
 # contract. `_strip_answer_key`'s allowlist already excludes them on the
-# keyless path; this is the same exclusion for the still-default keyed path,
-# so provenance can't leak into a browser payload just because #546 hasn't
-# flipped `include_answer_key` yet.
+# keyless (default) path; this is the same exclusion for the opt-in keyed
+# path (`include_answer_key=true` — see
+# models.GenerateQuizBody.include_answer_key, #546), so provenance can't leak
+# into a browser payload just because a caller asked for the answer key too.
 #
 # `question_hash` sits here too — not because it is sensitive (it is the
 # student's own question) but because nothing client-side consumes it yet.
@@ -1362,16 +1426,11 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         },
     )
     prompt_dimensions.clear()
-    # #541 C3: the answer key (per-option `correct` booleans) ships to the
-    # client only behind the deprecated include_answer_key flag — default
-    # true for the current QuizPanel, removed with #546 once the #537
-    # client grades via /attempts/{id}/answer. Log every keyed response so
-    # zero-usage is observable before the default flips.
-    if body.include_answer_key:
-        logger.info(
-            "quiz: generate served the client-side answer key "
-            "(include_answer_key=true, deprecated — #546) quiz_id=%s", quiz_id,
-        )
+    # #541 C3 / #546: the answer key (per-option `correct` booleans) ships
+    # to the client only behind the deprecated include_answer_key flag.
+    # Lifecycle prose is documented once, on the field itself — see
+    # models.GenerateQuizBody.include_answer_key.
+    _record_answer_key_flag(body, quiz_id, request_id)
     response_questions = _client_questions(questions, body.include_answer_key)
 
     # #540 A1: echo what generation actually chose. requested_difficulty

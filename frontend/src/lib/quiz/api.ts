@@ -29,11 +29,19 @@ export const fetchQuizConfig = (): Promise<QuizConfig> =>
 /**
  * `POST /api/quiz/generate`.
  *
- * `include_answer_key: false` is deliberate and load-bearing (R-2): with the
- * default `true` the response carries per-option `correct` booleans and every
- * explanation, which is what let the old panel grade client-side. The keyless
- * projection forces every verdict through `answerQuestion`, where the server
- * grades. Removing the flag entirely is #546.
+ * `include_answer_key: false` is no longer load-bearing: #546 flipped the
+ * server default to `false`, so omitting it would get the same keyless
+ * response (no per-option `correct` booleans, no explanations — the shape
+ * that makes client-side grading impossible and forces every verdict through
+ * `answerQuestion`, where the server grades, per R-2).
+ *
+ * It stays on the wire anyway, for two reasons: it states the contract this
+ * client is written against rather than inheriting whatever the default
+ * happens to be, and the backend counts callers that OMIT the flag as
+ * flag-unaware stragglers (`quiz.answer_key_flag_omitted`) while it decides
+ * whether the parameter can be deleted. Dropping it here would put this
+ * client in that count and muddy the signal. Delete this line when the
+ * parameter goes (#546).
  *
  * `use_shared_context` and `model_pref` are left at their server defaults —
  * the redesign has no surface for either.
