@@ -66,7 +66,7 @@ def get_me(user_id: str, request: Request):
     if not_mod:
         return not_mod
 
-    return cached_json(me_payload(user_id, inputs), etag, REVALIDATE_CACHE_CONTROL)
+    return cached_json(me_payload(inputs), etag, REVALIDATE_CACHE_CONTROL)
 
 
 def _scope_ids(user_id: str, scope: str) -> set[str] | None:

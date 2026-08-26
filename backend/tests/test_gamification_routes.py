@@ -48,8 +48,8 @@ class TestMe:
         _one_page(handles["xp_events"], [
             {"amount": 40, "created_at": datetime.now(timezone.utc).isoformat()}
         ])
-        handles["user_achievements"].select.return_value = [{"achievement_id": "a1"}]
-        handles["achievements"].select.return_value = [{"id": "a1"}, {"id": "a2"}]
+        _one_page(handles["user_achievements"], [{"achievement_id": "a1"}])
+        _one_page(handles["achievements"], [{"id": "a1"}, {"id": "a2"}])
         with _patched_tables(handles), \
              patch("services.gamification_service.stage_for_level", return_value=STAGE), \
              patch("services.gamification_service.xp_into_level", return_value=(20, 100)):
@@ -69,15 +69,56 @@ class TestMe:
         handles["users"].select.return_value = [{"total_xp": 0, "level": 1}]
         _one_page(handles["xp_events"], [])
         for k in ("user_achievements", "achievements"):
-            handles[k].select.return_value = []
+            _one_page(handles[k], [])
         with _patched_tables(handles), \
              patch("services.gamification_service.stage_for_level", return_value=STAGE), \
              patch("services.gamification_service.xp_into_level", return_value=(0, 50)):
             client.get("/api/gamification/me?user_id=u1")
         # Drafts are work-in-progress and must not inflate the denominator.
-        assert handles["achievements"].select.call_args.kwargs["filters"] == {
-            "status": "eq.live"
-        }
+        assert handles["achievements"].select_with_count.call_args.kwargs[
+            "filters"
+        ] == {"status": "eq.live"}
+
+    def test_an_earned_draft_badge_is_not_in_the_numerator(self):
+        """"N of M" must never be able to exceed M (PR #589 review E1).
+
+        Migration 20260731194102 demoted ten legacy seed badges to `draft`
+        while DELIBERATELY keeping the rows people had already earned
+        ("nobody loses a badge"). So an earned row for a draft badge is not a
+        hypothetical — it is the state of every account that predates the
+        catalog rewrite. Counting every `user_achievements` row against a
+        denominator filtered to `status = live` renders "13 of 30" where only
+        12 of those 13 are among the 30, and "31 of 30" for a completionist.
+
+        Both sides have to be filtered the same way. `routes/profile.py`
+        already does this with an `achievements!inner(...)` embed plus an
+        `achievements.status` filter; without the `!inner` the filter cannot
+        apply to the embedded table at all and nothing is excluded.
+        """
+        handles = {"users": MagicMock(), "xp_events": MagicMock(),
+                   "user_achievements": MagicMock(), "achievements": MagicMock()}
+        handles["users"].select.return_value = [{"total_xp": 0, "level": 1}]
+        _one_page(handles["xp_events"], [])
+        # What PostgREST returns for the inner-join form: the draft badge's
+        # earned row is dropped by the join, so only the live one comes back.
+        _one_page(handles["user_achievements"], [{"achievement_id": "live-1"}])
+        _one_page(handles["achievements"], [{"id": "live-1"}, {"id": "live-2"}])
+        with _patched_tables(handles), \
+             patch("services.gamification_service.stage_for_level", return_value=STAGE), \
+             patch("services.gamification_service.xp_into_level", return_value=(0, 50)):
+            body = client.get("/api/gamification/me?user_id=u1").json()
+
+        assert body["earned_count"] == 1
+        assert body["total_count"] == 2
+
+        call = handles["user_achievements"].select_with_count.call_args
+        kwargs, columns = call.kwargs, call.args[0]
+        assert "achievements!inner" in columns, (
+            "without the !inner embed PostgREST cannot filter on the joined "
+            "table, so every earned draft stays in the numerator"
+        )
+        assert kwargs["filters"]["achievements.status"] == "eq.live"
+        assert kwargs["filters"]["user_id"] == "eq.u1"
 
     def test_sends_a_private_cache_control(self):
         handles = {"users": MagicMock(), "xp_events": MagicMock(),
@@ -85,7 +126,7 @@ class TestMe:
         handles["users"].select.return_value = [{"total_xp": 0, "level": 1}]
         _one_page(handles["xp_events"], [])
         for k in ("user_achievements", "achievements"):
-            handles[k].select.return_value = []
+            _one_page(handles[k], [])
         with _patched_tables(handles), \
              patch("services.gamification_service.stage_for_level", return_value=STAGE), \
              patch("services.gamification_service.xp_into_level", return_value=(0, 50)):
@@ -298,6 +339,77 @@ class TestEventsSincePagination:
         assert first_call.kwargs["offset"] == 0
         assert second_call.kwargs["offset"] == XP_EVENTS_PAGE
 
+    def test_a_full_page_with_an_unparseable_total_is_not_the_end(self):
+        """The sibling of the test above, and the one that was missing
+        (PR #589 review E2).
+
+        It always stubbed a truthful total, so it only ever proved the loop
+        can take a second lap — not that it takes one when it must.
+        `select_with_count` reports `total = 0` for a missing or unparseable
+        Content-Range, and `len(out) >= total` is then satisfied on lap one
+        holding a completely full page. The rows past the cap vanish, with a
+        2xx and no log line: today's XP silently under-reports, and the same
+        read under the leaderboard mis-ranks the week.
+        """
+        from services.gamification_service import XP_EVENTS_PAGE, events_since
+
+        now = datetime.now(timezone.utc).isoformat()
+        full_page = [
+            {"user_id": "u1", "amount": 1, "created_at": now}
+            for _ in range(XP_EVENTS_PAGE)
+        ]
+        short_page = [{"user_id": "u1", "amount": 2, "created_at": now}]
+
+        handle = MagicMock()
+        handle.select_with_count.side_effect = [(full_page, 0), (short_page, 0)]
+        with patch("services.gamification_service.table", return_value=handle):
+            rows = events_since("u1", datetime.now(timezone.utc) - timedelta(days=1))
+
+        assert len(rows) == XP_EVENTS_PAGE + 1, (
+            "a full page plus an unparseable total was read as the end of the "
+            "ledger — the silent truncation the loop exists to prevent"
+        )
+        assert handle.select_with_count.call_count == 2
+
+
+class TestTheCatalogReadsArePaged:
+    """review E7. The badge catalog and a user's earned rows were the two
+    unpaged reads left in the module whose own header explains that an unpaged
+    PostgREST read truncates at max_rows with a 2xx. The catalog is global and
+    grows with every wiki publish; `user_achievements` grows with the catalog.
+    Neither is near 1000 today, which is exactly when it is cheap to fix."""
+
+    def _handles(self):
+        handles = {"users": MagicMock(), "xp_events": MagicMock(),
+                   "user_achievements": MagicMock(), "achievements": MagicMock()}
+        handles["users"].select.return_value = [{"total_xp": 0, "level": 1}]
+        _one_page(handles["xp_events"], [])
+        return handles
+
+    def test_both_achievement_reads_page_to_completion(self):
+        from db.connection import MAX_ROWS
+
+        handles = self._handles()
+        full = [{"id": f"a{i}"} for i in range(MAX_ROWS)]
+        handles["achievements"].select_with_count.side_effect = [
+            (full, 0), ([{"id": "past-the-cap"}], 0),
+        ]
+        handles["user_achievements"].select_with_count.side_effect = [
+            ([{"achievement_id": "e1"}], 1),
+        ]
+        with _patched_tables(handles), \
+             patch("services.gamification_service.stage_for_level", return_value=STAGE), \
+             patch("services.gamification_service.xp_into_level", return_value=(0, 50)):
+            body = client.get("/api/gamification/me?user_id=u1").json()
+
+        assert body["total_count"] == MAX_ROWS + 1, (
+            "the catalog read stopped at the first full page"
+        )
+        assert body["earned_count"] == 1
+        # Not `select` any more — paging needs the count-bearing form.
+        assert handles["achievements"].select.call_count == 0
+        assert handles["user_achievements"].select.call_count == 0
+
 
 # ── Auth guard ───────────────────────────────────────────────────────────────
 
@@ -326,8 +438,8 @@ class TestAuthGuard:
             "longest_streak": 0, "daily_goal_xp": 50,
         }]
         _one_page(handles["xp_events"], [])
-        handles["user_achievements"].select.return_value = []
-        handles["achievements"].select.return_value = []
+        _one_page(handles["user_achievements"], [])
+        _one_page(handles["achievements"], [])
         handles["friendships"].select.return_value = []
         handles["user_settings"].select.return_value = []
         return handles

@@ -21,52 +21,44 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from db.connection import table
+from db.connection import MAX_ROWS, page_all, table
 from services.growth import stage_for_level, xp_into_level
 
-# supabase/config.toml sets PostgREST's `max_rows = 1000`. A page past that
-# cap doesn't error — PostgREST returns 206 Partial Content, which is a 2xx,
-# so db/connection.py's raise_for_status() never fires; the truncation is
-# silent by construction. `events_since` backs the leaderboard's weekly-XP
-# aggregation (and /me and /activity), so an unbounded single call here would
-# silently corrupt totals and rank order once platform-wide weekly events
-# cross this cap. Keep this at or below max_rows and page to completion.
-XP_EVENTS_PAGE = 1000
+# Every read in this module pages through `db.connection.page_all`, which
+# carries the rationale: PostgREST caps a response at `max_rows` and reports
+# the cut with a 206, a 2xx that raise_for_status() ignores, so an unpaged
+# read truncates silently. `events_since` backs the leaderboard's weekly-XP
+# aggregation (and /me and /activity), so a truncated read here corrupts
+# totals and rank order rather than merely under-reporting one card.
+XP_EVENTS_PAGE = MAX_ROWS
 
 
 def events_since(user_id: str | None, since: datetime) -> list[dict]:
-    """All xp_events at/after `since`, optionally scoped to one user.
-
-    Pages to completion via select_with_count rather than a single unbounded
-    select — see XP_EVENTS_PAGE. The `created_at,id` order is required for
-    offset paging to be correct: without a stable sort, Postgres/PostgREST
-    can return rows in a different order across pages, silently skipping or
-    duplicating rows across the page boundary.
-    """
+    """All xp_events at/after `since`, optionally scoped to one user."""
     filters = {"created_at": f"gte.{since.isoformat()}"}
     if user_id:
         filters["user_id"] = f"eq.{user_id}"
-    out: list[dict] = []
-    offset = 0
-    while True:
-        rows, total = table("xp_events").select_with_count(
-            "user_id,amount,created_at",
-            filters=filters,
-            order="created_at.asc,id.asc",
-            limit=XP_EVENTS_PAGE,
-            offset=offset,
-        )
-        out.extend(rows or [])
-        if not rows or len(out) >= total:
-            break
-        offset += XP_EVENTS_PAGE
-    return out
+    return list(page_all(
+        table("xp_events"),
+        "user_id,amount,created_at",
+        filters=filters,
+        order="created_at.asc,id.asc",
+        page=XP_EVENTS_PAGE,
+    ))
 
 
 @dataclass(frozen=True)
 class MeInputs:
-    """The cheap reads behind the hero card — and `/me`'s ETag inputs."""
+    """The cheap reads behind the hero card — and `/me`'s ETag inputs.
 
+    Carries the `user_id` it was read for so `me_payload` needs no second
+    opinion about whose card it is building. It used to take the id
+    separately, which type-checked a transposition —
+    `me_payload("userB", read_me_inputs("userA"))` returned userA's totals
+    spliced with userB's `today_xp` — with nothing to catch it.
+    """
+
+    user_id: str
     total_xp: int
     level: int
     streak: int
@@ -83,29 +75,48 @@ def read_me_inputs(user_id: str) -> MeInputs:
     )
     u = rows[0] if rows else {}
 
-    earned = table("user_achievements").select(
-        "achievement_id", filters={"user_id": f"eq.{user_id}"}
-    ) or []
-    # Live only — a work-in-progress badge must not inflate "12 of 30".
-    catalog = table("achievements").select("id", filters={"status": "eq.live"}) or []
+    # Both halves of "N of M" filter to live, or N can exceed M. Migration
+    # 20260731194102 demoted ten legacy seeds to draft and deliberately kept
+    # the rows people had already earned ("nobody loses a badge"), so counting
+    # every user_achievements row against a live-only catalog puts badges in
+    # the numerator that are absent from the denominator. `achievements!inner`
+    # is what lets the `achievements.status` filter reach the embedded table
+    # at all — the same form routes/profile.py's showcase uses, and without
+    # the `!inner` PostgREST silently excludes nothing.
+    earned = page_all(
+        table("user_achievements"),
+        "achievement_id,achievements!inner(id)",
+        filters={"user_id": f"eq.{user_id}", "achievements.status": "eq.live"},
+        # user_id is fixed, so achievement_id alone is the rest of the PK and
+        # therefore a total order.
+        order="achievement_id.asc",
+    )
+    catalog = page_all(
+        table("achievements"), "id",
+        filters={"status": "eq.live"},
+        order="id.asc",
+    )
 
     return MeInputs(
+        user_id=user_id,
         total_xp=int(u.get("total_xp") or 0),
         level=int(u.get("level") or 1),
         streak=int(u.get("streak_count") or 0),
         longest_streak=int(u.get("longest_streak") or 0),
         daily_goal_xp=int(u.get("daily_goal_xp") or 50),
-        earned_count=len(earned),
-        total_count=len(catalog),
+        earned_count=sum(1 for _ in earned),
+        total_count=sum(1 for _ in catalog),
     )
 
 
-def me_payload(user_id: str, inputs: MeInputs) -> dict:
+def me_payload(inputs: MeInputs) -> dict:
     """The hero-card payload. `GET /api/gamification/me` returns this verbatim."""
     today = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    today_xp = sum(int(e.get("amount") or 0) for e in events_since(user_id, today))
+    today_xp = sum(
+        int(e.get("amount") or 0) for e in events_since(inputs.user_id, today)
+    )
 
     into, for_level = xp_into_level(inputs.total_xp)
     stage = stage_for_level(inputs.level)
@@ -129,4 +140,4 @@ def me_payload(user_id: str, inputs: MeInputs) -> dict:
 
 def me_snapshot(user_id: str) -> dict:
     """`me_payload` with its own reads — for callers with no ETag to serve."""
-    return me_payload(user_id, read_me_inputs(user_id))
+    return me_payload(read_me_inputs(user_id))
