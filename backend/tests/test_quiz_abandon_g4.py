@@ -1,11 +1,6 @@
 """#537 G4: `POST /api/quiz/attempts/{id}/abandon` — a real discard.
 
-Until this route existed, "Discard" on the resume strip was a localStorage
-flag (`lib/quiz/session.ts::dismissAttempt`): the row stayed `in_progress`
-until D2's 24h sweep found it, so the strip came back on the student's phone,
-in a second tab, and in this browser as soon as the key was cleared. The
-endpoint lets the client write the same `abandoned_at` stamp the sweep writes,
-which is what makes a discard cross devices.
+Why the route exists is told once, in `routes/quiz.py::abandon_attempt`.
 
 The contract pinned here:
 
@@ -19,55 +14,22 @@ The contract pinned here:
   * the derived status the read paths report flips to `abandoned`, which is
     what the resume strip filters on.
 """
-from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from main import app
 
+# The attempt-row shape is the D-workstream's (#542) and is single-sourced
+# there: two byte-identical copies drifted apart the moment either route grew
+# a column. `tests/` is on sys.path during collection, so this is the module
+# pytest already imported, not a second copy of it.
+from test_quiz_lifecycle_d import _attempt_row
+
 client = TestClient(app)
 
 
-QUESTIONS = [
-    {
-        "id": 1,
-        "question": "Q1?",
-        "options": [
-            {"label": "A", "text": "a1", "correct": False},
-            {"label": "B", "text": "b1", "correct": True},
-        ],
-        "explanation": "B is right.",
-        "concept_tested": "Loops",
-        "difficulty": "medium",
-    },
-]
-
 STAMP = "2026-08-23T02:00:00+00:00"
-
-
-def _recent() -> str:
-    """A created_at inside the abandon TTL, relative so the suite can't rot."""
-    return (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-
-
-def _attempt_row(**overrides) -> dict:
-    row = {
-        "id": "quiz1",
-        "user_id": "user_andres",
-        "concept_node_id": "node1",
-        "difficulty": "medium",
-        "questions_json": QUESTIONS,
-        "score": None,
-        "total": None,
-        "completed_at": None,
-        "abandoned_at": None,
-        "mastery_before": None,
-        "mastery_after": None,
-        "created_at": _recent(),
-    }
-    row.update(overrides)
-    return row
 
 
 def _matches(row: dict, column: str, expression: str) -> bool:
@@ -89,7 +51,7 @@ def _matches(row: dict, column: str, expression: str) -> bool:
 
 
 class _Attempts:
-    """A `quiz_attempts` stand-in whose UPDATE honours its filters.
+    """A `quiz_attempts` stand-in whose READS AND WRITES honour their filters.
 
     A MagicMock returning a constant cannot tell "the claim won" from "the
     claim was refused", which is the only thing the idempotency and the
@@ -97,36 +59,61 @@ class _Attempts:
     rather than asserted against a canned return value. Timestamps compare as
     ISO strings, which sort correctly while they share an offset (they do:
     everything here is written UTC by the route).
+
+    The filters are honoured on `select` too. A fake that hands the stored row
+    back whatever it was asked for cannot fail when a route drops or
+    mis-builds an `id=eq.` / `user_id=eq.` filter — the reads would keep
+    answering, and the ownership and lost-claim branches would all be pinned
+    against a row nobody actually asked for.
+
+    `prefer_return_minimal` is modelled because the real `table().update`
+    returns `[]` in that mode (`db/connection.py`): a claim refactored to
+    minimal reads as LOST on every request, and a fake that ignores the kwarg
+    would let that land green.
     """
 
     def __init__(self, row: dict | None):
         self.row = row
-        self.updates: list[tuple[dict, dict]] = []
+        #: (data, filters, kwargs) per update — kwargs so the claim can be
+        #: pinned as a representation read, not a minimal one.
+        self.updates: list[tuple[dict, dict, dict]] = []
+        #: (columns, filters) per select, in call order.
+        self.selects: list[tuple[str, dict]] = []
 
-    def select(self, columns="*", filters=None, **kw):
-        return [dict(self.row)] if self.row else []
-
-    def select_with_count(self, columns="*", filters=None, **kw):
-        rows = [dict(self.row)] if self.row else []
-        return rows, len(rows)
-
-    def update(self, data, filters=None, **kw):
+    def _rows(self, filters=None) -> list[dict]:
         filters = filters or {}
-        self.updates.append((dict(data), dict(filters)))
         if self.row is None:
             return []
         if not all(_matches(self.row, c, e) for c, e in filters.items()):
             return []
-        self.row.update(data)
         return [dict(self.row)]
 
+    def select(self, columns="*", filters=None, **kw):
+        self.selects.append((columns, dict(filters or {})))
+        return self._rows(filters)
 
-def _factory(attempts: _Attempts, responses=None):
+    def select_with_count(self, columns="*", filters=None, **kw):
+        self.selects.append((columns, dict(filters or {})))
+        rows = self._rows(filters)
+        return rows, len(rows)
+
+    def update(self, data, filters=None, *, prefer_return_minimal=False, **kw):
+        filters = filters or {}
+        self.updates.append((dict(data), dict(filters), {
+            "prefer_return_minimal": prefer_return_minimal, **kw,
+        }))
+        if not self._rows(filters):
+            return []
+        self.row.update(data)
+        return [] if prefer_return_minimal else [dict(self.row)]
+
+
+def _factory(attempts: _Attempts):
     def factory(name):
         if name == "quiz_attempts":
             return attempts
         mock = MagicMock()
-        mock.select.return_value = responses or []
+        mock.select.return_value = []
         mock.update.return_value = []
         mock.select_with_count.return_value = ([], 0)
         return mock
@@ -163,10 +150,15 @@ class TestAbandon:
             client.post("/api/quiz/attempts/quiz1/abandon")
 
         assert len(attempts.updates) == 1
-        _, filters = attempts.updates[0]
+        _, filters, kwargs = attempts.updates[0]
         assert filters["id"] == "eq.quiz1"
         assert filters["completed_at"] == "is.null"
         assert filters["abandoned_at"] == "is.null"
+        # The claim's RETURNED ROWS are the arbitration — `[]` means another
+        # request won it. `prefer_return_minimal` makes the real client return
+        # `[]` unconditionally (db/connection.py), which would read as "lost"
+        # on every single discard.
+        assert kwargs["prefer_return_minimal"] is False
 
     def test_a_second_abandon_is_a_200_no_op_with_the_same_body(self):
         """A retry after a dropped response is free. The client fires this
@@ -237,6 +229,27 @@ class TestAbandonRefusals:
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
         assert attempts.row["abandoned_at"] is None
 
+    def test_a_row_that_vanished_under_the_claim_404s_rather_than_faking_a_stamp(self):
+        """Merge-gate review (D2). The lost-claim branch used to read the row
+        back as `(rows or [{}])[0]` and then answer
+        `{"status": "abandoned", "abandoned_at": <now>}` — a success built out
+        of an empty dict and a timestamp NOTHING EVER WROTE. A row that is
+        gone by the re-read is the 404 the top of the route already reports."""
+        attempts = _Attempts(_attempt_row())
+        real_update = attempts.update
+
+        def _deleted_under_the_claim(data, filters=None, **kw):
+            attempts.row = None
+            return real_update(data, filters, **kw)
+
+        attempts.update = _deleted_under_the_claim
+
+        with patch("routes.quiz.table", side_effect=_factory(attempts)):
+            r = client.post("/api/quiz/attempts/quiz1/abandon")
+
+        assert r.status_code == 404, r.text
+        assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_FOUND"
+
     def test_an_unknown_attempt_404s(self):
         attempts = _Attempts(None)
 
@@ -305,6 +318,16 @@ class TestAbandonIsVisibleToTheReadPaths:
         rows = listing.json()["attempts"]
         assert [a["quiz_id"] for a in rows] == ["quiz1"]
         assert rows[0]["status"] == "abandoned"
+        # …and the row came back because the LISTING ASKED FOR IT, scoped to
+        # the signed-in student. Without this the fake would hand the row to
+        # any query at all and the status above would be pinned on a read
+        # nobody made.
+        columns, filters = attempts.selects[-1]
+        assert filters == {"user_id": "eq.user_andres"}
+        assert "abandoned_at" in columns, (
+            "the derived status is computed from the projection — dropping "
+            "abandoned_at here reads every discarded attempt as in_progress"
+        )
 
     def test_answering_an_abandoned_attempt_409s(self):
         """The discard has to bite on the write paths too, or it is a label."""
@@ -417,5 +440,73 @@ class TestSubmitAndAbandonCannotBothWin:
             })
 
         assert r.status_code == 409
+        assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
+        apply_mock.assert_not_called()
+
+    def test_a_row_that_vanished_under_the_claim_404s(self):
+        """Merge-gate review (D3). `(rows or [{}])[0]` made
+        `_refuse_if_abandoned({})` a no-op and reported ALREADY_COMPLETED for
+        an attempt that is simply gone."""
+        attempts = _Attempts(_attempt_row())
+        apply_mock = MagicMock()
+        real_update = attempts.update
+
+        def _deleted_under_the_claim(data, filters=None, **kw):
+            attempts.row = None
+            return real_update(data, filters, **kw)
+
+        attempts.update = _deleted_under_the_claim
+
+        with (
+            patch("routes.quiz.table", side_effect=_factory(attempts)),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "B"}],
+            })
+
+        assert r.status_code == 404, r.text
+        assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_FOUND"
+        apply_mock.assert_not_called()
+
+    def test_a_failing_re_read_still_answers_409_rather_than_500(self):
+        """Merge-gate review (D3). Losing the claim used to be an INFALLIBLE
+        409 — no further I/O between the refusal and the response. G4 put a
+        SELECT in that window to tell "already submitted" from "you discarded
+        this", and a transient PostgREST failure there must degrade to the
+        answer the caller would have got before, not to a 500 on an ordinary
+        double-click."""
+        attempts = _Attempts(_attempt_row())
+        apply_mock = MagicMock()
+        real_select = attempts.select
+        real_update = attempts.update
+
+        def _submitted_under_the_claim(data, filters=None, **kw):
+            attempts.row["completed_at"] = STAMP
+            return real_update(data, filters, **kw)
+
+        def _select_that_falls_over(columns="*", filters=None, **kw):
+            if "abandoned_at" in columns and "questions_json" not in columns:
+                raise RuntimeError("PostgREST said 503")
+            return real_select(columns, filters, **kw)
+
+        attempts.update = _submitted_under_the_claim
+        attempts.select = _select_that_falls_over
+
+        with (
+            patch("routes.quiz.table", side_effect=_factory(attempts)),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "B"}],
+            })
+
+        assert r.status_code == 409, r.text
         assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
         apply_mock.assert_not_called()
