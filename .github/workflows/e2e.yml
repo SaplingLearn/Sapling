@@ -37,6 +37,21 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      # This lane reaches `supabase start` through `make e2e-up` ->
+      # scripts/e2e-up.sh, so it has the SAME exposure integration.yml does:
+      # Supabase's ports sit inside Linux's ephemeral source-port range, and an
+      # outbound connection can take 54322 as its source port before Docker
+      # binds it (run 32624263094 — the full diagnosis is in the script's
+      # header). e2e-up.sh's stop-and-retry only ever mitigated that by luck.
+      #
+      # Deliberately here rather than immediately before `make e2e-up`: the
+      # reservation only excludes ports from AUTOMATIC assignment from the
+      # moment it is written, and npm ci + `playwright install` in between are
+      # this job's heaviest download phase — hundreds of outbound connections,
+      # any of which could take a Supabase port if this ran after them. Right
+      # after checkout is the earliest point supabase/config.toml exists.
+      - name: Preflight (reserve the Supabase ports)
+        run: scripts/preflight-ports.sh
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'

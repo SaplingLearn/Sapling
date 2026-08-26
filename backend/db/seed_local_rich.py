@@ -716,7 +716,8 @@ def seed_offering_concept_stats() -> None:
                 "pct_struggling": 0.5,
                 "pct_unexplored": 0.25,
                 "common_misconceptions": misconceptions,
-                "effective_explanations": [],
+                # No `effective_explanations` key — #572, see
+                # services/course_context_service.py::_parse_quiz_context_to_arrays.
                 "prerequisite_gaps": [],
             },
         )

@@ -96,6 +96,11 @@ def test_event_taxonomy_is_pinned():
         "quiz.generation_failed",     # #544/F3
         "quiz.tool_empty",            # F5: a personalization input came back empty
         "quiz.rag_uncovered",         # E8: generation ran without course grounding
+        # #546: the deprecated include_answer_key flag's two straggler
+        # populations, made countable. Emit coverage lives in
+        # test_quiz_answers_c.py::TestAnswerKeyFlagTelemetry (the C3 file).
+        "quiz.answer_key_served",
+        "quiz.answer_key_flag_omitted",
         "chat.message_sent",
         "note.created",
         "session.started",
