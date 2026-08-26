@@ -292,22 +292,38 @@ describe("discard (G4)", () => {
     // blocked cookies) that flag never lands and the quiz the student just
     // discarded comes straight back.
     const result = await homeWithAResumableAttempt();
-    // jsdom's `localStorage` is a Proxy, so the spy has to go on the INSTANCE
-    // — one on `Storage.prototype` is never reached.
-    const blocked = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
-      throw new DOMException("QuotaExceededError");
-    });
 
-    await act(async () => {
-      result.current.discard("open");
+    // Blocked by making the ACCESSOR throw, which is what a browser with site
+    // data disabled actually does: `session.ts::storage()` catches it into
+    // `null`, so every write becomes a no-op.
+    //
+    // Spying on `setItem` is NOT a portable way to arrange this.
+    // `Storage.prototype` is never consulted (jsdom hands out a Proxy), and an
+    // instance spy lands or misses depending on the Node version — it passed
+    // on 26 locally and failed CI on 22, where the write went through and this
+    // test's premise quietly evaporated. The property getter is the one seam
+    // both agree on.
+    const original = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() { throw new DOMException("SecurityError"); },
     });
-    // Flush anything the discard might have kicked off behind it.
-    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
-    // Restored BEFORE the assertions, so a failure here can't leak a broken
-    // localStorage into the rest of the file.
-    blocked.mockRestore();
+    try {
+      await act(async () => {
+        result.current.discard("open");
+      });
+      // Flush anything the discard might have kicked off behind it.
+      await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    } finally {
+      // Restored before the assertions run, so a failure above cannot leak a
+      // broken `localStorage` into the rest of the file.
+      if (original) Object.defineProperty(window, "localStorage", original);
+      else delete (window as { localStorage?: Storage }).localStorage;
+    }
 
+    // The premise: the local flag never landed…
     expect(isDismissed("open")).toBe(false);
+    // …and the strip went anyway.
     expect(result.current.resumable).toBeNull();
   });
 
