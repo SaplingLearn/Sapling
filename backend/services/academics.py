@@ -16,6 +16,7 @@ latest term by ``sort_key`` so resolution never dead-ends.
 from __future__ import annotations
 
 import copy
+import logging
 import uuid
 from datetime import date
 from functools import lru_cache
@@ -23,6 +24,13 @@ from functools import lru_cache
 import httpx
 
 from db.connection import table
+
+logger = logging.getLogger(__name__)
+
+#: Cap on a per-course offering read. A course has one offering per
+#: (term, section), so this sits far above any real catalog row — it exists so
+#: a pathological one cannot build an unbounded ``in.(…)`` filter downstream.
+_OFFERING_SCAN_LIMIT = 200
 
 
 def current_term(today: date | None = None) -> dict | None:
@@ -182,11 +190,72 @@ def offering_course_id(offering_id: str) -> str | None:
     return rows[0]["course_id"] if rows else None
 
 
+def course_offering_ids(course_id: str | None) -> list[str] | None:
+    """Every offering of an abstract course, or ``None`` if we couldn't tell.
+
+    This is the keyspace ``sessions.offering_id`` and ``flashcards.offering_id``
+    are actually written in: every writer resolves through
+    :func:`resolve_offering` (current term, created if absent) and not one of
+    them consults ``enrollments``. A reader looking for a student's rows in a
+    course therefore wants THIS, not :func:`user_offering_ids_for_course` —
+    the two diverge permanently at the first term rollover, because the
+    no-retake rule keeps an enrollment in the term the course was taken in
+    while new rows land on the current term's offering. That divergence is the
+    #553/#529 keyspace shape. Ownership is not weakened by the difference:
+    those tables carry ``user_id`` and their readers filter on it.
+
+    Never raises, and tri-state: ``None`` is "we could not tell", ``[]`` is
+    "this course genuinely has no offering" — a fact, and a suspicious one. A
+    read that overruns ``_OFFERING_SCAN_LIMIT`` is ``None`` too, never a short
+    list: a caller cannot tell a truncated offering list from a complete one,
+    and every answer keyed on it would quietly undercount.
+    """
+    if not course_id:
+        return None
+    try:
+        rows, total = table("course_offerings").select_with_count(
+            "id", filters={"course_id": f"eq.{course_id}"},
+            limit=_OFFERING_SCAN_LIMIT,
+        )
+    except Exception:
+        # WARNING, not debug. This is a real failure on a request path, and at
+        # debug it is invisible in production — a transient PostgREST outage
+        # would look exactly like a course with no offerings, which is the bug
+        # class F5 exists to end. Callers cannot learn of it any other way:
+        # this never raises, by contract.
+        logger.warning(
+            "academics: offering resolution failed for course=%s; callers "
+            "will report this scope unknown", course_id, exc_info=True,
+        )
+        return None
+    ids = [r["id"] for r in (rows or []) if r.get("id")]
+    if total > len(ids):
+        logger.warning(
+            "academics: course=%s has %s offerings, over the %s scan cap; "
+            "reporting the scope unknown rather than a partial one",
+            course_id, total, _OFFERING_SCAN_LIMIT,
+        )
+        return None
+    return ids
+
+
 def user_offering_ids_for_course(user_id: str, course_id: str) -> list[str]:
-    """The offerings of an abstract course that ``user_id`` is enrolled in.
+    """The offerings of an abstract course that ``user_id`` is ENROLLED in.
 
     Two-step (offerings of the course, then the user's enrollments intersected)
     to avoid fragile PostgREST embedded-filter syntax.
+
+    Enrollment-derived, which is right for enrollment-keyed data (the
+    gradebook, ``assignments``) and wrong for anything stamped by
+    :func:`resolve_offering` — see :func:`course_offering_ids` above.
+
+    It deliberately does NOT share that function's read, close as the two look.
+    This one lets a failed read RAISE: it has no tri-state to express "couldn't
+    tell", and its callers already handle the exception, whereas degrading to
+    ``[]`` here would assert the student is enrolled in nothing. Routing it
+    through the never-raising counted form would either swallow that or force
+    the counted form to raise; one duplicated ``select`` line is the cheaper of
+    the two.
     """
     offs = table("course_offerings").select(
         "id", filters={"course_id": f"eq.{course_id}"}

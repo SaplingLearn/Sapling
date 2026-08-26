@@ -42,13 +42,9 @@ from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.academics import course_offering_ids
 from services.exam_proximity import days_until_next_exam, exam_prompt_line
-from services.quiz_signals import (
-    CourseScope,
-    QuizSignals,
-    course_offering_ids,
-    gather_signals,
-)
+from services.quiz_signals import CourseScope, QuizSignals, gather_signals
 from services.quiz_signals import prompt_block as signal_block
 from services.timestamps import parse_ts
 from services.quiz_distractors import build_distractor_profile
@@ -603,8 +599,10 @@ def _course_row(course_id: str | None) -> CourseRow:
         )
     except Exception:
         logger.warning(
-            "quiz: course lookup failed for course=%s; grounding "
-            "coverage is unknown, not absent", course_id, exc_info=True,
+            "quiz: course lookup failed for course=%s; grounding coverage is "
+            "unknown (not absent), and the flashcard signals report unknown "
+            "rather than counting an offering-only subset", course_id,
+            exc_info=True,
         )
         return CourseRow(failed=True)
     row = rows[0] if rows else {}

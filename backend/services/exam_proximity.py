@@ -132,8 +132,8 @@ def _enrollment_ids(offering_ids: list[str], user_id: str) -> list[str]:
     This is also what makes a WIDER `offering_ids` harmless: `assignments` is
     enrollment-keyed, so offerings of this course the student is not enrolled
     in contribute nothing here. The quiz route passes every offering of the
-    course (see `quiz_signals.course_offering_ids`) and this narrows it back
-    to theirs.
+    course (see `academics.course_offering_ids`) and this narrows it back to
+    theirs.
     """
     wanted = set(offering_ids)
     return [

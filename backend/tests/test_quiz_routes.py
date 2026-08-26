@@ -1764,10 +1764,15 @@ class TestSignalCourseKeyspace:
             f"imported cards land on the current term's offering; got {clause!r}"
         )
 
-    def test_the_scope_never_consults_enrollments(self):
-        """Ownership on both tables comes from `user_id`, so intersecting with
-        enrollments narrows the read without adding any safety — it only
-        introduces the keyspace the writers do not use."""
+    def test_the_scope_is_resolved_from_the_courses_own_offerings(self):
+        """Where the scope comes FROM, not what it excludes: a
+        `course_offerings` read keyed on this course id.
+
+        It deliberately does not assert `enrollments` went unread — the exam
+        leg reads it legitimately, to turn offerings into the enrollment ids
+        `assignments` is keyed on. The absence assertion belongs one level
+        down, on the resolver itself, and lives in
+        tests/test_academics.py::test_course_offering_ids_never_consults_enrollments."""
         seen: dict = {}
         self._generate(seen)
 

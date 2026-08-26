@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 from services.quiz_signals import (
     CourseScope,
     QuizSignals,
-    course_offering_ids,
     gather_signals,
     prompt_block,
 )
@@ -243,67 +242,6 @@ def test_velocity_matches_what_the_graph_screen_shows():
     assert got == expected, (
         f"quiz prompt would report {got} where the graph screen shows {expected}"
     )
-
-
-class TestCourseOfferingIds:
-    """The keyspace itself (#592 merge gate).
-
-    `sessions.offering_id` and `flashcards.offering_id` are written by
-    `resolve_offering(course_id, …)` — the CURRENT term's offering, created if
-    missing, and never checked against `enrollments`. Reading them back
-    through an enrollment-derived list is a foreign keyspace in the #553/#529
-    shape, and it diverges permanently at the first term rollover.
-    """
-
-    def test_it_reads_every_offering_of_the_course(self):
-        reads = _Reads({
-            "course_offerings": ([{"id": "off-fall"}, {"id": "off-spring"}], 2),
-        })
-        with patch("services.quiz_signals.table", side_effect=reads):
-            assert course_offering_ids("c1") == ["off-fall", "off-spring"]
-
-        assert reads.calls["course_offerings"][0]["filters"] == {
-            "course_id": "eq.c1"
-        }
-
-    def test_it_never_consults_enrollments(self):
-        """The divergence, stated as a query shape. Ownership on both signal
-        tables comes from `user_id`, so intersecting with enrollments adds no
-        safety — it only subtracts the offerings the writers actually use."""
-        reads = _Reads({
-            "course_offerings": ([{"id": "off-fall"}, {"id": "off-spring"}], 2),
-        })
-        with patch("services.quiz_signals.table", side_effect=reads):
-            course_offering_ids("c1")
-
-        assert "enrollments" not in reads.calls
-
-    def test_no_course_is_unknown(self):
-        assert course_offering_ids(None) is None
-        assert course_offering_ids("") is None
-
-    def test_a_failing_read_is_unknown_and_LOUD(self, caplog):
-        """A transient PostgREST outage must not look like a student with
-        nothing. At debug this was invisible in production — the exact bug
-        class this module exists to end, one layer up."""
-        reads = _Reads(raises={"course_offerings"})
-        with (
-            patch("services.quiz_signals.table", side_effect=reads),
-            caplog.at_level("WARNING", logger="services.quiz_signals"),
-        ):
-            assert course_offering_ids("c1") is None
-
-        assert any(
-            r.levelname == "WARNING" and "offering resolution failed" in r.message
-            for r in caplog.records
-        ), "a real DB failure must reach the operator, not just a debug line"
-
-    def test_a_truncated_read_is_unknown_not_a_partial_list(self):
-        """Every signal keyed on this scope would undercount against a
-        truncated offering list — and report the undercount as a fact."""
-        reads = _Reads({"course_offerings": ([{"id": "off-1"}], 5000)})
-        with patch("services.quiz_signals.table", side_effect=reads):
-            assert course_offering_ids("c1") is None
 
 
 class TestSharedScope:

@@ -53,8 +53,10 @@ sessions AS A FACT, with no F5 report to catch it (the offering list is not
 empty, just wrong).
 
 So the scope here is **every offering of the abstract course**
-(`course_offering_ids`), which is the exact closure of what those writers can
-stamp. It costs one read instead of two, and ownership is not weakened by it:
+(`services.academics.course_offering_ids`, which lives there because CLAUDE.md
+names that module as the single home for term/offering/enrollment
+resolution). That is the exact closure of what those writers can stamp; it
+costs one read instead of two, and ownership is not weakened by it, because
 both tables carry `user_id` and both reads filter on it. What the enrollment
 intersection was adding was not safety — it was the divergence.
 
@@ -100,14 +102,6 @@ _TUTOR_WINDOW_DAYS = 14
 #: reports unknown rather than "not recently tutored".
 _TUTOR_SESSION_SCAN = 5
 _TUTOR_MESSAGE_SCAN = 120
-
-#: Cap on the offering read. A course has one offering per (term, section), so
-#: this is far above any real catalog row — it exists so a pathological one
-#: cannot build an unbounded `in.(…)` filter. Overrunning it reports the scope
-#: UNKNOWN rather than a partial list, because a partial offering list is an
-#: undercount of every signal keyed on it, presented as a fact.
-_OFFERING_SCAN_LIMIT = 200
-
 
 class CourseScope(NamedTuple):
     """How this student's course-keyed rows can be found.
@@ -343,52 +337,6 @@ def _in_flight(user_id: str, concept_node_id: str) -> int | None:
 #: module and the exam line one sentence away in the same prompt agree about
 #: what "yesterday" means. See `services/timestamps.py`.
 _days_since = calendar_days_since
-
-
-def course_offering_ids(course_id: str | None) -> list[str] | None:
-    """EVERY offering of an abstract course, or None if we couldn't tell.
-
-    This is the keyspace `sessions.offering_id` and `flashcards.offering_id`
-    are actually written in — see the module docstring. Not the student's
-    enrollments: those diverge from what the writers stamp the moment a term
-    rolls over, and ownership on both tables comes from `user_id` anyway, so
-    the intersection was subtracting correctness rather than adding safety.
-
-    A never-raising wrapper, so the quiz route can resolve the scope ONCE, up
-    front, and hand the same answer to every leg that needs it — the signals
-    here and `exam_proximity`, which narrows it back to enrollments itself.
-
-    A read that overruns `_OFFERING_SCAN_LIMIT` returns None rather than the
-    partial list: every signal keyed on this scope would silently undercount
-    against a truncated one, and report the undercount as a fact.
-    """
-    if not course_id:
-        return None
-    try:
-        rows, total = table("course_offerings").select_with_count(
-            "id", filters={"course_id": f"eq.{course_id}"},
-            limit=_OFFERING_SCAN_LIMIT,
-        )
-    except Exception:
-        # WARNING, not debug. This is a real DB failure on the request path,
-        # and at debug it is invisible in production — a transient PostgREST
-        # outage would look exactly like a student with nothing, which is the
-        # bug class this whole module is written against. The caller's own
-        # exception branch cannot see it: this never raises, by contract.
-        logger.warning(
-            "quiz signals: offering resolution failed for course=%s; the "
-            "course-scoped signals report unknown", course_id, exc_info=True,
-        )
-        return None
-    ids = [r["id"] for r in (rows or []) if r.get("id")]
-    if total > len(ids):
-        logger.warning(
-            "quiz signals: course=%s has %s offerings, over the %s scan cap; "
-            "reporting the scope unknown rather than a partial one",
-            course_id, total, _OFFERING_SCAN_LIMIT,
-        )
-        return None
-    return ids
 
 
 def _report_dark_scope(
