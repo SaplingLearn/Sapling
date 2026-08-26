@@ -60,13 +60,28 @@ class GenerateQuizBody(BaseModel):
     # through to whatever SAPLING_MODEL_QUIZ resolves to (default
     # gemini-2.5-flash-lite per ADR 0008).
     model_pref: Optional[Literal["fast", "smart"]] = None
-    # DEPRECATED (#541 C3, removal tracked in #546): when true (the default
-    # the current QuizPanel needs), the response's per-option dicts carry
-    # `correct` booleans — the full answer key, client-side. Removing the
-    # key is a hard requirement of the #537 revamp: the new client grades
-    # through POST /api/quiz/attempts/{id}/answer instead. Every keyed
-    # response is logged so we can see when usage reaches zero.
-    include_answer_key: bool = True
+    # DEPRECATED (#541 C3; default flipped false #546 — 2026-08-23).
+    #
+    # THE canonical account of this flag's lifecycle: every other site that
+    # touches it points here rather than restating it, because six copies of
+    # this paragraph is six things to update when the flag finally goes.
+    #
+    # When true, the response's per-option dicts carry `correct` booleans —
+    # the full answer key, client-side. The #537 client already grades
+    # through POST /api/quiz/attempts/{id}/answer and has sent
+    # `include_answer_key: false` on every generate since it shipped, so the
+    # flag now defaults to the keyless shape that client has been using all
+    # along. The true branch stays accepted for one release for any
+    # straggler caller before the parameter itself is deleted.
+    #
+    # That deletion is gated on telemetry, not on a calendar: every generate
+    # that opts in emits `quiz.answer_key_served`, and every one that omits
+    # the field entirely emits `quiz.answer_key_flag_omitted`, both countable
+    # in the #375 admin-analytics by_event_type rollup. When the served count
+    # is zero across a release, the parameter goes. See
+    # routes/quiz.py::_record_answer_key_flag for why the two populations get
+    # separate event types.
+    include_answer_key: bool = False
 
 
 class AnswerQuestionBody(BaseModel):

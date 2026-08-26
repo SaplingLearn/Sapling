@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
 import { courseInTerm } from "@/lib/useActiveSemester";
 import type { GraphEdge, GraphNode } from "@/lib/types";
-import { describeConcept, getAttempt, listAttempts } from "./api";
+import { abandonAttempt, describeConcept, getAttempt, listAttempts } from "./api";
 import { describeQuizError, type QuizError } from "./errors";
 import {
   alternativesOf,
@@ -33,7 +33,7 @@ import {
   rankCandidates,
   type Candidate,
 } from "./proposals";
-import { isDismissed, loadSession } from "./session";
+import { dismissAttempt, isDismissed, loadSession } from "./session";
 import type { EntryRequest } from "./source";
 import type { AttemptDetail, AttemptSummary, QuizSession } from "./types";
 
@@ -88,6 +88,8 @@ export interface QuizHome {
    *  card too, which this name implies it is not. */
   primaryDescription: string | null;
   refresh(): void;
+  /** Close an unfinished attempt for good — the resume strip's Discard. */
+  discard(attemptId: string): void;
 }
 
 /** The fallback definition when `concept-description` is slow or fails (R-8),
@@ -106,8 +108,10 @@ export function fallbackDefinition(candidate: Candidate | null, connected: numbe
  * — but it is only a hint, and `GET /attempts/{id}` is what decides whether the
  * attempt is really resumable (it may have been submitted elsewhere or swept
  * past the 24h TTL). The history page then covers the other-device case, where
- * this browser has no record at all. Discarded ids are skipped: there is no
- * abandon endpoint, so a discard is client-side only (gap G4).
+ * this browser has no record at all. Locally dismissed ids are skipped before
+ * either pass spends a request on them — `discard` writes that flag the instant
+ * the student presses the button, ahead of the abandon call that makes it
+ * durable (G4).
  */
 async function discoverResumable(
   attempts: AttemptSummary[],
@@ -171,6 +175,48 @@ export function useQuizHome(
   const [nonce, setNonce] = useState(0);
 
   const refresh = useCallback(() => setNonce(n => n + 1), []);
+
+  /**
+   * Discard an unfinished attempt (G4): drop it from the strip here, and close
+   * it server-side.
+   *
+   * `POST /attempts/{id}/abandon` is the durable half — it stamps
+   * `abandoned_at`, so a reload and the student's other devices stop offering
+   * the attempt (see `routes/quiz.py::abandon_attempt` for why that endpoint
+   * exists). Everything else in here is about what THIS screen shows in the
+   * meantime.
+   *
+   * NO `refresh()`. It used to fire one synchronously beside the POST, which
+   * re-read courses + graph + history + a `getAttempt` per open attempt (and
+   * re-fired `describeConcept`, since `cardConceptId` transits null through
+   * the reload) — a full skeleton flash to change one row. Worse, the re-read
+   * routinely OVERTOOK the write and came back `in_progress`, leaving the
+   * strip hidden only by the localStorage flag: the single point of failure
+   * G4 exists to retire, and one that fails outright in a private window.
+   * Clearing the slot directly is both cheaper and the honest ordering —
+   * nothing else on this screen derives from an unfinished attempt (the
+   * ranking and the "missed N last time" join read COMPLETED attempts only,
+   * `proposals.ts`).
+   *
+   * `dismissAttempt` still runs, and still first: it is what keeps the
+   * attempt hidden across the NEXT load, before the abandon lands or if it
+   * never does.
+   *
+   * A failed abandon is swallowed rather than surfaced. The student said
+   * discard; putting the quiz back on screen — or a red toast over a discard
+   * that visibly worked — would both be worse answers than letting
+   * `_sweep_abandoned` collect the row on its own.
+   */
+  const discard = useCallback((attemptId: string) => {
+    if (!attemptId) return;
+    dismissAttempt(attemptId);
+    setResumable(prev =>
+      prev?.value?.attempt.quiz_id === attemptId ? { ...prev, value: null } : prev,
+    );
+    void abandonAttempt(attemptId).catch(err => {
+      console.warn("quiz: abandon failed; the attempt will expire on its own", err);
+    });
+  }, []);
 
   // "Loading" is DERIVED from whether the resolved load answers the request
   // currently on screen, rather than stored and reset at the top of the effect:
@@ -340,5 +386,6 @@ export function useQuizHome(
     cardDescription,
     primaryDescription: cardDescription,
     refresh,
+    discard,
   };
 }

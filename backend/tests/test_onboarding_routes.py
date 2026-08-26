@@ -49,6 +49,54 @@ class TestSearchCourses:
         assert res.status_code == 200
         assert len(res.json()["courses"]) == 2
 
+    def _filters_for(self, q: str) -> dict:
+        captured = {}
+        mock = MagicMock()
+
+        def select(columns="*", filters=None, **kw):
+            captured.update(filters or {})
+            return []
+
+        mock.select.side_effect = select
+        with patch("routes.onboarding.table", return_value=mock):
+            res = client.get("/api/onboarding/courses", params={"q": q})
+        assert res.status_code == 200
+        return captured
+
+    def test_a_comma_in_the_query_cannot_break_the_logic_tree(self):
+        """#592 review C11. The query is user input interpolated into a
+        PostgREST `or=(…)` tree, where a bare value ends at the first comma or
+        paren — so searching for "Ethics, Law" built two broken operands and
+        returned nonsense (or a 400) rather than the course."""
+        clause = self._filters_for("Ethics, Law")["or"]
+
+        assert clause == (
+            '(course_name.ilike."%Ethics, Law%",'
+            'course_code.ilike."%Ethics, Law%")'
+        )
+
+    def test_like_metacharacters_in_the_query_are_not_wildcards(self):
+        """`_` is LIKE's any-single-character wildcard and `%` is any run of
+        them, so typing either turned the search into a pattern over the whole
+        catalog. Only the two `%` the route adds are live."""
+        clause = self._filters_for("CS_1 100%")["or"]
+
+        # `\\_`, not `\_`: the LIKE escape runs first and the PostgREST quote
+        # then doubles its backslashes. The other order emits a bare `\%` that
+        # PostgREST unescapes straight back into a live wildcard.
+        assert clause == (
+            r'(course_name.ilike."%CS\\_1 100\\%%",'
+            r'course_code.ilike."%CS\\_1 100\\%%")'
+        )
+
+    def test_a_quote_in_the_query_is_escaped_rather_than_closing_the_value(self):
+        clause = self._filters_for('say "hi"')["or"]
+
+        assert clause.startswith(r'(course_name.ilike."%say \"hi\"%"')
+
+    def test_a_blank_query_adds_no_filter_at_all(self):
+        assert "or" not in self._filters_for("   ")
+
     def test_collapses_duplicate_course_codes(self):
         # The catalog can hold two DISTINCT abstract courses (different ids,
         # possibly different names) that share a course_code — e.g. the seed-*
