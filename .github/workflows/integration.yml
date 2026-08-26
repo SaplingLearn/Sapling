@@ -21,96 +21,22 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      # Supabase's ports sit INSIDE Linux's default ephemeral source-port range
-      # (32768-60999), so any outbound TCP connection this job makes can be
-      # handed 54322 as its source port — and Docker's later bind of
-      # 0.0.0.0:54322 then fails with "address already in use". That is what
-      # killed run 32624263094 on 2026-08-23 (push to main, 9f34454c): its log
-      # shows `supabase start` finishing dozens of image pulls and hitting the
-      # bind error in the same second, and the identical commit re-run 40
-      # minutes later passed. Rare, load-dependent, and indistinguishable from
-      # a real failure in the summary view — a day of signal went to it.
+      # Supabase's ports sit INSIDE Linux's default ephemeral source-port range,
+      # so an outbound connection this job makes can be handed 54322 as its
+      # source port and Docker's later bind of 0.0.0.0:54322 then fails with
+      # "address already in use" — which killed run 32624263094 on 2026-08-23
+      # (push to main, 9f34454c) while the identical commit passed on re-run.
+      # scripts/preflight-ports.sh carries the whole diagnosis and mechanism in
+      # its header: it reserves those ports against AUTOMATIC assignment (an
+      # explicit bind() still works, so Docker can publish them) and names
+      # whatever already holds one. e2e.yml calls the same script.
       #
-      # `ip_local_reserved_ports` excludes ports from AUTOMATIC assignment only;
-      # explicit bind() is unaffected, so Docker can still publish them. Run
-      # right after checkout — the earliest point config.toml exists — so
-      # setup-python's and setup-cli's downloads are covered too. The list comes
-      # from supabase/config.toml rather than a literal, so enabling the pooler
-      # or moving a port cannot silently un-protect it.
-      #
-      # Reserving cannot free a socket allocated before this step, so the second
-      # half diagnoses instead: leftover containers are removed, a foreign
-      # LISTENer fails the job by name (we never kill what isn't ours), and a
-      # draining outbound socket is waited out. The wait is 30s, not the full
-      # 60s TIME-WAIT: a listener's SO_REUSEADDR steps over TIME-WAIT anyway,
-      # the reservation is the actual fix, and this half is the diagnostic net —
-      # so it warns and proceeds rather than failing on a guess.
+      # Placed right after checkout — the earliest point config.toml exists —
+      # so setup-python's and setup-cli's downloads are covered by the
+      # reservation too, not just `supabase start`'s image pulls.
       - name: Preflight (reserve the Supabase ports)
         working-directory: .
-        run: |
-          ports=$(awk -F= '
-            /^[[:space:]]*#/                        { next }
-            /^[[:space:]]*[a-z_]*port[[:space:]]*=/ { v = $2 + 0; if (v >= 32768 && v <= 60999) print v }
-          ' supabase/config.toml | sort -un | paste -sd, -)
-          if [ -z "$ports" ]; then
-            echo "preflight: FAIL - no ports parsed out of supabase/config.toml"
-            exit 1
-          fi
-
-          want=$(printf '%s,%s' "$(cat /proc/sys/net/ipv4/ip_local_reserved_ports)" "$ports" \
-                 | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -)
-          echo "preflight: ephemeral source-port range $(tr -s '[:blank:]' '-' < /proc/sys/net/ipv4/ip_local_port_range)"
-          if sudo sysctl -qw "net.ipv4.ip_local_reserved_ports=$want"; then
-            echo "preflight: reserved $want"
-          else
-            echo "preflight: WARNING - could not set net.ipv4.ip_local_reserved_ports; collisions stay possible"
-          fi
-
-          port_re=":(${ports//,/|})\$"
-          pub_re=":(${ports//,/|})->"
-          leftovers=$(docker ps --format '{{.ID}} {{.Names}} {{.Ports}}' | awk -v re="$pub_re" '$0 ~ re' || true)
-          if [ -n "$leftovers" ]; then
-            echo "preflight: removing leftover container(s) publishing Supabase ports:"
-            printf '%s\n' "$leftovers" | sed 's/^/  /'
-            printf '%s\n' "$leftovers" | awk '{print $1}' | xargs -r docker rm -f \
-              || echo "preflight: WARNING - could not remove leftover container(s); the LISTEN check below names whatever survived"
-          fi
-
-          drain_timeout=30
-          waited=0
-          clean=yes
-          while :; do
-            busy=$(sudo ss -H -tanp 2>/dev/null | awk -v re="$port_re" '$4 ~ re' || true)
-            [ -n "$busy" ] || break
-
-            listening=$(printf '%s\n' "$busy" | awk '$1 == "LISTEN"')
-            if [ -n "$listening" ]; then
-              echo "preflight: FAIL - a foreign process is LISTENing on a Supabase port"
-              echo "  (state / recv-q / send-q / local / peer / process)"
-              printf '%s\n' "$listening" | sed 's/^/  /'
-              exit 1
-            fi
-
-            if [ "$waited" -eq 0 ]; then
-              echo "preflight: transient socket(s) hold a Supabase port; waiting up to ${drain_timeout}s to drain:"
-              printf '%s\n' "$busy" | sed 's/^/  /'
-            fi
-            if [ "$waited" -ge "$drain_timeout" ]; then
-              echo "preflight: WARNING - still held after ${drain_timeout}s:"
-              printf '%s\n' "$busy" | sed 's/^/  /'
-              echo "preflight: continuing; if 'supabase start' now fails with 'address already in use', this is why."
-              clean=no
-              break
-            fi
-            sleep 2
-            waited=$((waited + 2))
-          done
-
-          if [ "$clean" = yes ]; then
-            echo "preflight: ports $ports free (reserved from ephemeral range)"
-          else
-            echo "preflight: ports $ports NOT all free (reserved from ephemeral range) - see WARNING above"
-          fi
+        run: scripts/preflight-ports.sh
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -118,8 +44,18 @@ jobs:
         with:
           version: latest
       - name: Start Supabase
-        run: supabase start
         working-directory: .
+        # Mirrors scripts/e2e-up.sh:219-226, the other runner of this command:
+        # a stale project makes the CLI claim it is "already running" and then
+        # fail, and `supabase stop` keeps the DB volume, so a retry loses
+        # nothing. It also covers the preflight's admitted give-up path — the
+        # collision that killed 32624263094 passed on a plain re-run.
+        run: |
+          if ! supabase start; then
+            echo "supabase start failed — retrying once after supabase stop"
+            supabase stop >/dev/null 2>&1 || true
+            supabase start
+          fi
       - name: Install deps
         run: pip install -r requirements.txt
       # Ordering is intentional: db.migrate reads SUPABASE_DB_URL inline and
