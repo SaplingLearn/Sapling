@@ -21,6 +21,22 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      # Supabase's ports sit INSIDE Linux's default ephemeral source-port range,
+      # so an outbound connection this job makes can be handed 54322 as its
+      # source port and Docker's later bind of 0.0.0.0:54322 then fails with
+      # "address already in use" — which killed run 32624263094 on 2026-08-23
+      # (push to main, 9f34454c) while the identical commit passed on re-run.
+      # scripts/preflight-ports.sh carries the whole diagnosis and mechanism in
+      # its header: it reserves those ports against AUTOMATIC assignment (an
+      # explicit bind() still works, so Docker can publish them) and names
+      # whatever already holds one. e2e.yml calls the same script.
+      #
+      # Placed right after checkout — the earliest point config.toml exists —
+      # so setup-python's and setup-cli's downloads are covered by the
+      # reservation too, not just `supabase start`'s image pulls.
+      - name: Preflight (reserve the Supabase ports)
+        working-directory: .
+        run: scripts/preflight-ports.sh
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -28,8 +44,18 @@ jobs:
         with:
           version: latest
       - name: Start Supabase
-        run: supabase start
         working-directory: .
+        # Mirrors scripts/e2e-up.sh:219-226, the other runner of this command:
+        # a stale project makes the CLI claim it is "already running" and then
+        # fail, and `supabase stop` keeps the DB volume, so a retry loses
+        # nothing. It also covers the preflight's admitted give-up path — the
+        # collision that killed 32624263094 passed on a plain re-run.
+        run: |
+          if ! supabase start; then
+            echo "supabase start failed — retrying once after supabase stop"
+            supabase stop >/dev/null 2>&1 || true
+            supabase start
+          fi
       - name: Install deps
         run: pip install -r requirements.txt
       # Ordering is intentional: db.migrate reads SUPABASE_DB_URL inline and

@@ -130,6 +130,37 @@ def test_generate_writes_a_real_attempt_row_with_ciphertext_questions(
     assert "recursion" not in row["questions_json"].lower()
 
 
+def test_generate_default_response_never_reveals_the_correct_option(
+    authed_client, db_conn, assert_keyless_projection
+):
+    """With `include_answer_key` omitted entirely — the shape every real
+    caller now gets (see GenerateQuizBody.include_answer_key, #546) —
+    nothing anywhere in the response may let a client determine which
+    option is correct, and what IS served must be the faithful keyless
+    projection of what was stored.
+
+    Grounded against the attempt's REAL stored answer key, decrypted
+    straight from Postgres via the same helper the other tests in this file
+    use: not a hand-built fixture, and not merely "the field named
+    `correct` is absent" (a renamed or restructured leak would slip past a
+    check that narrow).
+
+    The assertions themselves live in the `assert_keyless_projection`
+    fixture (tests/conftest.py), shared with the hermetic twin in
+    tests/test_quiz_answers_c.py so the two lanes cannot drift; its
+    docstring carries the non-circularity argument for the hard-coded
+    allowlists it uses."""
+    from services.encryption import decrypt_json_column
+
+    r = _generate(authed_client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = _attempt_row(db_conn, body["quiz_id"], "questions_json")
+    assert row is not None, "generate returned 200 but wrote no attempt row"
+    assert_keyless_projection(body, decrypt_json_column(row["questions_json"]))
+
+
 @pytest.mark.parametrize("difficulty", _advertised_difficulties())
 def test_generate_accepts_every_difficulty_the_config_advertises(
     authed_client, db_conn, difficulty

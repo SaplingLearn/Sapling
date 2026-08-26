@@ -707,6 +707,17 @@ class TestQuizAgentSuccess:
     """Happy path: quiz_agent.run returns a Quiz, route persists + responds."""
 
     def test_returns_agent_output_in_legacy_wire_shape(self):
+        """The keyed wire shape a caller that explicitly opts in still
+        gets: per-option `correct` booleans and the explanation.
+
+        "Legacy" is about the flag, not about grading — `submit_quiz`
+        grades from the attempt's stored `questions_json` and consumes only
+        `question_id`/`selected_label` off the payload, so it never needed
+        this shape and doesn't now. What this pins is the deprecated opt-in
+        path staying intact while the grace window is open (see
+        GenerateQuizBody.include_answer_key, #546); the keyless default
+        every real caller gets is covered in
+        tests/test_quiz_answers_c.py::TestIncludeAnswerKey."""
         fake_quiz = Quiz(questions=[
             QuizQuestion(
                 question="What is 2+2?",
@@ -731,6 +742,7 @@ class TestQuizAgentSuccess:
                 "num_questions": 1,
                 "difficulty": "easy",
                 "use_shared_context": False,
+                "include_answer_key": True,
             })
 
         assert r.status_code == 200
