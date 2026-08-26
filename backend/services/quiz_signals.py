@@ -15,30 +15,48 @@ The two the first pass deferred now land as well, at the granularity the data
 actually supports rather than the one the issue's wording implied:
 
   * flashcard review state — **COURSE-level, not concept-level.** `flashcards`
-    carries no concept link, and `topic` is free text that every writer sets
-    to the COURSE name (`routes/flashcards.py` stores `body.topic`; its only
-    caller, `Study.tsx`, passes `course.course_name`, and filters its own list
-    by that same name). A concept-name match is therefore a permanent zero.
-    What IS honest is "how many cards does this student have for this course,
-    how many have they reviewed, and how long since the last review" — so
-    that is what this reads. The field names, the F6 dimension names and the
-    prompt line all say COURSE out loud; a line the model read as
-    concept-level would be a lie about the student, which is precisely why
+    carries no concept link at all, so a concept-name match would be a
+    permanent zero. What IS honest is "how many cards does this student have
+    for this course, how many have they reviewed, and how long since the last
+    review" — so that is what this reads. The field names, the F6 dimension
+    names and the prompt line all say COURSE out loud; a line the model read
+    as concept-level would be a lie about the student, which is precisely why
     this half was deferred rather than shipped as specified.
   * tutor recency — days since the last tutor turn that touched THIS concept,
-    plus how many tutor sessions this course has had in the last 14 days.
-    `messages` has no `user_id` (it is session-scoped), so this is one bounded
-    owner-scoped `sessions` read followed by one `messages` read over the ids
-    it returned, matching the concept inside `graph_update_json`.
+    plus how many tutor sessions this course has had lately. `messages` has no
+    `user_id` (it is session-scoped), so this is one bounded owner-scoped
+    `sessions` read followed by one `messages` read over the ids it returned,
+    matching the concept inside `graph_update_json`.
 
-Both of the new ones key on the OFFERING (`flashcards.offering_id`,
-`sessions.offering_id`) while the route holds the abstract `course_id`;
-`services/academics.py` bridges the two. Passing a course id where an offering
-id was expected is exactly how the misconceptions tool read a foreign keyspace
-for months (#553), which is why that resolution is one `CourseScope` shared by
-both signals rather than an inline filter repeated per signal — and why the
-quiz route can resolve it ONCE and inject it, since two of its other
-concurrent legs already ask the identical (uncached) question.
+The keyspace, which is the whole difficulty
+-------------------------------------------
+Both new signals key on the OFFERING (`flashcards.offering_id`,
+`sessions.offering_id`) while the route holds the abstract `course_id`, and
+neither table has a `course_id` column to fall back on (0025 dropped and
+recreated both without one). So the bridge has to match how the rows are
+WRITTEN, and every writer resolves it the same enrollment-agnostic way:
+
+  * `sessions` — `resolve_offering(course_id, create=True)`, the CURRENT
+    term's offering, created if missing (`routes/learn.py:431`, `:882`);
+  * imported `flashcards` — `resolve_offering(course_id)`, current term
+    falling back to any offering of the course (`routes/flashcards.py:419`);
+  * AI-generated `flashcards` — **no `offering_id` at all** (the insert at
+    `routes/flashcards.py:248` omits the column), only a free-text `topic`.
+
+Not one of them consults `enrollments`. Reading them back through an
+enrollment-derived offering list — `user_offering_ids_for_course`, the obvious
+helper — is therefore a foreign keyspace in the #553/#529 shape: after a term
+rollover the two diverge permanently, because the no-retake rule keeps the
+enrollment in the term the student took the course in while new sessions and
+imports land on the current term's offering. An engaged student would read 0
+sessions AS A FACT, with no F5 report to catch it (the offering list is not
+empty, just wrong).
+
+So the scope here is **every offering of the abstract course**
+(`course_offering_ids`), which is the exact closure of what those writers can
+stamp. It costs one read instead of two, and ownership is not weakened by it:
+both tables carry `user_id` and both reads filter on it. What the enrollment
+intersection was adding was not safety — it was the divergence.
 
 Per the issue, these land BEHIND the F6 measurement: every signal records its
 own prompt dimension, so `llm_usage.prompt_tokens` can be attributed and the
@@ -57,8 +75,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
-from db.connection import table
-from services.academics import user_offering_ids_for_course
+from db.connection import like_literal, pg_quote_value, table
+from services.timestamps import calendar_days_since
 from services.tool_signals import Expect, report_empty_result
 
 logger = logging.getLogger(__name__)
@@ -76,33 +94,50 @@ _FLASHCARD_SCAN_LIMIT = 200
 #: How far back "recently tutored" looks, matching the velocity window so the
 #: two signals in this block describe the same stretch of time.
 _TUTOR_WINDOW_DAYS = 14
-#: Most recent sessions in that window scanned for concept touches, and the
-#: message cap across them. Both are bounds, not filters: the session COUNT is
-#: exact regardless (`select_with_count`), and a concept not found inside the
-#: scan reports unknown rather than "not recently tutored".
+#: Most recent sessions scanned for concept touches, and the message cap
+#: across them. Both are bounds, not filters: the session COUNT is exact
+#: regardless (`select_with_count`), and a concept not found inside the scan
+#: reports unknown rather than "not recently tutored".
 _TUTOR_SESSION_SCAN = 5
 _TUTOR_MESSAGE_SCAN = 120
+
+#: Cap on the offering read. A course has one offering per (term, section), so
+#: this is far above any real catalog row — it exists so a pathological one
+#: cannot build an unbounded `in.(…)` filter. Overrunning it reports the scope
+#: UNKNOWN rather than a partial list, because a partial offering list is an
+#: undercount of every signal keyed on it, presented as a fact.
+_OFFERING_SCAN_LIMIT = 200
 
 
 class CourseScope(NamedTuple):
     """How this student's course-keyed rows can be found.
 
     Two keys because neither alone finds the collection: imported flashcards
-    carry an `offering_id`, AI-generated ones never do and take the course
-    NAME as their topic.
+    carry an `offering_id`, AI-generated ones never do and take a free-text
+    `topic` — which the Study screen matches against the course name.
 
-    `offering_ids=None` means the resolution itself could not be done, and is
-    distinct from `[]` — "resolved, and this student has no offering of this
-    course", which is a fact and a suspicious one (see `_report_dark_scope`).
+    `offering_ids` is **every offering of the abstract course**, not this
+    student's enrollments — see the module docstring for why that distinction
+    is the whole bug. `None` means the resolution itself could not be done,
+    and is distinct from `[]`: "resolved, and this course has no offering at
+    all", which is a fact and a suspicious one (see `_report_dark_scope`).
 
-    Public because the caller can supply it: `user_offering_ids_for_course` is
-    two uncached reads and the `courses` row is a third, all of which the quiz
-    generation path already needs elsewhere. Resolving once and passing it in
-    is the difference between three reads and six.
+    `name_failed` is the same tri-state one level over: a `courses` read that
+    RAISED leaves `course_name=None`, which is indistinguishable from a course
+    that has no name — and the flashcard read needs to tell those apart,
+    because the name is the only key that reaches an AI-generated card.
+
+    Public, and the caller builds it: the quiz route already reads this
+    course's row for grounding and needs the offerings in a second concurrent
+    leg, so resolving once and passing it in is the difference between three
+    reads and six. It is a required argument of `gather_signals` rather than
+    an optional one for the same reason the fields are tri-state — a caller
+    that silently got no scope would get silently unknown signals.
     """
 
     offering_ids: list[str] | None = None
     course_name: str | None = None
+    name_failed: bool = False
 
 
 class _Flashcards(NamedTuple):
@@ -161,10 +196,11 @@ def gather_signals(
     user_id: str,
     concept_node_id: str,
     *,
+    scope: CourseScope,
     times_studied: Any = None,
     course_id: str | None = None,
     concept_name: str = "",
-    scope: CourseScope | None = None,
+    has_graph: bool | None = None,
 ) -> QuizSignals:
     """Collect the cheap signals for one (student, concept).
 
@@ -174,15 +210,20 @@ def gather_signals(
     learn something we were already told. `course_id` and `concept_name` come
     from that same row for the same reason.
 
-    `scope` is the same idea one level up: its three reads are ones the quiz
-    route already makes in concurrent legs (see `CourseScope`). Omit it and
-    this resolves the scope itself, so every other caller keeps working.
+    `scope` is the same idea one level up, and is REQUIRED: its reads are ones
+    the quiz route already makes in concurrent legs (see `CourseScope`), and a
+    default would let a caller get silently-unknown course signals by
+    forgetting an argument — the failure mode this whole module is written
+    against.
 
-    The `plausible=True` in `_report_dark_scope` rests on a precondition the
-    quiz route holds and any future caller must too: it reached here by way of
-    an owner-scoped `graph_nodes` read that produced this `course_id`, so the
-    student demonstrably has graph data in this course. It is a fact, not a
-    guess.
+    `has_graph` is what the caller knows about this student's graph in this
+    course, for the F5 dark-scope report below. `True` skips a probe that
+    could only return what the caller just read; `None` means "I don't know,
+    go and check". Only assert it if you actually looked: `generate_quiz`
+    reads an owner-scoped `graph_nodes` row on its way in, so it holds the
+    fact — but `scripts/benchmark_quiz.py` calls the same generator with a
+    fixture user that has no graph at all, and an assertion baked into this
+    module would have made every benchmark run write a false discrepancy.
 
     Without a `course_id` the two course-keyed signals are SKIPPED rather than
     guessed at: there is no other key that finds this student's flashcards or
@@ -192,19 +233,24 @@ def gather_signals(
     flashcards = _Flashcards()
     tutor = _Tutor()
     if course_id:
-        if scope is None:
-            scope = _course_scope(user_id, course_id)
         if scope.offering_ids == []:
             # Resolved, and found none — a fact, and a suspicious one. `None`
             # (couldn't resolve) is a different situation and stays quiet.
-            _report_dark_scope(user_id, course_id)
+            _report_dark_scope(user_id, course_id, has_graph)
         if scope.offering_ids is not None:
             # BOTH signals need the offering leg, even the flashcard one that
             # can also match on the course name: with the offerings unknown,
             # a topic-only match would silently omit every imported deck and
             # report the remainder as though it were the whole collection.
             # A partial count presented as a fact is worse than no count.
-            flashcards = _flashcards(user_id, scope)
+            #
+            # The flashcard leg needs the NAME leg to be trustworthy too, for
+            # the mirror-image reason: a `courses` read that RAISED leaves an
+            # offering-only tree, which cannot see an AI-generated card (those
+            # carry no `offering_id`), so it would report a subset of the
+            # collection — or a verified zero — as the whole answer.
+            if not scope.name_failed:
+                flashcards = _flashcards(user_id, scope)
             tutor = _tutor_recency(user_id, scope, concept_name)
 
     return QuizSignals(
@@ -293,73 +339,81 @@ def _in_flight(user_id: str, concept_node_id: str) -> int | None:
 
 
 
-def _days_since(stamp: Any) -> int | None:
-    """Whole days since a stored timestamp, or None if it can't be read.
-
-    Parsing goes through `routes.quiz._parse_ts` rather than a second
-    `fromisoformat` here: it already documents the trap (a naive value from an
-    out-of-band write compares against an aware `now()` with a TypeError that
-    an `except ValueError` does not catch) and already resolves it by assuming
-    UTC. Two copies of that rule is how one of them ends up without the fix.
-    """
-    from routes.quiz import _parse_ts
-
-    parsed = _parse_ts(stamp)
-    if parsed is None:
-        return None
-    elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
-    # Clamped: clock skew on a just-written row would otherwise produce "-1
-    # days ago", which reads as a data bug in the prompt.
-    return max(0, int(elapsed // 86400))
+#: Whole CALENDAR days since a stored timestamp — the shared rule, so this
+#: module and the exam line one sentence away in the same prompt agree about
+#: what "yesterday" means. See `services/timestamps.py`.
+_days_since = calendar_days_since
 
 
-def offering_scope(user_id: str, course_id: str | None) -> list[str] | None:
-    """This student's offerings of `course_id`, or None if we couldn't tell.
+def course_offering_ids(course_id: str | None) -> list[str] | None:
+    """EVERY offering of an abstract course, or None if we couldn't tell.
 
-    A never-raising wrapper so the quiz route can resolve the scope ONCE, up
+    This is the keyspace `sessions.offering_id` and `flashcards.offering_id`
+    are actually written in — see the module docstring. Not the student's
+    enrollments: those diverge from what the writers stamp the moment a term
+    rolls over, and ownership on both tables comes from `user_id` anyway, so
+    the intersection was subtracting correctness rather than adding safety.
+
+    A never-raising wrapper, so the quiz route can resolve the scope ONCE, up
     front, and hand the same answer to every leg that needs it — the signals
-    here and `exam_proximity`, which asks the identical uncached question.
+    here and `exam_proximity`, which narrows it back to enrollments itself.
+
+    A read that overruns `_OFFERING_SCAN_LIMIT` returns None rather than the
+    partial list: every signal keyed on this scope would silently undercount
+    against a truncated one, and report the undercount as a fact.
     """
     if not course_id:
         return None
     try:
-        return list(user_offering_ids_for_course(user_id, course_id) or [])
+        rows, total = table("course_offerings").select_with_count(
+            "id", filters={"course_id": f"eq.{course_id}"},
+            limit=_OFFERING_SCAN_LIMIT,
+        )
     except Exception:
-        logger.debug("quiz signals: offering resolution failed", exc_info=True)
+        # WARNING, not debug. This is a real DB failure on the request path,
+        # and at debug it is invisible in production — a transient PostgREST
+        # outage would look exactly like a student with nothing, which is the
+        # bug class this whole module is written against. The caller's own
+        # exception branch cannot see it: this never raises, by contract.
+        logger.warning(
+            "quiz signals: offering resolution failed for course=%s; the "
+            "course-scoped signals report unknown", course_id, exc_info=True,
+        )
         return None
+    ids = [r["id"] for r in (rows or []) if r.get("id")]
+    if total > len(ids):
+        logger.warning(
+            "quiz signals: course=%s has %s offerings, over the %s scan cap; "
+            "reporting the scope unknown rather than a partial one",
+            course_id, total, _OFFERING_SCAN_LIMIT,
+        )
+        return None
+    return ids
 
 
-def _course_scope(user_id: str, course_id: str) -> CourseScope:
-    """Resolve the scope ourselves, for callers that don't supply one."""
-    course_name = None
-    try:
-        rows = table("courses").select(
-            "course_name", filters={"id": f"eq.{course_id}"}, limit=1,
-        ) or []
-        course_name = (rows[0].get("course_name") if rows else None) or None
-    except Exception:
-        logger.debug("quiz signals: course name read failed", exc_info=True)
+def _report_dark_scope(
+    user_id: str, course_id: str, has_graph: bool | None,
+) -> None:
+    """F5: this student has graph nodes in a course that has NO offering.
 
-    return CourseScope(
-        offering_ids=offering_scope(user_id, course_id), course_name=course_name,
-    )
-
-
-def _report_dark_scope(user_id: str, course_id: str) -> None:
-    """F5: this student has graph nodes in this course but no offering of it.
-
-    Everything keyed on the offering — both signals here, and the class
+    Everything keyed on the offering — the tutor signal here, and the class
     misconceptions on the same key — is therefore silently dark for them,
     which is the #553 keyspace shape rather than "this student has nothing
-    yet".
+    yet". Note that this is now a genuinely odd state rather than a routine
+    one: it is a property of the COURSE, not of the student's enrollment, and
+    every path that creates graph data for a course (upload, tutoring)
+    resolves an offering with `create=True` on the way.
 
-    `plausible=True` rather than letting the helper probe: the caller reached
-    this module by way of a `graph_nodes` row it read for this exact user and
-    course, so a `HAS_GRAPH` probe scoped to that course can only return what
-    the route already saw. Running it would be a guaranteed-True round trip on
-    the request path, once per generation, forever. The expectation still
-    ships in the event — it is what a rollup reads to know WHY this was
-    unexpected.
+    `has_graph` is the caller's own knowledge, passed straight through to
+    `plausible`. `True` skips a probe that could only return what the caller
+    just read — a guaranteed-True round trip on the request path, once per
+    generation, forever. `None` lets the probe run, which is what a caller
+    that did NOT read a graph row needs (see `gather_signals`). The
+    expectation ships in the event either way: it is what a rollup reads to
+    know WHY this was unexpected.
+
+    `scope` narrows the probe to this course, so a student with a graph in
+    some OTHER course does not answer the question that was asked.
     """
     report_empty_result(
         "quiz_signals.offerings_for_course",
@@ -367,40 +421,10 @@ def _report_dark_scope(user_id: str, course_id: str) -> None:
         count=0,
         expect=Expect.HAS_GRAPH,
         feature="quiz",
-        plausible=True,
+        plausible=has_graph,
+        scope={"course_id": f"eq.{course_id}"},
         payload={"course_id": course_id},
     )
-
-
-def _pg_quote(value: str) -> str:
-    """Double-quote a value for a PostgREST logic tree.
-
-    Inside `or=(…)` a bare value ends at the first comma or paren, so a course
-    named "Ethics, Law and Society" would parse as two broken operands.
-    Quoting fixes that; `"` and `\\` inside the value are backslash-escaped,
-    as PostgREST's grammar specifies.
-    """
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-#: LIKE's own metacharacters, plus its default escape character. Applied
-#: BEFORE `_pg_quote`, which then doubles the backslashes this introduces for
-#: PostgREST's grammar — the other order would emit a bare `\%` that PostgREST
-#: unescapes to `%` and hands to LIKE as a live wildcard.
-_LIKE_SPECIALS = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
-
-
-def _like_literal(value: str) -> str:
-    """Escape a value so `ilike` matches it verbatim rather than as a pattern.
-
-    `topic.ilike."Math_101"` would otherwise match "Math-101" and "Math 101"
-    too (`_` is LIKE's any-single-character wildcard), and a course with a `%`
-    in its name would match half the student's collection. Course names are
-    catalog data, so this is defence rather than a live bug — with one gap it
-    cannot close: PostgREST rewrites `*` to `%` in like/ilike values itself,
-    before Postgres ever sees the pattern, and offers no escape for it.
-    """
-    return value.translate(_LIKE_SPECIALS)
 
 
 def _flashcards(user_id: str, scope: CourseScope) -> _Flashcards:
@@ -411,30 +435,51 @@ def _flashcards(user_id: str, scope: CourseScope) -> _Flashcards:
     to read, so a concept-scoped version of this would return zero forever.
 
     The course filter is an `or=` logic tree because the two keys that reach a
-    card are different (`offering_id` for imported decks, the course NAME in
-    `topic` for generated ones, which carry no offering at all) and NOT
-    exclusive — a card can match both, so two counted reads would double-count
-    the overlap while a `user_id`-only scan would drag the student's whole
+    card are different and NOT exclusive:
+
+      * `offering_id` — set on IMPORTED cards, to any offering of this course
+        (`routes/flashcards.py:419`);
+      * `topic` — free text on every card, and the ONLY key that reaches an
+        AI-generated one, since that insert omits `offering_id` entirely.
+
+    A card can match both, so two counted reads would double-count the
+    overlap, while a `user_id`-only scan would drag the student's whole
     collection across the wire and cap the count of a course with three cards
     behind a course with four hundred.
+
+    The topic half is a SUBSTRING match, deliberately, because that is what
+    the Study screen does — `Study.tsx` assigns a card to a course with
+    `topic.toLowerCase().includes(courseName.toLowerCase())`. An earlier draft
+    of this used case-insensitive equality on the theory that "every writer
+    sets topic to the course name"; that is true of the generate path (whose
+    only caller passes `course.course_name`) but false of the import path,
+    where `topic` is a text box the student types into. Equality therefore
+    missed every imported deck whose topic was anything but the exact course
+    name, and disagreed with the count the student can see on their own
+    screen.
+
+    Between them the two clauses are a superset of the Study screen's course
+    view — an imported card whose topic does not name the course is one the UI
+    files elsewhere but that the student really did import against this
+    course. That is what the prompt line and the budget doc say is being
+    counted: cards *for this course*, by either key.
 
     `front`/`back` are column-encrypted and never selected: this signal has no
     use for the text.
 
-    The caller guarantees `scope.offering_ids is not None`: a topic-only tree
-    would silently omit every imported deck and report the remainder as the
-    whole collection.
+    The caller guarantees `scope.offering_ids is not None` and
+    `not scope.name_failed`: with either half unknown the surviving clause
+    would report a subset of the collection as the whole of it.
     """
     clauses = []
     if scope.offering_ids:
         clauses.append(f"offering_id.in.({','.join(scope.offering_ids)})")
     if scope.course_name:
-        # `ilike` over an escaped literal is case-insensitive EQUALITY, which
-        # is the drift worth tolerating: both writers store the same
-        # `courses.course_name` string this scope was read from.
-        clauses.append(
-            f"topic.ilike.{_pg_quote(_like_literal(scope.course_name))}"
-        )
+        # `%…%` around an escaped literal: a substring match on the value, not
+        # a pattern built out of it. `like_literal` neutralizes any `%`/`_`
+        # the course name itself contains, so only these two are wildcards.
+        needle = pg_quote_value(f"%{like_literal(scope.course_name)}%")
+        clauses.append(f"topic.ilike.{needle}")
     if not clauses:
         return _Flashcards()
 
@@ -496,12 +541,18 @@ def _oldest_review(rows: list[dict]) -> int | None:
 
 def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tutor:
     """When the tutor last covered THIS concept, and how busy this course has
-    been in the tutor lately.
+    been in the tutor lately (started in the window, or still open).
 
     `messages` is session-scoped and carries no `user_id`, so ownership comes
     from the `sessions` read and the message read is bounded to the ids it
     returned. `content` is column-encrypted and never selected — the concept
     lives in the plaintext `graph_update_json` the tutor's graph tools write.
+
+    `node_mastery_events` would be a cheaper primary read for this — indexed
+    on `(node_id, created_at)`, no name matching, no offering dependency — but
+    only as a supplement: unclassified turns write a NULL `event_type` and a
+    new-node introduction writes no event at all, so a straight swap trades
+    one silent miss for two others. #596 tracks the combination.
     """
     if not scope.offering_ids:
         # Sessions key on the offering only; without one there is no way to
@@ -515,7 +566,16 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
             filters={
                 "user_id": f"eq.{user_id}",
                 "offering_id": f"in.({','.join(scope.offering_ids)})",
-                "started_at": f"gte.{cutoff.isoformat()}",
+                # Started recently OR never finished. `started_at` alone
+                # excludes the dashboard's first-class "Where you left off"
+                # resume flow: a session is not auto-ended and has no age
+                # gate, so one opened three weeks ago and used yesterday reads
+                # as no tutoring at all. Including the open ones widens the
+                # claim, so the prompt line says "or still open" rather than
+                # asserting they all happened inside the window.
+                "or": (
+                    f"(started_at.gte.{cutoff.isoformat()},ended_at.is.null)"
+                ),
             },
             order="started_at.desc",
             limit=_TUTOR_SESSION_SCAN,
@@ -641,9 +701,13 @@ def prompt_block(signals: QuizSignals) -> str:
             else f"last tutored on this concept {days} days ago"
         )
     if signals.tutor_course_sessions_14d:
+        # "or still open" is not padding either: the read counts sessions
+        # STARTED inside the window plus any that were never ended, because
+        # the resume flow leaves them open indefinitely. Saying only "in the
+        # last 14 days" would assert a thing the query did not check.
         parts.append(
             f"{signals.tutor_course_sessions_14d} tutor session(s) in this "
-            f"course in the last {_TUTOR_WINDOW_DAYS} days"
+            f"course in the last {_TUTOR_WINDOW_DAYS} days or still open"
         )
 
     if not parts:

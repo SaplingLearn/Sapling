@@ -42,14 +42,15 @@ from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
-from services.exam_proximity import PROMPT_HORIZON_DAYS, days_until_next_exam
+from services.exam_proximity import days_until_next_exam, exam_prompt_line
 from services.quiz_signals import (
     CourseScope,
     QuizSignals,
+    course_offering_ids,
     gather_signals,
-    offering_scope,
 )
 from services.quiz_signals import prompt_block as signal_block
+from services.timestamps import parse_ts
 from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
 from services.quiz_identity import question_hash, normalize_text
@@ -252,23 +253,11 @@ def _abandon_cutoff() -> datetime:
     )
 
 
-def _parse_ts(value) -> datetime | None:
-    """Parse a stored timestamp to an AWARE datetime, or None.
-
-    Naive values (an out-of-band write, a hand-edited row) are assumed UTC
-    rather than left naive: comparing a naive datetime against an aware one
-    raises TypeError, which `except ValueError` around the parse does not
-    catch — it would 500 both read endpoints.
-    """
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+#: THE stored-timestamp parser, now in `services/timestamps.py` so a service
+#: can use it without importing a route (see that module). Kept as a
+#: module-level name because this file's readers — and their tests — refer to
+#: it by this one.
+_parse_ts = parse_ts
 
 
 def _attempt_status(attempt: dict, last_activity_at=None) -> str:
@@ -959,8 +948,16 @@ async def _quiz_via_agent(
     request_id: str,
     model_pref: str | None = None,
     times_studied: int | None = None,
+    has_graph: bool | None = None,
 ) -> GeneratedQuiz:
     """Run quiz_agent and return questions in the legacy wire shape.
+
+    `has_graph` is what the CALLER knows about this student's knowledge graph
+    in this course, for the F5 dark-scope report in `quiz_signals`. Left None
+    on purpose: `generate_quiz` read an owner-scoped `graph_nodes` row on its
+    way here and passes True, but `scripts/benchmark_quiz.py` calls this same
+    function with a fixture user that has none — so asserting the fact in here
+    would make every benchmark run write a false `quiz.tool_empty`.
 
     The agent's tools (read_concepts_for_user, read_misconceptions_for_course)
     pull weak-area + class misconception data themselves, replacing the
@@ -1003,18 +1000,29 @@ async def _quiz_via_agent(
             f"Generate {num_questions} {difficulty} questions for the student."
         )
 
-    # ONE resolution of the two things the legs below share. Three of them
-    # want the same two answers — grounding wants this course's `course_code`,
-    # the H4 flashcard signal wants its `course_name` (same row), and both
-    # exam proximity and the H4 signals want this student's offerings of it
-    # (`user_offering_ids_for_course`, which is NOT cached). Because those
-    # legs run CONCURRENTLY they cannot share by accident, so resolving here
-    # is what stops one generation from asking the same three questions twice.
+    # ONE resolution of the two things the legs below share. Four of them want
+    # the same two answers — grounding wants this course's `course_code`, the
+    # H4 flashcard signal wants its `course_name` (same row), and both exam
+    # proximity and the H4 tutor signal want this course's offerings. Because
+    # those legs run CONCURRENTLY they cannot share by accident, so resolving
+    # here is what stops one generation from asking the same questions twice.
     #
     # These two are themselves independent, so they run concurrently with each
-    # other: the pair costs the LONGER of them — one `courses` read, or the
-    # offering resolution's TWO sequential reads (`course_offerings` then
-    # `enrollments`) — ahead of the gather, and removes three from inside it.
+    # other: the pair costs the LONGER of them — one `courses` read or one
+    # `course_offerings` read — ahead of the gather, and removes three from
+    # inside it.
+    #
+    # The trade, stated plainly (#592 review C15): this is a serial PREFIX. It
+    # cuts three round-trips out of a healthy request, but under a degraded
+    # Supabase it adds up to one client timeout (30s, db/connection.py) ahead
+    # of the gather and outside QUIZ_GENERATION_TIMEOUT_SEC, which bounds only
+    # the agent runs. Handing each leg a future to await instead would recover
+    # that — but the recovery is small: `_course_material` cannot start
+    # without the `courses` row and both the exam and signal legs need the
+    # offerings, so the only leg that could genuinely start early is the
+    # recently-asked read. One cheap read's worth of overlap is not worth
+    # three awaited tasks with hand-rolled per-leg degradation in the hottest
+    # function in this file.
     #
     # return_exceptions=True for the same reason the gather below uses it:
     # both helpers already degrade internally, so this is the backstop for the
@@ -1024,28 +1032,41 @@ async def _quiz_via_agent(
     # ungrounded.
     course_row, offering_ids = await asyncio.gather(
         asyncio.to_thread(_course_row, course_id),
-        asyncio.to_thread(offering_scope, user_id, course_id),
+        asyncio.to_thread(course_offering_ids, course_id),
         return_exceptions=True,
     )
     if isinstance(course_row, BaseException):
+        # Precise about what is lost: grounding needs `course_code`, and the
+        # FLASHCARD signal needs `course_name` — but the tutor signal needs
+        # neither and still runs on the offerings below. Saying "without the
+        # course-scoped signals" here would describe a degradation that isn't
+        # the one that happened.
         logger.warning(
-            "quiz: course lookup failed (%s); generating ungrounded and "
-            "without the course-scoped signals",
+            "quiz: course lookup failed (%s); generating ungrounded, and the "
+            "flashcard signals report unknown",
             type(course_row).__name__, exc_info=course_row,
         )
         # failed=True rather than a bare empty row, so E8 reports
-        # `coverage_unknown` instead of claiming this course has no BU code.
+        # `coverage_unknown` instead of claiming this course has no BU code —
+        # and so the flashcard read is skipped rather than run offering-only,
+        # which would miss every AI-generated card and call the remainder the
+        # whole collection.
         course_row = CourseRow(failed=True)
     if isinstance(offering_ids, BaseException):
         logger.warning(
-            "quiz: offering resolution failed (%s); the course-scoped signals "
-            "report unknown", type(offering_ids).__name__, exc_info=offering_ids,
+            "quiz: offering resolution failed (%s); the offering-scoped "
+            "signals report unknown",
+            type(offering_ids).__name__, exc_info=offering_ids,
         )
-        # None, not []: "could not tell". An empty list would assert the
-        # student is enrolled in no offering of this course, tripping the F5
-        # dark-scope report on what is really a transport failure.
+        # None, not []: "could not tell". An empty list would assert this
+        # course has no offering at all, tripping the F5 dark-scope report on
+        # what is really a transport failure.
         offering_ids = None
-    course_scope = CourseScope(offering_ids=offering_ids, course_name=course_row.name)
+    course_scope = CourseScope(
+        offering_ids=offering_ids,
+        course_name=course_row.name,
+        name_failed=course_row.failed,
+    )
 
     # Course-material grounding does blocking network I/O (a Gemini
     # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
@@ -1085,6 +1106,10 @@ async def _quiz_via_agent(
             course_id=course_id,
             concept_name=concept_name,
             scope=course_scope,
+            # Passed through from OUR caller, never assumed here: `_quiz_via_agent`
+            # is also the entry point `scripts/benchmark_quiz.py` drives, with a
+            # fixture user that has no graph at all.
+            has_graph=has_graph,
         ),
         return_exceptions=True,
     )
@@ -1128,27 +1153,11 @@ async def _quiz_via_agent(
             " Also call read_misconceptions_for_course and use those misconceptions "
             "as distractors and probes."
         )
-    # H3/#555: one line, dates only. Says how near the deadline is and lets
-    # the model decide what that implies — not "make it harder", which would
-    # contradict the adaptive difficulty the student actually chose. Omitted
-    # entirely when unknown: "next exam: unknown" is prompt tokens spent to
-    # say nothing.
-    # Bounded by a horizon: a final dated 87 days out would otherwise put
-    # "there is an exam coming, weight toward what an exam tests" on EVERY
-    # quiz for the whole semester, which carries no proximity signal and
-    # steers week-two practice toward exam-style questions — the opposite of
-    # what this line is for. The stored `exam_days_away` is NOT clamped: the
-    # analytics want the real distance, including the far ones.
-    if exam_days_away is not None and exam_days_away <= PROMPT_HORIZON_DAYS:
-        when = (
-            "TODAY" if exam_days_away == 0
-            else "tomorrow" if exam_days_away == 1
-            else f"in {exam_days_away} days"
-        )
-        routing_msg += (
-            f" The student's next exam in this course is {when}. Weight the"
-            " questions toward what an exam would actually test."
-        )
+    # H3/#555: one line, dates only, and only inside the proximity horizon.
+    # The sentence itself lives next to the number it renders, in
+    # `services/exam_proximity.py`, so the prompt-budget benchmark measures
+    # the real one instead of a hand-copy (it had one, and it was stale).
+    routing_msg += exam_prompt_line(exam_days_away)
 
     # H4/#556: the signals that were already in reach and never asked for.
     # Appended as one short line, and recorded as dimensions so F6 can price
@@ -1439,6 +1448,11 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             request_id=request_id,
             model_pref=body.model_pref,
             times_studied=node.get("times_studied"),
+            # A fact, not a guess: `node_rows` above is an owner-scoped
+            # `graph_nodes` read, and `course_id` came off that very row. It
+            # spares the F5 reporter a probe that could only tell it what we
+            # just saw — once per generation, forever.
+            has_graph=True,
         )
         questions = generated.questions
         exam_days_away = generated.exam_days_away

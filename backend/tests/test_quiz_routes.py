@@ -1126,8 +1126,7 @@ class TestQuizGrounding:
         """#556 review finding: two answers are each wanted by two CONCURRENT
         legs of the gather — this course's `courses` row (grounding wants
         `course_code`, the H4 flashcard signal wants `course_name`) and this
-        student's offerings of it (exam proximity and the H4 tutor signal,
-        via the UNCACHED `user_offering_ids_for_course`, two reads a call).
+        course's offerings (exam proximity and the H4 tutor signal).
 
         Concurrent legs cannot share by accident, so the route resolves both
         up front and injects them. This pins that neither is asked twice."""
@@ -1149,9 +1148,9 @@ class TestQuizGrounding:
             patch("routes.quiz._get_catalog_chunk", return_value=""),
             patch("routes.quiz.retrieve_chunks_detailed",
                   return_value=Retrieval(chunks=[])),
-            patch("routes.quiz.offering_scope", return_value=["off-1"]) as scope,
+            patch("routes.quiz.course_offering_ids",
+                  return_value=["off-1"]) as scope,
             patch("services.exam_proximity.user_offering_ids_for_course") as by_exam,
-            patch("services.quiz_signals.user_offering_ids_for_course") as by_signals,
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_1", "concept_node_id": "node_x",
@@ -1161,9 +1160,10 @@ class TestQuizGrounding:
 
         assert r.status_code == 200
         assert reads.count("courses") == 1
-        scope.assert_called_once_with("user_1", "course-uuid-1")
+        scope.assert_called_once_with("course-uuid-1")
+        # The exam leg re-resolves only when the shared scope came back
+        # None; it got a real one, so it must not ask again.
         by_exam.assert_not_called()
-        by_signals.assert_not_called()
 
     def test_a_raise_from_the_shared_lookups_degrades_instead_of_502ing(self):
         """Hoisting those two reads ahead of the gather also moved them out
@@ -1176,7 +1176,8 @@ class TestQuizGrounding:
             patch("routes.quiz.table", side_effect=self._table_factory()),
             patch("routes.quiz.quiz_agent.run", new=agent_run),
             patch("routes.quiz._course_row", side_effect=RuntimeError("boom")),
-            patch("routes.quiz.offering_scope", side_effect=RuntimeError("boom")),
+            patch("routes.quiz.course_offering_ids",
+                  side_effect=RuntimeError("boom")),
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_1", "concept_node_id": "node_x",
@@ -1651,3 +1652,231 @@ class TestQuizContextPromptTemplate:
             "{quiz_results_json}",
         ):
             assert placeholder in text, f"missing placeholder: {placeholder}"
+
+
+class _RecordingTables:
+    """A per-table fake for `table()` that records every filter it was asked
+    for. The assertions in `TestSignalCourseKeyspace` are about the QUERY, not
+    the answer — "which offerings did this read span" has nothing else to
+    check."""
+
+    def __init__(self, spec: dict, seen: dict):
+        self.spec, self.seen = spec, seen
+
+    def __call__(self, name: str):
+        outer = self
+
+        class _T:
+            def _record(self, filters):
+                outer.seen.setdefault(name, []).append(filters or {})
+                return outer.spec.get(name, [])
+
+            def select(self, columns="*", filters=None, order=None, limit=None,
+                       offset=None):
+                return self._record(filters)
+
+            def select_with_count(self, columns="*", filters=None, order=None,
+                                  limit=None, offset=None):
+                rows = self._record(filters)
+                return rows, len(rows)
+
+            def insert(self, data):
+                return []
+
+            def update(self, data, filters=None, **kw):
+                return []
+
+        return _T()
+
+
+class TestSignalCourseKeyspace:
+    """#592 merge gate: the H4 course signals must read the keyspace the
+    tables are actually WRITTEN in.
+
+    `sessions.offering_id` is stamped `resolve_offering(course_id, create=True)`
+    (routes/learn.py:431, :882) and imported `flashcards.offering_id` is
+    stamped `resolve_offering(course_id)` (routes/flashcards.py:419). Both are
+    CURRENT-TERM resolutions and neither consults enrollments. Reading them
+    back through an enrollment-derived offering list is the #553/#529 keyspace
+    shape: after a term rollover the two diverge permanently (the no-retake
+    rule keeps the enrollment in the term the student took the course in), and
+    an engaged student reads 0 sessions AS A FACT.
+
+    The shape below is exactly that: enrolled in the FALL offering, tutored
+    and imported cards against the SPRING one.
+    """
+
+    NODE = {"id": "node_x", "user_id": "user_1", "course_id": "course-uuid-1",
+            "concept_name": "dynamic programming"}
+
+    SPEC = {
+        "graph_nodes": [NODE],
+        "courses": [{"course_code": "CAS CS 330", "course_name": "Machine Learning"}],
+        # Every offering of the abstract course — both terms.
+        "course_offerings": [{"id": "off-fall"}, {"id": "off-spring"}],
+        # ...but the enrollment only ever covered the fall one.
+        "enrollments": [{"id": "enr-1", "offering_id": "off-fall"}],
+    }
+
+    def _generate(self, seen):
+        agent_run = AsyncMock(return_value=TestQuizGrounding._valid_quiz_result(
+            TestQuizGrounding()
+        ))
+        tables = _RecordingTables(self.SPEC, seen)
+        with (
+            patch("routes.quiz.table", side_effect=tables),
+            patch("services.quiz_signals.table", side_effect=tables),
+            patch("services.academics.table", side_effect=tables),
+            patch("services.exam_proximity.table", side_effect=tables),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks_detailed",
+                  return_value=Retrieval(chunks=[])),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200
+        return seen
+
+    def test_the_session_read_spans_every_offering_of_the_course(self):
+        seen: dict = {}
+        self._generate(seen)
+
+        assert "sessions" in seen, "the tutor-recency read never ran"
+        offering_filter = seen["sessions"][0]["offering_id"]
+        assert offering_filter == "in.(off-fall,off-spring)", (
+            "the sessions read must span the offerings the WRITER stamps "
+            f"(resolve_offering, current term), not the enrollment's — got "
+            f"{offering_filter!r}, which reads 0 sessions as a fact for a "
+            "student who tutored this course this term"
+        )
+
+    def test_the_flashcard_read_spans_every_offering_of_the_course(self):
+        seen: dict = {}
+        self._generate(seen)
+
+        assert "flashcards" in seen, "the flashcard read never ran"
+        clause = seen["flashcards"][0]["or"]
+        assert "off-fall" in clause and "off-spring" in clause, (
+            f"imported cards land on the current term's offering; got {clause!r}"
+        )
+
+    def test_the_scope_never_consults_enrollments(self):
+        """Ownership on both tables comes from `user_id`, so intersecting with
+        enrollments narrows the read without adding any safety — it only
+        introduces the keyspace the writers do not use."""
+        seen: dict = {}
+        self._generate(seen)
+
+        course_scoped = [
+            f for f in seen.get("course_offerings", [])
+            if f.get("course_id") == "eq.course-uuid-1"
+        ]
+        assert course_scoped, "the course's offerings were never read"
+
+
+class TestDarkScopeAlarmOwnership:
+    """#592 review C4: `plausible=True` was hard-coded inside the shared
+    signal path, which made it an assertion about a caller that module cannot
+    see. `_quiz_via_agent` is the entry point for BOTH the HTTP route (which
+    reads an owner-scoped `graph_nodes` row on its way in, so it holds the
+    fact) and `scripts/benchmark_quiz.py` (whose fixture user has no graph at
+    all — so every benchmark run wrote a false `quiz.tool_empty`).
+    """
+
+    def _signal_kwargs(self, run):
+        from services.quiz_signals import QuizSignals
+
+        gathered = MagicMock(return_value=QuizSignals())
+        agent_run = AsyncMock(
+            return_value=TestQuizGrounding._valid_quiz_result(TestQuizGrounding())
+        )
+        with (
+            patch("routes.quiz.table",
+                  side_effect=TestQuizGrounding._table_factory(TestQuizGrounding())),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks_detailed",
+                  return_value=Retrieval(chunks=[])),
+            patch("routes.quiz.course_offering_ids", return_value=["off-1"]),
+            patch("routes.quiz.gather_signals", new=gathered),
+        ):
+            run()
+        return gathered.call_args.kwargs
+
+    def test_the_http_route_asserts_the_graph_it_just_read(self):
+        def run():
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy",
+                "use_shared_context": False,
+            })
+            assert r.status_code == 200
+
+        assert self._signal_kwargs(run)["has_graph"] is True
+
+    def test_a_direct_caller_asserts_nothing_and_the_probe_decides(self):
+        """The benchmark's shape. `None` means "I did not look" — the F5
+        reporter probes rather than trusting a fact nobody established."""
+        import asyncio
+
+        from routes.quiz import _quiz_via_agent
+
+        def run():
+            asyncio.run(_quiz_via_agent(
+                user_id="quizfix-user-0001",
+                course_id="course-uuid-1",
+                concept_node_id="quizfix-node-0001",
+                concept_name="dynamic programming",
+                num_questions=1,
+                difficulty="easy",
+                use_shared_context=False,
+                request_id="bench",
+            ))
+
+        assert self._signal_kwargs(run)["has_graph"] is None
+
+
+class TestDegradedCourseReadIsDescribedHonestly:
+    """#592 review C3: with the `courses` read FAILED the route logged
+    "without the course-scoped signals" and then ran them anyway — the
+    flashcard tree offering-only, which cannot see an AI-generated card (no
+    `offering_id`) and so reports a subset as the whole collection."""
+
+    def test_a_failed_course_read_leaves_the_flashcards_unknown(self):
+        from services.quiz_signals import QuizSignals
+
+        captured = {}
+
+        def spy(*args, **kwargs):
+            captured.update(kwargs)
+            return QuizSignals()
+
+        agent_run = AsyncMock(
+            return_value=TestQuizGrounding._valid_quiz_result(TestQuizGrounding())
+        )
+        with (
+            patch("routes.quiz.table",
+                  side_effect=TestQuizGrounding._table_factory(TestQuizGrounding())),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._course_row", side_effect=RuntimeError("boom")),
+            patch("routes.quiz.course_offering_ids", return_value=["off-1"]),
+            patch("routes.quiz.gather_signals", side_effect=spy),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        scope = captured["scope"]
+        # The tri-state that lets the signals module tell "this course has no
+        # name" from "we could not read it".
+        assert scope.name_failed is True
+        assert scope.course_name is None
+        # ...and the offerings survived, so the tutor signal still runs.
+        assert scope.offering_ids == ["off-1"]

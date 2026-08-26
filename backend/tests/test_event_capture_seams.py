@@ -523,11 +523,18 @@ def test_quiz_generate_emits_quiz_started(sink):
             mock.select.return_value = [_quiz_node_row()]
         else:
             mock.select.return_value = []
+        mock.select_with_count.return_value = ([], 0)
         mock.insert.return_value = []
         return mock
 
     with (
         patch("routes.quiz.table", side_effect=factory),
+        # Patched through the signals module too, so the offering resolution
+        # answers from the fixture rather than from whatever a real
+        # (unreachable) Supabase does — this test asserts on the SCOPE the
+        # signals ran with, and letting a live connection error supply it
+        # makes the assertion depend on the machine.
+        patch("services.quiz_signals.table", side_effect=factory),
         patch(
             "routes.quiz.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -573,10 +580,11 @@ def test_quiz_generate_emits_quiz_started(sink):
         "signal_velocity": 0.0,
         "signal_in_flight": 0,
         # The two course-keyed signals report UNKNOWN here rather than zero,
-        # and that distinction is the assertion: this fixture's course
-        # resolves to no offering and no name, so nothing can find this
-        # student's cards or tutor sessions. Zeros would claim they have
-        # none, which is a different — and unverified — statement.
+        # and that distinction is the assertion: this fixture's course has no
+        # offering row and no name, so neither key that reaches a flashcard
+        # exists and there is no way to tell this course's tutor sessions from
+        # any other's. Zeros would claim the student HAS none, which is a
+        # different — and unverified — statement.
         "signal_flashcards_course_cards": None,
         "signal_flashcards_course_reviewed": None,
         "signal_flashcards_course_last_review_days": None,

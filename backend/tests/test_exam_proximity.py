@@ -319,3 +319,65 @@ def test_an_insert_failure_unrelated_to_the_column_still_raises():
     with _patch("routes.quiz.table", return_value=tbl):
         with _pytest.raises(RuntimeError):
             _insert_attempt({"id": "q1", "user_id": "u1"})
+
+
+class TestExamPromptLine:
+    """#592 review C8: the prompt-budget benchmark hand-copied the routing
+    message and had drifted two features behind it, so the doc it feeds
+    published token counts for a prompt that no longer existed. The sentence
+    now lives here, next to the number it renders, and both the route and the
+    benchmark call it.
+    """
+
+    def test_the_route_renders_this_exact_sentence(self):
+        """Not a lookalike — the same function. A second copy is the drift
+        this extraction exists to end."""
+        from services.exam_proximity import exam_prompt_line
+
+        msg, _ = TestExamProximityReachesGeneration()._generate(3, _agent_run())
+        assert exam_prompt_line(3).strip() in msg
+
+    def test_today_is_shouted_and_tomorrow_is_named(self):
+        from services.exam_proximity import exam_prompt_line
+
+        assert "TODAY" in exam_prompt_line(0)
+        assert "tomorrow" in exam_prompt_line(1)
+        assert "in 5 days" in exam_prompt_line(5)
+
+    def test_unknown_and_distant_render_nothing(self):
+        from services.exam_proximity import PROMPT_HORIZON_DAYS, exam_prompt_line
+
+        assert exam_prompt_line(None) == ""
+        assert exam_prompt_line(PROMPT_HORIZON_DAYS + 1) == ""
+        assert exam_prompt_line(PROMPT_HORIZON_DAYS) != ""
+
+    def test_the_benchmark_measures_the_real_sentence(self):
+        """The budget doc's numbers come from the benchmark. Its H3 row must
+        be the live sentence, not a paraphrase that drifts out from under the
+        published figure."""
+        from scripts.bench_quiz_prompt_budget import exam_line
+        from services.exam_proximity import exam_prompt_line
+
+        assert exam_line() == exam_prompt_line(3)
+        assert exam_line() != ""
+
+
+class TestWidenedOfferingScopeIsSafeHere:
+    """The quiz route now shares EVERY offering of the course rather than the
+    student's enrollments (#592 review C1). `assignments` is enrollment-keyed,
+    so this module narrows it back itself — a superset in must not become a
+    superset out."""
+
+    def test_offerings_the_student_is_not_enrolled_in_contribute_nothing(self):
+        from services.exam_proximity import _enrollment_ids
+
+        with patch(
+            "services.exam_proximity.user_enrollment_ids",
+            return_value=[
+                {"id": "enr-fall", "offering_id": "off-fall"},
+                {"id": "enr-other", "offering_id": "off-someone-elses-course"},
+            ],
+        ):
+            got = _enrollment_ids(["off-fall", "off-spring"], "u1")
+
+        assert got == ["enr-fall"]

@@ -354,3 +354,49 @@ def test_a_caller_that_knows_there_is_nothing_reports_nothing(sink):
     t.assert_not_called()
     events_service.flush_now()
     assert sink == []
+
+
+def test_no_assertion_from_the_caller_still_probes(sink):
+    """#592 review C4: `plausible` is an override for a caller that HOLDS the
+    fact, never a way to turn the probe off. A caller that passes nothing —
+    `scripts/benchmark_quiz.py`, whose fixture user has no graph_nodes — must
+    still be checked, or the seam manufactures discrepancies for it."""
+    with patch("services.tool_signals.table") as t:
+        t.return_value.select.return_value = []   # this user has no graph
+        reported = report_empty_result(
+            "quiz_signals.offerings_for_course",
+            user_id="quizfix-user-0001", count=0, expect=Expect.HAS_GRAPH,
+            feature="quiz", plausible=None,
+        )
+
+    assert reported is False
+    t.assert_called_once_with("graph_nodes")
+    events_service.flush_now()
+    assert sink == []
+
+
+def test_the_probe_is_narrowed_to_the_scope_the_caller_supplied(sink):
+    """A student with a graph in some OTHER course does not answer "should
+    this course have had data?" — the mismatch would fire the alarm on the
+    routine case of starting work in a second course."""
+    captured = {}
+
+    def factory(name):
+        m = MagicMock()
+
+        def select(columns="*", filters=None, **kw):
+            captured.update(filters or {})
+            return [{"id": "n1"}]
+
+        m.select.side_effect = select
+        return m
+
+    with patch("services.tool_signals.table", side_effect=factory):
+        report_empty_result(
+            "quiz_signals.offerings_for_course",
+            user_id="u1", count=0, expect=Expect.HAS_GRAPH, feature="quiz",
+            scope={"course_id": "eq.c1"},
+        )
+
+    assert captured["course_id"] == "eq.c1"
+    assert captured["user_id"] == "eq.u1"
