@@ -1942,7 +1942,9 @@ def abandon_attempt(attempt_id: str, request: Request):
     }
 
 
-def _gamification_block(user_id: str, award: XpAward | None) -> dict | None:
+def _gamification_block(
+    user_id: str, award: XpAward | None, quiz_id: str,
+) -> dict | None:
     """G8: the XP/streak numbers the results screen needs, in the submit reply.
 
     Before this the close screen had to read `GET /api/gamification/me` once
@@ -1953,27 +1955,58 @@ def _gamification_block(user_id: str, award: XpAward | None) -> dict | None:
     function `/api/gamification/me` serves, so the inline numbers and the
     endpoint can never disagree.
 
-    Two things can go wrong, and each is reported as itself rather than
-    papered over with a plausible number:
+    The block has two independent halves, and each failure is reported as
+    itself rather than papered over with a plausible number:
 
-    * the XP write failed (`award_xp_safe` swallowed it) → `xp_awarded` is
-      `None`. The client's rule is to omit the XP line rather than invent one.
-    * the snapshot read failed → the whole block is `None`. The client falls
-      back to its own `/me` read, i.e. exactly today's behaviour.
+    * the AWARD half (`xp_awarded`, `leveled_up`, `duplicate`) comes off the
+      `XpAward` already in memory and costs no query. All three are `None`
+      TOGETHER when the XP write failed and `award_xp_safe` swallowed it —
+      there is no award to report, and the client's rule is to omit the XP
+      line rather than invent one.
+    * the CARD half is the `/me` snapshot. If that read fails the award half
+      still ships ALONE. It cost nothing to produce, the `/me` fallback that
+      would otherwise supply it is aimed at the same database that just
+      failed, and R-9a tells a migrated client to have dropped those reads
+      entirely — so the fallback is least likely to work on exactly the
+      request that needs it.
+
+    `leveled_up` and `duplicate` ride along because a client cannot
+    reconstruct either: three different paths all report `xp_awarded: 0` (a
+    disabled rule, a zero-amount rule, an idempotent replay), and spotting a
+    level-up without `leveled_up` means re-adding the round trip this block
+    exists to remove.
 
     `xp_awarded` is what the `quiz_completed` award paid, which is the amount
     written to the `xp_events` ledger. A badge earned by the same submit pays
     its own XP separately; that is not in `xp_awarded` but IS in `total_xp`,
     which is read after the achievement pass.
     """
+    paid = {
+        "xp_awarded": award.awarded if award else None,
+        "leveled_up": award.leveled_up if award else None,
+        "duplicate": award.duplicate if award else None,
+    }
     try:
         snapshot = me_snapshot(user_id)
     except Exception:
         # Display data must never fail the action that earned it — the same
-        # rule `award_xp_safe` follows for the write itself.
-        logger.exception("quiz: gamification snapshot failed user=%s", user_id)
-        return None
-    return {"xp_awarded": award.awarded if award else None, **snapshot}
+        # rule `award_xp_safe` follows for the write itself. But swallowing it
+        # silently is what let #529 live 51 days undetected in this very
+        # function, so the log line is paired with a countable event exactly
+        # as `_update_context` pairs its own.
+        logger.exception(
+            "quiz: gamification snapshot failed quiz_id=%s user=%s",
+            quiz_id, user_id,
+        )
+        events_service.log_event(
+            "quiz.gamification_snapshot_failed",
+            category="error",
+            user_id=user_id,
+            request_id=current_request_id(),
+            payload={"quiz_id": quiz_id},
+        )
+        return paid
+    return {**paid, **snapshot}
 
 
 @router.post("/submit")
@@ -2283,7 +2316,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # G8: read AFTER the achievement pass — a badge earned by this submit pays
     # its own XP and moves earned_count, so a snapshot taken before it would
     # be stale the moment it was serialized.
-    gamification = _gamification_block(user_id, award)
+    gamification = _gamification_block(user_id, award, body.quiz_id)
 
     # #117: quiz.completed on the success path only — a 409 replay (the
     # atomic completed_at claim above) or any earlier 4xx never reaches here.

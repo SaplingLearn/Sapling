@@ -362,9 +362,22 @@ def test_submit_returns_the_xp_it_paid_and_the_card_the_endpoint_would_serve(
 
     me = authed_client.get(f"/api/gamification/me?user_id={USER_ACTIVE}")
     assert me.status_code == 200, me.text
-    assert {k: v for k, v in block.items() if k != "xp_awarded"} == me.json(), (
+    award_only = {"xp_awarded", "leveled_up", "duplicate"}
+    assert {k: v for k, v in block.items() if k not in award_only} == me.json(), (
         "the inline snapshot and /api/gamification/me disagree — the point of "
         "both going through services/gamification_service.py"
+    )
+
+    # "N of M" — the one pair whose two sides could be filtered differently
+    # (review E1), and only a real Postgres can prove the `achievements!inner`
+    # embed actually drops an earned row whose badge is a DRAFT. The seeded
+    # catalog carries the ten that 20260731194102 demoted.
+    live_total = db_conn.execute(
+        "SELECT count(*) AS n FROM achievements WHERE status = 'live'"
+    ).fetchone()["n"]
+    assert block["total_count"] == live_total
+    assert block["earned_count"] <= block["total_count"], (
+        "'N of M' exceeded M — an earned draft badge is in the numerator"
     )
 
 

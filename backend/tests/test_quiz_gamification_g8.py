@@ -7,27 +7,53 @@ session and again after the submit and subtract
 (`frontend/src/lib/quiz/useGamificationDelta.ts`) — two extra requests whose
 race or failure showed a blank where the student's reward should be.
 
-Submit now returns a `gamification` block: `xp_awarded` plus the same hero-card
-snapshot `/api/gamification/me` serves, taken after the award. The tests below
-pin the three things that make that block worth trusting:
+Submit now returns a `gamification` block: what the award paid (`xp_awarded`,
+`leveled_up`, `duplicate`) plus the same hero-card snapshot
+`/api/gamification/me` serves, taken after the award. The tests below pin the
+three things that make that block worth trusting:
 
   * it is there, with the numbers the award and the snapshot actually produced;
-  * it is byte-for-byte what `/api/gamification/me` would return a moment later
-    (the point of both callers sharing `services/gamification_service.py`);
-  * neither failure mode invents a number — a failed award reports `null`, a
-    failed snapshot read reports a `null` block, and neither fails the submit.
+  * the card half is byte-for-byte what `/api/gamification/me` would return a
+    moment later (the point of both callers sharing
+    `services/gamification_service.py`);
+  * neither half invents a number when it fails, and neither fails the submit.
+    A failed award nulls all three award fields together; a failed snapshot
+    read ships the award half ALONE, since it cost no query and the client's
+    `/me` fallback would be aimed at the same degraded database.
 """
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from services import events_service
 from services.xp_service import XpAward
 
 client = TestClient(app)
+
+
+class _FakeTable:
+    """Collects the rows events_service would have written."""
+
+    def __init__(self, name: str, rows: list):
+        self.name, self.rows = name, rows
+
+    def insert(self, rows):
+        self.rows.append((self.name, rows))
+        return rows if isinstance(rows, list) else [rows]
+
+
+@pytest.fixture
+def sink(monkeypatch):
+    """Same plumbing as tests/test_event_capture_seams.py — the events worker
+    thread never runs here, so the queue is drained with `flush_now()`."""
+    rows: list = []
+    monkeypatch.setattr(events_service, "table", lambda n: _FakeTable(n, rows))
+    return rows
 
 
 QUESTIONS = [
@@ -75,6 +101,9 @@ class GamificationWorld:
         self.level = PRE_AWARD_LEVEL
         self.streak = PRE_AWARD_STREAK
         self.today_xp = 0
+        #: Name of a table whose read blows up, so a snapshot failure can be
+        #: injected at the DB rather than by stubbing out the seam under test.
+        self.fail_on: str | None = None
 
     # — what the route's collaborators do to those numbers —
 
@@ -101,6 +130,8 @@ class GamificationWorld:
     # — the four tables the snapshot reads, resolved at CALL time —
 
     def tables(self, name):
+        if name == self.fail_on:
+            raise RuntimeError(f"pg down reading {name}")
         mock = MagicMock()
         if name == "users":
             mock.select.side_effect = lambda *a, **k: [{
@@ -111,9 +142,11 @@ class GamificationWorld:
                 "daily_goal_xp": DAILY_GOAL_XP,
             }]
         elif name == "user_achievements":
-            mock.select.return_value = [{"achievement_id": "a1"}]
+            mock.select_with_count.return_value = ([{"achievement_id": "a1"}], 1)
         elif name == "achievements":
-            mock.select.return_value = [{"id": "a1"}, {"id": "a2"}, {"id": "a3"}]
+            mock.select_with_count.return_value = (
+                [{"id": "a1"}, {"id": "a2"}, {"id": "a3"}], 3
+            )
         elif name == "xp_events":
             mock.select_with_count.side_effect = lambda *a, **k: (
                 ([{"amount": self.today_xp,
@@ -207,6 +240,10 @@ class TestTheBlockIsThere:
         assert r.status_code == 200, r.text
         block = r.json()["gamification"]
         assert block["xp_awarded"] == QUIZ_XP
+        # E8: both already on the XpAward, and neither reconstructable
+        # client-side — three separate paths all report xp_awarded: 0.
+        assert block["leveled_up"] is True
+        assert block["duplicate"] is False
         # Everything the results screen reads off /me today.
         assert block["total_xp"] == POST_AWARD_XP
         assert block["streak"] == POST_AWARD_STREAK
@@ -312,8 +349,9 @@ class TestItAgreesWithTheEndpoint:
         with patch("services.gamification_service.table", side_effect=world.tables):
             me = client.get("/api/gamification/me?user_id=user_andres").json()
 
-        assert set(block) == set(me) | {"xp_awarded"}
-        assert {k: v for k, v in block.items() if k != "xp_awarded"} == me
+        award_only = {"xp_awarded", "leveled_up", "duplicate"}
+        assert set(block) == set(me) | award_only
+        assert {k: v for k, v in block.items() if k not in award_only} == me
 
 
 class TestNeitherFailureInventsANumber:
@@ -337,16 +375,77 @@ class TestNeitherFailureInventsANumber:
         answer — distinct from `null`, which means "we don't know"."""
         award = XpAward(awarded=0, total_xp=PRE_AWARD_XP, level=PRE_AWARD_LEVEL,
                         leveled_up=False, duplicate=True)
-        assert _submit(award=award).json()["gamification"]["xp_awarded"] == 0
+        block = _submit(award=award).json()["gamification"]
+        assert block["xp_awarded"] == 0
+        # The field that tells a replay apart from a misconfigured rule.
+        assert block["duplicate"] is True
 
-    def test_a_failed_snapshot_read_nulls_the_block_and_still_returns_200(self):
+    def test_a_failed_snapshot_read_still_reports_the_xp_it_paid(self):
         """Display data must never fail the action that earned it — the same
-        rule `award_xp_safe` follows. The client falls back to its own /me
-        read, which is exactly today's behaviour."""
-        with patch("routes.quiz.me_snapshot", side_effect=RuntimeError("pg down")):
-            r = _submit()
+        rule `award_xp_safe` follows for the write.
+
+        But the block does not go all the way to `null`: `xp_awarded` is the
+        one number already in memory, and it needed no DB read to produce. The
+        client's `/me` fallback would be hitting the same degraded database,
+        and R-9a tells a migrated client to have dropped those reads — so
+        discarding a value we hold, on the exact request where the fallback is
+        least likely to work, is the wrong trade.
+
+        The failure is injected at the DATABASE (review E6), not by stubbing
+        `me_snapshot`. Patching the seam under test would keep passing through
+        a refactor that narrowed the `try` to `read_me_inputs` alone, and the
+        `xp_events` scan in `me_payload` — the slowest read, and the likeliest
+        to be the one that fails — would then escape and 500 a submit that had
+        already paid XP and moved mastery.
+        """
+        world = GamificationWorld()
+        world.fail_on = "xp_events"
+
+        r = _submit(world=world)
 
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["gamification"] is None
+        assert body["gamification"] == {
+            "xp_awarded": QUIZ_XP, "leveled_up": True, "duplicate": False,
+        }, (
+            "a failed snapshot must still carry what the submit paid, and "
+            "must not carry a half-built card"
+        )
         assert body["score"] == 1, "the submit itself must still be scored"
+
+    def test_a_failed_snapshot_read_with_no_award_reports_null(self):
+        """Both halves failed, so there is nothing honest to report but
+        `null` — the client omits the line rather than inventing one."""
+        world = GamificationWorld()
+        world.fail_on = "xp_events"
+
+        r = _submit(award=None, world=world)
+
+        assert r.status_code == 200, r.text
+        assert r.json()["gamification"] == {
+            "xp_awarded": None, "leveled_up": None, "duplicate": None,
+        }, "all three award fields are unknown together, or none are"
+
+    def test_a_failed_snapshot_read_is_counted_not_just_logged(self, sink):
+        """review E4. `_update_context` twelve lines up pairs its
+        `logger.exception` with a `quiz.context_write_failed` event for a
+        concrete reason: #529's swallowed failure lived 51 days undetected in
+        this same function because a log line is not a number anyone watches.
+        A swallowed failure with no event is the same bug with a new name.
+        """
+        world = GamificationWorld()
+        world.fail_on = "xp_events"
+
+        _submit(world=world)
+
+        events_service.flush_now()
+        rows = [r for name, batch in sink for r in batch if name == "events"]
+        failed = [e for e in rows if e["event_type"] == "quiz.gamification_snapshot_failed"]
+        assert len(failed) == 1, (
+            f"no analytics event for the swallowed snapshot failure; got "
+            f"{sorted({e['event_type'] for e in rows})}"
+        )
+        assert failed[0]["category"] == "error"
+        assert failed[0]["user_id"] == "user_andres"
+        assert failed[0]["payload"]["quiz_id"] == "quiz1"
+        assert failed[0]["event_type"] in events_service.EVENT_TAXONOMY
