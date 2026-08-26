@@ -177,15 +177,30 @@ export function useQuizHome(
   const refresh = useCallback(() => setNonce(n => n + 1), []);
 
   /**
-   * Discard an unfinished attempt (G4) — two writes, in this order for a
-   * reason.
+   * Discard an unfinished attempt (G4): drop it from the strip here, and close
+   * it server-side.
    *
-   * `dismissAttempt` hides it in THIS browser synchronously, so the strip is
-   * gone on the very next render whatever the network does; the abandon call
-   * stamps `abandoned_at` server-side, which is the half that survives a
-   * reload and reaches the student's other devices. Before the endpoint
-   * existed only the first write happened, and the strip came back everywhere
-   * else until the backend's 24h sweep caught up.
+   * `POST /attempts/{id}/abandon` is the durable half — it stamps
+   * `abandoned_at`, so a reload and the student's other devices stop offering
+   * the attempt (see `routes/quiz.py::abandon_attempt` for why that endpoint
+   * exists). Everything else in here is about what THIS screen shows in the
+   * meantime.
+   *
+   * NO `refresh()`. It used to fire one synchronously beside the POST, which
+   * re-read courses + graph + history + a `getAttempt` per open attempt (and
+   * re-fired `describeConcept`, since `cardConceptId` transits null through
+   * the reload) — a full skeleton flash to change one row. Worse, the re-read
+   * routinely OVERTOOK the write and came back `in_progress`, leaving the
+   * strip hidden only by the localStorage flag: the single point of failure
+   * G4 exists to retire, and one that fails outright in a private window.
+   * Clearing the slot directly is both cheaper and the honest ordering —
+   * nothing else on this screen derives from an unfinished attempt (the
+   * ranking and the "missed N last time" join read COMPLETED attempts only,
+   * `proposals.ts`).
+   *
+   * `dismissAttempt` still runs, and still first: it is what keeps the
+   * attempt hidden across the NEXT load, before the abandon lands or if it
+   * never does.
    *
    * A failed abandon is swallowed rather than surfaced. The student said
    * discard; putting the quiz back on screen — or a red toast over a discard
@@ -195,11 +210,13 @@ export function useQuizHome(
   const discard = useCallback((attemptId: string) => {
     if (!attemptId) return;
     dismissAttempt(attemptId);
+    setResumable(prev =>
+      prev?.value?.attempt.quiz_id === attemptId ? { ...prev, value: null } : prev,
+    );
     void abandonAttempt(attemptId).catch(err => {
       console.warn("quiz: abandon failed; the attempt will expire on its own", err);
     });
-    refresh();
-  }, [refresh]);
+  }, []);
 
   // "Loading" is DERIVED from whether the resolved load answers the request
   // currently on screen, rather than stored and reset at the top of the effect:

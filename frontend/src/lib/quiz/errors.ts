@@ -58,7 +58,12 @@ export const QUIZ_ERROR_COPY: Record<QuizErrorCode, string> = {
   QUIZ_CONCEPT_NOT_FOUND: "That concept isn't on your tree any more. Pick another one.",
   QUIZ_ATTEMPT_NOT_FOUND: "We couldn't find that quiz. Start a new one.",
   QUIZ_ATTEMPT_ALREADY_COMPLETED: "This quiz was already scored. Your results are on your tree.",
-  QUIZ_ATTEMPT_ABANDONED: "That quiz expired after a day. Start a fresh one.",
+  // Two ways to earn this code, and nothing on the wire can tell them apart:
+  // `abandoned_at` is stamped by D2's 24h sweep AND by Discard (G4), and it
+  // records WHEN the attempt closed, never who closed it. The old sentence
+  // ("expired after a day") predates the button, and reads as a bug to the
+  // student who pressed Discard on their phone thirty seconds ago.
+  QUIZ_ATTEMPT_ABANDONED: "That quiz was discarded or expired. Start a fresh one.",
   QUIZ_ATTEMPT_NOT_RESUMABLE: "This quiz can't be resumed. Start a new one.",
   QUIZ_QUESTION_INVALID: "That answer didn't line up with the question. Reload and try again.",
   // The server sentence wins for this one — it carries the real bounds, and the

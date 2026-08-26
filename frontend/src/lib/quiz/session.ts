@@ -148,16 +148,13 @@ export function persistSession(session: QuizSession): void {
 
 // ── Discarded attempts ─────────────────────────────────────────────────────
 //
-// The OPTIMISTIC half of Discard. `POST /api/quiz/attempts/{id}/abandon` (G4,
-// closed) is what makes a discard durable — it stamps `abandoned_at`, so a
-// reload and every other device see the attempt as `abandoned` and stop
-// offering it. This key is what makes it INSTANT, and what keeps it honoured
-// in this browser when that call is slow or never lands: `useQuizHome::discard`
-// writes here first and treats a failed abandon as nothing to undo (the
-// backend's 24h TTL sweep is the backstop).
+// The LOCAL half of Discard: what keeps an attempt hidden in this browser
+// across a load, before `POST /api/quiz/attempts/{id}/abandon` lands or if it
+// never does. That endpoint is the durable half and the reason G4 exists —
+// told once, in `backend/routes/quiz.py::abandon_attempt`.
 //
-// So it is deliberately not redundant with the server state, and deliberately
-// not authoritative either: nothing here ever un-hides an attempt.
+// Deliberately not redundant with the server state, and deliberately not
+// authoritative either: nothing here ever un-hides an attempt.
 
 function readDismissed(): string[] {
   const parsed = readJson<unknown>(DISMISSED_KEY);

@@ -123,13 +123,21 @@ export interface AttemptDetail {
   created_at: string;
 }
 
-/** `POST /api/quiz/attempts/{id}/abandon` (G4). Idempotent: a second call
- *  answers with the stamp already on the row, so `status` is always
- *  `"abandoned"` on a 2xx. */
+/**
+ * `POST /api/quiz/attempts/{id}/abandon` (G4). Idempotent: a second call
+ * answers with the stamp already on the row rather than re-writing it.
+ *
+ * `status` is DERIVED server-side from the timestamps, exactly as the read
+ * paths derive it, and `abandoned_at` is nullable for the same reason: the
+ * route reports the state it actually observed. It never substitutes its own
+ * clock for a write it did not make, so a claim it lost to a concurrent
+ * writer that then left the row open reads back `in_progress` / `null`
+ * instead of a fabricated success. Read `status`, not the timestamp.
+ */
 export interface AbandonResult {
   quiz_id: string;
   status: AttemptStatus;
-  abandoned_at: string;
+  abandoned_at: string | null;
 }
 
 export type SourceKind = "tree" | "dashboard" | "notes" | "nav" | "link" | "quiz";

@@ -49,6 +49,8 @@
  * live in `support/quiz.ts`.
  */
 import type { Page } from "@playwright/test";
+import { DISMISSED_KEY, STORAGE_KEY } from "@/lib/quiz/session";
+import type { AttemptsPage } from "@/lib/quiz/types";
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
 import { USER_ACTIVE } from "./support/stack";
@@ -201,12 +203,10 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
 
   // ── Discard, which CLOSES the attempt server-side (G4) ────────────────────
   //
-  // It used to be a localStorage flag, so the strip came back on every other
-  // device and the row sat open until the backend's 24h sweep found it. What
-  // proves the difference is a visit with this browser's two quiz keys wiped:
-  // no `dismissedAttempts` entry to skip and no stored session to resume from,
-  // so the strip's only remaining input is `GET /attempts`. That is the
-  // other-device path.
+  // What proves the difference from the localStorage flag it replaced is a
+  // visit with this browser's two quiz keys wiped: no dismissed entry to skip
+  // and no stored session to resume from, so the strip's only remaining input
+  // is `GET /attempts`. That is the other-device path.
   //
   // The POSITIVE CONTROL comes first, deliberately. "The strip is absent" is a
   // vacuous assertion on its own — a slow load, a renamed testid or a broken
@@ -229,8 +229,13 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
     { timeout: SUBMIT_TIMEOUT },
   );
   await page.getByTestId("quiz-resume-discard").click();
+  // `toHaveCount(0)` alone would also be satisfied by a home screen that had
+  // gone to skeletons, so the proposal card is what says the strip is gone
+  // FROM A RENDERED SCREEN. Same generous budget as every sibling wait here:
+  // the default 5s is not a deliberate deadline, just the one that happens to
+  // be there.
   await expect(strip).toHaveCount(0);
-  await expect(page.getByTestId("quiz-proposal")).toBeVisible();
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
   expect((await abandoned).status()).toBe(200);
 
   const attempts = await appAttempts();
@@ -253,13 +258,8 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
   await expect(strip).toHaveCount(0);
 });
 
-/** One page of `GET /api/quiz/attempts`, as much of it as this journey reads. */
-interface AttemptsListing {
-  attempts: { quiz_id: string; status: string }[];
-}
-
 /** The status the SERVER reports for one attempt on a listing page. */
-function statusOf(listing: AttemptsListing, attemptId: string): string | undefined {
+function statusOf(listing: AttemptsPage, attemptId: string): string | undefined {
   return listing.attempts.find(a => a.quiz_id === attemptId)?.status;
 }
 
@@ -268,20 +268,28 @@ function statusOf(listing: AttemptsListing, attemptId: string): string | undefin
  * both quiz localStorage keys gone, so only `GET /attempts` can put anything on
  * the resume strip. Returns that listing's payload — the deterministic thing to
  * assert on, since every rendered consequence of it is a round trip further on.
+ *
+ * The keys, the payload type and the navigation all come from the app
+ * (`@/lib/quiz/session`, `@/lib/quiz/types`, `support/quiz::openQuizHome`;
+ * precedent for the `@/lib` imports: quiz-errors.spec.ts). Hardcoded literals
+ * left this leg free to go VACUOUS on a rename — a renamed storage key clears
+ * nothing, this browser keeps its local record, and the strip's absence
+ * afterwards stops meaning anything.
  */
-async function otherDeviceVisit(page: Page): Promise<AttemptsListing> {
-  await page.evaluate(() => {
-    window.localStorage.removeItem("sapling_quiz_dismissed");
-    window.localStorage.removeItem("sapling_quiz_session");
-  });
+async function otherDeviceVisit(page: Page): Promise<AttemptsPage> {
+  await page.evaluate(
+    ([dismissedKey, sessionKey]) => {
+      window.localStorage.removeItem(dismissedKey);
+      window.localStorage.removeItem(sessionKey);
+    },
+    [DISMISSED_KEY, STORAGE_KEY],
+  );
   const listing = page.waitForResponse(
     r => r.request().method() === "GET" && r.url().includes("/api/quiz/attempts?"),
     { timeout: SUBMIT_TIMEOUT },
   );
-  await page.goto("/quiz");
-  const body = (await (await listing).json()) as AttemptsListing;
-  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
-  return body;
+  await openQuizHome(page);
+  return (await (await listing).json()) as AttemptsPage;
 }
 
 /**

@@ -242,36 +242,92 @@ describe("discard (G4)", () => {
     return result;
   }
 
-  it("abandons the attempt server-side and drops it from the strip at once", async () => {
-    const result = await homeWithAResumableAttempt();
+  /** Every read the bootstrap makes, counted, so "did this re-fetch?" is a
+   *  fact rather than an impression. */
+  function readCounts() {
+    return {
+      courses: coreApi.getCourses.mock.calls.length,
+      graph: coreApi.getGraph.mock.calls.length,
+      listAttempts: quizApi.listAttempts.mock.calls.length,
+      getAttempt: quizApi.getAttempt.mock.calls.length,
+      describe: quizApi.describeConcept.mock.calls.length,
+    };
+  }
 
-    await act(async () => {
+  it("drops the attempt from the strip while the abandon call is still in flight", async () => {
+    const result = await homeWithAResumableAttempt();
+    // Held open deliberately: the strip must be gone on the render AFTER the
+    // click, not on the render after the network answers.
+    let land: (value: unknown) => void = () => {};
+    quizApi.abandonAttempt.mockReturnValue(new Promise(resolve => { land = resolve; }));
+
+    act(() => {
       result.current.discard("open");
     });
 
-    // The durable half: the row is closed for every other device too.
+    // The durable half is on its way…
     expect(quizApi.abandonAttempt).toHaveBeenCalledWith("open");
-    // …and the optimistic half, which is what makes the strip vanish now.
+    // …and the strip is already gone, with the screen still on screen. The
+    // `status` assertion is what makes `resumable` mean anything here: a
+    // `refresh()` in `discard` would null `resumable` merely by invalidating
+    // the load key, and would flash the whole home screen back to a skeleton
+    // to do it.
+    expect(result.current.status).toBe("ready");
+    expect(result.current.resumable).toBeNull();
     expect(isDismissed("open")).toBe(true);
+
+    await act(async () => {
+      land({ quiz_id: "open", status: "abandoned", abandoned_at: "2026-08-23T02:00:00Z" });
+    });
+    expect(result.current.status).toBe("ready");
     expect(result.current.resumable).toBeNull();
   });
 
-  it("re-reads the world, so the strip's next answer comes off the wire", async () => {
+  it("hides it on the server's word, not on localStorage's", async () => {
+    // The failure this pins: `discard` used to fire `refresh()` synchronously
+    // alongside the abandon POST, so the re-read routinely PREDATED the write
+    // and came back `in_progress`. The strip then stayed hidden only because
+    // `discoverResumable` skips locally dismissed ids — the exact single point
+    // of failure G4 exists to retire. With storage unavailable (private mode,
+    // blocked cookies) that flag never lands and the quiz the student just
+    // discarded comes straight back.
     const result = await homeWithAResumableAttempt();
-    const before = quizApi.listAttempts.mock.calls.length;
-
-    // What the server says once the abandon has landed.
-    quizApi.listAttempts.mockResolvedValue({
-      ...OPEN, attempts: [{ ...attempt({ quiz_id: "open", status: "abandoned" }) }],
+    // jsdom's `localStorage` is a Proxy, so the spy has to go on the INSTANCE
+    // — one on `Storage.prototype` is never reached.
+    const blocked = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new DOMException("QuotaExceededError");
     });
 
     await act(async () => {
       result.current.discard("open");
     });
-    await waitFor(() =>
-      expect(quizApi.listAttempts.mock.calls.length).toBeGreaterThan(before),
-    );
-    await waitFor(() => expect(result.current.status).toBe("ready"));
+    // Flush anything the discard might have kicked off behind it.
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    // Restored BEFORE the assertions, so a failure here can't leak a broken
+    // localStorage into the rest of the file.
+    blocked.mockRestore();
+
+    expect(isDismissed("open")).toBe(false);
+    expect(result.current.resumable).toBeNull();
+  });
+
+  it("does not re-read the whole home screen to hide one row", async () => {
+    const result = await homeWithAResumableAttempt();
+    // Let the description settle first, so its call is not counted as churn.
+    await waitFor(() => expect(result.current.cardDescription).not.toBeNull());
+    const before = readCounts();
+
+    await act(async () => {
+      result.current.discard("open");
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+
+    // A discard changes exactly one thing on this screen — the strip. The
+    // ranking and the "missed N last time" join both read COMPLETED attempts
+    // only (`proposals.ts`), so re-reading courses + graph + history + one
+    // `getAttempt` each, plus a re-fired `describeConcept` as `cardConceptId`
+    // transits null, bought nothing and raced the write it meant to observe.
+    expect(readCounts()).toEqual(before);
     expect(result.current.resumable).toBeNull();
   });
 
@@ -285,11 +341,24 @@ describe("discard (G4)", () => {
     await act(async () => {
       result.current.discard("open");
     });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
 
     expect(isDismissed("open")).toBe(true);
+    expect(result.current.status).toBe("ready");
     expect(result.current.resumable).toBeNull();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it("leaves a DIFFERENT resumable attempt alone", async () => {
+    const result = await homeWithAResumableAttempt();
+
+    await act(async () => {
+      result.current.discard("some-other-attempt");
+    });
+
+    expect(quizApi.abandonAttempt).toHaveBeenCalledWith("some-other-attempt");
+    expect(result.current.resumable?.attempt.quiz_id).toBe("open");
   });
 
   it("does nothing at all for an empty id", async () => {

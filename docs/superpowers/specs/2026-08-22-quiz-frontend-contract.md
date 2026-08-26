@@ -274,7 +274,7 @@ Human strings (final):
 | QUIZ_CONCEPT_NOT_FOUND | "That concept isn't on your tree any more. Pick another one." | no |
 | QUIZ_ATTEMPT_NOT_FOUND | "We couldn't find that quiz. Start a new one." | no |
 | QUIZ_ATTEMPT_ALREADY_COMPLETED | "This quiz was already scored. Your results are on your tree." | no |
-| QUIZ_ATTEMPT_ABANDONED | "That quiz expired after a day. Start a fresh one." | no |
+| QUIZ_ATTEMPT_ABANDONED | "That quiz was discarded or expired. Start a fresh one." (G4: `abandoned_at` is stamped by the TTL sweep AND by Discard; the wire cannot say which) | no |
 | QUIZ_ATTEMPT_NOT_RESUMABLE | "This quiz can't be resumed. Start a new one." | no |
 | QUIZ_QUESTION_INVALID | "That answer didn't line up with the question. Reload and try again." | no |
 | QUIZ_COUNT_OUT_OF_RANGE | server message verbatim (it carries the real bounds) | no |

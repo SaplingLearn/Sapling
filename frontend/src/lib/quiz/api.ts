@@ -109,16 +109,15 @@ export const submitQuiz = (
   });
 
 /**
- * `POST /api/quiz/attempts/{id}/abandon` — the real Discard (G4).
+ * `POST /api/quiz/attempts/{id}/abandon` — the real Discard (G4; why the route
+ * exists is told once, in `backend/routes/quiz.py::abandon_attempt`).
  *
- * Stamps `abandoned_at` server-side, which is what makes a discard outlive
- * this browser: the listing's derived status flips to `abandoned` and
- * `getAttempt` starts answering `resumable: false`, so no reload and no other
- * device offers the attempt again. Before this existed the row stayed
- * `in_progress` until the backend's 24h sweep found it.
+ * Stamps `abandoned_at`, so the listing's derived status flips to `abandoned`
+ * and `getAttempt` starts answering `resumable: false` — no reload and no
+ * other device offers the attempt again.
  *
  * Idempotent (a repeat is a 200 no-op); 409 on an attempt that was already
- * submitted, since there is nothing there to discard.
+ * submitted, since there is nothing there to discard; 404 once the row is gone.
  */
 export const abandonAttempt = (attemptId: string): Promise<AbandonResult> =>
   fetchJSON<AbandonResult>(
