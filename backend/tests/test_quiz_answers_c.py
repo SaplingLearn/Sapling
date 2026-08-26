@@ -8,22 +8,23 @@ server-authoritative grading.
   response (no revision; the revamp decides if that changes).
 - C2: responses persist individually in quiz_responses (plaintext
   analytics scalars; nothing free-text).
-- C3: include_answer_key on generate (default flipped false #546 — the
-  #537 client already grades via /attempts/{id}/answer and has sent
-  `include_answer_key: false` on every generate since it shipped;
-  explicit true is still accepted-but-logged for one release) — when
-  false, the response strips per-option `correct` booleans while the
-  stored questions_json keeps them for grading.
+- C3: include_answer_key on generate — when the key is not asked for, the
+  response strips per-option `correct` booleans while the stored
+  questions_json keeps them for grading. The flag's lifecycle (default
+  flipped false, deprecation, deletion) is documented once, on the field
+  itself: see GenerateQuizBody.include_answer_key, #546.
 - C4: submit prefers recorded quiz_responses and falls back to the
   payload per question; the atomic completed_at claim (PR #464) stays.
 """
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
 from agents.quiz import Quiz, QuizQuestion
+from services import events_service
 
 client = TestClient(app)
 
@@ -257,58 +258,38 @@ def _fake_quiz():
     ])
 
 
+def _post_generate(extra):
+    """`extra` is spread last, so a test can either omit `include_answer_key`
+    entirely or pin it — the distinction the route now reads off
+    `model_fields_set`."""
+    return client.post("/api/quiz/generate", json={
+        "user_id": "user_andres",
+        "concept_node_id": "node1",
+        "num_questions": 1,
+        "difficulty": "easy",
+        "use_shared_context": False,
+        **extra,
+    })
+
+
 class TestIncludeAnswerKey:
-    def _post(self, extra):
-        return client.post("/api/quiz/generate", json={
-            "user_id": "user_andres",
-            "concept_node_id": "node1",
-            "num_questions": 1,
-            "difficulty": "easy",
-            "use_shared_context": False,
-            **extra,
-        })
+    @pytest.mark.parametrize("extra", [{}, {"include_answer_key": False}])
+    def test_no_opt_in_means_no_key_in_the_response_but_a_key_in_storage(
+        self, extra, caplog,
+    ):
+        """Both callers that don't opt in get the same keyless response.
 
-    def test_default_now_strips_the_key(self, caplog):
-        """#546: the default flipped false tonight. Omitting the field
-        entirely — what the #537 client actually does before it started
-        sending the flag explicitly, and what any future caller that
-        doesn't know about the flag gets — must no longer leak the answer
-        key, and must not log the deprecation breadcrumb (that only fires
-        for a caller that explicitly opts back in)."""
-        factory, _ = _generate_factory()
-        with (
-            patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.quiz_agent.run",
-                  new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
-        ):
-            with caplog.at_level("INFO", logger="routes.quiz"):
-                r = self._post({})
-        assert r.status_code == 200
-        q = r.json()["questions"][0]
-        assert all("correct" not in o for o in q["options"])
-        # Filtered by logger name (M6): caplog's handler captures every
-        # propagating logger, not just ours, so an unfiltered scan could
-        # pass by coincidence off an unrelated log line rather than
-        # actually proving routes.quiz stayed silent.
-        ours = [rec for rec in caplog.records if rec.name == "routes.quiz"]
-        assert not any("answer key" in rec.message for rec in ours), (
-            "the keyless default path must not log the deprecated-key breadcrumb"
-        )
+        `{}` is the flag-unaware caller — a script, or a client written
+        against the pre-#546 docs; `include_answer_key: false` is what the
+        #537 client has sent on every generate since it shipped (it has
+        never relied on the old default). Parametrized together because the
+        response contract is identical for both; what differs is only the
+        telemetry, which TestAnswerKeyFlagTelemetry below covers.
 
-    def test_default_response_is_the_keyless_projection_of_the_real_stored_key(self):
-        """Grounded against the SAME encrypted questions_json a real
-        Postgres row would hold (round-tripped through the real
-        encrypt_json/decrypt_json_column, not a hand-built fixture):
-        confirms a real answer key actually exists in storage, then pins
-        the served shape against a HARD-CODED expectation written HERE —
-        not imported from routes.quiz's own `_strip_answer_key`/
-        `_KEYLESS_*_KEYS`. Diffing the response against the very function
-        that produced it is circular: it can't catch a leak (or an
-        accidental widening of that allowlist) introduced inside the
-        projection itself, since both sides would move together. The
-        recursive key-name walk at the end is a heuristic backstop only —
-        it catches a leak that names itself obviously, nothing more; the
-        hard-coded key-set assertions above it are the actual anchor."""
+        Neither may log the deprecation breadcrumb: that fires only for a
+        caller that explicitly opts back IN (see
+        GenerateQuizBody.include_answer_key, #546).
+        """
         from services.encryption import decrypt_json_column
 
         factory, captured = _generate_factory()
@@ -317,49 +298,49 @@ class TestIncludeAnswerKey:
             patch("routes.quiz.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
-            r = self._post({})
+            with caplog.at_level("INFO", logger="routes.quiz"):
+                r = _post_generate(extra)
         assert r.status_code == 200
-        body = r.json()
-        served = body["questions"]
-
+        q = r.json()["questions"][0]
+        assert all("correct" not in o for o in q["options"])
+        # Storage keeps the key — grading stays server-side.
         stored = decrypt_json_column(captured["payload"]["questions_json"])
-        assert any(o.get("correct") for o in stored[0]["options"]), (
-            "the fixture must actually mark an option correct, or the "
-            "grounding above is vacuous"
+        assert any(o.get("correct") for o in stored[0]["options"])
+        # Filtered by logger name (M6): caplog's handler captures every
+        # propagating logger, not just ours, so an unfiltered scan could
+        # pass by coincidence off an unrelated log line rather than
+        # actually proving routes.quiz stayed silent.
+        ours = [rec for rec in caplog.records if rec.name == "routes.quiz"]
+        assert not any("answer key" in rec.message for rec in ours), (
+            "the keyless path must not log the deprecated-key breadcrumb"
         )
 
-        # Non-circular anchor: this allowlist is a literal written in the
-        # test, not imported from routes.quiz — so a leak, or an
-        # accidental widening of the route's own allowlist, fails THIS
-        # assertion instead of passing by construction because both sides
-        # moved together.
-        allowed_question_keys = {"id", "question", "concept_tested", "difficulty", "options"}
-        for q in served:
-            leaked = set(q.keys()) - allowed_question_keys
-            assert not leaked, f"generate response question carries unexpected key(s): {leaked}"
-            for opt in q["options"]:
-                assert set(opt.keys()) == {"label", "text"}, (
-                    f"generate response option carries unexpected key(s): "
-                    f"{set(opt.keys()) - {'label', 'text'}}"
-                )
+    def test_default_response_is_the_keyless_projection_of_the_real_stored_key(
+        self, assert_keyless_projection,
+    ):
+        """Grounded against the SAME encrypted questions_json a real
+        Postgres row would hold (round-tripped through the real
+        encrypt_json/decrypt_json_column, not a hand-built fixture): a real
+        answer key exists in storage, and the response is that key's
+        projection — same questions, same options, minus the verdicts.
 
-        # Heuristic backstop: walk the WHOLE response, not just `questions`
-        # — a sibling top-level field (e.g. an `answer_key`) would sail
-        # past a walk scoped only to the questions list.
-        def _walk(node, path=""):
-            if isinstance(node, dict):
-                for k, v in node.items():
-                    lowered = k.lower()
-                    assert not any(
-                        tok in lowered
-                        for tok in ("correct", "answer", "explanation", "solution")
-                    ), f"generate response leaks the answer key via key {path}.{k!r}"
-                    _walk(v, f"{path}.{k}")
-            elif isinstance(node, list):
-                for i, item in enumerate(node):
-                    _walk(item, f"{path}[{i}]")
+        The assertions live in the `assert_keyless_projection` fixture
+        (tests/conftest.py) so this lane and the subcutaneous one can't
+        drift apart; its docstring carries the non-circularity argument for
+        the hard-coded allowlists it uses."""
+        from services.encryption import decrypt_json_column
 
-        _walk(body)
+        factory, captured = _generate_factory()
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run",
+                  new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
+        ):
+            r = _post_generate({})
+        assert r.status_code == 200
+        assert_keyless_projection(
+            r.json(), decrypt_json_column(captured["payload"]["questions_json"]),
+        )
 
     def test_explicit_true_keeps_the_key_and_logs(self, caplog):
         """The flag stays accepted-but-logged for one release: an explicit
@@ -373,7 +354,7 @@ class TestIncludeAnswerKey:
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
             with caplog.at_level("INFO", logger="routes.quiz"):
-                r = self._post({"include_answer_key": True})
+                r = _post_generate({"include_answer_key": True})
         assert r.status_code == 200
         q = r.json()["questions"][0]
         assert any(o.get("correct") for o in q["options"])
@@ -382,22 +363,75 @@ class TestIncludeAnswerKey:
             "every keyed response must leave a deprecation breadcrumb (#546)"
         )
 
-    def test_false_strips_the_key_from_response_but_not_storage(self):
-        from services.encryption import decrypt_json_column
 
-        factory, captured = _generate_factory()
+class TestAnswerKeyFlagTelemetry:
+    """#546: deleting `include_answer_key` is gated on a NUMBER reaching
+    zero — "nobody still asks for the client-side answer key" — and a
+    `logger.info` is not a number. These pin the events that make the
+    grace window's three caller populations countable in the #375
+    by_event_type rollup; the emit site's docstring
+    (`routes/quiz.py::_record_answer_key_flag`) argues why two event types
+    rather than one with a payload flag."""
+
+    def _generate(self, extra):
+        factory, _ = _generate_factory()
         with (
             patch("routes.quiz.table", side_effect=factory),
             patch("routes.quiz.quiz_agent.run",
                   new=AsyncMock(return_value=SimpleNamespace(output=_fake_quiz()))),
         ):
-            r = self._post({"include_answer_key": False})
+            r = _post_generate(extra)
+        # Enqueueing is asynchronous; drain before asserting on the sink.
+        events_service.flush_now()
+        return r
+
+    @staticmethod
+    def _of_type(sink, event_type):
+        return [row for row in sink if row.get("event_type") == event_type]
+
+    def test_explicit_true_is_counted_as_a_served_answer_key(self, sink):
+        """The population that BLOCKS deletion: the response really carried
+        the key, so the flag can't go until this count is zero."""
+        r = self._generate({"include_answer_key": True})
         assert r.status_code == 200
-        q = r.json()["questions"][0]
-        assert all("correct" not in o for o in q["options"])
-        # Storage keeps the key — grading stays server-side.
-        stored = decrypt_json_column(captured["payload"]["questions_json"])
-        assert any(o.get("correct") for o in stored[0]["options"])
+        rows = self._of_type(sink, "quiz.answer_key_served")
+        assert len(rows) == 1
+        assert rows[0]["category"] == "usage"
+        assert rows[0]["user_id"] == "user_andres"
+        assert rows[0]["payload"] == {"quiz_id": r.json()["quiz_id"]}
+        assert not self._of_type(sink, "quiz.answer_key_flag_omitted")
+
+    def test_omitting_the_flag_is_counted_separately(self, sink):
+        """The population the grace window exists FOR: flag-unaware callers
+        whose response shape changed at the flip. They got no telemetry at
+        all before — the breadcrumb only ever fired on explicit true."""
+        r = self._generate({})
+        assert r.status_code == 200
+        rows = self._of_type(sink, "quiz.answer_key_flag_omitted")
+        assert len(rows) == 1
+        assert rows[0]["category"] == "usage"
+        assert rows[0]["user_id"] == "user_andres"
+        assert rows[0]["payload"] == {"quiz_id": r.json()["quiz_id"]}
+        assert not self._of_type(sink, "quiz.answer_key_served")
+
+    def test_explicit_false_emits_nothing(self, sink):
+        """Every shipped #537 client sends this on every generate. An event
+        here would be one row per quiz — it would swamp the rollup it lands
+        in and tell nobody anything, since these callers are already on the
+        shape #546 ends at."""
+        r = self._generate({"include_answer_key": False})
+        assert r.status_code == 200
+        assert not self._of_type(sink, "quiz.answer_key_served")
+        assert not self._of_type(sink, "quiz.answer_key_flag_omitted")
+        # ...and the generation itself is still counted, so an empty
+        # answer-key series can't be read as "nothing was generated".
+        assert self._of_type(sink, "quiz.started")
+
+    def test_both_event_types_are_in_the_pinned_taxonomy(self):
+        """#117: an event type outside EVENT_TAXONOMY is one nobody
+        documented and no rollup expects."""
+        assert "quiz.answer_key_served" in events_service.EVENT_TAXONOMY
+        assert "quiz.answer_key_flag_omitted" in events_service.EVENT_TAXONOMY
 
 
 # ── C4: submit reconciles recorded responses with the payload ───────────────

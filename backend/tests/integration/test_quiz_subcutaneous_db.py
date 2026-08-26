@@ -131,73 +131,34 @@ def test_generate_writes_a_real_attempt_row_with_ciphertext_questions(
 
 
 def test_generate_default_response_never_reveals_the_correct_option(
-    authed_client, db_conn
+    authed_client, db_conn, assert_keyless_projection
 ):
-    """#546: the default flipped false. With `include_answer_key` omitted
-    entirely — the shape every real caller now gets — nothing anywhere in
-    the response (question objects, option objects, any nested dict) may
-    let a client determine which option is correct.
+    """With `include_answer_key` omitted entirely — the shape every real
+    caller now gets (see GenerateQuizBody.include_answer_key, #546) —
+    nothing anywhere in the response may let a client determine which
+    option is correct, and what IS served must be the faithful keyless
+    projection of what was stored.
 
     Grounded against the attempt's REAL stored answer key, decrypted
-    straight from Postgres via the same helper the other tests in this
-    file use — not against a hand-built fixture, and not just "the field
-    named `correct` is absent" (a renamed or restructured leak would slip
-    past a check that narrow). The actual anchor is the hard-coded key-set
-    assertion below, written here rather than imported from routes.quiz's
-    own `_strip_answer_key`/`_KEYLESS_*_KEYS` — diffing the response
-    against the very function that produced it would be circular and
-    couldn't catch a leak (or an accidental widening of that allowlist)
-    introduced inside the projection itself. The recursive key-name walk
-    at the end is a heuristic backstop only, not a proof.
-    """
+    straight from Postgres via the same helper the other tests in this file
+    use: not a hand-built fixture, and not merely "the field named
+    `correct` is absent" (a renamed or restructured leak would slip past a
+    check that narrow).
+
+    The assertions themselves live in the `assert_keyless_projection`
+    fixture (tests/conftest.py), shared with the hermetic twin in
+    tests/test_quiz_answers_c.py so the two lanes cannot drift; its
+    docstring carries the non-circularity argument for the hard-coded
+    allowlists it uses."""
     from services.encryption import decrypt_json_column
 
     r = _generate(authed_client)
     assert r.status_code == 200, r.text
-    quiz_id = r.json()["quiz_id"]
     body = r.json()
-    served = body["questions"]
 
-    row = _attempt_row(db_conn, quiz_id, "questions_json")
+    row = _attempt_row(db_conn, body["quiz_id"], "questions_json")
     assert row is not None, "generate returned 200 but wrote no attempt row"
-    stored = decrypt_json_column(row["questions_json"])
-    assert stored, "no questions were persisted — the grounding below is vacuous"
-    assert all(any(o.get("correct") for o in q["options"]) for q in stored), (
-        "every stored question must actually carry a marked-correct option, "
-        "or this test can't ground anything"
-    )
-
-    # Non-circular anchor: this allowlist is a literal written in the test,
-    # not imported from routes.quiz — so a leak, or an accidental widening
-    # of the route's own allowlist, fails THIS assertion instead of
-    # passing by construction because both sides moved together.
-    allowed_question_keys = {"id", "question", "concept_tested", "difficulty", "options"}
-    for q in served:
-        leaked = set(q.keys()) - allowed_question_keys
-        assert not leaked, f"generate response question carries unexpected key(s): {leaked}"
-        for opt in q["options"]:
-            assert set(opt.keys()) == {"label", "text"}, (
-                f"generate response option carries unexpected key(s): "
-                f"{set(opt.keys()) - {'label', 'text'}}"
-            )
-
-    # Heuristic backstop: walk the WHOLE response, not just `questions` —
-    # a sibling top-level field (e.g. an `answer_key`) would sail past a
-    # walk scoped only to the questions list.
-    def _walk(node, path=""):
-        if isinstance(node, dict):
-            for k, v in node.items():
-                lowered = k.lower()
-                assert not any(
-                    tok in lowered
-                    for tok in ("correct", "answer", "explanation", "solution")
-                ), f"generate response leaks the answer key via key {path}.{k!r}"
-                _walk(v, f"{path}.{k}")
-        elif isinstance(node, list):
-            for i, item in enumerate(node):
-                _walk(item, f"{path}[{i}]")
-
-    _walk(body)
+    assert_keyless_projection(body, decrypt_json_column(row["questions_json"]))
 
 
 @pytest.mark.parametrize("difficulty", _advertised_difficulties())
