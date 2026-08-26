@@ -58,11 +58,12 @@
 #      non-listening holder is waited out.
 #
 # ── Not local ────────────────────────────────────────────────────────────────
-# scripts/e2e-up.sh deliberately does NOT call this: the sysctl write needs
-# sudo (interactive prompt on a dev box), and a local `supabase start` is not
-# racing a runner's image pulls. It runs unprivileged if invoked by hand — the
-# reservation is then skipped with a warning and the diagnostic half still
-# works, minus the pids `ss -p` can only attribute as root.
+# scripts/e2e-up.sh deliberately does NOT call this: the reservation needs root,
+# and a local `supabase start` is not racing a runner's image pulls. Run by hand
+# it is still safe — every sudo call uses `-n`, so on a box without passwordless
+# sudo it fails immediately instead of prompting: the reservation is skipped
+# with a warning and the diagnostic half still works, minus the pids `ss -p`
+# can only attribute as root.
 #
 set -uo pipefail
 
@@ -76,6 +77,15 @@ PROC_RESERVED="/proc/sys/net/ipv4/ip_local_reserved_ports"
 # (TCP_TIMEWAIT_LEN is a compile-time constant — there is no sysctl for it),
 # so a 30s budget gave up before the one case it exists for could clear.
 DRAIN_TIMEOUT="${PREFLIGHT_DRAIN_TIMEOUT:-75}"
+# A non-numeric override would make every `-ge` test in the drain loop fail and
+# spin the loop until the JOB timeout — a worse failure than the one this guard
+# exists to prevent. Fall back loudly instead of failing the lane over a typo.
+case "$DRAIN_TIMEOUT" in
+  '' | *[!0-9]*)
+    echo "preflight: WARNING - PREFLIGHT_DRAIN_TIMEOUT='$DRAIN_TIMEOUT' is not a whole number of seconds; using 75"
+    DRAIN_TIMEOUT=75
+    ;;
+esac
 
 # `printf '  %s\n' "$multiline"` indents only the FIRST line; every other line
 # comes out flush-left. One helper so no call site gets it wrong again.
@@ -146,11 +156,21 @@ if ! parsed=$(awk -v lo="$eph_lo" -v hi="$eph_hi" '
   exit 1
 fi
 
-n_ports=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "COUNT" { print $2 + 0 }')
+# Splitting the records is in-memory string work that realistically cannot
+# fail — but "realistically cannot fail" is the reasoning that produced the
+# fail-open probe this rework had to fix. An empty $check_csv is indistinguish-
+# able from "no enabled service binds a port", which would exit 0 having
+# checked nothing, so these branch on their status like everything else.
+if ! n_ports=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "COUNT" { print $2 + 0 }') ||
+   ! drops=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "DROP" { printf "line %s: %s = %s\n", $2, $3, $4 }') ||
+   ! reserve_csv=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "RESERVE" { print $2 }' | sort -un | paste -sd, -) ||
+   ! check_csv=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "CHECK"   { print $2 }' | sort -un | paste -sd, -); then
+  echo "preflight: FAIL - could not classify the port records parsed out of $CONFIG"
+  echo "  (awk/sort/paste failed on data that had already parsed — the environment is broken,"
+  echo "  and continuing would report an unchecked port set as free.)"
+  exit 1
+fi
 n_ports="${n_ports:-0}"
-drops=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "DROP" { printf "line %s: %s = %s\n", $2, $3, $4 }')
-reserve_csv=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "RESERVE" { print $2 }' | sort -un | paste -sd, -)
-check_csv=$(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "CHECK"   { print $2 }' | sort -un | paste -sd, -)
 
 if [ -n "$drops" ]; then
   echo "preflight: WARNING - port key(s) in $CONFIG whose value is not a bare integer."
@@ -186,13 +206,24 @@ else
   # ("1024-1030"), and a numeric sort coerces that entry to 1024 and silently
   # drops the rest of the range. The kernel takes a mixed, unordered list and
   # normalises it itself.
-  want=$(printf '%s\n%s\n' "$current" "$reserve_csv" | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -)
-  if sudo sysctl -qw "net.ipv4.ip_local_reserved_ports=$want"; then
+  # Guarded for the same reason as the record split above, and with a sharper
+  # consequence: an empty $want would write an EMPTY reservation, i.e. clear
+  # the bitmap this block exists to extend.
+  if ! want=$(printf '%s\n%s\n' "$current" "$reserve_csv" | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -); then
+    echo "preflight: WARNING - could not build the merged reservation list; skipping the write"
+    want=""
+  fi
+  # `sudo -n`: never block on a password prompt. On a runner this is a no-op;
+  # run by hand on a dev box without passwordless sudo it fails immediately and
+  # the step degrades to its diagnostic half, which is what the header promises.
+  if [ -z "$want" ]; then
+    : # already warned
+  elif sudo -n sysctl -qw "net.ipv4.ip_local_reserved_ports=$want"; then
     readback=$(cat "$PROC_RESERVED" 2>/dev/null)
     # The kernel prints the bitmap back as ranges ("54320-54324,54327,54329"),
     # so a string compare would report a mismatch on every successful write.
     # Check MEMBERSHIP of each port we asked for instead.
-    missing=$(printf '%s\n' "$readback" | tr ',' '\n' | awk -v want="$reserve_csv" '
+    if ! missing=$(printf '%s\n' "$readback" | tr ',' '\n' | awk -v want="$reserve_csv" '
         BEGIN { n = split(want, w, ",") }
         {
             lo = $0; hi = $0
@@ -200,8 +231,11 @@ else
             for (i = 1; i <= n; i++) if (w[i] + 0 >= lo + 0 && w[i] + 0 <= hi + 0) ok[i] = 1
         }
         END { for (i = 1; i <= n; i++) if (!(i in ok)) printf "%s%s", (out++ ? "," : ""), w[i] }
-      ')
-    if [ -n "$missing" ]; then
+      '); then
+      # Unverifiable is not verified: claiming reserved=yes here is the exact
+      # fail-open shape F4 condemned.
+      echo "preflight: WARNING - could not verify the reservation readback; treating the ports as UNRESERVED"
+    elif [ -n "$missing" ]; then
       echo "preflight: WARNING - sysctl reported success but the readback is missing $missing"
       echo "  readback: ${readback:-<empty>}"
       echo "  treating the ports as UNRESERVED; collisions stay possible."
@@ -240,7 +274,7 @@ fi
 # probe at all.
 ss_probe=(ss -H -tanp)
 if sudo -n true 2>/dev/null; then
-  ss_probe=(sudo ss -H -tanp)
+  ss_probe=(sudo -n ss -H -tanp)
 else
   echo "preflight: note - no passwordless sudo; probing sockets unprivileged (holders may show with no pid)"
 fi
