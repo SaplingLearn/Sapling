@@ -281,19 +281,67 @@ def _attempt_status(attempt: dict, last_activity_at=None) -> str:
     return "in_progress"
 
 
+def _attempt_not_found() -> QuizAPIError:
+    """The one 404 for "that attempt isn't there" — raised from the load
+    preamble and from both lost-claim re-reads."""
+    return QuizAPIError(
+        status_code=404,
+        code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+        message="We couldn't find that quiz.",
+    )
+
+
+def _already_completed() -> QuizAPIError:
+    """The one 409 for "that attempt is already scored"."""
+    return QuizAPIError(
+        status_code=409,
+        code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
+        message="This quiz has already been submitted.",
+    )
+
+
+def _load_owned_attempt(attempt_id: str, request: Request, columns: str = "*") -> dict:
+    """Read one attempt or 404, then refuse anyone but its owner.
+
+    Verbatim in four routes before #537 G4's review (get_attempt,
+    answer_question, submit_quiz, abandon_attempt). `columns` is a projection
+    knob, not a policy one: `user_id` must be in it, because the ownership
+    check is the whole point.
+    """
+    rows = table("quiz_attempts").select(columns, filters={"id": f"eq.{attempt_id}"})
+    if not rows:
+        raise _attempt_not_found()
+    attempt = rows[0]
+    require_self(attempt["user_id"], request)
+    return attempt
+
+
+def _refuse_if_completed(attempt: dict) -> None:
+    """409 on an attempt that has already been scored — the mirror of
+    `_refuse_if_abandoned`, and the same shape everywhere it is used."""
+    if attempt.get("completed_at"):
+        raise _already_completed()
+
+
 def _refuse_if_abandoned(attempt: dict) -> None:
-    """409 on an attempt that's been swept as abandoned (#542 D2).
+    """409 on an attempt that is closed — swept as stale (#542 D2) or
+    discarded on purpose (#537 G4).
 
     Checks the STAMP, not the derived TTL: a student mid-quiz whose
     attempt merely crossed the age cutoff keeps working (their answers
-    refresh the activity clock — see _attempt_status), but once the sweep
-    has actually marked it, the attempt is closed.
+    refresh the activity clock — see _attempt_status), but once the stamp is
+    on the row the attempt is closed.
+
+    The sentence covers BOTH ways a row gets that stamp, because nothing here
+    can tell them apart — `abandoned_at` records when the row closed, not who
+    closed it. The client's own copy for this code
+    (`lib/quiz/errors.ts::QUIZ_ERROR_COPY`) says the same thing.
     """
     if attempt.get("abandoned_at"):
         raise QuizAPIError(
             status_code=409,
             code=QuizErrorCode.QUIZ_ATTEMPT_ABANDONED,
-            message="This quiz expired. Start a new one when you're ready.",
+            message="This quiz was discarded or expired. Start a new one when you're ready.",
         )
 
 
@@ -1630,17 +1678,7 @@ def get_attempt(attempt_id: str, request: Request):
     """#542 D2: resume state for one attempt — enough to rebuild an
     in-progress quiz client-side: questions WITHOUT the answer key, plus
     the responses already recorded through /answer."""
-    attempt_rows = table("quiz_attempts").select(
-        "*", filters={"id": f"eq.{attempt_id}"}
-    )
-    if not attempt_rows:
-        raise QuizAPIError(
-            status_code=404,
-            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
-            message="We couldn't find that quiz.",
-        )
-    attempt = attempt_rows[0]
-    require_self(attempt["user_id"], request)
+    attempt = _load_owned_attempt(attempt_id, request)
 
     responses = table("quiz_responses").select(
         "question_index,selected_index,is_correct,time_ms,confidence,answered_at",
@@ -1701,24 +1739,8 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
     FIRST recorded response (`recorded: false` marks the replay) rather
     than overwriting — no revision, decided for the #537 revamp flow.
     """
-    attempt_rows = table("quiz_attempts").select(
-        "*", filters={"id": f"eq.{attempt_id}"}
-    )
-    if not attempt_rows:
-        raise QuizAPIError(
-            status_code=404,
-            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
-            message="We couldn't find that quiz.",
-        )
-    attempt = attempt_rows[0]
-    require_self(attempt["user_id"], request)
-
-    if attempt.get("completed_at"):
-        raise QuizAPIError(
-            status_code=409,
-            code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
-            message="This quiz has already been submitted.",
-        )
+    attempt = _load_owned_attempt(attempt_id, request)
+    _refuse_if_completed(attempt)
     _refuse_if_abandoned(attempt)
 
     questions = decrypt_json_column(attempt["questions_json"]) or []
@@ -1777,6 +1799,19 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             "time_ms": body.time_ms,
             "confidence": body.confidence,
         }
+        # ACCEPTED RISK (#597, #537 G4): this is the one quiz write path still
+        # guarded by a PRE-READ alone. Submit and abandon both arbitrate with a
+        # conditional claim on `quiz_attempts`; an INSERT into `quiz_responses`
+        # conditioned on another table's state has no atomic PostgREST form, so
+        # a Discard landing between the refusals above and this line records a
+        # graded response against a closed attempt.
+        #
+        # Inert rather than harmful: an abandoned attempt can never be
+        # submitted (submit's claim filters on `abandoned_at IS NULL`), so the
+        # orphan pays out no mastery, no XP and no achievement. It costs a
+        # stray row on a resume payload nobody can resume. Closing it properly
+        # needs a trigger or an RPC — i.e. a migration — which is what #597 is
+        # for.
         try:
             table("quiz_responses").insert(row)
             response_row = row
@@ -1814,19 +1849,102 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
     }
 
 
+@router.post("/attempts/{attempt_id}/abandon")
+def abandon_attempt(attempt_id: str, request: Request):
+    """#537 G4: close an unfinished attempt ON PURPOSE.
+
+    Before this route, quiz home's "Discard" was a localStorage flag
+    (`lib/quiz/session.ts::dismissAttempt`): the row stayed in_progress until
+    D2's 24h sweep found it, so the resume strip came back on the student's
+    phone, in a second tab, and in this browser the moment the key was
+    cleared. Nothing new is stored — the client writes the same `abandoned_at`
+    stamp `_sweep_abandoned` writes; it is just allowed to say "now".
+
+    Idempotent by design: a second abandon is a 200 no-op carrying the stamp
+    already on the row. The client fires this and forgets it, so a retry after
+    a dropped response must not surface as an error. A COMPLETED attempt 409s
+    instead — the score, mastery and XP are already paid out, and there is
+    nothing here that could take them back.
+    """
+    attempt = _load_owned_attempt(
+        attempt_id,
+        request,
+        # Not "*": the decision needs the owner and three timestamps, and
+        # there is no reason to drag the encrypted questions_json blob across
+        # the wire to write one column.
+        columns="id,user_id,created_at,completed_at,abandoned_at",
+    )
+    _refuse_if_completed(attempt)
+
+    abandoned_at = attempt.get("abandoned_at")
+    if not abandoned_at:
+        now = datetime.now(timezone.utc).isoformat()
+        # The same conditional claim submit uses: the FILTERS arbitrate, so a
+        # concurrent submit and abandon cannot both win the row. The read
+        # above is only the fast path.
+        #
+        # NOT `prefer_return_minimal`: the returned rows ARE the arbitration
+        # (`[]` means someone else won), and minimal mode returns `[]`
+        # unconditionally (db/connection.py) — every discard would read as
+        # lost.
+        #
+        # What the stamp means: `abandoned_at` records when the row was
+        # CLOSED, not when it went quiet. Discarding an attempt that was
+        # already dead by the TTL therefore writes the moment of the click.
+        # Nothing consumes the column as an elapsed time today — the derived
+        # status only asks whether it is set — and a consumer that wants "when
+        # did this go quiet" wants `created_at` plus the last response, which
+        # is what `_attempt_status` already computes.
+        claimed = table("quiz_attempts").update(
+            {"abandoned_at": now},
+            filters={
+                "id": f"eq.{attempt_id}",
+                "completed_at": "is.null",
+                "abandoned_at": "is.null",
+            },
+        )
+        if claimed:
+            # `now` is the value this request WROTE, so preferring the echoed
+            # column and falling back to it is the same timestamp either way.
+            abandoned_at = claimed[0].get("abandoned_at") or now
+        else:
+            # Losing the claim is not an error on its own — it means the row
+            # moved between the read and the write. Re-read to find out which
+            # way: a submit that got there first must 409 rather than be
+            # reported back as a successful discard.
+            current_rows = table("quiz_attempts").select(
+                "completed_at,abandoned_at",
+                filters={"id": f"eq.{attempt_id}"},
+            )
+            if not current_rows:
+                # Deleted under us. There is no stamp to report and no row to
+                # report it for — the same 404 the top of the route gives.
+                raise _attempt_not_found()
+            current = current_rows[0]
+            _refuse_if_completed(current)
+            # A concurrent abandon (or the sweep) won; its stamp is the
+            # answer. No `or now` fallback: this request wrote NOTHING, so
+            # substituting its own clock would invent a stamp for a row whose
+            # real state we just failed to explain. If the row somehow reads
+            # open here, that is what the response says (`abandoned_at: null`,
+            # status `in_progress`) — the honest answer to "we did not close
+            # it", rather than a fabricated success.
+            abandoned_at = current.get("abandoned_at")
+
+    return {
+        "quiz_id": attempt_id,
+        # DERIVED like every other status the quiz routes report, never the
+        # literal "abandoned" — this endpoint must not be the one place that
+        # can disagree with the read paths.
+        "status": _attempt_status({**attempt, "abandoned_at": abandoned_at}),
+        "abandoned_at": abandoned_at,
+    }
+
+
 @router.post("/submit")
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
-    attempt_rows = table("quiz_attempts").select("*", filters={"id": f"eq.{body.quiz_id}"})
-    if not attempt_rows:
-        raise QuizAPIError(
-            status_code=404,
-            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
-            message="We couldn't find that quiz.",
-        )
-    attempt = attempt_rows[0]
-
+    attempt = _load_owned_attempt(body.quiz_id, request)
     user_id = attempt["user_id"]
-    require_self(user_id, request)
 
     # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
     questions = decrypt_json_column(attempt["questions_json"])
@@ -1837,12 +1955,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # quiz-context task, or achievements. 409 rather than replaying the original
     # 200: quiz_attempts stores no mastery_before/after, so faithfully
     # reconstructing the first response would need a migration.
-    if attempt.get("completed_at"):
-        raise QuizAPIError(
-            status_code=409,
-            code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
-            message="This quiz has already been submitted.",
-        )
+    _refuse_if_completed(attempt)
     # An abandoned attempt must not pay out mastery, XP or achievements —
     # otherwise the TTL is a label and the sweep enforces nothing.
     _refuse_if_abandoned(attempt)
@@ -1855,14 +1968,44 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # mastery. The final update further down fills score/total/answers_json.
     claimed = table("quiz_attempts").update(
         {"completed_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{body.quiz_id}", "completed_at": "is.null"},
+        filters={
+            "id": f"eq.{body.quiz_id}",
+            "completed_at": "is.null",
+            # Symmetric with abandon_attempt's claim (#537 G4). Without it the
+            # two claims can BOTH win — mid-quiz in one tab, Discard in
+            # another — and the row ends up completed AND abandoned.
+            # `_refuse_if_abandoned` above is only a pre-read; the filters are
+            # what actually arbitrate.
+            "abandoned_at": "is.null",
+        },
     )
     if not claimed:
-        raise QuizAPIError(
-            status_code=409,
-            code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
-            message="This quiz has already been submitted.",
-        )
+        # Two ways to lose the claim now, and they are different sentences to
+        # the student ("already submitted" vs "you discarded this"). The
+        # pre-read cannot see a stamp written since, so re-read rather than
+        # assume the completed case.
+        #
+        # That re-read is a REFINEMENT of an answer this branch already has.
+        # Losing the claim used to be infallible — no I/O between the refusal
+        # and the response — so a transient PostgREST failure here must fall
+        # back to the 409 a double-submit always got, not turn an ordinary
+        # double-click into a 500.
+        try:
+            current_rows = table("quiz_attempts").select(
+                "abandoned_at", filters={"id": f"eq.{body.quiz_id}"},
+            )
+        except Exception:
+            logger.warning(
+                "quiz: submit re-read failed after a lost claim attempt=%s; "
+                "answering already-completed", body.quiz_id, exc_info=True,
+            )
+            current_rows = None
+        if current_rows is not None:
+            if not current_rows:
+                # Deleted under us: neither sentence is true any more.
+                raise _attempt_not_found()
+            _refuse_if_abandoned(current_rows[0])
+        raise _already_completed()
 
     concept_node_id = attempt["concept_node_id"]
 

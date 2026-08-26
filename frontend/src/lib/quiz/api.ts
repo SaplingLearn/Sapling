@@ -1,11 +1,12 @@
 /**
- * The quiz client — thin `fetchJSON` wrappers over the six shipped quiz
- * endpoints (`backend/routes/quiz.py`, mounted at `/api/quiz`).
+ * The quiz client — thin `fetchJSON` wrappers over the quiz endpoints
+ * (`backend/routes/quiz.py`, mounted at `/api/quiz`).
  *
  * Three of them had no frontend caller at all before #537: `GET /attempts`,
  * `GET /attempts/{id}` and `POST /attempts/{id}/answer` (R1 §H). They are what
  * make resume, history and server-side grading possible, so the quiz leans on
- * all three.
+ * all three. `POST /attempts/{id}/abandon` is newer still — it is what closed
+ * gap G4, and it is the reason Discard survives a reload.
  *
  * This is the only quiz client. `lib/api.ts` carries the shared `fetchJSON` and
  * the non-quiz routes; its own quiz wrappers went with `QuizPanel`.
@@ -13,6 +14,7 @@
 
 import { fetchJSON, describeConcept as describeConceptRaw } from "@/lib/api";
 import type {
+  AbandonResult,
   AnswerResult,
   AttemptDetail,
   AttemptsPage,
@@ -105,6 +107,23 @@ export const submitQuiz = (
     method: "POST",
     body: JSON.stringify({ quiz_id: attemptId, answers }),
   });
+
+/**
+ * `POST /api/quiz/attempts/{id}/abandon` — the real Discard (G4; why the route
+ * exists is told once, in `backend/routes/quiz.py::abandon_attempt`).
+ *
+ * Stamps `abandoned_at`, so the listing's derived status flips to `abandoned`
+ * and `getAttempt` starts answering `resumable: false` — no reload and no
+ * other device offers the attempt again.
+ *
+ * Idempotent (a repeat is a 200 no-op); 409 on an attempt that was already
+ * submitted, since there is nothing there to discard; 404 once the row is gone.
+ */
+export const abandonAttempt = (attemptId: string): Promise<AbandonResult> =>
+  fetchJSON<AbandonResult>(
+    `/api/quiz/attempts/${encodeURIComponent(attemptId)}/abandon`,
+    { method: "POST" },
+  );
 
 /** `GET /api/quiz/attempts` — paginated, user-scoped, newest first. There is no
  *  concept/status filter param (gap G2/G3); filter the page client-side. */

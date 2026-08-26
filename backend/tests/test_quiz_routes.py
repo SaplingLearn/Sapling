@@ -1433,8 +1433,8 @@ class TestSubmitQuizConcurrentClaim:
                     "questions_json": SAMPLE_QUESTIONS,
                     "completed_at": None,
                 }]
-                def _update(data, filters):
-                    claim_calls.append((data, filters))
+                def _update(data, filters, **kw):
+                    claim_calls.append((data, filters, kw))
                     return [{"id": "quiz1"}]
                 mock.update.side_effect = _update
             elif name == "graph_nodes":
@@ -1464,9 +1464,16 @@ class TestSubmitQuizConcurrentClaim:
             })
         assert r.status_code == 200
         # First update is the claim: stamps completed_at, gated on is.null.
-        data, filters = claim_calls[0]
+        data, filters, kwargs = claim_calls[0]
         assert "completed_at" in data
         assert filters.get("completed_at") == "is.null"
+        # …and it must READ its returned rows, which is the arbitration:
+        # `prefer_return_minimal` makes the real client return [] regardless
+        # (db/connection.py), so a claim refactored to minimal would read as
+        # LOST on every submit — no payout, and every other submit test here
+        # stays green because they all lose the claim for other reasons.
+        # Abandon's claim asserts the same thing (test_quiz_abandon_g4.py).
+        assert kwargs.get("prefer_return_minimal") is not True
 
 
 # ── #521: quiz JSON payloads encrypted at rest, plaintext in responses ──────

@@ -58,8 +58,10 @@ describe("QUIZ_ERROR_COPY", () => {
     expect(QUIZ_ERROR_COPY.QUIZ_ATTEMPT_ALREADY_COMPLETED).toBe(
       "This quiz was already scored. Your results are on your tree.",
     );
+    // Covers BOTH ways an attempt earns `abandoned_at` — the 24h sweep (D2)
+    // and Discard (G4). The wire cannot say which, so the sentence must not.
     expect(QUIZ_ERROR_COPY.QUIZ_ATTEMPT_ABANDONED).toBe(
-      "That quiz expired after a day. Start a fresh one.",
+      "That quiz was discarded or expired. Start a fresh one.",
     );
     expect(QUIZ_ERROR_COPY.QUIZ_ATTEMPT_NOT_RESUMABLE).toBe(
       "This quiz can't be resumed. Start a new one.",
