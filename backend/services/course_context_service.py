@@ -273,15 +273,22 @@ def update_course_context(offering_id: str) -> None:
         return out
 
     def _parse_quiz_context_to_arrays(ctx_rows: list) -> tuple[list, list]:
-        # Note: `quiz_context.context_json` never carries an
+        # #572 (canonical telling — other mentions of this drop point back
+        # here): `quiz_context.context_json` never carries an
         # `effective_explanations` key — `agents/quiz_context.py::QuizContext`
         # writes exactly `weak_areas`/`common_mistakes`/`questions_seen_summary`/
-        # `recommended_difficulty`/`notes`. A prior version of this function
-        # read `effective_explanations` here too, which meant
-        # `offering_concept_stats.effective_explanations` always persisted an
-        # empty array — indistinguishable from "this class produced no
-        # effective explanations" (#572). The column stays (its DB default
-        # `'{}'` covers the now-omitted key); only the dead read is gone.
+        # `recommended_difficulty`/`notes` (every stored row also carries a
+        # server-stamped `schema_version`, added by
+        # `services/quiz_context_service.py::save_quiz_context`, not by the
+        # model). A prior version of this function read `effective_explanations`
+        # here too, which meant `offering_concept_stats.effective_explanations`
+        # always persisted an empty array — indistinguishable from "this class
+        # produced no effective explanations". Only the dead read is gone; the
+        # column itself stays. Its DB default (`'{}'`) covers a fresh INSERT,
+        # but the upsert below runs `on_conflict="offering_id,concept_name"` —
+        # a merge-duplicates UPDATE on an existing row — and never mentions
+        # this column in its payload, so an existing row's value (including
+        # anything written out-of-band) is left untouched, not reset.
         common_misconceptions: list = []
         prerequisite_gaps: list = []
         seen_misconceptions: set = set()

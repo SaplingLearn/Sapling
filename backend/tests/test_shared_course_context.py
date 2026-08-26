@@ -27,24 +27,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _make_table_mock(return_map: dict):
-    """Return a mock for `table(name)` that dispatches by table name."""
-    def _table(name):
-        m = MagicMock()
-        rows = return_map.get(name, [])
-        m.select.return_value = rows
-        m.upsert.return_value = None
-        m.insert.return_value = None
-        m.update.return_value = None
-        m.delete.return_value = None
-        return m
-    return _table
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # 1. course_context_service — get_course_context
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -138,44 +120,20 @@ class TestUpdateCourseContext(unittest.TestCase):
     @patch("services.course_context_service.table")
     def test_aggregates_mastery_and_upserts(self, mock_table, mock_ac_table):
         # Two students enrolled in offering "off-1", same concept "Loops".
-        enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
-        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
-        # offering_course_id("off-1") resolves to the abstract course.
-        offering_rows = [{"course_id": "abstract-cs101"}]
         node_rows = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.2,
              "mastery_tier": "struggling", "user_id": "u1"},
             {"id": "n2", "concept_name": "Loops", "mastery_score": 0.9,
              "mastery_tier": "mastered",   "user_id": "u2"},
         ]
+        nodes_tbl = MagicMock()
+        nodes_tbl.select.return_value = node_rows
 
         stats_tbl = MagicMock()
-        stats_tbl.upsert.return_value = None
-
         summary_tbl = MagicMock()
         summary_tbl.select.return_value = []  # no existing summary
-        summary_tbl.upsert.return_value = None
 
-        def _table(name):
-            m = MagicMock()
-            if name == "enrollments":
-                m.select.return_value = enrollment_rows
-            elif name == "course_offerings":
-                m.select.return_value = offering_rows
-            elif name == "courses":
-                m.select.return_value = course_rows
-            elif name == "graph_nodes":
-                m.select.return_value = node_rows
-            elif name == "quiz_context":
-                m.select.return_value = []
-            elif name == "offering_concept_stats":
-                return stats_tbl
-            elif name == "offering_summary":
-                return summary_tbl
-            else:
-                m.select.return_value = []
-            return m
-
+        _table, _ = self._table_factory([], nodes_tbl, stats_tbl, summary_tbl)
         mock_table.side_effect = _table
         mock_ac_table.side_effect = _table
 
@@ -196,9 +154,6 @@ class TestUpdateCourseContext(unittest.TestCase):
     @patch("services.course_context_service.table")
     def test_struggling_concepts_threshold(self, mock_table, mock_ac_table):
         """Concepts with pct_struggling > 0 should appear in top_struggling_concepts."""
-        enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
-        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
-        offering_rows = [{"course_id": "abstract-cs101"}]
         node_rows = [
             {"id": "n1", "concept_name": "Recursion", "mastery_score": 0.1,
              "mastery_tier": "struggling", "user_id": "u1"},
@@ -207,31 +162,14 @@ class TestUpdateCourseContext(unittest.TestCase):
             {"id": "n3", "concept_name": "Loops", "mastery_score": 0.8,
              "mastery_tier": "mastered", "user_id": "u1"},
         ]
+        nodes_tbl = MagicMock()
+        nodes_tbl.select.return_value = node_rows
 
         stats_tbl = MagicMock()
         summary_tbl = MagicMock()
         summary_tbl.select.return_value = []
 
-        def _table(name):
-            m = MagicMock()
-            if name == "enrollments":
-                m.select.return_value = enrollment_rows
-            elif name == "course_offerings":
-                m.select.return_value = offering_rows
-            elif name == "courses":
-                m.select.return_value = course_rows
-            elif name == "graph_nodes":
-                m.select.return_value = node_rows
-            elif name == "quiz_context":
-                m.select.return_value = []
-            elif name == "offering_concept_stats":
-                return stats_tbl
-            elif name == "offering_summary":
-                return summary_tbl
-            else:
-                m.select.return_value = []
-            return m
-
+        _table, _ = self._table_factory([], nodes_tbl, stats_tbl, summary_tbl)
         mock_table.side_effect = _table
         mock_ac_table.side_effect = _table
 
@@ -248,15 +186,14 @@ class TestUpdateCourseContext(unittest.TestCase):
     @patch("services.academics.table")
     @patch("services.course_context_service.table")
     def test_deduplicates_misconceptions_case_insensitive(self, mock_table, mock_ac_table):
-        enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
-        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
-        offering_rows = [{"course_id": "abstract-cs101"}]
         node_rows = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u1"},
             {"id": "n2", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u2"},
         ]
+        nodes_tbl = MagicMock()
+        nodes_tbl.select.return_value = node_rows
         quiz_rows = [
             {"concept_node_id": "n1",
              "context_json": {"common_mistakes": ["Off-by-one error", "off-by-one error"], "weak_areas": []}},
@@ -268,26 +205,7 @@ class TestUpdateCourseContext(unittest.TestCase):
         summary_tbl = MagicMock()
         summary_tbl.select.return_value = []
 
-        def _table(name):
-            m = MagicMock()
-            if name == "enrollments":
-                m.select.return_value = enrollment_rows
-            elif name == "course_offerings":
-                m.select.return_value = offering_rows
-            elif name == "courses":
-                m.select.return_value = course_rows
-            elif name == "graph_nodes":
-                m.select.return_value = node_rows
-            elif name == "quiz_context":
-                m.select.return_value = quiz_rows
-            elif name == "offering_concept_stats":
-                return stats_tbl
-            elif name == "offering_summary":
-                return summary_tbl
-            else:
-                m.select.return_value = []
-            return m
-
+        _table, _ = self._table_factory([], nodes_tbl, stats_tbl, summary_tbl, quiz_rows=quiz_rows)
         mock_table.side_effect = _table
         mock_ac_table.side_effect = _table
 
@@ -306,23 +224,22 @@ class TestUpdateCourseContext(unittest.TestCase):
     def test_effective_explanations_never_emitted_even_when_source_has_it(
         self, mock_table, mock_ac_table
     ):
-        """#572: `agents/quiz_context.py::QuizContext` never writes an
-        `effective_explanations` key into `context_json` — it only ever
-        writes `weak_areas`/`common_mistakes`/`questions_seen_summary`/
-        `recommended_difficulty`/`notes`. The rollup used to read that key
-        anyway, which meant `offering_concept_stats.effective_explanations`
-        always persisted an empty array (indistinguishable from "this class
-        produced no effective explanations"). Even if a stray row somehow
-        *did* carry the key (planted here to prove the read is really gone,
-        not just untested), the upsert payload must never include it — the
-        column stays on its own DB default, unwritten by this rollup."""
-        enrollment_rows = [{"user_id": "u1"}]
-        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
-        offering_rows = [{"course_id": "abstract-cs101"}]
+        """#572 — full rationale lives at the canonical comment in
+        `_parse_quiz_context_to_arrays` (services/course_context_service.py).
+        This plants the key on a source row to prove the read is really gone,
+        not just untested; the `model_fields` assertion below additionally
+        pins the premise that `QuizContext` never emits the key in the first
+        place, so this test goes red (instead of quietly passing) if a future
+        change ever adds the field without also adding the rollup half."""
+        from agents.quiz_context import QuizContext
+        self.assertNotIn("effective_explanations", QuizContext.model_fields)
+
         node_rows = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u1"},
         ]
+        nodes_tbl = MagicMock()
+        nodes_tbl.select.return_value = node_rows
         quiz_rows = [
             {"concept_node_id": "n1",
              "context_json": {
@@ -336,26 +253,7 @@ class TestUpdateCourseContext(unittest.TestCase):
         summary_tbl = MagicMock()
         summary_tbl.select.return_value = []
 
-        def _table(name):
-            m = MagicMock()
-            if name == "enrollments":
-                m.select.return_value = enrollment_rows
-            elif name == "course_offerings":
-                m.select.return_value = offering_rows
-            elif name == "courses":
-                m.select.return_value = course_rows
-            elif name == "graph_nodes":
-                m.select.return_value = node_rows
-            elif name == "quiz_context":
-                m.select.return_value = quiz_rows
-            elif name == "offering_concept_stats":
-                return stats_tbl
-            elif name == "offering_summary":
-                return summary_tbl
-            else:
-                m.select.return_value = []
-            return m
-
+        _table, _ = self._table_factory([], nodes_tbl, stats_tbl, summary_tbl, quiz_rows=quiz_rows)
         mock_table.side_effect = _table
         mock_ac_table.side_effect = _table
 
@@ -373,8 +271,11 @@ class TestUpdateCourseContext(unittest.TestCase):
     # ── #72: the persisted Class Intel opt-out gates the WRITE path ──────────
 
     @staticmethod
-    def _table_factory(settings_rows, nodes_tbl, stats_tbl, summary_tbl):
-        """Dispatch table() by name for the share_class_context tests."""
+    def _table_factory(settings_rows, nodes_tbl, stats_tbl, summary_tbl, quiz_rows=None):
+        """Dispatch table() by name — shared across the update_course_context
+        tests (the share_class_context ones plus any test that just needs the
+        standard 2-student CS101/off-1 fixture around a custom graph_nodes /
+        quiz_context payload)."""
         enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
         course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
         offering_rows = [{"course_id": "abstract-cs101"}]
@@ -394,7 +295,7 @@ class TestUpdateCourseContext(unittest.TestCase):
             elif name == "graph_nodes":
                 return nodes_tbl
             elif name == "quiz_context":
-                m.select.return_value = []
+                m.select.return_value = quiz_rows or []
             elif name == "offering_concept_stats":
                 return stats_tbl
             elif name == "offering_summary":
