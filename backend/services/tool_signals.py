@@ -165,6 +165,7 @@ def report_empty_result(
     feature: str = "unknown",
     scope: dict | None = None,
     payload: dict | None = None,
+    plausible: bool | None = None,
 ) -> bool:
     """Flag a tool result that is empty when it probably shouldn't be.
 
@@ -185,8 +186,18 @@ def report_empty_result(
     both the quiz and the tutor) would otherwise attribute every caller's
     empties to whichever feature the default happened to name.
 
-    NOTE: this is SYNCHRONOUS and does a Supabase read. Async callers must
-    use `report_empty_result_async`, or they block the event loop.
+    `plausible` lets a caller that ALREADY KNOWS the answer skip the probe
+    read. Some callers do: the quiz route reads a `graph_nodes` row before it
+    reaches this seam, so probing `HAS_GRAPH` for that same user and course
+    can only return what the caller just saw — a guaranteed-True round trip
+    on the request path, once per generation. `expect` is still required, and
+    still ships in the event: it names WHY the caller expected data, which is
+    the part a rollup reads. Pass this only for a fact you hold; a guess here
+    manufactures discrepancies with no probe left to catch it.
+
+    NOTE: this is SYNCHRONOUS and does a Supabase read (unless `plausible` is
+    supplied). Async callers must use `report_empty_result_async`, or they
+    block the event loop.
     """
     try:
         if count or not user_id:
@@ -198,7 +209,8 @@ def report_empty_result(
                 logger.debug("tool_signals: unknown expectation %r", expect)
                 return False
 
-        plausible = _user_plausibly_has_data(user_id, expect, scope)
+        if plausible is None:
+            plausible = _user_plausibly_has_data(user_id, expect, scope)
         if plausible is not True:
             return False
 
