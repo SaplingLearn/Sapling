@@ -84,6 +84,56 @@ def test_discover_is_sorted_lexicographically():
     assert order == sorted(order)
 
 
+# ── Offline: schema CHECK vs. what route code actually writes ───────────────
+#
+# The mock Supabase in conftest.py enforces no CHECK constraints, so a route that
+# writes a value its column forbids passes every unit test and fails only against
+# a real database. That is exactly how the Gradescope sync shipped broken:
+# 0021_gradebook tightened `assignments.source` to ('manual','syllabus') while
+# routes/gradescope.py was writing 'gradescope', so every synced row was rejected
+# and the endpoint still returned HTTP 200. These pins are static (no DB), so they
+# gate in the default lane alongside the order pins above.
+
+_SOURCE_CHECK_RE = re.compile(r"CHECK\s*\(\s*source\s+IN\s*\(([^)]*)\)", re.IGNORECASE)
+_SOURCE_WRITE_RE = re.compile(r"""["']source["']\s*:\s*["']([a-z_]+)["']""")
+
+
+def _allowed_source_values() -> set[str]:
+    """The effective assignments.source CHECK — the LAST definition in apply order
+    wins, since a later migration drops and re-adds the constraint."""
+    allowed: set[str] = set()
+    for path in discover_migrations(Path(MIGRATIONS_DIR)):
+        for match in _SOURCE_CHECK_RE.finditer(path.read_text(encoding="utf-8")):
+            allowed = set(re.findall(r"'([a-z_]+)'", match.group(1)))
+    return allowed
+
+
+def test_assignments_source_check_covers_every_value_routes_write():
+    """Every `"source": "..."` literal in routes/ must be permitted by the
+    effective CHECK. Catches the class of bug the mock DB cannot: a constraint
+    tightened in a migration without updating (or noticing) an existing writer."""
+    allowed = _allowed_source_values()
+    assert allowed, "no assignments.source CHECK found in migrations"
+
+    written: dict[str, set[str]] = {}
+    for path in sorted(Path("routes").glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for value in _SOURCE_WRITE_RE.findall(text):
+            written.setdefault(value, set()).add(path.name)
+
+    violations = {v: sorted(f) for v, f in written.items() if v not in allowed}
+    assert violations == {}, (
+        f"routes write assignments.source values the CHECK forbids: {violations}. "
+        f"Allowed: {sorted(allowed)}"
+    )
+
+
+def test_gradescope_is_an_allowed_source_value():
+    """Pin the 0032 widening directly: routes/gradescope.py::sync_course depends
+    on it for both its insert and its update path."""
+    assert "gradescope" in _allowed_source_values()
+
+
 # The DB-backed counterpart — that the schema_migrations ledger records every
 # file on disk — needs the real stack and lives in the integration lane
 # (tests/integration/test_migrations_ledger.py).
