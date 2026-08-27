@@ -2,61 +2,74 @@
 --
 -- `0021_gradebook.sql` recreated `assignments` with
 --     source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','syllabus'))
--- because the two writers it was written against (routes/gradebook.py) only ever
--- emit those two values. But routes/gradescope.py::sync_course writes
+-- because routes/gradebook.py, its only writer at the time, emits exactly those
+-- two. But routes/gradescope.py::sync_course writes
 --     record_write = {..., "source": "gradescope", ...}
--- on BOTH the insert and the update path, so every row the Gradescope sync tried
--- to write violated the CHECK. The route catches the failure per-assignment and
--- counts it into `failed`, so /api/gradescope/sync/{id} returned HTTP 200 with
--- {inserted: 0, updated: 0, failed: N} — a sync that reported success in the UI
--- while writing nothing.
+-- on BOTH its insert and its update path, so every row the Gradescope sync tried
+-- to write was rejected with 23514 (check_violation). The route catches failures
+-- per-assignment into `failed`, so POST /api/gradescope/sync/{id} returned HTTP
+-- 200 with {inserted: 0, updated: 0, failed: N} — a sync that reported success
+-- in the UI while writing nothing. Confirmed live against the staging database
+-- before this fix: source='manual' accepted, source='gradescope' rejected.
 --
 -- The pre-redesign column (0012_gradebook.sql) was a bare `TEXT DEFAULT 'manual'`
--- with no CHECK, which is why the Gradescope code was correct when it was written
--- and silently became wrong when 0021 tightened the column.
+-- with no CHECK, so the Gradescope code was correct when written and silently
+-- became wrong when 0021 tightened the column underneath it.
 --
--- 'gradescope' is real provenance and worth keeping distinct from 'manual' (the
--- gradebook UI shows synced rows differently and must not let a sync clobber a
--- hand-entered grade), so widen the constraint rather than making the route lie
--- about where the row came from.
+-- 'gradescope' is real provenance worth keeping distinct from 'manual' (a sync
+-- must never look like a hand-entered grade), so widen the constraint rather
+-- than making the route misreport where the row came from.
 
--- Drop by definition rather than by assumed name: the 0021 constraint is an
--- inline column CHECK, so Postgres auto-named it `assignments_source_check`, but
--- a re-created table could have picked up a numeric suffix. Matching on the
--- constraint body finds it either way, and leaves a DB that already has the
--- widened form untouched (its definition no longer lacks 'gradescope').
+-- Drop by DEFINITION, not by name.
+--
+-- main's equivalent migration (0042_assignments_source_gradescope.sql) does
+--     ALTER TABLE assignments DROP CONSTRAINT IF EXISTS assignments_source_check;
+-- which assumes Postgres's default name for 0021's inline CHECK. When a table
+-- has been recreated the original can carry a numeric suffix
+-- (`assignments_source_check1`), and then the DROP silently no-ops while the ADD
+-- succeeds — leaving BOTH constraints in place. Both are enforced, the narrow
+-- one still rejects 'gradescope', and the migration is recorded as applied
+-- having changed nothing. Matching on the constraint body avoids that trap and
+-- clears every narrow variant, however many there are.
 DO $$
 DECLARE
-  conname_found TEXT;
+  r RECORD;
 BEGIN
-  SELECT c.conname INTO conname_found
-  FROM pg_constraint c
-  JOIN pg_class t ON t.oid = c.conrelid
-  WHERE t.relname = 'assignments'
-    AND c.contype = 'c'
-    AND pg_get_constraintdef(c.oid) LIKE '%syllabus%'
-    AND pg_get_constraintdef(c.oid) NOT LIKE '%gradescope%'
-  LIMIT 1;
-
-  IF conname_found IS NOT NULL THEN
-    EXECUTE format('ALTER TABLE assignments DROP CONSTRAINT %I', conname_found);
-  END IF;
+  FOR r IN
+    SELECT c.conname
+    FROM pg_constraint c
+    WHERE c.conrelid = 'public.assignments'::regclass
+      AND c.contype = 'c'
+      AND pg_get_constraintdef(c.oid) ILIKE '%syllabus%'
+      AND pg_get_constraintdef(c.oid) NOT ILIKE '%gradescope%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.assignments DROP CONSTRAINT %I', r.conname);
+    RAISE NOTICE 'dropped narrow assignments.source CHECK: %', r.conname;
+  END LOOP;
 END $$;
 
--- Re-add the widened constraint. Guarded so a replay after the drop above (or on
--- a DB that never had the narrow form) is a clean no-op.
+-- Re-add widened, NOT VALID.
+--
+-- NOT VALID is about lock behaviour, not data: {manual, syllabus} is a strict
+-- subset of the new set, so every existing row already satisfies it by
+-- construction. A plain ADD CONSTRAINT ... CHECK holds ACCESS EXCLUSIVE on
+-- `assignments` for the whole validation scan, blocking every read and write to
+-- the gradebook's busiest table. NOT VALID skips the scan while still enforcing
+-- on every new and updated row, which is all this needs. Matches main's 0042.
+--
+-- Guarded so a replay (or an environment already carrying the widened form,
+-- including one fixed by hand ahead of this migration) is a clean no-op.
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    WHERE t.relname = 'assignments'
-      AND c.contype = 'c'
-      AND c.conname = 'assignments_source_check'
+    FROM pg_constraint
+    WHERE conrelid = 'public.assignments'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%gradescope%'
   ) THEN
-    ALTER TABLE assignments
+    ALTER TABLE public.assignments
       ADD CONSTRAINT assignments_source_check
-      CHECK (source IN ('manual', 'syllabus', 'gradescope'));
+      CHECK (source IN ('manual', 'syllabus', 'gradescope')) NOT VALID;
   END IF;
 END $$;
