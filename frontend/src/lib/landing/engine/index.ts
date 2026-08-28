@@ -107,6 +107,111 @@ export class LandingEngine {
   private tutorFacing = -1;
   private tileCounts = [0, 0, 0, 0];
 
+  /**
+   * High-water mark of each act's scroll progress, indexed act1/act2/act3.
+   *
+   * The acts are scrubbed: their progress is recomputed from scroll position
+   * every frame, so scrolling back up used to run them in reverse — the graph
+   * un-assembled, chips flew back into the document, the carousel spun
+   * backwards. These latch the furthest point each act reached, so scrolling
+   * up holds the played state and only the page moves.
+   *
+   * Deliberately never reset. Re-entering an act from above shows its end
+   * state rather than replaying it, which is the same rule seen from the
+   * other side: once played, it stays played.
+   */
+  private actPeak = [0, 0, 0];
+
+  /** Which acts have had their spent scrub runway folded away. */
+  private actFolded = [false, false, false];
+
+  /** Previous frame's raw scroll position, for direction. -1 until first tick. */
+  private lastRawSy = -1;
+
+  /**
+   * Latch raw scrubbed progress to its high-water mark.
+   *
+   * @param i   Act index, 0..2.
+   * @param raw Progress straight off the scroll position, already clamped.
+   */
+  private peak(i: number, raw: number): number {
+    if (raw > this.actPeak[i]) this.actPeak[i] = raw;
+    return this.actPeak[i];
+  }
+
+  /**
+   * Fold a finished act down to a single viewport.
+   *
+   * Each act is a tall section whose extra height is nothing but scrub runway
+   * for its animation: 360vh on act 1, 220vh on act 2, 240vh on act 3. Once
+   * `actPeak` has latched an act at 1 that runway drives nothing, so scrolling
+   * back up meant grinding through ~8 screens of dead space to get out.
+   *
+   * It is seamless from any scroll position because of how sticky behaves.
+   * While the act is pinned its child sits at the viewport top for every
+   * `scrollY` in `[top, top + h - vh]`, so cutting the section to one
+   * viewport and pulling `scrollY` back to `top` leaves that child exactly
+   * where it was. Past the act, the same distance comes off instead, which
+   * cancels the upward shift of everything below. Above it, nothing on screen
+   * moves and the shrink is zero. `min(scrollY - top, h - vh)` covers all
+   * three, and clamping at zero is what makes the third case a no-op.
+   *
+   * The smoothed scroll passes track absolute `scrollY`, so they shift too —
+   * otherwise the next frame reads a 360vh delta and either lerps through it
+   * or trips the `jumping` bypass.
+   *
+   * Two triggers, and between them upward scrolling is never pinned:
+   *
+   * 1. The act finished. Its runway is spent and drives nothing.
+   * 2. The reader is scrolling up inside an act they have started. The pin
+   *    would otherwise hold them in place for the whole distance they just
+   *    came down, which reads as the page having stopped responding.
+   *
+   * Trigger 2 strands the act at whatever progress it had reached, because the
+   * runway that would finish it is exactly what gets cut. That is the intended
+   * trade: scrolling up out of a scene is a decision to leave it, and a scene
+   * frozen part-way still reads as a paused scene. Coming back down shows that
+   * state rather than replaying, which matches the `actPeak` rule.
+   *
+   * Scrolling up into an act from *below* needs no special case. Raw progress
+   * there is already past 1, so `actPeak` latches on the first frame and
+   * trigger 1 folds it — the reader gets the finished scene, then keeps going.
+   *
+   * @returns true if a fold happened, in which case the caller must abandon
+   *          the frame: every cached offset below that act is now stale.
+   */
+  private foldActs(M: Measured, vh: number, rawSy: number, goingUp: boolean): boolean {
+    const acts = [M.act1, M.act2, M.act3];
+    for (let i = 0; i < 3; i++) {
+      const a = acts[i];
+      if (!a || this.actFolded[i]) continue;
+      // 0.999, not 1: scrolling out the bottom drives raw progress past 1 and
+      // clamp01 pins it, but reversing exactly on the boundary can leave a
+      // float a hair short, and the last 0.1% of any act is invisible anyway
+      const done = this.actPeak[i] >= 0.999;
+      const leaving = goingUp && this.actPeak[i] > 0 && rawSy > a.o.top;
+      if (!done && !leaving) continue;
+      this.actFolded[i] = true;
+      const runway = a.o.h - vh;
+      if (runway <= 1) continue;
+      const shrink = Math.max(0, Math.min(rawSy - a.o.top, runway));
+      // vh units, not px, so the section still tracks a window resize
+      a.el.style.height = '100vh';
+      if (shrink > 0) {
+        const to = Math.max(0, rawSy - shrink);
+        window.scrollTo(0, to);
+        if (this.sySmooth !== undefined) this.sySmooth -= shrink;
+        this.syMedia -= shrink;
+        // direction is diffed against this; leaving the pre-fold value here
+        // would read as one enormous upward scroll on the next frame
+        this.lastRawSy = to;
+      }
+      this.M = null;
+      return true;
+    }
+    return false;
+  }
+
   constructor(refs: EngineRefs, hooks: EngineHooks) {
     this.refs = refs;
     this.hooks = hooks;
@@ -174,6 +279,18 @@ export class LandingEngine {
     const vh = window.innerHeight;
     const rawSy = window.scrollY;
     const inten = Number(this.hooks.getParallax() ?? 1);
+
+    // Reclaim the runway of any act that has finished, or that the reader is
+    // scrolling back up out of. Ahead of the smoothing block, which this
+    // shifts in step with the scroll position.
+    // 0.5px deadband so sub-pixel jitter never reads as a direction change.
+    const goingUp = this.lastRawSy >= 0 && rawSy < this.lastRawSy - 0.5;
+    this.lastRawSy = rawSy;
+    // Explore mode holds the reader inside act 1 on purpose; resizing the
+    // section under them there would move the page out from under the graph.
+    if (!this.hooks.getExploring() && !this.hooks.getExpOut()) {
+      if (this.foldActs(M, vh, rawSy, goingUp)) return;
+    }
 
     // ── double-lerp scroll smoothing: raw → scroll pass (0.05) → media pass (0.08)
     if (this.sySmooth === undefined) {
@@ -282,7 +399,7 @@ export class LandingEngine {
     const top = M.act1.o.top - rawSy;
     if (top + M.act1.o.h <= -100 || top >= vh + 100) return;
 
-    const p = clamp01(-(M.act1.o.top - sy) / Math.max(1, M.act1.o.h - vh));
+    const p = this.peak(0, clamp01(-(M.act1.o.top - sy) / Math.max(1, M.act1.o.h - vh)));
     drawScroll(canvas, this.graph, this.view, p);
 
     M.caps.forEach((c) => {
@@ -310,7 +427,7 @@ export class LandingEngine {
     const top = M.act2.o.top - rawSy;
     if (top + M.act2.o.h <= -100 || top >= vh + 100) return;
 
-    const p = clamp01(-(M.act2.o.top - sy) / Math.max(1, M.act2.o.h - vh));
+    const p = this.peak(1, clamp01(-(M.act2.o.top - sy) / Math.max(1, M.act2.o.h - vh)));
     const sc = M.scene;
     if (!sc.doc || sc.tiles.length !== 4 || !sc.docL || !sc.tileL) return;
 
@@ -374,7 +491,7 @@ export class LandingEngine {
     const top = M.act3.o.top - rawSy;
     if (top + M.act3.o.h <= -100 || top >= vh + 100) return;
 
-    const p = clamp01(-(M.act3.o.top - sy) / Math.max(1, M.act3.o.h - vh));
+    const p = this.peak(2, clamp01(-(M.act3.o.top - sy) / Math.max(1, M.act3.o.h - vh)));
     const docked = p > 0.86;
     let target: number;
     let ease = 0.09;
