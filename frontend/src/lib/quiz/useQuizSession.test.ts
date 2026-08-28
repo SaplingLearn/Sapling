@@ -719,14 +719,16 @@ describe("leave and resume", () => {
     expect(second.result.current.session.source.kind).toBe("tree");
   });
 
-  it("explains an expired attempt instead of silently doing nothing", async () => {
+  it("explains a closed attempt instead of silently doing nothing", async () => {
+    // Reachable two ways since G4: the 24h sweep, and a Discard on another
+    // device while this one still has the resume strip up.
     quizApi.getAttempt.mockRejectedValue(
       new ApiError("gone", 409, { code: "QUIZ_ATTEMPT_ABANDONED" }),
     );
     const { result } = mount({ attempt: "attempt-9", source: { kind: "quiz" } });
     await waitFor(() => expect(result.current.session.phase).toBe("error"));
     expect(result.current.session.error?.message).toBe(
-      "That quiz expired after a day. Start a fresh one.",
+      "That quiz was discarded or expired. Start a fresh one.",
     );
     act(() => result.current.actions.dismissError());
     expect(result.current.session.phase).toBe("home");

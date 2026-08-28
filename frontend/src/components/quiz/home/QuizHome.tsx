@@ -40,7 +40,7 @@ import {
   rationaleFor,
   type Candidate,
 } from "@/lib/quiz/proposals";
-import { QUEUE_COUNT, QUEUE_MAX, dismissAttempt } from "@/lib/quiz/session";
+import { QUEUE_COUNT, QUEUE_MAX } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizConfig, QuizSession, SourceKind } from "@/lib/quiz/types";
 import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
@@ -325,10 +325,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
           <Button
             variant="link"
             data-testid="quiz-resume-discard"
-            onClick={() => {
-              dismissAttempt(resumable.attempt.quiz_id);
-              home.refresh();
-            }}
+            onClick={() => home.discard(resumable.attempt.quiz_id)}
           >
             Discard
           </Button>

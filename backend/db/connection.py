@@ -117,6 +117,46 @@ class SupabaseTable:
         return r.json()
 
 
+def pg_quote_value(value: str) -> str:
+    """Double-quote a value for a PostgREST logic tree (``or=(…)``/``and=(…)``).
+
+    Inside a logic tree a bare value ends at the first comma or paren, so a
+    course named ``Ethics, Law and Society`` parses as two broken operands and
+    a search for ``a)b`` closes the tree early. Quoting fixes that; ``"`` and
+    ``\\`` inside the value are backslash-escaped, as PostgREST's grammar
+    specifies.
+
+    Lives here rather than in the feature that first needed it because this is
+    PostgREST grammar, not domain logic: every caller that interpolates a
+    user- or catalog-supplied value into a filter needs the same rule, and one
+    of them (`routes/onboarding.py`'s course search) shipped without it.
+    """
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+#: LIKE's own metacharacters, plus its default escape character. Applied
+#: BEFORE `pg_quote_value`, which then doubles the backslashes this introduces
+#: for PostgREST's grammar — the other order emits a bare ``\%`` that PostgREST
+#: unescapes to ``%`` and hands to LIKE as a live wildcard.
+_LIKE_SPECIALS = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
+
+
+def like_literal(value: str) -> str:
+    """Escape a value so ``like``/``ilike`` matches it verbatim.
+
+    ``topic.ilike."Math_101"`` would otherwise match ``Math-101`` and
+    ``Math 101`` too (``_`` is LIKE's any-single-character wildcard), and a
+    value containing ``%`` would match a great deal more than it names. Add
+    your own surrounding ``%`` for a substring match — the point of this is
+    that the *value* stops being a pattern, not that the match stops being one.
+
+    One gap it cannot close: PostgREST rewrites ``*`` to ``%`` in like/ilike
+    values itself, before Postgres ever sees the pattern, and offers no escape
+    for it.
+    """
+    return value.translate(_LIKE_SPECIALS)
+
+
 def table(name: str) -> SupabaseTable:
     return SupabaseTable(name)
 

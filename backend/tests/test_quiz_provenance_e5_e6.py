@@ -232,9 +232,11 @@ def test_provenance_records_the_model_that_actually_served():
 
 @pytest.mark.parametrize("include_answer_key", [True, False])
 def test_provenance_never_reaches_the_client(include_answer_key):
-    """Both response shapes. The keyed branch is still the default until
-    #546 flips it, so an allowlist that only guards the keyless path would
-    ship chunk ids to every browser today."""
+    """Both response shapes. #546 made keyless the default, but the keyed
+    branch is still reachable for as long as the flag is accepted — and it
+    is a separate projection (`_INTERNAL_QUESTION_KEYS`, not
+    `_strip_answer_key`), so an allowlist that only guarded the keyless path
+    would ship chunk ids to whichever caller still opts in."""
     r, row, _ = _generate(
         [_question()],
         material=CourseMaterial(chunk_ids=("chunk-a",), bu_code="X"),

@@ -311,34 +311,42 @@ def test_reserved_questions_keep_their_identity_and_take_new_positions():
     assert all(q["provenance"]["reserved_from"] == SOURCE_ID for q in stored)
 
 
-def test_reserved_questions_are_stripped_for_the_client_like_generated_ones():
+def test_reserved_questions_are_stripped_on_the_opt_in_keyed_shape_too():
+    """The keyed shape (`include_answer_key: true`, deprecated since #546 but
+    still accepted) projects through a different branch of `_client_questions`
+    — a denylist rather than the keyless allowlist — so a re-served question's
+    internals have to be excluded there separately."""
     source_questions = [_stored("Q1", 1)]
     r, _, _ = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID, "include_answer_key": True},
+    )
+    assert r.status_code == 200, r.text
+    (question,) = r.json()["questions"]
+    assert "question_hash" not in question
+    assert "provenance" not in question
+    # The opt-in shape still ships the answer key it was asked for.
+    assert question["options"][0]["correct"] is True
+
+
+def test_the_default_projection_strips_the_reserved_internals(assert_keyless_projection):
+    """The shipping shape since #546 flipped the default: a re-served question
+    reaches the client keyless, exactly as a generated one does.
+
+    Asserted through the shared fixture so this checks the projection against
+    the answer key that was really stored for THIS attempt — proving the key
+    exists and was withheld, not merely that a re-served item never had one."""
+    source_questions = [_stored("Q1", 1)]
+    r, row, _ = _generate(
         attempts=[_attempt(source_questions)],
         responses=_missed(0),
         num_questions=1,
         body_extra={"source_attempt_id": SOURCE_ID},
     )
     assert r.status_code == 200, r.text
-    (question,) = r.json()["questions"]
-    assert "question_hash" not in question
-    assert "provenance" not in question
-    # The keyed default still ships the answer key it always did.
-    assert question["options"][0]["correct"] is True
-
-
-def test_keyless_projection_also_strips_the_reserved_internals():
-    source_questions = [_stored("Q1", 1)]
-    r, _, _ = _generate(
-        attempts=[_attempt(source_questions)],
-        responses=_missed(0),
-        num_questions=1,
-        body_extra={"source_attempt_id": SOURCE_ID, "include_answer_key": False},
-    )
-    assert r.status_code == 200, r.text
-    (question,) = r.json()["questions"]
-    assert set(question) == {"id", "question", "concept_tested", "difficulty", "options"}
-    assert all(set(o) == {"label", "text"} for o in question["options"])
+    assert_keyless_projection(r.json(), _stored_questions(row))
 
 
 def test_explicit_hashes_win_over_the_recorded_responses():
@@ -584,7 +592,16 @@ def test_quiz_started_records_what_was_reserved(sink):
 
 def _tool_empty_events(sink, **generate_kwargs):
     """Drive a generation with the F5 probe answering "yes, this student has
-    completed attempts", and return the `quiz.tool_empty` events it emitted."""
+    completed attempts", and return the `quiz.tool_empty` events THE RE-SERVE
+    emitted.
+
+    Narrowed to this tool on purpose. F5 is feature-agnostic and a generating
+    request runs several reporters — `quiz_signals.offerings_for_course` also
+    reports empty here, because the mocked `table()` serves that read no rows
+    while #592 tells the reporter this student has a graph. That is a fixture
+    artefact of a different subsystem; asserting on every emitter would make
+    these tests fail whenever another reporter is added, which is how a
+    subject-specific assertion turns into a tripwire for unrelated work."""
     from services import events_service
 
     def probe(name):
@@ -596,7 +613,11 @@ def _tool_empty_events(sink, **generate_kwargs):
         r, _, _ = _generate(**generate_kwargs)
     assert r.status_code == 200, r.text
     events_service.flush_now()
-    return [e for e in sink if e["event_type"] == "quiz.tool_empty"]
+    return [
+        e for e in sink
+        if e["event_type"] == "quiz.tool_empty"
+        and e["payload"].get("tool") == "quiz_reserve.missed_questions"
+    ]
 
 
 def test_an_attempt_that_missed_something_but_recovered_nothing_is_reported(sink):

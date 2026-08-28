@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  abandonAttempt,
   answerQuestion,
   describeConcept,
   fetchQuizConfig,
@@ -177,6 +178,29 @@ describe("getAttempt", () => {
     const detail = await getAttempt("a-1");
     expect(lastCall()[0]).toBe("/api/quiz/attempts/a-1");
     expect(detail.quiz_id).toBe("a-1");
+  });
+});
+
+describe("abandonAttempt", () => {
+  it("POSTs the abandon route with no body (G4)", async () => {
+    fetchMock().mockResolvedValue(
+      jsonResponse({
+        quiz_id: "a-1",
+        status: "abandoned",
+        abandoned_at: "2026-08-23T02:00:00+00:00",
+      }),
+    );
+    const out = await abandonAttempt("a-1");
+    const [url, init] = lastCall();
+    expect(url).toBe("/api/quiz/attempts/a-1/abandon");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+    expect(out.status).toBe("abandoned");
+  });
+
+  it("url-encodes the attempt id", async () => {
+    await abandonAttempt("a/1");
+    expect(lastCall()[0]).toBe("/api/quiz/attempts/a%2F1/abandon");
   });
 });
 

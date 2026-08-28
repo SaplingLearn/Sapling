@@ -8,7 +8,7 @@
  * pass while the screen showed something else.
  *
  * What is pinned here:
- *   - the resume strip, its Resume, and its client-side Discard (R-3)
+ *   - the resume strip, its Resume, and its Discard (R-3 / G4)
  *   - Start's request shape and the config it carries
  *   - the due row's queue cap and per-attempt count (R-4)
  *   - the concept dialog opening off an alternative, and starting with ITS config
@@ -31,7 +31,7 @@ import {
   primaryOf,
   rankCandidates,
 } from "@/lib/quiz/proposals";
-import { DISMISSED_KEY, PREFS_KEY, QUEUE_COUNT } from "@/lib/quiz/session";
+import { PREFS_KEY, QUEUE_COUNT } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
@@ -220,6 +220,7 @@ function buildHome(over: Partial<QuizHomeData> = {}): QuizHomeData {
     cardDescription: null,
     primaryDescription: null,
     refresh: vi.fn(),
+    discard: vi.fn(),
     ...over,
   };
 }
@@ -363,15 +364,18 @@ describe("QuizHome — the resume strip", () => {
     expect(actions.resume).toHaveBeenCalledWith("attempt-1");
   });
 
-  it("discards it client-side and reloads (R-3: there is no abandon endpoint)", () => {
+  it("hands Discard to the hook, which abandons it server-side (G4)", () => {
+    // The screen states the intent and nothing else: hiding the row locally,
+    // the abandon call and the reload are one operation, and splitting them
+    // across the component is how they drifted apart before (the row used to
+    // be hidden here and never closed anywhere).
     const { home } = mount({
       home: { resumable: { attempt: attemptDetail(), session: null, answered: 2 } },
     });
 
     fireEvent.click(screen.getByTestId("quiz-resume-discard"));
 
-    expect(window.localStorage.getItem(DISMISSED_KEY)).toContain("attempt-1");
-    expect(home.refresh).toHaveBeenCalled();
+    expect(home.discard).toHaveBeenCalledWith("attempt-1");
   });
 
   it("is absent when nothing is resumable", () => {

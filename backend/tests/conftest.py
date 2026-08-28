@@ -119,6 +119,129 @@ def sink():
         events_service.flush_now()
 
 
+#: The exact top-level shape of a `POST /api/quiz/generate` response (#540 A1,
+#: #543 E2). A literal here, never derived from the route, so a new top-level
+#: field has to be added deliberately — which is the moment to ask whether it
+#: leaks the answer key.
+_GENERATE_TOP_LEVEL_KEYS = frozenset({
+    "quiz_id", "questions", "requested_difficulty", "resolved_difficulty",
+    "requested_count", "delivered_count",
+})
+#: Top-level fields the route serves only on some requests, so they cannot be
+#: required the way the set above is — but must still be named here, so an
+#: unexpected key is caught rather than waved through as "probably optional".
+#: `source` (#537 G5) is an attempt id plus two counts describing how the quiz
+#: was assembled; it carries no question content and no key.
+_GENERATE_OPTIONAL_TOP_LEVEL_KEYS = frozenset({"source"})
+#: The keyless projection's per-question and per-option shapes (#546).
+_KEYLESS_QUESTION_KEYS = frozenset({
+    "id", "question", "concept_tested", "difficulty", "options",
+})
+_KEYLESS_OPTION_KEYS = frozenset({"label", "text"})
+#: Substrings that would name an answer key if one ever reappeared under a
+#: different field. A heuristic, not a proof — see the fixture's docstring.
+_ANSWER_KEY_TOKENS = ("correct", "answer", "explanation", "solution")
+
+
+@pytest.fixture
+def assert_keyless_projection():
+    """Assert a generate response is the keyless projection (#546) of the
+    answer key that was actually stored for that attempt.
+
+    Shared for the same reason `sink` above is: the two lanes that check this
+    — `tests/test_quiz_answers_c.py` (mocked `table()`) and
+    `tests/integration/test_quiz_subcutaneous_db.py` (real Postgres) — held
+    byte-for-byte copies of the block, and the copies had already drifted (one
+    said "the grounding above" where the anchors sit below; one reported only
+    the *extra* option keys, so a MISSING one was invisible).
+
+    Sharing a *test-side* helper is not the circularity the anchor guards
+    against. The allowlists above are literals written on this side, never
+    imported from `routes.quiz`, so a leak — or an accidental widening of the
+    route's own `_strip_answer_key`/`_KEYLESS_*_KEYS` — fails these assertions
+    instead of passing by construction because both sides moved together.
+
+    Args:
+        body: the WHOLE parsed response, not just `questions` — a sibling
+            top-level field (say an `answer_key`) would sail past a check
+            scoped to the questions list.
+        stored: the attempt's decrypted `questions_json`, i.e. the real key
+            generation persisted. Checking the projection against that rather
+            than a hand-built fixture is what makes this grounded: it proves
+            a key exists and was withheld, not merely that none was built.
+    """
+    def _walk(node, path=""):
+        """Heuristic backstop: a leak that names itself obviously. Nothing
+        more — the key-set assertions are the actual anchor."""
+        if isinstance(node, dict):
+            for k, v in node.items():
+                lowered = k.lower()
+                assert not any(tok in lowered for tok in _ANSWER_KEY_TOKENS), (
+                    f"generate response leaks the answer key via key {path}.{k!r}"
+                )
+                _walk(v, f"{path}.{k}")
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                _walk(item, f"{path}[{i}]")
+
+    def _assert(body, stored):
+        assert stored, "no questions were persisted — the grounding below is vacuous"
+        assert all(any(o.get("correct") for o in q["options"]) for q in stored), (
+            "every stored question must actually carry a marked-correct option, "
+            "or the grounding below is vacuous"
+        )
+
+        served_keys = set(body.keys())
+        missing = set(_GENERATE_TOP_LEVEL_KEYS) - served_keys
+        unexpected = served_keys - _GENERATE_TOP_LEVEL_KEYS - _GENERATE_OPTIONAL_TOP_LEVEL_KEYS
+        assert not (missing or unexpected), (
+            f"generate response top-level key drift — missing: {missing or '{}'}, "
+            f"unexpected: {unexpected or '{}'}"
+        )
+
+        served = body["questions"]
+        assert served, "generate served no questions — nothing was projected"
+        assert len(served) == len(stored), (
+            f"the keyless projection must serve every stored question: "
+            f"served {len(served)}, stored {len(stored)}"
+        )
+        assert body["delivered_count"] == len(served), (
+            f"delivered_count ({body['delivered_count']}) must count the "
+            f"questions actually served ({len(served)})"
+        )
+
+        for i, (q, sq) in enumerate(zip(served, stored)):
+            leaked = set(q.keys()) - _KEYLESS_QUESTION_KEYS
+            assert not leaked, (
+                f"generate response question {i} carries unexpected key(s): {leaked}"
+            )
+            assert q["id"] == sq["id"], (
+                f"served question {i} is not the stored one: id {q['id']} "
+                f"vs {sq['id']}"
+            )
+            assert q["question"] == sq["question"], (
+                f"served question {i} does not carry the stored stem"
+            )
+            assert len(q["options"]) == len(sq["options"]), (
+                f"question {i}: served {len(q['options'])} options, "
+                f"stored {len(sq['options'])}"
+            )
+            for j, (opt, sopt) in enumerate(zip(q["options"], sq["options"])):
+                option_drift = set(opt.keys()) ^ set(_KEYLESS_OPTION_KEYS)
+                assert not option_drift, (
+                    f"question {i} option {j} key drift (missing or "
+                    f"unexpected): {option_drift}"
+                )
+                assert (opt["label"], opt["text"]) == (sopt["label"], sopt["text"]), (
+                    f"question {i} option {j} is not the stored option: "
+                    f"{opt['label']!r} vs {sopt['label']!r}"
+                )
+
+        _walk(body)
+
+    return _assert
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_supabase_client(request, monkeypatch):
     """Hermetic safety net (#210): no test may make a real Supabase call.

@@ -74,8 +74,9 @@ export type QuizEvent =
   // ── Two events beyond §4's list, both forced by effects that have nowhere
   //    else to land. Documented as such rather than smuggled in.
   /**
-   * A failure with no phase of its own: `resume` 409s on an attempt the 24h
-   * sweep abandoned, or the initial load falls over. §4 lists a failure event
+   * A failure with no phase of its own: `resume` 409s on an attempt that has
+   * been closed (the 24h sweep, or a Discard on another device — G4), or the
+   * initial load falls over. §4 lists a failure event
    * for generate, answer and submit but not for these, and swallowing a
    * `QUIZ_ATTEMPT_ABANDONED` would leave the resume strip permanently broken
    * with no explanation. Only accepted from a phase with nothing live.
