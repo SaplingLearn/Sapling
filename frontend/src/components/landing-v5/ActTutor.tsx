@@ -16,6 +16,7 @@
  */
 
 import { DragField } from './DragField';
+import { FadeIn } from '@/components/landing/anim';
 
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
@@ -94,10 +95,15 @@ export function ActTutor({
 
         <div style={{ maxWidth: 1220, width: '100%', margin: '0 auto', padding: '0 24px', display: 'grid', gridTemplateColumns: '5fr 7fr', gap: 32, alignItems: 'center' }}>
           <div style={{ position: 'relative', zIndex: 2 }}>
-            <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase' }}>AI tutor</span>
-            <h2 style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
-              Three ways to learn this. Your <em style={{ color: '#0C5638' }}>pick.</em>
-            </h2>
+            {/* Wraps only the eyebrow and heading. The [data-tcap] captions
+                that follow are driven by the engine's own opacity writes, so
+                a second animation on them would fight the scrub. */}
+            <FadeIn>
+              <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase' }}>AI tutor</span>
+              <h2 style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
+                Three ways to learn this. Your <em style={{ color: '#0C5638' }}>pick.</em>
+              </h2>
+            </FadeIn>
 
             <div style={{ position: 'relative', marginTop: 22, minHeight: 110 }}>
               {CAPTIONS.map(([tag, body], i) => (

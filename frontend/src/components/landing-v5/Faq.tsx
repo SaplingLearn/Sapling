@@ -11,6 +11,7 @@
 
 import { FAQS } from '@/lib/landing/content';
 import { DragField } from './DragField';
+import { FadeIn } from '@/components/landing/anim';
 
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
@@ -57,7 +58,7 @@ export function Faq({
           because `DragField`'s `TRACKS` welds CS 112 and PH 150 to this
           column. If it stops being sticky, drop the entry there too.
         */}
-        <div data-reveal="1" data-drag-anchor="faq" style={{ position: 'sticky', top: 110 }}>
+        <FadeIn data-drag-anchor="faq" style={{ position: 'sticky', top: 110 }}>
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
             Honest answers
           </span>
@@ -74,9 +75,9 @@ export function Faq({
               <a href="#faq" style={{ color: '#0C5638', textDecoration: 'underline' }}>Read the full FAQ</a>
             </span>
           </div>
-        </div>
+        </FadeIn>
 
-        <div data-reveal="1" style={{ borderTop: '1px solid rgba(18,32,26,0.12)' }}>
+        <FadeIn style={{ borderTop: '1px solid rgba(18,32,26,0.12)' }}>
           {FAQS.map((q, i) => {
             const open = openFaq === i;
             return (
@@ -122,7 +123,7 @@ export function Faq({
               </div>
             );
           })}
-        </div>
+        </FadeIn>
       </div>
     </section>
   );

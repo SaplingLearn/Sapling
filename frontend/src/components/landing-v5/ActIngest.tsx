@@ -22,6 +22,7 @@
  */
 
 import { DragField } from './DragField';
+import { FadeIn } from '@/components/landing/anim';
 
 /** Syllabus lines. The bold span is the concept a chip carries away. */
 const DOC_LINES: [string, string, string][] = [
@@ -115,12 +116,15 @@ export function ActIngest({
 
         <div ref={ingestSceneRef} style={{ position: 'relative', maxWidth: 1180, width: '100%', margin: '0 auto', padding: '0 24px', display: 'flex', flexDirection: 'column', gap: 26 }}>
           <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 20 }}>
-            <div>
+            {/* The heading is ours to animate; the chips, tiles and doc lines
+                below are the engine's, addressed by [data-chip] and
+                [data-ingest-tile]. Keep the fade off those subtrees. */}
+            <FadeIn>
               <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase' }}>Ingest</span>
               <h2 style={{ margin: '14px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#12201A' }}>
                 Drop in the whole <em style={{ color: '#0C5638' }}>course.</em>
               </h2>
-            </div>
+            </FadeIn>
             <div style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,520px)', gap: '14px clamp(28px,5vw,72px)', alignItems: 'start' }}>
               <p style={{ margin: 0, maxWidth: '44ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
                 Ask ChatGPT for practice and you get generic exercises off the internet, then an

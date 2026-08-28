@@ -16,6 +16,7 @@
 import Image from 'next/image';
 import { POSTS, POST_META } from '@/lib/landing/content';
 import { DragField } from './DragField';
+import { FadeIn } from '@/components/landing/anim';
 
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
@@ -78,7 +79,7 @@ export function Journal({
       <DragField section="newsletter" />
 
       <div style={{ maxWidth: 1150, margin: '0 auto' }}>
-        <div data-reveal="1" style={{ display: 'grid', gridTemplateColumns: '7fr 4fr', gap: 48, alignItems: 'end', marginBottom: 56 }}>
+        <FadeIn style={{ display: 'grid', gridTemplateColumns: '7fr 4fr', gap: 48, alignItems: 'end', marginBottom: 56 }}>
           <div>
             <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
               The Sapling Journal
@@ -91,9 +92,9 @@ export function Journal({
             Why we built it, where it&rsquo;s headed, and what we&rsquo;re learning about learning,
             written by the four of us, once a month.
           </p>
-        </div>
+        </FadeIn>
 
-        <div data-reveal="1" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 22 }}>
+        <FadeIn style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 22 }}>
           {POSTS.map((p, i) => {
             const meta = POST_META[i] ?? POST_META[0];
             return (
@@ -145,7 +146,7 @@ export function Journal({
               </div>
             );
           })}
-        </div>
+        </FadeIn>
 
         {/*
           The newsletter panel's gradient is the shared hero surface. The
@@ -154,8 +155,7 @@ export function Journal({
           four of its five paste sites — and HeroCard.test.tsx fails the build
           if the literal reappears anywhere under src/. Same pixels, one owner.
         */}
-        <div
-          data-reveal="1"
+        <FadeIn
           className="hero-surface"
           style={{
             marginTop: 56,
@@ -212,7 +212,7 @@ export function Journal({
               )}
             </div>
           )}
-        </div>
+        </FadeIn>
       </div>
     </section>
   );

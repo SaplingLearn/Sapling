@@ -17,6 +17,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { DragField } from './DragField';
+import { FadeIn } from '@/components/landing/anim';
 
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
@@ -51,7 +52,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
         <div style={{ position: 'absolute', bottom: '8%', left: '-12%', width: '32vw', height: '32vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.28, background: 'rgba(43,140,150,0.2)' }} />
       </div>
 
-      <div data-reveal="1" style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>
+      <FadeIn style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>
         <h2 style={{ margin: 0, fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#12201A' }}>
           Ready to <br /> Start <em style={{ color: '#0C5638', paddingRight: 8 }}>Growing?</em>
         </h2>
@@ -67,7 +68,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
             Sign up for Beta Testing
           </button>
         </div>
-      </div>
+      </FadeIn>
     </section>
   );
 }

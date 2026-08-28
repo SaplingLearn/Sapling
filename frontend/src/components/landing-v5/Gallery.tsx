@@ -18,6 +18,7 @@
  */
 
 import { GALLERY_MINIS } from './galleryMinis';
+import { FadeIn } from '@/components/landing/anim';
 
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
@@ -126,7 +127,7 @@ export function Gallery({
       </div>
 
       <div style={{ position: 'relative', zIndex: 1, maxWidth: 1220, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
-        <div data-reveal="1">
+        <FadeIn>
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
             And much more
           </span>
@@ -139,7 +140,7 @@ export function Gallery({
             talks you through what you missed, and a gradebook and calendar that keep the semester
             honest. Each one writes back to the same graph.
           </p>
-        </div>
+        </FadeIn>
       </div>
 
       <div style={{ position: 'relative', zIndex: 1, marginTop: 40 }}>
