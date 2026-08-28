@@ -105,6 +105,12 @@ export default function LandingPage() {
         heroContentRef={heroContentRef}
         heroText0={state.heroText0}
         heroText1={state.heroText1}
+        // The design's rim and panel radials peak at 0.56/0.66/0.84, which
+        // buries the WebGL cards. Held at 0.3 so they read through — that
+        // puts the heaviest veil over any card at ~0.25. The bottom band
+        // stays at full strength; it is what the info box and cue sit on and
+        // it has faded out by half height, well above the cards.
+        sceneWash={0.3}
         onBeta={() => setBetaOpen(true)}
         onSeeHow={() => actions.scrollToId('gallery')}
       />

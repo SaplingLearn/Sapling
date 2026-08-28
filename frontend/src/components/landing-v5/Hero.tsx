@@ -3,41 +3,53 @@
 /**
  * The v5 title screen.
  *
- * Ported from `Sapling Landing v5.dc.html`. This replaces the v4 hero
- * outright — it is not a revision of it. The differences that matter:
+ * Ported from `Sapling Landing v5.dc.html`, then refreshed against the newer
+ * `Sapling Landing.html` bundle. The wordmark lockup carried over unchanged;
+ * what the refresh moved:
  *
- * - The wordmark is Playfair Display 600 in brand forest (#0C5638), not
- *   Archivo 800 in ink, and it arrives through a character scramble. The
- *   source defines a `heroWipe` clip-path keyframe but never references it.
- * - The v4 DOM `.floating-card` rig is gone, replaced by the WebGL scene
- *   rendering into `glCanvasRef` behind this content.
- * - Layout is a three-row grid (lockup / lede / bottom band) rather than a
- *   centred flex column.
+ * - The 01/02/03 Ingest/Map/Recall keys are gone from the hero entirely. The
+ *   bottom band is now three columns holding only the info box (left), the
+ *   scroll cue (centre) and an empty spacer (right) — the spacer is what keeps
+ *   the cue centred on the viewport rather than on the remaining content.
+ * - The info box moved from the right edge to the left.
+ * - The cue reads SCROLL TO EXPLORE and is flanked by two arrows, the second
+ *   offset 0.28s so the pair reads as a fall rather than a blink.
+ * - The lede is reworded, and is 500 weight on #2A3B32 rather than regular on
+ *   #33443B — it carries more of the row now that the keys are gone.
+ *
+ * The lede copy is the bundle's, verbatim. It was briefly rewritten to lead on
+ * AI context and to list uploadable materials, then reverted by request — so
+ * if that idea comes round again, it has been tried here once already.
+ * - Both CTAs grew to 16px/30px and 16px/27px padding at 16.5px.
+ *
+ * The wordmark is Playfair Display 600 in brand forest (#0C5638), not Archivo
+ * 800 in ink, and it arrives through a character scramble. The source defines
+ * a `heroWipe` clip-path keyframe but never references it. The v4 DOM
+ * `.floating-card` rig is gone, replaced by the WebGL scene rendering into
+ * `glCanvasRef` behind this content.
  *
  * The grid is `pointer-events:none` so the draggable WebGL scene underneath
- * stays grabbable through the copy; the two interactive clusters opt back in.
+ * stays grabbable through the copy; the CTA cluster opts back in.
  *
  * Entrance timing is a `heroRise` cascade of absolute CSS delays running
  * 1.90s → 3.37s, i.e. starting as the 1.9s intro overlay clears. The values
  * are irregular on purpose — they are hand-tuned, not a computed stagger.
  */
 
-const KEYS = [
-  {
-    num: '01', title: 'Ingest', delay: '2.97s',
-    body: 'Your syllabus, slides and lecture notes in. A model that knows your course out.',
-  },
-  {
-    num: '02', title: 'Map', delay: '3.08s',
-    body: "Every concept linked to the ones it rests on, in your professor's own order.",
-  },
-  {
-    num: '03', title: 'Recall', delay: '3.19s',
-    body: 'Questions drawn from your material, returning right before you would forget.',
-  },
-];
-
 const RISE = 'heroRise 900ms cubic-bezier(0.22,1,0.36,1) both';
+
+/** The cue's chevron, repeated either side of the label. */
+function CueArrow({ delay }: { delay?: string }) {
+  return (
+    <svg
+      width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#61726A"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      style={{ animation: 'cueDrop 2.2s ease-in-out infinite', animationDelay: delay }}
+    >
+      <path d="M12 5v14M6 13l6 6 6-6" />
+    </svg>
+  );
+}
 
 export function Hero({
   heroCanvasRef,
@@ -45,8 +57,17 @@ export function Hero({
   heroContentRef,
   heroText0,
   heroText1,
-  /** Strength of the two wash layers that lift the copy off the scene, 0..1. */
+  /**
+   * The bottom legibility band, 0..1. This is the layer the info box and the
+   * scroll cue sit on; it fades out by half height, so it barely touches the
+   * panels. Lowering it costs text contrast and buys almost no card.
+   */
   wash = 1,
+  /**
+   * The rim + panel radials, 0..1 — the layers that actually veil the WebGL
+   * cards. This is the knob to turn when a panel reads washed out.
+   */
+  sceneWash = 1,
   onBeta,
   onSeeHow,
 }: {
@@ -56,10 +77,12 @@ export function Hero({
   heroText0: string;
   heroText1: string;
   wash?: number;
+  sceneWash?: number;
   onBeta: () => void;
   onSeeHow: () => void;
 }) {
   const washOpacity = Math.max(0, Math.min(1, wash));
+  const sceneOpacity = Math.max(0, Math.min(1, sceneWash));
 
   return (
     <section style={{ position: 'relative', minHeight: '100vh', overflow: 'hidden' }}>
@@ -75,22 +98,31 @@ export function Hero({
           must claim its own touch handling rather than scrolling the page. */}
       <canvas ref={glCanvasRef} aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 1, width: '100%', height: '100%', display: 'block', touchAction: 'none' }} />
 
-      {/* Two washes that pull the scene back under the copy.
-          These veil by screen position, not by element, so they hit whatever
-          panel drifts under them — originally the top-left radial sat almost
-          exactly on the knowledge-graph card and veiled it at ~35%, and the
-          bottom band caught the mastery card at ~20%. Both are now cut to the
-          point where every panel is under ~0.12 veil across its whole body.
-          The bottom band keeps a strong toe (below ~9% of the viewport) for
-          the 01/02/03 keys and the info box, but its ramp is pulled down from
-          50% to 33% so it clears the lowest panel entirely. */}
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', opacity: washOpacity, background: 'radial-gradient(ellipse 88% 74% at 52% 48%, rgba(240,244,242,0) 0%, rgba(240,244,242,0.02) 74%, rgba(240,244,242,0.10) 100%)' }} />
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none', opacity: washOpacity, background: 'linear-gradient(0deg, rgba(240,244,242,0.62) 0%, rgba(240,244,242,0.34) 9%, rgba(240,244,242,0.06) 22%, rgba(240,244,242,0) 28%), radial-gradient(ellipse 44% 22% at 16% 17%, rgba(240,244,242,0.11) 0%, rgba(240,244,242,0.035) 52%, rgba(240,244,242,0) 76%), radial-gradient(ellipse 34% 20% at 80% 58%, rgba(240,244,242,0.17) 0%, rgba(240,244,242,0.055) 55%, rgba(240,244,242,0) 82%)' }} />
+      {/* The veils that pull the scene back under the copy. All three carry the
+          source bundle's own values; the split into two opacity groups is ours.
+
+          The source packs them into two elements, with the bottom band and the
+          two panel radials sharing one `background` shorthand. They are split
+          three ways here because they do different jobs and want different
+          strengths: the band is a legibility floor for the info box and cue and
+          is already zero by half height, while the rim and the two radials are
+          what sit on top of the WebGL panels. Scaling both together — the old
+          single `wash` prop — meant you could not clear the cards without also
+          thinning the text backing.
+
+          CSS paints the first background layer on top, so the source order puts
+          the band above the radials; the z-indexes below preserve that. */}
+      {/* rim wash — brightest at the edges, zero at 52%/48% */}
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', opacity: sceneOpacity, background: 'radial-gradient(ellipse 88% 74% at 52% 48%, rgba(240,244,242,0) 0%, rgba(240,244,242,0.2) 74%, rgba(240,244,242,0.56) 100%)' }} />
+      {/* panel radials — these are the ones that land on the cards */}
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none', opacity: sceneOpacity, background: 'radial-gradient(ellipse 52% 38% at 16% 22%, rgba(240,244,242,0.66) 0%, rgba(240,244,242,0.26) 52%, rgba(240,244,242,0) 76%), radial-gradient(ellipse 40% 30% at 80% 53%, rgba(240,244,242,0.84) 0%, rgba(240,244,242,0.36) 55%, rgba(240,244,242,0) 82%)' }} />
+      {/* bottom legibility band — fully faded by half height */}
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none', opacity: washOpacity, background: 'linear-gradient(0deg, rgba(240,244,242,0.94) 0%, rgba(240,244,242,0.78) 16%, rgba(240,244,242,0.34) 34%, rgba(240,244,242,0) 50%)' }} />
       {/* fractal-noise grain, multiplied at 3.5% — kills banding in the blooms */}
       <div
         aria-hidden="true"
         style={{
-          position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none',
+          position: 'absolute', inset: 0, zIndex: 5, pointerEvents: 'none',
           opacity: 0.035, mixBlendMode: 'multiply',
           backgroundImage:
             "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>\")",
@@ -153,7 +185,7 @@ export function Hero({
             alignItems: 'center', justifyContent: 'space-between', gap: 'min(4vw,56px)',
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 13 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 16 }}>
             <div
               style={{
                 display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
@@ -165,8 +197,8 @@ export function Hero({
                 className="ld-btn-solid"
                 style={{
                   background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6,
-                  padding: '15px 28px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
-                  fontSize: 16, cursor: 'pointer',
+                  padding: '16px 30px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
+                  fontSize: 16.5, cursor: 'pointer',
                   animation: 'betaGlow 2.2s ease-in-out infinite', transition: 'filter 200ms',
                 }}
               >
@@ -178,8 +210,8 @@ export function Hero({
                 style={{
                   background: 'rgba(253,252,249,0.82)', color: '#12201A',
                   border: '1px solid rgba(18,32,26,0.16)', borderRadius: 6,
-                  padding: '15px 25px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
-                  fontSize: 16, cursor: 'pointer', display: 'inline-flex',
+                  padding: '16px 27px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
+                  fontSize: 16.5, cursor: 'pointer', display: 'inline-flex',
                   alignItems: 'center', gap: 9,
                   backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
                   transition: 'all 220ms',
@@ -200,65 +232,31 @@ export function Hero({
             className="hero-lede"
             style={{
               margin: 0, maxWidth: '34ch', fontSize: 'clamp(16px,1.22vw,21px)',
-              lineHeight: 1.6, color: '#33443B', textWrap: 'pretty',
+              fontWeight: 500, lineHeight: 1.6, color: '#2A3B32', textWrap: 'pretty',
               animation: RISE, animationDelay: '2.64s',
             }}
           >
-            Upload a syllabus. Sapling reads your whole course, maps what you already know, and
-            drills only what is slipping. It works from your own coursework, not the open web, and
-            the AI never hands over the answer.
+            Upload a syllabus. Sapling reads your whole course, learns what you know, and drills
+            what is slipping. It works from your own coursework and assignments, not the open web,
+            and never hands over the answer.
           </p>
         </div>
 
-        {/* ── bottom band ── */}
+        {/* ── bottom band ──
+            Info box left, cue centre, empty spacer right. The spacer is load
+            bearing: it balances the info box's column so the cue lands on the
+            viewport's centre line rather than on the centre of the content. */}
         <div
           className="hero-bottom"
           style={{
-            display: 'grid', gridTemplateColumns: 'minmax(0,1.35fr) auto minmax(0,0.95fr)',
+            display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)',
             alignItems: 'end', gap: 'min(3vw,44px)',
           }}
         >
-          <div className="hero-keys" style={{ display: 'flex', gap: 'min(2.8vw,42px)', minWidth: 0 }}>
-            {KEYS.map((k) => (
-              <div key={k.num} style={{ minWidth: 0, maxWidth: '26ch', animation: RISE, animationDelay: k.delay }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 7 }}>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.24em', color: '#8B9A92' }}>
-                    {k.num}
-                  </span>
-                  <span style={{ flex: 1, height: 1, background: 'linear-gradient(90deg, rgba(12,86,56,0.3), rgba(12,86,56,0))' }} />
-                </div>
-                <div style={{ fontFamily: "'Spectral',Georgia,serif", fontWeight: 700, fontSize: 'clamp(21px,1.78vw,29px)', letterSpacing: '-0.02em', color: '#12201A', lineHeight: 1.05 }}>
-                  {k.title}
-                </div>
-                <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, color: '#61726A', textWrap: 'pretty' }}>
-                  {k.body}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          <div
-            className="hero-cue"
-            style={{
-              justifySelf: 'center', display: 'flex', flexDirection: 'column',
-              alignItems: 'center', gap: 11, paddingBottom: 4,
-              animation: 'heroRise 900ms ease both', animationDelay: '3.37s',
-            }}
-          >
-            <div className="hero-scrollcue" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.3em', color: '#61726A' }}>
-                SCROLL TO CONTINUE
-              </span>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#61726A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'cueDrop 2.2s ease-in-out infinite' }}>
-                <path d="M12 5v14M6 13l6 6 6-6" />
-              </svg>
-            </div>
-          </div>
-
           <div
             className="hero-info"
             style={{
-              justifySelf: 'end', display: 'flex', maxWidth: 480, padding: '18px 20px',
+              justifySelf: 'start', display: 'flex', maxWidth: 480, padding: '18px 20px',
               border: '1px solid rgba(18,32,26,0.12)', borderRadius: 5,
               background: 'rgba(253,252,249,0.7)',
               backdropFilter: 'blur(9px)', WebkitBackdropFilter: 'blur(9px)',
@@ -271,6 +269,25 @@ export function Hero({
               <span style={{ color: '#0C5638', fontWeight: 600 }}>Free through beta.</span>
             </p>
           </div>
+
+          <div
+            className="hero-cue"
+            style={{
+              justifySelf: 'center', display: 'flex', flexDirection: 'column',
+              alignItems: 'center', gap: 11, paddingBottom: 4,
+              animation: 'heroRise 900ms ease both', animationDelay: '3.37s',
+            }}
+          >
+            <div className="hero-scrollcue" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <CueArrow />
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.3em', color: '#61726A' }}>
+                SCROLL TO EXPLORE
+              </span>
+              <CueArrow delay="0.28s" />
+            </div>
+          </div>
+
+          <div aria-hidden="true" />
         </div>
       </div>
     </section>

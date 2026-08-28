@@ -2443,7 +2443,6 @@ input[type="reset"]:disabled {
   .landing-v5 .hero-mid { grid-template-columns:1fr !important; justify-items:start !important; gap:24px !important; }
 }
 @media (max-width: 820px) {
-  .landing-v5 .hero-keys { flex-direction:column !important; gap:14px !important; }
   .landing-v5 .hero-info { max-width:none !important; }
   .landing-v5 .hero-lede { max-width:38ch !important; }
 }
@@ -2453,7 +2452,6 @@ input[type="reset"]:disabled {
 }
 @media (max-height: 680px) {
   .landing-v5 .hero-grid   { padding-top:84px !important; }
-  .landing-v5 .hero-keys p { display:none !important; }
 }
 
 /* v5 hover states (the source's `style-hover` attribute has no inline
