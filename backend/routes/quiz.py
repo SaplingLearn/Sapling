@@ -1944,7 +1944,7 @@ def abandon_attempt(attempt_id: str, request: Request):
 
 def _gamification_block(
     user_id: str, award: XpAward | None, quiz_id: str,
-) -> dict | None:
+) -> dict:
     """G8: the XP/streak numbers the results screen needs, in the submit reply.
 
     Before this the close screen had to read `GET /api/gamification/me` once
@@ -2339,7 +2339,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         "mastery_before": mastery_before,
         "mastery_after": mastery_score_after,
         "results": results,
-        # G8, additive: `xp_awarded` plus the /api/gamification/me snapshot as
-        # of right now. `None` when the snapshot read failed.
+        # G8, additive: what the award paid (`xp_awarded`, `leveled_up`,
+        # `duplicate`) plus the /api/gamification/me snapshot as of right now.
+        # Always present. If the snapshot read failed it carries the award
+        # half ALONE — see `_gamification_block` for why that half survives.
         "gamification": gamification,
     }

@@ -127,8 +127,14 @@ export interface SubmitResult {
     explanation: string;
   }[];
   /** Optional while `useGamificationDelta` still reads `/me` around the
-   *  submit (R-9); the client migration to this field is a later pass. */
-  gamification?: SubmitGamification | null;
+   *  submit (R-9); the client migration to this field is a later pass. The
+   *  `?` also covers the deploy window against a backend older than G8.
+   *
+   *  Not `| null`: the server always sends the block. A failed snapshot read
+   *  ships the award half ALONE rather than nulling the whole thing, so
+   *  `null` is a state it can no longer produce — narrow on a card field
+   *  (see `SubmitGamification`), not on the block itself. */
+  gamification?: SubmitGamification;
 }
 
 export type AttemptStatus = "completed" | "abandoned" | "in_progress";
