@@ -199,11 +199,12 @@ export function GradescopeSyncModal({
       await refreshState();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "";
-      setError(
-        msg.includes("expired") || msg.includes("invalid")
-          ? "Those cookies didn't authenticate. Copy them again from a freshly signed-in tab."
-          : msg,
-      );
+      // Show what the backend actually said. The previous canned message fired
+      // on any "expired"/"invalid" substring, which swallowed the specific
+      // reason — expired session vs. truncated cookie vs. an auth failure on
+      // Sapling's own session — and pointed every one of them at "re-copy your
+      // cookies", advice that is wrong for two of the three.
+      setError(msg || "Those cookies didn't authenticate. Copy them again from a freshly signed-in tab.");
     }
   }
 

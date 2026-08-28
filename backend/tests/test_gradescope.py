@@ -187,44 +187,105 @@ class TestRateLimiting:
         assert other == 404
 
 
-class TestPastedCookieNormalization:
-    """Cookie-mode logins failed with "invalid or expired" for valid sessions
-    when the value was copied from DevTools → Network → Request Headers, which
-    shows the PERCENT-ENCODED wire form. A Rails session cookie is base64 and
-    ends in '==', which appears there as '%3D%3D'.
+class TestPastedCookieCleaning:
+    """`_clean_pasted_cookie` strips only unambiguous packaging. It must NOT
+    touch percent-encoding — deciding encoded-vs-decoded is login_with_cookies'
+    job, which tries both against /account.
 
-    The values below are structurally identical to a real Gradescope cookie
-    (base64 body, '--', 40 hex chars of HMAC) but are dummies.
+    Values below are structurally identical to a real Gradescope cookie (base64
+    body, '--', 40 hex chars of HMAC) but are dummies.
     """
 
-    _norm = staticmethod(gs._normalize_pasted_cookie)
+    _clean = staticmethod(gs._clean_pasted_cookie)
 
     DECODED = "YWJjZGVm==--3f9fe2c7fc866986103e247fafc5a5d00cba53a8"
     ENCODED = "YWJjZGVm%3D%3D--3f9fe2c7fc866986103e247fafc5a5d00cba53a8"
 
-    def test_percent_encoded_value_is_decoded(self):
-        assert self._norm(self.ENCODED) == self.DECODED
+    def test_percent_encoding_is_preserved_not_guessed_at(self):
+        assert self._clean(self.ENCODED) == self.ENCODED
 
-    def test_already_decoded_value_is_untouched(self):
-        assert self._norm(self.DECODED) == self.DECODED
-
-    def test_normalization_is_idempotent(self):
-        once = self._norm(self.ENCODED)
-        assert self._norm(once) == once
+    def test_decoded_value_is_untouched(self):
+        assert self._clean(self.DECODED) == self.DECODED
 
     def test_name_prefix_is_stripped(self):
-        assert self._norm(f"_gradescope_session={self.DECODED}") == self.DECODED
-        assert self._norm(f"signed_token={self.DECODED}") == self.DECODED
+        assert self._clean(f"_gradescope_session={self.DECODED}") == self.DECODED
+        assert self._clean(f"signed_token={self.DECODED}") == self.DECODED
 
     def test_surrounding_quotes_and_whitespace_are_stripped(self):
-        assert self._norm(f'  "{self.DECODED}"  ') == self.DECODED
+        assert self._clean(f'  "{self.DECODED}"  ') == self.DECODED
 
     def test_empty_and_none_become_none(self):
-        assert self._norm(None) is None
-        assert self._norm("   ") is None
+        assert self._clean(None) is None
+        assert self._clean("   ") is None
 
-    def test_base64_plus_signs_survive(self):
-        """unquote() must not be reached for values with no '%' — and a '+' in
-        base64 must never become a space (the Rack::Utils.unescape trap)."""
+    def test_base64_special_characters_survive(self):
         val = "YWJj+ZGVm/Zm9v--3f9fe2c7fc866986103e247fafc5a5d00cba53a8"
-        assert self._norm(val) == val
+        assert self._clean(val) == val
+
+
+class TestCookieLoginTriesBothEncodings:
+    """A percent-encoded cookie that fails must be retried decoded before the
+    user is told their session is expired."""
+
+    ENCODED = "YWJjZGVm%3D%3D--3f9fe2c7fc866986103e247fafc5a5d00cba53a8"
+    DECODED = "YWJjZGVm==--3f9fe2c7fc866986103e247fafc5a5d00cba53a8"
+
+    def _fake_session(self, results, seen):
+        """Session double whose /account result depends on the cookie set."""
+        def _make():
+            s = MagicMock()
+            s.headers = {}
+            s.cookies = MagicMock()
+            store = {}
+            s.cookies.set = lambda name, value, **kw: store.__setitem__(name, value)
+
+            def _get(url, **kw):
+                value = store.get("_gradescope_session")
+                seen.append(value)
+                ok = results.get(value, False)
+                return SimpleNamespace(
+                    status_code=200 if ok else 302,
+                    url="https://www.gradescope.com/account" if ok
+                        else "https://www.gradescope.com/login",
+                    text="<meta name='csrf-token' content='tok'>",
+                )
+
+            s.get = _get
+            return s
+        return _make
+
+    def test_falls_back_to_decoded_form(self):
+        seen: list[str] = []
+        with patch.object(gs, "_require_gradescopeapi", lambda: None), \
+             patch.object(gs, "requests") as req, \
+             patch.object(gs, "GSConnection", MagicMock()), \
+             patch.object(gs, "Account", MagicMock()):
+            req.Session = self._fake_session({self.DECODED: True}, seen)
+            req.RequestException = Exception
+            gs.login_with_cookies(signed_token=None, gradescope_session=self.ENCODED)
+        assert seen == [self.ENCODED, self.DECODED], (
+            "must try the pasted form first, then the decoded one"
+        )
+
+    def test_no_second_attempt_when_first_form_works(self):
+        seen: list[str] = []
+        with patch.object(gs, "_require_gradescopeapi", lambda: None), \
+             patch.object(gs, "requests") as req, \
+             patch.object(gs, "GSConnection", MagicMock()), \
+             patch.object(gs, "Account", MagicMock()):
+            req.Session = self._fake_session({self.ENCODED: True}, seen)
+            req.RequestException = Exception
+            gs.login_with_cookies(signed_token=None, gradescope_session=self.ENCODED)
+        assert seen == [self.ENCODED], "must not retry once a form succeeds"
+
+    def test_both_forms_failing_reports_expired(self):
+        seen: list[str] = []
+        with patch.object(gs, "_require_gradescopeapi", lambda: None), \
+             patch.object(gs, "requests") as req, \
+             patch.object(gs, "GSConnection", MagicMock()), \
+             patch.object(gs, "Account", MagicMock()):
+            req.Session = self._fake_session({}, seen)
+            req.RequestException = Exception
+            with pytest.raises(gs.GradescopeAuthError, match="expired"):
+                gs.login_with_cookies(signed_token=None, gradescope_session=self.ENCODED)
+        assert len(seen) == 2, "both encodings must be attempted before giving up"

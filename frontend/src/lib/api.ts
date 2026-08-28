@@ -17,8 +17,26 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   });
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err || `HTTP ${res.status}`);
+    // FastAPI returns {"detail": "..."} on HTTPException. Throwing the raw body
+    // meant callers matched substrings against a JSON blob and surfaced
+    // `{"detail":"..."}` verbatim to users; pull the message out instead.
+    const body = await res.text();
+    let message = body;
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed?.detail === "string") {
+        message = parsed.detail;
+      } else if (Array.isArray(parsed?.detail)) {
+        // 422 validation errors arrive as a list of {loc, msg, type}.
+        message = parsed.detail
+          .map((d: { msg?: string }) => d?.msg)
+          .filter(Boolean)
+          .join("; ");
+      }
+    } catch {
+      // Not JSON (proxy error page, empty body) — keep the raw text.
+    }
+    throw new Error(message || `HTTP ${res.status}`);
   }
   return res.json();
 }

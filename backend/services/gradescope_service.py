@@ -103,25 +103,18 @@ def _require_gradescopeapi() -> None:
         )
 
 
-def _normalize_pasted_cookie(value: str | None) -> str | None:
-    """Clean up a cookie value copied out of a browser by hand.
+def _clean_pasted_cookie(value: str | None) -> str | None:
+    """Strip the packaging off a cookie value copied out of a browser by hand.
 
-    Users get these from one of two places, and only one of them yields the
-    raw value:
+    Handles only what is unambiguously not part of the value: surrounding
+    whitespace, wrapping quotes, and a leading `name=` when someone copies the
+    whole pair out of the `Cookie:` header. A cookie value cannot begin with its
+    own name, and Rails' session cookie is base64 + `--<hmac>`, so neither
+    stripping can eat real data.
 
-    - DevTools → Application → Cookies shows the DECODED value. Paste-ready.
-    - DevTools → Network → Request Headers → `Cookie:` shows the value
-      PERCENT-ENCODED, because that is the wire format. A Rails session cookie
-      is base64 and ends in `==`, which appears there as `%3D%3D`.
-
-    Passing the encoded form through unchanged is what made cookie-mode logins
-    fail with "invalid or expired" even when the session was perfectly valid.
-    Base64 and the `--<hmac>` suffix Rails appends contain no literal `%`, so a
-    `%` in the input means it is encoded — decode it. Idempotent: an
-    already-decoded value has no `%` and is returned untouched.
-
-    Also tolerates the two other things people paste: the whole `name=value`
-    pair copied from the Cookie header, and a value wrapped in quotes.
+    Deliberately does NOT touch percent-encoding. Whether the encoded or decoded
+    form is the correct one to send is ambiguous enough that guessing here was a
+    mistake — `login_with_cookies` tries both against /account instead.
     """
     if not value:
         return None
@@ -130,11 +123,6 @@ def _normalize_pasted_cookie(value: str | None) -> str | None:
         if v.startswith(name):
             v = v[len(name):]
             break
-    if "%" in v:
-        decoded = unquote(v)
-        if decoded != v:
-            logger.info("Percent-decoded a pasted Gradescope cookie value")
-            v = decoded
     return v.strip() or None
 
 
@@ -156,48 +144,66 @@ def login_with_cookies(
     """
     _require_gradescopeapi()
     base_url = DEFAULT_GRADESCOPE_BASE_URL
-    gradescope_session = _normalize_pasted_cookie(gradescope_session)
-    signed_token = _normalize_pasted_cookie(signed_token)
+    gradescope_session = _clean_pasted_cookie(gradescope_session)
+    signed_token = _clean_pasted_cookie(signed_token)
     if not gradescope_session:
         raise GradescopeAuthError("Missing _gradescope_session cookie")
 
-    session = requests.Session()
-    session.headers.update(_BROWSER_HEADERS)
-    # Domain '.gradescope.com' so cookies are sent for both www and root.
-    session.cookies.set(
-        "_gradescope_session",
-        gradescope_session,
-        domain=".gradescope.com",
-        path="/",
-    )
-    if signed_token:
+    # Try the value exactly as pasted, then its percent-decoded form.
+    #
+    # Which one is correct is genuinely ambiguous, so stop guessing and try both.
+    # Rails writes _gradescope_session percent-ENCODED in Set-Cookie, so that is
+    # what DevTools → Application → Cookies displays and what the browser sends
+    # back; Rack unescapes on read. That argues the encoded form is right. But
+    # `requests` does no escaping of its own, users also paste from places that
+    # show the decoded value, and a '+' in the base64 body survives one path and
+    # not the other. One round trip to /account settles it definitively, and the
+    # cost of a second attempt is one request on a path that only runs when
+    # someone is connecting their account.
+    candidates = [gradescope_session]
+    decoded = unquote(gradescope_session)
+    if decoded != gradescope_session:
+        candidates.append(decoded)
+
+    last_failure: GradescopeAuthError | None = None
+    for candidate in candidates:
+        session = requests.Session()
+        session.headers.update(_BROWSER_HEADERS)
+        # Domain '.gradescope.com' so cookies are sent for both www and root.
         session.cookies.set(
-            "signed_token",
-            signed_token,
-            domain=".gradescope.com",
-            path="/",
+            "_gradescope_session", candidate, domain=".gradescope.com", path="/"
         )
+        if signed_token:
+            session.cookies.set(
+                "signed_token", signed_token, domain=".gradescope.com", path="/"
+            )
 
-    try:
-        r = session.get(f"{base_url}/account", timeout=20, allow_redirects=True)
-    except requests.RequestException as e:
-        raise GradescopeAuthError(f"Couldn't reach Gradescope: {e}") from e
+        try:
+            r = session.get(f"{base_url}/account", timeout=20, allow_redirects=True)
+        except requests.RequestException as e:
+            # Network failure is not a credential problem — don't burn the other
+            # candidate on it, and don't tell the user their cookie is bad.
+            raise GradescopeAuthError(f"Couldn't reach Gradescope: {e}") from e
 
-    if "/login" in (r.url or ""):
-        # Gradescope bounced us to the sign-in page: the cookie parsed fine but
-        # names no live session. Almost always genuinely stale — sessions die on
-        # logout and roll over every couple of weeks.
-        raise GradescopeAuthError(
-            "Gradescope redirected to its login page, so that session is expired "
-            "or was logged out. Sign in to Gradescope again, then re-copy "
-            "_gradescope_session from DevTools → Application → Cookies."
-        )
-    if r.status_code != 200:
-        raise GradescopeAuthError(
-            f"Gradescope returned HTTP {r.status_code} for /account. The cookie may be "
-            "truncated or malformed — copy the FULL value (they are ~700 characters "
-            "and end in a '--' followed by 40 hex characters)."
-        )
+        if r.status_code == 200 and "/login" not in (r.url or ""):
+            break
+
+        if "/login" in (r.url or ""):
+            last_failure = GradescopeAuthError(
+                "Gradescope redirected to its login page, so that session is expired "
+                "or was logged out — including by signing out in the browser you "
+                "copied it from. Sign in to Gradescope again, then copy the CURRENT "
+                "value of _gradescope_session from DevTools → Application → Cookies."
+            )
+        else:
+            last_failure = GradescopeAuthError(
+                f"Gradescope returned HTTP {r.status_code} for /account. The cookie may "
+                "be truncated — copy the whole value (they run ~700 characters and end "
+                "in '--' followed by 40 hex characters)."
+            )
+    else:
+        # Every candidate failed; surface the most recent reason.
+        raise last_failure or GradescopeAuthError("Session cookies were rejected.")
 
     # Pick up X-CSRF-Token for any later POSTs the library makes.
     soup = BeautifulSoup(r.text, "html.parser")
