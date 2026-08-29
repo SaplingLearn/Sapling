@@ -22,6 +22,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agents.tools.chat_context import (
     CourseProgress,
     read_session_history,
@@ -45,6 +47,19 @@ class TestSearchCourseMaterialsUserScope:
     """#125: documents are user-scoped within a shared course. The query must
     filter on user_id, or another enrolled student's private summary/concept
     notes get decrypted into this user's LLM context."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_offering_resolution(self):
+        """These tests exercise scoring/decryption, not course→offering
+        resolution. `documents` keys on offering_id, so the lookup is a real
+        dependency now; stub it so the fake `table` above stays the only
+        store these cases have to model. The resolution itself is covered by
+        TestSearchCourseMaterialsOfferingScope."""
+        with patch(
+            "agents.tools.chat_context.user_offering_ids_for_course",
+            return_value=["off_1"],
+        ):
+            yield
 
     def test_does_not_return_other_users_documents(self):
         doc_mine = {
@@ -92,6 +107,15 @@ class TestSearchCourseMaterialsUserScope:
 
 
 class TestSearchCourseMaterials:
+    @pytest.fixture(autouse=True)
+    def _stub_offering_resolution(self):
+        """See TestSearchCourseMaterialsUserScope._stub_offering_resolution."""
+        with patch(
+            "agents.tools.chat_context.user_offering_ids_for_course",
+            return_value=["off_1"],
+        ):
+            yield
+
     def test_returns_empty_when_course_id_is_none(self):
         # No table call should happen at all — cross-course search is a
         # data-leak risk we explicitly avoid.
@@ -421,3 +445,302 @@ class TestToolWrappers:
             _run(read_user_progress_tool(self._ctx()))
 
         inner.assert_awaited_once_with("user_andres", "course_cs101")
+
+
+class _FakeAcademicsDb:
+    """A schema-faithful `table()` stand-in for the course → offering →
+    documents read path.
+
+    Schema-faithful on purpose. The older mocks in this file accept ANY
+    filter and return a canned list, which is exactly how a query against a
+    non-existent `documents.course_id` column survived review: the mock said
+    yes, PostgREST said 400. So `documents` here rejects any filter column it
+    does not actually have, and honours the ones it does.
+    """
+
+    # Every column `documents` can legitimately be filtered on by this tool.
+    _DOCUMENT_COLUMNS = {"offering_id", "user_id", "deleted_at"}
+
+    def __init__(self, *, documents, offerings, enrollments, current_term_id):
+        self._documents = documents
+        self._offerings = offerings
+        self._enrollments = enrollments
+        self._current_term_id = current_term_id
+        # What the tool actually asked `documents` for — the assertions read
+        # these rather than trusting the returned rows.
+        self.document_filters: dict = {}
+        self.document_limit: int | None = None
+
+    def patched(self):
+        """Patch both `table` references the read path goes through: the tool's
+        own and `services.academics`' (offering resolution lives there)."""
+        return _patch_both_tables(self._table)
+
+    def _table(self, name):
+        store = MagicMock()
+        store.select.side_effect = lambda *a, **kw: self._select(name, *a, **kw)
+        return store
+
+    def _select(self, name, *_args, **kwargs):
+        filters = kwargs.get("filters") or {}
+        if name == "documents":
+            unknown = set(filters) - self._DOCUMENT_COLUMNS
+            if unknown:
+                # What PostgREST really answers for a column that isn't there.
+                raise RuntimeError(
+                    f"column documents.{sorted(unknown)[0]} does not exist"
+                )
+            self.document_filters = dict(filters)
+            self.document_limit = kwargs.get("limit")
+            return self._select_documents(filters)
+        if name == "course_offerings":
+            return self._select_offerings(filters, kwargs.get("limit"))
+        if name == "enrollments":
+            return list(self._enrollments)
+        if name == "terms":
+            return [{"id": self._current_term_id}] if self._current_term_id else []
+        return []
+
+    def _select_documents(self, filters):
+        allowed = None
+        raw = filters.get("offering_id") or ""
+        if raw.startswith("in.("):
+            allowed = set(raw[4:-1].split(","))
+        rows = []
+        for d in self._documents:
+            if filters.get("deleted_at") == "is.null" and d.get("deleted_at"):
+                continue
+            # A document with no explicit offering belongs to whatever the
+            # query asked for (keeps the simpler cases terse).
+            offering = d.get("offering_id")
+            if allowed is not None and offering is not None and offering not in allowed:
+                continue
+            rows.append(d)
+        return rows
+
+    def _select_offerings(self, filters, limit):
+        rows = list(self._offerings)
+        term = filters.get("term_id")
+        if term:
+            rows = [o for o in rows if f"eq.{o.get('term_id')}" == term]
+        if limit:
+            rows = rows[:limit]
+        return rows
+
+
+def _patch_both_tables(factory):
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(patch("agents.tools.chat_context.table", side_effect=factory))
+    stack.enter_context(patch("services.academics.table", side_effect=factory))
+    stack.enter_context(
+        patch("agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v)
+    )
+    return stack
+
+
+class TestSearchCourseMaterialsOfferingScope:
+    """`documents` keys on `offering_id`, never `course_id` (0025 schema).
+
+    Filtering it on `course_id` makes PostgREST 400 ("column
+    documents.course_id does not exist"), and this tool's degrade-silently
+    contract swallows that into `[]` — so the tutor loses EVERY course
+    document with no user-visible error and answers from base knowledge
+    alone. The abstract course must be resolved to the user's offerings via
+    `academics.user_offering_ids_for_course` first.
+
+    The fake below is schema-faithful on purpose: the existing mocks accept
+    any filter, which is exactly how this survived.
+    """
+
+    def test_documents_are_fetched_by_offering_not_course_id(self):
+        doc = {
+            "id": "doc_syllabus",
+            "file_name": "cs132-syllabus.pdf",
+            "summary": "convex hulls and sweep lines",
+            "concept_notes": [],
+        }
+
+        def _table(name):
+            store = MagicMock()
+
+            def _select(*_args, **kwargs):
+                f = kwargs.get("filters", {})
+                if name == "documents":
+                    if "course_id" in f:
+                        # What PostgREST actually does with a missing column.
+                        raise RuntimeError("column documents.course_id does not exist")
+                    if f.get("offering_id") == "in.(off_cs132_f26)" and \
+                            f.get("user_id") == "eq.user_mine":
+                        return [doc]
+                    return []
+                if name == "course_offerings":
+                    return [{"id": "off_cs132_f26"}]
+                if name == "enrollments":
+                    return [{"offering_id": "off_cs132_f26"}]
+                return []
+
+            store.select.side_effect = _select
+            return store
+
+        with patch("agents.tools.chat_context.table", side_effect=_table), \
+                patch("services.academics.table", side_effect=_table), \
+                patch("agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v):
+            result = _run(
+                search_course_materials("course_cs132", "convex hull", user_id="user_mine")
+            )
+
+        assert [m.document_id for m in result] == ["doc_syllabus"], (
+            "course materials must be reachable — a course_id filter on "
+            "documents 400s and silently yields no materials at all"
+        )
+
+    def test_soft_deleted_documents_are_excluded(self):
+        """A document the student deleted from their Library must stop
+        reaching the tutor.
+
+        `documents` is soft-deleted (routes/documents.py stamps `deleted_at`
+        and every other reader filters on it — study_guide.py,
+        flashcards.py). Before the offering fix this query 400'd and returned
+        [] unconditionally, so the missing `deleted_at` filter was invisible;
+        making the query work is exactly what exposes it. Without the filter
+        a deleted file's `summary` + `concept_notes` keep getting decrypted
+        into LLM context forever.
+        """
+        live = {
+            "id": "doc_live",
+            "file_name": "lecture-04.pdf",
+            "summary": "convex hulls and sweep lines",
+            "concept_notes": [],
+            "deleted_at": None,
+        }
+        deleted = {
+            "id": "doc_deleted",
+            "file_name": "convex-hull-draft.pdf",
+            "summary": "convex hulls and sweep lines, an earlier draft",
+            "concept_notes": [],
+            "deleted_at": "2026-08-01T00:00:00Z",
+        }
+        calls = _FakeAcademicsDb(
+            documents=[live, deleted],
+            offerings=[{"id": "off_cs132_f26", "term_id": "term_f26"}],
+            enrollments=[{"offering_id": "off_cs132_f26"}],
+            current_term_id="term_f26",
+        )
+
+        with calls.patched():
+            result = _run(
+                search_course_materials("course_cs132", "convex hull", user_id="user_mine")
+            )
+
+        assert calls.document_filters["deleted_at"] == "is.null", (
+            "the documents query must filter soft-deleted rows out; every "
+            "sibling reader does"
+        )
+        assert [m.document_id for m in result] == ["doc_live"], (
+            "a deleted document must never be decrypted into tutor context"
+        )
+
+    def test_documents_uploaded_in_a_later_term_are_still_found(self):
+        """The offering set must match the WRITER, not just `enrollments`.
+
+        Documents are written with `resolve_offering(course_id, create=True)`
+        — current term, enrollments never consulted. A student enrolled in
+        Fall-26 who uploads next term gets `documents.offering_id` = the new
+        offering and has no enrollment row for it, so an enrollment-only read
+        returns [] while the Library still lists the file: the tutor loses
+        every document with no visible error. `user_id` is the access
+        boundary here (#125), so widening to the union of both resolvers can
+        only re-include the student's OWN uploads.
+        """
+        doc = {
+            "id": "doc_new_term",
+            "file_name": "cs132-notes.pdf",
+            "summary": "convex hulls and sweep lines",
+            "concept_notes": [],
+            "offering_id": "off_cs132_s27",   # current term — no enrollment row
+            "deleted_at": None,
+        }
+        calls = _FakeAcademicsDb(
+            documents=[doc],
+            offerings=[
+                {"id": "off_cs132_f26", "term_id": "term_f26"},
+                {"id": "off_cs132_s27", "term_id": "term_s27"},
+            ],
+            enrollments=[{"offering_id": "off_cs132_f26"}],
+            current_term_id="term_s27",
+        )
+
+        with calls.patched():
+            result = _run(
+                search_course_materials("course_cs132", "convex hull", user_id="user_mine")
+            )
+
+        assert calls.document_filters["offering_id"] == (
+            "in.(off_cs132_f26,off_cs132_s27)"
+        ), (
+            "the enrolled offering AND the writer's current-term offering "
+            "must both be in scope, in a stable order"
+        )
+        assert [m.document_id for m in result] == ["doc_new_term"]
+
+    def test_documents_read_is_bounded(self):
+        """The select must carry a `limit`.
+
+        This runs on the latency-critical SSE path and EVERY returned row is
+        AES-decrypted before the list is truncated to `limit` in Python, so an
+        unbounded read makes a student with a large Library pay decrypt cost
+        for documents that can never be returned. The bound has to exceed the
+        requested count, though — ranking happens after the fetch, so
+        limiting to exactly `limit` would silently turn "most relevant" into
+        "most recent".
+        """
+        calls = _FakeAcademicsDb(
+            documents=[],
+            offerings=[{"id": "off_cs132_f26", "term_id": "term_f26"}],
+            enrollments=[{"offering_id": "off_cs132_f26"}],
+            current_term_id="term_f26",
+        )
+
+        with calls.patched():
+            _run(
+                search_course_materials(
+                    "course_cs132", "convex hull", limit=5, user_id="user_mine"
+                )
+            )
+
+        assert calls.document_limit is not None, "the documents read is unbounded"
+        assert calls.document_limit > 5, (
+            "the bound must leave a ranking pool larger than the result count"
+        )
+
+    def test_unresolvable_course_is_logged_not_silent(self, caplog):
+        """An empty offering set is a RETRIEVAL FAILURE, not an empty course.
+
+        The model can't tell the two apart — it sees `[]` either way and
+        narrates it as "your class doesn't cover this". That is the failure
+        this tool's offering fix exists to remove, and it went unnoticed
+        precisely because nothing was logged. The log line must not contain a
+        raw student identifier (Style Guide).
+        """
+        calls = _FakeAcademicsDb(
+            documents=[],
+            offerings=[],           # course has no offerings at all
+            enrollments=[],
+            current_term_id="term_f26",
+        )
+
+        with calls.patched(), caplog.at_level("WARNING"):
+            result = _run(
+                search_course_materials("course_cs132", "convex hull", user_id="user_mine")
+            )
+
+        assert result == []
+        warnings = [
+            r.getMessage() for r in caplog.records
+            if r.levelname == "WARNING" and "search_course_materials" in r.getMessage()
+        ]
+        assert warnings, "a retrieval gap must be visible in the logs"
+        assert "course_cs132" in warnings[0]
+        assert "user_mine" not in warnings[0], "never log a raw student id"
