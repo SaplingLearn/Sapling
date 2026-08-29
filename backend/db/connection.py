@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Iterator, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -159,6 +159,77 @@ def like_literal(value: str) -> str:
 
 def table(name: str) -> SupabaseTable:
     return SupabaseTable(name)
+
+
+#: `supabase/config.toml` sets PostgREST's `max_rows`. A response past that cap
+#: does not error — PostgREST answers 206 Partial Content, which is a 2xx, so
+#: `raise_for_status()` never fires and the truncation is silent by
+#: construction. Every unbounded read of a table that can grow past this has to
+#: page; `page_all` below is how.
+MAX_ROWS = 1000
+
+
+def page_all(
+    handle: SupabaseTable,
+    columns: str = "*",
+    *,
+    filters: Optional[dict] = None,
+    order: str,
+    page: int = MAX_ROWS,
+) -> Iterator[dict]:
+    """Yield EVERY row matching `filters`, paging past `MAX_ROWS`.
+
+    Lives here rather than in the feature that first needed it, for the same
+    reason `pg_quote_value` does: this is PostgREST's paging contract, not
+    domain logic. It replaced three hand-rolled copies (the XP ledger sum, the
+    per-day XP totals, and the hero card's `events_since`), each of which
+    carried its own constant, its own copy of the rationale above, and — the
+    reason they are one function now — the same termination bug.
+
+    Takes the RESOLVED handle, not a table name, so `table(...)` still
+    resolves in the calling module. That keeps each service's own `table` the
+    single patch point its tests already use, rather than silently relocating
+    the seam here.
+
+    **A full page is never evidence of the end; only a short page is.**
+    `select_with_count` reports `total = 0` whenever the Content-Range header
+    is missing or unparseable, so a `seen >= total` guard alone stops after
+    page one *with a completely full page in hand* — performing exactly the
+    silent truncation the loop exists to prevent. `total` is therefore only an
+    optimisation here: a trustworthy one saves the extra round trip that would
+    otherwise be needed to prove the end.
+
+    `order` is REQUIRED and must be a total order (append a unique tiebreaker
+    such as `id`). Offset paging over a non-deterministic sort lets Postgres
+    return rows in a different order for page N and N+1, silently skipping or
+    duplicating rows across the boundary.
+    """
+    if page > MAX_ROWS:
+        # Above the cap every page comes back short by construction, so the
+        # short-page terminator would end the read after MAX_ROWS rows and
+        # report it as the complete set. Refuse rather than truncate quietly.
+        raise ValueError(
+            f"page={page} exceeds PostgREST max_rows ({MAX_ROWS}); "
+            "every page would come back short and the read would stop early"
+        )
+    seen = 0
+    offset = 0
+    while True:
+        rows, total = handle.select_with_count(
+            columns, filters=filters, order=order, limit=page, offset=offset,
+        )
+        rows = rows or []
+        yield from rows
+        seen += len(rows)
+        # A SHORT page is the only proof of the end. `total` is a pure
+        # optimisation on top of it, and only when it is credible: `total = 0`
+        # is what an unparseable Content-Range reports, and `seen >= 0` holds
+        # trivially — so testing `seen >= total` on its own (or as one more
+        # `or` beside the short-page test) re-introduces the very truncation
+        # this guards, because a full page satisfies it too.
+        if len(rows) < page or (total > 0 and seen >= total):
+            return
+        offset += page
 
 
 def rpc(function_name: str, params: dict) -> list:

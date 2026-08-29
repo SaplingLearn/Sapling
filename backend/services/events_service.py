@@ -100,6 +100,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # dropped). Same reasoning: a 502 the student sees should be a 502 an
     # admin can count.
     "quiz.generation_failed",
+    # #537/G8: the hero-card snapshot submit now returns inline failed to
+    # read, and was swallowed so the submit could still succeed.
+    # category="error" for the same reason quiz.context_write_failed is: a
+    # swallowed failure with only a log line behind it is how #529 stayed
+    # invisible for 51 days in this same handler. Fires at most once per
+    # submit, so the /errors feed can carry it without drowning. See the emit
+    # site, routes/quiz.py::_gamification_block.
+    "quiz.gamification_snapshot_failed",
     # F5: a personalization input returned zero rows for a student who
     # plausibly should have data. Three inputs were silently empty for
     # months (#529's 42P10, the misconceptions offering-id filter, the

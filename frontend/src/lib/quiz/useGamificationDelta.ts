@@ -4,13 +4,19 @@
  * The XP/streak line on the results screen (R-9).
  *
  * `POST /api/quiz/submit` pays XP through `award_xp_safe` and bumps the streak
- * inside `apply_graph_update`, but returns neither (gap G8) — the response is
- * score/total/mastery only. The only way to show "+30 XP · 4-day streak" is to
- * read `GET /api/gamification/me` before the session and again after the submit
- * and subtract.
+ * inside `apply_graph_update`. It used to return neither (gap G8), so the only
+ * way to show "+30 XP · 4-day streak" was to read `GET /api/gamification/me`
+ * before the session and again after the submit and subtract — which is what
+ * this hook does.
+ *
+ * G8 is now closed on the server: the submit response carries a `gamification`
+ * block (`xp_awarded` + the same `/me` snapshot, `SubmitGamification` in
+ * `./types`). Migrating this hook away to that single value is a follow-up
+ * (R-9a); until then the two reads stand.
  *
  * Both reads are best-effort. If either fails the whole line is omitted rather
- * than showing a delta we'd have had to invent.
+ * than showing a delta we'd have had to invent — the same rule the inline
+ * block's nulls carry.
  */
 
 import { useCallback, useRef, useState } from "react";

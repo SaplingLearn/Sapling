@@ -158,9 +158,12 @@ test("a quiz launched from the tree moves mastery and returns to the node panel"
 
 /**
  * `POST /api/quiz/submit` pays XP, bumps the streak and re-evaluates the
- * `quizzes_completed` achievement stat — and returns NONE of it (R1 §E, gap
- * G8). R-9's answer is a second read of `GET /api/gamification/me`; this journey
- * pins that the line the student sees is that read, not an invention.
+ * `quizzes_completed` achievement stat. It now also RETURNS the first two
+ * (G8's `gamification` block), but the client has not migrated to them: R-9
+ * still renders a second read of `GET /api/gamification/me`, and this journey
+ * pins that the line the student sees is that read, not an invention. When the
+ * client swaps to `result.gamification` (R-9a) these assertions still hold —
+ * the inline block IS that snapshot, by construction.
  *
  * The achievement half reuses gamification.spec.ts's posture (drive the state,
  * then assert the rendered surface) against the one live `quizzes_completed`

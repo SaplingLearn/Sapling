@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from db.connection import table
+from db.connection import MAX_ROWS, page_all, table
 from services.growth import level_for_xp
 
 logger = logging.getLogger(__name__)
@@ -58,14 +58,12 @@ def _user_state(user_id: str) -> tuple[int, int]:
     return int(rows[0].get("total_xp") or 0), int(rows[0].get("level") or 1)
 
 
-# supabase/config.toml sets PostgREST's `max_rows = 1000`. A page past that cap
-# doesn't error — PostgREST returns 206 Partial Content, which is a 2xx, so
-# db/connection.py's raise_for_status() never fires and the truncation is
-# silent by construction. Same constant and same reasoning as
-# routes/gamification.py::_XP_EVENTS_PAGE; keep this at or below max_rows and
-# page to completion, or a heavy user's total_xp would silently collapse to
-# the first page's sum.
-_XP_EVENTS_PAGE = 1000
+# The paging loop and the reason for it now live in db/connection.py::page_all
+# (PostgREST truncates past max_rows with a 206 — a 2xx, so nothing raises).
+# This alias only names the page size for the tests that assert on it; without
+# paging, a heavy user's total_xp would silently collapse to the first page's
+# sum.
+_XP_EVENTS_PAGE = MAX_ROWS
 
 
 def _ledger_total(user_id: str) -> int:
@@ -88,24 +86,15 @@ def _ledger_total(user_id: str) -> int:
     without a stable sort PostgREST can return rows in a different order
     across pages, skipping or double-counting across the page boundary.
     """
-    total = 0
-    seen = 0
-    offset = 0
-    while True:
-        rows, count = table("xp_events").select_with_count(
-            "amount",
+    return sum(
+        int(r.get("amount") or 0)
+        for r in page_all(
+            table("xp_events"), "amount",
             filters={"user_id": f"eq.{user_id}"},
             order="created_at.asc,id.asc",
-            limit=_XP_EVENTS_PAGE,
-            offset=offset,
+            page=_XP_EVENTS_PAGE,
         )
-        rows = rows or []
-        total += sum(int(r.get("amount") or 0) for r in rows)
-        seen += len(rows)
-        if not rows or seen >= count:
-            break
-        offset += _XP_EVENTS_PAGE
-    return total
+    )
 
 
 def award_xp(
