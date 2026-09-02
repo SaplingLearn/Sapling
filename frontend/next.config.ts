@@ -99,11 +99,32 @@ const nextConfig: NextConfig = {
     "react-kapsule",
     "three",
   ],
+  // The /api proxy MUST NOT shadow the app's own route handlers — the session
+  // BFF (src/app/api/auth/session) is the only thing that can mint the
+  // `sapling_session` cookie, and the backend has no such endpoint.
+  //
+  // The array form is `afterFiles`, which Next 16 checks BEFORE app-router
+  // route handlers, so `/api/:path*` swallowed every local /api route and the
+  // OAuth callback's `POST /api/auth/session` 404'd — sign-in reached Google,
+  // came back approved, and then died one step from the finish line. The
+  // `{ source: "/api/auth/session", destination: "/api/auth/session" }`
+  // self-rewrite that used to sit above it was the attempted exemption; a
+  // rewrite whose destination is its own source resolves to not-found rather
+  // than re-entering route matching, so it 404'd just the same.
+  //
+  // `fallback` is the phase that runs only AFTER filesystem and dynamic routes
+  // have all missed. Anything this app serves itself wins; everything else
+  // proxies to the backend. That ordering is what the config wants and holds
+  // for any future BFF route without a per-path exemption.
+  // Guarded by e2e/auth-session.spec.ts and next.config.test.ts.
   async rewrites() {
-    return [
-      { source: "/api/auth/session", destination: "/api/auth/session" },
-      { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
-    ];
+    return {
+      beforeFiles: [],
+      afterFiles: [],
+      fallback: [
+        { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
+      ],
+    };
   },
   async redirects() {
     return [
