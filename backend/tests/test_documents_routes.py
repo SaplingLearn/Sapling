@@ -1323,3 +1323,601 @@ class TestEmptyExtractionGuard:
             r = _make_upload()
 
         assert r.status_code == 200
+
+
+# ── File-level duplicate detection ───────────────────────────────────────────
+
+class TestUploadFileLevelDedup:
+    """The same lecture deck arrives from many students under many filenames.
+    A fingerprint of the raw bytes catches it before OCR runs, so the
+    expensive work is paid once per file rather than once per uploader."""
+
+    # Exactly what find_duplicate returns: the routes reuse the twin's text and
+    # replay its stored result, and read nothing else off it.
+    _TWIN = {
+        "id": "doc-original",
+        "offering_id": "off-original",
+        "extracted_text": "photosynthesis converts light into sugar",
+        # No stored pipeline result — a row written before the column existed.
+        # The agents must still run for these.
+        "result": None,
+    }
+
+    def test_duplicate_file_skips_text_extraction(self):
+        """OCR is the slowest step on the upload path. A byte-identical file
+        already has its text stored, so extraction must not run again -- even
+        though this upload arrived under a different filename."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=self._TWIN),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d1", "file_name": "renamed.pdf"}]
+            r = _make_upload(filename="renamed.pdf")
+
+        assert r.status_code == 200
+        extract.assert_not_called()
+
+    def test_new_file_still_runs_text_extraction(self):
+        """Guard against the skip firing when there is no twin -- otherwise a
+        first upload would be indexed with no text at all."""
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                return_value=_doc_text("fresh text"),
+            ) as extract,
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d2", "file_name": "new.pdf"}]
+            r = _make_upload(filename="new.pdf")
+
+        assert r.status_code == 200
+        extract.assert_called_once()
+
+    def test_persists_the_file_fingerprint_on_the_new_row(self):
+        """Without the fingerprint on the row, the NEXT upload of this file
+        has nothing to match against and the dedup never starts working."""
+        from services.document_dedup import file_sha256
+
+        content = b"%PDF-1.4 unique bytes for this test"
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                return_value=_doc_text("fresh text"),
+            ),
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d3", "file_name": "x.pdf"}]
+            _make_upload(content=content)
+            inserted = t.return_value.insert.call_args[0][0]
+
+        assert inserted["file_sha256"] == file_sha256(content)
+
+    def test_duplicate_with_a_stored_result_skips_the_agents(self):
+        """The whole pipeline result is persisted, so a byte-identical file
+        needs no LLM calls at all -- the classifier, summary and concepts
+        agents are pure functions of text that is already known."""
+        twin = dict(self._TWIN, result=_make_orchestrator_result(category="slides"))
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.process_document") as agents,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d5", "file_name": "dup.pdf"}]
+            r = _make_upload(filename="dup.pdf")
+
+        assert r.status_code == 200
+        extract.assert_not_called()
+        agents.assert_not_called()
+
+    def test_duplicate_without_a_stored_result_still_runs_the_agents(self):
+        """Rows written before the column existed carry no result. Falling back
+        to the agents keeps those uploads correct instead of persisting a
+        half-empty document."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file"),
+            patch("routes.documents.find_duplicate", return_value=self._TWIN),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ) as agents,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d6", "file_name": "old.pdf"}]
+            r = _make_upload(filename="old.pdf")
+
+        assert r.status_code == 200
+        agents.assert_called_once()
+
+    def test_duplicate_syllabus_populates_the_calendar_without_rerunning_agents(self):
+        """The calendar import rides on the REPLAYED result, not on a fresh
+        agent run. `save_assignments_to_db` takes the uploader's user_id, so
+        replaying the twin's extracted assignments gives this student their own
+        calendar entries -- the separation that makes skipping the agents on a
+        syllabus safe.
+        """
+        from datetime import date
+
+        stored = _make_orchestrator_result(
+            category="syllabus",
+            is_syllabus=True,
+            syllabus_assignments=[
+                {"title": "PS1", "due_date": date(2026, 4, 1), "description": None},
+            ],
+        )
+        twin = dict(self._TWIN, result=stored)
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.process_document") as agents,
+            patch("routes.documents.save_assignments_to_db") as save_assignments,
+            patch("routes.documents.apply_graph_update"),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d4", "file_name": "syl.pdf"}]
+            r = _make_upload(filename="syl.pdf", user_id="u2")
+
+        assert r.status_code == 200
+        extract.assert_not_called()
+        agents.assert_not_called()
+        # The calendar is still populated -- and for THIS uploader.
+        save_assignments.assert_called_once()
+        assert save_assignments.call_args[0][0] == "u2"
+
+    def test_sync_duplicate_merges_the_concepts_into_the_new_uploader_graph(self):
+        """The one step a replay cannot inherit. The stored result's concepts
+        were merged into the ORIGINAL uploader's graph; on the fresh path the
+        merge happens inside `process_document` (`_step_apply_graph`), and the
+        replay branch skips `process_document` entirely.
+
+        Without this call, /upload/sync had NO graph write path on a duplicate:
+        `_graph_backstop` is the only other candidate and it returns early for
+        slides / lecture notes / readings. This is a live path -- the Gradebook
+        syllabus upload flow posts here -- so the second student to upload a
+        shared syllabus silently lost their graph seeding.
+        """
+        stored = _make_orchestrator_result(
+            category="slides", concept_names=["Photosynthesis", "Calvin Cycle"],
+        )
+        merge = AsyncMock(return_value=2)
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file"),
+            patch("routes.documents.find_duplicate", return_value=dict(self._TWIN, result=stored)),
+            patch("routes.documents.process_document") as agents,
+            patch("routes.documents.apply_concepts_to_graph", merge),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d10", "file_name": "dup.pdf"}]
+            r = _make_upload(filename="dup.pdf", user_id="u2", course_id="course-9")
+
+        assert r.status_code == 200
+        agents.assert_not_called()
+        merge.assert_awaited_once()
+        # THIS uploader's graph, in the course THEY uploaded to -- never the twin's.
+        user_id, course_id, concept_names = merge.await_args[0]
+        assert user_id == "u2"
+        assert course_id == "course-9"
+        assert concept_names == ["Photosynthesis", "Calvin Cycle"]
+
+    def test_a_cached_graph_updated_flag_cannot_suppress_the_new_merge(self):
+        """`graph_updated` is run-scoped state that happens to be stored inside a
+        content-addressed cache entry: it records whether the FIRST uploader's
+        graph gained nodes. Replaying it verbatim made `_graph_backstop` return
+        immediately for the second student, so a True from months ago could
+        silence every later merge. The replay recomputes it instead."""
+        stored = _make_orchestrator_result(category="syllabus", is_syllabus=True)
+        stored = stored.model_copy(update={"graph_updated": True})
+        merge = AsyncMock(return_value=0)
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file"),
+            patch("routes.documents.find_duplicate", return_value=dict(self._TWIN, result=stored)),
+            patch("routes.documents.process_document"),
+            patch("routes.documents.apply_concepts_to_graph", merge),
+            patch("routes.documents.save_assignments_to_db"),
+            patch("routes.documents.apply_graph_update") as backstop_write,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d11", "file_name": "syl.pdf"}]
+            r = _make_upload(filename="syl.pdf", user_id="u3")
+
+        assert r.status_code == 200
+        merge.assert_awaited_once()
+        # merged == 0 recomputes graph_updated=False, so the syllabus backstop
+        # runs for this student rather than being skipped by the stale True.
+        backstop_write.assert_called_once()
+        assert backstop_write.call_args[0][0] == "u3"
+
+    def test_persists_the_agent_result_for_future_reuse(self):
+        """Without the result on the row, the next duplicate has nothing to
+        replay and every uploader pays for the agents again."""
+        from services.encryption import decrypt_if_present
+
+        result = _make_orchestrator_result(category="slides")
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                return_value=_doc_text("fresh text"),
+            ),
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d7", "file_name": "x.pdf"}]
+            _make_upload()
+            inserted = t.return_value.insert.call_args[0][0]
+
+        from services.document_dedup import decode_result
+
+        assert decode_result(decrypt_if_present(inserted["agent_result"])) == result
+
+    def test_streaming_duplicate_replays_without_calling_any_agent(self):
+        """The SSE route is the one the frontend uses, so the saving has to
+        land here too. The client-visible event sequence must be unchanged --
+        a replayed upload looks identical, just faster."""
+        stored = _make_orchestrator_result(category="slides")
+        twin = dict(self._TWIN, result=stored)
+        cls_run, sum_run, cpt_run = AsyncMock(), AsyncMock(), AsyncMock()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.classifier_agent.run", cls_run),
+            patch("routes.documents.summary_agent.run", sum_run),
+            patch("routes.documents.concept_extraction_agent.run", cpt_run),
+            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll"),
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "stream-dup"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("renamed.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        extract.assert_not_called()
+        cls_run.assert_not_called()
+        sum_run.assert_not_called()
+        cpt_run.assert_not_called()
+
+        steps = [json.loads(e["data"])["step"] for e in _parse_sse_stream(body)]
+        assert steps == [
+            "start", "classify", "classified", "extract", "extracted",
+            "graph_update", "graph_updated", "finalize", "done",
+        ]
+
+    def test_streaming_duplicate_in_the_same_course_still_schedules_the_index(self):
+        """Same file, same OFFERING -- and the index task is still scheduled.
+
+        The route deliberately does not decide reuse from the twin: a
+        `documents` row proves someone uploaded these bytes, never that its
+        chunks landed (a /upload/sync twin never indexes at all), and skipping
+        on that basis left the course with permanently ZERO retrievable
+        material. The task asks course_chunks itself -- see
+        TestIndexDocumentChunksReuse for the skip that decision produces.
+
+        The row must still carry the text itself: it is what the NEXT duplicate
+        matches against, and the twin's chunks are not on this row."""
+        from services.encryption import decrypt_if_present
+
+        stored = _make_orchestrator_result(category="slides")
+        twin = dict(self._TWIN, offering_id="off-same", result=stored)
+        cls_run, sum_run, cpt_run = AsyncMock(), AsyncMock(), AsyncMock()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.resolve_offering", return_value="off-same"),
+            # All three workers stubbed, not just the classifier: an unpatched
+            # summary/concepts agent turns a regression into a network attempt
+            # or an unrelated exception instead of a clean assertion failure.
+            patch("routes.documents.classifier_agent.run", cls_run),
+            patch("routes.documents.summary_agent.run", sum_run),
+            patch("routes.documents.concept_extraction_agent.run", cpt_run),
+            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll") as post_roll,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "same-course-dup"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("renamed.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                steps = [json.loads(e["data"])["step"] for e in _parse_sse_stream(r.read())]
+            inserted = t.return_value.insert.call_args[0][0]
+            scheduled = [c[0] for c in post_roll.call_args[0]]
+
+        extract.assert_not_called()
+        cls_run.assert_not_called()
+        sum_run.assert_not_called()
+        cpt_run.assert_not_called()
+        assert "index_document_chunks" in scheduled
+        # The rest of the post-roll is untouched -- the per-student side effects
+        # never depend on whether the corpus already holds these chunks.
+        assert "update_course_context" in scheduled
+        assert decrypt_if_present(inserted["extracted_text"]) == self._TWIN["extracted_text"]
+        assert steps == [
+            "start", "classify", "classified", "extract", "extracted",
+            "graph_update", "graph_updated", "finalize", "done",
+        ]
+
+    def test_persists_the_extracted_text_so_a_later_duplicate_can_reuse_it(self):
+        """find_duplicate refuses a twin with no extracted_text -- reusing one
+        would skip OCR and leave the new document empty.
+
+        That column used to be written only by _index_document_chunks, which
+        runs as a post-roll task on the STREAMING route. /upload/sync never
+        indexes, so a sync upload persisted a row with file_sha256 set but
+        extracted_text NULL: it looked like a duplicate to the lookup and was
+        then rejected, and dedup could never fire. Caught by running the real
+        app, not by the suite.
+        """
+        from services.encryption import decrypt_if_present
+
+        text = _doc_text("the text that must survive onto the row")
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=text),
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d8", "file_name": "x.pdf"}]
+            _make_upload()
+            inserted = t.return_value.insert.call_args[0][0]
+
+        assert decrypt_if_present(inserted["extracted_text"]) == text
+
+    def _stream_dup(self, caplog, twin):
+        """Drive the streaming route against `twin`, capturing route logs.
+
+        The agents are stubbed with real output shapes rather than bare
+        AsyncMocks: the no-stored-result case genuinely runs them, and a mock
+        without `.output` leaves un-awaited coroutines behind that surface as
+        warnings from unrelated tests later in the session.
+        """
+        import logging
+
+        from agents.classifier import DocumentClassification
+        from agents.concept_extraction import Concept, ConceptList
+        from agents.summary import Summary
+
+        runs = (
+            AsyncMock(return_value=SimpleNamespace(output=DocumentClassification(
+                category="slides", is_syllabus=False, confidence=0.9, rationale="t",
+            ))),
+            AsyncMock(return_value=SimpleNamespace(output=Summary(
+                headline="h", abstract="a", key_points=["a", "b", "c"],
+            ))),
+            AsyncMock(return_value=SimpleNamespace(output=ConceptList(concepts=[
+                Concept(name="Photosynthesis", description="d", importance=0.5),
+            ]))),
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file"),
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.classifier_agent.run", runs[0]),
+            patch("routes.documents.summary_agent.run", runs[1]),
+            patch("routes.documents.concept_extraction_agent.run", runs[2]),
+            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll"),
+            caplog.at_level(logging.INFO, logger="routes.documents"),
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "stream-dup"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("renamed.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                r.read()
+        return caplog.text
+
+    def test_streaming_replay_says_the_agents_were_skipped(self, caplog):
+        """The two savings a duplicate can yield -- skipping OCR and skipping
+        the agents -- are independent, and NEITHER shows up in the event stream
+        (a replay emits the same nine steps as a fresh upload). Logging only
+        'reusing extracted text' therefore leaves the expensive question
+        unanswered: the sole way to tell a full replay from a text-only reuse
+        was counting generateContent calls in the httpx log."""
+        log = self._stream_dup(caplog, dict(self._TWIN, result=_make_orchestrator_result(category="slides")))
+
+        assert "Replaying stored pipeline result from document doc-original" in log
+        assert "skipping the classifier and workers" in log
+
+    def test_streaming_reuse_without_a_result_says_the_agents_still_run(self, caplog):
+        """The counter-case has to be distinguishable, not merely silent: a twin
+        predating the agent_result column reuses the text but still pays for
+        every agent. Reading the same 'duplicate' line for both would make the
+        LLM spend on this path invisible."""
+        log = self._stream_dup(caplog, dict(self._TWIN, result=None))
+
+        assert "re-running the agents" in log
+        assert "skipping the classifier and workers" not in log
+
+
+# ── Chunk reuse: decided against the corpus, not against a documents row ─────
+
+def _index_tables(**by_name):
+    """Build a `routes.documents.table` stand-in with per-table behaviour.
+
+    _index_document_chunks reads `courses` (to resolve the BU course code) and
+    writes `documents`; the shared `t.return_value` mock cannot tell them
+    apart, and this function's whole job is to route by table name."""
+    from unittest.mock import MagicMock
+
+    def _table(name):
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = by_name.get(name, [])
+        return m
+
+    return _table
+
+
+class TestIndexDocumentChunksReuse:
+    """The chunk-reuse decision lives here, not at the route: only this function
+    knows the resolved course code and the actual chunk list, which are what
+    `rag_service.chunk_id` hashes. The route used to decide it from the dedup
+    twin's offering, which is neither."""
+
+    _CHUNKS = ["light reactions", "calvin cycle"]
+
+    def _run(self, already_exist):
+        from routes.documents import _index_document_chunks
+
+        with (
+            patch(
+                "routes.documents.table",
+                side_effect=_index_tables(courses=[{"course_code": "CAS BI 110"}]),
+            ),
+            patch("services.chunker.chunk_for_category", return_value=self._CHUNKS),
+            patch(
+                "routes.documents.chunks_already_exist", return_value=already_exist,
+            ) as exists,
+            patch("services.rag_service.index_document_chunks") as index,
+        ):
+            _index_document_chunks(
+                "doc-new", "course-uuid", "u1", "photosynthesis text", "slides",
+            )
+        return exists, index
+
+    def test_skips_the_embed_when_the_corpus_already_holds_these_chunks(self):
+        """The saving this feature exists for: the twelfth student uploading the
+        same deck re-embeds nothing, because the ids are content-addressed and
+        the upsert would land on the rows that are already there."""
+        exists, index = self._run(already_exist=True)
+
+        index.assert_not_called()
+
+    def test_indexes_when_the_corpus_does_not_hold_them(self):
+        """The failure this replaced: a duplicate whose twin never indexed (a
+        /upload/sync row, a swallowed index failure, a relevance-gate return)
+        used to skip here forever, leaving the course with zero material."""
+        exists, index = self._run(already_exist=False)
+
+        index.assert_called_once()
+        assert index.call_args.kwargs["chunks"] == self._CHUNKS
+        assert index.call_args.kwargs["course_code"] == "CAS BI 110"
+
+    def test_asks_about_the_course_code_and_the_real_chunks(self):
+        """Scope check. `chunk_id` hashes the course CODE, so two offerings of
+        one course share their chunk rows -- asking about an offering both
+        missed real reuse and claimed reuse the ids do not provide."""
+        exists, _ = self._run(already_exist=True)
+
+        exists.assert_called_once_with("CAS BI 110", self._CHUNKS)
+
+
+# ── _persist_document: the missing-column insert fallback ────────────────────
+
+class TestPersistDocumentInsertFallback:
+    """The retry exists so the code can ship before the migration runs. It must
+    not double as a catch-all: dropping file_sha256/agent_result on an unrelated
+    failure writes a row that is permanently invisible to dedup and carries
+    nothing to replay."""
+
+    def _persist(self, insert_error):
+        from routes.documents import _persist_document
+
+        inserts = []
+
+        def _insert(row):
+            inserts.append(dict(row))
+            if len(inserts) == 1:
+                raise insert_error
+            return [dict(row)]
+
+        with patch("routes.documents.table") as t:
+            t.return_value.insert.side_effect = _insert
+            _persist_document(
+                user_id="u1", offering_id="off-1", filename="x.pdf",
+                result=_make_orchestrator_result(category="slides"),
+                request_id="req-1", file_hash="abc123",
+                extracted_text="some extracted text",
+            )
+        return inserts
+
+    def test_retries_without_the_new_columns_when_the_schema_lacks_them(self):
+        """Deployments ship code before migrations run."""
+        import httpx
+
+        response = httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://db.example/documents"),
+            json={"message": 'column "file_sha256" of relation "documents" does not exist'},
+        )
+        inserts = self._persist(
+            httpx.HTTPStatusError("400", request=response.request, response=response),
+        )
+
+        assert len(inserts) == 2
+        assert "file_sha256" in inserts[0]
+        for dropped in ("request_id", "file_sha256", "agent_result"):
+            assert dropped not in inserts[1]
+        # The content columns are NOT part of the fallback.
+        assert inserts[1]["extracted_text"]
+
+    def test_an_unrelated_insert_failure_propagates_instead_of_dropping_columns(self):
+        """A transient PostgREST error or an unrelated constraint violation used
+        to be swallowed into a silent column-stripping retry, so one blip wrote
+        a row no future duplicate could ever match -- and logged nothing."""
+        import pytest as _pytest
+
+        with _pytest.raises(RuntimeError, match="connection reset"):
+            self._persist(RuntimeError("connection reset by peer"))
+
+    def test_the_fallback_says_so_in_the_log(self, caplog):
+        """Silent degradation is the failure mode: every upload looks healthy
+        while dedup can never fire again on these rows."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="routes.documents"):
+            self._persist(Exception("Could not find the 'agent_result' column of 'documents' in the schema cache"))
+
+        assert "retrying without them" in caplog.text
