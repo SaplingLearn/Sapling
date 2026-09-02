@@ -7,6 +7,7 @@
  * session/scope model, the phase machine) is marked as a client concept.
  */
 
+import type { GamificationMe } from "@/lib/types";
 import type { QuizError } from "./errors";
 
 /** `GET /api/quiz/config` — the ONLY source of option lists (never enumerate
@@ -82,6 +83,54 @@ export interface AnswerResult {
   recorded: boolean;
 }
 
+/** What the `quiz_completed` award paid. Free to send — the server already
+ *  holds all three — and none of them is reconstructable client-side.
+ *
+ *  All three are `null` TOGETHER when the XP write failed and the server
+ *  swallowed it (XP must never fail the submit that earned it). That is the
+ *  signal to omit the XP line, not to render a zero: `xp_awarded: 0` is a
+ *  real, different answer, reachable three ways — a disabled rule, a
+ *  zero-amount rule, and an idempotent replay — and `duplicate` is what tells
+ *  the replay apart from a misconfigured rule. */
+export interface SubmitAward {
+  /** The amount written to the `xp_events` ledger by this submit. */
+  xp_awarded: number | null;
+  /** Whether this award crossed a level boundary. Without it, a migrated
+   *  client cannot detect a level-up except by re-adding the `/me` round trip
+   *  this whole block exists to remove. */
+  leveled_up: boolean | null;
+  /** True when the ledger already had this award (a retried submit). */
+  duplicate: boolean | null;
+}
+
+/** G8: the XP line, inline in the submit reply — what the award paid plus the
+ *  same `GET /api/gamification/me` snapshot, taken right after it (both built
+ *  by `backend/services/gamification_service.py`, so they cannot disagree).
+ *
+ *  The two halves fail independently, and neither ever invents a number. If
+ *  the SNAPSHOT read fails the block carries the award half ALONE — the card
+ *  fields are absent, not zeroed. Narrow on a card field before reading one:
+ *
+ *      if (g && g.total_xp !== undefined) { ...render the card... }
+ *
+ *  The award half survives that failure on purpose: it cost no query, and the
+ *  `/me` fallback that would otherwise supply it is aimed at the same database
+ *  that just failed.
+ *
+ *  READ THIS BEFORE MIGRATING OFF `useGamificationDelta` (R-9a).
+ *  `xp_awarded` is the `quiz_completed` ledger amount — NOT the student's
+ *  total XP change across the submit. A badge earned by the same quiz pays
+ *  its own `xp_reward`, which lands in `total_xp` here but not in
+ *  `xp_awarded`. Today's line renders `after - before` from two `/me` reads
+ *  and therefore INCLUDES that badge XP; a client that drops the pre-session
+ *  read and renders `xp_awarded` will show the smaller number on those
+ *  submits. Deliberate — the ledger amount is the one value the server can
+ *  name without guessing. If the badge delta must survive the migration, the
+ *  server needs an `xp_before` field; that call has not been made. */
+export type SubmitGamification =
+  | (SubmitAward & GamificationMe)
+  | (SubmitAward & { [K in keyof GamificationMe]?: undefined });
+
 export interface SubmitResult {
   score: number;
   total: number;
@@ -94,6 +143,15 @@ export interface SubmitResult {
     correct_answer: string;
     explanation: string;
   }[];
+  /** Optional while `useGamificationDelta` still reads `/me` around the
+   *  submit (R-9); the client migration to this field is a later pass. The
+   *  `?` also covers the deploy window against a backend older than G8.
+   *
+   *  Not `| null`: the server always sends the block. A failed snapshot read
+   *  ships the award half ALONE rather than nulling the whole thing, so
+   *  `null` is a state it can no longer produce — narrow on a card field
+   *  (see `SubmitGamification`), not on the block itself. */
+  gamification?: SubmitGamification;
 }
 
 export type AttemptStatus = "completed" | "abandoned" | "in_progress";

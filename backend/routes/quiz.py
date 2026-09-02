@@ -59,7 +59,8 @@ from services.quiz_reserve import (
 from services.tool_signals import Expect, report_empty_result_async
 from services import prompt_dimensions
 from services.rag_service import retrieve_chunks_detailed, format_rag_context
-from services.xp_service import award_xp_safe
+from services.gamification_service import me_snapshot
+from services.xp_service import XpAward, award_xp_safe
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -1933,7 +1934,7 @@ def list_attempts(
         # `id` is the unique tiebreaker: without it two attempts sharing a
         # created_at have undefined relative order across the separate
         # queries serving page N and N+1, so a row can repeat or vanish.
-        # Same idiom as routes/gamification.py's xp_events paging.
+        # Same idiom as gamification_service.events_since's xp_events paging.
         order="created_at.desc,id.desc",
         limit=limit,
         offset=offset,
@@ -2240,6 +2241,73 @@ def abandon_attempt(attempt_id: str, request: Request):
     }
 
 
+def _gamification_block(
+    user_id: str, award: XpAward | None, quiz_id: str,
+) -> dict:
+    """G8: the XP/streak numbers the results screen needs, in the submit reply.
+
+    Before this the close screen had to read `GET /api/gamification/me` once
+    before the session and once after the submit and subtract — two extra
+    round trips whose race or failure showed the student a blank where their
+    XP should be (`frontend/src/lib/quiz/useGamificationDelta.ts`). The
+    snapshot is built by `services/gamification_service.me_snapshot`, the same
+    function `/api/gamification/me` serves, so the inline numbers and the
+    endpoint can never disagree.
+
+    The block has two independent halves, and each failure is reported as
+    itself rather than papered over with a plausible number:
+
+    * the AWARD half (`xp_awarded`, `leveled_up`, `duplicate`) comes off the
+      `XpAward` already in memory and costs no query. All three are `None`
+      TOGETHER when the XP write failed and `award_xp_safe` swallowed it —
+      there is no award to report, and the client's rule is to omit the XP
+      line rather than invent one.
+    * the CARD half is the `/me` snapshot. If that read fails the award half
+      still ships ALONE. It cost nothing to produce, the `/me` fallback that
+      would otherwise supply it is aimed at the same database that just
+      failed, and R-9a tells a migrated client to have dropped those reads
+      entirely — so the fallback is least likely to work on exactly the
+      request that needs it.
+
+    `leveled_up` and `duplicate` ride along because a client cannot
+    reconstruct either: three different paths all report `xp_awarded: 0` (a
+    disabled rule, a zero-amount rule, an idempotent replay), and spotting a
+    level-up without `leveled_up` means re-adding the round trip this block
+    exists to remove.
+
+    `xp_awarded` is what the `quiz_completed` award paid, which is the amount
+    written to the `xp_events` ledger. A badge earned by the same submit pays
+    its own XP separately; that is not in `xp_awarded` but IS in `total_xp`,
+    which is read after the achievement pass.
+    """
+    paid = {
+        "xp_awarded": award.awarded if award else None,
+        "leveled_up": award.leveled_up if award else None,
+        "duplicate": award.duplicate if award else None,
+    }
+    try:
+        snapshot = me_snapshot(user_id)
+    except Exception:
+        # Display data must never fail the action that earned it — the same
+        # rule `award_xp_safe` follows for the write itself. But swallowing it
+        # silently is what let #529 live 51 days undetected in this very
+        # function, so the log line is paired with a countable event exactly
+        # as `_update_context` pairs its own.
+        logger.exception(
+            "quiz: gamification snapshot failed quiz_id=%s user=%s",
+            quiz_id, user_id,
+        )
+        events_service.log_event(
+            "quiz.gamification_snapshot_failed",
+            category="error",
+            user_id=user_id,
+            request_id=current_request_id(),
+            payload={"quiz_id": quiz_id},
+        )
+        return paid
+    return {**paid, **snapshot}
+
+
 @router.post("/submit")
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
     attempt = _load_owned_attempt(body.quiz_id, request)
@@ -2534,7 +2602,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # a replay 409s before reaching here). source_id=body.quiz_id is the
     # attempt id, so a hypothetical double-invocation is a no-op via the
     # xp_events idempotency key rather than a double payout.
-    award_xp_safe(user_id, "quiz_completed", source_type="quiz", source_id=body.quiz_id)
+    award = award_xp_safe(user_id, "quiz_completed", source_type="quiz",
+                          source_id=body.quiz_id)
 
     # Check for achievements after quiz completion
     try:
@@ -2542,6 +2611,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         check_achievements(user_id, "quizzes_completed", {})
     except Exception:
         pass
+
+    # G8: read AFTER the achievement pass — a badge earned by this submit pays
+    # its own XP and moves earned_count, so a snapshot taken before it would
+    # be stale the moment it was serialized.
+    gamification = _gamification_block(user_id, award, body.quiz_id)
 
     # #117: quiz.completed on the success path only — a 409 replay (the
     # atomic completed_at claim above) or any earlier 4xx never reaches here.
@@ -2564,4 +2638,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         "mastery_before": mastery_before,
         "mastery_after": mastery_score_after,
         "results": results,
+        # G8, additive: what the award paid (`xp_awarded`, `leveled_up`,
+        # `duplicate`) plus the /api/gamification/me snapshot as of right now.
+        # Always present. If the snapshot read failed it carries the award
+        # half ALONE — see `_gamification_block` for why that half survives.
+        "gamification": gamification,
     }
