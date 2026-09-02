@@ -275,6 +275,9 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
           conceptNodeId: from.conceptId,
           numQuestions: from.config.count,
           difficulty: from.config.difficulty,
+          // G5: set only by PRACTISE_MISSED, so an ordinary start sends
+          // nothing and the route behaves exactly as it always has.
+          sourceAttemptId: from.sourceAttemptId,
         });
         if (generationRef.current !== token) return;
         apply({ type: "GENERATED", result });
@@ -501,6 +504,14 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
               scope: next.scope,
               conceptId: next.conceptId,
               courseId: next.courseId,
+              // G5: retrying a failed PRACTISE_MISSED must still be a
+              // practice run. `START` clears `sourceAttemptId` (a fresh quiz
+              // practises nothing unless asked), so without carrying it here
+              // "Try again" quietly turns "the ones you missed" into an
+              // ordinary generation — the exact failure the honest label was
+              // added to prevent, now invisible because the label would be
+              // right about the quiz it silently became.
+              sourceAttemptId: next.sourceAttemptId,
             },
             config: next.config,
           });

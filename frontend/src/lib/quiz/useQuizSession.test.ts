@@ -157,6 +157,9 @@ describe("start → answer → answer → submit", () => {
       conceptNodeId: "c1",
       numQuestions: 5,
       difficulty: "medium",
+      // G5: an ordinary start practises nothing, and the client omits the
+      // wire key entirely for a null source (see api.test.ts).
+      sourceAttemptId: null,
     });
 
     act(() => result.current.actions.select(1));
@@ -235,6 +238,90 @@ describe("start → answer → answer → submit", () => {
     expect(result.current.session.error?.message).toBe(
       "That answer didn't line up with the question. Reload and try again.",
     );
+  });
+});
+
+describe("practise the ones you missed (G5)", () => {
+  /** Run one attempt to completion so the results screen's action is live. */
+  async function toResults() {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.config).not.toBeNull());
+    quizApi.generateQuiz.mockResolvedValue(generated(1));
+    act(() => result.current.actions.start(START));
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+    act(() => result.current.actions.select(1));
+    await act(async () => {
+      result.current.actions.submitAnswer();
+    });
+    await waitFor(() => expect(result.current.session.phase).toBe("results"));
+    return result;
+  }
+
+  it("asks the server to re-serve the misses from the attempt just finished", async () => {
+    const result = await toResults();
+    quizApi.generateQuiz.mockClear();
+    quizApi.generateQuiz.mockResolvedValue({
+      ...generated(1),
+      quiz_id: "attempt-2",
+      source: { attempt_id: "attempt-1", reserved_count: 1, regenerated_count: 0 },
+    });
+
+    act(() => result.current.actions.practiseMissed());
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+    expect(quizApi.generateQuiz).toHaveBeenCalledWith(
+      expect.objectContaining({ conceptNodeId: "c1", sourceAttemptId: "attempt-1" }),
+    );
+    expect(result.current.session.reserved).toEqual({
+      reservedCount: 1,
+      regeneratedCount: 0,
+    });
+  });
+
+  it("records a fallback that re-served nothing, so the label stays honest", async () => {
+    const result = await toResults();
+    quizApi.generateQuiz.mockResolvedValue({
+      ...generated(1),
+      quiz_id: "attempt-2",
+      source: { attempt_id: "attempt-1", reserved_count: 0, regenerated_count: 1 },
+    });
+
+    act(() => result.current.actions.practiseMissed());
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+    expect(result.current.session.reserved).toEqual({
+      reservedCount: 0,
+      regeneratedCount: 1,
+    });
+  });
+
+  it("keeps practising the same attempt when Try again retries a failed generate", async () => {
+    const result = await toResults();
+    quizApi.generateQuiz.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    act(() => result.current.actions.practiseMissed());
+    await waitFor(() => expect(result.current.session.phase).toBe("error"));
+
+    // `START` clears `sourceAttemptId` by design (a fresh quiz practises
+    // nothing), so unless the retry restates it, "Try again" quietly turns
+    // "the ones you missed" into an ordinary generation — and the honest
+    // label would then be honest about the wrong quiz.
+    quizApi.generateQuiz.mockClear();
+    quizApi.generateQuiz.mockResolvedValue({
+      ...generated(1),
+      quiz_id: "attempt-2",
+      source: { attempt_id: "attempt-1", reserved_count: 1, regenerated_count: 0 },
+    });
+    act(() => result.current.actions.retry());
+    await waitFor(() => expect(result.current.session.phase).toBe("active"));
+
+    expect(quizApi.generateQuiz).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceAttemptId: "attempt-1" }),
+    );
+    expect(result.current.session.scope.kind).toBe("missed");
+    expect(result.current.session.reserved).toEqual({
+      reservedCount: 1,
+      regeneratedCount: 0,
+    });
   });
 });
 

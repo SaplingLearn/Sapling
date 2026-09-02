@@ -45,6 +45,22 @@ export interface WireQuestion {
   difficulty: string;
 }
 
+/**
+ * G5: how a "practise the ones you missed" generate was actually assembled.
+ *
+ * Present only when the request named a `source_attempt_id`, and then always —
+ * so the three outcomes stay distinguishable: re-served everything
+ * (`regenerated_count === 0`), re-served some, re-served nothing and fell back
+ * to generation (`reserved_count === 0`). The results screen labels each
+ * honestly instead of promising "the ones you missed" for a quiz that wrote
+ * new questions.
+ */
+export interface GenerateSource {
+  attempt_id: string;
+  reserved_count: number;
+  regenerated_count: number;
+}
+
 export interface GenerateResult {
   quiz_id: string;
   questions: WireQuestion[];
@@ -52,6 +68,7 @@ export interface GenerateResult {
   resolved_difficulty: string;
   requested_count: number;
   delivered_count: number;
+  source?: GenerateSource;
 }
 
 export interface AnswerResult {
@@ -256,4 +273,12 @@ export interface QuizSession {
   xp: { before: number; after: number; streak: number } | null;
   /** `delivered_count < requested_count` on the generate that produced `items`. */
   deliveredShort: boolean;
+  /** G5: the completed attempt whose misses this session is practising, set by
+   *  `PRACTISE_MISSED` and sent on the next generate. `null` for every other
+   *  way into a quiz. */
+  sourceAttemptId: string | null;
+  /** G5: what that generate re-served versus regenerated. `null` unless the
+   *  request named a source attempt — which is exactly when the results
+   *  eyebrow may claim "the ones you missed, again". */
+  reserved: { reservedCount: number; regeneratedCount: number } | null;
 }
