@@ -16,7 +16,8 @@ real Supabase (`_hermetic_supabase_client`, #210) or a real model
 """
 import sys
 import os
-from unittest.mock import MagicMock
+from contextlib import ExitStack
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -410,3 +411,142 @@ def _bypass_session_auth(request, monkeypatch):
             monkeypatch.setattr(mod, "require_admin", _require_admin_stub)
         if hasattr(mod, "require_role"):
             monkeypatch.setattr(mod, "require_role", _require_role_stub)
+
+
+# ─── Shared PostgREST fake ───────────────────────────────────────────────────
+#
+# One in-memory stand-in for `db.connection.table`, shared by every hermetic test
+# of a script that writes through PostgREST (`db/seed_staging.py` via
+# `db/seed_helpers.py`, `db/import_offerings.py`). It used to be forked per test
+# module, which meant two fakes with quietly different upsert/insert semantics: a
+# script could satisfy one module's idea of PostgREST and break against the
+# other's, and a fix to one fake never reached the second.
+#
+# Rows are held per table keyed by primary key, the way the real database holds
+# them, so a duplicate insert is detectable and merge-duplicates upsert has
+# something to merge into. Only the surface the scripts actually use is modelled:
+# `eq.` / `in.()` filters, paged `select_with_count`, insert, update, and
+# `upsert(on_conflict=...)`. Anything else raises rather than silently passing.
+
+
+class FakePostgrestStore:
+    """In-memory tables: ``{table_name: {pk_value: row}}``, insertion-ordered."""
+
+    def __init__(self, pk_columns: dict | None = None, tables: dict | None = None):
+        # Tables whose primary key is not `id` (user_profiles is keyed on user_id).
+        self.pk_columns = dict(pk_columns or {})
+        # (table, op, row_count) per write, so a test can assert *how* a script
+        # wrote — e.g. that updates go out in batches instead of one request per row.
+        self.calls: list[tuple[str, str, int]] = []
+        self.tables: dict[str, dict] = {}
+        for name, rows in (tables or {}).items():
+            self.seed(name, *rows)
+
+    def pk(self, name: str) -> str:
+        return self.pk_columns.get(name, "id")
+
+    def rows(self, name: str) -> list[dict]:
+        """Every row of `name`, in insertion order (live row dicts, not copies)."""
+        return list(self.tables.setdefault(name, {}).values())
+
+    def seed(self, name: str, *rows: dict) -> None:
+        """Put fixture rows in place without going through the write path."""
+        t = self.tables.setdefault(name, {})
+        for row in rows:
+            t[row[self.pk(name)]] = dict(row)
+
+    def table(self, name: str) -> "FakePostgrestTable":
+        self.tables.setdefault(name, {})
+        return FakePostgrestTable(name, self)
+
+
+class FakePostgrestTable:
+    """The `SupabaseTable` surface, backed by a `FakePostgrestStore`."""
+
+    def __init__(self, name: str, store: FakePostgrestStore):
+        self.name = name
+        self.store = store
+
+    @property
+    def _t(self) -> dict:
+        return self.store.tables.setdefault(self.name, {})
+
+    def _match(self, filters: dict | None) -> list[dict]:
+        rows = list(self._t.values())
+        for col, expr in (filters or {}).items():
+            if expr.startswith("eq."):
+                val = expr[len("eq."):]
+                rows = [r for r in rows if str(r.get(col)) == val]
+            elif expr.startswith("in.("):
+                vals = set(expr[len("in.("):-1].split(","))
+                rows = [r for r in rows if str(r.get(col)) in vals]
+            else:
+                raise AssertionError(f"unexpected filter {expr!r}")
+        return rows
+
+    def select(self, columns="*", filters=None, order=None, limit=None):
+        rows = self._match(filters)
+        return rows[:limit] if limit is not None else rows
+
+    def select_with_count(self, columns="*", filters=None, order=None, limit=None, offset=None):
+        rows = self._match(filters)
+        start = offset or 0
+        page = rows[start:] if limit is None else rows[start : start + limit]
+        return page, len(rows)
+
+    def insert(self, data):
+        rows = data if isinstance(data, list) else [data]
+        pk = self.store.pk(self.name)
+        for row in rows:
+            key = row[pk]
+            assert key not in self._t, (
+                f"duplicate insert into {self.name} {pk}={key} (not idempotent)"
+            )
+            self._t[key] = dict(row)
+        self.store.calls.append((self.name, "insert", len(rows)))
+        return rows
+
+    def update(self, data: dict, filters: dict):
+        hit = self._match(filters)
+        for row in hit:
+            row.update(data)
+        self.store.calls.append((self.name, "update", len(hit)))
+        return hit
+
+    def upsert(self, data, on_conflict: str = "id"):
+        rows = data if isinstance(data, list) else [data]
+        pk = self.store.pk(self.name)
+        keys = on_conflict.split(",")
+        for row in rows:
+            # merge-duplicates: an existing row matching the conflict key is
+            # updated in place (keeping its pk); otherwise the row is inserted.
+            match = next(
+                (k for k, r in self._t.items()
+                 if all(str(r.get(c)) == str(row.get(c)) for c in keys)),
+                None,
+            )
+            key = match if match is not None else row[pk]
+            merged = dict(self._t.get(key, {}))
+            merged.update(row)
+            self._t[key] = merged
+        self.store.calls.append((self.name, "upsert", len(rows)))
+        return rows
+
+
+@pytest.fixture
+def fake_postgrest():
+    """Factory fixture: patch a module's `table` with the shared fake.
+
+        store = fake_postgrest(db.import_offerings)
+
+    Each script imports `table` into its own namespace (or delegates to a helper
+    module that does), so the caller names the module to patch. Every patch is
+    undone when the test ends.
+    """
+    with ExitStack() as stack:
+        def install(module, pk_columns: dict | None = None, tables: dict | None = None):
+            store = FakePostgrestStore(pk_columns=pk_columns, tables=tables)
+            stack.enter_context(patch.object(module, "table", side_effect=store.table))
+            return store
+
+        yield install

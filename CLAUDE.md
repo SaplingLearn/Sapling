@@ -35,6 +35,8 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 - backend/agents/note_summary.py, note_concepts.py, note_chat.py — Pydantic AI agents backing the `/api/notes` agent actions (model slots in `agents/_providers.py`).
 - backend/db/connection.py:102 — `table()` factory; the only sanctioned Supabase entry point (PostgREST, no DDL).
 - backend/db/migrate.py — raw-DDL migration runner (psycopg over `SUPABASE_DB_URL`); migrations are append-only `db/migrations/*.sql`, named with a UTC timestamp prefix (`YYYYMMDDHHMMSS_description.sql`). See `db/migrations/README.md`.
+- backend/db/import_offerings.py — per-section `course_offerings` import from a BU scrape (#280); adopts hollow section-less offerings in place rather than re-creating them, so enrollments/sessions/documents keep their offering ids.
+- backend/scripts/scrape_bu_catalog.py — BU catalog crawler; emits a per-course `sections` list (section code, instructor, meeting times, location) that `db/import_offerings.py` consumes. `--rescan` refetches known course pages to pick up a parser change; `scripts/verify_catalog_scrape.py` checks the result.
 
 ## Commands
 
@@ -51,6 +53,8 @@ Database (run from `backend/`; migrations are raw DDL, never dashboard SQL):
 python -m db.migrate              # apply pending migrations (SUPABASE_DB_URL = SESSION-mode pooler URI, port 5432)
 python -m db.migrate --baseline   # record migrations as applied without running them
 python -m db.seed_staging         # idempotent fake demo dataset on the new schema
+python -m db.import_offerings     # dry run: per-section offerings from data/bu_catalog_*.json (#280)
+python -m db.import_offerings --apply --create-missing --link-school
 ```
 
 The `db/` scripts read `.env` by default; for staging/prod ops run them under
