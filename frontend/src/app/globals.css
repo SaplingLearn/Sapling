@@ -13,8 +13,8 @@
  * so the hierarchy is doing the work, not decoration.
  */
 :root {
-  --font-display: 'Playfair Display', 'Spectral', georgia, serif;
-  --font-serif: 'Spectral', 'Playfair Display', georgia, serif;
+  --font-display: 'Playfair Display', Spectral, georgia, serif;
+  --font-serif: Spectral, 'Playfair Display', georgia, serif;
   --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
@@ -139,6 +139,33 @@
   --pad-xl: 32px;
   --row-h: 40px;
 
+  /* Type scale (#289).
+     DERIVED, not invented: every step is a size the app already uses, counted
+     across screens/ and components/ — 13px is the true body size (107 uses),
+     12/11/10 carry chrome and micro-labels, 14-16 body copy, 18-26 headings,
+     30 is TopBar's screen title, 32 the display numeral on Dashboard.
+
+     Deliberately NOT density-aware, unlike --pad-*. Retuning the whole type
+     ramp with the density preference is a real product decision — it changes
+     how much text fits on every screen — and this scale's job right now is to
+     give one source of truth for sizes that are currently inline literals at
+     ~300 call sites. Making it density-aware later is additive; making it
+     density-aware now would ship a behaviour change disguised as a refactor.
+
+     Adopted by Onboarding first. The rest of the app keeps its inline sizes
+     until each screen is converted deliberately. */
+  --fs-2xs:  10px;
+  --fs-xs:   11px;
+  --fs-sm:   12px;
+  --fs-md:   13px;   /* body */
+  --fs-base: 14px;
+  --fs-lg:   16px;
+  --fs-xl:   18px;
+  --fs-2xl:  22px;
+  --fs-3xl:  26px;
+  --fs-4xl:  30px;   /* screen title — matches TopBar */
+  --fs-5xl:  32px;
+
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --dur-fast: 140ms;
   --dur: 220ms;
@@ -212,6 +239,43 @@ body { font-size: 14px; line-height: 1.5; }
   border-radius: var(--r-lg); box-shadow: var(--shadow-sm);
 }
 
+/* ── Hero surface (#288) ──────────────────────────────────────────────────
+   The warm marketing gradient behind the sign-in and beta modals. It was
+   inlined as a literal at five sites and had already drifted apart there
+   (three different shadow alphas, two radii, one missing inset), while the
+   --surface-hero / --surface-hero-shadow tokens sat further down this file
+   with zero consumers. These two classes are the only consumers now.
+
+   One value here is a correction rather than a de-drift, and is worth naming:
+   the shadow's base COLOUR was consistent across all five sites at
+   rgba(15,23,42) — Tailwind slate-900, which nothing else in this app uses.
+   The token is rgba(19,38,16) = --sap-900, the same base as --shadow-sm/md/lg.
+   So adopting it re-tints these shadows from cool slate to the warm green the
+   rest of the surface language already casts. Deliberate; the token had no
+   consumers, so this is the first time that value renders.
+
+   `.hero-surface` is the gradient ALONE — for panels nested inside a
+   `.card--hero`, which must not restate its border, radius or shadow.
+   `.card--hero` is the full surface, and is used together with `.card`
+   (`class="card card--hero"`), so it has to be declared after it to win.
+
+   The literal fallbacks are deliberate. The tokens are scoped to
+   `.public-surface`, so a `.card--hero` mounted anywhere
+   outside the pre-auth subtree would otherwise render with no background at
+   all. Every consumer is inside that subtree today — this is the guard for
+   the day one of them isn't, which for a shared component is a matter of
+   time rather than of chance. */
+.hero-surface,
+.card--hero {
+  background: var(--surface-hero, linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%));
+}
+
+.card--hero {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 24px;
+  box-shadow: var(--surface-hero-shadow, 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.5));
+}
+
 .divider { height: 1px; background: var(--border); }
 
 .label-micro {
@@ -224,6 +288,52 @@ body { font-size: 14px; line-height: 1.5; }
 .fade-in { animation: fade-in var(--dur) var(--ease); }
 .slide-up { animation: slide-up var(--dur-slow) var(--ease); }
 .fade-up { animation: fade-in 0.5s var(--ease); animation-fill-mode: both; }
+/* Study mode-switch enter fade (#111/#490): CSS stand-in for the old
+   framer-motion crossfade so pane content never waits on the motion chunk. */
+@keyframes study-mode-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.study-mode-enter { animation: study-mode-enter 0.22s cubic-bezier(0.2, 0.85, 0.35, 1); }
+
+/* Approval gate (#290) — the "you're in" beat.
+   The sapling draws itself once and the message steps in behind it; the
+   whole sequence settles by ~560ms. Finite by construction: every rule runs
+   a single pass, and `both` holds each step at its start frame so a delayed
+   element never flashes at its resting value first. Declared ABOVE the
+   .anim-d* utilities on purpose — the `animation` shorthand resets
+   animation-delay, so the delay utilities have to come later to win.
+   animation-fill-mode is split out of the shorthand for the same reason
+   .fade-up does it (f4ac696): the combination of a var()-based timing slot
+   and a trailing keyword in one shorthand is what broke stagger there.
+   The global prefers-reduced-motion reset collapses the whole sequence. */
+@keyframes pending-draw  { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes pending-swell { from { opacity: 0; transform: scale(0.7); } to { opacity: 0.2; transform: none; } }
+.pending-card {
+  animation: slide-up var(--dur-slow) var(--ease);
+  animation-fill-mode: both;
+}
+.pending-sprout-body {
+  transform-box: fill-box; transform-origin: 50% 100%;
+  animation: pending-swell 340ms var(--ease) 60ms;
+  animation-fill-mode: both;
+}
+/* Stem and veins are SEPARATE paths, not subpaths of one. A dash pattern
+   restarts its phase at every `M`, so subpaths of a single path all draw at
+   once — two paths on staggered delays is what actually makes the stem lead
+   and the leaves follow. */
+.pending-sprout-stem,
+.pending-sprout-veins { stroke-dasharray: 1; }
+.pending-sprout-stem {
+  animation: pending-draw 260ms var(--ease) 120ms;
+  animation-fill-mode: both;
+}
+.pending-sprout-veins {
+  animation: pending-draw 240ms var(--ease) 320ms;
+  animation-fill-mode: both;
+}
+.pending-step {
+  animation: fade-in var(--dur) var(--ease);
+  animation-fill-mode: both;
+}
+
 .anim-d0 { animation-delay:   0ms; }
 .anim-d1 { animation-delay:  80ms; }
 .anim-d2 { animation-delay: 160ms; }
@@ -307,7 +417,6 @@ body { font-size: 14px; line-height: 1.5; }
   .assignment-row:hover { background: var(--accent-soft); }
 }
 
-
 /* Course-detail two-column shell: assignment list (primary action surface)
  * on the left, sticky projection sidebar on the right. Collapses to a
  * single column below 1100px so the sidebar stacks above the list. */
@@ -328,6 +437,79 @@ body { font-size: 14px; line-height: 1.5; }
   }
   .gradebook-course-sidebar {
     position: static;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   RESPONSIVE LAYOUT PRIMITIVES (#109)
+
+   Inline styles can't express a media query, so the app's fixed
+   multi-column shells live here instead. Doing it in CSS rather than
+   branching on `useIsMobile` also means the *first* paint is already
+   correct — the hook can only flip after hydration (#110).
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Admin's master/detail panes: an editor rail beside a table.
+   `minmax(0, 1fr)` on the content track — a bare `1fr` floors at
+   min-content, which is what let the wide tables push the grid past the
+   viewport instead of scrolling inside their own column. */
+.pane-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.pane-split--wide {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+}
+@media (max-width: 899px) {
+  .pane-split,
+  .pane-split--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Admin overview's metric row. */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 899px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Pre-hydration shell guard (#110).
+   `ShellFrame` picks TopNav vs SideNav from `useIsMobile`, which reports
+   desktop on the server and on the hydrating render — it has to, or server
+   and client markup disagree. So a phone is served the sidebar shell and
+   would paint a 232px desktop rail until hydration swaps it out. The rail is
+   desktop-only by definition, so hide it below the hook's own breakpoint,
+   where CSS reaches the very first frame and JS can't. After hydration React
+   has already unmounted it and this rule is moot. Keep the width in sync with
+   MOBILE_BREAKPOINT in lib/useIsMobile.ts. */
+@media (max-width: 767px) {
+  [data-app-sidenav] {
+    display: none;
+  }
+}
+
+/* Settings' "label on the left, control on the right" profile rows. */
+.settings-field-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+@media (max-width: 599px) {
+  .settings-field-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    align-items: stretch;
   }
 }
 
@@ -433,172 +615,11 @@ body { font-size: 14px; line-height: 1.5; }
 .font-inter    { font-family: var(--font-inter), sans-serif; }
 .font-jetbrains { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
 
-/* Prevent horizontal overflow without breaking position: sticky */
-.landing-page {
-  /* Same airy base as hero: mesh + soft radial so scroll feels one canvas */
-  background-color: var(--bg-mesh);
-  background-image:
-    radial-gradient(ellipse 100% 60% at 50% -10%, rgba(255, 255, 255, 0.55) 0%, transparent 50%),
-    radial-gradient(ellipse 80% 50% at 100% 40%, rgba(255, 255, 255, 0.2) 0%, transparent 45%),
-    radial-gradient(ellipse 70% 45% at 0% 70%, rgba(255, 255, 255, 0.18) 0%, transparent 40%);
-}
-
 /* Sections sit on mesh; no solid gray blocks */
 .landing-section {
   background: transparent;
   position: relative;
 }
-
-.landing-divider {
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
-}
-
-.landing-divider-v {
-  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.45), transparent);
-}
-
-/* ── Ambient glow ──────────────────────────────────────────────── */
-.landing-ambient-glow {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: radial-gradient(ellipse at 50% 18%, rgba(255, 255, 255, 0.45) 0%, transparent 55%);
-  opacity: 0;
-  transition: opacity 0.5s ease, background 0.8s ease;
-}
-
-/* ── Slow pulse ────────────────────────────────────────────────── */
-@keyframes landing-pulse-slow {
-  0%, 100% { transform: scale(0.98); }
-  50%      { transform: scale(1.02); }
-}
-.landing-animate-pulse-slow { animation: landing-pulse-slow 4s ease-in-out infinite; }
-
-/* ── Float indicator ───────────────────────────────────────────── */
-@keyframes landing-float-indicator {
-  0%, 100% { transform: translateY(0) translateX(-50%); }
-  50%      { transform: translateY(6px) translateX(-50%); }
-}
-.landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out infinite; }
-
-/* ── Initial load / intro overlay ───────────────────────────────── */
-.landing-intro-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Keep background mostly transparent so graph dots stay visible */
-  background: radial-gradient(circle at 50% 50%, rgba(233,239,237,0.2) 0%, rgba(233,239,237,0) 70%);
-  transition: opacity 700ms cubic-bezier(0.22,1,0.36,1);
-}
-
-@keyframes landing-intro-orbit {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.landing-intro-orbit {
-  width: 220px;
-  height: 220px;
-  border-radius: 999px;
-  border: 1px solid rgba(148,163,184,0.25);
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 32px 80px rgba(15,23,42,0.10);
-  background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.9) 0%, rgba(241,245,249,0.85) 50%, rgba(226,232,240,0.95) 100%);
-}
-
-.landing-intro-orbit-ring {
-  position: absolute;
-  inset: 18px;
-  border-radius: inherit;
-  border: 1px dashed rgba(148,163,184,0.35);
-  animation: landing-intro-orbit 14s linear infinite;
-}
-
-.landing-intro-orbit-node {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-}
-
-.landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
-.landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
-.landing-intro-orbit-node--blue   { background: var(--info);  bottom: -3px; left: 35%; transform: translateX(-50%); }
-.landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
-
-/* ── Button shimmer ────────────────────────────────────────────── */
-.landing-btn-shimmer { position: relative; overflow: hidden; }
-.landing-btn-shimmer::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to right, transparent, rgba(255,255,255,0.3), transparent);
-  transform: translateX(-200%);
-  transition: transform 0.7s ease;
-  border-radius: 9999px;
-  pointer-events: none;
-}
-.landing-btn-shimmer:hover::before { transform: translateX(200%); }
-
-/* ── Spotlight card (mouse-follow glow) ────────────────────────── */
-.landing-spotlight-card {
-  position: relative;
-  overflow: hidden;
-}
-.landing-spotlight-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 1rem;
-  background: radial-gradient(250px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(27,108,66,0.04) 0%, transparent 70%);
-  opacity: 0;
-  transition: opacity 0.5s ease;
-  pointer-events: none;
-  z-index: 0;
-}
-.landing-spotlight-card:hover::before { opacity: 1; }
-
-/* ── Feature card icon hover ───────────────────────────────────── */
-.landing-icon-container {
-  transition: transform 0.4s var(--ease);
-}
-.landing-spotlight-card:hover .landing-icon-container {
-  transform: scale(1.1) rotate(5deg);
-}
-
-/* ── Feature card float ────────────────────────────────────────── */
-@keyframes landing-card-float {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-8px); }
-}
-.landing-card-float-1 { animation: landing-card-float 5.0s ease-in-out infinite; }
-.landing-card-float-2 { animation: landing-card-float 5.5s ease-in-out infinite 0.4s; }
-.landing-card-float-3 { animation: landing-card-float 4.8s ease-in-out infinite 0.8s; }
-.landing-card-float-4 { animation: landing-card-float 5.3s ease-in-out infinite 1.2s; }
-.landing-card-float-5 { animation: landing-card-float 5.1s ease-in-out infinite 0.6s; }
-.landing-card-float-6 { animation: landing-card-float 4.6s ease-in-out infinite 1.0s; }
-
-.landing-card-float-1:hover,
-.landing-card-float-2:hover,
-.landing-card-float-3:hover,
-.landing-card-float-4:hover,
-.landing-card-float-5:hover,
-.landing-card-float-6:hover {
-  animation-play-state: paused;
-}
-
-/* ── Landing scrollbar ─────────────────────────────────────────── */
-.landing-page ::-webkit-scrollbar       { width: 6px; }
-.landing-page ::-webkit-scrollbar-track { background: var(--bg-mesh); }
-.landing-page ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
-.landing-page ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
 
 /* ════════════════════════════════════════════════════════════════════
    PANEL SURFACES  (was the LIQUID GLASS SYSTEM — removed in #102)
@@ -694,20 +715,23 @@ input[type="reset"]:disabled {
   transition: box-shadow 150ms ease, border-color 150ms ease;
 }
 
-
 /* ══════════════════════════════════════════════════════════════════
-   PRE-AUTH (sign-in / landing) THEME — scoped to .landing-page only.
-   This block themes the public, pre-auth surface (currently rendered
-   as the sign-in entry page) and intentionally does NOT touch the
-   signed-in app shell tokens. To be revisited and consolidated with
-   the rest of the design system in a follow-up pass.
+   PRE-AUTH (marketing / legal) THEME — scoped to .public-surface only.
+   This block themes the public, pre-auth subtree and intentionally does
+   NOT touch the signed-in app shell tokens. To be revisited and
+   consolidated with the rest of the design system in a follow-up pass.
    ══════════════════════════════════════════════════════════════════ */
 /* .public-surface = the (public) route-group layout wrapper: hosts the marketing-layer
-   tokens for the whole pre-auth subtree WITHOUT the landing-only mesh background, so
-   content pages (about/careers/privacy/terms) keep the warm paper canvas. The landing
-   page additionally carries .landing-page for its mesh visual + descendant styling. */
-.public-surface,
-.landing-page {
+   tokens for the whole pre-auth subtree. It carries no page background of its own, so
+   content pages (about/careers/privacy/terms) keep the warm paper canvas and the
+   landing supplies its own canvas through .landing-dc.
+
+   There used to be a parallel `.landing-page` scope here, worn by the old landing
+   page. The v5 port replaced that page with `.landing-dc`, leaving every
+   `.landing-page`-prefixed rule unreachable — they are deleted rather than left to
+   rot, because dead CSS that still parses is indistinguishable from live CSS to the
+   next reader. */
+.public-surface {
   /* Marketing layer (Layer 2): additive tokens only — never redefine a :root token.
      The marketing-specific tokens (--display-hero, --surface-hero, --brand-glow) are
      added in Task 3. Core tokens (border, text, shadow, bg, accent) now inherit
@@ -732,150 +756,6 @@ input[type="reset"]:disabled {
   overscroll-behavior-y: none;
 }
 
-/* Typography helpers main uses on the landing. */
-.landing-page .font-spectral   { font-family: var(--font-spectral), 'Spectral', Georgia, serif; }
-.landing-page .font-playfair   { font-family: var(--font-playfair), 'Playfair Display', serif; }
-.landing-page .font-inter      { font-family: var(--font-inter), sans-serif; }
-.landing-page .font-jetbrains  { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
-.landing-page .font-dm-sans    { font-family: var(--font-dm-sans), 'DM Sans', sans-serif; }
-
-/* Global mesh (animated blobs behind the hero). */
-.landing-page .sapling-mesh-bg {
-  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
-  background: var(--bg-mesh);
-}
-.landing-page .sapling-mesh-blob {
-  position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.7;
-  animation: sapling-blob 10s ease-in-out infinite;
-  will-change: transform; transform: translateZ(0);
-}
-.landing-page .sapling-mesh-blob--1 { top: -10%; left: -10%; width: 50vw; height: 50vw; max-width: 900px; max-height: 900px; background: rgba(46, 125, 82, 0.22); }
-.landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(43, 140, 150, 0.2); animation-delay: -2.5s; }
-.landing-page .sapling-mesh-blob--3 { bottom: -20%; left: 20%; width: 60vw; height: 60vw; max-width: 1000px; max-height: 1000px; background: rgba(232, 163, 58, 0.18); opacity: 0.6; animation-delay: -5s; }
-@keyframes sapling-blob {
-  0%   { transform: translate(0, 0) scale(1); }
-  33%  { transform: translate(30px, -50px) scale(1.1); }
-  66%  { transform: translate(-20px, 20px) scale(0.9); }
-  100% { transform: translate(0, 0) scale(1); }
-}
-
-/* Landing floating-card surfaces — solid (glass removed, #102). */
-.landing-page .liquid-glass {
-  position: relative;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-md);
-  transition: transform 500ms var(--ease),
-              box-shadow 500ms var(--ease);
-}
-.landing-page .liquid-glass-strong {
-  background: var(--bg-panel);
-  border-color: var(--border);
-}
-.landing-page .liquid-glass-subtle {
-  background: var(--bg-panel);
-  border-color: var(--border);
-}
-
-/* Landing sections / dividers / ambient glow. */
-.landing-page .landing-section { background: transparent; position: relative; }
-.landing-page .landing-divider   { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent); }
-.landing-page .landing-divider-v { background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.45), transparent); }
-.landing-page .landing-ambient-glow {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background: radial-gradient(ellipse at 50% 18%, rgba(255, 255, 255, 0.45) 0%, transparent 55%);
-  opacity: 0;
-  transition: opacity 0.5s ease, background 0.8s ease;
-}
-
-/* Slow pulse + float indicator. */
-@keyframes landing-pulse-slow {
-  0%, 100% { transform: scale(0.98); }
-  50%      { transform: scale(1.02); }
-}
-.landing-page .landing-animate-pulse-slow { animation: landing-pulse-slow 4s ease-in-out infinite; }
-@keyframes landing-float-indicator {
-  0%, 100% { transform: translateY(0) translateX(-50%); }
-  50%      { transform: translateY(6px) translateX(-50%); }
-}
-.landing-page .landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out infinite; }
-
-/* Intro overlay + orbit animation. */
-.landing-page .landing-intro-overlay {
-  position: fixed; inset: 0; z-index: 60;
-  display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(circle at 50% 50%, rgba(233,239,237,0.2) 0%, rgba(233,239,237,0) 70%);
-  transition: opacity 700ms cubic-bezier(0.22,1,0.36,1);
-}
-@keyframes landing-intro-orbit {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-.landing-page .landing-intro-orbit {
-  width: 220px; height: 220px; border-radius: 999px;
-  border: 1px solid rgba(148,163,184,0.25);
-  position: relative; display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 32px 80px rgba(15,23,42,0.10);
-  background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.9) 0%, rgba(241,245,249,0.85) 50%, rgba(226,232,240,0.95) 100%);
-}
-.landing-page .landing-intro-orbit-ring {
-  position: absolute; inset: 18px; border-radius: inherit;
-  border: 1px dashed rgba(148,163,184,0.35);
-  animation: landing-intro-orbit 14s linear infinite;
-}
-.landing-page .landing-intro-orbit-node { position: absolute; width: 10px; height: 10px; border-radius: 999px; }
-.landing-page .landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
-.landing-page .landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
-.landing-page .landing-intro-orbit-node--blue   { background: var(--info);  bottom: -3px; left: 35%; transform: translateX(-50%); }
-.landing-page .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
-
-/* Button shimmer. */
-.landing-page .landing-btn-shimmer { position: relative; overflow: hidden; }
-.landing-page .landing-btn-shimmer::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(to right, transparent, rgba(255,255,255,0.3), transparent);
-  transform: translateX(-200%); transition: transform 0.7s ease;
-  border-radius: 9999px; pointer-events: none;
-}
-.landing-page .landing-btn-shimmer:hover::before { transform: translateX(200%); }
-
-/* Spotlight card hover glow. */
-.landing-page .landing-spotlight-card { position: relative; overflow: hidden; }
-.landing-page .landing-spotlight-card::before {
-  content: ""; position: absolute; inset: 0; border-radius: 1rem;
-  background: radial-gradient(250px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(27,108,66,0.04) 0%, transparent 70%);
-  opacity: 0; transition: opacity 0.5s ease; pointer-events: none; z-index: 0;
-}
-.landing-page .landing-spotlight-card:hover::before { opacity: 1; }
-.landing-page .landing-icon-container { transition: transform 0.4s var(--ease); }
-.landing-page .landing-spotlight-card:hover .landing-icon-container { transform: scale(1.1) rotate(5deg); }
-
-/* Feature card float. */
-@keyframes landing-card-float {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-8px); }
-}
-.landing-page .landing-card-float-1 { animation: landing-card-float 5.0s ease-in-out infinite; }
-.landing-page .landing-card-float-2 { animation: landing-card-float 5.5s ease-in-out infinite 0.4s; }
-.landing-page .landing-card-float-3 { animation: landing-card-float 4.8s ease-in-out infinite 0.8s; }
-.landing-page .landing-card-float-4 { animation: landing-card-float 5.3s ease-in-out infinite 1.2s; }
-.landing-page .landing-card-float-5 { animation: landing-card-float 5.1s ease-in-out infinite 0.6s; }
-.landing-page .landing-card-float-6 { animation: landing-card-float 4.6s ease-in-out infinite 1.0s; }
-.landing-page .landing-card-float-1:hover,
-.landing-page .landing-card-float-2:hover,
-.landing-page .landing-card-float-3:hover,
-.landing-page .landing-card-float-4:hover,
-.landing-page .landing-card-float-5:hover,
-.landing-page .landing-card-float-6:hover {
-  animation-play-state: paused;
-}
-
-/* Landing scrollbar. */
-.landing-page ::-webkit-scrollbar       { width: 6px; }
-.landing-page ::-webkit-scrollbar-track { background: var(--bg-mesh); }
-.landing-page ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
-.landing-page ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
-
 /* ── Newsletter modal animations ── */
 @keyframes modal-backdrop-in {
   from { opacity: 0; }
@@ -898,36 +778,258 @@ input[type="reset"]:disabled {
 .modal-card-in      { animation: modal-card-in      300ms cubic-bezier(0.22,1,0.36,1) forwards; }
 .modal-card-out     { animation: modal-card-out     200ms cubic-bezier(0.4,0,1,1)     forwards; }
 
-/* ── Beta button border glow pulse ── */
-@keyframes beta-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,92,0), 0 4px 20px rgba(74,158,92,0.15); }
-  50%       { box-shadow: 0 0 0 5px rgba(74,158,92,0.6), 0 4px 28px rgba(74,158,92,0.3); }
-}
-.beta-glow-btn { animation: beta-glow 2.2s ease-in-out infinite; }
+/* ══════════════════════════════════════════════════════════════════
+   LANDING (design-component ports) — shared foundation
+   Ported from the `Sapling Landing *.dc.html` design components.
 
-/* ── Editorial feature rows (no boxes, hairline dividers, hover sweep) ── */
-.landing-page .landing-feature-row { transition: background-color 600ms ease, padding 500ms ease; }
-.landing-page .landing-feature-row > div { position: relative; z-index: 1; }
-.landing-page .landing-feature-row::before {
-  content: ""; position: absolute; inset: 0;
-  background: linear-gradient(90deg, rgba(27,108,66,0.07) 0%, transparent 70%);
-  opacity: 0; transition: opacity 600ms ease; pointer-events: none; z-index: 0;
+   Scoped to .landing-dc, worn by the landing route that replaced the old
+   `.landing-page` one outright — whose rules are gone from this file.
+
+   Fonts reuse the app's next/font variables: DM Sans, Spectral, Playfair
+   Display and JetBrains Mono are exactly the four families the source
+   pulls from Google Fonts, so no extra webfont request is needed.
+
+   prefers-reduced-motion is deliberately NOT repeated here — the global
+   block near the top of this file already collapses animation and
+   transition durations to 0.01ms, a superset of the source's rule.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* stylelint-disable keyframes-name-pattern -- the ported keyframe names below
+   (s1Stem, popHold, heroRise, labIn, …) are camelCase because the design
+   components name them that way, and the names are not confined to this file:
+   the landing-v5 components pass them to React in inline `animation:` strings.
+   Renaming them to kebab-case means editing ~45 names across two languages with
+   no compiler to catch a miss, for zero behavioural gain. The rule stays ACTIVE
+   for the rest of this file (the app's own CSS is kebab-case) and is re-enabled
+   at the end of the ported region. */
+
+.landing-dc {
+  /* Core palette, literal source values.
+     These are NOT the app's brand tokens and must not be consolidated into
+     them: #0C5638 / #0E9E5A are their own scale, distinct from
+     --brand-forest (#1B6C42) / --brand-forest-bright (#2D8F5C). */
+  --ld-deep:       #0C5638;
+  --ld-bright:     #0E9E5A;
+  --ld-mid:        #4FA574;
+  --ld-pale:       #8FD9A8;
+  --ld-coral:      #E27A63;
+  --ld-ink:        #12201A;
+  --ld-muted:      #61726A;
+  --ld-page:       #f0f4f2;
+  --ld-stage:      #081F14;
+  --ld-stage-deep: #061710;
+
+  /* Mastery tiers — mirrored by XTIER in lib/landing/course.ts.
+     --ld-tier-unexplored is byte-identical to --state-neutral today but is
+     kept literal for the same reason --fallback-muted is: distinct concept,
+     so a future neutral-state change can't silently move a landing tier. */
+  --ld-tier-mastered:   #0E9E5A;
+  --ld-tier-learning:   #4FA574;
+  --ld-tier-struggling: #E27A63;
+  --ld-tier-unexplored: #9a9a9a;
+
+  /* The source uses Spectral for the wordmark + display serif and Playfair
+     as the secondary serif — the reverse of the app's --font-display /
+     --font-serif roles, so bind to the concrete families, not the roles. */
+  --ld-font-sans:    var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
+  --ld-font-display: var(--font-spectral), Spectral, georgia, serif;
+  --ld-font-serif:   var(--font-playfair), 'Playfair Display', georgia, serif;
+  --ld-font-mono:    var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace;
+
+  background: var(--ld-page);
+  color: var(--ld-ink);
+  font-family: var(--ld-font-sans);
+  overflow-x: clip;
 }
-.landing-page .landing-feature-row:hover::before { opacity: 1; }
-.landing-page .landing-feature-title {
-  transition: transform 700ms cubic-bezier(0.22,1,0.36,1), color 500ms ease, letter-spacing 700ms ease;
-  will-change: transform;
+
+.landing-dc a       { color: var(--ld-deep); text-decoration: none; }
+.landing-dc a:hover { color: var(--ld-bright); }
+
+/* Three responsive rules carry the whole layout. */
+@media (max-width: 1023px) {
+  .landing-dc .floating-card { display: none !important; }
+  .landing-dc .drag-field    { display: none !important; }
 }
-.landing-page .landing-feature-row:hover .landing-feature-title {
-  transform: translateX(8px);
-  color: var(--brand-forest);
-  letter-spacing: -0.012em;
+/* Deliberately NOT scoped to .landing-dc. `.nav-tabs` / `.nav-compact` are worn
+   by two navs: landing-v5/Navbar.tsx, which does sit inside .landing-dc, and
+   companion/CompanionShell.tsx, whose root carries the WARM companion palette
+   and must never wear .landing-dc. While these rules were scoped, the companion
+   pages below 1180px kept the overflowing tab row visible and left the compact
+   disclosure at its inline display:none — the !important flags made that look
+   deliberate rather than broken. Both classes are used nowhere else, so the
+   unscoped selector has no wider reach than the scoped one had intent. */
+@media (max-width: 1180px) {
+  .nav-tabs    { display: none !important; }
+  .nav-compact { display: flex !important; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .landing-page .landing-feature-row::before,
-  .landing-page .landing-feature-title,
-  .landing-page .landing-feature-icon,
-  .landing-page .landing-feature-underline { transition: none !important; }
-  .landing-page .landing-feature-row:hover .landing-feature-title { transform: none; }
-  .landing-page .landing-feature-row:hover .landing-feature-icon { transform: none; }
+
+.landing-dc ::-webkit-scrollbar       { width: 6px; }
+.landing-dc ::-webkit-scrollbar-track { background: var(--ld-page); }
+.landing-dc ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+.landing-dc .gal-rail                     { scrollbar-width: none; }
+.landing-dc .gal-rail::-webkit-scrollbar  { display: none; }
+
+/* ── Intro lockup ──────────────────────────────────────────────────
+   A hand-tuned causal sequence, 2.4s, played once with `both`. The stem
+   passes each joint before that part grows; the leaves then settle under
+   their own weight. The per-keyframe animation-timing-function
+   declarations ARE the effect — collapsing them onto one shared curve
+   destroys it. Do not "simplify" these.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes s1Stem   { 0%,15% { stroke-dashoffset:27; } 34%,100% { stroke-dashoffset:0; } }
+@keyframes s1LeafLo {
+  0%,27% { transform:scale(0.05) rotate(9deg);  opacity:0; animation-timing-function:cubic-bezier(0.16,0.9,0.3,1); }
+  36%    { transform:scale(1.03) rotate(5deg);  opacity:1; animation-timing-function:cubic-bezier(0.5,0,0.85,0.3); }
+  42%    { transform:scale(1) rotate(-4.5deg);  opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  46%    { transform:scale(1) rotate(-0.4deg);  opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  51%,100% { transform:scale(1) rotate(-2.4deg); opacity:1; } }
+@keyframes s1LeafHi {
+  0%,33% { transform:scale(0.05) rotate(-9deg); opacity:0; animation-timing-function:cubic-bezier(0.16,0.9,0.3,1); }
+  42%    { transform:scale(1.03) rotate(-5deg); opacity:1; animation-timing-function:cubic-bezier(0.5,0,0.85,0.3); }
+  48%    { transform:scale(1) rotate(5.4deg);   opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  52%    { transform:scale(1) rotate(0.8deg);   opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  57%,100% { transform:scale(1) rotate(3.2deg); opacity:1; } }
+@keyframes s1Bud    { 0%,29% { transform:scale(0); } 35%,100% { transform:scale(1); } }
+@keyframes s1Word   { 0%,2%  { opacity:0; transform:translateY(8px); } 14%,100% { opacity:1; transform:translateY(0); } }
+@keyframes s1Rule   { 0%,60% { transform:scaleX(0); } 74%,100% { transform:scaleX(1); } }
+
+/* ── Ambient / hero ────────────────────────────────────────────────── */
+@keyframes saplingBlob { 0% { transform:translate(0,0) scale(1); } 33% { transform:translate(30px,-50px) scale(1.1); } 66% { transform:translate(-20px,20px) scale(0.9); } 100% { transform:translate(0,0) scale(1); } }
+@keyframes introOrbit { to { transform:rotate(360deg); } }
+@keyframes floatIndicator { 0%,100% { transform:translateY(0) translateX(-50%); } 50% { transform:translateY(6px) translateX(-50%); } }
+@keyframes betaGlow { 0%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0), 0 4px 20px rgba(14,158,90,0.15); } 50% { box-shadow:0 0 0 5px rgba(14,158,90,0.45), 0 4px 28px rgba(14,158,90,0.3); } }
+@keyframes nodeFloatA { 0%,100% { transform:translate(0,0); } 33% { transform:translate(16px,-24px); } 66% { transform:translate(-12px,14px); } }
+@keyframes nodeFloatB { 0%,100% { transform:translate(0,0); } 40% { transform:translate(-18px,18px); } 75% { transform:translate(10px,-12px); } }
+
+/* ── Gallery card miniatures ───────────────────────────────────────── */
+@keyframes popHold { 0% { opacity:0; transform:translateY(-10px) scale(0.94); } 6% { opacity:1; transform:translateY(0) scale(1); } 86% { opacity:1; } 96% { opacity:0; } 100% { opacity:0; } }
+@keyframes chipSwapA { 0%,42% { opacity:1; transform:translateY(0); } 50%,92% { opacity:0; transform:translateY(-8px); } 100% { opacity:1; transform:translateY(0); } }
+@keyframes chipSwapB { 0%,42% { opacity:0; transform:translateY(8px); } 50%,92% { opacity:1; transform:translateY(0); } 100% { opacity:0; transform:translateY(8px); } }
+@keyframes flipLoop { 0%,38% { transform:rotateY(0deg); } 50%,88% { transform:rotateY(180deg); } 100% { transform:rotateY(360deg); } }
+@keyframes lineReveal { 0% { clip-path:inset(0 100% 0 0); } 12% { clip-path:inset(0 -4px 0 0); } 90% { clip-path:inset(0 -4px 0 0); } 100% { clip-path:inset(0 100% 0 0); } }
+@keyframes underSweep { 0%,8% { transform:scaleX(0); } 18% { transform:scaleX(1); } 88% { transform:scaleX(1); } 100% { transform:scaleX(0); } }
+@keyframes barGrow { 0% { transform:scaleY(0.08); } 14% { transform:scaleY(1); } 86% { transform:scaleY(1); } 100% { transform:scaleY(0.08); } }
+@keyframes coverRise { 0% { transform:translateY(46px) rotate(-1deg); opacity:0; } 16% { transform:translateY(0) rotate(-1deg); opacity:1; } 84% { transform:translateY(0) rotate(-1deg); opacity:1; } 100% { transform:translateY(46px) rotate(-1deg); opacity:0; } }
+@keyframes ringDraw { 0% { stroke-dashoffset:100; } 30%,85% { stroke-dashoffset:8.8; } 100% { stroke-dashoffset:100; } }
+@keyframes gaugeFloat { 0%,100% { transform:translateY(0); } 30% { transform:translateY(-52px); } 65% { transform:translateY(20px); } }
+@keyframes answerTick { 0%,55% { box-shadow:0 0 0 0 rgba(14,158,90,0); } 62% { box-shadow:0 0 0 7px rgba(14,158,90,0.22); } 72%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0); } }
+@keyframes waveBar { 0%,100% { transform:scaleY(0.25); } 50% { transform:scaleY(1); } }
+@keyframes gaugeMini { 0%,100% { transform:translate(-50%,0); } 30% { transform:translate(-50%,-32px); } 65% { transform:translate(-50%,12px); } }
+@keyframes coverMini { 0% { transform:translateY(30px); opacity:0; } 16% { transform:translateY(0); opacity:1; } 84% { transform:translateY(0); opacity:1; } 100% { transform:translateY(30px); opacity:0; } }
+@keyframes cursorMini { 0%,100% { transform:translate(0,0); } 30% { transform:translate(22px,-14px); } 70% { transform:translate(-16px,10px); } }
+@keyframes cardFloat { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-9px); } }
+@keyframes scanSweep { 0% { transform:translateY(-14px); opacity:0; } 8% { opacity:1; } 92% { opacity:1; } 100% { transform:translateY(212px); opacity:0; } }
+@keyframes ocrBlink { 0%,100% { opacity:0.35; } 50% { opacity:1; } }
+@keyframes panelFade { from { opacity:0; } to { opacity:1; } }
+@keyframes fillX { 0% { transform:scaleX(0); } 18% { transform:scaleX(1); } 86% { transform:scaleX(1); } 100% { transform:scaleX(0); } }
+@keyframes typingDot { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
+@keyframes ringPop { 0% { opacity:0; r:0; } 12% { opacity:1; } 88% { opacity:1; } 100% { opacity:0; } }
+@keyframes cursorDrift { 0%,100% { transform:translate(0,0); } 30% { transform:translate(38px,-22px); } 70% { transform:translate(-26px,16px); } }
+
+/* ── Hover states ──────────────────────────────────────────────────
+   The source expresses these with a `style-hover` attribute, which is a
+   design-canvas construct with no inline equivalent in React. Same values,
+   moved into real CSS.
+   ────────────────────────────────────────────────────────────────── */
+.landing-dc .ld-navlink:hover      { color: var(--ld-ink); }
+.landing-dc .ld-btn-solid:hover    { filter: brightness(1.12); }
+.landing-dc .ld-btn-ghost:hover    { border-color: var(--ld-deep); color: var(--ld-deep); }
+.landing-dc .ld-navmenu-item:hover { background: rgba(12,86,56,0.07); color: var(--ld-ink); }
+.landing-dc .ld-kofi:hover {
+  color: var(--ld-ink);
+  border-color: #FF5E1A;  /* Ko-fi brand orange — not part of the Sapling palette */
+  background: #FFF3EC;
 }
+
+/* ── Landing v5 additions ──────────────────────────────────────────
+   Ported from `Sapling Landing v5.dc.html`. The v5 hero is a ground-up
+   rebuild, not a v4 tweak: the wordmark is Playfair 600 in brand forest
+   (not Archivo 800 in ink), it arrives via a character scramble rather
+   than a wipe, and the DOM `.floating-card` rig is replaced by a WebGL
+   scene. Everything above this comment is shared with v4.
+   ────────────────────────────────────────────────────────────────── */
+
+/* The cascade that walks the hero in, ~1.9s–3.4s after mount. */
+@keyframes heroRise { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+/* Scroll cue, 2.2s loop. */
+@keyframes cueDrop  { 0%,100% { transform:translateY(0); opacity:0.55; } 50% { transform:translateY(5px); opacity:1; } }
+/* heroWipe and heroChar are defined by the source but never referenced by
+   its markup — the wordmark scrambles instead. Kept out deliberately;
+   see components/landing-v5/Hero.tsx. */
+
+/* v5 hero responsive rules. The bottom band collapses before the mid row,
+   and the two height rules trim the top padding on short viewports. */
+@media (max-width: 1180px) {
+  .landing-v5 .hero-bottom   { grid-template-columns:1fr !important; gap:20px !important; }
+  .landing-v5 .hero-info     { justify-self:start !important; }
+  .landing-v5 .hero-cue      { justify-self:start !important; align-items:flex-start !important; }
+  .landing-v5 .hero-scrollcue { display:none !important; }
+}
+@media (max-width: 860px) {
+  .landing-v5 .hero-mid { grid-template-columns:1fr !important; justify-items:start !important; gap:24px !important; }
+}
+@media (max-width: 820px) {
+  .landing-v5 .hero-keys { flex-direction:column !important; gap:14px !important; }
+  .landing-v5 .hero-info { max-width:none !important; }
+  .landing-v5 .hero-lede { max-width:38ch !important; }
+}
+@media (max-height: 800px) {
+  .landing-v5 .hero-grid    { padding-top:96px !important; gap:14px !important; }
+  .landing-v5 .hero-info p  { font-size:12.5px !important; }
+}
+@media (max-height: 680px) {
+  .landing-v5 .hero-grid   { padding-top:84px !important; }
+  .landing-v5 .hero-keys p { display:none !important; }
+}
+
+/* v5 hover states (the source's `style-hover` attribute has no inline
+   React equivalent). The Ko-fi pill differs from v4: v5 tints the
+   background rather than swapping it to a solid cream. */
+.landing-v5 .ld-kofi:hover      { border-color:#FF5E1A; background:rgba(255,94,26,0.14); }
+.landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
+
+/* Gallery + feature lab hover states. */
+.landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
+.landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
+.landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
+.landing-v5 .ld-jumpitem:hover  { background: rgba(12,86,56,0.07); color: #12201A; }
+.landing-v5 .ld-jumppill:hover  { opacity: 0.75; }
+.landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
+
+/* ── Companion pages (About, Team, Wiki, Gallery, News, FAQ) ───────
+   Ported from the sibling design components. These sit on the WARM
+   paper palette, not the landing's cool one — that difference is
+   intentional and matches the app's existing public pages.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+
+.cp-navlink:hover  { color: #1a1814; }
+.cp-menuitem:hover { background: rgba(27,108,66,0.07); color: #1a1814; }
+.cp-kofi:hover     { border-color: #FF5E1A; background: #FFF3EC; }
+.cp-cta:hover      { filter: brightness(1.12); }
+
+/* ── Feature-lab demos ─────────────────────────────────────────────
+   Ported from `FeatureLab.dc.html`. `labIn` is its entrance, `labSpin`
+   the busy rings, `labDot` the typing indicator. `labFlash` is defined
+   by the source but never referenced by its markup — not ported.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes labIn   { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes labSpin { to { transform:rotate(360deg); } }
+@keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
+
+.landing-v5 .ld-labprimary:hover { background: #0C5638; }
+.landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
+.landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
+.landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }
+.landing-v5 .ld-labsend:hover    { background: #0E9E5A; }
+.landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
+.landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
+.cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
+@keyframes nodeDrift { 0%,100% { transform:translate(0,0); } 50% { transform:translate(10px,-13px); } }
+
+/* Beta modal — recovered from the previous landing page. */
+.ld-betaclose:hover  { background: rgba(107,114,128,0.1); }
+.ld-betasubmit:hover:not(:disabled) { background: var(--brand-forest-hover) !important; }
+.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(27,108,66,0.12); outline: none; }
+
+/* stylelint-enable keyframes-name-pattern -- end of the ported landing region. */
