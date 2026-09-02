@@ -65,9 +65,23 @@ const pct = (value: number) => Math.round(value * 100);
  * those items; a partial or a full fallback keeps the wording R-5 shipped,
  * which is true of both ("focused on" is not "the same questions"). Exported
  * for its own test — the branch is copy, and copy that lies is the bug.
+ *
+ * `deliveredShort` is the second half of "entirely", and it is not redundant:
+ * when the remainder generation fails the server degrades to serving what it
+ * recovered, which comes back as `regeneratedCount: 0` on a quiz that is
+ * missing some of the very items being claimed. Without this the definite
+ * article ("THE ones you missed") would overclaim on exactly that response.
  */
-export function missedEyebrow(reserved: QuizSession["reserved"]): string {
-  if (reserved && reserved.reservedCount > 0 && reserved.regeneratedCount === 0) {
+export function missedEyebrow(
+  reserved: QuizSession["reserved"],
+  deliveredShort: boolean,
+): string {
+  if (
+    reserved
+    && reserved.reservedCount > 0
+    && reserved.regeneratedCount === 0
+    && !deliveredShort
+  ) {
     return "The ones you missed, again";
   }
   return "Focused on what you missed";
@@ -150,7 +164,9 @@ export function QuizResults({
           exact items or wrote new ones, and the student should never have to
           guess which. `missedEyebrow` reads the server's own account. */}
       {session.scope.kind === "missed" && (
-        <div className="label-micro quiz-results__eyebrow">{missedEyebrow(session.reserved)}</div>
+        <div className="label-micro quiz-results__eyebrow">
+          {missedEyebrow(session.reserved, session.deliveredShort)}
+        </div>
       )}
 
       <h2 className="h-serif quiz-results__name">{concept.name}</h2>

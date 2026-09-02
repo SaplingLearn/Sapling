@@ -346,7 +346,7 @@ def test_the_default_projection_strips_the_reserved_internals(assert_keyless_pro
         body_extra={"source_attempt_id": SOURCE_ID},
     )
     assert r.status_code == 200, r.text
-    assert_keyless_projection(r.json(), _stored_questions(row))
+    assert_keyless_projection(r.json(), _stored_questions(row), expect_source=True)
 
 
 def test_explicit_hashes_win_over_the_recorded_responses():
@@ -511,6 +511,101 @@ def test_an_unfinished_source_attempt_is_refused():
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
     agent.assert_not_awaited()
+
+
+def test_a_source_attempt_on_another_concept_is_refused():
+    """The re-served items are copied into an attempt row stamped with THIS
+    request's concept, and /submit pays mastery to the row's concept — so a
+    source from another node would raise the WRONG node's mastery and write a
+    node_mastery_events row against a concept the student never answered on.
+
+    Not reachable from the shipped client (PRACTISE_MISSED names the attempt
+    just finished), which is exactly why the route has to say so itself: this
+    is the one place two attempts' concepts meet."""
+    foreign = _attempt([_stored("Q1", 1)])
+    foreign["concept_node_id"] = "node-binary-trees"
+    r, row, agent = _generate(
+        attempts=[foreign],
+        responses=_missed(0, of=(0,)),
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+    agent.assert_not_awaited()
+    assert row is None, "a refused practice must not write an attempt row"
+
+
+@pytest.mark.parametrize(
+    "attempts,expected",
+    [
+        pytest.param([], 404, id="unknown-attempt"),
+        pytest.param(
+            [_attempt([_stored("Q1", 1)], user_id="user_someone_else")], 403,
+            id="someone-elses-attempt",
+        ),
+        pytest.param(
+            [_attempt([_stored("Q1", 1)], completed=False)], 400,
+            id="unfinished-attempt",
+        ),
+    ],
+)
+def test_a_refused_source_attempt_refunds_the_generate_slot(attempts, expected):
+    """None of these refusals generated anything, so none of them may cost the
+    student a slot. A results screen left open across a session would
+    otherwise burn the whole window on 404s and then 429 a student who has
+    generated nothing — the case `_refund_generate_slot` exists to prevent."""
+    with patch("routes.quiz._refund_generate_slot") as refund:
+        r, _, _ = _generate(
+            attempts=attempts, body_extra={"source_attempt_id": SOURCE_ID},
+        )
+    assert r.status_code == expected
+    refund.assert_called_once_with("user_andres")
+
+
+def test_a_non_dict_stored_question_does_not_shift_the_missed_index():
+    """`quiz_responses.question_index` was written against `questions_json` AS
+    STORED. Compacting that array before resolving indexes would shift every
+    position past the dropped element — re-serving a question the student got
+    RIGHT while the missed one silently disappears."""
+    keeper = _stored("the missed one", 3)
+    attempt = _attempt(["a legacy string, not a question", _stored("Q2", 2), keeper])
+    r, row, _ = _generate(
+        attempts=[attempt],
+        # Index 2 is `keeper` in the stored array, and must stay index 2.
+        responses=_missed(2, of=(1, 2)),
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200
+    assert r.json()["source"]["reserved_count"] == 1
+    assert [q["question"] for q in _stored_questions(row)] == ["the missed one"]
+
+
+def test_a_regenerated_question_repeating_a_reserved_STEM_is_dropped():
+    """The hash covers the stem AND the options, so a model re-emitting a
+    re-served stem with reworded distractors clears the identity check.
+    `_absorb`'s own stem guard only ever holds the current run's questions,
+    never the re-served ones — so this is the only place that case is caught,
+    and the same question must not appear twice in one quiz."""
+    reserved = _stored("What does a base case do?", 1)
+    reworded = QuizQuestion(
+        question="What does a base case do?", type="multiple_choice",
+        difficulty="easy", options=["totally", "different", "option", "texts"],
+        correct_answer="totally", explanation="reworded", concept="Recursion",
+    )
+    r, row, _ = _generate(
+        attempts=[_attempt([reserved, _stored("Q2", 2)])],
+        responses=_missed(0, of=(0, 1)),
+        generated=[reworded, _agent_question("a genuinely new question")],
+        num_questions=3,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200
+    stems = [q["question"] for q in _stored_questions(row)]
+    assert stems.count("What does a base case do?") == 1, (
+        f"the re-served stem came back twice: {stems}"
+    )
+    assert "a genuinely new question" in stems
 
 
 def test_more_hashes_than_a_quiz_can_hold_is_a_validation_error():

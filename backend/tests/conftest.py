@@ -132,6 +132,12 @@ _GENERATE_TOP_LEVEL_KEYS = frozenset({
 #: unexpected key is caught rather than waved through as "probably optional".
 #: `source` (#537 G5) is an attempt id plus two counts describing how the quiz
 #: was assembled; it carries no question content and no key.
+#:
+#: These are allowed only when the CALLER says the request should have earned
+#: them (`expect_source=True`). A permanent allowance would mean a refactor
+#: that emitted `source` on every generate — the practice metadata leaking
+#: onto ordinary quizzes — passed every test using this fixture, which is the
+#: drift the symmetric check exists to catch.
 _GENERATE_OPTIONAL_TOP_LEVEL_KEYS = frozenset({"source"})
 #: The keyless projection's per-question and per-option shapes (#546).
 _KEYLESS_QUESTION_KEYS = frozenset({
@@ -184,7 +190,7 @@ def assert_keyless_projection():
             for i, item in enumerate(node):
                 _walk(item, f"{path}[{i}]")
 
-    def _assert(body, stored):
+    def _assert(body, stored, *, expect_source=False):
         assert stored, "no questions were persisted — the grounding below is vacuous"
         assert all(any(o.get("correct") for o in q["options"]) for q in stored), (
             "every stored question must actually carry a marked-correct option, "
@@ -192,8 +198,11 @@ def assert_keyless_projection():
         )
 
         served_keys = set(body.keys())
-        missing = set(_GENERATE_TOP_LEVEL_KEYS) - served_keys
-        unexpected = served_keys - _GENERATE_TOP_LEVEL_KEYS - _GENERATE_OPTIONAL_TOP_LEVEL_KEYS
+        expected = set(_GENERATE_TOP_LEVEL_KEYS)
+        if expect_source:
+            expected |= _GENERATE_OPTIONAL_TOP_LEVEL_KEYS
+        missing = expected - served_keys
+        unexpected = served_keys - expected
         assert not (missing or unexpected), (
             f"generate response top-level key drift — missing: {missing or '{}'}, "
             f"unexpected: {unexpected or '{}'}"

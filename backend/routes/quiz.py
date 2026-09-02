@@ -1483,7 +1483,8 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
         # score/total are plaintext scalars (#521) and ride along for free:
         # they are the only evidence that a pre-#537 attempt with no recorded
         # responses missed anything at all (see _missed_something).
-        "id,user_id,completed_at,questions_json,score,total",
+        # concept_node_id rides along for the same-concept check below.
+        "id,user_id,concept_node_id,completed_at,questions_json,score,total",
         filters={"id": f"eq.{body.source_attempt_id}"},
     )
     if not rows:
@@ -1521,6 +1522,26 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
             ),
         )
 
+    if attempt.get("concept_node_id") != body.concept_node_id:
+        # The re-served items are copied into an attempt row stamped with THIS
+        # request's concept, and /submit applies mastery to the row's concept
+        # (`attempt["concept_node_id"]`) — so a source from another node would
+        # pay Recursion answers into Binary Trees, write node_mastery_events
+        # on the wrong node, and feed E6's per-concept guard foreign items.
+        # Every sibling route re-derives concept from its own attempt; this is
+        # the one place two attempts' concepts meet, so it is checked here.
+        # Not reachable from the shipped client (PRACTISE_MISSED names the
+        # attempt just finished, which is by construction the same concept) —
+        # which is exactly why it needs a guard rather than an assumption.
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_VALIDATION_ERROR,
+            message=(
+                "That quiz was on a different concept, so its questions "
+                "can't be practised here."
+            ),
+        )
+
     try:
         stored = decrypt_json_column(attempt.get("questions_json")) or []
     except Exception:
@@ -1529,7 +1550,12 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
             "re-serving", body.source_attempt_id, exc_info=True,
         )
         stored = []
-    stored = [q for q in stored if isinstance(q, dict)]
+    # Deliberately NOT compacted to dicts. `quiz_responses.question_index` was
+    # written against this array as stored, so dropping an element would shift
+    # every index past it — silently re-serving a question the student got
+    # RIGHT while the missed one goes missing. Both readers below tolerate a
+    # non-dict element in place (`wire_question_hash` returns None for one),
+    # so position is preserved and the odd element is simply unrecoverable.
 
     # An explicit list overrides the derivation; an empty one does not, so a
     # client that sends `[]` still gets its misses looked up.
@@ -1582,6 +1608,12 @@ async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
             user_id=body.user_id,
             count=0,
             expect=Expect.HAS_ATTEMPTS,
+            # A fact, not a guess — the same move #592 made with `has_graph`.
+            # We read this very row above and proved it owned and completed,
+            # which is the entire question HAS_ATTEMPTS' probe would ask. Left
+            # unset it is a guaranteed-True Supabase round trip on the request
+            # path, once per degraded practice.
+            plausible=True,
             feature="quiz",
             scope={"id": f"eq.{body.source_attempt_id}"},
             payload={"source_attempt_id": body.source_attempt_id},
@@ -1745,7 +1777,15 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # for them. Resolved BEFORE the spend cap because a quiz that is entirely
     # re-served spends nothing: the cap's own message is about "AI-generated
     # study material", and there is none here.
-    reserved = await _reserved_misses(body)
+    try:
+        reserved = await _reserved_misses(body)
+    except QuizAPIError:
+        # None of these refusals is a generation: a stale attempt id off a
+        # results screen the student left open would otherwise spend their
+        # quota eight times over and then 429 them having generated nothing.
+        # Same rule _generate_or_502 follows on every one of its exits.
+        _refund_generate_slot(body.user_id)
+        raise
     recovered = list(reserved.questions) if reserved else []
     missing = body.num_questions - len(recovered)
 
@@ -1814,9 +1854,19 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             reserved_hashes = {
                 h for h in (wire_question_hash(q) for q in recovered) if h
             }
+            # The stem check is the COARSER of the two and is why _absorb
+            # keeps both: a hash covers the stem AND the options, so a model
+            # re-emitting a re-served stem with reworded distractors clears
+            # the hash check. _absorb's own `seen_stems` only ever holds the
+            # current run's questions, never the re-served ones, so this is
+            # the only place that case can be caught.
+            reserved_stems = {
+                normalize_text(q.get("question") or "") for q in recovered
+            } - {""}
             questions = recovered + [
                 q for q in generated.questions
                 if wire_question_hash(q) not in reserved_hashes
+                and normalize_text(q.get("question") or "") not in reserved_stems
             ]
             exam_days_away = generated.exam_days_away
     regenerated_count = len(questions) - len(recovered)

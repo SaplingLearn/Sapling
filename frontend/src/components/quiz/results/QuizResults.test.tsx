@@ -434,6 +434,21 @@ describe("QuizResults", () => {
     expect(screen.getByText("Focused on what you missed")).toBeInTheDocument();
   });
 
+  it("keeps the R-5 wording when the remainder failed and the quiz came back short", () => {
+    // The server's degrade path: it recovered 2, the top-up generation 502'd,
+    // and it served the 2 rather than deny practice already earned. That comes
+    // back as regeneratedCount 0 on a quiz that is MISSING one of the items
+    // being claimed, so "THE ones you missed" would overclaim.
+    renderResults({
+      intent: "review",
+      scope: { kind: "missed", conceptId: "recursion", missedCount: 3 },
+      reserved: { reservedCount: 2, regeneratedCount: 0 },
+      deliveredShort: true,
+    });
+    expect(screen.getByText("Focused on what you missed")).toBeInTheDocument();
+    expect(screen.queryByText("The ones you missed, again")).toBeNull();
+  });
+
   it("keeps the R-5 wording when nothing could be re-served", () => {
     renderResults({
       intent: "review",
