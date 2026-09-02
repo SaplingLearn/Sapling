@@ -314,13 +314,20 @@ def index_document_chunks(
     return len(embedded)
 
 
-def format_rag_context(chunks: list[dict]) -> str:
+_DEFAULT_RAG_HEADER = "RETRIEVED COURSE CONTEXT (semantically relevant to this question):"
+
+
+def format_rag_context(chunks: list[dict], *, header: str | None = None) -> str:
     """Format retrieved chunks into a text block for prompt assembly.
 
     #150: chunk_text is cut from student-uploaded documents, so the chunk
     list ships inside the untrusted-content envelope (one envelope for all
     chunks; embedded delimiter forgeries are neutralized). The header line
     stays trusted framing.
+
+    `header` overrides that trusted framing line. The chat tutor passes its
+    own so the block can tell the model what to do when the chunks do not
+    cover the question; quiz passes nothing and keeps the default verbatim.
     """
     from services.prompt_safety import wrap_untrusted
 
@@ -331,6 +338,6 @@ def format_rag_context(chunks: list[dict]) -> str:
         sim = chunk.get("similarity", 0)
         entries.append(f"[{i}] (relevance {sim:.2f})\n{chunk.get('chunk_text', '')}")
     return (
-        "RETRIEVED COURSE CONTEXT (semantically relevant to this question):\n"
+        (header or _DEFAULT_RAG_HEADER) + "\n"
         + wrap_untrusted("\n\n".join(entries), source="student-document chunks")
     )

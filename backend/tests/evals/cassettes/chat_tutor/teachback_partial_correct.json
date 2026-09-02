@@ -1,17 +1,4 @@
 {
-  "text": "You've got the first part right \u2014 a closure is a function!\n\nWhat makes it special isn't just that it *uses* variables, but *where* it gets them. A closure is a function that remembers the variables from the environment where it was created, even after that environment is gone.\n\nHere's a classic example:\n```python\ndef outer_function(x):\n  # This inner function is a closure\n  def inner_function(y):\n    return x + y\n  return inner_function\n\n# Create a closure that \"remembers\" x = 5\nadd_five = outer_function(5)\n\n# Now, call the closure\nprint(add_five(10)) # What do you think this prints?\n```\n\nThe `add_five` function is a closure. It \"remembers\" that `x` is 5, long after `outer_function` has finished running.\n\nSo, my question is: in the line `add_five = outer_function(5)`, the `outer_function` runs and then it's done. Why can `add_five` still access the variable `x`?",
-  "tool_calls": [
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Closures",
-            "mastery_delta": -0.05,
-            "reason": "Identified a closure as just a function with variables, missing the key concept of lexical scope."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "text": "Right, that's the basic idea. A function has access to variables.\n\nWhat makes a **closure** special is that an inner function remembers and can still access variables from its outer (enclosing) function, even after that outer function has finished running.\n\nThink of it like a function carrying a little backpack of variables from where it was born.\n\nHere's a classic example in Python:\n```python\ndef make_multiplier(n):\n  # This inner function `multiply` is going to be our closure\n  def multiply(x):\n    return n * x # It uses `n` from the outer function\n  \n  return multiply\n\n# We call the outer function, which creates and returns the inner function\ntimes_3 = make_multiplier(3)\ntimes_5 = make_multiplier(5)\n\n# Now we call the closures. They remember the 'n' they were created with.\nprint(times_3(10))  # Output: 30\nprint(times_5(10))  # Output: 50\n```\n\nIn this code, `times_3` is a closure. It \"remembers\" that `n` is 3.\n\nSo, here's my question: in the line `print(times_3(10))`, the `make_multiplier(3)` call has already completed. How does `times_3` still know what `n` is?",
+  "tool_calls": []
 }

@@ -9,6 +9,11 @@ name: Evals
 # then commit the changes (see backend/tests/evals/README or the ADR).
 on:
   workflow_dispatch:
+  # Weekly behavioural lane (see the `behavioral` job): the PR lane below is
+  # replay-only and cannot observe a prompt edit, so nothing in it notices if
+  # the tutor's SCOPE rule stops working on the live model.
+  schedule:
+    - cron: '17 6 * * 1'
   pull_request:
     paths:
       - 'backend/agents/**'
@@ -45,3 +50,48 @@ jobs:
         run: |
           cd backend
           python tests/evals/run_all.py
+
+  # Behavioural lane. The `evals` job above scores frozen cassettes, so a
+  # prompt regression is invisible to it: delete the SCOPE paragraph from
+  # agents/chat_tutor.py and replay still returns 1.0 because the recordings
+  # don't change. This job runs the chat-tutor dataset against the LIVE model
+  # and the CURRENT prompt, which is the only way to observe behaviour.
+  #
+  # Deliberately not a PR gate: a live model is nondeterministic and would
+  # flake the merge queue. Scheduled + continue-on-error means it reports
+  # without blocking. `live` (not `record`) so a CI run can never commit or
+  # overwrite a cassette.
+  behavioral:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install backend deps
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install 'pydantic-evals>=0.0.5'
+      - name: Run chat_tutor against the live model
+        env:
+          SAPLING_EVAL_MODE: live
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+          # The CS132 refusal was reported on the Fast tier, which is the
+          # weakest at following the negative instructions in SCOPE. Gate on
+          # the tier where the bug actually appeared, not on Pro.
+          SAPLING_MODEL_CHAT_TUTOR: gemini-2.5-flash-lite
+        run: |
+          cd backend
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "No GEMINI_API_KEY secret configured; behavioural lane skipped."
+            echo "The replay lane does NOT cover this — see the note above" \
+                 "NoCourseScopeRefusalEvaluator in tests/evals/chat_tutor.py."
+            exit 0
+          fi
+          python tests/evals/chat_tutor.py

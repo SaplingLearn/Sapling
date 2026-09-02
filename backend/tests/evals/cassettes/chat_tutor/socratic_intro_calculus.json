@@ -1,22 +1,4 @@
 {
-  "text": "Of course. It's common for these concepts to feel a bit tangled at first. They're two sides of the same coin!\n\nTo get started, can you tell me in your own words what a derivative helps you find?",
-  "tool_calls": [
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Derivatives",
-            "mastery_delta": -0.05,
-            "reason": "Expressed confusion."
-          },
-          {
-            "concept_name": "Integrals",
-            "mastery_delta": -0.05,
-            "reason": "Expressed confusion."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "text": "Of course. It's common to mix them up, as they're closely related.\n\nLet's start with the basics. In your own words, what does a derivative tell you about a function? What about an integral?",
+  "tool_calls": []
 }
