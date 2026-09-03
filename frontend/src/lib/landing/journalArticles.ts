@@ -1,14 +1,21 @@
 /**
- * The Sapling Journal — full article content for /news/[slug].
+ * The Sapling Journal — every post, and the only place one is described.
  *
- * Written for the six posts `NEWS_POSTS` (companionContent.ts) has always
- * listed. Until these existed every "Read article" link routed back to the
- * landing newsletter capture; the cards looked clickable and went nowhere.
- * Slugs here are the contract: `NEWS_POSTS` and the landing `POSTS` carry
- * the same slugs, and /news/[slug] statically generates from this table.
+ * This table is the source of truth for the whole journal: the landing cards
+ * (`POSTS` in content.ts), the /news index (`NEWS_POSTS` in
+ * companionContent.ts) and the article pages at /news/[slug] all derive from
+ * it. Before #601 those three surfaces each carried their own hand-typed tag,
+ * date and read time, and had already drifted apart.
+ *
+ * Two consequences worth knowing:
+ *   - `publishedAt` is an ISO day and `dateLabel` is the one formatter. Never
+ *     print a date any other way.
+ *   - `time` is not a field. Read time is derived from the body by
+ *     `readTime`, so it cannot disagree with the article it describes.
  *
  * Bodies are typed blocks rather than JSX so the article page owns all
- * presentation and the content stays greppable plain text.
+ * presentation and the content stays greppable plain text — which is also
+ * what lets /news search the prose, not just the excerpt.
  */
 
 export type ArticleBlock =
@@ -16,11 +23,28 @@ export type ArticleBlock =
   | { t: 'p'; text: string }
   | { t: 'ul'; items: string[] };
 
+/** Motif illustrations live in components/journal/ArticleArt.tsx. */
+export type ArtMotif = 'graph' | 'spacing' | 'teachback' | 'syllabus';
+
+/**
+ * Every post has artwork. A post with no photograph gets a drawn motif
+ * rather than the empty tinted panel /news used to render (#601).
+ */
+export type ArticleArt =
+  | { kind: 'photo'; src: string }
+  | { kind: 'motif'; motif: ArtMotif };
+
+/** Filter bucket on /news. Must be a `NEWS_FILTERS` key. */
+export type ArticleCategory = 'founding' | 'perspective' | 'product' | 'release';
+
 export interface JournalArticle {
   slug: string;
+  /** Display label on the card and article header. */
   tag: string;
-  date: string;
-  time: string;
+  cat: ArticleCategory;
+  /** ISO `YYYY-MM-DD`. Every rendered date derives from this. */
+  publishedAt: string;
+  art: ArticleArt;
   title: string;
   /** One-line standfirst under the title — the card excerpt, verbatim. */
   deck: string;
@@ -31,8 +55,9 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
   {
     slug: 'why-we-built-sapling',
     tag: 'Founding',
-    date: 'JUN 2026',
-    time: '6 MIN',
+    cat: 'founding',
+    publishedAt: '2026-06-12',
+    art: { kind: 'photo', src: '/journal-founding.png' },
     title: 'Why we built Sapling',
     deck:
       'Four students, one library table, and a nagging question: what if AI made you understand more, not less? The origin story, missteps included.',
@@ -85,8 +110,9 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
   {
     slug: 'ai-shouldnt-do-your-homework',
     tag: 'Perspective',
-    date: 'MAY 2026',
-    time: '4 MIN',
+    cat: 'perspective',
+    publishedAt: '2026-05-04',
+    art: { kind: 'photo', src: '/journal-ai-homework.png' },
     title: 'AI shouldn’t do your homework',
     deck:
       'Our line in the sand on AI and education: guidance over answers, process over shortcuts, and why "just give me the solution" is the wrong deal.',
@@ -127,8 +153,9 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
   {
     slug: 'how-the-knowledge-graph-works',
     tag: 'Product',
-    date: 'APR 2026',
-    time: '7 MIN',
+    cat: 'product',
+    publishedAt: '2026-04-18',
+    art: { kind: 'motif', motif: 'graph' },
     title: 'How the knowledge graph works',
     deck:
       'Nodes, edges, and mastery scores: how a semester of studying becomes a living map, and why the cross-unit edges matter most.',
@@ -181,8 +208,9 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
   {
     slug: 'teachback-is-live',
     tag: 'Release',
-    date: 'MAR 2026',
-    time: '3 MIN',
+    cat: 'release',
+    publishedAt: '2026-03-22',
+    art: { kind: 'motif', motif: 'teachback' },
     title: 'TeachBack is live',
     deck:
       'The mode that flips the desk. You explain the concept, Sapling names the step you skipped, and mastery counts for more than reading.',
@@ -213,8 +241,9 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
   {
     slug: 'what-spacing-actually-buys-you',
     tag: 'Research',
-    date: 'FEB 2026',
-    time: '5 MIN',
+    cat: 'product',
+    publishedAt: '2026-02-09',
+    art: { kind: 'motif', motif: 'spacing' },
     title: 'What spacing actually buys you',
     deck:
       'Why ten minutes, one day, and four days are the intervals we shipped, and what happened when we tested longer gaps on our own courses.',
@@ -257,8 +286,9 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
   {
     slug: 'syllabus-to-semester-in-one-upload',
     tag: 'Release',
-    date: 'JAN 2026',
-    time: '2 MIN',
+    cat: 'release',
+    publishedAt: '2026-01-06',
+    art: { kind: 'motif', motif: 'syllabus' },
     title: 'Syllabus to semester in one upload',
     deck:
       'Calendar extraction went from a manual paste to a single drop. Every exam, pset, and quiz dated and synced before week one is over.',
@@ -284,4 +314,31 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
 
 export function getArticle(slug: string): JournalArticle | undefined {
   return JOURNAL_ARTICLES.find((a) => a.slug === slug);
+}
+
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+/**
+ * The one date format: `12 JUN 2026`.
+ *
+ * Reads the ISO string directly instead of going through `Date`, which parses
+ * a bare `YYYY-MM-DD` as UTC midnight and would print the previous day for
+ * anyone west of Greenwich.
+ */
+export function dateLabel(publishedAt: string): string {
+  const [year, month, day] = publishedAt.split('-');
+  return `${day} ${MONTHS[Number(month) - 1]} ${year}`;
+}
+
+/** Every block flattened to prose — read-time input, and what /news searches. */
+export function articleText(body: ArticleBlock[]): string {
+  return body.map((block) => (block.t === 'ul' ? block.items.join(' ') : block.text)).join(' ');
+}
+
+const WORDS_PER_MINUTE = 200;
+
+/** Read time derived from the article itself, floored at a minute. */
+export function readTime(body: ArticleBlock[]): string {
+  const words = articleText(body).split(/\s+/).filter(Boolean).length;
+  return `${Math.max(1, Math.round(words / WORDS_PER_MINUTE))} MIN`;
 }

@@ -20,10 +20,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { GALLERY_FILTERS, GALLERY_SHOTS } from '@/lib/landing/companionContent';
-
-const MONO = "'JetBrains Mono',monospace";
-const SERIF = "'Spectral',Georgia,serif";
-const DISPLAY = "'Playfair Display',Georgia,serif";
+import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
 
 export default function GalleryPage() {
   const [filter, setFilter] = useState('all');
@@ -31,7 +28,7 @@ export default function GalleryPage() {
 
   return (
     <CompanionShell current="/gallery">
-      <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 1180, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box' }}>
+      <div>
         <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
           Inside the product
         </span>

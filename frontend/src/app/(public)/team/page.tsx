@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { TEAM_MEMBERS, TEAM_WAYS } from '@/lib/landing/companionContent';
+import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
 
 /**
  * Meet the team.
@@ -21,10 +22,6 @@ export const metadata: Metadata = {
     'A small team out of Boston University who got tired of study tools that did not know what they were studying.',
 };
 
-const MONO = "'JetBrains Mono',monospace";
-const SERIF = "'Spectral',Georgia,serif";
-const DISPLAY = "'Playfair Display',Georgia,serif";
-
 const EYEBROW: React.CSSProperties = {
   display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em',
   textTransform: 'uppercase', color: '#2D8F5C',
@@ -33,7 +30,7 @@ const EYEBROW: React.CSSProperties = {
 export default function TeamPage() {
   return (
     <CompanionShell current="/team">
-      <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 880, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box', position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
         {/* two motes drifting at the page edges */}
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
           <span style={{ position: 'absolute', right: '-2%', top: '8%', width: 8, height: 8, borderRadius: 99, background: '#2D8F5C', opacity: 0.28, animation: 'nodeDrift 14s ease-in-out -3s infinite' }} />

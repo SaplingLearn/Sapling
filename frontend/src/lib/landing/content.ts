@@ -7,6 +7,13 @@
  * the feature-lab panel it expands into.
  */
 
+import {
+  JOURNAL_ARTICLES,
+  dateLabel,
+  readTime,
+  type ArticleArt,
+} from './journalArticles';
+
 /** Character set the hero text scrambles through before it settles. */
 export const SCRAMBLE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_';
 
@@ -174,96 +181,47 @@ export const FAQS: Faq[] = [
   },
 ];
 
-export interface PostMeta {
-  /** Image-slot persistence key. Must stay distinct per slot. */
-  slot: string;
-  /** Public-dir path, or '' when the card renders a graph instead. */
-  src: string;
-  slotHint: string;
-  isPhoto: boolean;
-  isGraph: boolean;
-  comments: number;
-  likes: number;
-  /** Negative delays desynchronise the three cards' float loops. */
-  floatDelay: string;
-}
-
 /**
- * Presentation metadata paired positionally with POSTS.
+ * Float delays for the three landing journal cards, paired positionally with
+ * POSTS. Negative delays desynchronise the cards' float loops.
  *
- * NOTE: `journal-founding.png` and `journal-ai-homework.png` are not in
- * `public/` yet — both exceed the design API's 256 KiB read cap, so they
- * ship with the project export alongside the rest of the source.
+ * Everything else the cards render — tag, date, read time, artwork — comes
+ * from the article table via POSTS. The old PostMeta carried an image path,
+ * a photo/graph flag and hardcoded comment and like counts (12/84, 31/126,
+ * 8/57) with nothing behind them; #601 removed the counts and moved artwork
+ * onto the post.
  */
-export const POST_META: PostMeta[] = [
-  {
-    slot: 'journal-1',
-    src: '/journal-founding.png',
-    slotHint: 'Drop the founding photo',
-    isPhoto: true,
-    isGraph: false,
-    comments: 12,
-    likes: 84,
-    floatDelay: '0s',
-  },
-  {
-    slot: 'journal-2',
-    src: '/journal-ai-homework.png',
-    slotHint: 'Drop an image for this essay',
-    isPhoto: true,
-    isGraph: false,
-    comments: 31,
-    likes: 126,
-    floatDelay: '-2.5s',
-  },
-  {
-    slot: 'journal-3',
-    src: '',
-    slotHint: '',
-    isPhoto: false,
-    isGraph: true,
-    comments: 8,
-    likes: 57,
-    floatDelay: '-5s',
-  },
-];
+export const POST_FLOAT_DELAYS = ['0s', '-2.5s', '-5s'];
 
 export interface Post {
   tag: string;
+  /** Formatted by `dateLabel` — never hand-typed. */
   date: string;
   title: string;
+  /** Derived from the article body by `readTime`. */
   time: string;
   excerpt: string;
+  art: ArticleArt;
   /** /news/[slug] article this card opens. */
   slug: string;
 }
 
-export const POSTS: Post[] = [
-  {
-    tag: 'Founding',
-    date: 'JUN 2026',
-    title: 'Why we built Sapling',
-    slug: 'why-we-built-sapling',
-    time: '6 MIN',
-    excerpt:
-      'Four students, one library table, and a nagging question: what if AI made you understand more, not less? The origin story, missteps included.',
-  },
-  {
-    tag: 'Perspective',
-    date: 'MAY 2026',
-    title: 'AI shouldn’t do your homework',
-    slug: 'ai-shouldnt-do-your-homework',
-    time: '4 MIN',
-    excerpt:
-      'Our line in the sand on AI and education: guidance over answers, process over shortcuts, and why "just give me the solution" is the wrong deal.',
-  },
-  {
-    tag: 'Under the hood',
-    date: 'APR 2026',
-    title: 'How the knowledge graph works',
-    slug: 'how-the-knowledge-graph-works',
-    time: '7 MIN',
-    excerpt:
-      'Nodes, edges, and mastery scores: how a semester of studying becomes a living map, and what your graph knows that your transcript doesn’t.',
-  },
-];
+/**
+ * The three most recent articles, as landing cards.
+ *
+ * Derived rather than transcribed: the landing used to hold its own copy of
+ * this metadata and had drifted (it tagged the graph post `Under the hood`
+ * while every other surface said `Product`). Pulling the article table in
+ * here also ships the article prose in the landing bundle — a few KiB of
+ * text next to the landing's scroll rig, and the price of one source of
+ * truth for read time, which cannot be computed without the body.
+ */
+export const POSTS: Post[] = JOURNAL_ARTICLES.slice(0, 3).map((article) => ({
+  tag: article.tag,
+  date: dateLabel(article.publishedAt),
+  title: article.title,
+  time: readTime(article.body),
+  excerpt: article.deck,
+  art: article.art,
+  slug: article.slug,
+}));

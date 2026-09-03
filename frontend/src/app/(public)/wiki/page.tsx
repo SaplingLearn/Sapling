@@ -4,6 +4,7 @@ import {
   WIKI_DATA_FACTS, WIKI_GRAPH_TERMS, WIKI_LETTERS, WIKI_MODES,
   WIKI_PIPELINE, WIKI_RATINGS, WIKI_TIERS, WIKI_TOC,
 } from '@/lib/landing/companionContent';
+import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
 
 /**
  * Wiki.
@@ -20,10 +21,6 @@ export const metadata: Metadata = {
   description:
     'Exact definitions for the terms and numbers Sapling puts on screen. Every value here is the one the product actually uses.',
 };
-
-const MONO = "'JetBrains Mono',monospace";
-const SERIF = "'Spectral',Georgia,serif";
-const DISPLAY = "'Playfair Display',Georgia,serif";
 
 const H2: React.CSSProperties = {
   margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 26,
@@ -46,7 +43,7 @@ function cssColor(decl: string): string {
 export default function WikiPage() {
   return (
     <CompanionShell current="/wiki">
-      <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 1060, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box' }}>
+      <div>
         <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
           Reference
         </span>

@@ -18,12 +18,16 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
+import { PAGE_MAX, PAGE_PAD } from '@/lib/landing/companionType';
 
 const SANS = "'DM Sans',system-ui,sans-serif";
 
-/** Page order as it appears in the nav. `/` is Home. */
+/**
+ * Page order as it appears in the footer. No Home entry: the wordmark in the
+ * header is the way back to the landing page on every companion surface, and
+ * a second link for it just crowded the row.
+ */
 export const COMPANION_NAV = [
-  { label: 'Home', href: '/' },
   { label: 'About', href: '/about' },
   { label: 'Team', href: '/team' },
   { label: 'Wiki', href: '/wiki' },
@@ -41,6 +45,7 @@ const TAB: React.CSSProperties = {
 };
 
 const FOOTER_LINK: React.CSSProperties = { fontSize: 14, color: '#6f6857' };
+
 
 export function CompanionShell({
   current,
@@ -97,10 +102,22 @@ export function CompanionShell({
         </div>
       </header>
 
-      {children}
+      {/* One content box for every companion page, footer included. Pages
+          used to size their own and had all drifted — 880 on /about, /faq and
+          /team, 1060 on /wiki, 1180 on /gallery, 1240 on /news, 928 on an
+          article, 1280 on the footer — so content jumped left and right as you
+          navigated. Pages render content now, not a container. */}
+      <main
+        style={{
+          flex: 1, minWidth: 0, width: '100%', maxWidth: PAGE_MAX,
+          margin: '0 auto', padding: `40px ${PAGE_PAD}px 64px`, boxSizing: 'border-box',
+        }}
+      >
+        {children}
+      </main>
 
-      <footer style={{ borderTop: '1px solid rgba(42,39,31,0.10)', background: '#faf8f3', padding: '48px 32px', boxSizing: 'border-box' }}>
-        <div style={{ maxWidth: 1280, margin: '0 auto', boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 24 }}>
+      <footer style={{ borderTop: '1px solid rgba(42,39,31,0.10)', background: '#faf8f3', padding: `48px ${PAGE_PAD}px`, boxSizing: 'border-box' }}>
+        <div style={{ maxWidth: PAGE_MAX, margin: '0 auto', boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
             <span style={{ fontSize: 14, color: '#6f6857' }}>Sapling · © 2026</span>

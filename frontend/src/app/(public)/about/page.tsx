@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ABOUT_AWARDS, ABOUT_DIFFERENTIATORS } from '@/lib/landing/companionContent';
+import { DISPLAY, MONO, PROSE_MEASURE, SERIF } from '@/lib/landing/companionType';
 
 /**
  * About Sapling.
@@ -23,20 +24,16 @@ export const metadata: Metadata = {
   alternates: { canonical: '/about' },
 };
 
-const MONO = "'JetBrains Mono',monospace";
-const SERIF = "'Spectral',Georgia,serif";
-const DISPLAY = "'Playfair Display',Georgia,serif";
-
 /** Body copy shares one type ramp; only the stagger delay changes. */
 const PROSE: React.CSSProperties = {
   margin: 0, fontFamily: SERIF, fontWeight: 400, fontSize: 16,
-  lineHeight: 1.6, color: '#3f3b31',
+  lineHeight: 1.6, color: '#3f3b31', maxWidth: PROSE_MEASURE,
 };
 
 export default function AboutPage() {
   return (
     <CompanionShell current="/about">
-      <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 880, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box' }}>
+      <div>
         <h1 style={{ margin: '0 0 32px', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em', color: '#1a1814', animation: 'fadeUp 700ms ease both' }}>
           About Sapling
         </h1>
@@ -69,7 +66,7 @@ export default function AboutPage() {
             </p>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {ABOUT_DIFFERENTIATORS.map((d) => (
-                <li key={d} style={{ display: 'flex', gap: 12, fontFamily: SERIF, fontSize: 15, lineHeight: 1.6, color: '#3f3b31' }}>
+                <li key={d} style={{ display: 'flex', gap: 12, fontFamily: SERIF, fontSize: 15, lineHeight: 1.6, color: '#3f3b31', maxWidth: PROSE_MEASURE }}>
                   <span style={{ color: '#2D8F5C', marginTop: 2, flex: '0 0 auto' }}>&#8226;</span>
                   <span>{d}</span>
                 </li>
@@ -93,7 +90,7 @@ export default function AboutPage() {
               <div key={a.title} style={{ animation: 'fadeUp 700ms ease both', animationDelay: a.delay }}>
                 <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#1a1814' }}>{a.title}</p>
                 <p style={{ margin: '2px 0 0', fontSize: 12, fontWeight: 500, color: '#2D8F5C' }}>{a.org}</p>
-                <p style={{ margin: '8px 0 0', fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{a.body}</p>
+                <p style={{ margin: '8px 0 0', fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31', maxWidth: PROSE_MEASURE }}>{a.body}</p>
               </div>
             ))}
           </div>

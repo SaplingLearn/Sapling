@@ -5,6 +5,13 @@
  * lives as plain JS object literals. Content only -- no markup, no styling.
  */
 
+import {
+  JOURNAL_ARTICLES,
+  articleText,
+  dateLabel,
+  readTime,
+} from './journalArticles';
+
 export const ABOUT_DIFFERENTIATORS = [
         'Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you\u2019ve clicked through.',
         'Three distinct teaching modes mean you\u2019re never locked into one way of learning.',
@@ -95,26 +102,25 @@ export const GALLERY_FILTERS = [
   { key:'semester', label:'Semester' },
 ] as const;
 
-export const NEWS_POSTS = [
-  { cat:'founding', tag:'Founding', date:'6/12/2026', time:'6 MIN', slot:'news-founding', src:'assets/journal-founding.png',
-    slug:'why-we-built-sapling', title:'Why we built Sapling',
-    excerpt:'Four students, one library table, and a nagging question: what if AI made you understand more, not less? The origin story, missteps included.' },
-  { cat:'perspective', tag:'Perspective', date:'5/04/2026', time:'4 MIN', slot:'news-homework', src:'assets/journal-ai-homework.png',
-    slug:'ai-shouldnt-do-your-homework', title:'AI shouldn\u2019t do your homework',
-    excerpt:'Our line in the sand on AI and education: guidance over answers, process over shortcuts, and why "just give me the solution" is the wrong deal.' },
-  { cat:'product', tag:'Product', date:'4/18/2026', time:'7 MIN', slot:'news-graph', src:'',
-    slug:'how-the-knowledge-graph-works', title:'How the knowledge graph works',
-    excerpt:'Nodes, edges, and mastery scores: how a semester of studying becomes a living map, and why the cross-unit edges matter most.' },
-  { cat:'release', tag:'Release', date:'3/22/2026', time:'3 MIN', slot:'news-teachback', src:'',
-    slug:'teachback-is-live', title:'TeachBack is live',
-    excerpt:'The mode that flips the desk. You explain the concept, Sapling names the step you skipped, and mastery counts for more than reading.' },
-  { cat:'product', tag:'Research', date:'2/09/2026', time:'5 MIN', slot:'news-spacing', src:'',
-    slug:'what-spacing-actually-buys-you', title:'What spacing actually buys you',
-    excerpt:'Why ten minutes, one day, and four days are the intervals we shipped, and what happened when we tested longer gaps on our own courses.' },
-  { cat:'release', tag:'Release', date:'1/06/2026', time:'2 MIN', slot:'news-calendar', src:'',
-    slug:'syllabus-to-semester-in-one-upload', title:'Syllabus to semester in one upload',
-    excerpt:'Calendar extraction went from a manual paste to a single drop. Every exam, pset, and quiz dated and synced before week one is over.' },
-] as const;
+/**
+ * The /news index cards.
+ *
+ * Derived from the article table (#601): these used to be six hand-typed
+ * literals carrying their own tag, `6/12/2026`-style date, read time and an
+ * `assets/...` image path that /news had to remap. `body` rides along so the
+ * search box can match the prose, not just the excerpt.
+ */
+export const NEWS_POSTS = JOURNAL_ARTICLES.map((article) => ({
+  cat: article.cat,
+  tag: article.tag,
+  date: dateLabel(article.publishedAt),
+  time: readTime(article.body),
+  art: article.art,
+  slug: article.slug,
+  title: article.title,
+  excerpt: article.deck,
+  text: articleText(article.body),
+}));
 
 export const NEWS_FILTERS = [
   { key:'all', label:'All articles' },

@@ -16,10 +16,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { FAQ_GROUPS } from '@/lib/landing/companionContent';
-
-const MONO = "'JetBrains Mono',monospace";
-const SERIF = "'Spectral',Georgia,serif";
-const DISPLAY = "'Playfair Display',Georgia,serif";
+import { DISPLAY, MONO, PROSE_MEASURE, SERIF } from '@/lib/landing/companionType';
 
 /** Groups paired with a running index across ALL groups, computed once. */
 const INDEXED = (() => {
@@ -35,7 +32,7 @@ export default function FaqPage() {
 
   return (
     <CompanionShell current="/faq">
-      <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 880, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box' }}>
+      <div>
         <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
           Straight answers
         </span>
@@ -83,7 +80,7 @@ export default function FaqPage() {
                       </span>
                     </button>
                     <div style={{ overflow: 'hidden', transition: 'max-height 380ms cubic-bezier(0.22,1,0.36,1), opacity 300ms ease', maxHeight: isOpen ? 420 : 0, opacity: isOpen ? 1 : 0 }}>
-                      <p style={{ margin: '0 0 20px', paddingRight: 44, fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.7, color: '#3f3b31' }}>
+                      <p style={{ margin: '0 0 20px', paddingRight: 44, fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.7, color: '#3f3b31', maxWidth: PROSE_MEASURE }}>
                         {item.a}
                       </p>
                     </div>
