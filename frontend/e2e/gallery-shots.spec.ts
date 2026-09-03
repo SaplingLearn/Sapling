@@ -38,6 +38,23 @@ test.use({ viewport: { width: 1440, height: 900 } });
 const NODE_RECURSION = "rich-node-cs-recursion";
 
 /**
+ * Acknowledge the AI-disclosure modal before every shot.
+ *
+ * DisclaimerModal.tsx is a fixed overlay a browser that has never dismissed it
+ * gets on the AI surfaces, and it both photographs badly and swallows clicks —
+ * the first capture run failed on /learn and /quiz because of it, the quiz one
+ * with "<div role=dialog> intercepts pointer events". Applied globally rather
+ * than per-recipe: it is unrelated chrome on every screen it appears on, and
+ * a shot of it is never the shot we want. Same localStorage key the tutor and
+ * quiz journeys use (support/quizStack.ts documents it as an app contract).
+ */
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+});
+
+/**
  * Everything a screen needs before it is worth photographing: the network
  * quiet, motion suppressed (the app animates on mount — `fadeUp`, the graph —
  * and a shot taken mid-animation is a shot of a half-faded screen), webfonts
@@ -47,6 +64,10 @@ const NODE_RECURSION = "rich-node-cs-recursion";
 async function settle(page: Page): Promise<void> {
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.emulateMedia({ reducedMotion: "reduce" });
+  // Park the cursor. A recipe that clicks leaves the pointer wherever it
+  // landed, and hover state photographs: the first /learn capture came back
+  // with a node tooltip stuck over the knowledge map, covering the legend.
+  await page.mouse.move(0, 0);
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(250);
 }
@@ -71,14 +92,30 @@ const RECIPES: Record<string, (page: Page) => Promise<void>> = {
     });
   },
 
+  // /learn lands on "Start a session", not on a conversation. The seeded
+  // sessions are in the sidebar, so open one — a tutor screenshot with no
+  // tutoring in it is not a picture of the tutor.
   "shot-learn": async (page) => {
     await page.goto("/learn");
+    await page.getByRole("button", { name: /Recursion socratic/ }).click();
     await expect(page.getByTestId("tutor-input")).toBeVisible({ timeout: 30_000 });
   },
 
   // The one shot that drives generation rather than viewing seeded state: a
   // quiz screen with no question on it is not a picture of the quiz.
+  //
+  // The length pref is pinned to the showcase handler's fixed three questions.
+  // Left at the app default it asks for more, and the shortfall raises a
+  // "Only 3 questions were ready for this concept" toast across the header —
+  // true, and not what this card is meant to show. Same key the quiz journeys
+  // use (support/quizStack.ts).
   "shot-quiz": async (page) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "sapling_quiz_prefs",
+        JSON.stringify({ count: 3, difficulty: "medium", feedback: "at-end" }),
+      );
+    });
     await page.goto(`/quiz?concept=${NODE_RECURSION}&from=tree&return=%2Ftree`);
     await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("quiz-start")).toBeEnabled();
@@ -103,9 +140,11 @@ const RECIPES: Record<string, (page: Page) => Promise<void>> = {
     });
   },
 
+  // The notetaker has no h1 — it opens straight into the editor with the most
+  // recent note loaded, so the title field is what "ready" looks like.
   "shot-notetaker": async (page) => {
     await page.goto("/notetaker");
-    await expect(page.getByRole("heading", { level: 1 })).toBeVisible({
+    await expect(page.getByRole("textbox", { name: "Untitled note" })).toBeVisible({
       timeout: 30_000,
     });
   },
@@ -115,10 +154,18 @@ const RECIPES: Record<string, (page: Page) => Promise<void>> = {
     await expect(page.getByTestId("library-search")).toBeVisible({ timeout: 30_000 });
   },
 
+  // /social opens on whichever room comes first, which is the lounge and its
+  // three stranded lines. The CS101 study group is both fuller (the showcase
+  // overlay adds four messages to it) and the better room to photograph — a
+  // study tool should show people studying.
   "shot-social": async (page) => {
     await page.goto("/social");
     await expect(page.getByTestId("social-chat-messages")).toBeVisible({
       timeout: 30_000,
+    });
+    await page.getByText("CS101 Study Group", { exact: true }).click();
+    await expect(page.getByTestId("social-room-name")).toContainText("CS101", {
+      timeout: 15_000,
     });
   },
 

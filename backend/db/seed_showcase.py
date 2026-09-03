@@ -15,9 +15,15 @@ What does give it away, and what this file fixes:
 
   - Display names. "Rich Active" and "Sam Second" render in the dashboard
     greeting, every avatar, room member lists and the leaderboard.
-  - Room names and the denormalised `room_messages.user_name`, which is a
-    plain copy of the sender's name taken at write time.
+  - Room names, their INVITE CODES (rendered as a badge next to the room
+    title, so "RICH-LOUNGE" sits in the header of the /social shot), and the
+    denormalised `room_messages.user_name`, which is a plain copy of the
+    sender's name taken at write time.
   - The one message body that greets people by the old room name.
+
+It also adds a few messages to the study room. The rich seed gives it three,
+which is enough to assert on and far too few to photograph — a chat panel at
+1440x900 showing three lines is mostly empty space.
 
 Everything else the screenshots show is left exactly as the rich seed wrote
 it. What the *model* would have written is not here at all — that comes from
@@ -37,6 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db.connection import table                                    # noqa: E402
 from db.seed_local_rich import (                                   # noqa: E402
     ROOM_GENERAL,
+    ROOM_STUDY,
     USER_ACTIVE,
     USER_ADMIN,
     USER_NEW,
@@ -67,13 +74,41 @@ _PEOPLE = [
 
 _NAME_BY_ID = {uid: f"{first} {last}" for uid, first, last, _ in _PEOPLE}
 
-# The study-group room is already called "CS101 Study Group" and stays. Only
-# the lounge carries the seed's own branding.
-_ROOM_RENAMES = [(ROOM_GENERAL, "Late Night Study Hall")]
+# The study-group room is already called "CS101 Study Group" and stays; only
+# the lounge carries the seed's own branding. Invite codes are rendered as a
+# badge beside the room title, so both need replacing regardless of the name.
+#
+# NOTE the ordering dependency this creates: seed_local_rich upserts rooms
+# ON CONFLICT (invite_code). Once this overlay has changed a code, re-running
+# the rich seed against the same database inserts a SECOND room under the old
+# code rather than updating the existing one. Harmless in the capture cycle,
+# which seeds then overlays exactly once against a fresh stack, but it is why
+# this file is not something to run repeatedly against a database you are
+# also re-seeding.
+_ROOM_RENAMES = [
+    (ROOM_STUDY, "CS101 Study Group", "CS101-FALL"),
+    (ROOM_GENERAL, "Late Night Study Hall", "LATE-NIGHT"),
+]
 
 # (message_id, replacement text) — only the bodies that name the old room.
 _MESSAGE_REWRITES = [
     ("11111111-1111-4111-8111-000000000004", "Welcome to the Late Night Study Hall!"),
+]
+
+# (message_id, user_id, text) appended to the study room so the /social shot
+# shows a conversation rather than three stranded lines. Fixed UUIDs in the
+# rich seed's own series, continuing past its six.
+_EXTRA_MESSAGES = [
+    ("11111111-1111-4111-8111-000000000007", USER_SECOND,
+     "Thursday works. I keep losing the thread on where the base case goes."),
+    ("11111111-1111-4111-8111-000000000008", USER_ACTIVE,
+     "Same. My tree says recursion is my weakest node in CS101 so I want to "
+     "spend most of the time there."),
+    ("11111111-1111-4111-8111-000000000009", USER_SECOND,
+     "Can you bring the study guide you generated? The one weighted to the "
+     "midterm."),
+    ("11111111-1111-4111-8111-00000000000a", USER_ACTIVE,
+     "Already exported it. I'll drop it in the room before we start."),
 ]
 
 _counts: dict[str, int] = {}
@@ -108,8 +143,11 @@ def overlay_people() -> None:
 
 
 def overlay_rooms() -> None:
-    for room_id, name in _ROOM_RENAMES:
-        table("rooms").update({"name": name}, filters={"id": f"eq.{room_id}"})
+    for room_id, name, invite_code in _ROOM_RENAMES:
+        table("rooms").update(
+            {"name": name, "invite_code": invite_code},
+            filters={"id": f"eq.{room_id}"},
+        )
         _bump("rooms")
 
 
@@ -134,6 +172,22 @@ def overlay_room_messages() -> None:
             filters={"id": f"eq.{msg_id}"},
         )
         _bump("room_messages.text")
+
+    for msg_id, user_id, text in _EXTRA_MESSAGES:
+        existing = table("room_messages").select(
+            "id", filters={"id": f"eq.{msg_id}"}, limit=1
+        ) or []
+        if existing:
+            continue
+        table("room_messages").insert({
+            "id": msg_id,
+            "room_id": ROOM_STUDY,
+            "user_id": user_id,
+            "user_name": _NAME_BY_ID[user_id],
+            # 🔒 text
+            "text": encrypt_if_present(text),
+        })
+        _bump("room_messages.added")
 
 
 def main() -> None:

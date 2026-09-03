@@ -17,6 +17,7 @@
  */
 
 import { useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { GALLERY_FILTERS, GALLERY_SHOTS } from '@/lib/landing/companionContent';
@@ -76,6 +77,17 @@ export default function GalleryPage() {
               }}
             >
               <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', borderRadius: 14, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)', boxShadow: '0 10px 28px -16px rgba(26,24,20,0.45)' }}>
+                {/* Captured by `make gallery-shots` at 1440x900 — the same
+                    16:10 this box is, so it fills without cropping. The
+                    figcaption names and describes the screen, so the image is
+                    decorative here rather than carrying its own alt text. */}
+                <Image
+                  src={`/gallery/${s.slot}.png`}
+                  alt=""
+                  fill
+                  sizes="(max-width: 900px) 100vw, 33vw"
+                  style={{ objectFit: 'cover' }}
+                />
                 <span style={{ position: 'absolute', left: 10, top: 10, padding: '4px 9px', borderRadius: 6, background: 'rgba(250,248,243,0.9)', backdropFilter: 'blur(4px)', fontFamily: MONO, fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#3f3b31' }}>
                   {s.route}
                 </span>
