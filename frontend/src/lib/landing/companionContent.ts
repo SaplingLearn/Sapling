@@ -241,7 +241,7 @@ export const WIKI_UPLOAD_SPECS = [
   { label:'File types', value:'PDF · DOCX · PPTX', note:'Anything else is refused at upload. Photos and images are not accepted here.' },
   { label:'Size limit', value:'100 MB', note:'Per file. A larger one is rejected before any processing starts.' },
   { label:'Text extraction', value:'Docling, then Tesseract', note:'A layout-aware pass first, falling back to plain OCR. A clean digital PDF reads better than a scan, and a scan better than handwriting.' },
-  { label:'Repeat uploads', value:'Deduplicated', note:'The same file sent twice is not processed twice.' },
+  { label:'Retries', value:'Processed once', note:'An upload that gets retried — a flaky connection, a second tap — is recognised as the same request and not run through the pipeline again.' },
 ] as const;
 
 /** The five progress events the upload actually streams over SSE
