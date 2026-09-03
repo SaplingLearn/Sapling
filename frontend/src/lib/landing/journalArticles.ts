@@ -24,7 +24,7 @@ export type ArticleBlock =
   | { t: 'ul'; items: string[] };
 
 /** Motif illustrations live in components/journal/ArticleArt.tsx. */
-export type ArtMotif = 'graph' | 'spacing' | 'teachback' | 'syllabus';
+export type ArtMotif = 'graph' | 'spacing' | 'teachback' | 'syllabus' | 'canopy';
 
 /**
  * Every post has artwork. A post with no photograph gets a drawn motif
@@ -52,6 +52,58 @@ export interface JournalArticle {
 }
 
 export const JOURNAL_ARTICLES: JournalArticle[] = [
+  {
+    slug: 'the-map-we-keep-for-ourselves',
+    tag: 'Perspective',
+    cat: 'perspective',
+    publishedAt: '2026-09-03',
+    art: { kind: 'motif', motif: 'canopy' },
+    title: 'The map we keep for ourselves',
+    deck:
+      'Sapling maps what you know so nothing important falls out of your head between weeks. It turns out the four people building it had exactly the same problem.',
+    body: [
+      {
+        t: 'p',
+        text:
+          'Sapling exists because things fall out of your head between weeks. You understood recursion in week three; by the midterm it is in there somewhere and you cannot find the door. Our answer is a map — every concept in your course, what you have actually shown you know, and honest holes where you have not.',
+      },
+      {
+        t: 'p',
+        text:
+          'Building it, we hit the same problem from the other side. There are four of us, working in parallel on different parts of one codebase, often with an AI agent doing a share of the typing. Someone settles a question on a Tuesday — why the tutor cites the slide it drew from, why mastery is allowed to go down — and by Thursday the person who needs that reasoning is three files away and it is gone. Not disputed. Just gone.',
+      },
+      { t: 'h2', text: 'So we built ourselves one' },
+      {
+        t: 'p',
+        text:
+          'It is called Canopy, which is not an accident: a sapling grows up into one. It holds the team’s docs, the decisions we have settled, the roadmap, and a running log of what each of us shipped — one place, and everyone reads it. The habit around it is the same one we ask of you. Orient before you start: pull what the team already knows about the thing you are about to touch. Record when you learn something: write back what the work actually changed, not what you remember of it a week later.',
+      },
+      {
+        t: 'p',
+        text:
+          'The part we did not expect to carry the most weight is that every entry says how settled it is. Anyone can propose — the agents propose constantly — but only a person can promote. So the map can hold work in progress without work in progress quietly becoming fact.',
+      },
+      {
+        t: 'ul',
+        items: [
+          'Live — settled. Build on it.',
+          'Staged — proposed by whoever just did the work, waiting on a human to confirm it.',
+          'Draft — a question we have argued about and not yet closed.',
+        ],
+      },
+      { t: 'h2', text: 'The version that did not work' },
+      {
+        t: 'p',
+        text:
+          'Our first attempt was the obvious one: notes in a folder in the repo. It failed in the most ordinary way — nobody updated them. Months on, half of what they claimed was wrong: bugs written up as open that we had already fixed, fixes written up as shipped that never landed. A stale map is worse than no map, because you trust it. We lost a day re-checking every line before admitting the real bug was that writing things down had been optional.',
+      },
+      {
+        t: 'p',
+        text:
+          'So we are not asking you to take on faith a habit we do not keep ourselves. Reading the map before you start and writing to it the moment you learn something beats trusting that you will remember having understood. We do it every day on our own work. Sapling is that same habit pointed at your courses, with the writing part done for you.',
+      },
+    ],
+  },
   {
     slug: 'why-we-built-sapling',
     tag: 'Founding',

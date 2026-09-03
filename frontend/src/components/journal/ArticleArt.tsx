@@ -1,11 +1,11 @@
 /**
  * A journal post's artwork, at any size.
  *
- * Two posts ship photographs; the other four are illustrated with a drawn
- * motif taken from what the article actually argues — the forgetting curve
- * for the spacing piece, a verdict list for TeachBack, a syllabus becoming a
- * calendar for the ingest release. Before #601 those four rendered an empty
- * tinted panel on /news and the article pages showed no artwork at all.
+ * Two posts ship photographs; the rest are illustrated with a drawn motif
+ * taken from what the article actually argues — the forgetting curve for the
+ * spacing piece, a verdict list for TeachBack, a syllabus becoming a calendar
+ * for the ingest release. Before #601 those rendered an empty tinted panel on
+ * /news and the article pages showed no artwork at all.
  *
  * The same component serves the landing card (~243px), the /news card
  * (~330px) and the article hero (~880px), which is a 3.6x magnification of
@@ -178,6 +178,57 @@ function SyllabusMotif() {
   );
 }
 
+/**
+ * The team's own map: linked notes, each carrying how settled it is. The
+ * states are the article's point — a shared map is only trustworthy if it
+ * admits which parts nobody has confirmed yet.
+ */
+function CanopyMotif({ ls }: MotifProps) {
+  const states = [
+    { y: 52, tint: 'rgba(14,158,90,0.16)', dot: GREEN, label: 'Live' },
+    { y: 80, tint: 'rgba(200,155,94,0.18)', dot: AMBER, label: 'Staged' },
+    { y: 108, tint: 'rgba(18,32,26,0.08)', dot: '#9a9a9a', label: 'Draft' },
+  ];
+  return (
+    <Frame label="CANOPY · THE SHARED MAP">
+      {/* links are drawn first, so the opaque cards leave them showing in the gaps */}
+      <line x1="42" y1="46" x2="104" y2="72" stroke="rgba(12,86,56,0.30)" />
+      <line x1="42" y1="46" x2="46" y2="112" stroke="rgba(12,86,56,0.30)" />
+      <line x1="104" y1="72" x2="46" y2="112" stroke="rgba(12,86,56,0.18)" />
+      <line x1="46" y1="112" x2="84" y2="117" stroke="rgba(12,86,56,0.20)" strokeDasharray="3 3" />
+      {/* two settled entries */}
+      <rect x="20" y="32" width="44" height="28" rx="6" fill={PAPER} stroke={HAIRLINE} />
+      <rect x="26" y="39" width="24" height="3.2" rx="1.6" fill="rgba(12,86,56,0.30)" />
+      <rect x="26" y="46" width="30" height="2.8" rx="1.4" fill="rgba(12,86,56,0.16)" />
+      <rect x="26" y="52" width="18" height="2.8" rx="1.4" fill="rgba(12,86,56,0.16)" />
+      <circle cx="57" cy="38" r="2.6" fill={GREEN} />
+      <rect x="82" y="58" width="44" height="28" rx="6" fill={PAPER} stroke={HAIRLINE} />
+      <rect x="88" y="65" width="26" height="3.2" rx="1.6" fill="rgba(12,86,56,0.30)" />
+      <rect x="88" y="72" width="30" height="2.8" rx="1.4" fill="rgba(12,86,56,0.16)" />
+      <rect x="88" y="78" width="20" height="2.8" rx="1.4" fill="rgba(12,86,56,0.16)" />
+      <circle cx="119" cy="64" r="2.6" fill={GREEN} />
+      {/* one staged: written, not yet confirmed by a person */}
+      <rect x="24" y="98" width="44" height="28" rx="6" fill={PAPER} stroke="rgba(200,155,94,0.8)" strokeDasharray="3.5 2.5" />
+      <rect x="30" y="105" width="24" height="3.2" rx="1.6" fill="rgba(200,155,94,0.55)" />
+      <rect x="30" y="112" width="28" height="2.8" rx="1.4" fill="rgba(12,86,56,0.14)" />
+      <circle cx="61" cy="104" r="2.6" fill={AMBER} />
+      {/* and one still an open question */}
+      <rect x="84" y="106" width="40" height="26" rx="5" fill="none" stroke="rgba(18,32,26,0.22)" strokeDasharray="3 3" />
+      <rect x="90" y="118" width="20" height="2.6" rx="1.3" fill="rgba(18,32,26,0.12)" />
+      <rect x="90" y="124" width="13" height="2.6" rx="1.3" fill="rgba(18,32,26,0.10)" />
+      <circle cx="117" cy="112" r="2.4" fill="#9a9a9a" />
+      <line x1="140" y1="32" x2="140" y2="134" stroke="rgba(12,86,56,0.14)" />
+      {states.map((state) => (
+        <g key={state.label}>
+          <circle cx="157" cy={state.y} r="7.5" fill={state.tint} />
+          <circle cx="157" cy={state.y} r="3" fill={state.dot} />
+          <text x="172" y={state.y + 3} fontFamily="DM Sans" fontSize={8.5 * ls} fill={INK}>{state.label}</text>
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
 /** Label scale in viewBox units: 1 at card size, halved for the hero. */
 interface MotifProps {
   ls: number;
@@ -188,6 +239,7 @@ const MOTIFS: Record<ArtMotif, (props: MotifProps) => React.JSX.Element> = {
   spacing: SpacingMotif,
   teachback: TeachBackMotif,
   syllabus: SyllabusMotif,
+  canopy: CanopyMotif,
 };
 
 export function ArticleArt({
