@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import { CompanionShell } from '@/components/companion/CompanionShell';
+import { WikiRail } from './WikiRail';
 import {
   WIKI_ACHIEVEMENT_TERMS, WIKI_CALENDAR_SPECS, WIKI_CLASS_TERMS, WIKI_DATA_FACTS,
   WIKI_FLASHCARD_NOTES, WIKI_FLASHCARD_RATINGS, WIKI_GRADE_NOTES, WIKI_GRAPH_TERMS,
   WIKI_GUIDE_SPECS, WIKI_LETTERS, WIKI_MASTERY_FORMULA, WIKI_MASTERY_MOVES, WIKI_MODES,
   WIKI_NOTE_SPECS, WIKI_ONBOARDING_SPECS, WIKI_PIPELINE, WIKI_PROGRESS_TERMS,
-  WIKI_QUIZ_SPECS, WIKI_ROOM_SPECS, WIKI_SHOTS, WIKI_TIERS, WIKI_TOC, WIKI_UPLOAD_SPECS,
+  WIKI_QUIZ_SPECS, WIKI_ROOM_SPECS, WIKI_SHOTS, WIKI_TIERS, WIKI_UPLOAD_SPECS,
 } from '@/lib/landing/companionContent';
 import { DISPLAY, MONO, PROSE_MEASURE, SERIF } from '@/lib/landing/companionType';
 
@@ -31,8 +32,17 @@ export const metadata: Metadata = {
 
 const H2: React.CSSProperties = {
   margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 26,
-  lineHeight: 1.2, letterSpacing: '-0.015em', scrollMarginTop: 84,
+  lineHeight: 1.2, letterSpacing: '-0.015em',
 };
+/**
+ * Anchor offset for a jumped-to section.
+ *
+ * It belongs on the `<section>`, which is what carries the id and is
+ * therefore what the browser scrolls to — on the heading it looks right and
+ * does nothing, which is how the heading ended up under the nav bar. Matches
+ * the rail's own sticky offset so the two line up.
+ */
+const SECTION: React.CSSProperties = { scrollMarginTop: 84 };
 const LEDE: React.CSSProperties = {
   margin: '12px 0 0', fontFamily: SERIF, fontSize: 15, lineHeight: 1.6,
   color: '#3f3b31', maxWidth: PROSE_MEASURE,
@@ -94,7 +104,7 @@ function Section({ id, title, lede, children }: {
   id: string; title: string; lede?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
-    <section id={id}>
+    <section id={id} style={SECTION}>
       <h2 style={H2}>{title}</h2>
       {lede ? <p style={LEDE}>{lede}</p> : null}
       <Shot section={id} />
@@ -154,33 +164,32 @@ export default function WikiPage() {
   return (
     <CompanionShell current="/wiki">
       <div>
-        <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
-          Reference
-        </span>
-        <h1 style={{ margin: '14px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em', animation: 'fadeUp 700ms ease 60ms both' }}>
-          Wiki
-        </h1>
-        <p style={{ margin: '24px 0 0', fontFamily: SERIF, fontSize: 16, lineHeight: 1.6, color: '#3f3b31', maxWidth: '62ch', animation: 'fadeUp 700ms ease 140ms both' }}>
-          Exact definitions for the terms and numbers Sapling puts on screen. Every value here is
-          the one the product actually uses. Where a loop is not closed yet, this page says so
-          rather than describing the version we would like to ship.
-        </p>
+        {/*
+          A masthead rather than a stack. Left-aligning the eyebrow, title and
+          deck one under the other left the whole top-left corner heavy and
+          the right two-thirds of the box empty; setting the title against the
+          deck spreads the weight across the full width and gives the rule
+          something to sit under. `auto-fit` is what collapses it to one
+          column on a narrow screen without a media query.
+        */}
+        <header style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 'clamp(20px,4vw,56px)', alignItems: 'end', paddingBottom: 30, borderBottom: '1px solid rgba(42,39,31,0.12)' }}>
+          <div style={{ animation: 'fadeUp 700ms ease both' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857' }}>
+              Reference
+            </span>
+            <h1 style={{ margin: '14px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em' }}>
+              Wiki
+            </h1>
+          </div>
+          <p style={{ margin: 0, fontFamily: SERIF, fontSize: 16, lineHeight: 1.62, color: '#3f3b31', maxWidth: PROSE_MEASURE, animation: 'fadeUp 700ms ease 140ms both' }}>
+            Exact definitions for the terms and numbers Sapling puts on screen. Every value here is
+            the one the product actually uses. Where a loop is not closed yet, this page says so
+            rather than describing the version we would like to ship.
+          </p>
+        </header>
 
-        <div style={{ marginTop: 44, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
-          <aside style={{ position: 'sticky', top: 84, display: 'flex', flexDirection: 'column', gap: 18 }}>
-            {WIKI_TOC.map((section) => (
-              <div key={section.group} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', marginBottom: 6 }}>
-                  {section.group}
-                </span>
-                {section.items.map((t) => (
-                  <a key={t.href} href={t.href} className="cp-navlink" style={{ fontSize: 13.5, color: '#6f6857', padding: '4px 0' }}>
-                    {t.title}
-                  </a>
-                ))}
-              </div>
-            ))}
-          </aside>
+        <div style={{ marginTop: 40, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
+          <WikiRail />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 52 }}>
             <Section
