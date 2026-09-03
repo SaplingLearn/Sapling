@@ -63,20 +63,20 @@ const RULE_INSET = 8;
 
 /* Active/hover surfaces.
  *
- * Active used to be a full-bleed `--bg-soft` fill, which at 44px tall read as
- * a slab. The selected row is now marked rather than filled: a 2px brand rail
- * on its leading edge, the brand green on icon + label at weight 600, and only
- * a whisper of forest tint behind it. Hover is a neutral ink veil — the same
- * `color-mix` idiom `.answer-option:hover` uses in globals.css — with no rail
- * and no hue, so it is unmistakably the weaker, transient state.
+ * A plain highlight, the way it always was — just not in the old colour. The
+ * selected row is a flat `--sap-100` fill (the soft end of the green scale)
+ * where it used to be `--bg-soft`, so the marker reads as green against the
+ * rail's warm `--bg-subtle` ground instead of as another shade of cream. No
+ * rail, no hue on the label, nothing else: the fill IS the treatment, and at
+ * 38px on a 4px radius it is a smaller one than the 44px slab it replaces.
  *
- * Both are mixed off tokens rather than hardcoded, so they re-derive if the
- * palette moves. On the light paper shell (the only theme this app ships —
- * see the note under the token block in globals.css) --brand-forest is 5.1:1
- * on the active tint and the rail is 5.7:1 on the rail's --bg-subtle ground. */
-const NAV_ACTIVE_BG = "color-mix(in srgb, var(--brand-forest) 8%, transparent)";
-const NAV_HOVER_BG = "color-mix(in srgb, var(--text) 4%, transparent)";
-const NAV_ACTIVE_RAIL = "inset 2px 0 0 var(--brand-forest)";
+ * Hover inherits the fill that active gave up. `--bg-soft` is one step off the
+ * ground and neutral, so it is unmistakably the weaker, transient state and
+ * cannot be confused with the green of a selection.
+ *
+ * Both are palette tokens rather than mixes, so they move with the scale. */
+const NAV_ACTIVE_BG = "var(--sap-100)";
+const NAV_HOVER_BG = "var(--bg-soft)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -178,7 +178,12 @@ export function SideNav() {
           {!collapsed && (
             <div
               className="label-micro"
-              style={{ padding: i === 0 ? "6px 10px 6px" : "22px 10px 6px" }}
+              /* Above: the first group needs its own value — it is the only
+                 one introduced by the logo rule rather than by the group
+                 before it, and inherits nothing from a preceding item.
+                 Below: every header stands clear of the items it labels, so
+                 the header reads as a heading and not as the first row. */
+              style={{ padding: i === 0 ? "20px 10px 10px" : "22px 10px 10px" }}
             >
               {section.label}
             </div>
@@ -349,20 +354,24 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         alignItems: "center",
         justifyContent: collapsed ? "center" : "flex-start",
         gap: 10,
-        width: "100%",
+        // No explicit width: the rail is a flex column, so a row stretches to
+        // the content box on its own and the margins below actually inset it.
+        // `width: 100%` would have added to them and overflowed instead.
         minHeight: NAV_ITEM_MIN_HEIGHT,
+        // The pill is inset to the group header's own 10px, so its leading
+        // edge lines up with "LEARN" rather than running to the rail's walls,
+        // and it stops the same distance short on the right. The icon then
+        // sits 12px inside that — which is what puts the destinations a step
+        // in from the label they belong to.
+        marginLeft: collapsed ? 0 : 10,
+        marginRight: collapsed ? 0 : 10,
         padding: collapsed ? "6px 0" : "6px 12px",
         borderRadius: "var(--r-xs)",
         background: active ? NAV_ACTIVE_BG : "transparent",
-        // The rail is an inset shadow rather than a border so it costs no
-        // layout — the row keeps the same box whether it's active or not,
-        // in the collapsed rail as well as the expanded one.
-        boxShadow: active ? NAV_ACTIVE_RAIL : "none",
-        color: active ? "var(--brand-forest)" : "var(--text-dim)",
+        color: active ? "var(--text)" : "var(--text-dim)",
         fontWeight: active ? 600 : 400,
         fontSize: 13,
-        transition:
-          "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)",
+        transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
         textDecoration: "none",
       }}
       onMouseEnter={(e) => {

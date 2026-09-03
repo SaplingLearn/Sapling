@@ -177,10 +177,13 @@ describe("SideNav — active vs inactive", () => {
     const quiz = screen.getByText("Quiz").closest("a")!;
     const tree = screen.getByText("Tree").closest("a")!;
 
+    // The selected row is a plain fill in the green scale; an unselected one
+    // has no background at all. Asserting the TOKEN rather than a computed
+    // colour keeps this honest if the scale is retuned.
     expect(quiz.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-    expect(quiz.getAttribute("style") || "").toMatch(/--brand-forest/);
+    expect(quiz.getAttribute("style") || "").toMatch(/--sap-100/);
     expect(tree.getAttribute("style") || "").toMatch(/font-weight:\s*400/);
-    expect(tree.getAttribute("style") || "").not.toMatch(/--brand-forest/);
+    expect(tree.getAttribute("style") || "").not.toMatch(/--sap-100/);
   });
 
   it("treats / and /dashboard/... as the Dashboard route", () => {
