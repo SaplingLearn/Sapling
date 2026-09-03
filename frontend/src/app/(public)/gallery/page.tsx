@@ -85,7 +85,7 @@ export default function GalleryPage() {
                 className="cp-shot"
                 onClick={() => setExpanded(s.slot)}
                 aria-label={`Expand ${s.title}`}
-                style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', borderRadius: 14, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)', boxShadow: '0 10px 28px -16px rgba(26,24,20,0.45)', padding: 0, cursor: 'zoom-in', display: 'block' }}
+                style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', borderRadius: 14, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)', boxShadow: '0 10px 28px -16px rgba(26,24,20,0.45)', padding: 0, cursor: 'pointer', display: 'block' }}
               >
                 {/* Captured by `make gallery-shots` at 1440x900 — the same
                     16:10 this box is, so it fills without cropping. The
