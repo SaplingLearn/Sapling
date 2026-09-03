@@ -552,19 +552,6 @@ export default function ApplyForm({ job }: { job: Job | null }) {
             ))}
           </div>
         </div>
-        <div
-          style={{
-            maxWidth: 1280,
-            margin: '32px auto 0',
-            paddingTop: 24,
-            borderTop: '1px solid var(--border)',
-            textAlign: 'center',
-          }}
-        >
-          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
-          </p>
-        </div>
       </footer>
     </div>
   );

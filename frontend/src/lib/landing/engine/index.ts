@@ -91,6 +91,8 @@ export class LandingEngine {
 
   // scroll smoothing
   private sySmooth: number | undefined;
+  /** Time-eased opacity for the ambient field — see ambient.ts. */
+  private ambientFade = 0;
   private syMedia = 0;
   private jumpUntil = 0;
   private lastJumpSy = 0;
@@ -99,7 +101,6 @@ export class LandingEngine {
   // nav / jump pill
   private jumpLastY = 0;
   private jumpSeen = 0;
-  private jumpOnDark: boolean | undefined;
   private activeNav = -1;
 
   // act state
@@ -316,11 +317,13 @@ export class LandingEngine {
     const syM = this.syMedia;
 
     if (rawSy < vh * 1.4) {
-      this.heroShiftPx = syM * -0.3;
+      // deliberately unsmoothed: on a fast scroll back to the top the lagged
+      // value made the whole hero layer settle into place a beat late
+      this.heroShiftPx = rawSy * -0.3;
       if (this.refs.heroContent) {
         put(this.refs.heroContent, 'transform', 'translateY(' + this.heroShiftPx.toFixed(1) + 'px)');
       }
-      this.parallaxY = syM * 0.1;
+      this.parallaxY = rawSy * 0.1;
     }
 
     if (rawSy < vh * 1.6) {
@@ -373,9 +376,16 @@ export class LandingEngine {
     this.tickAct1(M, vh, rawSy, sy);
     this.tickAct2(M, vh, rawSy, sy);
     this.tickAct3(M, vh, rawSy, sy);
-    this.tickNav(M, vh, rawSy, sy);
+    this.tickNav(M, vh, rawSy);
 
-    if (this.refs.ambientCanvas) this.ambient.draw(this.refs.ambientCanvas, syM, vh, this.mouse);
+    // rawSy, not the lerp: the dot field kept drifting and dissolving for a
+    // beat after a fast return to the top. Opacity still eases in time —
+    // dots dissolve in place rather than popping — but position tracks 1:1.
+    if (this.refs.ambientCanvas) {
+      const fadeTarget = clamp01((rawSy - vh * 0.5) / (vh * 0.5));
+      this.ambientFade += (fadeTarget - this.ambientFade) * 0.1;
+      this.ambient.draw(this.refs.ambientCanvas, rawSy, vh, this.mouse, this.ambientFade);
+    }
 
     if (M.gal) {
       const gt = M.gal.top - rawSy;
@@ -417,7 +427,7 @@ export class LandingEngine {
     M.ticks.forEach((t) => {
       const wn = ACT1_WINDOWS[t.i];
       const active = p >= wn[0] && p < (wn[1] === 1.01 ? 2 : wn[1] + 0.02);
-      put(t.el, 'background', active ? '#8FD9A8' : 'rgba(230,242,232,0.2)');
+      put(t.el, 'background', active ? '#0E9E5A' : 'rgba(18,32,26,0.14)');
       put(t.el, 'height', active ? '38px' : '26px');
     });
   }
@@ -530,10 +540,13 @@ export class LandingEngine {
     }
   }
 
-  private tickNav(M: Measured, vh: number, rawSy: number, sy: number): void {
-    if (M.stem) put(M.stem, 'width', (clamp01(sy / this.docH) * 100).toFixed(2) + '%');
+  // Deliberately unsmoothed: the hairline, the past-hero flag and the active
+  // section must land the instant the scroll does, or they visibly trail a
+  // fast return to the top.
+  private tickNav(M: Measured, vh: number, rawSy: number): void {
+    if (M.stem) put(M.stem, 'width', (clamp01(rawSy / this.docH) * 100).toFixed(2) + '%');
 
-    const past = sy > vh * 0.7;
+    const past = rawSy > vh * 0.7;
     const dy = rawSy - this.jumpLastY;
     if (Math.abs(dy) > 1.5) {
       this.jumpLastY = rawSy;
@@ -551,28 +564,11 @@ export class LandingEngine {
       this.hooks.setJumpDown(false);
     }
 
-    // recolour the jump pill when it sits over the dark act
-    if (M.dark && M.jumpPill) {
-      const mid = rawSy + vh * 0.9;
-      const onDark = mid > M.dark.top && mid < M.dark.top + M.dark.h;
-      if (onDark !== this.jumpOnDark) {
-        this.jumpOnDark = onDark;
-        if (M.jumpLabel) {
-          put(M.jumpLabel, 'color', onDark ? '#B9D9C4' : '#61726A');
-          put(
-            M.jumpLabel, 'text-shadow',
-            onDark ? '0 1px 10px rgba(4,18,12,0.85)' : '0 0 8px rgba(246,248,244,0.9)',
-          );
-        }
-        M.jumpTicks.forEach((t) => put(t, 'opacity', onDark ? '0.9' : '1'));
-      }
-    }
-
     if (past !== this.hooks.getPastHero()) this.hooks.setPastHero(past);
 
     let activeIdx = 0;
     M.nav.forEach((n, i) => {
-      if (i > 0 && n.top - sy < vh * 0.5) activeIdx = i;
+      if (i > 0 && n.top - rawSy < vh * 0.5) activeIdx = i;
     });
     if (activeIdx !== this.activeNav) {
       this.activeNav = activeIdx;
@@ -594,9 +590,7 @@ export class LandingEngine {
             ? '#0E9E5A'
             : i < activeIdx
               ? 'rgba(79,165,116,0.6)'
-              : this.jumpOnDark
-                ? 'rgba(230,242,232,0.28)'
-                : 'rgba(18,32,26,0.18)',
+              : 'rgba(18,32,26,0.18)',
         );
         put(t, 'transform', i === activeIdx ? 'scale(1.5)' : 'scale(1)');
       });

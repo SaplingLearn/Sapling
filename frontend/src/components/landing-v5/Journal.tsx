@@ -11,6 +11,9 @@
  * affordance) for the photos. Here they are `next/image` against the assets
  * already in `public/`, keeping the source's 860/574 aspect so the card
  * geometry is unchanged.
+ *
+ * Each card opens its article at /news/[slug] (content in
+ * lib/landing/journalArticles.ts).
  */
 
 import Image from 'next/image';
@@ -23,36 +26,36 @@ const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 /** The inline graph illustration used by the third card. */
 function GraphThumb() {
   return (
-    <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 80% 70% at 45% 45%, #123526 0%, #0B2418 60%, #071A11 100%)' }}>
+    <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 80% 70% at 45% 45%, #EAF1EC 0%, #E2ECE5 60%, #D8E5DD 100%)' }}>
       <svg width="100%" height="100%" viewBox="0 0 243 158" preserveAspectRatio="xMidYMid slice">
-        <line x1="118" y1="76" x2="62" y2="44" stroke="rgba(143,217,168,0.28)" />
-        <line x1="118" y1="76" x2="54" y2="108" stroke="rgba(143,217,168,0.28)" />
-        <line x1="118" y1="76" x2="182" y2="50" stroke="rgba(143,217,168,0.28)" />
-        <line x1="118" y1="76" x2="176" y2="116" stroke="rgba(143,217,168,0.18)" />
-        <line x1="62" y1="44" x2="182" y2="50" stroke="rgba(143,217,168,0.1)" />
-        <line x1="54" y1="108" x2="176" y2="116" stroke="rgba(143,217,168,0.1)" />
+        <line x1="118" y1="76" x2="62" y2="44" stroke="rgba(12,86,56,0.3)" />
+        <line x1="118" y1="76" x2="54" y2="108" stroke="rgba(12,86,56,0.3)" />
+        <line x1="118" y1="76" x2="182" y2="50" stroke="rgba(12,86,56,0.3)" />
+        <line x1="118" y1="76" x2="176" y2="116" stroke="rgba(12,86,56,0.2)" />
+        <line x1="62" y1="44" x2="182" y2="50" stroke="rgba(12,86,56,0.12)" />
+        <line x1="54" y1="108" x2="176" y2="116" stroke="rgba(12,86,56,0.12)" />
         {/* each node's ring arc is its mastery, drawn from 12 o'clock */}
-        <circle cx="118" cy="76" r="15" fill="none" stroke="rgba(230,242,232,0.14)" strokeWidth="2.6" />
+        <circle cx="118" cy="76" r="15" fill="none" stroke="rgba(18,32,26,0.12)" strokeWidth="2.6" />
         <circle cx="118" cy="76" r="15" fill="none" stroke="#0E9E5A" strokeWidth="2.6" strokeLinecap="round" strokeDasharray="58 94" transform="rotate(-90 118 76)" />
         <circle cx="118" cy="76" r="9" fill="#0E9E5A" />
         <text x="118" y="79" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="7" fill="#061710">112</text>
-        <circle cx="62" cy="44" r="10" fill="none" stroke="rgba(230,242,232,0.14)" strokeWidth="2.2" />
+        <circle cx="62" cy="44" r="10" fill="none" stroke="rgba(18,32,26,0.12)" strokeWidth="2.2" />
         <circle cx="62" cy="44" r="10" fill="none" stroke="#4FA574" strokeWidth="2.2" strokeLinecap="round" strokeDasharray="38 25" transform="rotate(-90 62 44)" />
         <circle cx="62" cy="44" r="5.5" fill="#4FA574" />
-        <text x="62" y="26" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#8FA89A">Trees</text>
-        <circle cx="54" cy="108" r="10" fill="none" stroke="rgba(230,242,232,0.14)" strokeWidth="2.2" />
+        <text x="62" y="26" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#4A5D53">Trees</text>
+        <circle cx="54" cy="108" r="10" fill="none" stroke="rgba(18,32,26,0.12)" strokeWidth="2.2" />
         <circle cx="54" cy="108" r="10" fill="none" stroke="#0E9E5A" strokeWidth="2.2" strokeLinecap="round" strokeDasharray="55 8" transform="rotate(-90 54 108)" />
         <circle cx="54" cy="108" r="5.5" fill="#0E9E5A" />
-        <text x="54" y="130" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#8FA89A">Sorting</text>
-        <circle cx="182" cy="50" r="10" fill="none" stroke="rgba(230,242,232,0.14)" strokeWidth="2.2" />
+        <text x="54" y="130" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#4A5D53">Sorting</text>
+        <circle cx="182" cy="50" r="10" fill="none" stroke="rgba(18,32,26,0.12)" strokeWidth="2.2" />
         <circle cx="182" cy="50" r="10" fill="none" stroke="#E27A63" strokeWidth="2.2" strokeLinecap="round" strokeDasharray="16 47" transform="rotate(-90 182 50)" />
         <circle cx="182" cy="50" r="5" fill="#E27A63" />
-        <text x="182" y="32" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#8FA89A">Recursion</text>
-        <circle cx="176" cy="116" r="9" fill="none" stroke="rgba(230,242,232,0.12)" strokeWidth="2" />
+        <text x="182" y="32" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#4A5D53">Recursion</text>
+        <circle cx="176" cy="116" r="9" fill="none" stroke="rgba(18,32,26,0.10)" strokeWidth="2" />
         <circle cx="176" cy="116" r="4.5" fill="#9a9a9a" />
-        <text x="176" y="137" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#6C8377">DP</text>
+        <text x="176" y="137" textAnchor="middle" fontFamily="DM Sans" fontSize="7.5" fill="#61726A">DP</text>
       </svg>
-      <span style={{ position: 'absolute', left: 11, top: 10, ...MONO, fontSize: 7.5, letterSpacing: '0.2em', color: '#8FD9A8' }}>
+      <span style={{ position: 'absolute', left: 11, top: 10, ...MONO, fontSize: 7.5, letterSpacing: '0.2em', color: '#0C5638' }}>
         CS 112 · KNOWLEDGE GRAPH
       </span>
     </div>
@@ -100,7 +103,7 @@ export function Journal({
             return (
               <div key={p.title} style={{ display: 'flex', animation: 'cardFloat 7.5s ease-in-out infinite both', animationDelay: meta.floatDelay }}>
                 <a
-                  href="#newsletter"
+                  href={`/news/${p.slug}`}
                   className="ld-post"
                   style={{ display: 'flex', flexDirection: 'column', width: '100%', background: '#FDFCF9', border: '1px solid rgba(18,32,26,0.09)', borderRadius: 16, padding: '14px 14px 20px', color: 'inherit' }}
                 >

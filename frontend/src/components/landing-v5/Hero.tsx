@@ -116,14 +116,24 @@ export function Hero({
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', opacity: sceneOpacity, background: 'radial-gradient(ellipse 88% 74% at 52% 48%, rgba(240,244,242,0) 0%, rgba(240,244,242,0.2) 74%, rgba(240,244,242,0.56) 100%)' }} />
       {/* panel radials — these are the ones that land on the cards */}
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none', opacity: sceneOpacity, background: 'radial-gradient(ellipse 52% 38% at 16% 22%, rgba(240,244,242,0.66) 0%, rgba(240,244,242,0.26) 52%, rgba(240,244,242,0) 76%), radial-gradient(ellipse 40% 30% at 80% 53%, rgba(240,244,242,0.84) 0%, rgba(240,244,242,0.36) 55%, rgba(240,244,242,0) 82%)' }} />
-      {/* bottom legibility band — fully faded by half height */}
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none', opacity: washOpacity, background: 'linear-gradient(0deg, rgba(240,244,242,0.94) 0%, rgba(240,244,242,0.78) 16%, rgba(240,244,242,0.34) 34%, rgba(240,244,242,0) 50%)' }} />
-      {/* fractal-noise grain, multiplied at 3.5% — kills banding in the blooms */}
+      {/* bottom legibility band — fully faded by half height. Opaque at the
+          very edge on purpose: every hero layer (canvases, rim, grain) stops
+          dead at the section boundary, and the only way that cut is invisible
+          is if the bottom row is one flat colour the descent band below can
+          start from exactly. */}
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none', opacity: washOpacity, background: 'linear-gradient(0deg, #F0F4F2 0%, rgba(240,244,242,0.9) 10%, rgba(240,244,242,0.78) 18%, rgba(240,244,242,0.34) 34%, rgba(240,244,242,0) 50%)' }} />
+      {/* fractal-noise grain, multiplied at 3.5% — kills banding in the blooms.
+          Masked out before the section's bottom edge: it multiplies over even
+          the opaque band below it, so run to the edge and its ~2% darkening
+          ends on a razor line right at the boundary. The blooms it exists for
+          live in the top half, so the fade costs nothing. */}
       <div
         aria-hidden="true"
         style={{
           position: 'absolute', inset: 0, zIndex: 5, pointerEvents: 'none',
           opacity: 0.035, mixBlendMode: 'multiply',
+          maskImage: 'linear-gradient(180deg, #000 0%, #000 70%, transparent 94%)',
+          WebkitMaskImage: 'linear-gradient(180deg, #000 0%, #000 70%, transparent 94%)',
           backgroundImage:
             "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>\")",
         }}

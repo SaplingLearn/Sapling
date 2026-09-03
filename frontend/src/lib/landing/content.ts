@@ -234,6 +234,8 @@ export interface Post {
   title: string;
   time: string;
   excerpt: string;
+  /** /news/[slug] article this card opens. */
+  slug: string;
 }
 
 export const POSTS: Post[] = [
@@ -241,6 +243,7 @@ export const POSTS: Post[] = [
     tag: 'Founding',
     date: 'JUN 2026',
     title: 'Why we built Sapling',
+    slug: 'why-we-built-sapling',
     time: '6 MIN',
     excerpt:
       'Four students, one library table, and a nagging question: what if AI made you understand more, not less? The origin story, missteps included.',
@@ -249,6 +252,7 @@ export const POSTS: Post[] = [
     tag: 'Perspective',
     date: 'MAY 2026',
     title: 'AI shouldn’t do your homework',
+    slug: 'ai-shouldnt-do-your-homework',
     time: '4 MIN',
     excerpt:
       'Our line in the sand on AI and education: guidance over answers, process over shortcuts, and why "just give me the solution" is the wrong deal.',
@@ -257,6 +261,7 @@ export const POSTS: Post[] = [
     tag: 'Under the hood',
     date: 'APR 2026',
     title: 'How the knowledge graph works',
+    slug: 'how-the-knowledge-graph-works',
     time: '7 MIN',
     excerpt:
       'Nodes, edges, and mastery scores: how a semester of studying becomes a living map, and what your graph knows that your transcript doesn’t.',

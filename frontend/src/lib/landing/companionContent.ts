@@ -97,22 +97,22 @@ export const GALLERY_FILTERS = [
 
 export const NEWS_POSTS = [
   { cat:'founding', tag:'Founding', date:'6/12/2026', time:'6 MIN', slot:'news-founding', src:'assets/journal-founding.png',
-    title:'Why we built Sapling',
+    slug:'why-we-built-sapling', title:'Why we built Sapling',
     excerpt:'Four students, one library table, and a nagging question: what if AI made you understand more, not less? The origin story, missteps included.' },
   { cat:'perspective', tag:'Perspective', date:'5/04/2026', time:'4 MIN', slot:'news-homework', src:'assets/journal-ai-homework.png',
-    title:'AI shouldn\u2019t do your homework',
+    slug:'ai-shouldnt-do-your-homework', title:'AI shouldn\u2019t do your homework',
     excerpt:'Our line in the sand on AI and education: guidance over answers, process over shortcuts, and why "just give me the solution" is the wrong deal.' },
   { cat:'product', tag:'Product', date:'4/18/2026', time:'7 MIN', slot:'news-graph', src:'',
-    title:'How the knowledge graph works',
+    slug:'how-the-knowledge-graph-works', title:'How the knowledge graph works',
     excerpt:'Nodes, edges, and mastery scores: how a semester of studying becomes a living map, and why the cross-unit edges matter most.' },
   { cat:'release', tag:'Release', date:'3/22/2026', time:'3 MIN', slot:'news-teachback', src:'',
-    title:'TeachBack is live',
+    slug:'teachback-is-live', title:'TeachBack is live',
     excerpt:'The mode that flips the desk. You explain the concept, Sapling names the step you skipped, and mastery counts for more than reading.' },
   { cat:'product', tag:'Research', date:'2/09/2026', time:'5 MIN', slot:'news-spacing', src:'',
-    title:'What spacing actually buys you',
+    slug:'what-spacing-actually-buys-you', title:'What spacing actually buys you',
     excerpt:'Why ten minutes, one day, and four days are the intervals we shipped, and what happened when we tested longer gaps on our own courses.' },
   { cat:'release', tag:'Release', date:'1/06/2026', time:'2 MIN', slot:'news-calendar', src:'',
-    title:'Syllabus to semester in one upload',
+    slug:'syllabus-to-semester-in-one-upload', title:'Syllabus to semester in one upload',
     excerpt:'Calendar extraction went from a manual paste to a single drop. Every exam, pset, and quiz dated and synced before week one is over.' },
 ] as const;
 

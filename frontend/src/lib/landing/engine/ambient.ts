@@ -4,6 +4,11 @@
  * Ported from `Sapling Landing v4.dc.html`. Fades in past half a viewport of
  * scroll, then drifts on a parallax depth per node with a little mouse pull.
  * Nodes wrap vertically, so the field is endless without ever reallocating.
+ *
+ * `fade` is computed and time-eased by the engine rather than derived from
+ * the scroll position here: positions must track the scroll 1:1 (a lagged
+ * position reads as drag), but opacity popping with it reads as a glitch —
+ * so the two are deliberately decoupled.
  */
 
 import { cv } from './dom';
@@ -34,7 +39,7 @@ export interface Mouse {
 
 export interface AmbientField {
   nodes: AmbientNode[];
-  draw(canvas: HTMLCanvasElement, sy: number, vh: number, mouse: Mouse): void;
+  draw(canvas: HTMLCanvasElement, sy: number, vh: number, mouse: Mouse, fade: number): void;
 }
 
 export function createAmbient(): AmbientField {
@@ -48,13 +53,12 @@ export function createAmbient(): AmbientField {
     leaf: Math.random() < 0.14,
   }));
 
-  function draw(canvas: HTMLCanvasElement, sy: number, vh: number, mouse: Mouse): void {
+  function draw(canvas: HTMLCanvasElement, sy: number, vh: number, mouse: Mouse, fade: number): void {
     const c = cv(canvas);
     const { ctx, w, h } = c;
     ctx.clearRect(0, 0, w, h);
 
-    const fade = Math.max(0, Math.min(1, (sy - vh * 0.5) / (vh * 0.5)));
-    if (fade <= 0) return;
+    if (fade <= 0.01) return;
 
     const t = Date.now() * 0.001;
     const mx = mouse.x;

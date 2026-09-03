@@ -249,13 +249,13 @@ export function ActTutor({
                 </div>
               </div>
 
-              {/* ── face 2 · TeachBack — the only dark face ── */}
+              {/* ── face 2 · TeachBack — light like its siblings since the graph act moved off the dark ground ── */}
               <div
                 data-panel="2"
-                style={{ ...FACE, transform: `rotateY(240deg) translateZ(${RADIUS}px)`, background: 'linear-gradient(155deg,#153F2B 0%,#0D2B1E 58%,#081F14 100%)', border: '1px solid rgba(143,217,168,0.22)', boxShadow: '0 26px 54px -22px rgba(4,22,14,0.55)', padding: 18, display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto', gap: 8 }}
+                style={{ ...FACE, transform: `rotateY(240deg) translateZ(${RADIUS}px)`, background: '#FDFCF9', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(18,32,26,0.3)', padding: 18, display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto', gap: 8 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#8FD9A8' }}>TEACHBACK MODE</span>
+                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#0C5638' }}>TEACHBACK MODE</span>
                   <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#E27A63" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 3.5a3 3 0 0 1 3 3v4.5a3 3 0 0 1-6 0V6.5a3 3 0 0 1 3-3z" />
                     <path d="M5.5 10.5v.8a6.5 6.5 0 0 0 13 0v-.8" />
@@ -264,38 +264,38 @@ export function ActTutor({
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ display: 'flex', alignItems: 'flex-end', gap: 2.5, height: 26 }}>
-                    {([['#4FA574', '1.1s', '0s'], ['#8FD9A8', '1.3s', '-0.2s'], ['#0E9E5A', '0.9s', '-0.5s'],
-                       ['#8FD9A8', '1.2s', '-0.8s'], ['#4FA574', '1.0s', '-0.3s'], ['#0E9E5A', '1.4s', '-0.6s'],
-                       ['#8FD9A8', '1.1s', '-0.9s'], ['#4FA574', '1.25s', '-0.4s'], ['#0E9E5A', '0.95s', '-0.7s']] as const).map(([c, dur, delay], i) => (
+                    {([['#4FA574', '1.1s', '0s'], ['#6FBF8F', '1.3s', '-0.2s'], ['#0E9E5A', '0.9s', '-0.5s'],
+                       ['#6FBF8F', '1.2s', '-0.8s'], ['#4FA574', '1.0s', '-0.3s'], ['#0E9E5A', '1.4s', '-0.6s'],
+                       ['#6FBF8F', '1.1s', '-0.9s'], ['#4FA574', '1.25s', '-0.4s'], ['#0E9E5A', '0.95s', '-0.7s']] as const).map(([c, dur, delay], i) => (
                       <span key={i} style={{ width: 3, height: '100%', borderRadius: 2, background: c, transformOrigin: 'bottom', animation: `waveBar ${dur} ease-in-out ${delay} infinite` }} />
                     ))}
                   </span>
-                  <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.16em', color: '#8FD9A8' }}>RECORDING · 0:42</span>
+                  <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.16em', color: '#0C5638' }}>RECORDING · 0:42</span>
                 </div>
-                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: '#B9D9C4' }}>
-                  &ldquo;…so you <span style={{ color: '#E6F2E8' }}>rotate left when the right side gets too heavy</span>, and, um, <span style={{ background: 'rgba(226,122,99,0.16)', borderBottom: '1.5px solid #E27A63', borderRadius: 3, padding: '1px 3px', color: '#F6F8F4' }}>the parent just moves down</span> and it&rsquo;s balanced again…&rdquo;
+                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: '#33443B' }}>
+                  &ldquo;…so you <span style={{ color: '#12201A', fontWeight: 600 }}>rotate left when the right side gets too heavy</span>, and, um, <span style={{ background: 'rgba(226,122,99,0.16)', borderBottom: '1.5px solid #E27A63', borderRadius: 3, padding: '1px 3px', color: '#12201A' }}>the parent just moves down</span> and it&rsquo;s balanced again…&rdquo;
                 </p>
                 <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 3, overflow: 'hidden' }}>
-                  <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.2em', color: '#5F7A6C', marginBottom: 2 }}>WHAT YOUR EXPLANATION COVERED</span>
+                  <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.2em', color: '#9AA5A0', marginBottom: 2 }}>WHAT YOUR EXPLANATION COVERED</span>
                   {([['#0E9E5A', 'Rotation direction', 'CORRECT'],
                      ['#E27A63', 'Which node becomes root', 'MISSING'],
                      ['#c89b5e', 'Subtree reattachment', 'VAGUE']] as const).map(([c, label, verdict]) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ width: 6, height: 6, borderRadius: 99, background: c, flex: '0 0 auto' }} />
-                      <span style={{ fontSize: 10.5, color: '#B9D9C4' }}>{label}</span>
+                      <span style={{ fontSize: 10.5, color: '#33443B' }}>{label}</span>
                       <span style={{ marginLeft: 'auto', ...MONO, fontSize: 8.5, letterSpacing: '0.14em', color: c }}>{verdict}</span>
                     </div>
                   ))}
                 </div>
                 <div style={{ background: 'rgba(226,122,99,0.12)', border: '1px solid rgba(226,122,99,0.4)', borderRadius: 12, padding: '8px 11px' }}>
                   <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#E27A63' }}>GAP FOUND</span>
-                  <p style={{ margin: '5px 0 0', fontSize: 11.5, lineHeight: 1.5, color: '#F6F8F4' }}>
+                  <p style={{ margin: '5px 0 0', fontSize: 11.5, lineHeight: 1.5, color: '#12201A' }}>
                     The right child becomes the new root, not the parent.
                   </p>
                   <div style={{ marginTop: 7, display: 'flex', alignItems: 'center', gap: 8 }}>
                     {/* mastery goes DOWN — the gap is new information */}
-                    <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.14em', color: '#B9D9C4' }}>MASTERY 24% → 19%</span>
-                    <span style={{ marginLeft: 'auto', ...MONO, fontSize: 8, letterSpacing: '0.14em', color: '#8FD9A8', whiteSpace: 'nowrap' }}>RE-EXPLAIN ↻</span>
+                    <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.14em', color: '#61726A' }}>MASTERY 24% → 19%</span>
+                    <span style={{ marginLeft: 'auto', ...MONO, fontSize: 8, letterSpacing: '0.14em', color: '#0C5638', whiteSpace: 'nowrap' }}>RE-EXPLAIN ↻</span>
                   </div>
                 </div>
               </div>

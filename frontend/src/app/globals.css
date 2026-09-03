@@ -2332,10 +2332,23 @@ input[type="reset"]:disabled {
   .landing-dc .floating-card { display: none !important; }
   .landing-dc .drag-field    { display: none !important; }
 }
-@media (max-width: 1180px) {
-  .landing-dc .nav-tabs    { display: none !important; }
-  .landing-dc .nav-compact { display: flex !important; }
+/* Short screens: the grove tightens in two steps so the header and both
+   rails stay on one screen. !important — the sizes it overrides are inline. */
+@media (max-height: 1020px) {
+  .landing-v5 #gallery { padding: 40px 0 28px !important; }
+  .landing-v5 #gallery article > div[aria-hidden='true'],
+  .landing-v5 #gallery article > div[aria-hidden='true'] > div { height: 124px !important; }
 }
+@media (max-height: 880px) {
+  .landing-v5 #gallery { padding: 30px 0 22px !important; }
+  .landing-v5 #gallery article > div[aria-hidden='true'],
+  .landing-v5 #gallery article > div[aria-hidden='true'] > div { height: 110px !important; }
+  .landing-v5 #gallery article h3 { font-size: 17px !important; }
+}
+
+/* Set by the landing page while mounted — hides the document scrollbar. */
+html.ld-noscrollbar { scrollbar-width: none; }
+html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 
 .landing-dc ::-webkit-scrollbar       { width: 6px; }
 .landing-dc ::-webkit-scrollbar-track { background: var(--ld-page); }
@@ -2408,12 +2421,6 @@ input[type="reset"]:disabled {
 .landing-dc .ld-navlink:hover      { color: var(--ld-ink); }
 .landing-dc .ld-btn-solid:hover    { filter: brightness(1.12); }
 .landing-dc .ld-btn-ghost:hover    { border-color: var(--ld-deep); color: var(--ld-deep); }
-.landing-dc .ld-navmenu-item:hover { background: rgba(12,86,56,0.07); color: var(--ld-ink); }
-.landing-dc .ld-kofi:hover {
-  color: var(--ld-ink);
-  border-color: #FF5E1A;  /* Ko-fi brand orange — not part of the Sapling palette */
-  background: #FFF3EC;
-}
 
 /* ── Landing v5 additions ──────────────────────────────────────────
    Ported from `Sapling Landing v5.dc.html`. The v5 hero is a ground-up
@@ -2457,15 +2464,12 @@ input[type="reset"]:disabled {
 /* v5 hover states (the source's `style-hover` attribute has no inline
    React equivalent). The Ko-fi pill differs from v4: v5 tints the
    background rather than swapping it to a solid cream. */
-.landing-v5 .ld-kofi:hover      { border-color:#FF5E1A; background:rgba(255,94,26,0.14); }
 .landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
 
 /* Gallery + feature lab hover states. */
 .landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
 .landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
 .landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
-.landing-v5 .ld-jumpitem:hover  { background: rgba(12,86,56,0.07); color: #12201A; }
-.landing-v5 .ld-jumppill:hover  { opacity: 0.75; }
 .landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
 
 /* ── Companion pages (About, Team, Wiki, Gallery, News, FAQ) ───────
@@ -2477,7 +2481,6 @@ input[type="reset"]:disabled {
 
 .cp-navlink:hover  { color: #1a1814; }
 .cp-menuitem:hover { background: rgba(27,108,66,0.07); color: #1a1814; }
-.cp-kofi:hover     { border-color: #FF5E1A; background: #FFF3EC; }
 .cp-cta:hover      { filter: brightness(1.12); }
 
 /* ── Feature-lab demos ─────────────────────────────────────────────

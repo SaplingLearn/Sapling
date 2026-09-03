@@ -177,7 +177,7 @@ export default function NewsPage() {
             return (
               <Link
                 key={p.title}
-                href="/#newsletter"
+                href={`/news/${p.slug}`}
                 className="cp-newscard"
                 style={{ display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', color: 'inherit', transition: 'border-color 220ms, transform 220ms' }}
               >

@@ -55,7 +55,6 @@ export interface Measured {
   panels: { el: HTMLElement; i: number }[];
   pills: HTMLElement | null;
   stem: HTMLElement | null;
-  dark: { top: number; h: number } | null;
   jumpPill: HTMLElement | null;
   jumpLabel: HTMLElement | null;
   jumpTicks: HTMLElement[];
@@ -120,8 +119,6 @@ export function measure(
   M.pills = root.querySelector('[data-tutor-pills]');
   M.stem = root.querySelector('[data-stem]');
 
-  const darkSec = document.getElementById('act-graph');
-  M.dark = darkSec ? { top: off(darkSec).top, h: darkSec.offsetHeight } : null;
 
   M.jumpPill = root.querySelector('[data-jumppill]');
   M.jumpLabel = root.querySelector('[data-jumplabel]');

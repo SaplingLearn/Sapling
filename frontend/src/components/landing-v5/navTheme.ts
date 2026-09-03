@@ -8,11 +8,11 @@
  * and then never uses the dark half, because the scroll handler hardwires
  * `const wantDark = false`.
  *
- * We wire it up. The page passes through two full-bleed dark acts; leaving
- * the navbar in its light palette over them is plainly a stub rather than a
- * design intent, and the design brief calls for the interpolation. The rule
- * below is the one the dead code was shaped for: whichever section owns the
- * vertical centre of the viewport decides the theme.
+ * We wired it up while the graph act sat on a dark ground. That act moved
+ * onto the light ground, so the page now pins `NAV_LIGHT` and nothing calls
+ * `useNavDark` — the table and the scroll rule are kept here, working, for
+ * whenever a full-bleed dark section returns. The rule: whichever section
+ * owns the vertical centre of the viewport decides the theme.
  */
 
 import { useEffect, useState } from 'react';
