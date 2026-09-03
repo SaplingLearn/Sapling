@@ -17,19 +17,15 @@
  */
 
 import { useState } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { Lightbox } from '@/components/companion/Lightbox';
+import { ZoomableShot } from '@/components/companion/ZoomableShot';
 import { GALLERY_FILTERS, GALLERY_SHOTS } from '@/lib/landing/companionContent';
 import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
 
 export default function GalleryPage() {
   const [filter, setFilter] = useState('all');
-  const [expanded, setExpanded] = useState<string | null>(null);
   const shots = GALLERY_SHOTS.filter((s) => filter === 'all' || s.cat === filter);
-
-  const expandedShot = GALLERY_SHOTS.find((s) => s.slot === expanded) ?? null;
 
   return (
     <CompanionShell current="/gallery">
@@ -80,28 +76,13 @@ export default function GalleryPage() {
                 animationDelay: `${Math.min(i * 50, 400)}ms`,
               }}
             >
-              <button
-                type="button"
-                className="cp-shot"
-                onClick={() => setExpanded(s.slot)}
-                aria-label={`Expand ${s.title}`}
-                style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', borderRadius: 14, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)', boxShadow: '0 10px 28px -16px rgba(26,24,20,0.45)', padding: 0, cursor: 'pointer', display: 'block' }}
-              >
-                {/* Captured by `make gallery-shots` at 1440x900 — the same
-                    16:10 this box is, so it fills without cropping. The
-                    figcaption names and describes the screen, so the image is
-                    decorative here rather than carrying its own alt text. */}
-                <Image
-                  src={`/gallery/${s.slot}.png`}
-                  alt=""
-                  fill
-                  sizes="(max-width: 900px) 100vw, 33vw"
-                  style={{ objectFit: 'cover' }}
-                />
-                <span style={{ position: 'absolute', left: 10, top: 10, padding: '4px 9px', borderRadius: 6, background: 'rgba(250,248,243,0.9)', backdropFilter: 'blur(4px)', fontFamily: MONO, fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#3f3b31' }}>
-                  {s.route}
-                </span>
-              </button>
+              <ZoomableShot
+                src={`/gallery/${s.slot}.png`}
+                alt={`The ${s.title} screen in Sapling`}
+                title={s.title}
+                caption={s.body}
+                route={s.route}
+              />
               <figcaption style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
                   <span style={{ fontSize: 15, fontWeight: 600, color: '#1a1814', letterSpacing: '-0.01em' }}>{s.title}</span>
@@ -128,20 +109,6 @@ export default function GalleryPage() {
           </Link>
         </div>
 
-        {/* One lightbox for the whole grid rather than one per card: only ever
-            one is open, and twelve mounted portals would be twelve of
-            everything the overlay hook sets up. */}
-        {expandedShot && (
-          <Lightbox
-            open
-            onClose={() => setExpanded(null)}
-            src={`/gallery/${expandedShot.slot}.png`}
-            alt={`The ${expandedShot.title} screen in Sapling`}
-            title={expandedShot.title}
-            caption={expandedShot.body}
-            eyebrow={expandedShot.route}
-          />
-        )}
       </div>
     </CompanionShell>
   );
