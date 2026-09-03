@@ -73,7 +73,7 @@ const SECTION: React.CSSProperties = { scrollMarginTop: 84 };
 const PROSE: React.CSSProperties = {
   fontFamily: SERIF, fontSize: 22, lineHeight: 1.55, color: '#3f3b31',
 };
-const LEDE: React.CSSProperties = { ...PROSE, margin: '14px 0 0' };
+const LEDE: React.CSSProperties = { ...PROSE, margin: '20px 0 0' };
 /**
  * Definition text, shared by every row style below.
  *
@@ -95,6 +95,23 @@ const ROW_TOP = '1px solid rgba(42,39,31,0.08)';
  */
 const KEY_COL = 'minmax(0,172px)';
 const ROW_GAP = 20;
+/**
+ * Vertical rhythm, re-derived at the body size #604 set.
+ *
+ * That change took the prose to 22px and everything else up ~1.24, but four
+ * structural gaps kept the values they were given at a 15px body: between
+ * sections, from a section's opening block down to its rows, under the
+ * masthead rule, and from the masthead to the body. Pixels held while the
+ * type grew, so measured the way a reader actually feels it — in lines of
+ * body text — the page had lost close to half its air: a section break read
+ * as 3.5 lines before and 2.4 after, which is why eighteen sections ran
+ * together. These are those four gaps at the ratios they used to hold.
+ */
+const SECTION_GAP = 76;
+const BLOCK_GAP = 26;
+const MASTHEAD_PAD = 42;
+const MASTHEAD_GAP = 56;
+
 /** The green mono key that opens a row. */
 const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.06em', color: '#1B6C42' };
 /** The value a spec row states, above its reason. */
@@ -151,7 +168,7 @@ function Section({ id, title, lede, children }: {
       <h2 style={H2}>{title}</h2>
       {lede ? <p style={LEDE}>{lede}</p> : null}
       <Shot section={id} />
-      <div style={{ marginTop: 18 }}>{children}</div>
+      <div style={{ marginTop: BLOCK_GAP }}>{children}</div>
     </section>
   );
 }
@@ -177,7 +194,7 @@ function SpecRows({ rows }: { rows: readonly { label: string; value: string; not
       {rows.map((r) => (
         <div key={r.label} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
           <span style={KEY}>{r.label}</span>
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             <span style={VALUE}>{r.value}</span>
             <span style={DEF}>{r.note}</span>
           </span>
@@ -224,26 +241,26 @@ export default function WikiPage() {
           scale gives the deck something to hang off, and needs no media query
           to collapse because there is nothing to collapse.
         */}
-        <header style={{ paddingBottom: 30, borderBottom: '1px solid rgba(42,39,31,0.12)' }}>
+        <header style={{ paddingBottom: MASTHEAD_PAD, borderBottom: '1px solid rgba(42,39,31,0.12)' }}>
           <div style={{ animation: 'fadeUp 700ms ease both' }}>
             <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857' }}>
               Reference
             </span>
             {/* The shared companion display scale, not a local size: at a flat
                 48 the word was smaller than the air around it. */}
-            <h1 style={{ ...ARTICLE.title, margin: '14px 0 0' }}>
+            <h1 style={{ ...ARTICLE.title, margin: '16px 0 0' }}>
               Wiki
             </h1>
           </div>
-          <p style={{ ...PROSE, margin: '18px 0 0', animation: 'fadeUp 700ms ease 140ms both' }}>
+          <p style={{ ...PROSE, margin: '20px 0 0', animation: 'fadeUp 700ms ease 140ms both' }}>
             Exact definitions for the terms and numbers Sapling puts on screen.
           </p>
         </header>
 
-        <div style={{ marginTop: 40, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
+        <div style={{ marginTop: MASTHEAD_GAP, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
           <WikiRail />
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 52 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: SECTION_GAP }}>
             <Section
               id="graph"
               title="Knowledge graph"
@@ -346,7 +363,7 @@ export default function WikiPage() {
                 {WIKI_PIPELINE.map((p) => (
                   <div key={p.num} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
                     <span style={{ fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.16em', color: '#2D8F5C', paddingTop: 2 }}>{p.num}</span>
-                    <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                       <span style={VALUE}>{p.title}</span>
                       <span style={DEF}>{p.body}</span>
                     </span>
@@ -454,7 +471,7 @@ export default function WikiPage() {
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 6 }}>
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
-                    <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                       <span style={{ ...VALUE, lineHeight: 1.5 }}>{d.fact}</span>
                       <span style={PROSE}>{d.detail}</span>
                     </span>
