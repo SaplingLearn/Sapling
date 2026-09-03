@@ -9,13 +9,19 @@
  * click event fires on the common ancestor. Pressing on the panel and
  * releasing outside it is a normal gesture and must not dismiss anything, so
  * the backdrop listens on pointerdown and checks the target is itself.
+ *
+ * Dismissal is also two-phase: the parent closes by unmounting this component,
+ * so `onClose` is deferred by the exit animation's duration. Calling it
+ * straight away would unmount mid-animation and there would be no exit at all.
+ * Every dismissal goes through that one path, which is what these pin.
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Lightbox } from './Lightbox';
 
 afterEach(cleanup);
+
 
 function open(onClose = vi.fn()) {
   render(
@@ -46,11 +52,20 @@ describe('Lightbox', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('closes on a press that starts on the backdrop', () => {
-    const onClose = open();
-    const backdrop = screen.getByRole('dialog').parentElement!;
-    fireEvent.pointerDown(backdrop);
-    expect(onClose).toHaveBeenCalledTimes(1);
+  it('closes on a press that starts on the backdrop, once the exit ends', () => {
+    vi.useFakeTimers();
+    try {
+      const onClose = open();
+      const panel = screen.getByRole('dialog');
+      fireEvent.pointerDown(panel.parentElement!);
+      // Deferred: unmounting here would cut the exit animation off.
+      expect(onClose).not.toHaveBeenCalled();
+      expect(panel.className).toContain('cp-lightbox-panel--closing');
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does NOT close on a press that starts inside the panel', () => {
@@ -59,15 +74,41 @@ describe('Lightbox', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('closes on Escape', () => {
-    const onClose = open();
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
-    expect(onClose).toHaveBeenCalled();
+  it('closes on Escape, through the same exit path', () => {
+    vi.useFakeTimers();
+    try {
+      const onClose = open();
+      const panel = screen.getByRole('dialog');
+      fireEvent.keyDown(panel, { key: 'Escape' });
+      expect(panel.className).toContain('cp-lightbox-panel--closing');
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('closes on the close button', () => {
-    const onClose = open();
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    vi.useFakeTimers();
+    try {
+      const onClose = open();
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires onClose exactly once however long the page lives after', () => {
+    vi.useFakeTimers();
+    try {
+      const onClose = open();
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      act(() => { vi.advanceTimersByTime(5000); });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

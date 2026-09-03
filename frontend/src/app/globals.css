@@ -2523,8 +2523,19 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   from { opacity: 0; transform: scale(0.965) translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
+@keyframes cpLightboxOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes cpLightboxPanelOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: scale(0.975) translateY(6px); }
+}
 .cp-lightbox { animation: cpLightboxIn 200ms ease both; }
 .cp-lightbox-panel { animation: cpLightboxPanelIn 280ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+/* AFTER the entrance rules on purpose. An element mid-exit carries both
+   classes and they have equal specificity, so source order is the only thing
+   deciding which `animation` wins — declared first, the exit silently lost and
+   the panel replayed its entrance on the way out. */
+.cp-lightbox--closing { animation: cpLightboxOut 170ms ease both; }
+.cp-lightbox-panel--closing { animation: cpLightboxPanelOut 170ms ease both; }
 
 .cp-lightbox-close { transition: background 180ms, border-color 180ms; }
 .cp-lightbox-close:hover { background: rgba(26,24,20,0.78); border-color: rgba(250,248,243,0.45); }

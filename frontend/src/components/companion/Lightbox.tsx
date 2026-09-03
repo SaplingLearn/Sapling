@@ -18,12 +18,16 @@
  * it is a card; an expanded view that crops is failing at its one job.
  */
 
+import { useCallback, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { createPortal } from 'react-dom';
 
 import { useOverlayBehaviour } from '@/components/Dialog';
 
 import { MONO, SERIF } from '@/lib/landing/companionType';
+
+/** Exit animation duration. Keep in step with globals.css. */
+const EXIT_MS = 180;
 
 export interface LightboxProps {
   open: boolean;
@@ -39,10 +43,40 @@ export interface LightboxProps {
 }
 
 export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: LightboxProps) {
+  /**
+   * Closing runs an exit animation before the parent unmounts us.
+   *
+   * The parent closes by dropping this component from the tree, so without an
+   * exit phase the panel simply vanishes. `requestClose` starts the animation
+   * instead, and the real `onClose` fires when it ends. Every dismissal goes
+   * through it — backdrop, Escape (via the hook), and the button — so there is
+   * one exit path rather than three.
+   */
+  const [closing, setClosing] = useState(false);
+  const requestClose = useCallback(() => setClosing(true), []);
+
+  // A timer rather than onAnimationEnd, deliberately. The panel renders
+  // through a portal, and a synthesized `animationend` does not reach React's
+  // handler there (jsdom has no AnimationEvent at all, so it cannot even be
+  // tested) — and an animation that never runs, as in a backgrounded tab,
+  // emits no event, which would leave the viewer unclosable. A timer has none
+  // of that: it always fires, and it is trivially testable.
+  //
+  // MUST match the .cp-lightbox-panel--closing duration in globals.css. A few
+  // ms of slack so the last frame paints before the node goes.
+  useEffect(() => {
+    if (!closing) return;
+    const t = setTimeout(onClose, EXIT_MS);
+    return () => clearTimeout(t);
+  }, [closing, onClose]);
+
   // `visible` is deliberately unused: the entrance is a CSS keyframe on
   // insertion, not a transition driven by that flag. See .cp-lightbox in
   // globals.css for why.
-  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose });
+  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({
+    open,
+    onClose: requestClose,
+  });
 
   if (!mounted || !open) return null;
 
@@ -53,10 +87,10 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
       // backdrop — selecting, or flinging the panel — does not count as a
       // click-out and close the thing mid-gesture.
       onPointerDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) requestClose();
       }}
       onKeyDown={onKeyDown}
-      className="cp-lightbox"
+      className={`cp-lightbox${closing ? ' cp-lightbox--closing' : ''}`}
       style={{
         position: 'fixed',
         inset: 0,
@@ -76,7 +110,7 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className="cp-lightbox-panel"
+        className={`cp-lightbox-panel${closing ? ' cp-lightbox-panel--closing' : ''}`}
         style={{
           position: 'relative',
           width: 'min(1200px, 100%)',
@@ -128,7 +162,7 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
             box and renders thin next to a screenshot. */}
         <button
           type="button"
-          onClick={onClose}
+          onClick={requestClose}
           aria-label="Close"
           className="cp-lightbox-close"
           style={{
