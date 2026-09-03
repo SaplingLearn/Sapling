@@ -9,7 +9,7 @@ import {
   WIKI_NOTE_SPECS, WIKI_ONBOARDING_SPECS, WIKI_PIPELINE, WIKI_PROGRESS_TERMS,
   WIKI_QUIZ_SPECS, WIKI_ROOM_SPECS, WIKI_SHOTS, WIKI_TIERS, WIKI_UPLOAD_SPECS,
 } from '@/lib/landing/companionContent';
-import { DISPLAY, MONO, PROSE_MEASURE, SERIF } from '@/lib/landing/companionType';
+import { ARTICLE, DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
 
 /**
  * Wiki.
@@ -30,8 +30,34 @@ export const metadata: Metadata = {
     'Exact definitions for the terms and numbers Sapling puts on screen. Every value here is the one the product actually uses.',
 };
 
+/**
+ * One right edge, two measures, and the type scaled to each (#604).
+ *
+ * The page had four right edges — row grids at the full article column, ledes
+ * and definitions capped at `PROSE_MEASURE`, screenshots at a hardcoded 560 —
+ * so the content edge jittered eighteen times on the way down. Everything now
+ * runs to the column.
+ *
+ * The cap was not arbitrary, though: uncapped prose at the old 14.5/15px ran
+ * past 100 characters a line. So the sizes come up with the measure, the way
+ * /news/[slug] scales `ARTICLE` to the same box rather than capping it. The
+ * page has exactly two prose measures, and one size each, both measured in a
+ * browser at 1440px (characters counted off real line boxes, partial last
+ * lines excluded) rather than estimated:
+ *
+ *   PROSE (22px) — the full 870px column: ledes, fact lists, the deck.
+ *                  Median 88 characters a line, range 80-92.
+ *   DEF   (18px) — the 678px cell right of a row key. Median 83, up to 88.
+ *
+ * The two multi-column tables — tiers, and how mastery moves — inset their
+ * text further and so run shorter, into the 60s. Their cells hold a sentence
+ * or two, not running prose, and widening them would cost the row rhythm.
+ *
+ * Everything else on the page — keys, values, captions, headings — is scaled
+ * by the same ~1.24 the body took, so the rows keep their rhythm.
+ */
 const H2: React.CSSProperties = {
-  margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 26,
+  margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 32,
   lineHeight: 1.2, letterSpacing: '-0.015em',
 };
 /**
@@ -43,25 +69,36 @@ const H2: React.CSSProperties = {
  * the rail's own sticky offset so the two line up.
  */
 const SECTION: React.CSSProperties = { scrollMarginTop: 84 };
-const LEDE: React.CSSProperties = {
-  margin: '12px 0 0', fontFamily: SERIF, fontSize: 15, lineHeight: 1.6,
-  color: '#3f3b31', maxWidth: PROSE_MEASURE,
+/** Prose that runs the whole article column: ledes, fact lists, the deck. */
+const PROSE: React.CSSProperties = {
+  fontFamily: SERIF, fontSize: 22, lineHeight: 1.55, color: '#3f3b31',
 };
+const LEDE: React.CSSProperties = { ...PROSE, margin: '14px 0 0' };
 /**
  * Definition text, shared by every row style below.
  *
- * Capped like the lede. The rail only takes 190px off the shared box, so a
- * row's second column is still ~590px — which ran these definitions to ~95
- * characters a line before the cap went on.
+ * Set against the narrower of the page's two measures: a row key takes
+ * `KEY_COL` off the column, so this reads at ~84 characters where the ledes
+ * beside it read at ~88.
  */
 const DEF: React.CSSProperties = {
-  fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.6, color: '#3f3b31',
-  maxWidth: PROSE_MEASURE,
+  fontFamily: SERIF, fontSize: 18, lineHeight: 1.6, color: '#3f3b31',
 };
 /** The hairline that separates rows within a section. */
 const ROW_TOP = '1px solid rgba(42,39,31,0.08)';
+/**
+ * The key column every row shape opens with, and the gap after it.
+ *
+ * Sized off the longest key on the page ("Generation timeout", 18 mono
+ * characters) at the scaled-up `KEY` size — the two move together, and what
+ * is left is the definition measure.
+ */
+const KEY_COL = 'minmax(0,172px)';
+const ROW_GAP = 20;
 /** The green mono key that opens a row. */
-const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 11, letterSpacing: '0.06em', color: '#1B6C42' };
+const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.06em', color: '#1B6C42' };
+/** The value a spec row states, above its reason. */
+const VALUE: React.CSSProperties = { fontSize: 17, fontWeight: 600, color: '#1a1814' };
 
 /** `dot`/`tone` come from the source as CSS declaration strings. */
 function cssColor(decl: string): string {
@@ -76,14 +113,16 @@ function cssColor(decl: string): string {
  * page's inline figure and /gallery's grid card can lay out differently
  * while behaving identically.
  *
- * Capped well under the column: this is a reference page that shows you the
- * screen, not a gallery.
+ * Runs the full article column. It used to cap at 560 — half the available
+ * width — which made the widest thing on the page conceptually the narrowest
+ * thing on it visually, on a reference page whose job is showing you the
+ * screen (#604).
  */
 function Shot({ section }: { section: string }) {
   const shot = WIKI_SHOTS[section];
   if (!shot) return null;
   return (
-    <figure style={{ margin: '18px 0 0', maxWidth: 560, display: 'flex', flexDirection: 'column', gap: 9 }}>
+    <figure style={{ margin: '22px 0 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* Captured at 1440x900 — the same 16:10 as the panel, so it fills
           without cropping. The panel is a client component because the page
           is not: drawing the boundary around the one element that needs
@@ -94,10 +133,10 @@ function Shot({ section }: { section: string }) {
         title={shot.title}
         caption={shot.caption}
         route={shot.route}
-        sizes="(max-width: 900px) 100vw, 560px"
+        sizes="(max-width: 900px) 100vw, 880px"
         radius={12}
       />
-      <figcaption style={{ fontFamily: SERIF, fontSize: 13.5, lineHeight: 1.55, color: '#6f6857' }}>
+      <figcaption style={{ fontFamily: SERIF, fontSize: 16.5, lineHeight: 1.55, color: '#6f6857' }}>
         {shot.caption}
       </figcaption>
     </figure>
@@ -122,7 +161,7 @@ function TermRows({ rows }: { rows: readonly { term: string; def: string }[] }) 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {rows.map((r) => (
-        <div key={r.term} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,1fr)', gap: 18, padding: '13px 0', borderTop: ROW_TOP }}>
+        <div key={r.term} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
           <span style={KEY}>{r.term}</span>
           <span style={DEF}>{r.def}</span>
         </div>
@@ -136,10 +175,10 @@ function SpecRows({ rows }: { rows: readonly { label: string; value: string; not
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {rows.map((r) => (
-        <div key={r.label} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,1fr)', gap: 18, padding: '13px 0', borderTop: ROW_TOP }}>
+        <div key={r.label} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
           <span style={KEY}>{r.label}</span>
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1814' }}>{r.value}</span>
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <span style={VALUE}>{r.value}</span>
             <span style={DEF}>{r.note}</span>
           </span>
         </div>
@@ -148,16 +187,22 @@ function SpecRows({ rows }: { rows: readonly { label: string; value: string; not
   );
 }
 
-/** A checked list of plain statements. */
+/**
+ * A checked list of plain statements.
+ *
+ * Runs the full column rather than a row cell, so it takes the wider of the
+ * page's two prose sizes — same edge as the rows above it, same measure as
+ * the ledes it reads like.
+ */
 function FactList({ items }: { items: readonly string[] }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {items.map((d) => (
-        <div key={d} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 3 }}>
+        <div key={d} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 5 }}>
             <path d="M20 6L9 17l-5-5" />
           </svg>
-          <span style={DEF}>{d}</span>
+          <span style={PROSE}>{d}</span>
         </div>
       ))}
     </div>
@@ -169,26 +214,29 @@ export default function WikiPage() {
     <CompanionShell current="/wiki">
       <div>
         {/*
-          A masthead rather than a stack. Left-aligning the eyebrow, title and
-          deck one under the other left the whole top-left corner heavy and
-          the right two-thirds of the box empty; setting the title against the
-          deck spreads the weight across the full width and gives the rule
-          something to sit under. `auto-fit` is what collapses it to one
-          column on a narrow screen without a media query.
+          One stack: eyebrow, the word, the sentence under it.
+
+          This used to be a two-column grid, on the theory that setting the
+          title against the deck spread the weight across the full width. It
+          did the opposite — a one-word title beside a three-line paragraph
+          left its own cell ~85% empty, and the two halves never read as one
+          unit (#603). A single column with the title at the companion display
+          scale gives the deck something to hang off, and needs no media query
+          to collapse because there is nothing to collapse.
         */}
-        <header style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 'clamp(20px,4vw,56px)', alignItems: 'end', paddingBottom: 30, borderBottom: '1px solid rgba(42,39,31,0.12)' }}>
+        <header style={{ paddingBottom: 30, borderBottom: '1px solid rgba(42,39,31,0.12)' }}>
           <div style={{ animation: 'fadeUp 700ms ease both' }}>
             <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857' }}>
               Reference
             </span>
-            <h1 style={{ margin: '14px 0 0', fontFamily: DISPLAY, fontWeight: 500, fontSize: 48, lineHeight: 1.15, letterSpacing: '-0.015em' }}>
+            {/* The shared companion display scale, not a local size: at a flat
+                48 the word was smaller than the air around it. */}
+            <h1 style={{ ...ARTICLE.title, margin: '14px 0 0' }}>
               Wiki
             </h1>
           </div>
-          <p style={{ margin: 0, fontFamily: SERIF, fontSize: 16, lineHeight: 1.62, color: '#3f3b31', maxWidth: PROSE_MEASURE, animation: 'fadeUp 700ms ease 140ms both' }}>
-            Exact definitions for the terms and numbers Sapling puts on screen. Every value here is
-            the one the product actually uses. Where a loop is not closed yet, this page says so
-            rather than describing the version we would like to ship.
+          <p style={{ ...PROSE, margin: '18px 0 0', animation: 'fadeUp 700ms ease 140ms both' }}>
+            Exact definitions for the terms and numbers Sapling puts on screen.
           </p>
         </header>
 
@@ -211,10 +259,10 @@ export default function WikiPage() {
             >
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_TIERS.map((t) => (
-                  <div key={t.name} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0,104px) minmax(0,92px) minmax(0,1fr)', gap: 14, alignItems: 'baseline', padding: '13px 0', borderTop: ROW_TOP }}>
+                  <div key={t.name} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0,124px) minmax(0,116px) minmax(0,1fr)', gap: 16, alignItems: 'baseline', padding: '15px 0', borderTop: ROW_TOP }}>
                     <span style={{ width: 10, height: 10, borderRadius: 99, background: cssColor(t.dot) }} />
-                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1814' }}>{t.name}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 11, lineHeight: 1.5, color: '#6f6857', whiteSpace: 'nowrap' }}>{t.range}</span>
+                    <span style={VALUE}>{t.name}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 13.5, lineHeight: 1.5, color: '#6f6857', whiteSpace: 'nowrap' }}>{t.range}</span>
                     <span style={DEF}>{t.meaning}</span>
                   </div>
                 ))}
@@ -227,19 +275,19 @@ export default function WikiPage() {
               lede="Mastery moves on demonstrated understanding, not time spent — which means several things you might expect to move it do not. Every change is appended to your graph with a reason attached."
             >
               {/* The formula reads as an equation, so it gets to look like one. */}
-              <div style={{ padding: '14px 16px', borderRadius: 10, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', fontFamily: MONO, fontSize: 12.5, lineHeight: 1.6, color: '#1a1814', overflowX: 'auto' }}>
+              <div style={{ padding: '16px 18px', borderRadius: 10, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', fontFamily: MONO, fontSize: 15, lineHeight: 1.6, color: '#1a1814', overflowX: 'auto' }}>
                 {WIKI_MASTERY_FORMULA}
               </div>
-              <p style={{ ...LEDE, marginTop: 12 }}>
+              <p style={{ ...LEDE, marginTop: 14 }}>
                 That is one quiz. Around seventeen correct answers in a row take a concept from
                 nothing to mastered — roughly three or four full quizzes.
               </p>
               <div style={{ marginTop: 14 }}>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   {WIKI_MASTERY_MOVES.map((m) => (
-                    <div key={m.source} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,124px) minmax(0,1fr)', gap: 18, alignItems: 'baseline', padding: '13px 0', borderTop: ROW_TOP }}>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1814' }}>{m.source}</span>
-                      <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#1B6C42', whiteSpace: 'nowrap' }}>{m.value}</span>
+                    <div key={m.source} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,132px) minmax(0,1fr)`, gap: ROW_GAP, alignItems: 'baseline', padding: '15px 0', borderTop: ROW_TOP }}>
+                      <span style={VALUE}>{m.source}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 13.5, color: '#1B6C42', whiteSpace: 'nowrap' }}>{m.value}</span>
                       <span style={DEF}>{m.note}</span>
                     </div>
                   ))}
@@ -270,7 +318,7 @@ export default function WikiPage() {
             >
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_MODES.map((m) => (
-                  <div key={m.name} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,1fr)', gap: 18, padding: '13px 0', borderTop: ROW_TOP }}>
+                  <div key={m.name} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
                     <span style={{ ...KEY, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{m.name}</span>
                     <span style={DEF}>{m.def}</span>
                   </div>
@@ -291,12 +339,15 @@ export default function WikiPage() {
               title="Ingestion"
               lede="What happens to a file after you drop it in. These five steps stream to your screen as they run, so you can always see why a concept or a date exists."
             >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Same two columns as a spec row — the step number is the key —
+                  so the step bodies read on the same measure as every other
+                  definition instead of running the full column. */}
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_PIPELINE.map((p) => (
-                  <div key={p.num} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-                    <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.16em', color: '#2D8F5C', paddingTop: 4, flex: '0 0 auto' }}>{p.num}</span>
-                    <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <span style={{ fontSize: 14.5, fontWeight: 600, color: '#1a1814' }}>{p.title}</span>
+                  <div key={p.num} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
+                    <span style={{ fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.16em', color: '#2D8F5C', paddingTop: 2 }}>{p.num}</span>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      <span style={VALUE}>{p.title}</span>
                       <span style={DEF}>{p.body}</span>
                     </span>
                   </div>
@@ -319,9 +370,9 @@ export default function WikiPage() {
             >
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 12 }}>
                 {WIKI_FLASHCARD_RATINGS.map((r) => (
-                  <div key={r.label} style={{ border: '1px solid rgba(42,39,31,0.10)', borderRadius: 12, padding: 16, background: '#faf8f3', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 14.5, fontWeight: 600, color: cssColor(r.tone) }}>{r.label}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 10, color: '#6f6857' }}>KEY {r.key}</span>
+                  <div key={r.label} style={{ border: '1px solid rgba(42,39,31,0.10)', borderRadius: 12, padding: 18, background: '#faf8f3', display: 'flex', alignItems: 'center', gap: 9 }}>
+                    <span style={{ ...VALUE, color: cssColor(r.tone) }}>{r.label}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 12, color: '#6f6857' }}>KEY {r.key}</span>
                   </div>
                 ))}
               </div>
@@ -353,9 +404,9 @@ export default function WikiPage() {
             >
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {WIKI_LETTERS.map((l) => (
-                  <span key={l.letter} style={{ display: 'flex', alignItems: 'baseline', gap: 7, padding: '7px 12px', borderRadius: 8, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)' }}>
-                    <b style={{ fontSize: 13, fontWeight: 600, color: '#1a1814' }}>{l.letter}</b>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: '#6f6857' }}>{l.min}</span>
+                  <span key={l.letter} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '8px 14px', borderRadius: 8, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)' }}>
+                    <b style={{ fontSize: 16, fontWeight: 600, color: '#1a1814' }}>{l.letter}</b>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: '#6f6857' }}>{l.min}</span>
                   </span>
                 ))}
               </div>
@@ -399,13 +450,13 @@ export default function WikiPage() {
             <Section id="privacy" title="Your data">
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {WIKI_DATA_FACTS.map((d) => (
-                  <div key={d.fact} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 4 }}>
+                  <div key={d.fact} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 6 }}>
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      <span style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.5, color: '#1a1814', maxWidth: PROSE_MEASURE }}>{d.fact}</span>
-                      <span style={DEF}>{d.detail}</span>
+                      <span style={{ ...VALUE, lineHeight: 1.5 }}>{d.fact}</span>
+                      <span style={PROSE}>{d.detail}</span>
                     </span>
                   </div>
                 ))}

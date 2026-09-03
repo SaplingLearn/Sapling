@@ -31,8 +31,15 @@ export const ACCENT = '#2D8F5C';
  * The box is one width everywhere so the pages line up, but a paragraph is
  * not a grid: /about ran to 133 characters a line and /faq to 148 once they
  * inherited the wider box. `ch` rather than px so the cap tracks whatever
- * size the page sets. The article does not use this — its type is scaled to
- * the full width instead, which is why it reads at 85 across 1116px.
+ * size the page sets.
+ *
+ * Two pages deliberately do not use it, because capping prose inside a box
+ * that everything else fills is what gives a page more than one right edge.
+ * They scale their type to the measure instead: /news/[slug] via `ARTICLE`
+ * (85 characters across 1116px), and /wiki via its own two body sizes (#604 —
+ * 22px across the 870px article column, 18px in the 678px cell right of a row
+ * key, measured at 88 and 83). Prefer that where a page can carry it; the
+ * cap is for prose that has to sit inside a box sized by something else.
  */
 export const PROSE_MEASURE = '80ch';
 
