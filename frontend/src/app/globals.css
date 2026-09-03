@@ -2500,6 +2500,16 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 .landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
 .landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
 .cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
+
+/* Gallery shot — the whole panel is the button that expands it (#601 follow-up).
+   Lift plus a hair of scale on the image inside, so it reads as clickable
+   without moving the caption underneath. The global prefers-reduced-motion
+   reset zeroes both. */
+.cp-shot { transition: border-color 220ms, box-shadow 220ms; }
+.cp-shot img { transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1); }
+.cp-shot:hover { border-color: rgba(42,39,31,0.26); box-shadow: 0 16px 36px -18px rgba(26,24,20,0.6); }
+.cp-shot:hover img { transform: scale(1.03); }
+.cp-shot:focus-visible { outline: 2px solid #1B6C42; outline-offset: 3px; }
 @keyframes nodeDrift { 0%,100% { transform:translate(0,0); } 50% { transform:translate(10px,-13px); } }
 
 /* Beta modal — recovered from the previous landing page. */
