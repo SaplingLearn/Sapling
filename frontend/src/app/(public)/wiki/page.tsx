@@ -1,19 +1,26 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import {
-  WIKI_DATA_FACTS, WIKI_GRAPH_TERMS, WIKI_LETTERS, WIKI_MODES,
-  WIKI_PIPELINE, WIKI_RATINGS, WIKI_TIERS, WIKI_TOC,
+  WIKI_ACHIEVEMENT_TERMS, WIKI_CALENDAR_SPECS, WIKI_CLASS_TERMS, WIKI_DATA_FACTS,
+  WIKI_FLASHCARD_NOTES, WIKI_FLASHCARD_RATINGS, WIKI_GRADE_NOTES, WIKI_GRAPH_TERMS,
+  WIKI_GUIDE_SPECS, WIKI_LETTERS, WIKI_MASTERY_FORMULA, WIKI_MASTERY_MOVES, WIKI_MODES,
+  WIKI_NOTE_SPECS, WIKI_ONBOARDING_SPECS, WIKI_PIPELINE, WIKI_PROGRESS_TERMS,
+  WIKI_QUIZ_SPECS, WIKI_ROOM_SPECS, WIKI_SHOTS, WIKI_TIERS, WIKI_TOC, WIKI_UPLOAD_SPECS,
 } from '@/lib/landing/companionContent';
-import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
+import { DISPLAY, MONO, PROSE_MEASURE, SERIF } from '@/lib/landing/companionType';
 
 /**
  * Wiki.
  *
- * Ported from `Wiki.dc.html`. A sticky contents rail beside seven definition
- * sections, each laid out for what it holds: two-column term/definition rows
- * for the graph and tutor modes, a four-column row with a tier swatch for
- * mastery, cards for the review intervals, a numbered list for ingestion, and
- * chips for the grade bands.
+ * A sticky contents rail beside eighteen definition sections, grouped the
+ * way the product is: learn, capture, the semester, the people, and you.
+ *
+ * Three row shapes carry almost all of it — `TermRows` for a name and a
+ * definition, `SpecRows` for a name, a value and the reason for the value,
+ * and the tier table, which is the only one that needs a swatch. Adding a
+ * section should mean adding content and picking a shape, not writing a
+ * fourth grid.
  */
 
 export const metadata: Metadata = {
@@ -28,16 +35,119 @@ const H2: React.CSSProperties = {
 };
 const LEDE: React.CSSProperties = {
   margin: '12px 0 0', fontFamily: SERIF, fontSize: 15, lineHeight: 1.6,
-  color: '#3f3b31', maxWidth: '64ch',
+  color: '#3f3b31', maxWidth: PROSE_MEASURE,
 };
-/** Definition text, shared by every row style below. */
-const DEF: React.CSSProperties = { fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.6, color: '#3f3b31' };
+/**
+ * Definition text, shared by every row style below.
+ *
+ * Capped like the lede. The rail only takes 190px off the shared box, so a
+ * row's second column is still ~590px — which ran these definitions to ~95
+ * characters a line before the cap went on.
+ */
+const DEF: React.CSSProperties = {
+  fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.6, color: '#3f3b31',
+  maxWidth: PROSE_MEASURE,
+};
 /** The hairline that separates rows within a section. */
 const ROW_TOP = '1px solid rgba(42,39,31,0.08)';
+/** The green mono key that opens a row. */
+const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 11, letterSpacing: '0.06em', color: '#1B6C42' };
 
 /** `dot`/`tone` come from the source as CSS declaration strings. */
 function cssColor(decl: string): string {
   return decl.replace(/^(background|color):/, '').replace(/;$/, '').trim();
+}
+
+/**
+ * The screen a section is about, when there is one.
+ *
+ * The tint, border and 16:10 box live on the wrapper and the image sits on
+ * top, so a slot whose capture has not landed yet degrades to an empty
+ * panel rather than a broken image. The figcaption names the screen and the
+ * image takes `alt=""` — the split the gallery uses, and the reason a
+ * missing capture leaves no alt text stranded across the panel.
+ *
+ * Capped well under the column: this is a reference page that shows you the
+ * screen, not a gallery.
+ */
+function Shot({ section }: { section: string }) {
+  const shot = WIKI_SHOTS[section];
+  if (!shot) return null;
+  return (
+    <figure style={{ margin: '18px 0 0', maxWidth: 560, display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', borderRadius: 12, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)', boxShadow: '0 10px 28px -18px rgba(26,24,20,0.45)' }}>
+        {/* Captured at 1440x900 — the same 16:10 as this box, so it fills
+            without cropping. */}
+        <Image src={`/gallery/${shot.slot}.png`} alt="" fill sizes="(max-width: 900px) 100vw, 560px" style={{ objectFit: 'cover' }} />
+        <span style={{ position: 'absolute', left: 10, top: 10, padding: '4px 9px', borderRadius: 6, background: 'rgba(250,248,243,0.9)', fontFamily: MONO, fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#3f3b31' }}>
+          {shot.route}
+        </span>
+      </div>
+      <figcaption style={{ fontFamily: SERIF, fontSize: 13.5, lineHeight: 1.55, color: '#6f6857' }}>
+        {shot.caption}
+      </figcaption>
+    </figure>
+  );
+}
+
+function Section({ id, title, lede, children }: {
+  id: string; title: string; lede?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <section id={id}>
+      <h2 style={H2}>{title}</h2>
+      {lede ? <p style={LEDE}>{lede}</p> : null}
+      <Shot section={id} />
+      <div style={{ marginTop: 18 }}>{children}</div>
+    </section>
+  );
+}
+
+/** A name and what it means. */
+function TermRows({ rows }: { rows: readonly { term: string; def: string }[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {rows.map((r) => (
+        <div key={r.term} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,1fr)', gap: 18, padding: '13px 0', borderTop: ROW_TOP }}>
+          <span style={KEY}>{r.term}</span>
+          <span style={DEF}>{r.def}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A name, the value the product uses, and why that value. */
+function SpecRows({ rows }: { rows: readonly { label: string; value: string; note: string }[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {rows.map((r) => (
+        <div key={r.label} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,1fr)', gap: 18, padding: '13px 0', borderTop: ROW_TOP }}>
+          <span style={KEY}>{r.label}</span>
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1814' }}>{r.value}</span>
+            <span style={DEF}>{r.note}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A checked list of plain statements. */
+function FactList({ items }: { items: readonly string[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {items.map((d) => (
+        <div key={d} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 3 }}>
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+          <span style={DEF}>{d}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function WikiPage() {
@@ -52,48 +162,43 @@ export default function WikiPage() {
         </h1>
         <p style={{ margin: '24px 0 0', fontFamily: SERIF, fontSize: 16, lineHeight: 1.6, color: '#3f3b31', maxWidth: '62ch', animation: 'fadeUp 700ms ease 140ms both' }}>
           Exact definitions for the terms and numbers Sapling puts on screen. Every value here is
-          the one the product actually uses.
+          the one the product actually uses. Where a loop is not closed yet, this page says so
+          rather than describing the version we would like to ship.
         </p>
 
         <div style={{ marginTop: 44, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
-          <aside style={{ position: 'sticky', top: 84, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', marginBottom: 8 }}>
-              Contents
-            </span>
-            {WIKI_TOC.map((t) => (
-              <a key={t.href} href={t.href} className="cp-navlink" style={{ fontSize: 13.5, color: '#6f6857', padding: '5px 0' }}>
-                {t.title}
-              </a>
+          <aside style={{ position: 'sticky', top: 84, display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {WIKI_TOC.map((section) => (
+              <div key={section.group} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', marginBottom: 6 }}>
+                  {section.group}
+                </span>
+                {section.items.map((t) => (
+                  <a key={t.href} href={t.href} className="cp-navlink" style={{ fontSize: 13.5, color: '#6f6857', padding: '4px 0' }}>
+                    {t.title}
+                  </a>
+                ))}
+              </div>
             ))}
           </aside>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 52 }}>
-            <section id="graph">
-              <h2 style={H2}>Knowledge graph</h2>
-              <p style={LEDE}>
-                One node per concept in a course, joined by an edge when learning one depends on the
-                other. Nodes are positioned by unit, so the shape of the graph is the shape of the
-                syllabus.
-              </p>
-              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {WIKI_GRAPH_TERMS.map((g) => (
-                  <div key={g.term} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,140px) minmax(0,1fr)', gap: 18, padding: '12px 0', borderTop: ROW_TOP }}>
-                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.06em', color: '#1B6C42' }}>{g.term}</span>
-                    <span style={DEF}>{g.def}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+            <Section
+              id="graph"
+              title="Knowledge graph"
+              lede="One node per concept in a course, joined by an edge when the two are related. Each course anchors its own cluster, so a semester reads as a handful of constellations rather than one tangle."
+            >
+              <TermRows rows={WIKI_GRAPH_TERMS} />
+            </Section>
 
-            <section id="mastery">
-              <h2 style={H2}>Mastery tiers</h2>
-              <p style={LEDE}>
-                Every node carries a mastery score from 0 to 1, drawn as a ring around it. The score
-                moves on demonstrated understanding, not time spent.
-              </p>
-              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 0 }}>
+            <Section
+              id="mastery"
+              title="Mastery tiers"
+              lede="Every node carries a mastery score from 0.00 to 1.00, drawn as a ring around it. Four tiers are derived from that score, and they are what the tier filters, the dashboard counts, and the quiz generator all read."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_TIERS.map((t) => (
-                  <div key={t.name} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0,104px) minmax(0,86px) minmax(0,1fr)', gap: 14, alignItems: 'baseline', padding: '13px 0', borderTop: ROW_TOP }}>
+                  <div key={t.name} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0,104px) minmax(0,92px) minmax(0,1fr)', gap: 14, alignItems: 'baseline', padding: '13px 0', borderTop: ROW_TOP }}>
                     <span style={{ width: 10, height: 10, borderRadius: 99, background: cssColor(t.dot) }} />
                     <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1814' }}>{t.name}</span>
                     <span style={{ fontFamily: MONO, fontSize: 11, lineHeight: 1.5, color: '#6f6857', whiteSpace: 'nowrap' }}>{t.range}</span>
@@ -101,69 +206,139 @@ export default function WikiPage() {
                   </div>
                 ))}
               </div>
-            </section>
+            </Section>
 
-            <section id="review">
-              <h2 style={H2}>Spaced review</h2>
-              <p style={LEDE}>
-                After each card you rate your recall, and that rating sets when the card comes back.
-                Rating a card also writes to the mastery score of the concept it tests.
-              </p>
-              <div style={{ marginTop: 18, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))', gap: 12 }}>
-                {WIKI_RATINGS.map((r) => (
-                  <div key={r.label} style={{ border: '1px solid rgba(42,39,31,0.10)', borderRadius: 12, padding: 16, background: '#faf8f3', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 14.5, fontWeight: 600, color: '#1a1814' }}>{r.label}</span>
-                      <span style={{ fontFamily: MONO, fontSize: 10, color: '#6f6857' }}>KEY {r.key}</span>
-                    </span>
-                    <span style={{ fontFamily: MONO, fontSize: 12, color: cssColor(r.tone) }}>next in {r.due}</span>
-                  </div>
-                ))}
+            <Section
+              id="deltas"
+              title="How mastery moves"
+              lede="Mastery moves on demonstrated understanding, not time spent — which means several things you might expect to move it do not. Every change is appended to your graph with a reason attached."
+            >
+              {/* The formula reads as an equation, so it gets to look like one. */}
+              <div style={{ padding: '14px 16px', borderRadius: 10, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', fontFamily: MONO, fontSize: 12.5, lineHeight: 1.6, color: '#1a1814', overflowX: 'auto' }}>
+                {WIKI_MASTERY_FORMULA}
               </div>
-            </section>
-
-            <section id="tutor">
-              <h2 style={H2}>Tutor modes</h2>
-              <p style={LEDE}>
-                Three ways to work the same concept. All three are grounded in documents you
-                uploaded, and none of them will hand over an answer.
+              <p style={{ ...LEDE, marginTop: 12 }}>
+                That is one quiz. Around seventeen correct answers in a row take a concept from
+                nothing to mastered — roughly three or four full quizzes.
               </p>
-              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {WIKI_MASTERY_MOVES.map((m) => (
+                    <div key={m.source} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,124px) minmax(0,1fr)', gap: 18, alignItems: 'baseline', padding: '13px 0', borderTop: ROW_TOP }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1814' }}>{m.source}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 11.5, color: '#1B6C42', whiteSpace: 'nowrap' }}>{m.value}</span>
+                      <span style={DEF}>{m.note}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Section>
+
+            <Section
+              id="progress"
+              title="Progress stats"
+              lede="The numbers around the app that describe your movement rather than your position."
+            >
+              <TermRows rows={WIKI_PROGRESS_TERMS} />
+            </Section>
+
+            <Section
+              id="quizzes"
+              title="Adaptive quizzes"
+              lede="A quiz is written fresh each time from your graph, weighted toward the concepts you have mastered least. These are the values the quiz screen builds its selectors from, so it can never offer one the server refuses."
+            >
+              <SpecRows rows={WIKI_QUIZ_SPECS} />
+            </Section>
+
+            <Section
+              id="tutor"
+              title="Tutor modes"
+              lede="Three ways to work the same concept. You pick one per conversation, and it changes the tutor's stance rather than its knowledge — all three read your graph and the documents you uploaded."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_MODES.map((m) => (
-                  <div key={m.name} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,120px) minmax(0,1fr)', gap: 18, padding: '13px 0', borderTop: ROW_TOP }}>
-                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#1B6C42' }}>{m.name}</span>
+                  <div key={m.name} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,150px) minmax(0,1fr)', gap: 18, padding: '13px 0', borderTop: ROW_TOP }}>
+                    <span style={{ ...KEY, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{m.name}</span>
                     <span style={DEF}>{m.def}</span>
                   </div>
                 ))}
               </div>
-            </section>
+            </Section>
 
-            <section id="ingestion">
-              <h2 style={H2}>Ingestion</h2>
-              <p style={LEDE}>
-                What happens to a file after you drop it in. Each step is visible in the product, so
-                you can always see why a concept or a date exists.
-              </p>
-              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Section
+              id="uploads"
+              title="Uploads"
+              lede="What Sapling accepts, and what it does to read it."
+            >
+              <SpecRows rows={WIKI_UPLOAD_SPECS} />
+            </Section>
+
+            <Section
+              id="ingestion"
+              title="Ingestion"
+              lede="What happens to a file after you drop it in. These five steps stream to your screen as they run, so you can always see why a concept or a date exists."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {WIKI_PIPELINE.map((p) => (
                   <div key={p.num} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
                     <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.16em', color: '#2D8F5C', paddingTop: 4, flex: '0 0 auto' }}>{p.num}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <span style={{ fontSize: 14.5, fontWeight: 600, color: '#1a1814' }}>{p.title}</span>
-                      <span style={{ ...DEF, maxWidth: '60ch' }}>{p.body}</span>
+                      <span style={DEF}>{p.body}</span>
                     </span>
                   </div>
                 ))}
               </div>
-            </section>
+            </Section>
 
-            <section id="grades">
-              <h2 style={H2}>Grade scale</h2>
-              <p style={LEDE}>
-                Category weights come from your syllabus, and every score rolls into one weighted
-                number. These are the letter bands it maps onto.
-              </p>
-              <div style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <Section
+              id="notes"
+              title="Notetaker"
+              lede="Your own writing, turned into concepts on the same tree everything else feeds."
+            >
+              <SpecRows rows={WIKI_NOTE_SPECS} />
+            </Section>
+
+            <Section
+              id="flashcards"
+              title="Flashcards"
+              lede="Flip a card and rate how it went. Three ratings, and what each one actually does."
+            >
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 12 }}>
+                {WIKI_FLASHCARD_RATINGS.map((r) => (
+                  <div key={r.label} style={{ border: '1px solid rgba(42,39,31,0.10)', borderRadius: 12, padding: 16, background: '#faf8f3', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 14.5, fontWeight: 600, color: cssColor(r.tone) }}>{r.label}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: '#6f6857' }}>KEY {r.key}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <FactList items={WIKI_FLASHCARD_NOTES} />
+              </div>
+            </Section>
+
+            <Section
+              id="guide"
+              title="Study guide"
+              lede="One exam-ready review per course, assembled from what you have already uploaded."
+            >
+              <SpecRows rows={WIKI_GUIDE_SPECS} />
+            </Section>
+
+            <Section
+              id="calendar"
+              title="Syllabus and calendar"
+              lede="The one document every course hands you, turned into a working plan. One upload shows up in three places."
+            >
+              <SpecRows rows={WIKI_CALENDAR_SPECS} />
+            </Section>
+
+            <Section
+              id="grades"
+              title="Grade scale"
+              lede="Your gradebook tracks the grade that goes on your transcript. These are the letter bands a percentage maps onto by default."
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {WIKI_LETTERS.map((l) => (
                   <span key={l.letter} style={{ display: 'flex', alignItems: 'baseline', gap: 7, padding: '7px 12px', borderRadius: 8, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)' }}>
                     <b style={{ fontSize: 13, fontWeight: 600, color: '#1a1814' }}>{l.letter}</b>
@@ -171,21 +346,58 @@ export default function WikiPage() {
                   </span>
                 ))}
               </div>
-            </section>
+              <div style={{ marginTop: 18 }}>
+                <FactList items={WIKI_GRADE_NOTES} />
+              </div>
+            </Section>
 
-            <section id="privacy">
-              <h2 style={H2}>Your data</h2>
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <Section
+              id="rooms"
+              title="Study rooms"
+              lede="A chat scoped to the people studying the same thing, next to a comparison of where you each are."
+            >
+              <SpecRows rows={WIKI_ROOM_SPECS} />
+            </Section>
+
+            <Section
+              id="class"
+              title="Class intelligence"
+              lede="The anonymised, class-wide layer. It is the least-finished thing in Sapling, so here is exactly how far it reaches."
+            >
+              <TermRows rows={WIKI_CLASS_TERMS} />
+            </Section>
+
+            <Section
+              id="onboarding"
+              title="Onboarding"
+              lede="The short path from signed in to on the tree."
+            >
+              <SpecRows rows={WIKI_ONBOARDING_SPECS} />
+            </Section>
+
+            <Section
+              id="achievements"
+              title="Achievements"
+              lede="What you earn as you go, and what it unlocks."
+            >
+              <TermRows rows={WIKI_ACHIEVEMENT_TERMS} />
+            </Section>
+
+            <Section id="privacy" title="Your data">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {WIKI_DATA_FACTS.map((d) => (
-                  <div key={d} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 3 }}>
+                  <div key={d.fact} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 4 }}>
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
-                    <span style={{ ...DEF, maxWidth: '62ch' }}>{d}</span>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      <span style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.5, color: '#1a1814', maxWidth: PROSE_MEASURE }}>{d.fact}</span>
+                      <span style={DEF}>{d.detail}</span>
+                    </span>
                   </div>
                 ))}
               </div>
-            </section>
+            </Section>
           </div>
         </div>
       </div>
