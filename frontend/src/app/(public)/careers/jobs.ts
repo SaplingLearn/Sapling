@@ -9,20 +9,28 @@ export interface Job {
   tags: string[];
 }
 
-export const JOBS: Job[] = [
-  {
-    id: 1,
-    slug: 'marketing-intern',
-    title: 'Marketing Intern',
-    department: 'Growth',
-    location: 'Hybrid',
-    type: 'Internship',
-    description:
-      "Help Sapling reach more students. You'll run social campaigns, create content, build relationships with student organizations, and help shape our brand voice from the ground up. On the video side, you'll produce and render short-form clips, professional product trailers, and feature update videos with consistent branding. Experience in marketing or advertising is preferred. Having some knowledge in software or tech is also a plus. Great fit for someone who loves learning and wants real ownership from day one.",
-    tags: ['Branding', 'Video Production', 'Content Creation', 'Social Media', 'Community', 'Business', 'Analytics', 'AI Fluency'],
-  },
-];
+/**
+ * Open roles. Empty means we are not hiring, and /careers says so rather than
+ * rendering an empty table — see the empty state in `CareersList`.
+ *
+ * Everything downstream already tolerates this: `generateStaticParams` yields
+ * no slugs, the sitemap spreads nothing, and `/careers/<anything>` hard-404s
+ * through the existing `notFound()` (#187). Adding a role back is a matter of
+ * pushing one object here.
+ */
+export const JOBS: Job[] = [];
 
+/**
+ * Department chip colours. Kept while `JOBS` is empty: the palette is per
+ * department, not per role, so a returning Growth listing should not have to
+ * re-derive it.
+ *
+ * The alphas are up from 0.07/0.18: these used to sit
+ * on the app shell's near-white `--bg`, and once /careers moved onto the
+ * companion chrome the chip tints against `#f4f1ea` paper, where a 7% amber
+ * wash was indistinguishable from the ground. The hue is unchanged — amber
+ * belongs on warm paper.
+ */
 export const DEPT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  Growth: { bg: 'rgba(217,119,6,0.07)', text: '#b45309', border: 'rgba(217,119,6,0.18)' },
+  Growth: { bg: 'rgba(217,119,6,0.12)', text: '#b45309', border: 'rgba(217,119,6,0.26)' },
 };
