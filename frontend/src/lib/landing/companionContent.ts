@@ -355,7 +355,12 @@ export const WIKI_DATA_FACTS = [
  * any. Nothing new goes in `public/gallery/`: the orphan check in
  * gallery.test.ts pins that directory to exactly the GALLERY_SHOTS slots.
  *
- * `caption` is rendered as a visible figcaption and the image carries
+ * `title` names the screen: it heads the expanded view and becomes the alt
+ * on the expanded image, which has no caption beside it. The names are
+ * GALLERY_SHOTS' verbatim, so a screen is called the same thing on both
+ * surfaces.
+ *
+ * `caption` is rendered as a visible figcaption and the thumbnail carries
  * `alt=""`, the same split the gallery uses. That is what keeps a capture
  * that has not landed yet from painting alt text and a broken-image glyph
  * across the panel.
@@ -366,27 +371,27 @@ export const WIKI_DATA_FACTS = [
  * `shot-planner` is a screenshot of a "Coming soon" panel — a reference page
  * has nothing to define about a screen that does not exist yet.
  */
-export const WIKI_SHOTS: Record<string, { slot: string; route: string; caption: string }> = {
-  graph: { slot:'shot-tree', route:'/tree',
+export const WIKI_SHOTS: Record<string, { slot: string; route: string; title: string; caption: string }> = {
+  graph: { slot:'shot-tree', route:'/tree', title:'Knowledge graph',
     caption:'The knowledge tree: concept nodes joined by edges, each ringed to show its mastery.' },
-  quizzes: { slot:'shot-quiz', route:'/quiz',
+  quizzes: { slot:'shot-quiz', route:'/quiz', title:'Adaptive quiz',
     caption:'An adaptive quiz mid-session, showing a multiple-choice question and its difficulty.' },
-  tutor: { slot:'shot-learn', route:'/learn',
+  tutor: { slot:'shot-learn', route:'/learn', title:'AI tutor',
     caption:'The tutor answering in Socratic mode, leading with a question rather than an answer.' },
-  ingestion: { slot:'shot-library', route:'/library',
+  ingestion: { slot:'shot-library', route:'/library', title:'Library',
     caption:'The document library, listing uploads beside the summary and concepts each produced.' },
-  notes: { slot:'shot-notetaker', route:'/notetaker',
+  notes: { slot:'shot-notetaker', route:'/notetaker', title:'Notetaker',
     caption:'The notetaker with a note open and its generated summary in the side rail.' },
-  flashcards: { slot:'shot-study', route:'/study',
+  flashcards: { slot:'shot-study', route:'/study', title:'Flashcard review',
     caption:'A flashcard mid-review with its three rating buttons.' },
-  guide: { slot:'shot-guide', route:'/study',
+  guide: { slot:'shot-guide', route:'/study', title:'Study guide',
     caption:'A generated study guide for one course, laid out in sections.' },
-  calendar: { slot:'shot-calendar', route:'/calendar',
+  calendar: { slot:'shot-calendar', route:'/calendar', title:'Calendar',
     caption:'The calendar, showing assignments and dates extracted from a syllabus.' },
-  grades: { slot:'shot-gradebook', route:'/gradebook',
+  grades: { slot:'shot-gradebook', route:'/gradebook', title:'Gradebook',
     caption:'A course gradebook showing weighted categories and the resulting letter grade.' },
-  rooms: { slot:'shot-social', route:'/social',
+  rooms: { slot:'shot-social', route:'/social', title:'Study rooms',
     caption:'A study room with its chat thread beside the room member list.' },
-  achievements: { slot:'shot-achievements', route:'/achievements',
+  achievements: { slot:'shot-achievements', route:'/achievements', title:'Achievements',
     caption:'The achievements screen showing earned milestones and a study streak.' },
 };

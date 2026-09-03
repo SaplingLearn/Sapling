@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
-import Image from 'next/image';
 import { CompanionShell } from '@/components/companion/CompanionShell';
+import { ZoomableShot } from '@/components/companion/ZoomableShot';
 import { WikiRail } from './WikiRail';
 import {
   WIKI_ACHIEVEMENT_TERMS, WIKI_CALENDAR_SPECS, WIKI_CLASS_TERMS, WIKI_DATA_FACTS,
@@ -71,11 +71,10 @@ function cssColor(decl: string): string {
 /**
  * The screen a section is about, when there is one.
  *
- * The tint, border and 16:10 box live on the wrapper and the image sits on
- * top, so a slot whose capture has not landed yet degrades to an empty
- * panel rather than a broken image. The figcaption names the screen and the
- * image takes `alt=""` — the split the gallery uses, and the reason a
- * missing capture leaves no alt text stranded across the panel.
+ * `ZoomableShot` is the panel — the tinted box, the thumbnail, the route
+ * badge and the click-to-expand. The figure and caption stay here, so this
+ * page's inline figure and /gallery's grid card can lay out differently
+ * while behaving identically.
  *
  * Capped well under the column: this is a reference page that shows you the
  * screen, not a gallery.
@@ -85,14 +84,19 @@ function Shot({ section }: { section: string }) {
   if (!shot) return null;
   return (
     <figure style={{ margin: '18px 0 0', maxWidth: 560, display: 'flex', flexDirection: 'column', gap: 9 }}>
-      <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', borderRadius: 12, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)', boxShadow: '0 10px 28px -18px rgba(26,24,20,0.45)' }}>
-        {/* Captured at 1440x900 — the same 16:10 as this box, so it fills
-            without cropping. */}
-        <Image src={`/gallery/${shot.slot}.png`} alt="" fill sizes="(max-width: 900px) 100vw, 560px" style={{ objectFit: 'cover' }} />
-        <span style={{ position: 'absolute', left: 10, top: 10, padding: '4px 9px', borderRadius: 6, background: 'rgba(250,248,243,0.9)', fontFamily: MONO, fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#3f3b31' }}>
-          {shot.route}
-        </span>
-      </div>
+      {/* Captured at 1440x900 — the same 16:10 as the panel, so it fills
+          without cropping. The panel is a client component because the page
+          is not: drawing the boundary around the one element that needs
+          state keeps `metadata` exportable here. */}
+      <ZoomableShot
+        src={`/gallery/${shot.slot}.png`}
+        alt={`The ${shot.title} screen in Sapling`}
+        title={shot.title}
+        caption={shot.caption}
+        route={shot.route}
+        sizes="(max-width: 900px) 100vw, 560px"
+        radius={12}
+      />
       <figcaption style={{ fontFamily: SERIF, fontSize: 13.5, lineHeight: 1.55, color: '#6f6857' }}>
         {shot.caption}
       </figcaption>
