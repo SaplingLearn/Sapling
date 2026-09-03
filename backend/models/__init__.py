@@ -1,5 +1,5 @@
 from typing import Optional, Union, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
@@ -60,6 +60,21 @@ class GenerateQuizBody(BaseModel):
     # through to whatever SAPLING_MODEL_QUIZ resolves to (default
     # gemini-2.5-flash-lite per ADR 0008).
     model_pref: Optional[Literal["fast", "smart"]] = None
+    # G5 (#537): "practise the ones you missed" — the attempt whose missed
+    # questions should be RE-SERVED verbatim instead of regenerated. The
+    # server derives which items those were from that attempt's own
+    # `quiz_responses` rows, so the client only has to name the attempt.
+    source_attempt_id: Optional[str] = None
+    # Optional override for that derivation: the identities
+    # (`services/quiz_identity.py::question_hash`) to re-serve. Hashes are
+    # internal — the client projection strips them — so nothing sends this
+    # today; it exists for a caller that has already decided which items it
+    # wants back. Validated against the source attempt (anything that
+    # attempt never held is simply not recoverable), and capped at one
+    # quiz's worth, which is the most an attempt can hold.
+    missed_question_hashes: Optional[list[str]] = Field(
+        default=None, max_length=QUIZ_MAX_QUESTIONS,
+    )
     # DEPRECATED (#541 C3; default flipped false #546 — 2026-08-23).
     #
     # THE canonical account of this flag's lifecycle: every other site that
@@ -82,6 +97,22 @@ class GenerateQuizBody(BaseModel):
     # routes/quiz.py::_record_answer_key_flag for why the two populations get
     # separate event types.
     include_answer_key: bool = False
+
+    @model_validator(mode="after")
+    def _hashes_need_a_source(self) -> "GenerateQuizBody":
+        """Hashes without a source attempt are a request that cannot mean
+        anything: identities are only ever resolved against the named
+        attempt's own stored questions, so with no attempt there is nothing
+        to resolve them against and every hash would be silently ignored.
+
+        Rejecting says so. Accepting-and-ignoring is how a caller ends up
+        debugging why its carefully chosen items were regenerated."""
+        if self.missed_question_hashes and not self.source_attempt_id:
+            raise ValueError(
+                "missed_question_hashes needs a source_attempt_id — hashes are "
+                "resolved against that attempt's own questions."
+            )
+        return self
 
 
 class AnswerQuestionBody(BaseModel):

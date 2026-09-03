@@ -542,3 +542,81 @@ def test_a_past_exam_leaves_the_column_null(authed_client, db_conn):
     """
     quiz_id = _generate(authed_client).json()["quiz_id"]
     assert _attempt_row(db_conn, quiz_id, "exam_days_away")["exam_days_away"] is None
+
+
+# ── G5: practise the ones you missed ────────────────────────────────────────
+
+
+def _sat_and_missed(authed_client):
+    """Generate, answer every question B, submit. Returns the attempt id.
+
+    The seam's key is B, C, A — so B throughout gets Q1 right and misses Q2
+    and Q3, which is the state "practise the ones you missed" starts from.
+    """
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+    for index in range(3):
+        a = authed_client.post(
+            f"/api/quiz/attempts/{quiz_id}/answer",
+            json={"question_index": index, "selected_index": 1},
+        )
+        assert a.status_code == 200, a.text
+    s = authed_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
+    assert s.status_code == 200, s.text
+    assert s.json()["score"] == 1, "the seam's answer key moved; this setup assumes B, C, A"
+    return quiz_id
+
+
+def _stored_questions(db_conn, quiz_id):
+    from services.encryption import decrypt_json_column
+
+    row = _attempt_row(db_conn, quiz_id, "questions_json")
+    return decrypt_json_column(row["questions_json"])
+
+
+def test_practising_the_missed_questions_re_serves_them_verbatim(
+    authed_client, db_conn
+):
+    """G5 over HTTP with real rows.
+
+    The mocked lane cannot prove the derivation — it hands the route exactly
+    the response rows it wants to see. Here `is_correct` was written into
+    Postgres by the /answer route and read back by the query under test, so
+    "which ones did they miss" is answered by the system, not by a fixture.
+    """
+    source_id = _sat_and_missed(authed_client)
+    source = _stored_questions(db_conn, source_id)
+    missed = source[1:]
+
+    r = _generate(authed_client, num_questions=2, source_attempt_id=source_id)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"] == {
+        "attempt_id": source_id,
+        "reserved_count": 2,
+        "regenerated_count": 0,
+    }
+    assert [q["question"] for q in body["questions"]] == [q["question"] for q in missed]
+
+    stored = _stored_questions(db_conn, body["quiz_id"])
+    # E5 identity survives the copy — the same items, asked again — while the
+    # ids are renumbered, because an id is a position inside one attempt.
+    assert [q["question_hash"] for q in stored] == [q["question_hash"] for q in missed]
+    assert [q["id"] for q in stored] == [1, 2]
+    assert all(q["provenance"]["reserved_from"] == source_id for q in stored)
+
+
+def test_a_longer_practice_quiz_tops_up_with_generated_questions(
+    authed_client, db_conn
+):
+    """Two recoverable misses, three asked for: the remainder comes from the
+    ordinary generation path, and the response says how the quiz was split."""
+    source_id = _sat_and_missed(authed_client)
+
+    r = _generate(authed_client, num_questions=3, source_attempt_id=source_id)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"]["reserved_count"] == 2
+    assert body["source"]["regenerated_count"] >= 1
+    assert body["delivered_count"] == len(body["questions"])
+    stems = [q["question"] for q in body["questions"]]
+    assert len(set(stems)) == len(stems), "a re-served item was also regenerated"

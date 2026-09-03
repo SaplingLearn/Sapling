@@ -47,12 +47,20 @@ export const fetchQuizConfig = (): Promise<QuizConfig> =>
  *
  * `use_shared_context` and `model_pref` are left at their server defaults —
  * the redesign has no surface for either.
+ *
+ * `sourceAttemptId` is the client half of G5, "practise the ones you missed":
+ * name the attempt and the server re-serves the items that were actually
+ * missed, verbatim, generating only what it cannot recover. We deliberately
+ * do NOT send question hashes — they are internal and stripped from every
+ * response — so the server derives the misses from that attempt's own
+ * recorded answers. The response's `source` block says what it did.
  */
 export const generateQuiz = (p: {
   userId: string;
   conceptNodeId: string;
   numQuestions: number;
   difficulty: string;
+  sourceAttemptId?: string | null;
 }): Promise<GenerateResult> =>
   fetchJSON<GenerateResult>("/api/quiz/generate", {
     method: "POST",
@@ -62,6 +70,9 @@ export const generateQuiz = (p: {
       num_questions: p.numQuestions,
       difficulty: p.difficulty,
       include_answer_key: false,
+      // Omitted rather than sent as null: every other generate is an ordinary
+      // one, and the route's response only carries `source` when asked.
+      ...(p.sourceAttemptId ? { source_attempt_id: p.sourceAttemptId } : {}),
     }),
   });
 

@@ -157,6 +157,8 @@ function session(over: Partial<QuizSession> = {}): QuizSession {
     result: null,
     xp: null,
     deliveredShort: false,
+    sourceAttemptId: null,
+    reserved: null,
     ...over,
   };
 }

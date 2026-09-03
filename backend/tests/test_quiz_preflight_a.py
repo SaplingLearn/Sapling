@@ -308,6 +308,25 @@ class TestQuizErrorEnvelope:
         assert r.status_code == 404
         assert "error" not in r.json()
 
+    def test_a_cross_field_rule_still_comes_out_as_an_envelope(self):
+        """A model_validator raising ValueError puts the EXCEPTION OBJECT in
+        the error's `ctx`, which json.dumps cannot serialize — so handing
+        Pydantic's raw errors to JSONResponse turned any such 422 into a 500,
+        i.e. the envelope failing exactly when a route adds the kind of
+        cross-field rule it exists to report. `missed_question_hashes` without
+        a `source_attempt_id` (G5) is the first such rule."""
+        r = _generate({
+            "difficulty": "medium",
+            "missed_question_hashes": ["0123456789abcdef"],
+        })
+        body = _assert_envelope(r, 422, "QUIZ_VALIDATION_ERROR")
+        assert isinstance(body["detail"], list)
+        # The reason survives encoding — the client gets a machine detail it
+        # can actually read, not a stringified exception class.
+        assert any(
+            "source_attempt_id" in str(e.get("msg", "")) for e in body["detail"]
+        ), body["detail"]
+
     def test_type_error_on_num_questions_is_not_the_count_code(self):
         """A non-numeric num_questions fails int parsing, not the bounds —
         labelling it QUIZ_COUNT_OUT_OF_RANGE would send a clamping client
