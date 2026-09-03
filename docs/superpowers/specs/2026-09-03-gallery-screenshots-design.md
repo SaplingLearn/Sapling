@@ -34,8 +34,8 @@ is already deterministic, and deliberately does not rebuild any of it.
 
 - **A booted, seeded, deterministic stack.** `make e2e-up` owns the contract:
   Supabase → migrate → seed → uvicorn on :5000 → test-profile Next build on
-  :3000. `scripts/e2e-up.sh` already honours `SEED_RICH=0` to skip the rich
-  seed, which is the hook a showcase seed substitutes into.
+  :3000. The rich seed it runs (`SEED_RICH`, default 1) is the base the
+  showcase overlay is applied on top of.
 - **A frozen world.** The test-profile build bakes `NEXT_PUBLIC_TEST_MODE=1`:
   seeded PRNG and a clock frozen at 2026-03-11T12:00:00Z, with `timezoneId`
   pinned to America/New_York in `playwright.config.ts`. Re-running the capture
@@ -65,19 +65,32 @@ gradient descent — fine for assertions, unusable in a marketing gallery. Two
 pieces fix it, and both are needed: the seed covers what the database holds,
 the handlers cover what the model would have written.
 
-**`backend/db/seed_showcase.py`** — a sibling of `seed_local_rich.py`.
-Local-only, idempotent, `show-*` ids. Owns the text that reaches a screenshot
-through the database: course and concept names, documents, notes, room
-messages, assignments, scores, streaks. Fixes `/library`, `/gradebook`,
-`/calendar`, `/social`, `/achievements`, `/tree`.
+**`backend/db/seed_showcase.py`** — an **overlay** on `seed_local_rich`, not a
+sibling of it. This narrowed during implementation, and the narrowing is the
+interesting part.
 
-**It must also create the user the capture signs in as.** `SEED_RICH=0` skips
-the rich seed, and the comment at `scripts/e2e-up.sh:228` says why that
-matters: `/api/auth/test-login` needs seeded users to sign in as. Skipping the
-rich seed removes the `rich-*` users the harness normally uses, so
-`seed_showcase` owns a `show-user-*` with a display name worth photographing —
-the dashboard greeting and every avatar render it. `mintStorageState` already
-takes an arbitrary user id, so no harness change is needed.
+The design assumed a parallel dataset. Reading the rich seed showed that its
+substance is already photogenic: CS101 / MATH210 / BIO110 with real concept
+names (Recursion, Eigenvalues, DNA Replication), mastery deliberately spread
+across all four tiers, notes called "Week 1 — Variables", documents called
+"cs101-syllabus.pdf". A parallel 875-line seed would have duplicated all of
+that to change the few strings that actually give the game away — and then both
+copies would have to track every schema change forever.
+
+What actually reads as test data is narrow, and it is all this file touches:
+
+  - Display names. "Rich Active", "Sam Second", "Ada Admin" render in the
+    dashboard greeting, every avatar, room member lists and the leaderboard.
+  - The lounge room's name ("Rich Local Lounge") and the denormalised
+    `room_messages.user_name`, which is a plain copy taken at write time — so
+    renaming a profile alone leaves the old name on every message.
+  - The one message body that greets people by the old room name.
+
+Roughly 150 lines instead of 875, and `SEED_RICH` stays **1**. That resolves a
+hazard the original design created for itself: `scripts/e2e-up.sh:228` notes
+that `/api/auth/test-login` needs the seeded `rich-*` users, so `SEED_RICH=0`
+would have removed the very users the capture signs in as, and the new seed
+would have had to re-create them. Overlaying keeps them.
 
 **`backend/agents/function_handlers_showcase.py`** — selected with
 `SAPLING_FUNCTION_HANDLERS=agents.function_handlers_showcase`. Owns the text
@@ -213,8 +226,9 @@ failing loudly and early.
 make gallery-shots
   └─ scripts/gallery-shots.sh
        ├─ flock /tmp/claude-<uid>/sapling-e2e-stack.lock   (whole cycle, one invocation)
-       ├─ SEED_RICH=0 SAPLING_MODEL_MODE=function \
+       ├─ SAPLING_MODEL_MODE=function \
        │  SAPLING_FUNCTION_HANDLERS=agents.function_handlers_showcase  make e2e-up
+       │  (SEED_RICH stays 1 — the overlay needs the rich seed under it)
        ├─ (cd backend && venv/bin/python -m db.seed_showcase)
        ├─ (cd frontend && GALLERY_SHOTS_DIR=public/gallery \
        │     npx playwright test gallery-shots.spec.ts)
@@ -238,9 +252,10 @@ hypothetical.
 - **The stack is not up.** `global-setup.ts` already health-checks and fails
   with "run `make e2e-up`". `scripts/gallery-shots.sh` boots it, so this is the
   path for someone running the spec by hand.
-- **The showcase user is missing.** Sign-in fails at the first shot with
-  test-login's own error. This is the failure `SEED_RICH=0` invites, and the
-  reason the seed owns its user.
+- **The overlay ran without the rich seed under it.** Every UPDATE matches
+  zero rows and the capture photographs an empty product. `SEED_RICH=1` is
+  what prevents it, which is why `scripts/gallery-shots.sh` does not set it to
+  0 and says so in a comment.
 - **A bad `SAPLING_FUNCTION_HANDLERS` module path** raises ImportError at every
   dispatch by design (`_load_env_handlers_module`), so a typo fails the run
   rather than silently serving E2E copy.
@@ -265,6 +280,14 @@ hypothetical.
   (photographs `[e2e-function-model]`) and "real Gemini" (costs calls, and
   output changes every run, so re-capture yields different screenshots — the
   determinism this whole design is built on).
+- **The seed is an overlay, not a second dataset** — see above. Decided during
+  implementation, against this document's original text.
+- **A parallel handler module, despite `function_handlers_e2e.py` saying new
+  tasks should be appended there.** That guidance is right for journeys; this
+  is not one. Those constants are asserted verbatim by Chapter 1 specs and by
+  `tests/test_e2e_function_handlers.py`, so they cannot be rewritten to read
+  well in a screenshot. The two modules want opposite things from one seam:
+  strings a test can pin, versus prose a person can read.
 - **Recipes in the spec, not the content table.** Keeps Playwright out of the
   browser bundle.
 - **Committed PNGs.** Build-time generation is impossible without a stack.
