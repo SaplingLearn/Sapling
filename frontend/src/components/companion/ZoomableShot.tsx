@@ -93,15 +93,22 @@ export function ZoomableShot({
         )}
       </button>
 
-      <Lightbox
-        open={open}
-        onClose={() => setOpen(false)}
-        src={src}
-        alt={alt}
-        title={title}
-        caption={caption}
-        eyebrow={route}
-      />
+      {/* Mounted only while open. Lightbox calls onClose at the END of its exit
+          animation, so unmounting here does not cut the exit off — and a fresh
+          instance per open means its exit state cannot survive into the next
+          one. Keeping it permanently mounted is what made a reopened shot
+          close itself after ~180ms. */}
+      {open && (
+        <Lightbox
+          open
+          onClose={() => setOpen(false)}
+          src={src}
+          alt={alt}
+          title={title}
+          caption={caption}
+          eyebrow={route}
+        />
+      )}
     </>
   );
 }

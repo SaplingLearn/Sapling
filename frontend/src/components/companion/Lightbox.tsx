@@ -65,10 +65,14 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
   // MUST match the .cp-lightbox-panel--closing duration in globals.css. A few
   // ms of slack so the last frame paints before the node goes.
   useEffect(() => {
-    if (!closing) return;
+    // `open` as well as `closing`: a closed instance must never hold a pending
+    // close. Callers are expected to mount this only while open (see
+    // ZoomableShot) so the exit state cannot leak between opens — this guard
+    // is the belt to that braces.
+    if (!open || !closing) return;
     const t = setTimeout(onClose, EXIT_MS);
     return () => clearTimeout(t);
-  }, [closing, onClose]);
+  }, [open, closing, onClose]);
 
   // `visible` is deliberately unused: the entrance is a CSS keyframe on
   // insertion, not a transition driven by that flag. See .cp-lightbox in
