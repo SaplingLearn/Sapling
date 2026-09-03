@@ -39,7 +39,10 @@ export interface LightboxProps {
 }
 
 export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: LightboxProps) {
-  const { mounted, visible, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose });
+  // `visible` is deliberately unused: the entrance is a CSS keyframe on
+  // insertion, not a transition driven by that flag. See .cp-lightbox in
+  // globals.css for why.
+  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose });
 
   if (!mounted || !open) return null;
 
@@ -53,6 +56,7 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
         if (e.target === e.currentTarget) onClose();
       }}
       onKeyDown={onKeyDown}
+      className="cp-lightbox"
       style={{
         position: 'fixed',
         inset: 0,
@@ -61,12 +65,9 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
         alignItems: 'center',
         justifyContent: 'center',
         padding: 'clamp(16px, 4vw, 48px)',
-        background: visible ? 'rgba(26,24,20,0.62)' : 'rgba(26,24,20,0)',
-        backdropFilter: visible ? 'blur(6px)' : 'blur(0px)',
-        WebkitBackdropFilter: visible ? 'blur(6px)' : 'blur(0px)',
-        // The global prefers-reduced-motion reset in globals.css zeroes these,
-        // so there is no media query here on purpose.
-        transition: 'background 220ms ease, backdrop-filter 220ms ease',
+        background: 'rgba(26,24,20,0.62)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
       }}
     >
       <div
@@ -75,6 +76,7 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
+        className="cp-lightbox-panel"
         style={{
           position: 'relative',
           width: 'min(1200px, 100%)',
@@ -83,9 +85,6 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
           flexDirection: 'column',
           gap: 14,
           outline: 'none',
-          opacity: visible ? 1 : 0,
-          transform: visible ? 'scale(1)' : 'scale(0.965)',
-          transition: 'opacity 220ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1)',
         }}
       >
         <div

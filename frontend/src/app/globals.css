@@ -2512,6 +2512,20 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 .cp-shot:active { transform: translateY(-1px); transition-duration: 90ms; }
 .cp-shot:focus-visible { outline: 2px solid #1B6C42; outline-offset: 3px; }
 
+/* Lightbox entrance (#601 follow-up). Keyframes rather than a transition on a
+   state flip: the panel only mounts once the overlay hook has set `mounted`,
+   so the node can be inserted already at its final opacity in the same frame
+   the flag flips — nothing to transition FROM, and the open reads as a pop.
+   An animation runs on insertion and cannot lose that race. The app-wide
+   prefers-reduced-motion reset zeroes animation-duration, so no media query. */
+@keyframes cpLightboxIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cpLightboxPanelIn {
+  from { opacity: 0; transform: scale(0.965) translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.cp-lightbox { animation: cpLightboxIn 200ms ease both; }
+.cp-lightbox-panel { animation: cpLightboxPanelIn 280ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
 .cp-lightbox-close { transition: background 180ms, border-color 180ms; }
 .cp-lightbox-close:hover { background: rgba(26,24,20,0.78); border-color: rgba(250,248,243,0.45); }
 .cp-lightbox-close:focus-visible { outline: 2px solid #faf8f3; outline-offset: 2px; }
