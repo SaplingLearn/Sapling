@@ -2510,6 +2510,10 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 .cp-shot:hover { border-color: rgba(42,39,31,0.26); box-shadow: 0 16px 36px -18px rgba(26,24,20,0.6); }
 .cp-shot:hover img { transform: scale(1.03); }
 .cp-shot:focus-visible { outline: 2px solid #1B6C42; outline-offset: 3px; }
+
+.cp-lightbox-close { transition: background 180ms, border-color 180ms; }
+.cp-lightbox-close:hover { background: rgba(26,24,20,0.78); border-color: rgba(250,248,243,0.45); }
+.cp-lightbox-close:focus-visible { outline: 2px solid #faf8f3; outline-offset: 2px; }
 @keyframes nodeDrift { 0%,100% { transform:translate(0,0); } 50% { transform:translate(10px,-13px); } }
 
 /* Beta modal — recovered from the previous landing page. */

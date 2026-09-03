@@ -120,29 +120,39 @@ export function Lightbox({ open, onClose, src, alt, title, caption, eyebrow }: L
 
         {/* Click-out is not discoverable, and is unavailable to keyboard and
             most touch users. Escape is handled by the hook; this is the
-            visible affordance. */}
+            visible affordance.
+
+            Inset INSIDE the image rather than hung off the panel corner: at a
+            6px overhang most of the button sat on the rounded corner, cutting
+            the radius and reading as neither in nor out. A stroked glyph
+            rather than the × character, which sits optically high in its line
+            box and renders thin next to a screenshot. */}
         <button
           type="button"
           onClick={onClose}
           aria-label="Close"
+          className="cp-lightbox-close"
           style={{
             position: 'absolute',
-            top: -6,
-            right: -6,
-            width: 34,
-            height: 34,
+            top: 12,
+            right: 12,
+            width: 32,
+            height: 32,
             display: 'grid',
             placeItems: 'center',
             borderRadius: '50%',
-            border: '1px solid rgba(250,248,243,0.25)',
-            background: 'rgba(26,24,20,0.72)',
+            border: '1px solid rgba(250,248,243,0.22)',
+            background: 'rgba(26,24,20,0.55)',
+            backdropFilter: 'blur(6px)',
+            WebkitBackdropFilter: 'blur(6px)',
             color: '#faf8f3',
-            fontSize: 16,
-            lineHeight: 1,
             cursor: 'pointer',
+            padding: 0,
           }}
         >
-          ×
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+            <path d="M5 5 19 19M19 5 5 19" />
+          </svg>
         </button>
       </div>
     </div>,
