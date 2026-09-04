@@ -1,5 +1,31 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { CompanionShell } from "@/components/companion/CompanionShell";
+import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/companionType";
+
+/**
+ * Terms of Service.
+ *
+ * On the shared companion chrome, which supplies the header, the footer and
+ * the page box. What is left here is the document.
+ *
+ * The layout is the interesting half. The box is 1116px wide and this page
+ * used to set 15px prose in an 880px box of its own; dropped in as-is the
+ * line ran past 145 characters. Capping the prose instead — a narrow column
+ * pinned inside a frame everything else fills — is the failure /about
+ * shipped: the h1 and the rules run the full width while every paragraph
+ * hugs the left, and the page reads as broken rather than as narrow.
+ *
+ * So the document is built as columns rather than capped inside one, the way
+ * /wiki was (#604). Each clause is a row: its heading in a fixed column, its
+ * text in the rest. That leaves the prose 812px, and the type comes up to meet
+ * it: 21px Spectral, measured in a browser at 1440px off real line boxes,
+ * reads at a median 88 characters a line, range 80-91. Nothing is capped, so
+ * the row rules, the masthead and every clause share one right edge.
+ *
+ * /privacy is the same document in the same shape. The constants below are
+ * duplicated there on purpose and the two are meant to move together — they
+ * are the pair a reader compares side by side.
+ */
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -8,13 +34,55 @@ export const metadata: Metadata = {
   alternates: { canonical: "/terms" },
 };
 
-const FOOTER_LINKS = [
-  { label: "Home", href: "/" },
-  { label: "About", href: "/about" },
-  { label: "Careers", href: "/careers" },
-  { label: "Terms of Service", href: "/terms" },
-  { label: "Privacy Policy", href: "/privacy" },
-];
+const RULE = "1px solid rgba(42,39,31,0.08)";
+/** Sized off the longest clause title ("6. Study Rooms and Social Features"). */
+const TITLE_COL = 220;
+const COL_GAP = 32;
+
+/**
+ * A clause row.
+ *
+ * Wrapping flex rather than a grid so the two columns collapse to one on a
+ * narrow screen: inline styles cannot carry a media query and these pages
+ * have no stylesheet of their own. The text cell's 460px basis is what
+ * triggers it — below ~764px of content width there is no room for both.
+ */
+const ROW: React.CSSProperties = {
+  display: "flex", flexWrap: "wrap", alignItems: "flex-start",
+  gap: COL_GAP, padding: "22px 0", borderTop: RULE,
+};
+/**
+ * Both cells grow, but the text cell grows a thousand times harder. Side by
+ * side that is invisible — the heading takes 264.35px of the 1116 rather than
+ * 264 — and once the row wraps it is the whole point: each cell is alone on
+ * its line and stretches to fill it, so the stacked heading keeps the same
+ * right edge as the text under it instead of stopping 60px short.
+ */
+const TITLE_CELL: React.CSSProperties = { flex: `1 1 ${TITLE_COL}px`, maxWidth: "100%", minWidth: 0 };
+const TEXT_CELL: React.CSSProperties = { flex: "999 1 330px", minWidth: 0 };
+
+const H2: React.CSSProperties = {
+  margin: 0, fontSize: 14.5, fontWeight: 600, lineHeight: 1.45,
+  letterSpacing: "-0.01em", color: INK,
+};
+const PROSE: React.CSSProperties = {
+  margin: 0, fontFamily: SERIF, fontSize: 16, lineHeight: 1.62, color: BODY,
+};
+const LIST: React.CSSProperties = {
+  margin: "14px 0 0", padding: 0, listStyle: "none",
+  display: "flex", flexDirection: "column", gap: 10,
+};
+const ITEM: React.CSSProperties = { ...PROSE, display: "flex", gap: 12 };
+const BULLET: React.CSSProperties = { color: MUTED, flex: "0 0 auto" };
+const META: React.CSSProperties = {
+  display: "block", fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.04em", color: MUTED,
+};
+const LINK: React.CSSProperties = { color: ACCENT };
+
+/** Rows fade in down the page; the cap keeps the last clause from waiting. */
+function enter(i: number): React.CSSProperties {
+  return { animation: "fadeUp 700ms ease both", animationDelay: `${Math.min(120 + i * 40, 640)}ms` };
+}
 
 const sections = [
   {
@@ -76,202 +144,79 @@ const sections = [
 
 export default function TermsPage() {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--bg)",
-        color: "var(--text)",
-      }}
-    >
-      <header
-        style={{
-          borderBottom: "1px solid var(--border)",
-          background: "var(--bg-topbar)",
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1280,
-            margin: "0 auto",
-            padding: "0 24px",
-            height: 52,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <Link
-            href="/"
-            style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+    <CompanionShell current="/terms">
+      <div>
+        {/* No rule of its own: the first clause row below carries a
+            `borderTop`, so a masthead border drew a second line 48px above
+            it — two hairlines stacked between the title and the date. The
+            row rule is the structural one (every clause has one), so the
+            masthead defers to it and only keeps the space. */}
+        <header style={{ paddingBottom: 30 }}>
+          <span
+            style={{
+              display: "block", fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em",
+              textTransform: "uppercase", color: MUTED, animation: "fadeUp 600ms ease both",
+            }}
           >
-            <img
-              src="/sapling-icon.svg"
-              alt="Sapling"
-              style={{ width: 26, height: 26, flexShrink: 0, position: "relative", top: -2 }}
-            />
-            <span
-              style={{
-                fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-                fontWeight: 700,
-                fontSize: 20,
-                color: "var(--brand-forest)",
-                letterSpacing: "-0.02em",
-                lineHeight: 1.1,
-              }}
-            >
-              Sapling
-            </span>
-          </Link>
-          <Link
-            href="/"
-            style={{ fontSize: 13, color: "var(--text-muted)", textDecoration: "none" }}
+            Legal
+          </span>
+          <h1
+            style={{
+              margin: "14px 0 0", fontFamily: DISPLAY, fontWeight: 500, fontSize: 34,
+              lineHeight: 1.15, letterSpacing: "-0.015em", color: INK,
+              animation: "fadeUp 700ms ease 60ms both",
+            }}
           >
-            ← Back to home
-          </Link>
-        </div>
-      </header>
+            Terms of Service
+          </h1>
+        </header>
 
-      <div
-        style={{
-          flex: 1,
-          width: "100%",
-          maxWidth: 880,
-          margin: "0 auto",
-          padding: "64px 32px",
-        }}
-      >
-        <h1
-          className="h-serif fade-up anim-d1"
-          style={{ fontSize: 44, marginBottom: 8, color: "var(--text)" }}
-        >
-          Terms of Service
-        </h1>
-        <p
-          className="fade-up anim-d2"
-          style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 40 }}
-        >
-          Last updated: May 3, 2026
-        </p>
-
-        <p
-          className="body-serif fade-up anim-d3"
-          style={{ fontSize: 16, color: "var(--text-dim)", marginBottom: 40 }}
-        >
-          By accessing or using Sapling (&ldquo;the Service&rdquo;), you agree to be bound by these
-          Terms of Service. If you do not agree, please do not use the Service.
-        </p>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-          {sections.map((section, i) => (
-            <div
-              key={section.title}
-              className="fade-up"
-              style={{ animationDelay: `${Math.min(320 + i * 40, 640)}ms` }}
-            >
-              <h2
-                style={{
-                  fontFamily: "var(--font-sans)",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: "var(--text)",
-                  marginBottom: 8,
-                  letterSpacing: "-0.005em",
-                }}
-              >
-                {section.title}
-              </h2>
-              <p
-                className="body-serif"
-                style={{ fontSize: 15, color: "var(--text-dim)" }}
-              >
-                {section.body}
-                {section.link && (
-                  <a
-                    href={section.link.href}
-                    style={{ color: "var(--accent)", textDecoration: "none" }}
-                  >
-                    {section.link.label}
-                  </a>
-                )}
+        <div>
+          {/* The date is metadata about the document, so it takes the heading
+              column and the preamble takes the text column. That puts the
+              opening paragraph on the same measure and the same left edge as
+              every clause under it, instead of running the full width alone. */}
+          <div style={{ ...ROW, ...enter(0) }}>
+            <div style={TITLE_CELL}>
+              <span style={META}>Last updated: May 3, 2026</span>
+            </div>
+            <div style={TEXT_CELL}>
+              <p style={PROSE}>
+                By accessing or using Sapling (&ldquo;the Service&rdquo;), you agree to be bound by these
+                Terms of Service. If you do not agree, please do not use the Service.
               </p>
-              {section.list && (
-                <ul
-                  style={{
-                    marginTop: 12,
-                    paddingLeft: 16,
-                    listStyle: "none",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                  }}
-                >
-                  {section.list.map((item, i) => (
-                    <li
-                      key={i}
-                      className="body-serif"
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        fontSize: 15,
-                        color: "var(--text-dim)",
-                      }}
-                    >
-                      <span style={{ color: "var(--text-muted)", marginTop: 2 }}>•</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            </div>
+          </div>
+
+          {sections.map((section, i) => (
+            <div key={section.title} style={{ ...ROW, ...enter(i + 1) }}>
+              <div style={TITLE_CELL}>
+                <h2 style={H2}>{section.title}</h2>
+              </div>
+              <div style={TEXT_CELL}>
+                <p style={PROSE}>
+                  {section.body}
+                  {section.link && (
+                    <a href={section.link.href} style={LINK}>
+                      {section.link.label}
+                    </a>
+                  )}
+                </p>
+                {section.list && (
+                  <ul style={LIST}>
+                    {section.list.map((item) => (
+                      <li key={item} style={ITEM}>
+                        <span style={BULLET}>&bull;</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           ))}
         </div>
-
       </div>
-
-      <footer
-        style={{
-          borderTop: "1px solid var(--border)",
-          background: "var(--bg-subtle)",
-          padding: "48px 32px",
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1280,
-            margin: "0 auto",
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 24,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
-            <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Sapling · © 2026</span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
-            {FOOTER_LINKS.map(({ label, href }) => (
-              <Link
-                key={label}
-                href={href}
-                style={{
-                  fontSize: 14,
-                  color: "var(--text-muted)",
-                  textDecoration: "none",
-                }}
-              >
-                {label}
-              </Link>
-            ))}
-          </div>
-        </div>
-      </footer>
-    </div>
+    </CompanionShell>
   );
 }

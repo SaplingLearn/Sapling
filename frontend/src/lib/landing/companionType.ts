@@ -43,15 +43,45 @@ export const ACCENT = '#2D8F5C';
  */
 export const PROSE_MEASURE = '80ch';
 
-/** The page box: outer border-box, its side padding, and the content inside. */
-export const PAGE_MAX = 1180;
+/**
+ * The page box: outer border-box, its side padding, and the content inside.
+ *
+ * 960 rather than the 1180 this started at, and up from a first pass at 860.
+ * The three are not interchangeable, and the number that governs is not the
+ * box — it is the measure. Spectral at 18px runs about 9.3px per character,
+ * so 1116px of content is ~120 characters (which is why 1180 forced 26px type
+ * on the reading pages) and even 896px is ~97.
+ *
+ * What makes 960 work where 1180 did not is that no page spends the full
+ * width on running prose. Every reading page opens its rows with a key column
+ * — /wiki's rail, the clause titles on /terms and /privacy, the section spine
+ * on /about — so the text column lands near 650px and measures in the 70s
+ * while the page, its rules and its footer all fill 896. The grids need no
+ * help: each is `auto-fit`/`auto-fill` and simply takes another column.
+ *
+ * There is deliberately ONE of these. A brief two-tier version of this file
+ * gave the prose pages their own narrower box, and the result was the drift
+ * `CompanionShell` exists to prevent: the content edge jumped as you moved
+ * between /about and /team.
+ */
+export const PAGE_MAX = 960;
 export const PAGE_PAD = 32;
 export const PAGE_CONTENT = PAGE_MAX - PAGE_PAD * 2;
 
+
+/**
+ * The essay ramp, measured against `PAGE_CONTENT` (796px).
+ *
+ * It used to be measured against `PAGE_CONTENT` (1116px), which forced a 26px
+ * body to keep the line under 90 characters — correct for that box, but the
+ * pages read as oversized. The box narrowed instead, so the type could come
+ * down to something document-sized: 18px over 796px is ~88 characters, the
+ * same measure at a size that no longer shouts.
+ */
 export const ARTICLE = {
   eyebrow: {
     fontFamily: MONO,
-    fontSize: 13,
+    fontSize: 11,
     letterSpacing: '0.14em',
     textTransform: 'uppercase',
     color: MUTED,
@@ -59,29 +89,29 @@ export const ARTICLE = {
   title: {
     fontFamily: DISPLAY,
     fontWeight: 500,
-    fontSize: 'clamp(2.5rem,5vw,4.2rem)',
-    lineHeight: 1.08,
+    fontSize: 'clamp(1.9rem,4vw,2.9rem)',
+    lineHeight: 1.12,
     letterSpacing: '-0.02em',
     color: INK,
   },
   deck: {
     fontFamily: SERIF,
     fontStyle: 'italic',
-    fontSize: 29,
-    lineHeight: 1.45,
+    fontSize: 20,
+    lineHeight: 1.5,
     color: '#57503f',
   },
   heading: {
     fontFamily: DISPLAY,
     fontWeight: 500,
-    fontSize: 40,
-    lineHeight: 1.18,
+    fontSize: 27,
+    lineHeight: 1.22,
     letterSpacing: '-0.015em',
     color: INK,
   },
   body: {
     fontFamily: SERIF,
-    fontSize: 26,
+    fontSize: 18,
     lineHeight: 1.62,
     color: BODY,
   },

@@ -20,6 +20,10 @@ export const metadata: Metadata = {
   title: 'Meet the team',
   description:
     'A small team out of Boston University who got tired of study tools that did not know what they were studying.',
+  // Unlisted while the portrait frames are empty. The page is still served at
+  // /team; it is just not linked from either footer and not indexed. Remove
+  // this block and restore the two nav entries to publish it again.
+  robots: { index: false, follow: false },
 };
 
 const EYEBROW: React.CSSProperties = {

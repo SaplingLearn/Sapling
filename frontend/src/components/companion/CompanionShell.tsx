@@ -29,11 +29,27 @@ const SANS = "'DM Sans',system-ui,sans-serif";
  */
 export const COMPANION_NAV = [
   { label: 'About', href: '/about' },
-  { label: 'Team', href: '/team' },
+  // Team is deliberately absent, not forgotten: the page ships with five empty
+  // portrait frames and is unlinked and noindexed until there are photographs
+  // to put in them. It still renders at /team. Restore this entry, the one in
+  // landing-v5/Closing.tsx, and drop the `robots` block in team/page.tsx to
+  // put it back.
   { label: 'Wiki', href: '/wiki' },
   { label: 'Gallery', href: '/gallery' },
   { label: 'News', href: '/news' },
   { label: 'FAQ', href: '/faq' },
+];
+
+/**
+ * The three links below the design's own footer row. They used to be plain
+ * `<Link>`s while COMPANION_NAV entries got current-page styling, so landing
+ * on /careers, /terms or /privacy left the footer with nothing marked — the
+ * only pages in the shell where you could not tell where you were.
+ */
+export const COMPANION_EXTRA_NAV = [
+  { label: 'Careers', href: '/careers' },
+  { label: 'Terms of Service', href: '/terms' },
+  { label: 'Privacy Policy', href: '/privacy' },
 ];
 
 const GITHUB_URL = 'https://github.com/SaplingLearn/Sapling';
@@ -141,9 +157,17 @@ export function CompanionShell({
                 folding it into this shell would otherwise orphan /careers
                 outright and leave the legal pages unreachable from any
                 companion page. */}
-            <Link href="/careers" className="cp-navlink" style={FOOTER_LINK}>Careers</Link>
-            <Link href="/terms" className="cp-navlink" style={FOOTER_LINK}>Terms of Service</Link>
-            <Link href="/privacy" className="cp-navlink" style={FOOTER_LINK}>Privacy Policy</Link>
+            {COMPANION_EXTRA_NAV.map((n) => (
+              <Link
+                key={n.href}
+                href={n.href}
+                aria-current={n.href === current ? 'page' : undefined}
+                className="cp-navlink"
+                style={{ ...FOOTER_LINK, color: n.href === current ? '#1a1814' : '#6f6857', fontWeight: n.href === current ? 600 : 400 }}
+              >
+                {n.label}
+              </Link>
+            ))}
           </div>
         </div>
       </footer>

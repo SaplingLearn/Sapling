@@ -71,18 +71,18 @@ const H2: React.CSSProperties = {
 const SECTION: React.CSSProperties = { scrollMarginTop: 84 };
 /** Prose that runs the whole article column: ledes, fact lists, the deck. */
 const PROSE: React.CSSProperties = {
-  fontFamily: SERIF, fontSize: 22, lineHeight: 1.55, color: '#3f3b31',
+  fontFamily: SERIF, fontSize: 18, lineHeight: 1.6, color: '#3f3b31',
 };
 const LEDE: React.CSSProperties = { ...PROSE, margin: '20px 0 0' };
 /**
  * Definition text, shared by every row style below.
  *
  * Set against the narrower of the page's two measures: a row key takes
- * `KEY_COL` off the column, so this reads at ~84 characters where the ledes
- * beside it read at ~88.
+ * `KEY_COL` off the column, so this reads at a median 55 characters where the
+ * ledes beside it read at 68 (measured off line boxes at the 960px page box).
  */
 const DEF: React.CSSProperties = {
-  fontFamily: SERIF, fontSize: 18, lineHeight: 1.6, color: '#3f3b31',
+  fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.6, color: '#3f3b31',
 };
 /** The hairline that separates rows within a section. */
 const ROW_TOP = '1px solid rgba(42,39,31,0.08)';
@@ -93,7 +93,7 @@ const ROW_TOP = '1px solid rgba(42,39,31,0.08)';
  * characters) at the scaled-up `KEY` size — the two move together, and what
  * is left is the definition measure.
  */
-const KEY_COL = 'minmax(0,172px)';
+const KEY_COL = 'minmax(0,164px)';
 const ROW_GAP = 20;
 /**
  * Vertical rhythm, re-derived at the body size #604 set.
@@ -105,15 +105,17 @@ const ROW_GAP = 20;
  * type grew, so measured the way a reader actually feels it — in lines of
  * body text — the page had lost close to half its air: a section break read
  * as 3.5 lines before and 2.4 after, which is why eighteen sections ran
- * together. These are those four gaps at the ratios they used to hold.
+ * together. These are those four gaps at the ratios they used to hold —
+ * re-derived once more when the page box came to 960 and the body came down to
+ * 18px with it, on that same principle: the ratio is the constant, not the px.
  */
-const SECTION_GAP = 76;
-const BLOCK_GAP = 26;
-const MASTHEAD_PAD = 42;
-const MASTHEAD_GAP = 56;
+const SECTION_GAP = 62;
+const BLOCK_GAP = 22;
+const MASTHEAD_PAD = 34;
+const MASTHEAD_GAP = 46;
 
 /** The green mono key that opens a row. */
-const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.06em', color: '#1B6C42' };
+const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 12, letterSpacing: '0.06em', color: '#1B6C42' };
 /** The value a spec row states, above its reason. */
 const VALUE: React.CSSProperties = { fontSize: 17, fontWeight: 600, color: '#1a1814' };
 
@@ -257,7 +259,7 @@ export default function WikiPage() {
           </p>
         </header>
 
-        <div style={{ marginTop: MASTHEAD_GAP, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
+        <div style={{ marginTop: MASTHEAD_GAP, display: 'grid', gridTemplateColumns: 'minmax(0,180px) minmax(0,1fr)', gap: 'clamp(24px,3vw,44px)', alignItems: 'start' }}>
           <WikiRail />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: SECTION_GAP }}>

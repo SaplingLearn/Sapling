@@ -75,7 +75,8 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
 
 const FOOTER_LINKS = [
   { label: 'About', href: '/about' },
-  { label: 'Team', href: '/team' },
+  // Unlinked while /team has no photographs — see COMPANION_NAV in
+  // components/companion/CompanionShell.tsx.
   { label: 'Wiki', href: '/wiki' },
   { label: 'Gallery', href: '/gallery' },
   { label: 'News', href: '/news' },
