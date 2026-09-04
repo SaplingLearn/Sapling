@@ -1,5 +1,23 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { CompanionShell } from "@/components/companion/CompanionShell";
+import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/companionType";
+
+/**
+ * Privacy Policy.
+ *
+ * The twin of /terms: same chrome, same row geometry, same type scale, so the
+ * two legal pages read as one document set rather than two ports. See the
+ * header comment there for why the clauses are columns instead of a capped
+ * prose block — short version, the companion box is 1116px wide and a capped
+ * column inside a full-width frame is what makes /about read as broken. The
+ * clause text lands on 812px at 21px Spectral, a measured median of 86
+ * characters a line here; bulleted items sit an indent in and run shorter.
+ *
+ * This document carries four section shapes the Terms does not — labelled
+ * sub-lists, bolded highlight rows, a trailing paragraph after a list, and a
+ * sentence that resumes after an inline mail link. All four render inside the
+ * one text cell, so they share the clause measure and the clause left edge.
+ */
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -8,13 +26,59 @@ export const metadata: Metadata = {
   alternates: { canonical: "/privacy" },
 };
 
-const FOOTER_LINKS = [
-  { label: "Home", href: "/" },
-  { label: "About", href: "/about" },
-  { label: "Careers", href: "/careers" },
-  { label: "Terms of Service", href: "/terms" },
-  { label: "Privacy Policy", href: "/privacy" },
-];
+const RULE = "1px solid rgba(42,39,31,0.08)";
+/** Sized off the longest clause title ("4. How We Share Your Information"). */
+const TITLE_COL = 220;
+const COL_GAP = 32;
+
+/**
+ * A clause row.
+ *
+ * Wrapping flex rather than a grid so the two columns collapse to one on a
+ * narrow screen: inline styles cannot carry a media query and these pages
+ * have no stylesheet of their own. The text cell's 460px basis is what
+ * triggers it — below ~764px of content width there is no room for both.
+ */
+const ROW: React.CSSProperties = {
+  display: "flex", flexWrap: "wrap", alignItems: "flex-start",
+  gap: COL_GAP, padding: "22px 0", borderTop: RULE,
+};
+/**
+ * Both cells grow, but the text cell grows a thousand times harder. Side by
+ * side that is invisible — the heading takes 264.35px of the 1116 rather than
+ * 264 — and once the row wraps it is the whole point: each cell is alone on
+ * its line and stretches to fill it, so the stacked heading keeps the same
+ * right edge as the text under it instead of stopping 60px short.
+ */
+const TITLE_CELL: React.CSSProperties = { flex: `1 1 ${TITLE_COL}px`, maxWidth: "100%", minWidth: 0 };
+const TEXT_CELL: React.CSSProperties = { flex: "999 1 330px", minWidth: 0 };
+
+const H2: React.CSSProperties = {
+  margin: 0, fontSize: 14.5, fontWeight: 600, lineHeight: 1.45,
+  letterSpacing: "-0.01em", color: INK,
+};
+const PROSE: React.CSSProperties = {
+  margin: 0, fontFamily: SERIF, fontSize: 16, lineHeight: 1.62, color: BODY,
+};
+const LIST: React.CSSProperties = {
+  margin: "14px 0 0", padding: 0, listStyle: "none",
+  display: "flex", flexDirection: "column", gap: 10,
+};
+const ITEM: React.CSSProperties = { ...PROSE, display: "flex", gap: 12 };
+const BULLET: React.CSSProperties = { color: MUTED, flex: "0 0 auto" };
+/** The sans label that introduces a sub-list, held off the serif around it. */
+const SUBLABEL: React.CSSProperties = {
+  margin: 0, fontSize: 14, fontWeight: 600, letterSpacing: "-0.005em", color: INK,
+};
+const META: React.CSSProperties = {
+  display: "block", fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.04em", color: MUTED,
+};
+const LINK: React.CSSProperties = { color: ACCENT };
+
+/** Rows fade in down the page; the cap keeps the last clause from waiting. */
+function enter(i: number): React.CSSProperties {
+  return { animation: "fadeUp 700ms ease both", animationDelay: `${Math.min(120 + i * 40, 640)}ms` };
+}
 
 const sections = [
   {
@@ -110,306 +174,124 @@ const sections = [
 
 export default function PrivacyPage() {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--bg)",
-        color: "var(--text)",
-      }}
-    >
-      <header
-        style={{
-          borderBottom: "1px solid var(--border)",
-          background: "var(--bg-topbar)",
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1280,
-            margin: "0 auto",
-            padding: "0 24px",
-            height: 52,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <Link
-            href="/"
-            style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+    <CompanionShell current="/privacy">
+      <div>
+        {/* No rule of its own: the first clause row below carries a
+            `borderTop`, so a masthead border drew a second line 48px above
+            it — two hairlines stacked between the title and the date. The
+            row rule is the structural one (every clause has one), so the
+            masthead defers to it and only keeps the space. */}
+        <header style={{ paddingBottom: 30 }}>
+          <span
+            style={{
+              display: "block", fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em",
+              textTransform: "uppercase", color: MUTED, animation: "fadeUp 600ms ease both",
+            }}
           >
-            <img
-              src="/sapling-icon.svg"
-              alt="Sapling"
-              style={{ width: 26, height: 26, flexShrink: 0, position: "relative", top: -2 }}
-            />
-            <span
-              style={{
-                fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-                fontWeight: 700,
-                fontSize: 20,
-                color: "var(--brand-forest)",
-                letterSpacing: "-0.02em",
-                lineHeight: 1.1,
-              }}
-            >
-              Sapling
-            </span>
-          </Link>
-          <Link
-            href="/"
-            style={{ fontSize: 13, color: "var(--text-muted)", textDecoration: "none" }}
+            Legal
+          </span>
+          <h1
+            style={{
+              margin: "14px 0 0", fontFamily: DISPLAY, fontWeight: 500, fontSize: 34,
+              lineHeight: 1.15, letterSpacing: "-0.015em", color: INK,
+              animation: "fadeUp 700ms ease 60ms both",
+            }}
           >
-            ← Back to home
-          </Link>
-        </div>
-      </header>
+            Privacy Policy
+          </h1>
+        </header>
 
-      <div
-        style={{
-          flex: 1,
-          width: "100%",
-          maxWidth: 880,
-          margin: "0 auto",
-          padding: "64px 32px",
-        }}
-      >
-        <h1
-          className="h-serif fade-up anim-d1"
-          style={{ fontSize: 44, marginBottom: 8, color: "var(--text)" }}
-        >
-          Privacy Policy
-        </h1>
-        <p
-          className="fade-up anim-d2"
-          style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 40 }}
-        >
-          Last updated: May 3, 2026
-        </p>
+        <div>
+          {/* The date is metadata about the document, so it takes the heading
+              column and the preamble takes the text column. That puts the
+              opening paragraph on the same measure and the same left edge as
+              every clause under it, instead of running the full width alone. */}
+          <div style={{ ...ROW, ...enter(0) }}>
+            <div style={TITLE_CELL}>
+              <span style={META}>Last updated: May 3, 2026</span>
+            </div>
+            <div style={TEXT_CELL}>
+              <p style={PROSE}>
+                This Privacy Policy explains how Sapling (&ldquo;we,&rdquo; &ldquo;us,&rdquo; or &ldquo;our&rdquo;) collects,
+                uses, and protects your information when you use our Service.
+              </p>
+            </div>
+          </div>
 
-        <p
-          className="body-serif fade-up anim-d3"
-          style={{ fontSize: 16, color: "var(--text-dim)", marginBottom: 40 }}
-        >
-          This Privacy Policy explains how Sapling (&ldquo;we,&rdquo; &ldquo;us,&rdquo; or &ldquo;our&rdquo;) collects,
-          uses, and protects your information when you use our Service.
-        </p>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
           {sections.map((section, i) => (
-            <div
-              key={section.title}
-              className="fade-up"
-              style={{ animationDelay: `${Math.min(320 + i * 40, 640)}ms` }}
-            >
-              <h2
-                style={{
-                  fontFamily: "var(--font-sans)",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: "var(--text)",
-                  marginBottom: 8,
-                  letterSpacing: "-0.005em",
-                }}
-              >
-                {section.title}
-              </h2>
+            <div key={section.title} style={{ ...ROW, ...enter(i + 1) }}>
+              <div style={TITLE_CELL}>
+                <h2 style={H2}>{section.title}</h2>
+              </div>
+              <div style={TEXT_CELL}>
+                {section.body && (
+                  <p style={PROSE}>
+                    {section.body}
+                    {section.link && (
+                      <a href={section.link.href} style={LINK}>
+                        {section.link.label}
+                      </a>
+                    )}
+                    {section.bodySuffix}
+                  </p>
+                )}
 
-              {section.body && (
-                <p
-                  className="body-serif"
-                  style={{ fontSize: 15, color: "var(--text-dim)", marginBottom: 12 }}
-                >
-                  {section.body}
-                  {section.link && (
-                    <a
-                      href={section.link.href}
-                      style={{ color: "var(--accent)", textDecoration: "none" }}
-                    >
-                      {section.link.label}
-                    </a>
-                  )}
-                  {section.bodySuffix}
-                </p>
-              )}
+                {section.list && (
+                  <ul style={LIST}>
+                    {section.list.map((item) => (
+                      <li key={item} style={ITEM}>
+                        <span style={BULLET}>&bull;</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
-              {section.list && (
-                <ul
-                  style={{
-                    paddingLeft: 16,
-                    listStyle: "none",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                  }}
-                >
-                  {section.list.map((item, i) => (
-                    <li
-                      key={i}
-                      className="body-serif"
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        fontSize: 15,
-                        color: "var(--text-dim)",
-                      }}
-                    >
-                      <span style={{ color: "var(--text-muted)", marginTop: 2 }}>•</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                {section.subsections && (
+                  <div
+                    style={{
+                      marginTop: section.body ? 16 : 0,
+                      display: "flex", flexDirection: "column", gap: 22,
+                    }}
+                  >
+                    {section.subsections.map((sub) => (
+                      <div key={sub.label}>
+                        <p style={SUBLABEL}>{sub.label}</p>
+                        <ul style={{ ...LIST, marginTop: 10 }}>
+                          {sub.list.map((item) => (
+                            <li key={item} style={ITEM}>
+                              <span style={BULLET}>&bull;</span>
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-              {section.subsections && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  {section.subsections.map((sub) => (
-                    <div key={sub.label}>
-                      <p
-                        style={{
-                          fontFamily: "var(--font-sans)",
-                          fontSize: 13,
-                          fontWeight: 500,
-                          color: "var(--text)",
-                          marginBottom: 6,
-                        }}
-                      >
-                        {sub.label}
-                      </p>
-                      <ul
-                        style={{
-                          paddingLeft: 16,
-                          listStyle: "none",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 6,
-                        }}
-                      >
-                        {sub.list.map((item, i) => (
-                          <li
-                            key={i}
-                            className="body-serif"
-                            style={{
-                              display: "flex",
-                              gap: 8,
-                              fontSize: 15,
-                              color: "var(--text-dim)",
-                            }}
-                          >
-                            <span style={{ color: "var(--text-muted)", marginTop: 2 }}>•</span>
-                            <span>{item}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              )}
+                {section.highlights && (
+                  <ul style={LIST}>
+                    {section.highlights.map((h) => (
+                      <li key={h.label} style={ITEM}>
+                        <span style={BULLET}>&bull;</span>
+                        <span>
+                          <strong style={{ color: INK, fontWeight: 600 }}>{h.label}</strong>{" "}
+                          {h.text}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
-              {section.highlights && (
-                <ul
-                  style={{
-                    paddingLeft: 16,
-                    listStyle: "none",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                  }}
-                >
-                  {section.highlights.map((h) => (
-                    <li
-                      key={h.label}
-                      className="body-serif"
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        fontSize: 15,
-                        color: "var(--text-dim)",
-                      }}
-                    >
-                      <span style={{ color: "var(--text-muted)", marginTop: 2 }}>•</span>
-                      <span>
-                        <strong style={{ color: "var(--text)", fontWeight: 600 }}>
-                          {h.label}
-                        </strong>{" "}
-                        {h.text}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {section.bodyAfter && (
-                <p
-                  className="body-serif"
-                  style={{ fontSize: 15, color: "var(--text-dim)", marginTop: 12 }}
-                >
-                  {section.bodyAfter}
-                </p>
-              )}
+                {section.bodyAfter && (
+                  <p style={{ ...PROSE, marginTop: 16 }}>{section.bodyAfter}</p>
+                )}
+              </div>
             </div>
           ))}
         </div>
-
       </div>
-
-      <footer
-        style={{
-          borderTop: "1px solid var(--border)",
-          background: "var(--bg-subtle)",
-          padding: "48px 32px",
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1280,
-            margin: "0 auto",
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 24,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
-            <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Sapling · © 2026</span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
-            {FOOTER_LINKS.map(({ label, href }) => (
-              <Link
-                key={label}
-                href={href}
-                style={{
-                  fontSize: 14,
-                  color: "var(--text-muted)",
-                  textDecoration: "none",
-                }}
-              >
-                {label}
-              </Link>
-            ))}
-          </div>
-        </div>
-        <div
-          style={{
-            maxWidth: 1280,
-            margin: "32px auto 0",
-            paddingTop: 24,
-            borderTop: "1px solid var(--border)",
-            textAlign: "center",
-          }}
-        >
-          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
-          </p>
-        </div>
-      </footer>
-    </div>
+    </CompanionShell>
   );
 }
