@@ -57,9 +57,9 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
 ];
 
 const CARD: React.CSSProperties = {
-  flex: '0 0 auto', width: 350, borderRadius: 18, background: '#FDFCF9',
+  flex: '0 0 auto', width: 372, borderRadius: 20, background: '#FDFCF9',
   border: '1px solid #E8E5DA', boxShadow: '0 6px 18px -6px rgba(18,32,26,0.14)',
-  padding: '10px 10px 14px', display: 'flex', flexDirection: 'column',
+  padding: '12px 12px 18px', display: 'flex', flexDirection: 'column',
   position: 'relative', overflow: 'hidden', cursor: 'pointer', userSelect: 'none',
   transition: 'transform 320ms cubic-bezier(0.22,1,0.36,1)',
 };
@@ -73,15 +73,15 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
       style={CARD}
       className="ld-galcard"
     >
-      <div aria-hidden="true" style={{ position: 'relative', height: 140, borderRadius: 12, overflow: 'hidden', background: '#FDFCF9', border: '1px solid #EBF1EC' }}>
+      <div aria-hidden="true" style={{ position: 'relative', height: 166, borderRadius: 13, overflow: 'hidden', background: '#FDFCF9', border: '1px solid #EBF1EC' }}>
         {GALLERY_MINIS[i]}
       </div>
-      <div style={{ padding: '12px 10px 0', display: 'flex', flexDirection: 'column' }}>
-        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#0C5638' }}>{c.kicker}</span>
-        <h3 style={{ margin: '8px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 19, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#12201A' }}>
+      <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
+        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.28em', color: '#0C5638' }}>{c.kicker}</span>
+        <h3 style={{ margin: '10px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#12201A' }}>
           {c.title}
         </h3>
-        <p style={{ margin: '7px 0 0', fontSize: 12, lineHeight: 1.55, color: '#61726A', maxWidth: '42ch', textWrap: 'pretty' }}>
+        <p style={{ margin: '9px 0 0', fontSize: 12.5, lineHeight: 1.6, color: '#61726A', maxWidth: '40ch', textWrap: 'pretty' }}>
           {c.desc}
         </p>
       </div>
@@ -151,7 +151,7 @@ export function Gallery({
         {/* the mask feathers both ends so cards enter and leave rather than pop */}
         <div
           style={{
-            position: 'relative', overflow: 'hidden', padding: '12px 0',
+            position: 'relative', overflow: 'hidden', padding: '16px 0',
             WebkitMaskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
             maskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
           }}
@@ -160,7 +160,7 @@ export function Gallery({
         </div>
         <div
           style={{
-            position: 'relative', overflow: 'hidden', padding: '12px 0',
+            position: 'relative', overflow: 'hidden', padding: '16px 0',
             WebkitMaskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
             maskImage: 'linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%)',
           }}

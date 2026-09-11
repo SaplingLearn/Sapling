@@ -1,5 +1,5 @@
 /**
- * Type for the companion pages (/news, /about, /wiki, /faq, /team, /gallery).
+ * Type for the companion pages (/news, /about, /wiki, /faq, /gallery).
  *
  * These three stacks were declared verbatim in seven page files. They are the
  * paper-palette counterpart to the app shell's warm tokens — see
@@ -52,19 +52,21 @@ export const PROSE_MEASURE = '80ch';
  * so 1116px of content is ~120 characters (which is why 1180 forced 26px type
  * on the reading pages) and even 896px is ~97.
  *
- * What makes 960 work where 1180 did not is that no page spends the full
- * width on running prose. Every reading page opens its rows with a key column
- * — /wiki's rail, the clause titles on /terms and /privacy, the section spine
- * on /about — so the text column lands near 650px and measures in the 70s
- * while the page, its rules and its footer all fill 896. The grids need no
- * help: each is `auto-fit`/`auto-fill` and simply takes another column.
+ * 1180 is the original box, restored. It was narrowed to 960 by the same
+ * commit that rebuilt /about into a keyed "spine" layout, on the reasoning
+ * that no page spends its full width on running prose — every reading page
+ * was to open its rows with a key column, so the text would land near 650px
+ * while the rules and footer filled 896. That rebuild is reverted: /about is
+ * an essay again, capping its prose at PROSE_MEASURE and letting the h1, the
+ * bullets and the closing rule run the full width past it. The margin beside
+ * a paragraph is the format, not a defect in it.
  *
  * There is deliberately ONE of these. A brief two-tier version of this file
  * gave the prose pages their own narrower box, and the result was the drift
  * `CompanionShell` exists to prevent: the content edge jumped as you moved
- * between /about and /team.
+ * between a prose page and a wider sibling.
  */
-export const PAGE_MAX = 960;
+export const PAGE_MAX = 1180;
 export const PAGE_PAD = 32;
 export const PAGE_CONTENT = PAGE_MAX - PAGE_PAD * 2;
 

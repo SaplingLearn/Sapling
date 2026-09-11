@@ -63,7 +63,11 @@ export function Faq({
             Honest answers
           </span>
           <h2 style={{ margin: '20px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#12201A' }}>
-            &ldquo;Isn&rsquo;t AI just going to do it <em style={{ color: '#12201A' }}>for</em> me?&rdquo;
+            {/* Explicit space: a literal one after </em> sits on the text
+                node's leading edge and does not survive the JSX text trim —
+                the heading rendered as "forme?". Same fix as /about's
+                "Saplingis an". */}
+            &ldquo;Isn&rsquo;t AI just going to do it <em style={{ color: '#12201A' }}>for</em>{' '}me?&rdquo;
           </h2>
           <p style={{ margin: '20px 0 0', color: '#33443B', fontSize: 15, lineHeight: 1.75, maxWidth: '38ch' }}>
             Fair question, and the one we get most. Sapling exists because we think AI should

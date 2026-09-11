@@ -273,7 +273,7 @@ export function ActTutor({
                   <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.16em', color: '#0C5638' }}>RECORDING · 0:42</span>
                 </div>
                 <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: '#33443B' }}>
-                  &ldquo;…so you <span style={{ color: '#12201A', fontWeight: 600 }}>rotate left when the right side gets too heavy</span>, and, um, <span style={{ background: 'rgba(226,122,99,0.16)', borderBottom: '1.5px solid #E27A63', borderRadius: 3, padding: '1px 3px', color: '#12201A' }}>the parent just moves down</span> and it&rsquo;s balanced again…&rdquo;
+                  &ldquo;…so you <span style={{ color: '#12201A', fontWeight: 600 }}>rotate left when the right side gets too heavy</span>, and, um, <span style={{ background: 'rgba(226,122,99,0.16)', borderBottom: '1.5px solid #E27A63', borderRadius: 3, padding: '1px 3px', color: '#12201A' }}>the parent just moves down</span>{' '}and it&rsquo;s balanced again…&rdquo;
                 </p>
                 <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 3, overflow: 'hidden' }}>
                   <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.2em', color: '#9AA5A0', marginBottom: 2 }}>WHAT YOUR EXPLANATION COVERED</span>

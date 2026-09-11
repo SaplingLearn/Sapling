@@ -2332,19 +2332,14 @@ input[type="reset"]:disabled {
   .landing-dc .floating-card { display: none !important; }
   .landing-dc .drag-field    { display: none !important; }
 }
-/* Short screens: the grove tightens in two steps so the header and both
-   rails stay on one screen. !important — the sizes it overrides are inline. */
-@media (max-height: 1020px) {
-  .landing-v5 #gallery { padding: 40px 0 28px !important; }
-  .landing-v5 #gallery article > div[aria-hidden='true'],
-  .landing-v5 #gallery article > div[aria-hidden='true'] > div { height: 124px !important; }
-}
-@media (max-height: 880px) {
-  .landing-v5 #gallery { padding: 30px 0 22px !important; }
-  .landing-v5 #gallery article > div[aria-hidden='true'],
-  .landing-v5 #gallery article > div[aria-hidden='true'] > div { height: 110px !important; }
-  .landing-v5 #gallery article h3 { font-size: 17px !important; }
-}
+/* The grove's cards keep one size at every viewport height.
+   Two `max-height` rules used to tighten them in steps — the demo pane to
+   124px under 1020px of viewport, 110px under 880px — so the header and both
+   rails would sit on one screen. On any laptop that is every screen, so the
+   pane a card was drawn for (166px) was one almost nobody saw: the card kept
+   its 372px width while its illustration lost a quarter of its height, and
+   the eight demos read as squashed. The rails drift and are meant to be
+   scrolled to, so the section does not have to fit in one viewport. */
 
 /* Set by the landing page while mounted — hides the document scrollbar. */
 html.ld-noscrollbar { scrollbar-width: none; }
@@ -2460,6 +2455,26 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @media (max-height: 680px) {
   .landing-v5 .hero-grid   { padding-top:84px !important; }
 }
+
+/* v5 navbar page-link row, restored from v4 (see landing-v5/Navbar.tsx).
+   The tabs/compact swap is v4's rule at a lower threshold: four links plus the
+   Ko-fi pill instead of v4's six-plus-GitHub, so the row survives to 860px
+   where v4 had to fold at 1180px. 860px is the hero's own mid-row breakpoint,
+   above. */
+@media (max-width: 860px) {
+  .landing-v5 .nav-tabs    { display: none !important; }
+  .landing-v5 .nav-compact { display: flex !important; }
+}
+
+/* Ko-fi pill and Pages-panel hovers, ported from the v4 rules alongside the
+   markup. The pill's hover is Ko-fi brand orange, deliberately outside the
+   Sapling palette — it reads as a third-party affordance, which is the point. */
+.landing-v5 .ld-kofi:hover {
+  color: #12201A;
+  border-color: #FF5E1A;
+  background: #FFF3EC;
+}
+.landing-v5 .ld-navmenu-item:hover { background: rgba(12,86,56,0.07); color: #12201A; }
 
 /* v5 hover states (the source's `style-hover` attribute has no inline
    React equivalent). The Ko-fi pill differs from v4: v5 tints the

@@ -74,9 +74,9 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
 }
 
 const FOOTER_LINKS = [
+  // About also carries the team; /team was folded into it and the route
+  // deleted. See COMPANION_NAV in components/companion/CompanionShell.tsx.
   { label: 'About', href: '/about' },
-  // Unlinked while /team has no photographs — see COMPANION_NAV in
-  // components/companion/CompanionShell.tsx.
   { label: 'Wiki', href: '/wiki' },
   { label: 'Gallery', href: '/gallery' },
   { label: 'News', href: '/news' },

@@ -28,12 +28,11 @@ const SANS = "'DM Sans',system-ui,sans-serif";
  * a second link for it just crowded the row.
  */
 export const COMPANION_NAV = [
+  // About also carries the team: /team was folded into it and the route
+  // deleted. It had never published — five empty portrait frames, unlinked and
+  // noindexed, waiting on photographs — so the writing moved to the page people
+  // already reach and the frames were dropped.
   { label: 'About', href: '/about' },
-  // Team is deliberately absent, not forgotten: the page ships with five empty
-  // portrait frames and is unlinked and noindexed until there are photographs
-  // to put in them. It still renders at /team. Restore this entry, the one in
-  // landing-v5/Closing.tsx, and drop the `robots` block in team/page.tsx to
-  // put it back.
   { label: 'Wiki', href: '/wiki' },
   { label: 'Gallery', href: '/gallery' },
   { label: 'News', href: '/news' },
