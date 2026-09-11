@@ -31,8 +31,8 @@ export interface NavTheme {
   pillFg: string;
   btnBg: string;
   btnFg: string;
-  /** The 92px blurred band behind the bar. */
-  scrim: string;
+  /** Box-shadow for the filled controls (Get Started, the Ko-fi pill). Ours, not the source's. */
+  lift: string;
 }
 
 export const NAV_LIGHT: NavTheme = {
@@ -46,8 +46,7 @@ export const NAV_LIGHT: NavTheme = {
   pillFg: '#12201A',
   btnBg: '#0C5638',
   btnFg: '#fff',
-  scrim:
-    'linear-gradient(180deg, rgba(240,244,242,0.94) 0%, rgba(240,244,242,0.5) 52%, rgba(240,244,242,0) 100%)',
+  lift: '0 1px 2px rgba(18,32,26,0.14), 0 6px 16px -4px rgba(18,32,26,0.28)',
 };
 
 export const NAV_DARK: NavTheme = {
@@ -61,8 +60,7 @@ export const NAV_DARK: NavTheme = {
   pillFg: '#EAF3EC',
   btnBg: '#EAF3EC',
   btnFg: '#07301E',
-  scrim:
-    'linear-gradient(180deg, rgba(6,23,16,0.88) 0%, rgba(6,23,16,0.42) 52%, rgba(6,23,16,0) 100%)',
+  lift: '0 1px 2px rgba(0,0,0,0.3), 0 6px 16px -4px rgba(0,0,0,0.5)',
 };
 
 /** The three sections that sit on the dark ground. */

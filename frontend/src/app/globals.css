@@ -2449,20 +2449,20 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .hero-lede { max-width:38ch !important; }
 }
 @media (max-height: 800px) {
-  .landing-v5 .hero-grid    { padding-top:96px !important; gap:14px !important; }
+  /* 108 clears the enlarged 88px navbar with ~20px to spare down to 660px tall. */
+  .landing-v5 .hero-grid    { padding-top:108px !important; gap:14px !important; }
   .landing-v5 .hero-info p  { font-size:12.5px !important; }
-}
-@media (max-height: 680px) {
-  .landing-v5 .hero-grid   { padding-top:84px !important; }
 }
 
 /* v5 navbar page-link row, restored from v4 (see landing-v5/Navbar.tsx).
-   The tabs/compact swap is v4's rule at a lower threshold: four links plus the
-   Ko-fi pill instead of v4's six-plus-GitHub, so the row survives to 860px
-   where v4 had to fold at 1180px. 860px is the hero's own mid-row breakpoint,
-   above. */
-@media (max-width: 860px) {
+   The tabs/compact swap is v4's rule. The threshold tracks the bar: the row is
+   centred on the viewport, and the actions cluster (Ko-fi pill, Sign In, Get
+   Started) is what it runs into, measured at 0px apart at 1200px and 36px at
+   1280px. So a 1280px laptop keeps the row, and anything narrower folds. The
+   pill folds with the row, as it did when it closed the row. */
+@media (max-width: 1279px) {
   .landing-v5 .nav-tabs    { display: none !important; }
+  .landing-v5 .nav-kofi    { display: none !important; }
   .landing-v5 .nav-compact { display: flex !important; }
 }
 
