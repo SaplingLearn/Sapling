@@ -6,7 +6,7 @@ import CareersList from './CareersList';
 export const metadata: Metadata = {
   title: 'Careers',
   description:
-    "Join the small team building Sapling — AI-powered study tools that help students learn better. See open roles across engineering and growth.",
+    "The small team building Sapling — AI-powered study tools that help students learn better. No open roles at the moment; get in touch and tell us what you'd build.",
   alternates: { canonical: '/careers' },
 };
 
