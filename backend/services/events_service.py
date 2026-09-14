@@ -46,6 +46,8 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
 quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
 quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
+quiz.answer_key_served        usage     quiz_id
+quiz.answer_key_flag_omitted  usage     quiz_id
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
@@ -98,6 +100,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # dropped). Same reasoning: a 502 the student sees should be a 502 an
     # admin can count.
     "quiz.generation_failed",
+    # #537/G8: the hero-card snapshot submit now returns inline failed to
+    # read, and was swallowed so the submit could still succeed.
+    # category="error" for the same reason quiz.context_write_failed is: a
+    # swallowed failure with only a log line behind it is how #529 stayed
+    # invisible for 51 days in this same handler. Fires at most once per
+    # submit, so the /errors feed can carry it without drowning. See the emit
+    # site, routes/quiz.py::_gamification_block.
+    "quiz.gamification_snapshot_failed",
     # F5: a personalization input returned zero rows for a student who
     # plausibly should have data. Three inputs were silently empty for
     # months (#529's 42P10, the misconceptions offering-id filter, the
@@ -114,6 +124,16 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # it used to be indistinguishable from a retrieval that quietly failed.
     # category="usage" for that reason — see the emit site in routes/quiz.py.
     "quiz.rag_uncovered",
+    # #546: the deprecated `include_answer_key` flag, made countable. Its
+    # deletion is gated on "nobody still asks for the client-side answer
+    # key", and only a rollup can answer that — a log line can't. Two types,
+    # not one with a payload flag, because by_event_type doesn't break
+    # payloads out and the two populations mean opposite things: _served is
+    # the caller that BLOCKS deletion (it got the key), _flag_omitted is the
+    # flag-unaware caller for whom deletion is a no-op. See the emit site,
+    # routes/quiz.py::_record_answer_key_flag.
+    "quiz.answer_key_served",
+    "quiz.answer_key_flag_omitted",
     "chat.message_sent",
     "note.created",
     "session.started",

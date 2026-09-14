@@ -1,0 +1,781 @@
+"""G5 (#537): "practise the ones you missed" re-serves the missed questions.
+
+Before this, the only thing the route could do with "I got these three
+wrong" was generate three NEW questions and label the result honestly
+("Focused on what you missed" — contract R-5). The student never saw the
+question they actually missed again, which is the one thing spaced
+practice is for.
+
+E5 gave every stored question a stable identity (`question_hash`), so the
+missed items can now be found in the source attempt and handed back
+verbatim — no model call, no paraphrase, same item. These tests pin the
+three outcomes that must stay distinguishable to the client: re-served
+everything, re-served some, re-served nothing.
+"""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agents.quiz import Quiz, QuizQuestion
+from main import app
+from routes.quiz import CourseMaterial
+from services.encryption import decrypt_json_column, encrypt_json
+from services.quiz_identity import question_hash
+from services.quiz_reserve import missed_question_hashes, recover_questions
+
+client = TestClient(app)
+
+NODE = {"id": "node1", "user_id": "user_andres", "course_id": "course1",
+        "concept_name": "Recursion", "mastery_score": 0.5}
+
+SOURCE_ID = "attempt-source"
+
+
+def _stored(stem, qid=1, opts=("alpha", "beta", "gamma", "delta")):
+    """One question in the shape `quiz_attempts.questions_json` holds."""
+    return {
+        "id": qid,
+        "question": stem,
+        "options": [
+            {"label": label, "text": text, "correct": i == 0}
+            for i, (label, text) in enumerate(zip("ABCDEF", opts))
+        ],
+        "explanation": f"because {stem}",
+        "concept_tested": "Recursion",
+        "difficulty": "easy",
+        "question_hash": question_hash(stem, opts),
+        "provenance": {
+            "prompt_version": "quiz/v1",
+            "chunk_ids": ["chunk-a"],
+            "rag_grounded": True,
+            "catalog": False,
+            "model": "gemini-2.5-flash-lite",
+        },
+    }
+
+
+def _agent_question(stem):
+    opts = ["fresh-a", "fresh-b", "fresh-c", "fresh-d"]
+    return QuizQuestion(
+        question=stem, type="multiple_choice", difficulty="easy",
+        options=opts, correct_answer=opts[0],
+        explanation="freshly written", concept="Recursion",
+    )
+
+
+def _attempt(questions, *, completed=True, user_id="user_andres", score=None, total=None):
+    """A stored source attempt. Scored as "missed one" by default — the state
+    "practise the ones you missed" is reachable from."""
+    row = {
+        "id": SOURCE_ID,
+        "user_id": user_id,
+        "concept_node_id": "node1",
+        "difficulty": "easy",
+        "questions_json": encrypt_json(questions),
+        "created_at": "2026-08-22T10:00:00+00:00",
+        "total": len(questions) if total is None else total,
+        "score": (max(len(questions) - 1, 0)) if score is None else score,
+    }
+    row["completed_at"] = "2026-08-22T10:10:00+00:00" if completed else None
+    return row
+
+
+def _missed(*indexes, of=()):
+    """`quiz_responses` rows: every index in `of` answered, the ones in
+    `indexes` answered WRONG. The read is unfiltered, so the right answers
+    have to be there too — they are how the route tells "nothing missed"
+    from "nothing recorded"."""
+    answered = of or indexes
+    return [
+        {"question_index": i, "is_correct": i not in indexes}
+        for i in answered
+    ]
+
+
+def _factory(captured, *, attempts=(), responses=()):
+    def factory(name):
+        mock = MagicMock()
+        mock.insert.return_value = []
+        if name == "graph_nodes":
+            mock.select.return_value = [NODE]
+        elif name == "quiz_attempts":
+            mock.select.return_value = list(attempts)
+
+            def _capture(payload):
+                captured["row"] = payload
+                return [{"id": payload["id"]}]
+
+            mock.insert.side_effect = _capture
+        elif name == "quiz_responses":
+            mock.select.return_value = list(responses)
+        else:
+            mock.select.return_value = []
+        return mock
+    return factory
+
+
+def _generate(
+    *,
+    generated=(),
+    attempts=(),
+    responses=(),
+    body_extra=None,
+    num_questions=2,
+    agent_side_effect=None,
+):
+    """Drive POST /generate, returning (response, stored_row, agent_mock)."""
+    captured: dict = {}
+    # `Quiz` requires at least one question, so a run that must never happen
+    # gets a loudly-named sentinel rather than an empty output: an unexpected
+    # agent call then shows up in the assertions instead of raising here.
+    result = SimpleNamespace(
+        output=Quiz(questions=list(generated) or [_agent_question("UNEXPECTED")]),
+        response=SimpleNamespace(model_name="gemini-2.5-flash-lite"),
+    )
+    agent_run = AsyncMock(
+        return_value=result,
+        **({"side_effect": agent_side_effect} if agent_side_effect else {}),
+    )
+    factory = _factory(captured, attempts=attempts, responses=responses)
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch("services.quiz_reserve.table", side_effect=factory),
+        patch("routes.quiz.quiz_agent.run", new=agent_run),
+        patch("routes.quiz._course_material", return_value=CourseMaterial()),
+        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch("routes.quiz.days_until_next_exam", return_value=None),
+    ):
+        r = client.post("/api/quiz/generate", json={
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "num_questions": num_questions,
+            "difficulty": "easy",
+            "use_shared_context": False,
+            **(body_extra or {}),
+        })
+    return r, captured.get("row"), agent_run
+
+
+def _stored_questions(row):
+    return decrypt_json_column(row["questions_json"])
+
+
+# ── services/quiz_reserve.py ────────────────────────────────────────────────
+
+
+def _lookup(rows, questions):
+    def factory(name):
+        m = MagicMock()
+        m.select.return_value = rows
+        return m
+
+    with patch("services.quiz_reserve.table", side_effect=factory):
+        return missed_question_hashes(SOURCE_ID, questions)
+
+
+def test_missed_hashes_come_back_in_the_order_they_were_asked():
+    """The rows arrive in whatever order PostgREST hands them over; the
+    practice quiz should follow the quiz the student actually sat."""
+    questions = [_stored("Q1", 1), _stored("Q2", 2), _stored("Q3", 3)]
+    found = _lookup(
+        [{"question_index": 2, "is_correct": False},
+         {"question_index": 1, "is_correct": True},
+         {"question_index": 0, "is_correct": False}],
+        questions,
+    )
+    assert found.hashes == [questions[0]["question_hash"], questions[2]["question_hash"]]
+    assert found.graded is True
+
+
+def test_a_perfect_attempt_is_graded_but_missed_nothing():
+    """The two facts that must not collapse into one: every answer recorded,
+    none of them wrong. `hashes` is empty and that is CORRECT, which is why
+    `graded` has to say so separately."""
+    questions = [_stored("Q1", 1), _stored("Q2", 2)]
+    found = _lookup(
+        [{"question_index": 0, "is_correct": True},
+         {"question_index": 1, "is_correct": True}],
+        questions,
+    )
+    assert found.hashes == []
+    assert found.graded is True
+
+
+def test_an_attempt_with_no_recorded_answers_is_not_graded():
+    """The pre-#537 shape: graded entirely through /submit, so nothing was
+    ever written to quiz_responses."""
+    found = _lookup([], [_stored("Q1", 1)])
+    assert found.hashes == []
+    assert found.graded is False
+
+
+def test_missed_hashes_ignore_indexes_that_are_not_in_the_attempt():
+    """A response row pointing past the stored questions (a truncated
+    re-write, a hand-edited row) must not index-error the whole practice."""
+    questions = [_stored("Q1", 1)]
+    found = _lookup(
+        [{"question_index": 7, "is_correct": False},
+         {"question_index": None, "is_correct": False},
+         {"question_index": 0, "is_correct": False}],
+        questions,
+    )
+    assert found.hashes == [questions[0]["question_hash"]]
+
+
+def test_missed_hashes_degrade_to_nothing_when_the_read_fails():
+    def factory(name):
+        m = MagicMock()
+        m.select.side_effect = RuntimeError("PostgREST down")
+        return m
+
+    with patch("services.quiz_reserve.table", side_effect=factory):
+        found = missed_question_hashes(SOURCE_ID, [_stored("Q1", 1)])
+    assert found.hashes == []
+    # "Can't tell", not "nothing was recorded" — a failed read must not
+    # manufacture a discrepancy downstream.
+    assert found.graded is False
+
+
+def test_recovered_questions_are_verbatim_copies():
+    """Same item, including the identity and the provenance of the
+    generation that wrote it — that is what makes E5 identity survive
+    across attempts. Copies, not aliases: the caller renumbers `id`."""
+    source = [_stored("Q1", 1), _stored("Q2", 2)]
+    got = recover_questions(source, [source[1]["question_hash"]])
+    assert got == [source[1]]
+    assert got[0] is not source[1]
+    got[0]["id"] = 99
+    got[0]["options"][0]["text"] = "mutated"
+    assert source[1]["id"] == 2
+    assert source[1]["options"][0]["text"] == "alpha"
+
+
+def test_recovered_questions_follow_the_requested_order_and_dedupe():
+    source = [_stored("Q1", 1), _stored("Q2", 2)]
+    order = [source[1]["question_hash"], source[0]["question_hash"],
+             source[1]["question_hash"]]
+    assert [q["question"] for q in recover_questions(source, order)] == ["Q2", "Q1"]
+
+
+def test_unknown_hashes_recover_nothing():
+    """A hash the source attempt never held is not an error — it is simply
+    not recoverable, and the caller regenerates that slot."""
+    source = [_stored("Q1", 1)]
+    assert recover_questions(source, ["deadbeefdeadbeef"]) == []
+
+
+# ── the route: re-served everything ─────────────────────────────────────────
+
+
+def test_full_reserve_makes_no_model_call():
+    source_questions = [_stored("Q1", 1), _stored("Q2", 2), _stored("Q3", 3)]
+    r, row, agent = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0, 2, of=(0, 1, 2)),
+        num_questions=2,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200, r.text
+    agent.assert_not_awaited()
+    body = r.json()
+    assert body["source"] == {
+        "attempt_id": SOURCE_ID,
+        "reserved_count": 2,
+        "regenerated_count": 0,
+    }
+    assert body["delivered_count"] == 2
+    assert [q["question"] for q in body["questions"]] == ["Q1", "Q3"]
+
+
+def test_reserved_questions_keep_their_identity_and_take_new_positions():
+    """`question_hash` is the item; `id` is only its position WITHIN an
+    attempt (the /answer route validates question_id against it), so the
+    identity carries over and the id is renumbered."""
+    source_questions = [_stored("Q1", 1), _stored("Q2", 2), _stored("Q3", 3)]
+    r, row, _ = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(1, 2, of=(0, 1, 2)),
+        num_questions=2,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200, r.text
+    stored = _stored_questions(row)
+    assert [q["question_hash"] for q in stored] == [
+        source_questions[1]["question_hash"], source_questions[2]["question_hash"],
+    ]
+    assert [q["id"] for q in stored] == [1, 2]
+    assert [q["provenance"]["model"] for q in stored] == ["gemini-2.5-flash-lite"] * 2
+    assert all(q["provenance"]["reserved_from"] == SOURCE_ID for q in stored)
+
+
+def test_reserved_questions_are_stripped_on_the_opt_in_keyed_shape_too():
+    """The keyed shape (`include_answer_key: true`, deprecated since #546 but
+    still accepted) projects through a different branch of `_client_questions`
+    — a denylist rather than the keyless allowlist — so a re-served question's
+    internals have to be excluded there separately."""
+    source_questions = [_stored("Q1", 1)]
+    r, _, _ = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID, "include_answer_key": True},
+    )
+    assert r.status_code == 200, r.text
+    (question,) = r.json()["questions"]
+    assert "question_hash" not in question
+    assert "provenance" not in question
+    # The opt-in shape still ships the answer key it was asked for.
+    assert question["options"][0]["correct"] is True
+
+
+def test_the_default_projection_strips_the_reserved_internals(assert_keyless_projection):
+    """The shipping shape since #546 flipped the default: a re-served question
+    reaches the client keyless, exactly as a generated one does.
+
+    Asserted through the shared fixture so this checks the projection against
+    the answer key that was really stored for THIS attempt — proving the key
+    exists and was withheld, not merely that a re-served item never had one."""
+    source_questions = [_stored("Q1", 1)]
+    r, row, _ = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200, r.text
+    assert_keyless_projection(r.json(), _stored_questions(row), expect_source=True)
+
+
+def test_explicit_hashes_win_over_the_recorded_responses():
+    """The client may name the items itself; unknown ones are ignored
+    rather than rejected, and count as "not recoverable"."""
+    source_questions = [_stored("Q1", 1), _stored("Q2", 2)]
+    r, _, agent = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=1,
+        body_extra={
+            "source_attempt_id": SOURCE_ID,
+            "missed_question_hashes": [
+                source_questions[1]["question_hash"], "0000000000000000",
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    agent.assert_not_awaited()
+    assert [q["question"] for q in r.json()["questions"]] == ["Q2"]
+
+
+# ── the route: re-served some ───────────────────────────────────────────────
+
+
+def test_short_recovery_generates_only_the_remainder():
+    source_questions = [_stored("Q1", 1)]
+    r, row, agent = _generate(
+        generated=[_agent_question("New A"), _agent_question("New B")],
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=3,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200, r.text
+    agent.assert_awaited_once()
+    prompt = agent.call_args[0][0]
+    assert "Generate 2 easy questions" in prompt
+    body = r.json()
+    assert body["source"] == {
+        "attempt_id": SOURCE_ID,
+        "reserved_count": 1,
+        "regenerated_count": 2,
+    }
+    assert [q["question"] for q in body["questions"]] == ["Q1", "New A", "New B"]
+    assert [q["id"] for q in _stored_questions(row)] == [1, 2, 3]
+
+
+def test_a_regenerated_repeat_of_a_reserved_question_is_dropped():
+    """The do-not-repeat block should prevent it; if the model does it
+    anyway, the student must not see the same item twice in one quiz."""
+    source_questions = [_stored("Q1", 1, opts=("fresh-a", "fresh-b", "fresh-c", "fresh-d"))]
+    r, _, _ = _generate(
+        generated=[_agent_question("Q1"), _agent_question("New B")],
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=3,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [q["question"] for q in body["questions"]] == ["Q1", "New B"]
+    assert body["source"]["reserved_count"] == 1
+    assert body["source"]["regenerated_count"] == 1
+    assert body["delivered_count"] == 2
+
+
+def test_a_failed_remainder_still_serves_what_was_recovered():
+    source_questions = [_stored("Q1", 1)]
+    r, _, _ = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=3,
+        body_extra={"source_attempt_id": SOURCE_ID},
+        agent_side_effect=RuntimeError("Gemini is having a day"),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"] == {
+        "attempt_id": SOURCE_ID,
+        "reserved_count": 1,
+        "regenerated_count": 0,
+    }
+    assert body["delivered_count"] == 1
+    assert body["requested_count"] == 3
+
+
+def test_a_failed_generation_with_nothing_recovered_still_502s():
+    r, _, _ = _generate(
+        attempts=[_attempt([_stored("Q1", 1)])],
+        responses=[],
+        num_questions=3,
+        body_extra={"source_attempt_id": SOURCE_ID},
+        agent_side_effect=RuntimeError("Gemini is having a day"),
+    )
+    assert r.status_code == 502
+    assert r.json()["error"]["code"] == "QUIZ_GENERATION_FAILED"
+
+
+# ── the route: re-served nothing ────────────────────────────────────────────
+
+
+def test_nothing_recoverable_falls_back_to_plain_generation():
+    """An attempt graded entirely through /submit records no
+    `quiz_responses` rows, so there is nothing to re-serve. The response
+    says so — reserved_count 0 — and the client keeps the old wording."""
+    r, _, agent = _generate(
+        generated=[_agent_question("New A"), _agent_question("New B")],
+        attempts=[_attempt([_stored("Q1", 1)])],
+        responses=[],
+        num_questions=2,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200, r.text
+    agent.assert_awaited_once()
+    body = r.json()
+    assert body["source"] == {
+        "attempt_id": SOURCE_ID,
+        "reserved_count": 0,
+        "regenerated_count": 2,
+    }
+
+
+def test_a_plain_generate_carries_no_source_block():
+    r, _, agent = _generate(
+        generated=[_agent_question("New A"), _agent_question("New B")],
+        num_questions=2,
+    )
+    assert r.status_code == 200, r.text
+    agent.assert_awaited_once()
+    assert "source" not in r.json()
+
+
+# ── the route: refusals ─────────────────────────────────────────────────────
+
+
+def test_unknown_source_attempt_404s():
+    r, _, agent = _generate(attempts=[], body_extra={"source_attempt_id": SOURCE_ID})
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_NOT_FOUND"
+    agent.assert_not_awaited()
+
+
+def test_someone_elses_attempt_403s():
+    r, _, agent = _generate(
+        attempts=[_attempt([_stored("Q1", 1)], user_id="user_someone_else")],
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "QUIZ_NOT_AUTHORIZED"
+    agent.assert_not_awaited()
+
+
+def test_an_unfinished_source_attempt_is_refused():
+    """There is nothing to practise from a quiz still being sat, and
+    "practise the ones you missed" is only reachable from the results
+    screen — so this is a malformed request, not a state to work around."""
+    r, _, agent = _generate(
+        attempts=[_attempt([_stored("Q1", 1)], completed=False)],
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+    agent.assert_not_awaited()
+
+
+def test_a_source_attempt_on_another_concept_is_refused():
+    """The re-served items are copied into an attempt row stamped with THIS
+    request's concept, and /submit pays mastery to the row's concept — so a
+    source from another node would raise the WRONG node's mastery and write a
+    node_mastery_events row against a concept the student never answered on.
+
+    Not reachable from the shipped client (PRACTISE_MISSED names the attempt
+    just finished), which is exactly why the route has to say so itself: this
+    is the one place two attempts' concepts meet."""
+    foreign = _attempt([_stored("Q1", 1)])
+    foreign["concept_node_id"] = "node-binary-trees"
+    r, row, agent = _generate(
+        attempts=[foreign],
+        responses=_missed(0, of=(0,)),
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+    agent.assert_not_awaited()
+    assert row is None, "a refused practice must not write an attempt row"
+
+
+@pytest.mark.parametrize(
+    "attempts,expected",
+    [
+        pytest.param([], 404, id="unknown-attempt"),
+        pytest.param(
+            [_attempt([_stored("Q1", 1)], user_id="user_someone_else")], 403,
+            id="someone-elses-attempt",
+        ),
+        pytest.param(
+            [_attempt([_stored("Q1", 1)], completed=False)], 400,
+            id="unfinished-attempt",
+        ),
+    ],
+)
+def test_a_refused_source_attempt_refunds_the_generate_slot(attempts, expected):
+    """None of these refusals generated anything, so none of them may cost the
+    student a slot. A results screen left open across a session would
+    otherwise burn the whole window on 404s and then 429 a student who has
+    generated nothing — the case `_refund_generate_slot` exists to prevent."""
+    with patch("routes.quiz._refund_generate_slot") as refund:
+        r, _, _ = _generate(
+            attempts=attempts, body_extra={"source_attempt_id": SOURCE_ID},
+        )
+    assert r.status_code == expected
+    refund.assert_called_once_with("user_andres")
+
+
+def test_a_non_dict_stored_question_does_not_shift_the_missed_index():
+    """`quiz_responses.question_index` was written against `questions_json` AS
+    STORED. Compacting that array before resolving indexes would shift every
+    position past the dropped element — re-serving a question the student got
+    RIGHT while the missed one silently disappears."""
+    keeper = _stored("the missed one", 3)
+    attempt = _attempt(["a legacy string, not a question", _stored("Q2", 2), keeper])
+    r, row, _ = _generate(
+        attempts=[attempt],
+        # Index 2 is `keeper` in the stored array, and must stay index 2.
+        responses=_missed(2, of=(1, 2)),
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200
+    assert r.json()["source"]["reserved_count"] == 1
+    assert [q["question"] for q in _stored_questions(row)] == ["the missed one"]
+
+
+def test_a_regenerated_question_repeating_a_reserved_STEM_is_dropped():
+    """The hash covers the stem AND the options, so a model re-emitting a
+    re-served stem with reworded distractors clears the identity check.
+    `_absorb`'s own stem guard only ever holds the current run's questions,
+    never the re-served ones — so this is the only place that case is caught,
+    and the same question must not appear twice in one quiz."""
+    reserved = _stored("What does a base case do?", 1)
+    reworded = QuizQuestion(
+        question="What does a base case do?", type="multiple_choice",
+        difficulty="easy", options=["totally", "different", "option", "texts"],
+        correct_answer="totally", explanation="reworded", concept="Recursion",
+    )
+    r, row, _ = _generate(
+        attempts=[_attempt([reserved, _stored("Q2", 2)])],
+        responses=_missed(0, of=(0, 1)),
+        generated=[reworded, _agent_question("a genuinely new question")],
+        num_questions=3,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200
+    stems = [q["question"] for q in _stored_questions(row)]
+    assert stems.count("What does a base case do?") == 1, (
+        f"the re-served stem came back twice: {stems}"
+    )
+    assert "a genuinely new question" in stems
+
+
+def test_more_hashes_than_a_quiz_can_hold_is_a_validation_error():
+    r, _, _ = _generate(
+        attempts=[_attempt([_stored("Q1", 1)])],
+        body_extra={
+            "source_attempt_id": SOURCE_ID,
+            "missed_question_hashes": [f"{i:016x}" for i in range(11)],
+        },
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+
+
+def test_hashes_without_a_source_attempt_are_rejected():
+    """Identities are only ever resolved against the named attempt's own
+    questions, so hashes with no attempt could only ever be ignored. Say so
+    instead — a silently dropped field is a debugging session."""
+    r, _, agent = _generate(
+        body_extra={"missed_question_hashes": ["0123456789abcdef"]},
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+    agent.assert_not_awaited()
+
+
+# ── the route: guards and measurement ───────────────────────────────────────
+
+
+def test_the_daily_spend_cap_does_not_block_a_pure_reserve():
+    """The cap exists to stop LLM spend. Re-serving questions the student
+    has already been served spends nothing, so a capped student can still
+    practise what they missed."""
+    source_questions = [_stored("Q1", 1)]
+    with patch("routes.quiz._daily_spend_exceeded", return_value=True):
+        r, _, agent = _generate(
+            attempts=[_attempt(source_questions)],
+            responses=_missed(0),
+            num_questions=1,
+            body_extra={"source_attempt_id": SOURCE_ID},
+        )
+    assert r.status_code == 200, r.text
+    agent.assert_not_awaited()
+
+
+def test_the_daily_spend_cap_still_blocks_a_generated_remainder():
+    source_questions = [_stored("Q1", 1)]
+    with patch("routes.quiz._daily_spend_exceeded", return_value=True):
+        r, _, agent = _generate(
+            attempts=[_attempt(source_questions)],
+            responses=_missed(0),
+            num_questions=3,
+            body_extra={"source_attempt_id": SOURCE_ID},
+        )
+    assert r.status_code == 429
+    assert r.json()["error"]["code"] == "QUIZ_DAILY_LIMIT_REACHED"
+    agent.assert_not_awaited()
+
+
+def test_quiz_started_records_what_was_reserved(sink):
+    from services import events_service
+
+    source_questions = [_stored("Q1", 1)]
+    r, _, _ = _generate(
+        generated=[_agent_question("New A")],
+        attempts=[_attempt(source_questions)],
+        responses=_missed(0),
+        num_questions=2,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert r.status_code == 200, r.text
+    events_service.flush_now()
+    started = [e for e in sink if e["event_type"] == "quiz.started"]
+    assert len(started) == 1
+    payload = started[0]["payload"]
+    assert payload["reserved_count"] == 1
+    assert payload["regenerated_count"] == 1
+
+
+def _tool_empty_events(sink, **generate_kwargs):
+    """Drive a generation with the F5 probe answering "yes, this student has
+    completed attempts", and return the `quiz.tool_empty` events THE RE-SERVE
+    emitted.
+
+    Narrowed to this tool on purpose. F5 is feature-agnostic and a generating
+    request runs several reporters — `quiz_signals.offerings_for_course` also
+    reports empty here, because the mocked `table()` serves that read no rows
+    while #592 tells the reporter this student has a graph. That is a fixture
+    artefact of a different subsystem; asserting on every emitter would make
+    these tests fail whenever another reporter is added, which is how a
+    subject-specific assertion turns into a tripwire for unrelated work."""
+    from services import events_service
+
+    def probe(name):
+        m = MagicMock()
+        m.select.return_value = [{"id": SOURCE_ID}]
+        return m
+
+    with patch("services.tool_signals.table", side_effect=probe):
+        r, _, _ = _generate(**generate_kwargs)
+    assert r.status_code == 200, r.text
+    events_service.flush_now()
+    return [
+        e for e in sink
+        if e["event_type"] == "quiz.tool_empty"
+        and e["payload"].get("tool") == "quiz_reserve.missed_questions"
+    ]
+
+
+def test_an_attempt_that_missed_something_but_recovered_nothing_is_reported(sink):
+    """F5: an attempt scored 0 of 1 with no recorded responses (the pre-#537
+    shape — graded entirely through /submit) missed something we cannot name.
+    The re-serve silently degraded to generation, and this is the only thing
+    that says so."""
+    empties = _tool_empty_events(
+        sink,
+        generated=[_agent_question("New A")],
+        attempts=[_attempt([_stored("Q1", 1)])],
+        responses=[],
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert len(empties) == 1
+    assert empties[0]["payload"]["source_attempt_id"] == SOURCE_ID
+
+
+def test_a_perfect_source_attempt_reports_no_discrepancy(sink):
+    """The false alarm the guard exists to prevent. The probe can only ask
+    "has this student completed an attempt", which is true by construction
+    here — so without knowing the attempt missed NOTHING, every practice
+    request on a clean sweep would file a discrepancy."""
+    questions = [_stored("Q1", 1), _stored("Q2", 2)]
+    empties = _tool_empty_events(
+        sink,
+        generated=[_agent_question("New A")],
+        attempts=[_attempt(questions, score=2, total=2)],
+        responses=_missed(of=(0, 1)),
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert empties == []
+
+
+def test_an_unscored_source_attempt_reports_no_discrepancy(sink):
+    """Neither responses nor a usable score: we cannot tell whether anything
+    was missed, and "can't tell" is silence — the same rule tool_signals'
+    own probe follows."""
+    empties = _tool_empty_events(
+        sink,
+        generated=[_agent_question("New A")],
+        attempts=[{**_attempt([_stored("Q1", 1)]), "score": None, "total": None}],
+        responses=[],
+        num_questions=1,
+        body_extra={"source_attempt_id": SOURCE_ID},
+    )
+    assert empties == []
+
+
+@pytest.mark.parametrize("hashes", [None, []])
+def test_omitted_hashes_are_derived_from_the_recorded_responses(hashes):
+    source_questions = [_stored("Q1", 1), _stored("Q2", 2)]
+    extra = {"source_attempt_id": SOURCE_ID}
+    if hashes is not None:
+        extra["missed_question_hashes"] = hashes
+    r, _, agent = _generate(
+        attempts=[_attempt(source_questions)],
+        responses=_missed(1, of=(0, 1)),
+        num_questions=1,
+        body_extra=extra,
+    )
+    assert r.status_code == 200, r.text
+    agent.assert_not_awaited()
+    assert [q["question"] for q in r.json()["questions"]] == ["Q2"]

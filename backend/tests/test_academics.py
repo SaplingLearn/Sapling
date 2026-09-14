@@ -13,7 +13,7 @@ import pytest
 import services.academics as ac
 
 
-def _factory(rows_by_table, recorder=None, select_seqs=None):
+def _factory(rows_by_table, recorder=None, select_seqs=None, counts=None):
     """Return a `table(name)` stand-in, caching one mock per table name so that
     repeated `table(name)` calls share `.select` side-effect sequencing (the
     helper queries some tables twice: a primary query then a fallback).
@@ -21,6 +21,8 @@ def _factory(rows_by_table, recorder=None, select_seqs=None):
     - `rows_by_table[name]` seeds a constant `.select()` return.
     - `select_seqs[name]` (optional) seeds an ordered list of `.select()` results
       for tables queried more than once.
+    - `counts[name]` (optional) overrides the `select_with_count` total, to
+      simulate a read that overran its cap.
     - `.insert()` echoes its payload and records it.
     """
     cache: dict = {}
@@ -34,6 +36,13 @@ def _factory(rows_by_table, recorder=None, select_seqs=None):
             m.select.side_effect = list(select_seqs[name])
         else:
             m.select.return_value = rows_by_table.get(name, [])
+        # `select_with_count` seeded from the same rows, with an exact count —
+        # the offering read uses it to tell a complete list from a truncated
+        # one. `counts[name]` overrides the total to simulate truncation.
+        _rows = rows_by_table.get(name, [])
+        m.select_with_count.return_value = (
+            _rows, (counts or {}).get(name, len(_rows)),
+        )
 
         def _insert(data):
             if recorder is not None:
@@ -191,6 +200,89 @@ def test_user_offering_ids_for_course_intersects():
 def test_user_offering_ids_for_course_empty_when_course_has_no_offerings():
     with patch.object(ac, "table", side_effect=_factory({"course_offerings": []})):
         assert ac.user_offering_ids_for_course("user-1", "course-1") == []
+
+
+# ── course_offering_ids ─────────────────────────────────────────────────────
+#
+# The keyspace `sessions.offering_id` and `flashcards.offering_id` are written
+# in: every writer resolves through `resolve_offering` (current term, created
+# if absent) and none of them consults `enrollments`. Reading those tables
+# back through `user_offering_ids_for_course` is a foreign keyspace in the
+# #553/#529 shape, and it diverges permanently at the first term rollover.
+# Moved here from `services/quiz_signals.py` — CLAUDE.md names this module as
+# the single home for term/offering/enrollment resolution.
+
+def test_course_offering_ids_returns_every_offering_of_the_course():
+    rows = {"course_offerings": [{"id": "off-fall"}, {"id": "off-spring"}]}
+    with patch.object(ac, "table", side_effect=_factory(rows)):
+        assert ac.course_offering_ids("course-1") == ["off-fall", "off-spring"]
+
+
+def test_course_offering_ids_never_consults_enrollments():
+    """The divergence, stated as a query shape. Ownership on the tables that
+    use this scope comes from `user_id`, so intersecting with enrollments adds
+    no safety — it only subtracts the offerings the writers actually use."""
+    seen: list[str] = []
+
+    def recording(name):
+        seen.append(name)
+        return _factory({"course_offerings": [{"id": "off-1"}]})(name)
+
+    with patch.object(ac, "table", side_effect=recording):
+        ac.course_offering_ids("course-1")
+
+    assert "enrollments" not in seen
+
+
+def test_course_offering_ids_no_course_is_unknown():
+    assert ac.course_offering_ids(None) is None
+    assert ac.course_offering_ids("") is None
+
+
+def test_course_offering_ids_a_failing_read_is_unknown_and_LOUD(caplog):
+    """A transient PostgREST outage must not look like a course with no
+    offerings. At debug it was invisible in production — the exact bug class
+    F5 exists to end, one layer up."""
+    def boom(name):
+        m = MagicMock()
+        m.select_with_count.side_effect = RuntimeError("postgrest 503")
+        return m
+
+    with (
+        patch.object(ac, "table", side_effect=boom),
+        caplog.at_level("WARNING", logger="services.academics"),
+    ):
+        assert ac.course_offering_ids("course-1") is None
+
+    assert any(
+        r.levelname == "WARNING" and "offering resolution failed" in r.message
+        for r in caplog.records
+    ), "a real DB failure must reach the operator, not just a debug line"
+
+
+def test_course_offering_ids_a_truncated_read_is_unknown_not_a_partial_list():
+    """Every signal keyed on this scope would undercount against a truncated
+    offering list — and report the undercount as a fact."""
+    rows = {"course_offerings": [{"id": "off-1"}]}
+    with patch.object(
+        ac, "table", side_effect=_factory(rows, counts={"course_offerings": 5000}),
+    ):
+        assert ac.course_offering_ids("course-1") is None
+
+
+def test_user_offering_ids_for_course_keeps_its_own_raising_read():
+    """The two resolvers look alike and deliberately do not share a read.
+    This one has no tri-state to express "couldn't tell", so it lets the read
+    raise — degrading to `[]` would assert the student is enrolled in nothing,
+    which is the undercount-as-fact bug the counted form exists to avoid."""
+    def boom(name):
+        m = MagicMock()
+        m.select.side_effect = RuntimeError("postgrest 503")
+        return m
+
+    with patch.object(ac, "table", side_effect=boom):
+        with pytest.raises(RuntimeError):
+            ac.user_offering_ids_for_course("user-1", "course-1")
 
 
 # ── offering_course_id / term_for_offering ──────────────────────────────────

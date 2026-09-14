@@ -90,11 +90,51 @@ def _today() -> date:
     return datetime.now(timezone.utc).date()
 
 
+def exam_prompt_line(days_away: int | None) -> str:
+    """The one sentence this module contributes to the quiz prompt, or "".
+
+    Dates only. Says how near the deadline is and lets the model decide what
+    that implies — not "make it harder", which would contradict the adaptive
+    difficulty the student actually chose. Omitted entirely when unknown:
+    "next exam: unknown" is prompt tokens spent to say nothing.
+
+    Bounded by `PROMPT_HORIZON_DAYS`: a final dated 87 days out would
+    otherwise put "there is an exam coming, weight toward what an exam tests"
+    on EVERY quiz for the whole semester, which carries no proximity signal
+    and steers week-two practice toward exam-style questions — the opposite of
+    what this line is for. The STORED `exam_days_away` is not clamped; the
+    analytics want the real distance, including the far ones.
+
+    It lives here, next to the number it renders, so that
+    `scripts/bench_quiz_prompt_budget.py` can measure the real sentence
+    instead of a hand-copy. It had one, and the copy was already two features
+    stale — which is the whole reason the budget doc's numbers can drift away
+    from the prompt they claim to describe.
+    """
+    if days_away is None or days_away > PROMPT_HORIZON_DAYS:
+        return ""
+    when = (
+        "TODAY" if days_away == 0
+        else "tomorrow" if days_away == 1
+        else f"in {days_away} days"
+    )
+    return (
+        f" The student's next exam in this course is {when}. Weight the"
+        " questions toward what an exam would actually test."
+    )
+
+
 def _enrollment_ids(offering_ids: list[str], user_id: str) -> list[str]:
     """Enrollment resolution via `services/academics.py`, which CLAUDE.md
-    names as its single home — and which has already read this user's
-    enrollments inside `user_offering_ids_for_course`. Intersecting in memory
-    costs nothing and keeps the resolution in one place."""
+    names as its single home. Intersecting in memory costs one read and keeps
+    the resolution in one place.
+
+    This is also what makes a WIDER `offering_ids` harmless: `assignments` is
+    enrollment-keyed, so offerings of this course the student is not enrolled
+    in contribute nothing here. The quiz route passes every offering of the
+    course (see `academics.course_offering_ids`) and this narrows it back to
+    theirs.
+    """
     wanted = set(offering_ids)
     return [
         r["id"]
@@ -103,7 +143,12 @@ def _enrollment_ids(offering_ids: list[str], user_id: str) -> list[str]:
     ]
 
 
-def days_until_next_exam(user_id: str, course_id: str | None) -> int | None:
+def days_until_next_exam(
+    user_id: str,
+    course_id: str | None,
+    *,
+    offering_ids: list[str] | None = None,
+) -> int | None:
     """Whole days until this student's soonest UPCOMING exam in the course.
 
     `0` means "today" and is the most actionable value this produces — it is
@@ -111,13 +156,29 @@ def days_until_next_exam(user_id: str, course_id: str | None) -> int | None:
     could not tell". Collapsing the two would drop the exact case the feature
     exists for.
 
+    `offering_ids` injects a resolution the caller already paid for — the quiz
+    generation path resolves this course's offerings once and hands the same
+    answer to every leg that needs it. It may be WIDER than this student's
+    enrollments; `_enrollment_ids` narrows it back, so a superset is safe.
+
+    `None` means "not supplied, resolve it yourself", so existing callers are
+    unaffected. It also covers "the caller's own resolution failed", and that
+    asymmetry is deliberate but worth naming: this leg can then succeed on a
+    scope the caller's other legs called unresolvable, and an empty result
+    discovered only here is invisible to the F5 reporter in
+    `quiz_signals._report_dark_scope`. Re-resolving costs one read in an
+    already-degraded request and keeps THIS answer honest, which is the trade
+    taken. It re-resolves through `user_offering_ids_for_course`
+    (enrollment-derived) rather than the quiz path's wider set, because
+    enrollments are all this module can use anyway.
+
     Never raises: this runs inline on the quiz generation path, and one
     optional prompt line is not worth failing a generation over.
     """
     if not course_id:
         return None
     try:
-        return _resolve(user_id, course_id)
+        return _resolve(user_id, course_id, offering_ids)
     except Exception:
         logger.warning(
             "exam proximity lookup failed; generating without it", exc_info=True
@@ -125,8 +186,11 @@ def days_until_next_exam(user_id: str, course_id: str | None) -> int | None:
         return None
 
 
-def _resolve(user_id: str, course_id: str) -> int | None:
-    offering_ids = user_offering_ids_for_course(user_id, course_id)
+def _resolve(
+    user_id: str, course_id: str, offering_ids: list[str] | None = None
+) -> int | None:
+    if offering_ids is None:
+        offering_ids = user_offering_ids_for_course(user_id, course_id)
     if not offering_ids:
         return None
     # `assignments` is enrollment-keyed — the gradebook table carries no

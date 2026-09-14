@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  abandonAttempt,
   answerQuestion,
   describeConcept,
   fetchQuizConfig,
@@ -71,6 +72,50 @@ describe("generateQuiz", () => {
       include_answer_key: false,
     });
   });
+
+  it("names the source attempt when practising the ones you missed (G5)", async () => {
+    await generateQuiz({
+      userId: "u1",
+      conceptNodeId: "c1",
+      numQuestions: 2,
+      difficulty: "medium",
+      sourceAttemptId: "attempt-9",
+    });
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({
+      user_id: "u1",
+      concept_node_id: "c1",
+      num_questions: 2,
+      difficulty: "medium",
+      include_answer_key: false,
+      source_attempt_id: "attempt-9",
+    });
+  });
+
+  it("omits source_attempt_id entirely when there is nothing to practise from", async () => {
+    await generateQuiz({
+      userId: "u1",
+      conceptNodeId: "c1",
+      numQuestions: 5,
+      difficulty: "medium",
+      sourceAttemptId: null,
+    });
+    expect(JSON.parse(lastCall()[1].body as string)).not.toHaveProperty("source_attempt_id");
+  });
+
+  // The hashes are internal (`_INTERNAL_QUESTION_KEYS` strips them from every
+  // response), so the client cannot name items even if it wanted to — the
+  // server derives them from the attempt's own recorded answers.
+  it("never sends question hashes", async () => {
+    await generateQuiz({
+      userId: "u1",
+      conceptNodeId: "c1",
+      numQuestions: 2,
+      difficulty: "medium",
+      sourceAttemptId: "attempt-9",
+    });
+    expect(JSON.parse(lastCall()[1].body as string))
+      .not.toHaveProperty("missed_question_hashes");
+  });
 });
 
 describe("answerQuestion", () => {
@@ -133,6 +178,29 @@ describe("getAttempt", () => {
     const detail = await getAttempt("a-1");
     expect(lastCall()[0]).toBe("/api/quiz/attempts/a-1");
     expect(detail.quiz_id).toBe("a-1");
+  });
+});
+
+describe("abandonAttempt", () => {
+  it("POSTs the abandon route with no body (G4)", async () => {
+    fetchMock().mockResolvedValue(
+      jsonResponse({
+        quiz_id: "a-1",
+        status: "abandoned",
+        abandoned_at: "2026-08-23T02:00:00+00:00",
+      }),
+    );
+    const out = await abandonAttempt("a-1");
+    const [url, init] = lastCall();
+    expect(url).toBe("/api/quiz/attempts/a-1/abandon");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+    expect(out.status).toBe("abandoned");
+  });
+
+  it("url-encodes the attempt id", async () => {
+    await abandonAttempt("a/1");
+    expect(lastCall()[0]).toBe("/api/quiz/attempts/a%2F1/abandon");
   });
 });
 

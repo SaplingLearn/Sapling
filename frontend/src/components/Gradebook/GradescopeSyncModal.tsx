@@ -13,6 +13,7 @@ import {
   type GradescopeCourse,
   type GradescopeSyncResult,
 } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface Props {
   open: boolean;
@@ -198,11 +199,17 @@ export function GradescopeSyncModal({
       setSignedToken("");
       await refreshState();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "";
+      // Show what the backend actually said. The previous canned message fired
+      // on any "expired"/"invalid" substring, which swallowed the specific
+      // reason — expired session vs. truncated cookie vs. a 401 from Sapling's
+      // own require_self — and pointed all three at "re-copy your cookies",
+      // advice that is wrong for two of them. humanizeError pulls `detail` off
+      // the ApiError envelope and still guarantees no raw JSON reaches the UI.
       setError(
-        msg.includes("expired") || msg.includes("invalid")
-          ? "Those cookies didn't authenticate. Copy them again from a freshly signed-in tab."
-          : msg,
+        humanizeError(
+          e,
+          "Those cookies didn't authenticate. Copy them again from a freshly signed-in tab.",
+        ),
       );
     }
   }

@@ -35,6 +35,14 @@ export interface StartRequest {
   scope: QuizScope;
   conceptId: string;
   courseId: string | null;
+  /**
+   * G5: the attempt whose misses this quiz re-serves. Omitted by every start
+   * affordance — a fresh quiz practises nothing — and set only by `retry()`
+   * re-issuing a practice run whose generation failed. `PRACTISE_MISSED` sets
+   * it from the session instead; this is the one path that has to restate it,
+   * because `START` deliberately clears it.
+   */
+  sourceAttemptId?: string | null;
 }
 
 export type SessionConfig = QuizSession["config"];
@@ -66,8 +74,9 @@ export type QuizEvent =
   // ── Two events beyond §4's list, both forced by effects that have nowhere
   //    else to land. Documented as such rather than smuggled in.
   /**
-   * A failure with no phase of its own: `resume` 409s on an attempt the 24h
-   * sweep abandoned, or the initial load falls over. §4 lists a failure event
+   * A failure with no phase of its own: `resume` 409s on an attempt that has
+   * been closed (the 24h sweep, or a Discard on another device — G4), or the
+   * initial load falls over. §4 lists a failure event
    * for generate, answer and submit but not for these, and swallowing a
    * `QUIZ_ATTEMPT_ABANDONED` would leave the resume strip permanently broken
    * with no explanation. Only accepted from a phase with nothing live.
@@ -144,6 +153,8 @@ export function initialSession(
     result: null,
     xp: null,
     deliveredShort: false,
+    sourceAttemptId: null,
+    reserved: null,
   };
 }
 
@@ -212,6 +223,11 @@ function generatingFrom(
 ): QuizSession {
   return {
     ...session,
+    // G5: a generation practises a past attempt only when the patch says so —
+    // which is why this one sits BEFORE the spread and the rest below it.
+    // Leaving the previous session's source in place would make the NEXT quiz
+    // re-serve the same items.
+    sourceAttemptId: null,
     ...patch,
     phase: "generating",
     attemptId: null,
@@ -221,6 +237,7 @@ function generatingFrom(
     result: null,
     xp: null,
     deliveredShort: false,
+    reserved: null,
   };
 }
 
@@ -264,6 +281,10 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
         courseId: event.start.courseId,
         config: event.config,
         queueIndex: 0,
+        // `?? null`, never the bare optional: an explicit `undefined` in the
+        // patch would overwrite `generatingFrom`'s own null and put a value
+        // outside the type into the session.
+        sourceAttemptId: event.start.sourceAttemptId ?? null,
       });
     }
 
@@ -292,6 +313,14 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
         cursor: 0,
         error: null,
         deliveredShort: result.delivered_count < result.requested_count,
+        // G5: absent whenever the request didn't name a source attempt, which
+        // is the same thing as "there is nothing to claim about re-serving".
+        reserved: result.source
+          ? {
+            reservedCount: result.source.reserved_count,
+            regeneratedCount: result.source.regenerated_count,
+          }
+          : null,
       };
     }
 
@@ -391,8 +420,11 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
 
     case "PRACTISE_MISSED": {
       if (session.phase !== "results") return session;
-      // A new attempt on the same concept (R-5). The repetition guard means the
-      // questions differ; the UI labels that honestly.
+      // A new attempt on the same concept (R-5), naming the attempt just
+      // finished as its source: G5 re-serves the items that were actually
+      // missed rather than writing new ones (backend #537 G5). What comes
+      // back may still be regenerated in part or in whole — the results
+      // eyebrow reads `reserved` and says which happened.
       return generatingFrom(session, {
         intent: "review",
         scope: {
@@ -401,6 +433,7 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
           missedCount: event.missedCount,
         },
         config: { ...session.config, count: event.numQuestions },
+        sourceAttemptId: session.attemptId,
       });
     }
 
@@ -445,6 +478,8 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
         result: null,
         xp: null,
         deliveredShort: false,
+        sourceAttemptId: null,
+        reserved: null,
       };
     }
 
@@ -539,5 +574,10 @@ function resumeFrom(
     result: null,
     xp: null,
     deliveredShort: matching?.deliveredShort ?? false,
+    // G5: only the stored session knows this attempt was a practice run and
+    // what it re-served — the resume payload has no idea. Without the carry
+    // a resumed practice quiz would lose its eyebrow.
+    sourceAttemptId: matching?.sourceAttemptId ?? null,
+    reserved: matching?.reserved ?? null,
   };
 }

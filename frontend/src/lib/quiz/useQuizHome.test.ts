@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { GraphNode } from "@/lib/types";
@@ -11,6 +11,7 @@ const quizApi = vi.hoisted(() => ({
   submitQuiz: vi.fn(),
   getAttempt: vi.fn(),
   listAttempts: vi.fn(),
+  abandonAttempt: vi.fn(),
   describeConcept: vi.fn(),
 }));
 vi.mock("./api", () => quizApi);
@@ -22,7 +23,7 @@ vi.mock("@/lib/api", async importActual => {
 });
 
 import { fallbackDefinition, useQuizHome } from "./useQuizHome";
-import { dismissAttempt, saveSession } from "./session";
+import { dismissAttempt, isDismissed, saveSession } from "./session";
 import { initialSession } from "./machine";
 import { DEFAULT_PREFS } from "./prefs";
 import type { EntryRequest } from "./source";
@@ -82,6 +83,9 @@ beforeEach(() => {
   });
   quizApi.listAttempts.mockResolvedValue({ total: 0, limit: 20, offset: 0, attempts: [] });
   quizApi.getAttempt.mockResolvedValue({ resumable: false });
+  quizApi.abandonAttempt.mockResolvedValue({
+    quiz_id: "open", status: "abandoned", abandoned_at: "2026-08-23T02:00:00Z",
+  });
   quizApi.describeConcept.mockResolvedValue("Recursion is a function calling itself.");
 });
 
@@ -189,7 +193,7 @@ describe("resume discovery (R-3)", () => {
     expect(quizApi.getAttempt).toHaveBeenCalledWith("open");
   });
 
-  it("skips a discarded attempt (there is no abandon endpoint — G4)", async () => {
+  it("skips a locally dismissed attempt without spending a request on it", async () => {
     dismissAttempt("open");
     quizApi.listAttempts.mockResolvedValue({
       total: 1, limit: 20, offset: 0, attempts: [attempt({ quiz_id: "open" })],
@@ -219,6 +223,169 @@ describe("resume discovery (R-3)", () => {
 
     const { result } = renderHook(() => useQuizHome("u1", ""));
     await waitFor(() => expect(result.current.resumable?.attempt.quiz_id).toBe("live"));
+  });
+});
+
+describe("discard (G4)", () => {
+  const OPEN = { total: 1, limit: 20, offset: 0, attempts: [{ ...attempt({ quiz_id: "open" }) }] };
+  const RESUMABLE = {
+    quiz_id: "open", status: "in_progress", resumable: true, difficulty: "medium",
+    concept_node_id: "n1", questions: [], responses: [], score: null, total: null,
+    created_at: "2026-08-22T09:00:00Z",
+  };
+
+  async function homeWithAResumableAttempt() {
+    quizApi.listAttempts.mockResolvedValue(OPEN);
+    quizApi.getAttempt.mockResolvedValue(RESUMABLE);
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.resumable?.attempt.quiz_id).toBe("open"));
+    return result;
+  }
+
+  /** Every read the bootstrap makes, counted, so "did this re-fetch?" is a
+   *  fact rather than an impression. */
+  function readCounts() {
+    return {
+      courses: coreApi.getCourses.mock.calls.length,
+      graph: coreApi.getGraph.mock.calls.length,
+      listAttempts: quizApi.listAttempts.mock.calls.length,
+      getAttempt: quizApi.getAttempt.mock.calls.length,
+      describe: quizApi.describeConcept.mock.calls.length,
+    };
+  }
+
+  it("drops the attempt from the strip while the abandon call is still in flight", async () => {
+    const result = await homeWithAResumableAttempt();
+    // Held open deliberately: the strip must be gone on the render AFTER the
+    // click, not on the render after the network answers.
+    let land: (value: unknown) => void = () => {};
+    quizApi.abandonAttempt.mockReturnValue(new Promise(resolve => { land = resolve; }));
+
+    act(() => {
+      result.current.discard("open");
+    });
+
+    // The durable half is on its way…
+    expect(quizApi.abandonAttempt).toHaveBeenCalledWith("open");
+    // …and the strip is already gone, with the screen still on screen. The
+    // `status` assertion is what makes `resumable` mean anything here: a
+    // `refresh()` in `discard` would null `resumable` merely by invalidating
+    // the load key, and would flash the whole home screen back to a skeleton
+    // to do it.
+    expect(result.current.status).toBe("ready");
+    expect(result.current.resumable).toBeNull();
+    expect(isDismissed("open")).toBe(true);
+
+    await act(async () => {
+      land({ quiz_id: "open", status: "abandoned", abandoned_at: "2026-08-23T02:00:00Z" });
+    });
+    expect(result.current.status).toBe("ready");
+    expect(result.current.resumable).toBeNull();
+  });
+
+  it("hides it on the server's word, not on localStorage's", async () => {
+    // The failure this pins: `discard` used to fire `refresh()` synchronously
+    // alongside the abandon POST, so the re-read routinely PREDATED the write
+    // and came back `in_progress`. The strip then stayed hidden only because
+    // `discoverResumable` skips locally dismissed ids — the exact single point
+    // of failure G4 exists to retire. With storage unavailable (private mode,
+    // blocked cookies) that flag never lands and the quiz the student just
+    // discarded comes straight back.
+    const result = await homeWithAResumableAttempt();
+
+    // Blocked by making the ACCESSOR throw, which is what a browser with site
+    // data disabled actually does: `session.ts::storage()` catches it into
+    // `null`, so every write becomes a no-op.
+    //
+    // Spying on `setItem` is NOT a portable way to arrange this.
+    // `Storage.prototype` is never consulted (jsdom hands out a Proxy), and an
+    // instance spy lands or misses depending on the Node version — it passed
+    // on 26 locally and failed CI on 22, where the write went through and this
+    // test's premise quietly evaporated. The property getter is the one seam
+    // both agree on.
+    const original = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() { throw new DOMException("SecurityError"); },
+    });
+    try {
+      await act(async () => {
+        result.current.discard("open");
+      });
+      // Flush anything the discard might have kicked off behind it.
+      await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    } finally {
+      // Restored before the assertions run, so a failure above cannot leak a
+      // broken `localStorage` into the rest of the file.
+      if (original) Object.defineProperty(window, "localStorage", original);
+      else delete (window as { localStorage?: Storage }).localStorage;
+    }
+
+    // The premise: the local flag never landed…
+    expect(isDismissed("open")).toBe(false);
+    // …and the strip went anyway.
+    expect(result.current.resumable).toBeNull();
+  });
+
+  it("does not re-read the whole home screen to hide one row", async () => {
+    const result = await homeWithAResumableAttempt();
+    // Let the description settle first, so its call is not counted as churn.
+    await waitFor(() => expect(result.current.cardDescription).not.toBeNull());
+    const before = readCounts();
+
+    await act(async () => {
+      result.current.discard("open");
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+
+    // A discard changes exactly one thing on this screen — the strip. The
+    // ranking and the "missed N last time" join both read COMPLETED attempts
+    // only (`proposals.ts`), so re-reading courses + graph + history + one
+    // `getAttempt` each, plus a re-fired `describeConcept` as `cardConceptId`
+    // transits null, bought nothing and raced the write it meant to observe.
+    expect(readCounts()).toEqual(before);
+    expect(result.current.resumable).toBeNull();
+  });
+
+  it("keeps the attempt hidden when the abandon call fails", async () => {
+    // Resurrecting a quiz the student just discarded is the worse answer; the
+    // backend's 24h sweep is the backstop for the row itself.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    quizApi.abandonAttempt.mockRejectedValue(new ApiError("boom", 500));
+    const result = await homeWithAResumableAttempt();
+
+    await act(async () => {
+      result.current.discard("open");
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+
+    expect(isDismissed("open")).toBe(true);
+    expect(result.current.status).toBe("ready");
+    expect(result.current.resumable).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("leaves a DIFFERENT resumable attempt alone", async () => {
+    const result = await homeWithAResumableAttempt();
+
+    await act(async () => {
+      result.current.discard("some-other-attempt");
+    });
+
+    expect(quizApi.abandonAttempt).toHaveBeenCalledWith("some-other-attempt");
+    expect(result.current.resumable?.attempt.quiz_id).toBe("open");
+  });
+
+  it("does nothing at all for an empty id", async () => {
+    const result = await homeWithAResumableAttempt();
+
+    await act(async () => {
+      result.current.discard("");
+    });
+
+    expect(quizApi.abandonAttempt).not.toHaveBeenCalled();
+    expect(result.current.resumable?.attempt.quiz_id).toBe("open");
   });
 });
 

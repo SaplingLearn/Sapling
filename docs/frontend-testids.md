@@ -201,7 +201,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-home` | quiz-home root (`phase: home \| configuring`) |
 | `quiz-resume-strip` | the "you left a quiz on X" banner (`ui/InlineBanner`) |
 | `quiz-resume` | "Resume" on that banner |
-| `quiz-resume-discard` | "Discard" — hides the attempt client-side; there is no abandon endpoint |
+| `quiz-resume-discard` | "Discard" — abandons the attempt server-side (`POST /attempts/{id}/abandon`) and hides it locally |
 | `quiz-proposal` | the "Ready for you" primary proposal card |
 | `quiz-start` | "Start" on that card |
 | `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |

@@ -6,7 +6,8 @@
  * actually FOR — the things the old screen either could not do or did wrongly:
  *
  *   resume                  a quiz you walked away from is offered back, at the
- *                           question you left it on (R-3).
+ *                           question you left it on (R-3) — and Discard closes
+ *                           it server-side, on every device (G4).
  *   leave-and-return        the one door out saves the attempt and comes back
  *                           to where the quiz was launched from (R-10).
  *   ask-without-abandoning  the tutor opens OVER the question instead of
@@ -47,6 +48,9 @@
  * Fixture constants, the function-mode contract note and the shared gestures
  * live in `support/quiz.ts`.
  */
+import type { Page } from "@playwright/test";
+import { DISMISSED_KEY, STORAGE_KEY } from "@/lib/quiz/session";
+import type { AttemptsPage } from "@/lib/quiz/types";
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
 import { USER_ACTIVE } from "./support/stack";
@@ -160,7 +164,7 @@ async function proposalsFromDb() {
 
 // ── 1. Resume ──────────────────────────────────────────────────────────────
 
-test("resume: an unfinished quiz is offered back at the question it was left on, and Discard hides it", async ({
+test("resume: an unfinished quiz is offered back at the question it was left on, and Discard abandons it", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -197,19 +201,96 @@ test("resume: an unfinished quiz is offered back at the question it was left on,
   await expect(dots.nth(1)).toHaveClass(/progress-dots__dot--current/);
   await expect(dots.nth(2)).toHaveClass(/progress-dots__dot--todo/);
 
-  // Discard is client-side only — there is no abandon endpoint (R-3, gap G4).
+  // ── Discard, which CLOSES the attempt server-side (G4) ────────────────────
+  //
+  // What proves the difference from the localStorage flag it replaced is a
+  // visit with this browser's two quiz keys wiped: no dismissed entry to skip
+  // and no stored session to resume from, so the strip's only remaining input
+  // is `GET /attempts`. That is the other-device path.
+  //
+  // The POSITIVE CONTROL comes first, deliberately. "The strip is absent" is a
+  // vacuous assertion on its own — a slow load, a renamed testid or a broken
+  // home screen all satisfy it. Showing that the very same visit DOES offer
+  // the attempt while the row is still open is what gives its absence
+  // afterwards any meaning.
   await openQuizHome(page, "/quiz");
   await expect(strip).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+
+  const [{ id: attemptId }] = await appAttempts();
+  expect(statusOf(await otherDeviceVisit(page), attemptId)).toBe("in_progress");
+  await expect(strip).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+
+  // The DB read is synchronized to the abandon POST, not to the click: the
+  // strip vanishes optimistically (`useQuizHome::discard` hides it locally
+  // before the call resolves), so reading the row off the click would race
+  // the write it is checking for.
+  const abandoned = page.waitForResponse(
+    r => r.request().method() === "POST" && /\/api\/quiz\/attempts\/[^/]+\/abandon$/.test(r.url()),
+    { timeout: SUBMIT_TIMEOUT },
+  );
   await page.getByTestId("quiz-resume-discard").click();
+  // `toHaveCount(0)` alone would also be satisfied by a home screen that had
+  // gone to skeletons, so the proposal card is what says the strip is gone
+  // FROM A RENDERED SCREEN. Same generous budget as every sibling wait here:
+  // the default 5s is not a deliberate deadline, just the one that happens to
+  // be there.
   await expect(strip).toHaveCount(0);
-  await expect(page.getByTestId("quiz-proposal")).toBeVisible();
+  await expect(page.getByTestId("quiz-proposal")).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  expect((await abandoned).status()).toBe(200);
 
   const attempts = await appAttempts();
   expect(attempts).toHaveLength(1);
-  // Hidden, not abandoned: the row is still open, waiting for the 24h sweep.
+  // Closed, not scored: a discard pays out no mastery and no XP.
   expect(attempts[0].completed_at).toBeNull();
-  expect(attempts[0].abandoned_at).toBeNull();
+  expect(attempts[0].abandoned_at).not.toBeNull();
+
+  // The SERVER'S OWN WORD is what this journey exists to pin, and it is
+  // asserted on the listing payload rather than on the rendered strip.
+  // `discoverResumable` reaches the strip through a further `GET
+  // /attempts/{id}` round trip, so in the regressed case (listing still
+  // `in_progress`) the strip is merely LATE, not absent, and a count check
+  // taken here would pass roughly half the time. The status assertion has no
+  // such window.
+  expect(statusOf(await otherDeviceVisit(page), attemptId)).toBe("abandoned");
+  // Corroboration only, and retrying (`toHaveCount` polls to its timeout): a
+  // strip that appeared late anyway would mean the client is offering a row
+  // the server calls abandoned.
+  await expect(strip).toHaveCount(0);
 });
+
+/** The status the SERVER reports for one attempt on a listing page. */
+function statusOf(listing: AttemptsPage, attemptId: string): string | undefined {
+  return listing.attempts.find(a => a.quiz_id === attemptId)?.status;
+}
+
+/**
+ * Reload quiz home as if this were a machine that had never seen the attempt:
+ * both quiz localStorage keys gone, so only `GET /attempts` can put anything on
+ * the resume strip. Returns that listing's payload — the deterministic thing to
+ * assert on, since every rendered consequence of it is a round trip further on.
+ *
+ * The keys, the payload type and the navigation all come from the app
+ * (`@/lib/quiz/session`, `@/lib/quiz/types`, `support/quiz::openQuizHome`;
+ * precedent for the `@/lib` imports: quiz-errors.spec.ts). Hardcoded literals
+ * left this leg free to go VACUOUS on a rename — a renamed storage key clears
+ * nothing, this browser keeps its local record, and the strip's absence
+ * afterwards stops meaning anything.
+ */
+async function otherDeviceVisit(page: Page): Promise<AttemptsPage> {
+  await page.evaluate(
+    ([dismissedKey, sessionKey]) => {
+      window.localStorage.removeItem(dismissedKey);
+      window.localStorage.removeItem(sessionKey);
+    },
+    [DISMISSED_KEY, STORAGE_KEY],
+  );
+  const listing = page.waitForResponse(
+    r => r.request().method() === "GET" && r.url().includes("/api/quiz/attempts?"),
+    { timeout: SUBMIT_TIMEOUT },
+  );
+  await openQuizHome(page);
+  return (await (await listing).json()) as AttemptsPage;
+}
 
 /**
  * REGRESSION GUARD — a resumed quiz used to forget everything the server does
@@ -483,14 +564,18 @@ test("missed review: the results screen explains the wrong answer and asks for a
   await page.getByTestId("quiz-ask-panel-close").click();
   await expect(sheet).toHaveCount(0);
 
-  // R-5: "practise the one you missed" is a NEW attempt on the same concept,
-  // one question, same difficulty. (No endpoint re-serves a specific question
-  // — gap G5 — so what the client ASKS FOR is the whole of the contract.)
+  // R-5 / G5: "practise the one you missed" is a NEW attempt on the same
+  // concept, one question, same difficulty — and it NAMES the attempt just
+  // finished, so the backend re-serves the item that was actually missed
+  // rather than writing a new one (#537 G5). What the client asks for is the
+  // whole of the contract here; that the server honours it is the journey
+  // below, which lets the route answer for real.
   //
   // The request is stubbed rather than served: the assertion is on the request
   // the client makes, which is where R-5 actually lives, and the stubbed 502
   // then exercises the mapped-copy path on the way out. (The E2E stacks raise
   // the generate limiter — see the header — so this is hermeticity, not budget.)
+  const [sourceAttempt] = await appAttempts();
   await page.route("**/api/quiz/generate", route =>
     route.fulfill({
       status: 502,
@@ -509,11 +594,15 @@ test("missed review: the results screen explains the wrong answer and asks for a
     num_questions: number;
     difficulty: string;
     include_answer_key: boolean;
+    source_attempt_id?: string;
   };
   expect(body.concept_node_id).toBe(NODE_ID);
   expect(body.num_questions).toBe(1);
   expect(body.difficulty).toBe("medium");
   expect(body.include_answer_key).toBe(false);
+  expect(body.source_attempt_id).toBe(sourceAttempt.id);
+  // Hashes are internal — the client never sees one, so it must never send one.
+  expect(body).not.toHaveProperty("missed_question_hashes");
 
   await expect(page.getByTestId("quiz-error")).toBeVisible({ timeout: GENERATE_TIMEOUT });
   await expect(page.getByTestId("quiz-error")).toContainText(
@@ -521,6 +610,54 @@ test("missed review: the results screen explains the wrong answer and asks for a
   );
   // The stub really did stand in for the route: no second attempt row exists.
   expect(await appAttempts()).toHaveLength(1);
+});
+
+test("missed review: the re-practice serves the SAME question back and says so (G5)", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  await preAckDisclaimer(page);
+  await openQuizHome(page, `/quiz?concept=${NODE_ID}`);
+  await startQuiz(page);
+
+  // Miss question 2 and nothing else, so the item that comes back is
+  // identifiable by its stem rather than by being the only question there is.
+  await answerAtEnd(page, [
+    ALL_CORRECT[0],
+    { n: 2, label: wrongLabelFor(2) },
+    ALL_CORRECT[2],
+  ]);
+  await expectResults(page);
+  await expect(page.getByTestId("quiz-results-score")).toHaveText(
+    `${QUIZ_LENGTH - 1} of ${QUIZ_LENGTH} correct`,
+    { timeout: SUBMIT_TIMEOUT },
+  );
+
+  // Served for real this time: G5 makes no model call for a recovered item, so
+  // this costs a round trip and no generation at all.
+  await page.getByTestId("quiz-practise-missed").click();
+  await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
+    timeout: GENERATE_TIMEOUT,
+  });
+  // THE assertion: the practice quiz is question 2 again — the one that was
+  // missed — not a freshly written question, and not question 1.
+  await expectOnQuestion(page, 2);
+  await expect(page.getByTestId("quiz-panel")).not.toContainText(stemOf(1));
+
+  await chooseAndSubmit(page, CORRECT_LABELS[1]);
+  await expectResults(page);
+  await expect(page.getByTestId("quiz-results-score")).toHaveText("1 of 1 correct", {
+    timeout: SUBMIT_TIMEOUT,
+  });
+  // And the copy tells the truth about what it just did.
+  await expect(page.getByTestId("quiz-results")).toContainText("The ones you missed, again");
+
+  // Two real attempts: the practice run is a first-class attempt of its own,
+  // scored and stored, not a replay of the first.
+  const attempts = await appAttempts();
+  expect(attempts).toHaveLength(2);
+  expect(Number(attempts[1].total)).toBe(1);
+  expect(attempts[1].completed_at).not.toBeNull();
 });
 
 // ── 5. Entry points ────────────────────────────────────────────────────────

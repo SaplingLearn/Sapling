@@ -457,6 +457,78 @@ describe("results exits", () => {
     expect(s.config.difficulty).toBe("medium");
   });
 
+  it("PRACTISE_MISSED names the finished attempt as the source to re-serve (G5)", () => {
+    const results = resultsSession({ kind: "concept", conceptId: "c1" });
+    expect(results.attemptId).toBe("attempt-1");
+    const s = reduce(results, { type: "PRACTISE_MISSED", missedCount: 2, numQuestions: 2 });
+    // The attempt itself is cleared for the new generation; its id survives as
+    // the thing the next generate practises from.
+    expect(s.attemptId).toBeNull();
+    expect(s.sourceAttemptId).toBe("attempt-1");
+    expect(s.reserved).toBeNull();
+  });
+
+  it("an ordinary START never carries a source attempt over", () => {
+    // Practise the misses, sit that quiz, then start a different concept from
+    // its results — the next generate must be an ordinary one.
+    const practising = reduce(
+      resultsSession({ kind: "concept", conceptId: "c1" }),
+      { type: "PRACTISE_MISSED", missedCount: 2, numQuestions: 2 },
+    );
+    const practised = reduce(
+      answerAll(reduce(practising, { type: "GENERATED", result: generated(2) })),
+      { type: "SUBMITTED", result: SUBMITTED, xp: null },
+    );
+    expect(practised.sourceAttemptId).toBe("attempt-1");
+
+    const s = reduce(practised, {
+      type: "START", start: startOf("c2"), config: practised.config,
+    });
+    expect(s.phase).toBe("generating");
+    expect(s.sourceAttemptId).toBeNull();
+  });
+
+  it("GENERATED records how much of the quiz was re-served (G5)", () => {
+    const practising = reduce(
+      resultsSession({ kind: "concept", conceptId: "c1" }),
+      { type: "PRACTISE_MISSED", missedCount: 2, numQuestions: 2 },
+    );
+    const s = reduce(practising, {
+      type: "GENERATED",
+      result: {
+        ...generated(2),
+        source: { attempt_id: "attempt-1", reserved_count: 2, regenerated_count: 0 },
+      },
+    });
+    expect(s.reserved).toEqual({ reservedCount: 2, regeneratedCount: 0 });
+  });
+
+  it("GENERATED leaves `reserved` null when the response says nothing about a source", () => {
+    expect(activeSession(2).reserved).toBeNull();
+  });
+
+  it("EXIT clears the source attempt so the next quiz is an ordinary one", () => {
+    const practising = reduce(
+      resultsSession({ kind: "concept", conceptId: "c1" }),
+      { type: "PRACTISE_MISSED", missedCount: 1, numQuestions: 1 },
+    );
+    const finished = reduce(
+      reduce(
+        answerAll(reduce(practising, {
+          type: "GENERATED",
+          result: {
+            ...generated(1),
+            source: { attempt_id: "attempt-1", reserved_count: 1, regenerated_count: 0 },
+          },
+        })),
+        { type: "SUBMITTED", result: SUBMITTED, xp: null },
+      ),
+      { type: "EXIT" },
+    );
+    expect(finished.sourceAttemptId).toBeNull();
+    expect(finished.reserved).toBeNull();
+  });
+
   it("NEXT_IN_QUEUE advances to the next concept in the queue", () => {
     const s = reduce(resultsSession({ kind: "due", queue: ["c1", "c2", "c3"] }), {
       type: "NEXT_IN_QUEUE",

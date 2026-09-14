@@ -148,11 +148,13 @@ export function persistSession(session: QuizSession): void {
 
 // ── Discarded attempts ─────────────────────────────────────────────────────
 //
-// There is no abandon endpoint (gap G4): an attempt only closes via submit or
-// the 24h TTL sweep. "Discard" therefore hides the row client-side and leaves
-// the server row to expire.
-// TODO(#537-followup: abandon endpoint) — replace this with a real
-// `POST /api/quiz/attempts/{id}/abandon` so a discard is visible on any device.
+// The LOCAL half of Discard: what keeps an attempt hidden in this browser
+// across a load, before `POST /api/quiz/attempts/{id}/abandon` lands or if it
+// never does. That endpoint is the durable half and the reason G4 exists —
+// told once, in `backend/routes/quiz.py::abandon_attempt`.
+//
+// Deliberately not redundant with the server state, and deliberately not
+// authoritative either: nothing here ever un-hides an attempt.
 
 function readDismissed(): string[] {
   const parsed = readJson<unknown>(DISMISSED_KEY);
