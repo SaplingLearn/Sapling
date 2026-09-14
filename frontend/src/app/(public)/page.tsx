@@ -7,6 +7,11 @@
  * replaced the previous marketing landing outright rather than sitting
  * beside it.
  *
+ * The hero is the exception: the v5 title screen was judged not good enough
+ * for the top of the page, so `Hero` is main's hero (the point-cloud canvas,
+ * the floating cards, the Playfair wordmark) carried over as a section of its
+ * own. Everything from the descent band down is v5's.
+ *
  * Sections land incrementally; the engine drives whatever is mounted.
  */
 
@@ -25,14 +30,25 @@ import { Hero } from '@/components/landing-v5/Hero';
 import { IntroOverlay } from '@/components/landing-v5/IntroOverlay';
 import { Navbar } from '@/components/landing-v5/Navbar';
 import { NAV_LIGHT } from '@/components/landing-v5/navTheme';
-import { useLanding } from '@/components/landing/useLanding';
+import { useLanding, type ScrambleStep } from '@/components/landing/useLanding';
+
+/**
+ * Main's hero cascade: the wordmark leads and the tagline follows 200ms
+ * behind, on the slots main's hero reads (1 = wordmark, 2 = tagline). v5's
+ * default runs the other way round on slots 0/1, for a title screen that is
+ * no longer mounted.
+ */
+const HERO_CASCADE: ScrambleStep[] = [
+  { slot: 1, text: 'Sapling', durationMs: 1000 },
+  { slot: 2, text: 'Grow Your Knowledge', durationMs: 1200, delayMs: 200 },
+];
 
 export default function LandingPage() {
   const {
-    rootRef, ambientCanvasRef, navRef, heroCanvasRef, glCanvasRef, heroContentRef,
+    rootRef, ambientCanvasRef, navRef,
     actCanvasRef, cinemaRef, ingestSceneRef, ingestStageRef, carouselRef, trackARef, trackBRef,
     state, set, actions,
-  } = useLanding({ loadCounter: true });
+  } = useLanding({ loadCounter: true, cascade: HERO_CASCADE });
 
   // Carried over from the page this replaced: the nav's Sign In still opens
   // the real OAuth modal rather than scrolling somewhere.
@@ -106,19 +122,10 @@ export default function LandingPage() {
       />
 
       <Hero
-        heroCanvasRef={heroCanvasRef}
-        glCanvasRef={glCanvasRef}
-        heroContentRef={heroContentRef}
-        heroText0={state.heroText0}
+        heroMounted={state.heroMounted}
         heroText1={state.heroText1}
-        // The design's rim and panel radials peak at 0.56/0.66/0.84, which
-        // buries the WebGL cards. Held at 0.3 so they read through — that
-        // puts the heaviest veil over any card at ~0.25. The bottom band
-        // stays at full strength; it is what the info box and cue sit on and
-        // it has faded out by half height, well above the cards.
-        sceneWash={0.3}
+        heroText2={state.heroText2}
         onBeta={() => setBetaOpen(true)}
-        onSeeHow={() => actions.scrollToId('gallery')}
       />
 
       {/* ═══ Descent band ═══

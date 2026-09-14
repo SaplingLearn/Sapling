@@ -68,15 +68,17 @@ test("landing page ships social cards and a canonical URL (#169)", async ({ requ
  * hydration warning appeared — which would leave every other spec green while
  * silently dropping the section's copy out of the crawled HTML. The v5 landing
  * replaced that component, but the failure mode is unchanged and is in fact
- * sharper: v5 is a client component whose visuals are canvas and WebGL, so
- * essentially all of its crawlable payload is the prose asserted below. Wrap
+ * sharper: the page is a client component whose visuals are canvas and WebGL,
+ * so essentially all of its crawlable payload is the prose asserted below. Wrap
  * the page (or the hero) in a `ssr: false` dynamic import and this is the only
  * spec that notices.
  *
  * Assert on the RAW response body, before any JS runs. Note what is NOT
  * asserted: the wordmark and tagline are empty on the server because they
  * scramble in on the client, so `aria-label` on the h1 carries the accessible
- * name and is checked here in its place.
+ * name and is checked here in its place. The hero is main's with v5's lede
+ * kept, so its crawlable text is the lede, the floating-card labels and the
+ * CTA; the acts below carry the rest of the product claims.
  */
 test("the landing page's copy is in the server-rendered HTML (#344)", async ({ request }) => {
   const res = await request.get("/");
@@ -86,15 +88,15 @@ test("the landing page's copy is in the server-rendered HTML (#344)", async ({ r
   // the wordmark scrambles in client-side, so only its accessible name is server-rendered
   expect(html, "the wordmark's accessible name must survive SSR").toContain('aria-label="Sapling"');
 
+  // the hero's own server-rendered text: the lede, the knowledge-state card and the CTA
   expect(html, "the lede is the page's primary SEO payload").toContain(
     "Sapling reads your whole course",
   );
-  expect(html).toContain("It works from your own coursework, not the open web");
+  expect(html).toContain("Mastered");
+  expect(html).toContain("Sign up for Beta Testing");
 
-  // the three key columns state what the product does
+  // the acts below the hero state what the product does
   expect(html).toContain("Ingest");
-  expect(html).toContain("Recall");
-  expect(html).toContain("Every concept linked to the ones it rests on");
-
-  expect(html, "the beta offer must be crawlable").toContain("Free through beta.");
+  expect(html).toContain("Drop in the whole");
+  expect(html).toContain("Ready to");
 });
