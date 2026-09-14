@@ -5,10 +5,100 @@ import { NameColorRenderer } from "./NameColorRenderer";
 import { TitleFlair } from "./TitleFlair";
 import { RoleBadge } from "./RoleBadge";
 import { Icon } from "./Icon";
+import { useToast } from "./ToastProvider";
+import { useUser } from "@/context/UserContext";
+import { fetchFriends, fetchFriendRequests, sendFriendRequest } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import type { UserProfile } from "@/lib/types";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css).
 const rarityVar = (r: string) => `var(--rarity-${r}, var(--text-muted))`;
+
+type FriendStatus = "loading" | "friends" | "pending" | "eligible";
+
+/**
+ * The add-friend action on someone else's profile. `fetchFriends` is
+ * self-only (Task 12), so the only way to know whether the viewer is already
+ * friends with — or already has a request pending toward — this profile is
+ * to fetch the VIEWER's own friends + outgoing requests and check membership.
+ * That's worth two extra calls here: rendering "Add friend" to someone
+ * already friended (or already pending) is a worse UX than a couple of
+ * background fetches, and it's the only way "Request sent" survives a page
+ * reload rather than resetting every time the component remounts.
+ */
+export function AddFriendAction({ profileUserId }: { profileUserId: string }) {
+  const { userId: viewerId } = useUser();
+  const toast = useToast();
+  const [status, setStatus] = React.useState<FriendStatus>("loading");
+
+  const checkStatus = React.useCallback(async () => {
+    if (!viewerId || viewerId === profileUserId) return;
+    try {
+      const [friendsRes, requestsRes] = await Promise.all([
+        fetchFriends(viewerId),
+        fetchFriendRequests(viewerId),
+      ]);
+      if (friendsRes.friends.some((f) => f.user_id === profileUserId)) {
+        setStatus("friends");
+        return;
+      }
+      if (requestsRes.outgoing.some((r) => r.to_user_id === profileUserId)) {
+        setStatus("pending");
+        return;
+      }
+      setStatus("eligible");
+    } catch {
+      // Couldn't confirm status. Default to eligible rather than hiding the
+      // action entirely — a stale "Add friend" that 409s is recoverable via
+      // the toast in send(), unlike a button that silently never shows up.
+      setStatus("eligible");
+    }
+  }, [viewerId, profileUserId]);
+
+  React.useEffect(() => {
+    checkStatus();
+  }, [checkStatus]);
+
+  const send = async () => {
+    if (!viewerId || status !== "eligible") return;
+    setStatus("pending");
+    try {
+      await sendFriendRequest(viewerId, profileUserId);
+      toast.success("Friend request sent");
+    } catch (err) {
+      // 409 means already friends, or a request is already pending in a
+      // direction we didn't know about — resync to the server's truth
+      // instead of guessing, and show the server's own explanation.
+      toast.error(humanizeError(err, "Couldn't send that friend request."));
+      await checkStatus();
+    }
+  };
+
+  if (!viewerId || viewerId === profileUserId || status === "loading") return null;
+
+  if (status === "friends") {
+    return (
+      <span className="chip chip--accent" data-testid="profile-friend-status">
+        Friends
+      </span>
+    );
+  }
+
+  return (
+    <button
+      data-testid="profile-add-friend"
+      className="btn btn--sm btn--primary"
+      disabled={status === "pending"}
+      onClick={send}
+    >
+      {status === "pending" ? "Request sent" : (
+        <>
+          <Icon name="plus" size={12} /> Add friend
+        </>
+      )}
+    </button>
+  );
+}
 
 export function ProfileView({ profile, embedded = false }: { profile: UserProfile; embedded?: boolean }) {
   const eq = profile.equipped_cosmetics || {};
@@ -32,6 +122,9 @@ export function ProfileView({ profile, embedded = false }: { profile: UserProfil
         overflow: "hidden",
       }}
     >
+      <div style={{ position: "absolute", top: "var(--pad-lg)", right: "var(--pad-lg)" }}>
+        <AddFriendAction profileUserId={profile.id} />
+      </div>
       <div>
         <AvatarFrame
           name={profile.name || "?"}

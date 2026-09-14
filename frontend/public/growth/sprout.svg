@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 120 120" width="100%" height="100%" style="display:block;overflow:visible">
+      <defs>
+        <radialGradient id="sky-sprout" cx="42%" cy="26%" r="84%">
+          <stop offset="0%" stop-color="#ecf5ec"/><stop offset="100%" stop-color="#d6ecda"/>
+        </radialGradient>
+        <linearGradient id="soil-sprout" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7a5a39" stop-opacity="1"/><stop offset="45%" stop-color="#5e4126"/><stop offset="100%" stop-color="#3d2b18"/>
+        </linearGradient>
+        <linearGradient id="turf-sprout" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#69a95a"/><stop offset="100%" stop-color="#3f7f45"/>
+        </linearGradient>
+        <clipPath id="clip-sprout"><circle cx="60" cy="60" r="55"/></clipPath>
+      </defs>
+      <circle cx="60" cy="62.5" r="55" fill="rgba(19,38,16,0.20)"/>
+      <g clip-path="url(#clip-sprout)">
+        <rect x="0" y="0" width="120" height="120" fill="url(#sky-sprout)"/>
+        
+        <path d="M-6 93 Q60 84 126 93 L126 126 L-6 126 Z" fill="url(#soil-sprout)"/>
+        <path d="M-6 93 Q60 84 126 93 L126 103 Q60 94 -6 103 Z" fill="url(#turf-sprout)"/>
+        <path d="M-6 93 Q60 84 126 93 L126 94.6 Q60 85.6 -6 94.6 Z" fill="rgba(255,255,255,0.16)"/>
+        <ellipse cx="53" cy="92" rx="4.4" ry="3" fill="#a67c4c" transform="rotate(-12 53 92)"/>
+        <ellipse cx="52.4" cy="91.4" rx="2.4" ry="1.6" fill="#c2986a" transform="rotate(-12 53 92)"/>
+        <defs><clipPath id="wdsprout0"><path d="M58.1 93.1Q57.8 84.9 58.6 81.4Q59.3 77.8 59.7 75.4L60.0 72.9L62.0 73.1Q61.9 78.2 61.4 81.6Q61.0 85.1 61.4 89.0L61.9 92.9Z"/></clipPath>
+      <linearGradient id="wdsprout0g" x1="0" y1="1" x2="0" y2="0">
+        <stop offset="0%" stop-color="#1d1108" stop-opacity="0.42"/>
+        <stop offset="42%" stop-color="#1d1108" stop-opacity="0.06"/>
+        <stop offset="100%" stop-color="#ffe9c2" stop-opacity="0.16"/>
+      </linearGradient></defs><path d="M58.1 93.1Q57.8 84.9 58.6 81.4Q59.3 77.8 59.7 75.4L60.0 72.9L62.0 73.1Q61.9 78.2 61.4 81.6Q61.0 85.1 61.4 89.0L61.9 92.9Z" fill="#0f5b39"/><path d="M58.1 93.1Q57.8 84.9 58.6 81.4Q59.3 77.8 59.7 75.4L60.0 72.9L61.7 73.1Q61.4 78.2 61.0 81.6Q60.5 85.1 60.9 89.0L61.3 92.9Z" fill="#2D8F5C"/><path d="M58.6 93.0Q58.2 85.0 59.0 81.5Q59.7 77.9 60.0 75.5L60.3 73.0L60.8 73.0Q60.4 78.1 59.8 81.5Q59.1 85.0 59.4 89.0L59.7 93.0Z" fill="#57AF77"/><g clip-path="url(#wdsprout0)"><rect x="0" y="0" width="120" height="120" fill="url(#wdsprout0g)"/></g>
+        <g transform="translate(60.6 79) rotate(-6) scale(0.42) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#0E5537"/><g transform="translate(32 38) scale(0.78) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#22794C"/></g><g transform="translate(32 38) scale(0.44) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#4FA36D" opacity="0.9"/></g></g>
+        <g transform="translate(61 74.5) rotate(4) scale(0.4) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#12603C"/><g transform="translate(32 30) scale(0.78) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#2D8F5C"/></g><g transform="translate(32 30) scale(0.44) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#63B77F" opacity="0.9"/></g></g>
+        <circle cx="61" cy="71.6" r="2.1" fill="#12603C"/><circle cx="60.4" cy="71" r="1" fill="#63B77F"/>
+        <g transform="translate(48 94)"><path d="M-1.9 0 Q-1.1 -1.4 -2.5 -2.3" stroke="#63B77F" stroke-width="0.77" fill="none" stroke-linecap="round"/><path d="M-0.9 0 Q-0.5 -2.1 -0.7 -3.5" stroke="#2D8F5C" stroke-width="0.77" fill="none" stroke-linecap="round"/><path d="M0.1 0 Q0.1 -2.4 0.8 -4.1" stroke="#63B77F" stroke-width="0.77" fill="none" stroke-linecap="round"/><path d="M1.1 0 Q0.7 -2.0 2.0 -3.3" stroke="#2D8F5C" stroke-width="0.77" fill="none" stroke-linecap="round"/><path d="M2.0 0 Q1.2 -1.3 2.6 -2.2" stroke="#63B77F" stroke-width="0.77" fill="none" stroke-linecap="round"/></g><g transform="translate(72 95)"><path d="M-1.7 0 Q-1.0 -1.3 -2.3 -2.1" stroke="#63B77F" stroke-width="0.70" fill="none" stroke-linecap="round"/><path d="M-0.8 0 Q-0.5 -1.9 -0.6 -3.2" stroke="#2D8F5C" stroke-width="0.70" fill="none" stroke-linecap="round"/><path d="M0.1 0 Q0.1 -2.2 0.7 -3.7" stroke="#63B77F" stroke-width="0.70" fill="none" stroke-linecap="round"/><path d="M1.0 0 Q0.6 -1.8 1.8 -3.0" stroke="#2D8F5C" stroke-width="0.70" fill="none" stroke-linecap="round"/><path d="M1.8 0 Q1.1 -1.2 2.4 -2.0" stroke="#63B77F" stroke-width="0.70" fill="none" stroke-linecap="round"/></g>
+      </g>
+      <circle cx="60" cy="60" r="55" fill="none" stroke="#6f9a5a" stroke-width="2.6"/>
+      <circle cx="60" cy="60" r="51.5" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>
+    </svg>

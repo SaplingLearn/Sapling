@@ -1,3 +1,4 @@
+import logging
 import uuid
 import random
 import string
@@ -11,8 +12,9 @@ from agents.deps import SaplingDeps
 from agents.social_summary import social_summary_agent
 from agents.usage import record_agent_usage
 from db.connection import table
-from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
+from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody, FriendRequestBody
 from services.auth_guard import require_self, get_session_user_id
+from services.achievement_service import check_achievements
 from services.encryption import encrypt_if_present, decrypt_if_present
 from services.profiles import get_display_name, get_display_names
 from services.graph_service import get_graph
@@ -20,6 +22,8 @@ from services import academics
 from services.matching_service import find_study_matches
 from services.request_context import current_request_id
 from services.social_cache_service import get_cached_summary, save_summary, invalidate as invalidate_summary
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -53,6 +57,22 @@ def create_room(body: CreateRoomBody, request: Request):
     })
     table("room_members").insert({"room_id": room_id, "user_id": body.user_id})
     invalidate_summary(room_id)
+
+    # Creating a room seeds owned_room_members at 1. Below the shipped
+    # threshold of 5, but the stat is admin-configurable from the wiki, so the
+    # create path dispatches it too rather than only the join path.
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(body.user_id, "owned_room_members", {})
+    except Exception:
+        # Post-commit: the room already exists, so a failing badge check must
+        # not fail the create. Logged, never swallowed — a silent `pass` here
+        # is how the `friendships.id` 400 stayed invisible for a whole wave.
+        logger.exception(
+            "achievement dispatch failed after room create user=%s room=%s",
+            body.user_id, room_id,
+        )
+
     return {"room_id": room_id, "invite_code": invite_code}
 
 
@@ -91,7 +111,11 @@ def list_public_rooms(request: Request, user_id: str = Query(...)):
 @router.post("/public-rooms/{room_id}/join")
 def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
     require_self(body.user_id, request)
-    rooms = table("rooms").select("id,is_public", filters={"id": f"eq.{room_id}"})
+    # created_by is selected because the achievement dispatch below needs it —
+    # owned_room_members is the OWNER's stat, not the joiner's.
+    rooms = table("rooms").select(
+        "id,is_public,created_by", filters={"id": f"eq.{room_id}"}
+    )
     if not rooms:
         raise HTTPException(status_code=404, detail="Room not found")
     if not rooms[0].get("is_public"):
@@ -109,6 +133,29 @@ def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
         )
         _touch_room(room_id)
         invalidate_summary(room_id)
+
+    # #405's public rooms are a SECOND way into a room, so they must dispatch
+    # exactly what the invite-code path (join_room) dispatches. Without this,
+    # `room-leader` (Grovekeeper: create a study room five people join) only
+    # advanced for owners whose members happened to arrive by invite code — the
+    # same badge, earnable or not depending on which join button the fifth
+    # member pressed. Fired unconditionally (not only on a fresh membership),
+    # mirroring join_room: a repeat join is a cheap re-evaluation, and the
+    # owner's badge must not depend on the joiner's click history.
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(body.user_id, "rooms_joined", {})
+        # The owner is rooms.created_by, NOT the joining user — dispatching for
+        # body.user_id would evaluate the wrong user's rooms.
+        owner = rooms[0].get("created_by")
+        if owner:
+            check_achievements(owner, "owned_room_members", {})
+    except Exception:
+        logger.exception(
+            "achievement dispatch failed after public room join user=%s room=%s",
+            body.user_id, room_id,
+        )
+
     return {"joined": True, "room_id": room_id}
 
 
@@ -140,8 +187,18 @@ def join_room(body: JoinRoomBody, request: Request):
     try:
         from services.achievement_service import check_achievements
         check_achievements(body.user_id, "rooms_joined", {})
+        # owned_room_members (`room-leader`/Grovekeeper: build a room five
+        # people join) is the ROOM CREATOR's stat, not the joiner's — a join
+        # advances someone else's badge. Dispatching it for body.user_id would
+        # evaluate the wrong user's rooms and the owner would never be granted.
+        owner = room.get("created_by")
+        if owner:
+            check_achievements(owner, "owned_room_members", {})
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after room join user=%s room=%s",
+            body.user_id, room["id"],
+        )
 
     return {"room": {**room, "member_count": len(members)}}
 
@@ -464,12 +521,20 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
     if row:
         row[0]["text"] = decrypt_if_present(row[0].get("text"))
 
-    # Check for achievements after message send
+    # Check for achievements after message send. Posting is the only thing
+    # that advances room_replies (`helping-hand`: answer in someone else's
+    # room) and rooms_active (`social-butterfly`: post in five different
+    # rooms), so this is their only possible dispatch point.
     try:
         from services.achievement_service import check_achievements
         check_achievements(body.user_id, "post_count", {})
+        check_achievements(body.user_id, "room_replies", {})
+        check_achievements(body.user_id, "rooms_active", {})
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after room message user=%s room=%s",
+            body.user_id, room_id,
+        )
 
     return {"message": row[0] if row else {}}
 
@@ -597,3 +662,206 @@ def get_students(request: Request):
     ]
     students.sort(key=lambda s: (s["name"] or ""))
     return {"students": students}
+
+
+# ── Friends ──────────────────────────────────────────────────────────────────
+
+def _are_friends(user_id: str, other_id: str) -> bool:
+    rows = table("friendships").select(
+        "friend_id", filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{other_id}"}
+    )
+    return bool(rows)
+
+
+@router.post("/friends/request")
+def send_friend_request(body: FriendRequestBody, request: Request):
+    require_self(body.from_user_id, request)
+    if body.from_user_id == body.to_user_id:
+        raise HTTPException(status_code=400, detail="You can't friend yourself")
+    if _are_friends(body.from_user_id, body.to_user_id):
+        raise HTTPException(status_code=409, detail="Already friends")
+    # Deliberately only the exact (from, to) pair — a pending REVERSE request
+    # is left alone rather than auto-accepted or rejected. Mutual pending
+    # requests are legal and harmless now that accept_friend_request is
+    # idempotent: whichever is accepted first makes the other a no-op that
+    # still resolves its row. Auto-accepting here would silently create a
+    # friendship from a click that only meant "send a request".
+    existing = table("friend_requests").select(
+        "id,status",
+        filters={
+            "from_user_id": f"eq.{body.from_user_id}",
+            "to_user_id": f"eq.{body.to_user_id}",
+        },
+    )
+    if existing:
+        if existing[0].get("status") == "pending":
+            raise HTTPException(status_code=409, detail="Request already pending")
+        # A row for this (from_user_id, to_user_id) pair already exists —
+        # declined, or accepted-then-unfriended (remove_friend only deletes
+        # the symmetric friendships rows, it deliberately leaves the
+        # historical friend_requests row in place). UNIQUE(from_user_id,
+        # to_user_id) means a second insert here would 409/500 on the
+        # constraint, so reactivate the existing row instead of inserting
+        # a duplicate.
+        result = table("friend_requests").update(
+            {
+                "status": "pending",
+                "responded_at": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            filters={"id": f"eq.{existing[0]['id']}"},
+        )
+        return {"request": result[0] if result else None}
+    result = table("friend_requests").insert({
+        "from_user_id": body.from_user_id,
+        "to_user_id": body.to_user_id,
+        "status": "pending",
+    })
+    return {"request": result[0] if result else None}
+
+
+def _load_request(request_id: str, user_id: str) -> dict:
+    rows = table("friend_requests").select(
+        "id,from_user_id,to_user_id,status", filters={"id": f"eq.{request_id}"}
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    req = rows[0]
+    if req["to_user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not your request to answer")
+    return req
+
+
+@router.post("/friends/requests/{request_id}/accept")
+def accept_friend_request(request_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    req = _load_request(request_id, user_id)
+    a, b = req["from_user_id"], req["to_user_id"]
+
+    # Accepting is idempotent. friendships is PRIMARY KEY (user_id, friend_id),
+    # so a second write of the same pair is a duplicate-key 500 — and since the
+    # request row would stay `pending`, it 500d on every retry, permanently.
+    # Two ways in, neither needing an adversary:
+    #   1. a plain double-click / retry on a request already accepted;
+    #   2. mutual requests — send_friend_request only checks the exact
+    #      (from, to) pair, never the reverse, so A->B and B->A can both sit
+    #      pending; accepting one makes the other's accept a duplicate.
+    # Case (1) is the status check, case (2) is the _are_friends check. Both
+    # still resolve the request row so a stale `pending` stops surfacing as an
+    # actionable incoming request forever.
+    #
+    # "Already friends" is the ONLY thing that makes this idempotent, though —
+    # NOT "not pending" on its own. Folding the two together
+    # (`status != "pending" or _are_friends(...)`) meant accepting a DECLINED
+    # request skipped the friendships upsert, still stamped the row
+    # `accepted`, and returned {"accepted": True}: a request recorded as
+    # accepted with no friendship behind it, and the sender left to work out
+    # that they have to send again. A resolved request that produced no
+    # friendship is not an accept to replay, it's a stale one to reject.
+    friends_already = _are_friends(a, b)
+    if req.get("status") != "pending" and not friends_already:
+        raise HTTPException(status_code=409, detail="Request is no longer pending")
+    already = friends_already
+
+    if not already:
+        # Symmetric rows: "my friends" stays a plain equality filter.
+        # upsert, not insert: two simultaneous accepts (a real double-click
+        # fires both before either has updated the status) both read `pending`,
+        # so the check above cannot close the race on its own — the write has
+        # to tolerate the conflict too.
+        table("friendships").upsert([
+            {"user_id": a, "friend_id": b},
+            {"user_id": b, "friend_id": a},
+        ], on_conflict="user_id,friend_id")
+
+    table("friend_requests").update(
+        {"status": "accepted", "responded_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{request_id}"},
+    )
+    if already:
+        return {"accepted": True}
+
+    # Guarded like every other dispatch site in this file (:64, :144, :185).
+    # The friendship rows and the request status are already committed above,
+    # so a failing badge check must not 500 a request that did succeed — that
+    # is exactly what happened while _count_rows selected a nonexistent `id`
+    # column off `friendships`.
+    try:
+        check_achievements(a, "friends_count")
+        check_achievements(b, "friends_count")
+    except Exception:
+        logger.exception(
+            "achievement dispatch failed after friend accept from=%s to=%s", a, b,
+        )
+    return {"accepted": True}
+
+
+@router.post("/friends/requests/{request_id}/decline")
+def decline_friend_request(request_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    _load_request(request_id, user_id)
+    table("friend_requests").update(
+        {"status": "declined", "responded_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{request_id}"},
+    )
+    return {"declined": True}
+
+
+@router.delete("/friends/{friend_id}")
+def remove_friend(friend_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    table("friendships").delete(
+        filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{friend_id}"}
+    )
+    table("friendships").delete(
+        filters={"user_id": f"eq.{friend_id}", "friend_id": f"eq.{user_id}"}
+    )
+    return {"removed": True}
+
+
+@router.get("/friends/requests")
+def list_friend_requests(user_id: str, request: Request):
+    require_self(user_id, request)
+    incoming = table("friend_requests").select(
+        "id,from_user_id,created_at",
+        filters={"to_user_id": f"eq.{user_id}", "status": "eq.pending"},
+    ) or []
+    outgoing = table("friend_requests").select(
+        "id,to_user_id,created_at",
+        filters={"from_user_id": f"eq.{user_id}", "status": "eq.pending"},
+    ) or []
+    ids = [r["from_user_id"] for r in incoming] + [r["to_user_id"] for r in outgoing]
+    names = get_display_names(ids) if ids else {}
+    return {
+        "incoming": [
+            {**r, "name": names.get(r["from_user_id"], "Someone")} for r in incoming
+        ],
+        "outgoing": [
+            {**r, "name": names.get(r["to_user_id"], "Someone")} for r in outgoing
+        ],
+    }
+
+
+@router.get("/friends/{user_id}")
+def list_friends(user_id: str, request: Request):
+    # Self-only for now: a friends list is arguably shareable with other
+    # users later (product decision), but the safe default until that's
+    # decided is that only the account owner can list their own friends.
+    require_self(user_id, request)
+    rows = table("friendships").select("friend_id", filters={"user_id": f"eq.{user_id}"})
+    ids = [r["friend_id"] for r in rows or []]
+    if not ids:
+        return {"friends": []}
+    users = table("users").select(
+        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})"}
+    ) or []
+    names = get_display_names(ids)
+    return {"friends": [
+        {
+            "user_id": u["id"],
+            "name": names.get(u["id"], "Someone"),
+            "level": u.get("level") or 1,
+            "total_xp": u.get("total_xp") or 0,
+        }
+        for u in users
+    ]}

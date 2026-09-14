@@ -31,23 +31,9 @@ vi.mock("react-force-graph-3d", () => ({
   },
 }));
 
-vi.mock("next/dynamic", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default: (loader: any) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let Resolved: any = () => null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Promise.resolve(loader()).then((mod: any) => {
-      Resolved = mod?.default ?? mod;
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const Wrapper = (props: any) => {
-      const C = Resolved;
-      return C ? C(props) : null;
-    };
-    return Wrapper;
-  },
-}));
+vi.mock("next/dynamic", async () =>
+  (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
+);
 
 let KnowledgeGraph3D: (typeof import("./KnowledgeGraph3D"))["KnowledgeGraph3D"];
 

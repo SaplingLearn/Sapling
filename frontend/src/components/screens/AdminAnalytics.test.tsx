@@ -48,20 +48,12 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api", () => api);
 
-// Charts are lazy-loaded via next/dynamic in the screen; render them
-// synchronously in tests (house passthrough precedent).
-vi.mock("next/dynamic", () => ({
-  default: (loader: () => Promise<unknown>) => {
-    let Comp: React.ComponentType<Record<string, unknown>> | null = null;
-    loader().then((m) => { Comp = (m as { default?: never } & Record<string, never>) as never; });
-    return function DynamicPassthrough(props: Record<string, unknown>) {
-      const [, force] = React.useReducer((x: number) => x + 1, 0);
-      React.useEffect(() => { if (!Comp) { loader().then((m) => { Comp = m as never; force(); }); } }, []);
-      const C = Comp as React.ComponentType<Record<string, unknown>> | null;
-      return C ? <C {...props} /> : null;
-    };
-  },
-}));
+// Charts are lazy-loaded via next/dynamic in the screen; the shared
+// passthrough renders them synchronously (re-rendering once late
+// resolutions land).
+vi.mock("next/dynamic", async () =>
+  (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
+);
 
 import { AdminAnalytics } from "./AdminAnalytics";
 

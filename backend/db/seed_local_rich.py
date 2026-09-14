@@ -553,7 +553,7 @@ def seed_notes_documents() -> None:
         )
 
 
-# (fc_id, user_id, offering_id, topic, front, back) — plaintext, grouped by topic.
+# (fc_id, user_id, offering_id, topic, front, back) — 🔒 front/back, grouped by topic.
 _FLASHCARDS = [
     ("rich-fc-cs-1", USER_ACTIVE, OFF_CS_F25, "CS Basics",
      "What is a variable?", "A named storage location for a value."),
@@ -579,8 +579,9 @@ def seed_flashcards() -> None:
                 "user_id": user_id,
                 "offering_id": off_id,
                 "topic": topic,
-                "front": front,
-                "back": back,
+                # 🔒 front / back (#518)
+                "front": encrypt_if_present(front),
+                "back": encrypt_if_present(back),
             },
         )
 
@@ -625,9 +626,24 @@ def seed_study_guides() -> None:
                 "offering_id": off_id,
                 "exam_id": exam_id,
                 "generated_at": generated_at,
-                "content": content,
+                # 🔒 content (#518)
+                "content": encrypt_json(content),
             },
         )
+
+
+def seed_room_summaries() -> None:
+    # #518: room_summaries.summary is 🔒. PK is room_id (no id column), so this
+    # can't go through insert_if_absent.
+    if not table("room_summaries").select("room_id", filters={"room_id": f"eq.{ROOM_STUDY}"}):
+        table("room_summaries").insert({
+            "room_id": ROOM_STUDY,
+            "summary": encrypt_if_present("The group is reviewing recursion before the midterm."),
+            "member_hash": "rich-member-hash-v1",
+        })
+        h.record("room_summaries", created=True)
+    else:
+        h.record("room_summaries", created=False)
 
 
 # (qa_id, concept_node_id, difficulty, score, total, questions_json, answers_json, completed_at)
@@ -646,6 +662,67 @@ _QUIZ_ATTEMPTS = [
 ]
 
 
+# ── offering_concept_stats (#553) ─────────────────────────────────────────
+#
+# Class-level aggregates, keyed on `course_offerings.id` — a DIFFERENT
+# keyspace from the abstract `courses.id` the graph carries. #553 was the
+# quiz's misconceptions tool filtering this table's `offering_id` with a
+# course id, which matched nothing for every student indefinitely while
+# looking exactly like a class that had no misconceptions yet.
+#
+# The rows are shaped so a test can tell a real fix from a coincidence:
+#
+#   * OFF_CS_F25 and OFF_CS_S26 are BOTH offerings of the same abstract CS
+#     course, and the active user is enrolled in both — so a fix that
+#     resolves only one "current" offering still loses half the rows.
+#   * OFF_HIST_F25 belongs to a course the active user is NOT enrolled in.
+#     Its misconception text must never reach them; that is the negative
+#     half of the assertion, and it is what stops a fix from "working" by
+#     simply dropping the offering filter altogether.
+#   * One row carries an EMPTY array: the aggregation writes a stats row per
+#     concept as soon as a class has activity and only fills the array when
+#     it has something to say (0 of 72 rows on staging and 0 of 73 on prod
+#     carried text on 2026-08-22). Seeding that state keeps the empty-vs-
+#     absent distinction exercised.
+#
+# (stats_id, offering_id, concept_name, misconceptions)
+_OFFERING_CONCEPT_STATS = [
+    ("rich-ocs-cs-f25-recursion", OFF_CS_F25, "Recursion",
+     ["Recursion always costs more memory than a loop",
+      "A base case is optional if the input shrinks"]),
+    ("rich-ocs-cs-f25-pointers", OFF_CS_F25, "Pointers and Memory",
+     ["Freeing a pointer also clears the variable holding it"]),
+    ("rich-ocs-cs-s26-controlflow", OFF_CS_S26, "Control Flow",
+     ["`else if` evaluates every branch before choosing one"]),
+    # Same class, no text yet — a stats row is not the same as a finding.
+    ("rich-ocs-cs-s26-variables", OFF_CS_S26, "Variables and Types", []),
+    # A class the active user is NOT in. Must never leak into their prompt.
+    ("rich-ocs-hist-f25-sources", OFF_HIST_F25, "Primary Sources",
+     ["A primary source is any source written by a historian"]),
+]
+
+
+def seed_offering_concept_stats() -> None:
+    for stats_id, off_id, concept, misconceptions in _OFFERING_CONCEPT_STATS:
+        h.insert_if_absent(
+            "offering_concept_stats",
+            stats_id,
+            {
+                "offering_id": off_id,
+                "concept_name": concept,
+                "student_count": 4,
+                "avg_mastery_score": 0.55,
+                "pct_mastered": 0.25,
+                "pct_struggling": 0.5,
+                "pct_unexplored": 0.25,
+                "common_misconceptions": misconceptions,
+                # No `effective_explanations` key — #572, see
+                # services/course_context_service.py::_parse_quiz_context_to_arrays.
+                "prerequisite_gaps": [],
+            },
+        )
+
+
 def seed_quiz() -> None:
     for qa_id, node_id, difficulty, score, total, questions, answers, completed_at in _QUIZ_ATTEMPTS:
         h.insert_if_absent(
@@ -657,11 +734,52 @@ def seed_quiz() -> None:
                 "score": score,
                 "total": total,
                 "difficulty": difficulty,
-                "questions_json": questions,
-                "answers_json": answers,
+                # 🔒 questions_json / answers_json
+                "questions_json": encrypt_json(questions),
+                "answers_json": encrypt_json(answers) if answers is not None else None,
                 "completed_at": completed_at,
             },
         )
+
+    # #521: quiz_context is 🔒 — one row so the roundtrip test has a baseline.
+    h.insert_if_absent(
+        "quiz_context",
+        "rich-qc-cs-variables",
+        {
+            "user_id": USER_ACTIVE,
+            "concept_node_id": "rich-node-cs-variables",
+            "context_json": encrypt_json(
+                {"misconceptions": ["confuses = with =="], "asked": 2}
+            ),
+        },
+    )
+
+
+# #520: feedback/issue_reports are 🔒 (comment/topic/description) — seed them
+# encrypted so the roundtrip test + ciphertext oracle have baseline rows.
+def seed_feedback() -> None:
+    h.insert_if_absent(
+        "feedback",
+        "rich-fb-1",
+        {
+            "user_id": USER_ACTIVE,
+            "type": "global",
+            "rating": 4,
+            "selected_options": ["tutor"],
+            "comment": encrypt_if_present("The tutor cited the wrong lecture."),
+            "topic": encrypt_if_present("chat"),
+        },
+    )
+    h.insert_if_absent(
+        "issue_reports",
+        "rich-issue-1",
+        {
+            "user_id": USER_ACTIVE,
+            "topic": encrypt_if_present("Upload stuck"),
+            "description": encrypt_if_present("Syllabus upload spins forever."),
+            "screenshot_urls": [],
+        },
+    )
 
 
 SESS_CS_RECURSION = "rich-sess-cs-recursion"
@@ -725,8 +843,10 @@ _SUMMARY_ORDER = [
     "schools", "courses", "course_offerings", "users", "user_profiles", "user_roles",
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
-    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "sessions",
-    "messages",
+    "room_summaries",
+    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
+    "sessions", "messages", "feedback", "issue_reports",
+    "offering_concept_stats",
 ]
 
 
@@ -744,7 +864,10 @@ def main() -> None:
     seed_notes_documents()
     seed_flashcards()
     seed_study_guides()
+    seed_room_summaries()
     seed_quiz()
+    seed_offering_concept_stats()
+    seed_feedback()
     seed_sessions()
     h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
 

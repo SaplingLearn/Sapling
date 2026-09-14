@@ -36,6 +36,12 @@ non-idempotent collision, or a data blocker), 0 clean. Nonzero means "do not
 apply on top of this" — so the report can gate CI directly rather than being
 re-implemented inline, which is how the workflow preflight and this script
 drifted apart in the first place.
+
+The ledger primitives (pending/orphans, ledger reads, the no-ledger guidance)
+are imported from promotion.preflight — the same implementation the promotion
+runner's preflight consumes (#516) — so the two cannot drift apart again. The
+extra checks (number collision, ALREADY EXISTS, data blockers) remain this
+script's own.
 """
 from __future__ import annotations
 
@@ -45,6 +51,18 @@ import re
 import sys
 
 import psycopg
+
+# Run as a script (`python scripts/migration_drift_report.py` from backend/),
+# sys.path[0] is scripts/ — put backend/ there so the shared promotion
+# primitives resolve; same pattern as the other scripts in this directory.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+from promotion.preflight import (  # noqa: E402
+    NO_LEDGER_REMEDIATION,
+    ledger_diff,
+    ledger_exists,
+    recorded_filenames,
+)
 
 MIGRATIONS = pathlib.Path(__file__).resolve().parent.parent / "db" / "migrations"
 
@@ -80,21 +98,13 @@ def main() -> int:
     files = sorted(p.name for p in MIGRATIONS.glob("*.sql"))
     conn = psycopg.connect(url)
 
-    has_ledger = conn.execute(
-        "SELECT count(*) FROM information_schema.tables WHERE table_name = %s",
-        ("schema_migrations",),
-    ).fetchone()[0]
-    if not has_ledger:
+    if not ledger_exists(conn):
         print("NO LEDGER — this database has never been migrated by db/migrate.py.")
-        print("Reconcile with `python -m db.migrate --baseline` against a schema you")
-        print("have verified is current, rather than applying.")
+        print(NO_LEDGER_REMEDIATION)
         return 1
 
-    recorded = {
-        r[0] for r in conn.execute("SELECT filename FROM schema_migrations").fetchall()
-    }
-    pending = [f for f in files if f not in recorded]
-    orphans = sorted(recorded - set(files))
+    recorded = recorded_filenames(conn)
+    pending, orphans = ledger_diff(files, recorded)
 
     print(f"on disk {len(files)} | recorded {len(recorded)} | pending {len(pending)}\n")
 

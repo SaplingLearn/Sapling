@@ -3,6 +3,8 @@ Admin routes — role, achievement, cosmetic, and user management.
 All routes require admin role.
 """
 
+import base64
+import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -22,11 +24,19 @@ from models import (
     LinkAchievementCosmeticBody,
     LinkRoleCosmeticBody,
     AllowlistEmailBody,
+    AchievementIconBody,
+    UpdateXpRuleBody,
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
-from services.achievement_service import check_achievements
+from services.achievement_service import check_achievements, grant_linked_cosmetics
 from services.users_search import paginate_users
+from services.encryption import decrypt_if_present
+from services.profiles import get_display_names
+from services.storage_service import upload_achievement_icon
+from services.xp_service import award_xp_safe
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -218,7 +228,8 @@ def create_achievement(body: CreateAchievementBody, request: Request):
 def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     require_admin(request)
     actor = get_session_user_id(request)
-    allowed = {"name", "description", "icon", "category", "rarity", "is_secret"}
+    allowed = {"name", "description", "icon", "icon_url", "category", "rarity",
+               "is_secret", "xp_reward", "sort_order", "status"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
@@ -228,6 +239,25 @@ def update_achievement(achievement_id: str, request: Request, body: dict = {}):
         target_id=achievement_id, payload=updates,
     )
     return {"updated": True}
+
+
+@router.post("/achievements/{achievement_id}/icon")
+def upload_icon(achievement_id: str, body: AchievementIconBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    try:
+        file_bytes = base64.b64decode(body.file_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="file_base64 is not valid base64")
+    icon_url = upload_achievement_icon(achievement_id, file_bytes, body.content_type)
+    table("achievements").update(
+        {"icon_url": icon_url}, filters={"id": f"eq.{achievement_id}"}
+    )
+    log_admin_action(
+        actor_id=actor, action="achievement.icon", target_type="achievement",
+        target_id=achievement_id, payload={"icon_url": icon_url},
+    )
+    return {"icon_url": icon_url}
 
 
 @router.delete("/achievements/cosmetics")
@@ -262,6 +292,22 @@ def delete_achievement(achievement_id: str, request: Request):
 def grant_achievement(body: GrantAchievementBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
+
+    # Resolve the badge BEFORE granting: a 'draft' achievement is
+    # work-in-progress in the admin wiki and must never reach a user.
+    achievement = table("achievements").select(
+        "id,slug,status,xp_reward", filters={"id": f"eq.{body.achievement_id}"},
+    )
+    if not achievement:
+        raise HTTPException(status_code=404, detail="Achievement not found")
+    achievement_row = achievement[0]
+    if achievement_row.get("status") != "live":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Achievement '{achievement_row.get('slug')}' is a draft — "
+                   f"publish it before granting.",
+        )
+
     # Check if already earned
     existing = table("user_achievements").select(
         "achievement_id",
@@ -281,7 +327,40 @@ def grant_achievement(body: GrantAchievementBody, request: Request):
         target_id=body.achievement_id, payload={"user_id": body.user_id},
     )
 
-    # Trigger linked cosmetics via achievement service
+    # Pay the badge's xp_reward, exactly as achievement_service.check_achievements
+    # does on the earned path. `mentor`, `comeback`, `secret` and `methuselah`
+    # are manual-grant-only, so without this they paid 0 and two users with
+    # identical badge sets ended up with different XP totals. Same rule_key +
+    # source_id as the earned path, so the xp_events idempotency key makes a
+    # re-grant (or an earned-then-granted badge) a clean no-op rather than a
+    # double payout. _safe: XP must never fail the grant that earned it.
+    reward = int(achievement_row.get("xp_reward") or 0)
+    if reward:
+        award_xp_safe(
+            body.user_id, "achievement_unlocked",
+            source_type="achievement", source_id=body.achievement_id,
+            amount=reward,
+        )
+
+    # Unlock the badge's linked cosmetics, exactly as the earned path does.
+    # This must be the direct call, NOT check_achievements: _get_user_stat
+    # returns a hard-coded 0 for `manual_admin_grant` and every such trigger
+    # in the catalog has a threshold of 1, so the dispatch below skips every
+    # trigger and grants nothing. `mentor`, `comeback`, `secret` and
+    # `methuselah` are manual-grant-only, so their cosmetics were unreachable.
+    # Post-commit: the badge row and its XP are already written, so a failure
+    # here must not 500 a grant that did succeed.
+    try:
+        grant_linked_cosmetics(body.user_id, body.achievement_id)
+    except Exception:
+        logger.exception(
+            "linked cosmetics failed after admin grant user=%s achievement=%s",
+            body.user_id, body.achievement_id,
+        )
+
+    # Kept for the cosmetics linked to OTHER achievements this grant may now
+    # qualify the user for (check_achievements re-evaluates every
+    # manual_admin_grant trigger they haven't earned).
     check_achievements(body.user_id, "manual_admin_grant", {})
 
     return {"granted": True}
@@ -363,6 +442,37 @@ def link_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Reques
         payload={"cosmetic_id": body.cosmetic_id},
     )
     return {"linked": True}
+
+
+# ── XP rules ─────────────────────────────────────────────────────────────────
+
+@router.get("/xp-rules")
+def list_xp_rules(request: Request):
+    require_admin(request)
+    rows = table("xp_rules").select("*", order="key.asc")
+    return {"rules": rows or []}
+
+
+@router.patch("/xp-rules/{key}")
+def update_xp_rule(key: str, body: UpdateXpRuleBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    updates: dict = {}
+    if body.amount is not None:
+        if body.amount < 0:
+            raise HTTPException(status_code=400, detail="amount must be >= 0")
+        updates["amount"] = body.amount
+    if body.enabled is not None:
+        updates["enabled"] = body.enabled
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    table("xp_rules").update(updates, filters={"key": f"eq.{key}"})
+    log_admin_action(
+        actor_id=actor, action="xp_rule.update", target_type="xp_rule",
+        target_id=key, payload=updates,
+    )
+    return {"updated": True}
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────
@@ -503,6 +613,42 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
         payload={"email": body.email},
     )
     return {"email": rows[0]}
+
+
+# ── Feedback + issue reports (#520) ──────────────────────────────────────────
+# These tables are 🔒 at rest (comment/topic/description); the Supabase
+# dashboard shows ciphertext, so this is the only human-readable surface.
+
+@router.get("/feedback")
+def list_feedback(request: Request, limit: int = 200):
+    require_admin(request)
+    rows = table("feedback").select(
+        "id,user_id,type,rating,selected_options,comment,session_id,topic,created_at",
+        order="created_at.desc",
+        limit=max(1, min(int(limit), 500)),
+    ) or []
+    names = get_display_names([r["user_id"] for r in rows])
+    for r in rows:
+        r["comment"] = decrypt_if_present(r.get("comment"))
+        r["topic"] = decrypt_if_present(r.get("topic"))
+        r["user_name"] = names.get(r["user_id"], "")
+    return {"feedback": rows}
+
+
+@router.get("/issue-reports")
+def list_issue_reports(request: Request, limit: int = 200):
+    require_admin(request)
+    rows = table("issue_reports").select(
+        "id,user_id,topic,description,screenshot_urls,created_at",
+        order="created_at.desc",
+        limit=max(1, min(int(limit), 500)),
+    ) or []
+    names = get_display_names([r["user_id"] for r in rows])
+    for r in rows:
+        r["topic"] = decrypt_if_present(r.get("topic"))
+        r["description"] = decrypt_if_present(r.get("description"))
+        r["user_name"] = names.get(r["user_id"], "")
+    return {"reports": rows}
 
 
 # ── Audit log ────────────────────────────────────────────────────────────────

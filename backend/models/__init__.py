@@ -1,5 +1,7 @@
 from typing import Optional, Union, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
@@ -46,7 +48,10 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     user_id: str = "user_andres"
     concept_node_id: str
-    num_questions: int = Field(default=5, ge=1, le=10)
+    # Bounds come from services/quiz_config.py — the same constants
+    # GET /api/quiz/config serves, so the client can't offer a value
+    # this model rejects (#540 A2).
+    num_questions: int = Field(default=5, ge=QUIZ_MIN_QUESTIONS, le=QUIZ_MAX_QUESTIONS)
     difficulty: str = "medium"
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has
@@ -55,6 +60,77 @@ class GenerateQuizBody(BaseModel):
     # through to whatever SAPLING_MODEL_QUIZ resolves to (default
     # gemini-2.5-flash-lite per ADR 0008).
     model_pref: Optional[Literal["fast", "smart"]] = None
+    # G5 (#537): "practise the ones you missed" — the attempt whose missed
+    # questions should be RE-SERVED verbatim instead of regenerated. The
+    # server derives which items those were from that attempt's own
+    # `quiz_responses` rows, so the client only has to name the attempt.
+    source_attempt_id: Optional[str] = None
+    # Optional override for that derivation: the identities
+    # (`services/quiz_identity.py::question_hash`) to re-serve. Hashes are
+    # internal — the client projection strips them — so nothing sends this
+    # today; it exists for a caller that has already decided which items it
+    # wants back. Validated against the source attempt (anything that
+    # attempt never held is simply not recoverable), and capped at one
+    # quiz's worth, which is the most an attempt can hold.
+    missed_question_hashes: Optional[list[str]] = Field(
+        default=None, max_length=QUIZ_MAX_QUESTIONS,
+    )
+    # DEPRECATED (#541 C3; default flipped false #546 — 2026-08-23).
+    #
+    # THE canonical account of this flag's lifecycle: every other site that
+    # touches it points here rather than restating it, because six copies of
+    # this paragraph is six things to update when the flag finally goes.
+    #
+    # When true, the response's per-option dicts carry `correct` booleans —
+    # the full answer key, client-side. The #537 client already grades
+    # through POST /api/quiz/attempts/{id}/answer and has sent
+    # `include_answer_key: false` on every generate since it shipped, so the
+    # flag now defaults to the keyless shape that client has been using all
+    # along. The true branch stays accepted for one release for any
+    # straggler caller before the parameter itself is deleted.
+    #
+    # That deletion is gated on telemetry, not on a calendar: every generate
+    # that opts in emits `quiz.answer_key_served`, and every one that omits
+    # the field entirely emits `quiz.answer_key_flag_omitted`, both countable
+    # in the #375 admin-analytics by_event_type rollup. When the served count
+    # is zero across a release, the parameter goes. See
+    # routes/quiz.py::_record_answer_key_flag for why the two populations get
+    # separate event types.
+    include_answer_key: bool = False
+
+    @model_validator(mode="after")
+    def _hashes_need_a_source(self) -> "GenerateQuizBody":
+        """Hashes without a source attempt are a request that cannot mean
+        anything: identities are only ever resolved against the named
+        attempt's own stored questions, so with no attempt there is nothing
+        to resolve them against and every hash would be silently ignored.
+
+        Rejecting says so. Accepting-and-ignoring is how a caller ends up
+        debugging why its carefully chosen items were regenerated."""
+        if self.missed_question_hashes and not self.source_attempt_id:
+            raise ValueError(
+                "missed_question_hashes needs a source_attempt_id — hashes are "
+                "resolved against that attempt's own questions."
+            )
+        return self
+
+
+class AnswerQuestionBody(BaseModel):
+    """One answer for POST /api/quiz/attempts/{attempt_id}/answer (#541 C1).
+
+    Indexes are 0-based positions into the attempt's stored questions and
+    the question's options. The wire questions carry 1-based `id`s (what
+    /submit keys on), so `question_index = id - 1` — two addressing schemes
+    for one question. `question_id` is the guard against confusing them:
+    send the id you displayed and the route rejects a mismatch instead of
+    silently grading the neighbouring question (which the idempotency rule
+    would then lock in). The response echoes both either way."""
+
+    question_index: int = Field(ge=0)
+    selected_index: int = Field(ge=0)
+    question_id: Optional[int] = None
+    time_ms: Optional[int] = Field(default=None, ge=0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class AnswerItem(BaseModel):
@@ -174,6 +250,11 @@ class EditMessageBody(BaseModel):
 class ToggleReactionBody(BaseModel):
     user_id: str
     emoji: str
+
+
+class FriendRequestBody(BaseModel):
+    from_user_id: str
+    to_user_id: str
 
 
 class ExportBody(BaseModel):
@@ -365,6 +446,16 @@ class LinkAchievementCosmeticBody(BaseModel):
 class LinkRoleCosmeticBody(BaseModel):
     role_id: str
     cosmetic_id: str
+
+
+class AchievementIconBody(BaseModel):
+    file_base64: str
+    content_type: str
+
+
+class UpdateXpRuleBody(BaseModel):
+    amount: Optional[int] = None
+    enabled: Optional[bool] = None
 
 
 # ── Cosmetics (Admin) ────────────────────────────────────────────────────────

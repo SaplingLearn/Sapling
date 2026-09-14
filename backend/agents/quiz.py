@@ -113,6 +113,18 @@ _SYSTEM_PROMPT = (
     "- Don't drop high-mastery, recently-reviewed concepts entirely; "
     "   include 1 question on a strong-and-fresh concept to keep the "
     "   quiz from feeling punishing.\n\n"
+    "ADAPTIVE MODE (#540): when the user message says the quiz is in "
+    "adaptive mode, there is no user-requested difficulty — you choose "
+    "each question's difficulty yourself. Base the mix on mastery and "
+    "`recent_attempts.accuracy`: struggling/low-accuracy concepts get "
+    "easy-leaning questions, strong/high-accuracy ones get hard-leaning "
+    "questions; with no history at all, center the mix on medium. The "
+    "±1-step limits below do not apply in adaptive mode, but every "
+    "question still carries a concrete easy|medium|hard difficulty — "
+    "'adaptive' is never a per-question value. Note that PAST attempts "
+    "in `recent_attempts` may carry difficulty 'adaptive' (that "
+    "attempt's mix was agent-chosen); treat such an attempt's "
+    "difficulty as unspecified and judge it by its accuracy alone.\n\n"
     "Adaptive-difficulty rules (use `recent_attempts.accuracy`):\n"
     "- If the most recent 2-3 attempts on this concept averaged < "
     "   0.5 accuracy, drop the difficulty mix one step from what the "
@@ -158,6 +170,14 @@ _SYSTEM_PROMPT = (
     "\n\n" + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+
+# Public alias. E5 stamps this into every generated question's provenance so
+# a stored item records which prompt wrote it — previously this value existed
+# only as trace metadata on the agent, which meant a question in the database
+# could not be attributed to a prompt version at all. Same value, one
+# definition: a second hash of the same string would silently diverge the
+# moment either call site was edited.
+PROMPT_VERSION = _PROMPT_HASH
 
 
 quiz_agent = Agent[SaplingDeps, Quiz](

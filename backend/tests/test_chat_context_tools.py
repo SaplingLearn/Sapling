@@ -286,14 +286,19 @@ class TestReadSessionHistory:
 
 class TestReadUserProgress:
     def test_aggregates_mastered_weak_in_progress(self):
-        # Thresholds: mastered >= 0.7, weak < 0.4, in_progress in [0.4, 0.7).
+        # Thresholds come from config.get_mastery_tier (#557): mastered
+        # >= 0.75, learning >= 0.45, below that is weak (struggling or
+        # unexplored). This tool used to carry its own 0.7/0.4, which is why
+        # 0.4 counts as WEAK here and used to count as in-progress — the
+        # divergence a student saw as "Struggling on the Tree, in-progress to
+        # the tutor".
         rows = [
             {"mastery_score": 0.9},   # mastered
-            {"mastery_score": 0.75},  # mastered
-            {"mastery_score": 0.5},   # in_progress
-            {"mastery_score": 0.4},   # in_progress (boundary)
-            {"mastery_score": 0.2},   # weak
-            {"mastery_score": 0.0},   # weak
+            {"mastery_score": 0.75},  # mastered (boundary)
+            {"mastery_score": 0.5},   # learning
+            {"mastery_score": 0.4},   # weak — below the 0.45 learning floor
+            {"mastery_score": 0.2},   # struggling -> weak
+            {"mastery_score": 0.0},   # unexplored -> weak
         ]
         with patch("agents.tools.chat_context.table") as t:
             t.return_value.select.return_value = rows
@@ -302,8 +307,8 @@ class TestReadUserProgress:
         assert isinstance(result, CourseProgress)
         assert result.total_concepts == 6
         assert result.mastered_count == 2
-        assert result.weak_count == 2
-        assert result.in_progress_count == 2
+        assert result.weak_count == 3
+        assert result.in_progress_count == 1
         # avg_mastery is rounded to 4dp; sum/6 = 2.75/6 = 0.4583...
         assert abs(result.avg_mastery - round(2.75 / 6, 4)) < 1e-6
 

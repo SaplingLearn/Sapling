@@ -11,6 +11,7 @@ import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
+import { humanizeError } from "@/lib/errorMessage";
 import {
   getUserRooms,
   createRoom,
@@ -28,9 +29,17 @@ import {
   getRoomActivity,
   findStudyMatches,
   getStudents,
+  fetchFriends,
+  fetchFriendRequests,
+  acceptFriendRequest,
+  declineFriendRequest,
+  removeFriend,
   type StudentRow,
 } from "@/lib/api";
-import type { PublicRoom, RoomMessageRow, RoomOverviewData } from "@/lib/types";
+import type { PublicRoom, RoomMessageRow, RoomOverviewData, Friend } from "@/lib/types";
+
+type IncomingFriendRequest = { id: string; from_user_id: string; name: string; created_at: string };
+type OutgoingFriendRequest = { id: string; to_user_id: string; name: string; created_at: string };
 
 type Tab = "overview" | "chat" | "match" | "activity" | "directory";
 type Room = {
@@ -266,6 +275,179 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
           </button>
         </div>
       ))}
+    </div>
+  );
+}
+
+function FriendRow({ friend, onRemove }: { friend: Friend; onRemove: () => void | Promise<void> }) {
+  const remove = useConfirm(onRemove);
+  return (
+    <div
+      data-testid={`social-friend-row-${friend.user_id}`}
+      style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}
+    >
+      <Avatar name={friend.name} size={26} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {friend.name}
+        </div>
+        <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+          Lv {friend.level} · {friend.total_xp} XP
+        </div>
+      </div>
+      <button
+        data-testid={`social-friend-remove-${friend.user_id}`}
+        className={`btn btn--sm ${remove.armed ? "btn--danger" : "btn--ghost"}`}
+        onClick={remove.trigger}
+        style={remove.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
+      >
+        {remove.armed ? "Click again" : "Remove"}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Friends panel: friends list + incoming/outgoing requests, sitting above
+ * the rooms list in the Social sidebar. Every mutation (accept/decline/
+ * remove) refetches both lists from the server rather than mutating local
+ * state optimistically — a failed accept (someone else already actioned the
+ * request, or it was withdrawn: 403/404) shouldn't leave a row the server
+ * doesn't agree exists, so we tell the user AND resync to the truth.
+ */
+export function FriendsPanel() {
+  const { userId } = useUser();
+  const toast = useToast();
+  const [friends, setFriends] = React.useState<Friend[]>([]);
+  const [incoming, setIncoming] = React.useState<IncomingFriendRequest[]>([]);
+  const [outgoing, setOutgoing] = React.useState<OutgoingFriendRequest[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  const refresh = React.useCallback(async () => {
+    if (!userId) return;
+    try {
+      const [f, r] = await Promise.all([fetchFriends(userId), fetchFriendRequests(userId)]);
+      setFriends(f.friends || []);
+      setIncoming(r.incoming || []);
+      setOutgoing(r.outgoing || []);
+    } catch (err) {
+      toast.error(humanizeError(err, "Couldn't load friends."));
+    } finally {
+      setLoading(false);
+    }
+  }, [userId, toast]);
+
+  React.useEffect(() => { refresh(); }, [refresh]);
+
+  const remove = async (friendId: string) => {
+    if (!userId) return;
+    try {
+      await removeFriend(friendId, userId);
+      toast.success("Friend removed");
+    } catch (err) {
+      toast.error(humanizeError(err, "Couldn't remove that friend."));
+    } finally {
+      await refresh();
+    }
+  };
+
+  const accept = async (requestId: string) => {
+    if (!userId) return;
+    try {
+      await acceptFriendRequest(requestId, userId);
+      toast.success("Friend request accepted");
+    } catch (err) {
+      toast.error(humanizeError(err, "Couldn't accept that request."));
+    } finally {
+      await refresh();
+    }
+  };
+
+  const decline = async (requestId: string) => {
+    if (!userId) return;
+    try {
+      await declineFriendRequest(requestId, userId);
+    } catch (err) {
+      toast.error(humanizeError(err, "Couldn't decline that request."));
+    } finally {
+      await refresh();
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+        <div className="label-micro" style={{ marginBottom: 6 }}>Friends</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", maxHeight: 320, overflowY: "auto" }}>
+      <div className="label-micro" style={{ marginBottom: 6 }}>Friends</div>
+
+      {incoming.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600 }}>Incoming requests</span>
+            <span className="chip chip--accent" style={{ fontSize: 10 }}>{incoming.length}</span>
+          </div>
+          {incoming.map((r) => (
+            <div
+              key={r.id}
+              data-testid={`social-friend-incoming-${r.id}`}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+            >
+              <Avatar name={r.name} size={24} />
+              <div style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.name}
+              </div>
+              <button
+                data-testid={`social-friend-accept-${r.id}`}
+                className="btn btn--sm btn--primary"
+                onClick={() => accept(r.id)}
+              >
+                Accept
+              </button>
+              <button
+                data-testid={`social-friend-decline-${r.id}`}
+                className="btn btn--sm btn--ghost"
+                onClick={() => decline(r.id)}
+              >
+                Decline
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {outgoing.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Outgoing</div>
+          {outgoing.map((r) => (
+            <div
+              key={r.id}
+              data-testid={`social-friend-outgoing-${r.id}`}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+            >
+              <Avatar name={r.name} size={24} />
+              <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.name}
+              </div>
+              <span className="chip" style={{ fontSize: 10 }}>Pending</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {friends.length === 0 ? (
+        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No friends yet.</div>
+      ) : (
+        friends.map((f) => (
+          <FriendRow key={f.user_id} friend={f} onRemove={() => remove(f.user_id)} />
+        ))
+      )}
     </div>
   );
 }
@@ -1293,6 +1475,7 @@ export function Social() {
             <Icon name="users" size={12} /> Browse directory
           </button>
         </div>
+        <FriendsPanel />
         <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
           {loading && <SocialRoomsSkeleton />}
           {!loading && rooms.length === 0 && (

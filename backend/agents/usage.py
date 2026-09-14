@@ -30,13 +30,28 @@ from services import events_service
 logger = logging.getLogger("sapling.agents.usage")
 
 
-def _model_name(result: Any, task: AgentTask | None) -> str:
-    """Best-effort model id for the run, resilient to Pydantic AI churn."""
+def served_model_name(result: Any, task: AgentTask | None = None) -> str:
+    """Best-effort model id for the run, resilient to Pydantic AI churn.
+
+    Public because question provenance (E5) needs the SAME answer this
+    module already computes for the `llm_usage` row: "which model actually
+    wrote this?" Two independent derivations of that would eventually
+    disagree, and the ledger and the stored question would then attribute
+    the same generation to different models.
+    """
+    # Every return below is coerced with str(). Pydantic AI hands back a
+    # plain string today, but this value is no longer only written to the
+    # usage ledger (which swallows everything): E5 stamps it into question
+    # provenance, which is json-serialized into the encrypted
+    # questions_json. A non-string leaking through there would raise inside
+    # encrypt_json and 502 a generation that had already succeeded —
+    # metadata about a quiz must never be able to destroy the quiz.
+    #
     # Preferred: the final ModelResponse carries the served model name.
     try:
         name = getattr(result.response, "model_name", None)
         if name:
-            return name
+            return str(name)
     except Exception:
         pass
     # Fallback: scan the message history for the last response with a model.
@@ -44,13 +59,13 @@ def _model_name(result: Any, task: AgentTask | None) -> str:
         for msg in reversed(result.all_messages()):
             name = getattr(msg, "model_name", None)
             if name:
-                return name
+                return str(name)
     except Exception:
         pass
     # Last resort: the task's configured default model.
     if task is not None:
         try:
-            return model_for(task).model_name
+            return str(model_for(task).model_name)
         except Exception:
             pass
     return "unknown"
@@ -107,7 +122,7 @@ def record_agent_usage(
         events_service.log_llm_usage(
             feature=feature,
             task=task,
-            model=_model_name(result, task),
+            model=served_model_name(result, task),
             usage=result.usage(),
             user_id=user_id,
         )

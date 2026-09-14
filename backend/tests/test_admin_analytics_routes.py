@@ -36,6 +36,12 @@ def _seed():
         {"event_type": "quiz.completed", "category": "usage", "user_id": "u2", "request_id": "r3", "payload": {}, "created_at": IN3},
         {"event_type": "error.5xx", "category": "error", "user_id": "u2", "request_id": "r4",
          "payload": {"path": "/api/quiz", "method": "POST", "status_code": 500, "duration_ms": 12.3}, "created_at": IN3},
+        # A category="error" event whose NAME doesn't start with error.* —
+        # the #529/B3 backend-failure class. The /errors feed keys on the
+        # category, so this must appear there (the old like.error.* name
+        # filter hid exactly these, recreating the invisibility it fixed).
+        {"event_type": "quiz.context_write_failed", "category": "error", "user_id": "u1", "request_id": "r5",
+         "payload": {"quiz_id": "q9", "concept_node_id": "n9"}, "created_at": IN2},
         {"event_type": "auth.login", "category": "audit", "user_id": "u1", "request_id": "r0", "payload": {}, "created_at": OUT},
     ]
     llm = [
@@ -116,7 +122,7 @@ def test_usage_summary_counts(seeded):
     r = client.get(f"{BASE}/usage/summary", params=RANGE)
     assert r.status_code == 200
     body = r.json()
-    assert body["total_events"] == 4  # the 2020 auth.login is excluded
+    assert body["total_events"] == 5  # the 2020 auth.login is excluded
     assert body["distinct_active_users"] == 2
     assert body["truncated"] is False  # nowhere near the scan cap
     by_type = {row["event_type"]: row["count"] for row in body["by_event_type"]}
@@ -134,7 +140,7 @@ def test_usage_by_user_totals(seeded):
     body = r.json()
     users = {u["user_id"]: u for u in body["users"]}
     assert body["total_users"] == 2
-    assert users["u1"]["event_count"] == 2
+    assert users["u1"]["event_count"] == 3
     assert users["u1"]["llm_cost_usd"] == pytest.approx(0.06)
     assert users["u1"]["total_tokens"] == 450
     assert users["u2"]["llm_cost_usd"] == pytest.approx(0.02)
@@ -187,13 +193,29 @@ def test_errors_returns_error_events_with_payload_fields(seeded):
     r = client.get(f"{BASE}/errors", params=RANGE)
     assert r.status_code == 200
     body = r.json()
-    assert body["total"] == 1
-    err = body["errors"][0]
-    assert err["event_type"] == "error.5xx"
+    assert body["total"] == 2
+    by_type = {e["event_type"]: e for e in body["errors"]}
+    err = by_type["error.5xx"]
     assert err["path"] == "/api/quiz"
     assert err["method"] == "POST"
     assert err["status_code"] == 500
     assert err["duration_ms"] == pytest.approx(12.3)
+
+
+def test_errors_feed_includes_non_http_error_category_events(seeded):
+    """quiz.context_write_failed (and the rag.* class from #482) carry
+    category="error" but not the error.* name prefix — the feed must key
+    on the category or backend failures stay invisible to admins, which
+    is the exact #529 failure mode the event exists to end."""
+    r = client.get(f"{BASE}/errors", params=RANGE)
+    body = r.json()
+    by_type = {e["event_type"]: e for e in body["errors"]}
+    assert "quiz.context_write_failed" in by_type
+    row = by_type["quiz.context_write_failed"]
+    # No HTTP payload fields on a background-task event — they null out.
+    assert row["path"] is None
+    assert row["status_code"] is None
+    assert row["request_id"] == "r5"
 
 
 # ── date filtering + defaults ────────────────────────────────────────────────
@@ -218,7 +240,7 @@ def test_default_range_is_last_30_days(seeded, monkeypatch):
     monkeypatch.setattr(analytics, "datetime", _FrozenDatetime)
     r = client.get(f"{BASE}/usage/summary")
     assert r.status_code == 200
-    assert r.json()["total_events"] == 4
+    assert r.json()["total_events"] == 5
 
 
 def test_rejects_malformed_from(seeded):
@@ -279,9 +301,9 @@ def test_usage_summary_bucket_day_series(seeded):
     assert r.status_code == 200
     body = r.json()
     assert [p["date"] for p in body["series"]] == ["2026-07-10", "2026-07-12", "2026-07-15"]
-    assert [p["count"] for p in body["series"]] == [1, 1, 2]
+    assert [p["count"] for p in body["series"]] == [1, 2, 2]
     # Bucketing adds the series; it must not change the aggregate fields.
-    assert body["total_events"] == 4
+    assert body["total_events"] == 5
     assert body["distinct_active_users"] == 2
 
 
@@ -306,8 +328,11 @@ def test_errors_bucket_day_series(seeded):
     r = client.get(f"{BASE}/errors", params={**RANGE, "bucket": "day"})
     assert r.status_code == 200
     body = r.json()
-    assert body["series"] == [{"date": "2026-07-15", "count": 1}]
-    assert body["total"] == 1
+    assert body["series"] == [
+        {"date": "2026-07-12", "count": 1},   # quiz.context_write_failed
+        {"date": "2026-07-15", "count": 1},   # error.5xx
+    ]
+    assert body["total"] == 2
     assert body["truncated"] is False
 
 

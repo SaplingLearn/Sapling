@@ -25,6 +25,10 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services import prompt_dimensions
+from services.encryption import decrypt_json_column
+from services.quiz_distractors import DIGEST_SCHEMA_VERSION
+from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
 
@@ -56,33 +60,104 @@ class QuizHistory(BaseModel):
     recent_attempts: list[RecentQuizAttempt] = Field(default_factory=list)
 
 
+# String fields worth surfacing, in display order. `questions_seen_summary`
+# and `notes` are what agents/quiz_context.py::QuizContext actually writes;
+# summary/context/digest cover older free-form rows.
+_SUMMARY_STRING_KEYS = ("summary", "questions_seen_summary", "notes", "context", "digest")
+
+# List-of-strings fields, with a label so the agent knows what each block is.
+# `weak_areas`/`common_mistakes` are the live QuizContext field names;
+# misconceptions/common_errors cover older rows.
+_SUMMARY_LIST_KEYS = (
+    ("weak_areas", "Weak areas"),
+    ("common_mistakes", "Common mistakes"),
+    ("misconceptions", "Misconceptions"),
+    ("common_errors", "Common errors"),
+)
+
+
 def _coerce_summary(ctx: Any) -> str | None:
     """quiz_context.context_json is free-form (whatever the post-submit
-    LLM produced). Different prompt versions have stored either a flat
-    string or a small dict. Coerce to a single string the agent can
-    reason over, or None if there's nothing useful."""
+    LLM produced). Coerce to a single string the agent can reason over,
+    or None if there's nothing useful.
+
+    #529/B4: this must consume the WHOLE QuizContext shape. The old
+    version returned the first matching string key — for a live
+    QuizContext row that was `notes` alone, silently dropping
+    weak_areas / common_mistakes / questions_seen_summary (and its list
+    fallback looked for `common_errors`, a key QuizContext never writes).
+    """
     if not ctx:
         return None
     if isinstance(ctx, str):
         text = ctx.strip()
         return text or None
     if isinstance(ctx, dict):
-        # Common shapes: {"summary": "..."}, {"notes": "..."},
-        # {"misconceptions": [...], "weak_areas": [...]}.
-        for key in ("summary", "notes", "context", "digest"):
+        parts: list[str] = []
+        for key in _SUMMARY_STRING_KEYS:
             v = ctx.get(key)
             if isinstance(v, str) and v.strip():
-                return v.strip()
-        # Fall back to flattening list-of-strings entries so the agent
-        # at least sees the misconceptions/weak_areas the prior job
-        # extracted, even when no top-level summary string exists.
-        parts: list[str] = []
-        for key in ("misconceptions", "weak_areas", "common_errors"):
-            for item in ctx.get(key) or []:
-                if isinstance(item, str) and item.strip():
-                    parts.append(f"- {item.strip()}")
-        return "\n".join(parts) or None
+                parts.append(v.strip())
+        for key, label in _SUMMARY_LIST_KEYS:
+            raw = ctx.get(key)
+            if not isinstance(raw, list):
+                # Legacy free-form rows can hold a string (or dict) under a
+                # list-shaped key; iterating those element-wise would spray
+                # per-character bullets / dict keys into the agent's prompt.
+                continue
+            items = [
+                item.strip()
+                for item in raw
+                if isinstance(item, str) and item.strip()
+            ]
+            if items:
+                parts.append(label + ":\n" + "\n".join(f"- {i}" for i in items))
+        rec = ctx.get("recommended_difficulty")
+        if isinstance(rec, str) and rec.strip():
+            # The post-submit agent's difficulty recommendation — surfaced
+            # here or it rots encrypted-and-unread (its only other mention
+            # is the dead legacy prompt template).
+            parts.append(f"Recommended next difficulty: {rec.strip()}")
+        _warn_if_digest_read_nothing(ctx, parts)
+        return "\n\n".join(parts) or None
     return None
+
+
+def _warn_if_digest_read_nothing(ctx: dict, parts: list[str]) -> None:
+    """A digest that exists but coerces to NOTHING is the drift signature.
+
+    #554 asked for a schema version so the next key drift would be caught.
+    A version alone does not catch the drift it was asked about: #548's bug
+    was a RENAME at the same version — the coercer looked for `common_errors`
+    while the agent wrote `common_mistakes` — and catching that with a version
+    requires remembering to bump it in the same commit as the rename, which is
+    exactly the discipline that failed the first time.
+
+    So the version is used for what it can actually prove (a writer newer than
+    this reader), and the rename case is caught by its OUTCOME instead: the
+    row is present, the writer stamped a version this reader claims to
+    understand, and yet every key it knows came back empty. For a real digest
+    that combination cannot happen — the agent always writes at least
+    `questions_seen_summary` or `notes` — so it means the keys moved.
+    """
+    version = ctx.get("schema_version")
+    if not isinstance(version, int):
+        # Pre-#554 row. Unversioned is expected, not a discrepancy.
+        return
+    if version > DIGEST_SCHEMA_VERSION:
+        logger.warning(
+            "quiz digest carries schema_version=%s but this reader understands "
+            "%s — fields added since are silently unread (mixed deploy?)",
+            version, DIGEST_SCHEMA_VERSION,
+        )
+        return
+    if not parts:
+        logger.warning(
+            "quiz digest at schema_version=%s yielded NOTHING readable "
+            "(keys present: %s) — the digest keys have most likely been "
+            "renamed out from under this coercer, which is #548 repeating",
+            version, sorted(ctx.keys()),
+        )
 
 
 async def read_recent_quiz_attempts(
@@ -116,7 +191,7 @@ async def read_recent_quiz_attempts(
                 },
                 limit=1,
             )
-            return rows[0]["context_json"] if rows else None
+            return decrypt_json_column(rows[0]["context_json"]) if rows else None
         except Exception:
             logger.exception(
                 "read_recent_quiz_attempts: quiz_context fetch failed "
@@ -232,6 +307,54 @@ async def read_recent_quiz_attempts_tool(
     """
     # user_id comes from ctx.deps so a tool call can't cross users.
     history = await read_recent_quiz_attempts(ctx.deps.user_id, concept_node_id)
+
+    # F6: whether the personal digest actually made it into the prompt. This
+    # is the one dimension the ROUTE cannot see — it is resolved here, inside
+    # a tool, which is why prompt_dimensions has to survive the to_thread
+    # hop. Recorded for every run, present or absent: "the digest was missing"
+    # is exactly as interesting as its token cost.
+    prompt_dimensions.record(
+        digest_present=bool(history.summary),
+        digest_chars=len(history.summary or ""),
+        recent_attempts=len(history.recent_attempts),
+    )
+    # F5: #529 lived here for 51 days. Every quiz_context write 42P10'd into
+    # a swallowed `except: pass`, so the digest was empty for every student
+    # on every concept — and an empty digest is precisely what a first
+    # attempt looks like, so nothing anywhere could tell the difference.
+    #
+    # The check that actually detects THAT failure keys on the DIGEST, not on
+    # the attempt list: #529 presents as an empty summary while completed
+    # attempts exist. Keying it on the attempt count instead would
+    # short-circuit (`if count: return False`) in exactly the situation the
+    # bug produces, so the seam could never fire for the bug it is named
+    # after. Scoped to this concept, matching the read.
+    concept_scope = {"concept_node_id": f"eq.{concept_node_id}"}
+    common = {
+        "user_id": ctx.deps.user_id,
+        "expect": Expect.HAS_ATTEMPTS,
+        "feature": getattr(ctx.deps, "feature", "unknown"),
+        "scope": concept_scope,
+    }
+    await report_empty_result_async(
+        "quiz_context_digest",
+        count=len(history.summary or ""),
+        payload={"concept_node_id": concept_node_id, "attempts": len(history.recent_attempts)},
+        **common,
+    )
+    # And the attempt list itself: a read that returns nothing for a concept
+    # this student demonstrably has completed attempts on means the tool's
+    # own query has drifted from the table.
+    await report_empty_result_async(
+        "read_recent_quiz_attempts",
+        count=len(history.recent_attempts),
+        payload={
+            "concept_node_id": concept_node_id,
+            "digest_present": bool(history.summary),
+        },
+        **common,
+    )
+
     if history.summary:
         # #150: the summary is LLM-digested from the student's own quiz
         # answers — free text that can carry injected directives back into

@@ -16,13 +16,17 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
-export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}"
+# Deferred to set_docker_host_for_podman (below, after the source), which only
+# exports the socket path when that socket actually exists — the unconditional
+# export broke every supabase command on Windows, where the podman binary is
+# present but the socket is not.
 
 LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 DB_CONTAINER="supabase_db_sapling"
 
 # Shared migrate → ensure buckets → reload PostgREST → seed sequence (#10).
 source "$REPO_ROOT/scripts/lib/local-common.sh"
+set_docker_host_for_podman
 
 echo "▶ Starting local Supabase (no-op if already running)…"
 supabase start || { echo "✗ supabase start failed"; exit 1; }

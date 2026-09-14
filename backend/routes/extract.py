@@ -30,12 +30,13 @@ def _enforce_ocr_limits(request: Request) -> str:
     user_id = get_session_user_id(request)
     retry = check_rate_limit(f"ocr:{user_id}", limit=_OCR_RATE_LIMIT, window_sec=_OCR_RATE_WINDOW)
     if retry is not None:
-        # NB: the app's global HTTPException handler (main.py) doesn't forward
-        # exc.headers, so the retry budget is conveyed in the detail string
-        # rather than a Retry-After header.
+        # main.py's HTTPException handler forwards exc.headers as of #544, so
+        # the budget rides in a real Retry-After. It stays in the detail
+        # string too — clients that only surface the message keep working.
         raise HTTPException(
             status_code=429,
             detail=f"Too many OCR requests. Retry in {retry}s.",
+            headers={"Retry-After": str(retry)},
         )
     return user_id
 

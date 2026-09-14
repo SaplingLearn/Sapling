@@ -12,7 +12,16 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from "d3-force";
-import { hashSeed, type GraphEdge, type GraphNode } from "@/lib/data";
+import { type GraphEdge, type GraphNode } from "@/lib/data";
+import {
+  GLOW,
+  NODE_STROKE_OPACITY,
+  edgeWidthFor,
+  opacityFor,
+  radiusFor,
+  shadeFor,
+  truncateLabel,
+} from "@/lib/graph/nodeStyle";
 import { IS_TEST_MODE, random } from "@/lib/testMode";
 
 export type GraphVariant = "orb" | "constellation" | "organism";
@@ -51,43 +60,10 @@ type Props = {
   comparisonLabel?: string;
 };
 
-// Deterministic per-node shade derived from the course color + node id.
-// Keeps each course visually unified while giving every node its own tone,
-// and produces identical output across pages because it depends only on the
-// stable inputs (no per-screen overrides). Hashing is delegated to the
-// shared, overflow-safe `hashSeed` in lib/data (the old local copy used
-// `Math.abs(h)`, which stays negative for INT_MIN).
-
-function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return null;
-  const r = parseInt(m[1].slice(0, 2), 16) / 255;
-  const g = parseInt(m[1].slice(2, 4), 16) / 255;
-  const b = parseInt(m[1].slice(4, 6), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
-  let h = 0, s = 0;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
-    else if (max === g) h = ((b - r) / d + 2) * 60;
-    else h = ((r - g) / d + 4) * 60;
-  }
-  return { h, s: s * 100, l: l * 100 };
-}
-
-function shadeFor(baseHex: string, nodeId: string): string {
-  const hsl = hexToHsl(baseHex);
-  if (!hsl) return baseHex;
-  const seed = hashSeed(nodeId);
-  const dh = (seed % 51) - 25;
-  const ds = ((seed >> 5) % 17) - 8;
-  const dl = ((seed >> 10) % 25) - 12;
-  const h = (hsl.h + dh + 360) % 360;
-  const s = Math.max(20, Math.min(85, hsl.s + ds));
-  const l = Math.max(28, Math.min(62, hsl.l + dl));
-  return `hsl(${h.toFixed(0)} ${s.toFixed(0)}% ${l.toFixed(0)}%)`;
-}
+// The pure node-style layer (shade, radius, tier opacity, edge width, label
+// truncation) lives in `lib/graph/nodeStyle` (#537). It was byte-duplicated
+// here and in KnowledgeGraph3D; the quiz surfaces consume the same module, so
+// a retune moves the tree and the quiz together.
 
 type DragState =
   | { kind: "node"; nodeId: string; pointerId: number }
@@ -275,9 +251,7 @@ function KnowledgeGraph2DImpl({
   }, []);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  const masteryOpacity = (tier: GraphNode["mastery_tier"]) =>
-    ({ mastered: 1, learning: 0.78, struggling: 0.55, unexplored: 0.28 })[tier] || 0.6;
-  const nodeRadius = (n: GraphNode) => (n.is_subject_root ? 22 : 8 + (n.mastery_score || 0) * 12);
+  const nodeRadius = (n: GraphNode) => radiusFor(n.mastery_score, n.is_subject_root);
   const courseColor = (n?: GraphNode) => {
     if (!n) return "var(--c-sage)";
     const base = n.color || "var(--c-sage)";
@@ -495,7 +469,7 @@ function KnowledgeGraph2DImpl({
       >
         <defs>
           <filter id="soft">
-            <feGaussianBlur stdDeviation="3" />
+            <feGaussianBlur stdDeviation={GLOW.blur} />
           </filter>
         </defs>
 
@@ -521,7 +495,7 @@ function KnowledgeGraph2DImpl({
                   y2={t.y}
                   stroke="var(--text-muted)"
                   strokeOpacity={op}
-                  strokeWidth={0.5 + (l.strength || 0.5) * 1.2}
+                  strokeWidth={edgeWidthFor(l.strength)}
                   strokeLinecap="round"
                 />
               );
@@ -534,7 +508,7 @@ function KnowledgeGraph2DImpl({
               if (n.x == null || n.y == null) return null;
               const r = nodeRadius(n);
               const color = fillFor(n);
-              const op = n.is_subject_root ? 1 : masteryOpacity(n.mastery_tier);
+              const op = n.is_subject_root ? 1 : opacityFor(n.mastery_tier);
               const isHl = highlightId === n.id;
               const isHovered = hovered?.id === n.id;
               const isPinned = n.fx != null && n.fy != null;
@@ -564,7 +538,7 @@ function KnowledgeGraph2DImpl({
                   }}
                 >
                   {variant === "organism" && (
-                    <circle cx={0} cy={0} r={r + 8} fill={color} opacity={0.15} filter="url(#soft)" />
+                    <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
                   )}
                   {isHl && (
                     <circle cx={0} cy={0} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
@@ -613,7 +587,7 @@ function KnowledgeGraph2DImpl({
                       opacity={op}
                       stroke={color}
                       strokeWidth={n.is_subject_root ? 2.5 : 1.5}
-                      strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : 0.4}
+                      strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : NODE_STROKE_OPACITY}
                     />
                   )}
                   {n.is_subject_root && (
@@ -641,7 +615,7 @@ function KnowledgeGraph2DImpl({
                       opacity={0.85}
                       pointerEvents="none"
                     >
-                      {n.name.length > 18 ? n.name.slice(0, 17) + "…" : n.name}
+                      {truncateLabel(n.name)}
                     </text>
                   )}
                 </g>

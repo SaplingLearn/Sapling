@@ -3,28 +3,64 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
-from agents import ORCHESTRATOR_LIMITS
-from agents.quiz import quiz_agent, Quiz, QuizQuestion
+import config
+from agents import ORCHESTRATOR_LIMITS, TOPUP_LIMITS
+from agents._providers import UnregisteredHandlerError
+from agents.quiz import quiz_agent, Quiz, QuizQuestion, PROMPT_VERSION
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
-from agents.usage import record_agent_usage
+from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
-from models import GenerateQuizBody, SubmitQuizBody
+from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self
+from services.quiz_config import (
+    CONCRETE_DIFFICULTIES,
+    QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
+    QUIZ_DAILY_SPEND_CAP_USD,
+    QUIZ_GENERATE_RATE_LIMIT,
+    QUIZ_GENERATE_RATE_WINDOW_SEC,
+    QUIZ_GENERATION_TIMEOUT_SEC,
+    QUIZ_TOPUP_DROP_RATIO,
+    QUIZ_TOPUP_MAX_RETRIES,
+    REQUESTED_DIFFICULTIES,
+    mastery_after,
+    quiz_config_payload,
+)
+from services.request_limits import check_rate_limit, refund_rate_limit
+from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
+from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.academics import course_offering_ids
+from services.exam_proximity import days_until_next_exam, exam_prompt_line
+from services.quiz_signals import CourseScope, QuizSignals, gather_signals
+from services.quiz_signals import prompt_block as signal_block
+from services.timestamps import parse_ts
+from services.quiz_distractors import build_distractor_profile
 from services.fingerprint import fingerprint
-from services.rag_service import retrieve_chunks, format_rag_context
+from services.quiz_identity import question_hash, normalize_text, wire_question_hash
+from services.quiz_repetition import RecentQuestion, recent_question_identities
+from services.quiz_reserve import (
+    MissedQuestions,
+    missed_question_hashes,
+    recover_questions,
+)
+from services.tool_signals import Expect, report_empty_result_async
+from services import prompt_dimensions
+from services.rag_service import retrieve_chunks_detailed, format_rag_context
+from services.gamification_service import me_snapshot
+from services.xp_service import XpAward, award_xp_safe
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -33,8 +69,10 @@ router = APIRouter()
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
 
-# quiz_attempts.difficulty CHECK enum (0025).
-VALID_DIFFICULTIES = {"easy", "medium", "hard"}
+# Request-side difficulties live in services/quiz_config.py (#540 A2):
+# the concrete trio matches the quiz_attempts.difficulty CHECK (0025,
+# extended with 'adaptive' by the #540 migration); 'adaptive' hands the
+# per-question mix decision to the agent (A1).
 
 
 def _load_prompt(name: str) -> str:
@@ -59,6 +97,391 @@ def _load_prompt(name: str) -> str:
 # `submitQuiz`/`scoreQuiz` flows are unaffected.
 
 _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
+
+# Rank order for tie-breaking the overall difficulty report — derived from
+# the config tuple so a difficulty added there can't be silently dropped by
+# _resolved_difficulty's counting.
+_DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
+
+
+# PostgREST passes `offset` to Postgres as a bigint; anything past this is
+# a client bug, and an empty page is a better answer than a 500.
+_MAX_HISTORY_OFFSET = 1_000_000
+
+
+# supabase/config.toml sets PostgREST's max_rows = 1000, and an over-cap
+# response is 206 Partial Content — a 2xx, so raise_for_status never fires
+# and the truncation is silent. Same constant and same reasoning as
+# achievement_service._daily_totals; page to completion or the sum is a lie.
+_USAGE_PAGE = 1000
+
+
+def _daily_spend_exceeded(user_id: str) -> bool:
+    """True if this user is past the daily LLM spend ceiling (#544 F1).
+
+    Reads the llm_usage ledger agents/usage.py already writes, PAGED: an
+    unpaged read stops at max_rows, so a heavy user's sum plateaus below
+    the cap and the guard never trips for exactly the runaway it targets.
+    Stops early once the ceiling is crossed — the common case is a couple
+    of rows, and a user past the cap doesn't need an exact total.
+
+    Fails OPEN on any error: this is a cost control, not a correctness
+    gate, and denying every student because a usage read blipped is worse
+    than the spend it would save.
+    """
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        spent = 0.0
+        offset = 0
+        while True:
+            rows = table("llm_usage").select(
+                "cost_usd",
+                filters={"user_id": f"eq.{user_id}", "created_at": f"gte.{since}"},
+                limit=_USAGE_PAGE,
+                offset=offset,
+            ) or []
+            spent += sum(float(r.get("cost_usd") or 0.0) for r in rows)
+            if spent >= QUIZ_DAILY_SPEND_CAP_USD:
+                return True
+            if len(rows) < _USAGE_PAGE:
+                return False
+            offset += _USAGE_PAGE
+    except Exception:
+        logger.exception("quiz: daily spend check failed user=%s; allowing", user_id)
+        return False
+
+
+def _refund_generate_slot(user_id: str) -> None:
+    """Hand back the rate-limit slot a failed generation consumed (#544 F1).
+
+    The slot is claimed BEFORE the model runs (so a burst can't get past
+    the gate concurrently), which means a backend failure would otherwise
+    spend the student's quota: eight 502s in two minutes would lock them
+    out for five with a message saying they'd generated too many quizzes,
+    having received none. A failure the student didn't cause shouldn't
+    cost them anything, and the 502 explicitly invites a retry.
+    """
+    try:
+        refund_rate_limit(f"quiz_generate:{user_id}")
+    except Exception:
+        logger.exception("quiz: rate-limit refund failed user=%s", user_id)
+
+
+def _log_generation_failed(body, request_id: str | None, reason: str) -> None:
+    """#544 F3: make a 502 the student saw a 502 an admin can count."""
+    events_service.log_event(
+        "quiz.generation_failed",
+        category="error",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={
+            "concept_node_id": body.concept_node_id,
+            "difficulty": body.difficulty,
+            "num_questions": body.num_questions,
+            "reason": reason,
+            # F6: whatever the prompt had managed to assemble before it
+            # failed. An ungrounded timeout and a grounded one are different
+            # diagnoses, and the failure path is where that matters most.
+            **prompt_dimensions.snapshot(),
+        },
+    )
+
+
+def _record_answer_key_flag(
+    body: GenerateQuizBody, quiz_id: str, request_id: str | None,
+) -> None:
+    """#546: make the deprecated `include_answer_key` flag's remaining
+    callers countable, not merely logged.
+
+    Deleting the parameter is gated on one number reaching zero — nobody
+    still asks for the client-side answer key — and a `logger.info` is not
+    a number: nothing rolls log lines up, and the grace window exists
+    precisely for callers nobody is watching the logs for. #375's admin
+    analytics aggregates the `events` table by event_type, so one event per
+    population is a count an admin can already read off the existing
+    endpoint, with no schema or endpoint work (#117 convention).
+
+    Three caller populations, told apart by whether the field was on the
+    wire at all (`model_fields_set`) rather than by its value — because the
+    default flip makes "omitted" and "explicit false" the same *response*
+    but very different *callers*:
+
+    * explicit true  → ``quiz.answer_key_served``. The straggler the grace
+      window is for; the response really carried the key. This is the count
+      that must be zero before the parameter is deleted.
+    * omitted        → ``quiz.answer_key_flag_omitted``. A flag-unaware
+      caller, already on the keyless shape. Deletion is a no-op for them,
+      but they are the population whose response shape silently changed at
+      the flip, and before this they had no telemetry at all.
+    * explicit false → nothing. Every shipped #537 client sends this on
+      every generate; an event here would be a row per quiz, swamping the
+      rollup it lands in to say something already known.
+
+    Two event types rather than one carrying a `flag` payload field: the
+    by_event_type rollup does not break payloads out, so a single type
+    would surface one number mixing the population that blocks deletion
+    with the one that doesn't — exactly the distinction the gate needs.
+
+    Fire-and-forget like the `quiz.started` emit below: `log_event` never
+    blocks and swallows its own failures, so telemetry can't fail a
+    generation that already succeeded.
+    """
+    if "include_answer_key" not in body.model_fields_set:
+        events_service.log_event(
+            "quiz.answer_key_flag_omitted",
+            category="usage",
+            user_id=body.user_id,
+            request_id=request_id,
+            payload={"quiz_id": quiz_id},
+        )
+        return
+    if not body.include_answer_key:
+        return
+    logger.info(
+        "quiz: generate served the client-side answer key "
+        "(include_answer_key=true, deprecated — #546) quiz_id=%s", quiz_id,
+    )
+    events_service.log_event(
+        "quiz.answer_key_served",
+        category="usage",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={"quiz_id": quiz_id},
+    )
+
+
+def _abandon_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(
+        hours=QUIZ_ATTEMPT_ABANDON_TTL_HOURS
+    )
+
+
+#: THE stored-timestamp parser, now in `services/timestamps.py` so a service
+#: can use it without importing a route (see that module). Kept as a
+#: module-level name because this file's readers — and their tests — refer to
+#: it by this one.
+_parse_ts = parse_ts
+
+
+def _attempt_status(attempt: dict, last_activity_at=None) -> str:
+    """#542 D2: status is DERIVED from the timestamps, never stored, so it
+    can't drift. An in-progress row past the TTL reads as abandoned even
+    before the lazy sweep has stamped abandoned_at.
+
+    `last_activity_at` is the newest recorded answer (quiz_responses):
+    a quiz generated days ago but answered minutes ago is being WORKED ON,
+    not abandoned — keying the TTL on created_at alone would strand the
+    responses already recorded against it.
+    """
+    if attempt.get("completed_at"):
+        return "completed"
+    if attempt.get("abandoned_at"):
+        return "abandoned"
+    cutoff = _abandon_cutoff()
+    latest = max(
+        (t for t in (_parse_ts(attempt.get("created_at")),
+                     _parse_ts(last_activity_at)) if t is not None),
+        default=None,
+    )
+    if latest is not None and latest < cutoff:
+        return "abandoned"
+    return "in_progress"
+
+
+def _attempt_not_found() -> QuizAPIError:
+    """The one 404 for "that attempt isn't there" — raised from the load
+    preamble and from both lost-claim re-reads."""
+    return QuizAPIError(
+        status_code=404,
+        code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+        message="We couldn't find that quiz.",
+    )
+
+
+def _already_completed() -> QuizAPIError:
+    """The one 409 for "that attempt is already scored"."""
+    return QuizAPIError(
+        status_code=409,
+        code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
+        message="This quiz has already been submitted.",
+    )
+
+
+def _load_owned_attempt(attempt_id: str, request: Request, columns: str = "*") -> dict:
+    """Read one attempt or 404, then refuse anyone but its owner.
+
+    Verbatim in four routes before #537 G4's review (get_attempt,
+    answer_question, submit_quiz, abandon_attempt). `columns` is a projection
+    knob, not a policy one: `user_id` must be in it, because the ownership
+    check is the whole point.
+    """
+    rows = table("quiz_attempts").select(columns, filters={"id": f"eq.{attempt_id}"})
+    if not rows:
+        raise _attempt_not_found()
+    attempt = rows[0]
+    require_self(attempt["user_id"], request)
+    return attempt
+
+
+def _refuse_if_completed(attempt: dict) -> None:
+    """409 on an attempt that has already been scored — the mirror of
+    `_refuse_if_abandoned`, and the same shape everywhere it is used."""
+    if attempt.get("completed_at"):
+        raise _already_completed()
+
+
+def _refuse_if_abandoned(attempt: dict) -> None:
+    """409 on an attempt that is closed — swept as stale (#542 D2) or
+    discarded on purpose (#537 G4).
+
+    Checks the STAMP, not the derived TTL: a student mid-quiz whose
+    attempt merely crossed the age cutoff keeps working (their answers
+    refresh the activity clock — see _attempt_status), but once the stamp is
+    on the row the attempt is closed.
+
+    The sentence covers BOTH ways a row gets that stamp, because nothing here
+    can tell them apart — `abandoned_at` records when the row closed, not who
+    closed it. The client's own copy for this code
+    (`lib/quiz/errors.ts::QUIZ_ERROR_COPY`) says the same thing.
+    """
+    if attempt.get("abandoned_at"):
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_ABANDONED,
+            message="This quiz was discarded or expired. Start a new one when you're ready.",
+        )
+
+
+def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None) -> None:
+    """Stamp abandoned_at on this user's stale in-progress attempts (#542
+    D2). Conditional-update filters arbitrate — same idiom as the submit
+    claim — and it runs lazily on the read paths, so no scheduler is
+    needed. Best-effort: a failure never breaks the read.
+
+    `active_attempt_ids` are attempts with recent recorded answers, which
+    must survive the sweep even though they were created before the
+    cutoff — the student is mid-quiz.
+    """
+    filters = {
+        "user_id": f"eq.{user_id}",
+        "completed_at": "is.null",
+        "abandoned_at": "is.null",
+        "created_at": f"lt.{_abandon_cutoff().isoformat()}",
+    }
+    if active_attempt_ids:
+        filters["id"] = f"not.in.({','.join(sorted(active_attempt_ids))})"
+    try:
+        table("quiz_attempts").update(
+            {"abandoned_at": datetime.now(timezone.utc).isoformat()},
+            filters=filters,
+            # The sweep is a side effect of a READ; without this PostgREST's
+            # global Prefer: return=representation drags every swept row
+            # back in full — including the encrypted questions_json /
+            # answers_json blobs — on each history page load.
+            prefer_return_minimal=True,
+        )
+    except Exception:
+        logger.exception("quiz: abandon sweep failed user=%s", user_id)
+
+
+# The keys a keyless (student-facing) question may carry. An ALLOWLIST,
+# not a denylist: `explanation` states the correct answer in prose, and a
+# stored row from an older shape can hold the answer under any key at all
+# (the rich seed has {"q":..., "a":...}). Anything not listed here never
+# reaches a client that hasn't answered yet.
+_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty")
+_KEYLESS_OPTION_KEYS = ("label", "text")
+
+
+def _is_wire_question(q) -> bool:
+    """True if this stored question is in the current wire shape, so
+    _strip_answer_key can be trusted to remove everything sensitive."""
+    return (
+        isinstance(q, dict)
+        and isinstance(q.get("options"), list)
+        and bool(q.get("options"))
+        and all(isinstance(o, dict) and "label" in o for o in q["options"])
+    )
+
+
+def _strip_answer_key(wire_questions: list[dict]) -> list[dict]:
+    """The student-facing view of a question: no per-option `correct`
+    booleans and no `explanation` (#541 C3, tightened in #542 review).
+
+    Built by allowlist, so a question shape this function doesn't
+    recognise can't leak an answer through an unexpected key. Callers must
+    gate on _is_wire_question first — an unrecognised shape has no safe
+    keyless projection at all.
+    """
+    stripped = []
+    for q in wire_questions:
+        q2 = {k: q[k] for k in _KEYLESS_QUESTION_KEYS if k in q}
+        q2["options"] = [
+            {k: o[k] for k in _KEYLESS_OPTION_KEYS if k in o}
+            for o in q.get("options", [])
+        ]
+        stripped.append(q2)
+    return stripped
+
+
+def _resolved_difficulty(wire_questions: list[dict]) -> str:
+    """The overall difficulty generation actually produced (#540 A1).
+
+    Mode of the per-question difficulties; ties break to the harder value
+    so the report never understates what the student is about to face.
+    Defaults to 'medium' when nothing usable is present (can't happen for
+    agent output — QuizQuestion.difficulty is a concrete Literal — but
+    this also runs on stored legacy rows).
+    """
+    counts: dict[str, int] = {}
+    for q in wire_questions:
+        d = q.get("difficulty")
+        if d in _DIFFICULTY_RANK:
+            counts[d] = counts.get(d, 0) + 1
+    if not counts:
+        return "medium"
+    return max(counts, key=lambda d: (counts[d], _DIFFICULTY_RANK[d]))
+
+
+# The wire contract every emitted question must satisfy (#543 E3). The
+# agent schema already pins 4 options, but the route is the boundary the
+# stored questions_json and every grading path trust, so it validates
+# rather than assuming.
+_MIN_OPTIONS = 2
+
+
+def _validate_wire_question(wire: dict) -> bool:
+    """True if this wire question is answerable and gradable.
+
+    Rejects: fewer than two options, duplicate option text (the student
+    can pick "the same" answer and be wrong), and anything other than
+    exactly one correct option (zero = ungradable free point per #129,
+    two = the grader's first-match wins silently).
+    """
+    options = wire.get("options") or []
+    qid = wire.get("id")
+    if len(options) < _MIN_OPTIONS:
+        logger.warning(
+            "quiz: dropping question id=%s — only %d option(s)", qid, len(options)
+        )
+        return False
+    # Compare exactly as GRADING does (_agent_question_to_wire matches
+    # correct_answer with `text.strip() == canonical`): case-sensitively.
+    # Casefolding here would reject items whose options differ only by
+    # case — `list` vs `List` is a real question, and one this route
+    # graded correctly before the check existed.
+    texts = [str(o.get("text", "")).strip() for o in options]
+    if len(set(texts)) != len(texts):
+        logger.warning("quiz: dropping question id=%s — duplicate option text", qid)
+        return False
+    n_correct = sum(1 for o in options if o.get("correct"))
+    if n_correct != 1:
+        logger.warning(
+            "quiz: dropping question id=%s — %d correct options (need exactly 1)",
+            qid, n_correct,
+        )
+        return False
+    return True
 
 
 def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
@@ -106,6 +529,8 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
             qid, len(q.options), len(canonical_only), fp,
         )
         return None
+    if not _validate_wire_question({"id": qid, "options": options}):
+        return None
     return {
         "id": qid,
         "question": q.question,
@@ -113,7 +538,36 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
         "explanation": q.explanation,
         "concept_tested": q.concept,
         "difficulty": q.difficulty,
+        # E5: stable identity, computed from the same normalized stem +
+        # option set every future reader will derive it from. `id` is only
+        # unique WITHIN an attempt; this is what survives across attempts
+        # (E6's repetition guard) and, later, across students (item stats).
+        "question_hash": question_hash(q.question, q.options),
     }
+
+
+# Keys that exist for the server's benefit and are never part of the client
+# contract. `_strip_answer_key`'s allowlist already excludes them on the
+# keyless (default) path; this is the same exclusion for the opt-in keyed
+# path (`include_answer_key=true` — see
+# models.GenerateQuizBody.include_answer_key, #546), so provenance can't leak
+# into a browser payload just because a caller asked for the answer key too.
+#
+# `question_hash` sits here too — not because it is sensitive (it is the
+# student's own question) but because nothing client-side consumes it yet.
+# Per-question feedback (#26) is the change that should surface it, and it
+# should do so by adding it to the keyless allowlist, deliberately.
+_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash")
+
+
+def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> list[dict]:
+    """The questions as the client may see them."""
+    if not include_answer_key:
+        return _strip_answer_key(wire_questions)
+    return [
+        {k: v for k, v in q.items() if k not in _INTERNAL_QUESTION_KEYS}
+        for q in wire_questions
+    ]
 
 
 # Per-request model override map. Mirrors the chat tutor's
@@ -156,30 +610,210 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
-def _resolve_bu_code(course_id: str | None) -> str | None:
-    """Resolve a Sapling course UUID to its BU course_code (course_chunks
-    partition key). None if unresolvable OR if the lookup fails — grounding
-    must never break quiz generation."""
+class BuCodeLookup(NamedTuple):
+    """Tri-state result of course id -> BU course_code resolution (E8).
+
+    `code` set                  — resolved.
+    `code=None, failed=False`   — this course genuinely has no BU code.
+    `code=None, failed=True`    — the read raised; we do not know.
+
+    The last two were one bare `None` until E8 started reporting reasons, and
+    collapsing them made a Supabase outage report as `course_unresolved` —
+    "this course has no BU code", a statement about the data. E8 exists to
+    tell problems apart, so the can't-tell case has to stay separable.
+    """
+
+    code: str | None = None
+    failed: bool = False
+
+
+class CourseRow(NamedTuple):
+    """The one `courses` read a generation needs, shared across its legs.
+
+    Two consumers want columns off the same row — grounding wants
+    `course_code`, the H4 flashcard signal wants `course_name` — and they run
+    in CONCURRENT legs of the gather below, so nothing can be shared by
+    accident. Reading it once here is what keeps that one read one read.
+
+    `failed` is tri-state exactly as `BuCodeLookup` is: a read that raised is
+    "we could not look", not "there is nothing to look up".
+    """
+
+    code: str | None = None
+    name: str | None = None
+    failed: bool = False
+
+
+def _course_row(course_id: str | None) -> CourseRow:
+    """The course's catalog code and display name. Never raises."""
     if not course_id:
-        return None
+        return CourseRow()
     try:
         rows = table("courses").select(
-            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+            "course_code,course_name", filters={"id": f"eq.{course_id}"}, limit=1
         )
     except Exception:
+        logger.warning(
+            "quiz: course lookup failed for course=%s; grounding coverage is "
+            "unknown (not absent), and the flashcard signals report unknown "
+            "rather than counting an offering-only subset", course_id,
+            exc_info=True,
+        )
+        return CourseRow(failed=True)
+    row = rows[0] if rows else {}
+    return CourseRow(
+        code=(row.get("course_code") or None),
+        name=(row.get("course_name") or None),
+    )
+
+
+def _resolve_bu_code(
+    course_id: str | None, *, course: CourseRow | None = None
+) -> BuCodeLookup:
+    """Resolve a Sapling course UUID to its BU course_code (course_chunks
+    partition key). Never raises — grounding must never break quiz
+    generation — so a failed read comes back as `failed=True` rather than as
+    an exception or an indistinguishable None.
+
+    `course` injects a row the caller already read, so a generation that
+    needs the same row for something else does not pay for it twice."""
+    row = course if course is not None else _course_row(course_id)
+    return BuCodeLookup(code=row.code, failed=row.failed)
+
+
+class CourseMaterial(NamedTuple):
+    """What grounding produced for one generation (E5 + E8).
+
+    Before E5 this was a bare string: the chunk ids that grounded a question
+    were resolved, formatted into the prompt, and dropped on the floor. That
+    made two things impossible — saying which source a stored question came
+    from, and telling an ungrounded generation apart from a grounded one.
+    """
+
+    #: The assembled prompt text ("" when there is nothing to ground on).
+    block: str = ""
+    #: Ids of the `course_chunks` rows in `block`, in rank order.
+    chunk_ids: tuple[str, ...] = ()
+    #: How many chunks are IN the prompt. Tracked separately from
+    #: len(chunk_ids) because groundedness is a property of the text the
+    #: model saw, not of our ability to name its sources: a row missing an
+    #: id still grounded the question, and reporting that generation as
+    #: ungrounded would be a lie in the direction that matters.
+    k_chunks: int = 0
+    #: Whether the official catalog chunk was included.
+    has_catalog: bool = False
+    #: Total chunks indexed for this course. Resolved ONLY when retrieval
+    #: came back empty — it is the difference between "this course has no
+    #: material at all" and "it has material, none of it matched this
+    #: concept", which are different problems with different fixes. None
+    #: means not asked, or the count read failed.
+    course_chunks: int | None = None
+    #: The BU course_code partition key, or None when unresolvable.
+    bu_code: str | None = None
+    #: Whether assembling this material FAILED rather than found nothing:
+    #: the course_code read raised, or `_course_material` itself blew up and
+    #: the caller degraded. Distinct from `bu_code is None` because E8's whole
+    #: job is telling problems apart, and "we could not look" is a different
+    #: problem from "this course has no BU code" — the honest label for the
+    #: former is `coverage_unknown`, not `course_unresolved`.
+    resolution_failed: bool = False
+    #: Whether concept-scoped RETRIEVAL raised (as opposed to cleanly matching
+    #: nothing). `retrieve_chunks` degrades to [] on failure, which is
+    #: indistinguishable from a clean miss — so without this, a course with
+    #: material indexed whose retrieval broke was reported as
+    #: `no_match_for_concept`: "it has material, none covers this concept".
+    #: That is a claim about data we never read. Same reasoning as
+    #: `resolution_failed`, one layer down.
+    retrieval_failed: bool = False
+
+    @property
+    def chunk_count(self) -> int:
+        """Chunks in the prompt.
+
+        Falls back to the id count so a partially-specified instance can
+        never read as ungrounded while visibly carrying sources — the two
+        fields disagreeing should be impossible, not merely unlikely.
+        """
+        return max(self.k_chunks, len(self.chunk_ids))
+
+    @property
+    def rag_grounded(self) -> bool:
+        """Whether retrieved DOCUMENT chunks are in the prompt.
+
+        Deliberately not named `grounded`: the catalog block is course
+        material too, and a course with catalog data but nothing indexed
+        does put real material in front of the model. Calling that
+        "ungrounded" would write a false record into every stored
+        question's provenance — the same class of lie `chunk_count` exists
+        to prevent. `has_catalog` carries the other half, and both are
+        stamped separately.
+        """
+        return self.chunk_count > 0
+
+
+_EMPTY_MATERIAL = CourseMaterial()
+# Grounding could not be assessed at all (an unexpected raise out of
+# `_course_material`). Distinct from _EMPTY_MATERIAL, which means "we looked
+# and there was nothing".
+_UNKNOWN_MATERIAL = CourseMaterial(resolution_failed=True)
+
+# k for concept-scoped retrieval. Named because E8 reports it and the audit's
+# proposed budget wants to trim it from 5 to 4 once the numbers are measured
+# (F6) rather than estimated.
+_RAG_K = 5
+
+
+def _course_chunk_coverage(bu_code: str) -> int | None:
+    """How many chunks are indexed for this course, or None if unknown.
+
+    Cheap: PostgREST's exact count with a one-row window — never pulls the
+    table. Only called when retrieval returned nothing, so the common
+    (grounded) path pays for no extra query at all.
+
+    A count of 0 is only reported when it is TRUSTWORTHY.
+    `select_with_count` returns `total = 0` both for a genuinely empty table
+    and for a missing or unparseable `Content-Range` header
+    (db/connection.py) — and those two mean opposite things here. Reporting a
+    degraded count as 0 would have E8 assert "this course has nothing
+    indexed" about a course that may be fully indexed, destroying the exact
+    distinction the reason taxonomy exists to draw. So a zero count with rows
+    actually returned is treated as unknown.
+    """
+    try:
+        rows, total = table("course_chunks").select_with_count(
+            "id", filters={"course_id": f"eq.{bu_code}"}, limit=1,
+        )
+        if total == 0 and rows:
+            logger.warning(
+                "quiz: course-chunk count came back 0 while rows exist for "
+                "course_code=%s — treating coverage as unknown", bu_code,
+            )
+            return None
+        return total
+    except Exception:
+        logger.warning(
+            "quiz: course-chunk coverage read failed for course_code=%s", bu_code,
+        )
         return None
-    return (rows[0].get("course_code") if rows else None) or None
 
 
-def _course_material_block(course_id: str | None, concept_name: str) -> str:
+def _course_material(
+    course_id: str | None, concept_name: str, *, course: CourseRow | None = None
+) -> CourseMaterial:
     """Best-effort catalog + document-chunk context for a concept.
 
-    Returns "" if nothing is available (no course, no bu_code, no chunks) or
-    if retrieval raises — grounding must never break quiz generation.
+    Returns an empty CourseMaterial if nothing is available (no course, no
+    bu_code, no chunks) or if retrieval raises — grounding must never break
+    quiz generation. A course_code read that FAILED is reported as such
+    (`resolution_failed`) rather than as an absent bu_code, so E8 can tell
+    "we could not look" from "there is nothing to look up".
+
+    `course` injects a `courses` row the caller already read (see `CourseRow`).
     """
-    bu_code = _resolve_bu_code(course_id)
+    lookup = _resolve_bu_code(course_id, course=course)
+    bu_code = lookup.code
     if not bu_code:
-        return ""
+        return _UNKNOWN_MATERIAL if lookup.failed else _EMPTY_MATERIAL
     blocks: list[str] = []
     try:
         catalog = _get_catalog_chunk(bu_code)
@@ -187,10 +821,11 @@ def _course_material_block(course_id: str | None, concept_name: str) -> str:
         catalog = ""
     if catalog:
         blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
-    try:
-        chunks = retrieve_chunks(concept_name, course_id=bu_code, k=5)
-    except Exception:
-        chunks = []
+    # `_detailed` because [] alone cannot say whether retrieval ran: it is
+    # both "nothing matched" and "the index was unreachable". E8 reports on
+    # that difference, so it has to be carried rather than inferred.
+    retrieval = retrieve_chunks_detailed(concept_name, course_id=bu_code, k=_RAG_K)
+    chunks = retrieval.chunks
     # Drop any retrieved chunk that merely repeats the catalog block already
     # injected above — catalog chunks share the course_chunks store and can
     # rank into the semantic results, which would send the same
@@ -201,7 +836,157 @@ def _course_material_block(course_id: str | None, concept_name: str) -> str:
     rag_block = format_rag_context(chunks)
     if rag_block:
         blocks.append(rag_block)
-    return "\n\n".join(blocks)
+    # Ids are what make a stored question traceable back to its source. Rows
+    # without one are still usable as prompt text, so they are kept in the
+    # block and simply absent from the provenance list.
+    chunk_ids = tuple(
+        str(c.get("id")) for c in chunks if isinstance(c, dict) and c.get("id")
+    )
+    return CourseMaterial(
+        block="\n\n".join(blocks),
+        chunk_ids=chunk_ids,
+        k_chunks=len(chunks),
+        has_catalog=bool(catalog),
+        course_chunks=None if chunks else _course_chunk_coverage(bu_code),
+        bu_code=bu_code,
+        retrieval_failed=retrieval.failed,
+    )
+
+
+def _log_rag_uncovered(
+    material: CourseMaterial,
+    *,
+    user_id: str,
+    concept_node_id: str,
+    request_id: str | None,
+) -> None:
+    """E8: make an ungrounded generation a decision, not an accident.
+
+    Generation is NOT blocked on this — a course with nothing indexed is a
+    legitimate mode, and refusing to quiz a student because their class
+    hasn't uploaded slides would be worse than a general-knowledge quiz.
+    But it stops being invisible: the reasons below are different
+    problems, and telling them apart is the whole point.
+    """
+    if material.rag_grounded:
+        return
+    if material.resolution_failed:
+        # The course_code read raised, or assembly blew up entirely. We never
+        # learned whether this course has material, so `course_unresolved`
+        # ("it has no BU code") would be an assertion about data we never
+        # read. `coverage_unknown` is the honest can't-tell label, and it
+        # already exists for exactly this shape of ignorance.
+        reason = "coverage_unknown"
+    elif material.retrieval_failed:
+        # Retrieval raised, so we never learned whether this course's material
+        # covers the concept. `no_match_for_concept` would assert that it
+        # doesn't. `rag.retrieval_failed` carries the cause under the same
+        # request_id; this event's job is only to stop claiming more than we
+        # know.
+        reason = "coverage_unknown"
+    elif material.bu_code is None:
+        reason = "course_unresolved"
+    elif material.course_chunks is None:
+        reason = "coverage_unknown"
+    elif material.course_chunks == 0:
+        reason = "no_chunks_for_course"
+    else:
+        reason = "no_match_for_concept"
+    # INFO, not WARNING: in function mode the embedding seam is disabled by
+    # design (#439), so every E2E generation lands here. A warning per run
+    # would train readers to ignore the one that matters.
+    logger.info(
+        "quiz: generating without course grounding (reason=%s course_chunks=%s "
+        "request_id=%s)", reason, material.course_chunks, request_id,
+    )
+    events_service.log_event(
+        "quiz.rag_uncovered",
+        # category="usage", NOT "error". Ungrounded generation is a
+        # legitimate mode — this event exists to make it countable, not to
+        # report a failure — and /api/admin/analytics/errors scans
+        # `category = error` newest-first (B re-keyed it off the error.*
+        # name prefix precisely so non-HTTP failures would surface). Since
+        # this fires on EVERY generation for any unindexed course, and on
+        # every function-mode run, filing it as an error would bury
+        # quiz.context_write_failed and rag.retrieval_failed under routine
+        # traffic and inflate the error series — degrading the surface that
+        # workstream B just repaired. `rag.retrieval_failed` stays an error
+        # because retrieval FAILING is one; nothing failed here.
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "concept_node_id": concept_node_id,
+            "reason": reason,
+            "course_chunks": material.course_chunks,
+            "k_chunks": material.chunk_count,
+        },
+    )
+
+
+def _do_not_repeat_block(recent: list[RecentQuestion]) -> str:
+    """E6: name the questions this student has already been served.
+
+    Stems, not hashes — "do not repeat 9f3a2c…" is unactionable for a model.
+    Neutralized at this boundary because a stem is LLM-written text derived
+    from student-uploaded course material, so it re-enters a prompt as
+    untrusted content (#150), exactly like the top-up's already-asked list.
+    """
+    if not recent:
+        return ""
+    from services.prompt_safety import neutralize_delimiters
+
+    lines = "\n".join(f"- {neutralize_delimiters(r.stem)}" for r in recent)
+    return (
+        "\n\n[RECENTLY ASKED] This student has already been served the "
+        "questions below on this concept. Do NOT repeat them or trivially "
+        "reword them — write new questions, on the same concept, that probe "
+        "it differently:\n" + lines
+    )
+
+
+def _insert_attempt(attempt_row: dict) -> None:
+    """Write the attempt, surviving a schema that predates `exam_days_away`.
+
+    The omit-when-None rule alone does NOT make a pre-migration environment
+    safe, and the failure is nastier than it looks: it strikes exactly the
+    students the feature is FOR (the ones with a dated upcoming exam), so it
+    presents as a random partial outage rather than an obvious missing
+    migration. And it strikes late — the agent has already run and been
+    billed — so an unhandled 400 here loses the generated quiz, writes no
+    attempt row, emits no `quiz.generation_failed`, and never refunds the
+    rate-limit slot.
+    #
+    Ordering is still the rule (migration before code, as with
+    20260814051517). This is the seatbelt for the window where PostgREST has
+    not yet reloaded its schema cache, not a licence to deploy first.
+    """
+    try:
+        table("quiz_attempts").insert(attempt_row)
+        return
+    except Exception:
+        if "exam_days_away" not in attempt_row:
+            raise
+    retry = {k: v for k, v in attempt_row.items() if k != "exam_days_away"}
+    logger.warning(
+        "quiz: attempt insert failed with exam_days_away present; retrying "
+        "without it (is 20260822090747 applied?) quiz_id=%s",
+        attempt_row.get("id"),
+    )
+    table("quiz_attempts").insert(retry)
+
+
+class GeneratedQuiz(NamedTuple):
+    """What one generation produced.
+
+    `exam_days_away` rides back with the questions rather than being resolved
+    again by the caller: it is used for the prompt here and stored on the
+    attempt there, and two lookups could disagree if an exam were entered
+    between them.
+    """
+
+    questions: list[dict]
+    exam_days_away: int | None = None
 
 
 async def _quiz_via_agent(
@@ -215,8 +1000,18 @@ async def _quiz_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
-) -> list[dict]:
+    times_studied: int | None = None,
+    has_graph: bool | None = None,
+) -> GeneratedQuiz:
     """Run quiz_agent and return questions in the legacy wire shape.
+
+    `has_graph` is what the CALLER knows about this student's knowledge graph
+    in this course, for the F5 dark-scope report in `quiz_signals`. Left None
+    on purpose: the request path (`generate_quiz` → `_generate_or_502`) read
+    an owner-scoped `graph_nodes` row on its way here and passes True, but
+    `scripts/benchmark_quiz.py` calls this same function with a fixture user
+    that has none — so asserting the fact in here would make every benchmark
+    run write a false `quiz.tool_empty`.
 
     The agent's tools (read_concepts_for_user, read_misconceptions_for_course)
     pull weak-area + class misconception data themselves, replacing the
@@ -231,12 +1026,177 @@ async def _quiz_via_agent(
         course_id=course_id,
         supabase=None,
         request_id=request_id,
+        feature="quiz",
+        # The Class-intel opt-out reaches the misconceptions tool through
+        # deps, not through the prompt: the tool is registered on the agent
+        # unconditionally and step 2 of the system prompt tells the model to
+        # call it every run, so the routing sentence below can only ever ADD
+        # emphasis — it cannot withhold the data (#553 review).
+        share_class_context=use_shared_context,
     )
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
+    if difficulty == "adaptive":
+        # #540 A1: no target difficulty — the agent picks the whole mix
+        # from mastery + recent accuracy (ADAPTIVE MODE in the system
+        # prompt). Every emitted question still carries a concrete
+        # easy|medium|hard; the route reports the overall pick back to
+        # the client as `resolved_difficulty`.
+        difficulty_clause = (
+            f"Generate {num_questions} questions in ADAPTIVE MODE: you "
+            f"choose each question's difficulty (easy, medium, or hard) "
+            f"from the student's mastery and recent accuracy, per the "
+            f"adaptive-mode rules in your system prompt."
+        )
+    else:
+        difficulty_clause = (
+            f"Generate {num_questions} {difficulty} questions for the student."
+        )
+
+    # ONE resolution of the two things the legs below share. Four of them want
+    # the same two answers — grounding wants this course's `course_code`, the
+    # H4 flashcard signal wants its `course_name` (same row), and both exam
+    # proximity and the H4 tutor signal want this course's offerings. Because
+    # those legs run CONCURRENTLY they cannot share by accident, so resolving
+    # here is what stops one generation from asking the same questions twice.
+    #
+    # These two are themselves independent, so they run concurrently with each
+    # other: the pair costs the LONGER of them — one `courses` read or one
+    # `course_offerings` read — ahead of the gather, and removes three from
+    # inside it.
+    #
+    # The trade, stated plainly (#592 review C15): this is a serial PREFIX. It
+    # cuts three round-trips out of a healthy request, but under a degraded
+    # Supabase it adds up to one client timeout (30s, db/connection.py) ahead
+    # of the gather and outside QUIZ_GENERATION_TIMEOUT_SEC, which bounds only
+    # the agent runs. Handing each leg a future to await instead would recover
+    # that — but the recovery is small: `_course_material` cannot start
+    # without the `courses` row and both the exam and signal legs need the
+    # offerings, so the only leg that could genuinely start early is the
+    # recently-asked read. One cheap read's worth of overlap is not worth
+    # three awaited tasks with hand-rolled per-leg degradation in the hottest
+    # function in this file.
+    #
+    # return_exceptions=True for the same reason the gather below uses it:
+    # both helpers already degrade internally, so this is the backstop for the
+    # failure they cannot catch — a raise from the to_thread machinery itself,
+    # or on the way in or out. Without it that raise leaves `_quiz_via_agent`
+    # for the generic handler and 502s a generation that only needed to run
+    # ungrounded.
+    course_row, offering_ids = await asyncio.gather(
+        asyncio.to_thread(_course_row, course_id),
+        asyncio.to_thread(course_offering_ids, course_id),
+        return_exceptions=True,
+    )
+    if isinstance(course_row, BaseException):
+        # Precise about what is lost: grounding needs `course_code`, and the
+        # FLASHCARD signal needs `course_name` — but the tutor signal needs
+        # neither and still runs on the offerings below. Saying "without the
+        # course-scoped signals" here would describe a degradation that isn't
+        # the one that happened.
+        logger.warning(
+            "quiz: course lookup failed (%s); generating ungrounded, and the "
+            "flashcard signals report unknown",
+            type(course_row).__name__, exc_info=course_row,
+        )
+        # failed=True rather than a bare empty row, so E8 reports
+        # `coverage_unknown` instead of claiming this course has no BU code —
+        # and so the flashcard read is skipped rather than run offering-only,
+        # which would miss every AI-generated card and call the remainder the
+        # whole collection.
+        course_row = CourseRow(failed=True)
+    if isinstance(offering_ids, BaseException):
+        logger.warning(
+            "quiz: offering resolution failed (%s); the offering-scoped "
+            "signals report unknown",
+            type(offering_ids).__name__, exc_info=offering_ids,
+        )
+        # None, not []: "could not tell". An empty list would assert this
+        # course has no offering at all, tripping the F5 dark-scope report on
+        # what is really a transport failure.
+        offering_ids = None
+    course_scope = CourseScope(
+        offering_ids=offering_ids,
+        course_name=course_row.name,
+        name_failed=course_row.failed,
+    )
+
+    # Course-material grounding does blocking network I/O (a Gemini
+    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
+    # worker thread so a slow/stalled retrieval can't freeze this worker's
+    # event loop for every other in-flight request. Matches the
+    # asyncio.to_thread pattern used by the agent read tools.
+    #
+    # E6's recently-asked read and H3's exam-proximity lookup are independent
+    # Supabase reads, so all three run CONCURRENTLY rather than in sequence —
+    # they have nothing to say to each other, and serializing them would add
+    # every one of their latencies to every generation. Proximity costs
+    # several round-trips on its own, so running it before this block made it
+    # fully additive.
+    #
+    # return_exceptions=True because ALL THREE are best-effort context, and a
+    # bare gather propagates the first failure straight out of generation: an
+    # unreadable past attempt would 502 a quiz that needed no history at all.
+    # Each helper already degrades internally; this is the backstop for the
+    # failure they cannot catch (an unexpected raise on the way in or out).
+    material, recent, exam_days_away, signals = await asyncio.gather(
+        asyncio.to_thread(
+            _course_material, course_id, concept_name, course=course_row,
+        ),
+        asyncio.to_thread(
+            recent_question_identities, user_id, concept_node_id
+        ),
+        asyncio.to_thread(
+            days_until_next_exam, user_id, course_id, offering_ids=offering_ids,
+        ),
+        asyncio.to_thread(
+            gather_signals, user_id, concept_node_id,
+            times_studied=times_studied,
+            # `concept_name` comes off the `graph_nodes` row this route already
+            # read; `scope` is the shared resolution above. The course-keyed
+            # signals (flashcards, tutor recency) key on the OFFERING, and the
+            # tutor scan matches the concept by name in `graph_update_json`.
+            course_id=course_id,
+            concept_name=concept_name,
+            scope=course_scope,
+            # Passed through from OUR caller, never assumed here: `_quiz_via_agent`
+            # is also the entry point `scripts/benchmark_quiz.py` drives, with a
+            # fixture user that has no graph at all.
+            has_graph=has_graph,
+        ),
+        return_exceptions=True,
+    )
+    if isinstance(signals, BaseException):
+        logger.warning(
+            "quiz: student-signal gather failed (%s); generating without them",
+            type(signals).__name__, exc_info=signals,
+        )
+        signals = QuizSignals()
+    if isinstance(exam_days_away, BaseException):
+        logger.warning(
+            "quiz: exam-proximity lookup failed (%s); generating without it",
+            type(exam_days_away).__name__, exc_info=exam_days_away,
+        )
+        exam_days_away = None
+    if isinstance(material, BaseException):
+        logger.warning(
+            "quiz: course-material assembly failed (%s); generating ungrounded",
+            type(material).__name__, exc_info=material,
+        )
+        # _UNKNOWN_MATERIAL, not _EMPTY_MATERIAL: assembly raised, so we know
+        # nothing about this course's coverage. E8 must report
+        # `coverage_unknown` rather than claiming the course has no BU code.
+        material = _UNKNOWN_MATERIAL
+    if isinstance(recent, BaseException):
+        logger.warning(
+            "quiz: recently-asked read failed (%s); generating without a "
+            "do-not-repeat list", type(recent).__name__, exc_info=recent,
+        )
+        recent = []
+
     routing_msg = (
-        f"Generate {num_questions} {difficulty} questions for the student. "
+        f"{difficulty_clause} "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
@@ -247,38 +1207,188 @@ async def _quiz_via_agent(
             " Also call read_misconceptions_for_course and use those misconceptions "
             "as distractors and probes."
         )
+    # H3/#555: one line, dates only, and only inside the proximity horizon.
+    # The sentence itself lives next to the number it renders, in
+    # `services/exam_proximity.py`, so the prompt-budget benchmark measures
+    # the real one instead of a hand-copy (it had one, and it was stale).
+    routing_msg += exam_prompt_line(exam_days_away)
 
-    # Course-material grounding does blocking network I/O (a Gemini
-    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
-    # worker thread so a slow/stalled retrieval can't freeze this worker's
-    # event loop for every other in-flight request. Matches the
-    # asyncio.to_thread pattern used by the agent read tools.
-    material = await asyncio.to_thread(_course_material_block, course_id, concept_name)
-    if material:
+    # H4/#556: the signals that were already in reach and never asked for.
+    # Appended as one short line, and recorded as dimensions so F6 can price
+    # it — the issue's whole framing is "land these behind the measurement so
+    # we can see what each costs before deciding what stays".
+    routing_msg += signal_block(signals)
+    prompt_dimensions.record(**signals.as_dimensions())
+    _log_rag_uncovered(
+        material,
+        user_id=user_id,
+        concept_node_id=concept_node_id,
+        request_id=request_id,
+    )
+    routing_msg += _do_not_repeat_block(recent)
+
+    if material.block:
         user_message = (
-            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material
+            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material.block
             + "\n\n[GENERATE QUIZ]\n" + routing_msg
         )
     else:
         user_message = routing_msg
 
+    # F6: what this prompt is made of, so `llm_usage.prompt_tokens` (same
+    # request_id) becomes attributable to sections instead of estimated.
+    # Recorded BEFORE the run so a failed generation still reports its
+    # composition — an ungrounded timeout is a different diagnosis from a
+    # grounded one.
+    prompt_dimensions.record(
+        blocks=sorted(
+            b for b, present in (
+                ("catalog", material.has_catalog),
+                ("rag", material.rag_grounded),
+                ("recently_asked", bool(recent)),
+                ("misconceptions_requested", use_shared_context),
+            ) if present
+        ),
+        k_chunks=material.chunk_count,
+        material_chars=len(material.block),
+        recent_asked=len(recent),
+        routing_chars=len(routing_msg),
+        adaptive=difficulty == "adaptive",
+    )
+
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
+    run_kwargs: dict = {"deps": deps}
     if model_override is not None:
         run_kwargs["model"] = model_override
-    result = record_agent_usage(
-        await quiz_agent.run(user_message, **run_kwargs),
-        feature="quiz", task="quiz", user_id=deps.user_id,
-    )
-    quiz: Quiz = result.output
-    # Filter out questions where the agent's correct_answer didn't match
-    # any option verbatim — _agent_question_to_wire returns None for those.
-    # Re-number the survivors so question IDs stay 1-based and contiguous.
+
+    async def _run(message: str, limits) -> tuple[Quiz, str]:
+        # #544 F2: bound EACH agent run rather than the whole function.
+        # Wrapping the outer coroutine cancelled it mid-flight, and
+        # CancelledError is a BaseException — it flew straight past the
+        # top-up's serve-what-we-have handler and threw away questions the
+        # student had already paid for. Timing out one run raises an
+        # ordinary TimeoutError the existing handlers can reason about.
+        result = record_agent_usage(
+            await asyncio.wait_for(
+                quiz_agent.run(message, usage_limits=limits, **run_kwargs),
+                timeout=QUIZ_GENERATION_TIMEOUT_SEC,
+            ),
+            feature="quiz", task="quiz", user_id=deps.user_id,
+        )
+        # Returned per-run, not resolved once for the function: a top-up is
+        # a SEPARATE model call and can be served by a different model than
+        # the first run (a provider-side reroute, or a future retry that
+        # escalates tiers). Stamping one model over all of them would make
+        # provenance quietly wrong in exactly the case it exists to record.
+        return result.output, served_model_name(result, "quiz")
+
+    # Filter out questions the agent got wrong (correct_answer not among
+    # the options, duplicate/insufficient options, no single correct
+    # answer) and duplicate stems within this attempt —
+    # _agent_question_to_wire returns None for the former,
+    # _validate_wire_question backs it. Survivors are re-numbered so
+    # question ids stay 1-based and contiguous.
+    #
+    # `dropped` counts questions we REJECTED, which is a different thing
+    # from "fewer than requested": the Quiz schema lets a run return any
+    # count, and the E2E seam always returns 3 no matter what was asked.
+    # Keying the top-up on under-delivery therefore fired a second full
+    # generation on perfectly good responses.
     wire_questions: list[dict] = []
-    for q in quiz.questions:
-        mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
-        if mapped is not None:
+    seen_stems: set[str] = set()
+    seen_hashes: set[str] = set()
+    dropped = 0
+
+    # E5 provenance shared by every question this generation produces. The
+    # chunk ids are attempt-level, not per-item: they are the sources that
+    # were in the prompt when the question was written, which is the honest
+    # claim — the model never tells us which chunk it drew any single
+    # question from.
+    provenance_base = {
+        "prompt_version": PROMPT_VERSION,
+        "chunk_ids": list(material.chunk_ids),
+        # Two separate facts, not one fuzzy one: whether retrieved document
+        # chunks grounded the question, and whether the official catalog
+        # block was present. Collapsing them into a single `grounded` made
+        # a catalog-only course record every question as ungrounded.
+        "rag_grounded": material.rag_grounded,
+        "catalog": material.has_catalog,
+    }
+
+    def _absorb(quiz: Quiz, model: str) -> None:
+        nonlocal dropped
+        for q in quiz.questions:
+            # E5: identity is the dedupe key now. The stem check is kept
+            # alongside it and is the COARSER of the two — a hash covers the
+            # stem AND the options, so a model re-emitting one stem with
+            # reworded options passes the hash check and is caught here.
+            # Dropping it would have narrowed #543's duplicate-question
+            # guard, which is not a trade E5 needs to make.
+            stem = normalize_text(q.question)
+            qhash = question_hash(q.question, q.options)
+            if qhash in seen_hashes or stem in seen_stems:
+                logger.warning(
+                    "quiz: dropping duplicate question (hash=%s, stem_len=%d)",
+                    qhash, len(stem),
+                )
+                dropped += 1
+                continue
+            mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
+            if mapped is None:
+                dropped += 1
+                continue
+            mapped["provenance"] = {**provenance_base, "model": model}
+            seen_stems.add(stem)
+            seen_hashes.add(qhash)
             wire_questions.append(mapped)
+
+    _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
+
+    # #543 E2: one bounded top-up when DRIFT cost us a big share of the
+    # quiz. Gated on questions actually dropped (never on a clean short
+    # response), and it runs for total drift too — that's the case a
+    # retry most obviously helps, and the old `wire_questions and` guard
+    # made it the only case that never retried. Bounded because a retry
+    # loop against a drifting model burns tokens without converging.
+    if dropped and dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO:
+        for _ in range(QUIZ_TOPUP_MAX_RETRIES):
+            missing = max(1, num_questions - len(wire_questions))
+            logger.info(
+                "quiz: topping up after drift (have=%d, dropped=%d, requested=%d)",
+                len(wire_questions), dropped, num_questions,
+            )
+            # Name the stems to avoid: "different from the ones already
+            # asked" is unactionable otherwise, and a deterministic model
+            # re-emits the same questions, which the dedupe above then
+            # discards — a full generation for nothing.
+            already = "\n".join(f"- {q['question']}" for q in wire_questions)
+            topup_msg = (
+                f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
+                f"format errors. Generate {missing} MORE questions on the same "
+                f"concept. Remember: correct_answer must appear VERBATIM in "
+                f"options."
+            )
+            if already:
+                topup_msg += (
+                    f"\n\nDo NOT repeat any of these questions, which are "
+                    f"already in the quiz:\n{already}"
+                )
+            try:
+                _absorb(*await _run(topup_msg, TOPUP_LIMITS))
+            except (Exception, asyncio.TimeoutError) as e:
+                # The request deliberately SUCCEEDS from here — serve the
+                # short quiz with an honest count. No traceback: the E2E
+                # logscan oracle reports those as findings, and this path
+                # is a handled degradation, not a bug (same rule the
+                # quiz_context seam skip follows).
+                logger.warning(
+                    "quiz: top-up run failed (%s: %s); serving what we have",
+                    type(e).__name__, e,
+                )
+                break
+            if len(wire_questions) >= num_questions:
+                break
+
     if not wire_questions:
         # All questions dropped — raise so generate_quiz's bare-Exception
         # catch degrades to HTTP 502 (the raw-Gemini legacy fallback was
@@ -286,25 +1396,351 @@ async def _quiz_via_agent(
         raise RuntimeError(
             "quiz_agent produced no valid questions after wire-format validation"
         )
-    return wire_questions
+    # Never serve more than asked for (a generous top-up run can overshoot).
+    return GeneratedQuiz(
+        questions=wire_questions[:num_questions],
+        exam_days_away=exam_days_away,
+    )
+
+@router.get("/config")
+def quiz_config():
+    """Selector options for the quiz UI (#540 A2). Single source of truth:
+    the same constants bound the Pydantic request model, so a client that
+    builds its selects from this payload can never send a value the route
+    rejects. No user data, no auth needed."""
+    return quiz_config_payload()
+
+
+class ReservedMisses(NamedTuple):
+    """What a source attempt can hand back verbatim (G5, #537)."""
+
+    #: The attempt the client asked to practise from.
+    attempt_id: str
+    #: Its missed questions, ready to serve — deep copies that still carry
+    #: their E5 `question_hash` and the provenance of the run that wrote them.
+    questions: list[dict]
+
+
+def _missed_something(attempt: dict, found: MissedQuestions) -> bool:
+    """Did this attempt miss anything at all? (G5's F5 guard.)
+
+    The question the silent-empty signal actually needs, and the one the
+    `HAS_ATTEMPTS` probe cannot answer: it asks "has this student completed an
+    attempt", which is true by construction for a source attempt, so every
+    zero-recovery would report a discrepancy — including the commonest and
+    most correct zero of all, a student who got everything right.
+
+    Three cases, in the order they resolve:
+
+    * wrong answers were recorded AND at least one mapped to a stored item →
+      yes. Recovering none of them is then a real discrepancy: the item was
+      named and still could not be served, which today means a stored
+      question that no longer passes the wire-format check;
+    * answers were recorded and none of them produced a missed item → NO,
+      silence. Read that as "everything was right", which is what it means
+      in every case but the two named below;
+    * nothing was recorded at all → fall back to the attempt's own score,
+      the only remaining evidence. `score < total` means the student missed
+      something we cannot name, which is exactly the pre-#537 degradation
+      (an attempt graded only through /submit) worth counting.
+
+    KNOWN GAP (deliberate, N1 in the PR). Two shapes are silent that should
+    not be, and both land in the second case above. `missed_question_hashes`
+    skips a wrong row whose `question_index` is out of range, and one whose
+    stored question yields no `wire_question_hash` at all — so the row exists
+    and is wrong, but produces no hash. That leaves `hashes` empty with
+    `graded` True, which resolves as "everything was right", and `graded`
+    short-circuits before the score fallback could catch it. A wrong-row
+    COUNT on `MissedQuestions` instead of a bool would close it: "N wrong
+    rows, none of them mappable" is a discrepancy, and it is exactly the one
+    this function cannot currently see.
+    """
+    if found.hashes:
+        return True
+    if found.graded:
+        return False
+    score, total = attempt.get("score"), attempt.get("total")
+    if not isinstance(score, (int, float)) or not isinstance(total, (int, float)):
+        # An unscored or unreadable attempt tells us nothing. "Can't tell" is
+        # silence, the same rule tool_signals' own probe follows.
+        return False
+    return score < total
+
+
+async def _reserved_misses(body: GenerateQuizBody) -> ReservedMisses | None:
+    """Recover the questions this student missed on `body.source_attempt_id`.
+
+    None when the request named no source attempt — the ordinary generate.
+
+    Raises for a source attempt that is missing, someone else's, or not
+    finished. Everything below that degrades to an EMPTY recovery rather
+    than an error: a re-serve that can't find its items is a quiz to
+    generate, not a request to fail.
+    """
+    if not body.source_attempt_id:
+        return None
+    rows = table("quiz_attempts").select(
+        # score/total are plaintext scalars (#521) and ride along for free:
+        # they are the only evidence that a pre-#537 attempt with no recorded
+        # responses missed anything at all (see _missed_something).
+        # concept_node_id rides along for the same-concept check below.
+        "id,user_id,concept_node_id,completed_at,questions_json,score,total",
+        filters={"id": f"eq.{body.source_attempt_id}"},
+    )
+    if not rows:
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+            message="We couldn't find the quiz you wanted to practise from.",
+        )
+    attempt = rows[0]
+    # `require_self(body.user_id, request)` at the top of generate_quiz has
+    # already proved body.user_id IS the signed-in user, so this comparison is
+    # the same ownership check the sibling attempt routes make with
+    # `require_self(attempt["user_id"], request)` — written out so it can carry
+    # a precise envelope code instead of the guard's bare "Forbidden".
+    if attempt.get("user_id") != body.user_id:
+        raise QuizAPIError(
+            status_code=403,
+            code=QuizErrorCode.QUIZ_NOT_AUTHORIZED,
+            message="That quiz isn't yours.",
+        )
+    if not attempt.get("completed_at"):
+        # 400 + QUIZ_VALIDATION_ERROR is the closest state the envelope
+        # supports. Nothing in the enum means "that attempt is still in
+        # progress", and both near neighbours would mislead a client that maps
+        # codes to copy: ALREADY_COMPLETED is the inverse state, NOT_RESUMABLE
+        # is about resuming — which this is not. "Practise the ones you
+        # missed" is only reachable from a results screen, so an unfinished
+        # source is a malformed request, not a state to work around.
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_VALIDATION_ERROR,
+            message=(
+                "That quiz isn't finished yet, so there's nothing to "
+                "practise from."
+            ),
+        )
+
+    if attempt.get("concept_node_id") != body.concept_node_id:
+        # The re-served items are copied into an attempt row stamped with THIS
+        # request's concept, and /submit applies mastery to the row's concept
+        # (`attempt["concept_node_id"]`) — so a source from another node would
+        # pay Recursion answers into Binary Trees, write node_mastery_events
+        # on the wrong node, and feed E6's per-concept guard foreign items.
+        # Every sibling route re-derives concept from its own attempt; this is
+        # the one place two attempts' concepts meet, so it is checked here.
+        # Not reachable from the shipped client (PRACTISE_MISSED names the
+        # attempt just finished, which is by construction the same concept) —
+        # which is exactly why it needs a guard rather than an assumption.
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_VALIDATION_ERROR,
+            message=(
+                "That quiz was on a different concept, so its questions "
+                "can't be practised here."
+            ),
+        )
+
+    try:
+        stored = decrypt_json_column(attempt.get("questions_json")) or []
+    except Exception:
+        logger.warning(
+            "quiz: source attempt %s did not decrypt; generating instead of "
+            "re-serving", body.source_attempt_id, exc_info=True,
+        )
+        stored = []
+    # Deliberately NOT compacted to dicts. `quiz_responses.question_index` was
+    # written against this array as stored, so dropping an element would shift
+    # every index past it — silently re-serving a question the student got
+    # RIGHT while the missed one goes missing. Both readers below tolerate a
+    # non-dict element in place (`wire_question_hash` returns None for one),
+    # so position is preserved and the odd element is simply unrecoverable.
+
+    # An explicit list overrides the derivation; an empty one does not, so a
+    # client that sends `[]` still gets its misses looked up.
+    if body.missed_question_hashes:
+        hashes = list(body.missed_question_hashes)
+        # The caller asserted these items were missed, so recovering none of
+        # them is a discrepancy whoever sent the list wants to know about.
+        missed_something = True
+    else:
+        found = missed_question_hashes(body.source_attempt_id, stored)
+        hashes = found.hashes
+        missed_something = _missed_something(attempt, found)
+    # Only questions in the CURRENT wire shape can be re-served: the client
+    # projection, /answer and /submit all read that shape, and an unrecognised
+    # stored row has no safe keyless projection at all (the same rule the
+    # resume path applies in get_attempt).
+    recovered = [
+        q for q in recover_questions(stored, hashes)
+        if _is_wire_question(q) and _validate_wire_question(q)
+    ][:body.num_questions]
+    for question in recovered:
+        # Make the stored row self-describing: this item was re-served, not
+        # written by a model for this attempt. The ORIGINAL provenance stays
+        # — it is still the truthful account of where the item came from —
+        # and this records where it came back from. Internal either way:
+        # `_INTERNAL_QUESTION_KEYS` strips provenance from every client
+        # payload, and `question_hash` is computed over stem + options, so
+        # nothing here touches the item's identity.
+        provenance = question.get("provenance")
+        question["provenance"] = {
+            **(provenance if isinstance(provenance, dict) else {}),
+            "reserved_from": body.source_attempt_id,
+        }
+
+    if not recovered and missed_something:
+        # F5: nothing recovered from an attempt that DID miss something is the
+        # silent-empty shape this seam exists for — the feature has quietly
+        # degraded to plain generation and nothing else would say so. The
+        # commonest cause is a legitimate one (an attempt graded only through
+        # /submit records no `quiz_responses` rows), which is exactly why it
+        # needs counting rather than guessing.
+        #
+        # `missed_something` is the whole guard: the probe below can only ask
+        # "did this student complete this attempt", which is true by
+        # construction here, so without it a perfect score would report a
+        # discrepancy on every practice request — alarm fatigue in the one
+        # place F5 exists to avoid it.
+        await report_empty_result_async(
+            "quiz_reserve.missed_questions",
+            user_id=body.user_id,
+            count=0,
+            expect=Expect.HAS_ATTEMPTS,
+            # A fact, not a guess — the same move #592 made with `has_graph`.
+            # We read this very row above and proved it owned and completed,
+            # which is the entire question HAS_ATTEMPTS' probe would ask. Left
+            # unset it is a guaranteed-True Supabase round trip on the request
+            # path, once per degraded practice.
+            plausible=True,
+            feature="quiz",
+            scope={"id": f"eq.{body.source_attempt_id}"},
+            payload={"source_attempt_id": body.source_attempt_id},
+        )
+    return ReservedMisses(attempt_id=body.source_attempt_id, questions=recovered)
+
+
+def _renumber(questions: list[dict]) -> list[dict]:
+    """Give every question its 1-based position in THIS attempt.
+
+    `id` addresses a question inside one attempt and nothing wider: /answer
+    validates the client's `question_id` against
+    `questions[question_index]["id"]`, and /submit keys its answer map on it.
+    So a re-served question keeps its identity (`question_hash`, which is the
+    item) and takes a new id (which is only where it sits) — carrying the
+    source attempt's ids over would 400 the first answer.
+    """
+    for position, question in enumerate(questions, start=1):
+        question["id"] = position
+    return questions
+
+
+async def _generate_or_502(
+    body: GenerateQuizBody,
+    *,
+    request_id: str,
+    course_id: str | None,
+    concept_name: str,
+    times_studied: int | None,
+    count: int,
+) -> GeneratedQuiz:
+    """Run generation, or raise the error the client contract calls for.
+
+    `count` is what to generate NOW, which is not `body.num_questions` when
+    G5 recovered part of the quiz from a previous attempt.
+    """
+    try:
+        # Each agent run inside is individually bounded by
+        # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
+        # coroutine here would discard a partial quiz the top-up handler
+        # is designed to serve.
+        return await _quiz_via_agent(
+            user_id=body.user_id,
+            course_id=course_id,
+            concept_node_id=body.concept_node_id,
+            concept_name=concept_name,
+            num_questions=count,
+            difficulty=body.difficulty,
+            use_shared_context=body.use_shared_context,
+            request_id=request_id,
+            model_pref=body.model_pref,
+            times_studied=times_studied,
+            # A fact, not a guess (#592): `generate_quiz` reached here only
+            # after an owner-scoped `graph_nodes` read, and `course_id` came
+            # off that very row. It spares the F5 reporter a probe that could
+            # only tell it what we just saw — once per generation, forever.
+            has_graph=True,
+        )
+    except HTTPException:
+        # The 404 for an unknown concept node is raised before the agent call;
+        # never swallow a known HTTP state.
+        _refund_generate_slot(body.user_id)
+        raise
+    except asyncio.TimeoutError as e:
+        # #544 F2: distinct from a generic failure — the client can say
+        # "that took too long" and offering a retry obviously makes sense.
+        # NB: only asyncio.TimeoutError. The builtin TimeoutError is in the
+        # OSError family, so catching it too would relabel a transport
+        # socket timeout as a wall-clock generation timeout.
+        logger.warning(
+            "quiz: generation timed out after %ss request_id=%s",
+            QUIZ_GENERATION_TIMEOUT_SEC, request_id,
+        )
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "timeout")
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_TIMEOUT,
+            message="Quiz generation took too long. Please try again.",
+        ) from e
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        # The raw-Gemini legacy fallback was retired in #145; degrade to 502
+        # rather than serving a quiz from a second LLM path.
+        logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "agent_guardrail")
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
+    except Exception as e:
+        logger.exception("Unexpected quiz-agent failure; returning 502")
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "agent_error")
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
+
 
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     require_self(body.user_id, request)
-    # quiz_attempts.difficulty is CHECK-constrained (0025); reject drift before
-    # we run the agent or write an attempt row.
-    if body.difficulty not in VALID_DIFFICULTIES:
-        raise HTTPException(
+    # The concrete trio is CHECK-constrained on quiz_attempts (0025 +
+    # the #540 'adaptive' extension); reject drift before we run the
+    # agent or write an attempt row.
+    if body.difficulty not in REQUESTED_DIFFICULTIES:
+        raise QuizAPIError(
             status_code=400,
-            detail=f"Invalid difficulty '{body.difficulty}'. "
-                   f"Must be one of {sorted(VALID_DIFFICULTIES)}.",
+            code=QuizErrorCode.QUIZ_DIFFICULTY_INVALID,
+            message=(
+                "That difficulty isn't available. Choose easy, medium, "
+                "hard, or adaptive."
+            ),
         )
     node_rows = table("graph_nodes").select(
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
     if not node_rows:
-        raise HTTPException(status_code=404, detail="Concept node not found")
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_CONCEPT_NOT_FOUND,
+            message="We couldn't find that concept in your knowledge graph.",
+        )
     node = node_rows[0]
     course_id = node.get("course_id") or None
     concept_name = node.get("concept_name") or ""
@@ -317,45 +1753,147 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         or str(uuid.uuid4())
     )
 
-    try:
-        questions = await _quiz_via_agent(
-            user_id=body.user_id,
-            course_id=course_id,
-            concept_node_id=body.concept_node_id,
-            concept_name=concept_name,
-            num_questions=body.num_questions,
-            difficulty=body.difficulty,
-            use_shared_context=body.use_shared_context,
-            request_id=request_id,
-            model_pref=body.model_pref,
+    # #544 F1: cost guards run AFTER ownership (a stranger's node 404s
+    # first, so probing can't consume a victim's quota) and BEFORE the
+    # model call. Neither rejection is a backend failure, so neither emits
+    # quiz.generation_failed.
+    retry_after = check_rate_limit(
+        f"quiz_generate:{body.user_id}",
+        limit=QUIZ_GENERATE_RATE_LIMIT,
+        window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
+    )
+    if retry_after is not None:
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_RATE_LIMITED,
+            message=(
+                "You've generated a lot of quizzes just now — "
+                "take a moment and try again shortly."
+            ),
+            headers={"Retry-After": str(retry_after)},
         )
-    except HTTPException:
-        # The 404 for an unknown concept node is raised before the agent call;
-        # never swallow a known HTTP state.
+    # G5 (#537): "practise the ones you missed" re-serves the exact items the
+    # student got wrong on a previous attempt — verbatim, with no model call
+    # for them. Resolved BEFORE the spend cap because a quiz that is entirely
+    # re-served spends nothing: the cap's own message is about "AI-generated
+    # study material", and there is none here.
+    try:
+        reserved = await _reserved_misses(body)
+    except QuizAPIError:
+        # None of these refusals is a generation: a stale attempt id off a
+        # results screen the student left open would otherwise spend their
+        # quota eight times over and then 429 them having generated nothing.
+        # Same rule _generate_or_502 follows on every one of its exits.
+        _refund_generate_slot(body.user_id)
         raise
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-        # The raw-Gemini legacy fallback was retired in #145; degrade to 502
-        # rather than serving a quiz from a second LLM path.
-        logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
-        raise HTTPException(
-            status_code=502,
-            detail="Quiz generation is temporarily unavailable. Please try again.",
-        ) from e
-    except Exception as e:
-        logger.exception("Unexpected quiz-agent failure; returning 502")
-        raise HTTPException(
-            status_code=502,
-            detail="Quiz generation is temporarily unavailable. Please try again.",
-        ) from e
+    recovered = list(reserved.questions) if reserved else []
+    missing = body.num_questions - len(recovered)
+
+    if missing > 0 and _daily_spend_exceeded(body.user_id):
+        logger.warning(
+            "quiz: daily spend cap reached user=%s request_id=%s",
+            body.user_id, request_id,
+        )
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
+            message=(
+                "You've reached today's limit for AI-generated study "
+                "material. It resets tomorrow."
+            ),
+        )
+
+    # F6: open the prompt-composition capture for this request. Both the
+    # route and the agent's read tools contribute; the snapshot rides into
+    # quiz.started, which shares this request_id with the llm_usage row.
+    prompt_dimensions.start_capture()
+    if reserved is not None:
+        # Recorded before the run, so a generation that then fails still
+        # reports how much of this quiz it was only topping up.
+        prompt_dimensions.record(reserved_count=len(recovered))
+
+    questions = recovered
+    # H3/#555 caveat, deliberate: `days_until_next_exam` is resolved INSIDE
+    # _quiz_via_agent (one lookup serves both the prompt and the stored
+    # column), so a quiz that generates nothing records no `exam_days_away`.
+    # The column therefore means "exam proximity at generation time", and a
+    # fully re-served practice attempt leaves it NULL rather than repeating
+    # the source attempt's value — which would be a different day's answer.
+    # Analytics keying on it must read it as "generated quizzes only". Paying
+    # for the lookup on a path that makes no model call, purely to fill a
+    # column nothing reads back on the request path, is the trade not taken.
+    exam_days_away = None
+    if missing > 0:
+        try:
+            generated = await _generate_or_502(
+                body,
+                request_id=request_id,
+                course_id=course_id,
+                concept_name=concept_name,
+                times_studied=node.get("times_studied"),
+                count=missing,
+            )
+        except QuizAPIError:
+            if not recovered:
+                raise
+            # A quiz was recoverable and the top-up wasn't: serve the short
+            # quiz rather than deny the student practice they'd already
+            # earned. Same call the top-up handler makes one level down, and
+            # the response says exactly what it contains. The slot refund
+            # inside _generate_or_502 stands — that generation really did
+            # fail, whatever else we manage to serve.
+            logger.warning(
+                "quiz: remainder generation failed; serving the %d re-served "
+                "question(s) request_id=%s", len(recovered), request_id,
+            )
+        else:
+            # The do-not-repeat block should already keep generation off the
+            # re-served items (they were served on the source attempt, so E6
+            # names them), but a model that repeats one anyway must not put
+            # the same item in front of the student twice in one quiz.
+            reserved_hashes = {
+                h for h in (wire_question_hash(q) for q in recovered) if h
+            }
+            # The stem check is the COARSER of the two and is why _absorb
+            # keeps both: a hash covers the stem AND the options, so a model
+            # re-emitting a re-served stem with reworded distractors clears
+            # the hash check. _absorb's own `seen_stems` only ever holds the
+            # current run's questions, never the re-served ones, so this is
+            # the only place that case can be caught.
+            reserved_stems = {
+                normalize_text(q.get("question") or "") for q in recovered
+            } - {""}
+            questions = recovered + [
+                q for q in generated.questions
+                if wire_question_hash(q) not in reserved_hashes
+                and normalize_text(q.get("question") or "") not in reserved_stems
+            ]
+            exam_days_away = generated.exam_days_away
+    regenerated_count = len(questions) - len(recovered)
+    _renumber(questions)
 
     quiz_id = str(uuid.uuid4())
-    table("quiz_attempts").insert({
+    attempt_row = {
         "id": quiz_id,
         "user_id": body.user_id,
         "concept_node_id": body.concept_node_id,
         "difficulty": body.difficulty,
-        "questions_json": questions,
-    })
+        "questions_json": encrypt_json(questions),
+    }
+    # H3/#555: recorded so the question "do deadline-aware quizzes perform
+    # differently?" is answerable later. Omitted when unknown rather than
+    # written as an explicit null, mirroring apply_graph_update's rule: an
+    # environment that took this code before the migration keeps generating
+    # instead of 400ing on a column PostgREST's schema cache doesn't have.
+    if exam_days_away is not None:
+        attempt_row["exam_days_away"] = exam_days_away
+    _insert_attempt(attempt_row)
+    if reserved is not None:
+        # G5, closing the pair opened before the run: how this quiz was
+        # actually assembled. Rides quiz.started on the F6 snapshot, which
+        # shares a request_id with the llm_usage row — so "this generation
+        # cost N prompt tokens for 2 of its 5 questions" is answerable.
+        prompt_dimensions.record(regenerated_count=regenerated_count)
     # #117: quiz.started once the attempt row exists. num_questions is the
     # actual generated count (the agent may return fewer than requested).
     events_service.log_event(
@@ -368,23 +1906,465 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             "concept_node_id": body.concept_node_id,
             "num_questions": len(questions),
             "difficulty": body.difficulty,
+            # F6: the prompt's composition, carried on the event that
+            # already shares a request_id with this generation's llm_usage
+            # row — so prompt_tokens becomes attributable to sections
+            # rather than estimated. Ids/counts/enums only, per the #117
+            # payload rule; no prompt text goes anywhere near this.
+            **prompt_dimensions.snapshot(),
         },
     )
-    return {"quiz_id": quiz_id, "questions": questions}
+    prompt_dimensions.clear()
+    # #541 C3 / #546: the answer key (per-option `correct` booleans) ships
+    # to the client only behind the deprecated include_answer_key flag.
+    # Lifecycle prose is documented once, on the field itself — see
+    # models.GenerateQuizBody.include_answer_key.
+    _record_answer_key_flag(body, quiz_id, request_id)
+    response_questions = _client_questions(questions, body.include_answer_key)
+
+    # #540 A1: echo what generation actually chose. requested_difficulty
+    # is what the student asked for (may be 'adaptive');
+    # resolved_difficulty is the overall mix the agent produced (always
+    # concrete) — so the client can say "we picked hard for you" instead
+    # of repeating the request back.
+    return {
+        "quiz_id": quiz_id,
+        "questions": response_questions,
+        "requested_difficulty": body.difficulty,
+        "resolved_difficulty": _resolved_difficulty(questions),
+        # #543 E2: never silently short-change a quiz. Drift (and the
+        # bounded top-up) can leave fewer questions than asked for; the
+        # client can now say so instead of pretending this is what was
+        # requested.
+        "requested_count": body.num_questions,
+        "delivered_count": len(questions),
+        # G5 (#537): present whenever the request named a source attempt, and
+        # then always — so the three outcomes stay distinguishable and the
+        # client can label each honestly: re-served everything
+        # (regenerated_count 0), re-served some (both non-zero), re-served
+        # nothing and fell back to generation (reserved_count 0). Additive: a
+        # request that isn't practising a past attempt never sees the key.
+        **(
+            {
+                "source": {
+                    "attempt_id": reserved.attempt_id,
+                    "reserved_count": len(recovered),
+                    "regenerated_count": regenerated_count,
+                }
+            }
+            if reserved is not None
+            else {}
+        ),
+    }
+
+
+@router.get("/attempts")
+def list_attempts(
+    request: Request,
+    user_id: str,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """#542 D4: paginated attempt history for the signed-in user — the
+    plaintext scalars (#521/#527) finally get their reader. No question
+    payloads here (and therefore no answer keys)."""
+    require_self(user_id, request)
+    limit = max(1, min(limit, 100))
+    # Clamp BOTH ends: an unbounded offset is stringified into PostgREST's
+    # offset param and Postgres rejects it as bigint-out-of-range — a 500
+    # where an empty page is the honest answer.
+    offset = max(0, min(offset, _MAX_HISTORY_OFFSET))
+    # Lazy lifecycle sweep (#542 D2) — the read paths keep statuses honest.
+    _sweep_abandoned(user_id)
+
+    rows, total = table("quiz_attempts").select_with_count(
+        "id,concept_node_id,difficulty,score,total,mastery_before,"
+        "mastery_after,completed_at,abandoned_at,created_at",
+        filters={"user_id": f"eq.{user_id}"},
+        # `id` is the unique tiebreaker: without it two attempts sharing a
+        # created_at have undefined relative order across the separate
+        # queries serving page N and N+1, so a row can repeat or vanish.
+        # Same idiom as gamification_service.events_since's xp_events paging.
+        order="created_at.desc,id.desc",
+        limit=limit,
+        offset=offset,
+    )
+    rows = rows or []
+
+    node_ids = sorted({r["concept_node_id"] for r in rows if r.get("concept_node_id")})
+    nodes: dict[str, dict] = {}
+    if node_ids:
+        node_rows = table("graph_nodes").select(
+            "id,concept_name,course_id",
+            filters={"id": f"in.({','.join(node_ids)})", "user_id": f"eq.{user_id}"},
+        ) or []
+        nodes = {n["id"]: n for n in node_rows}
+
+    attempts = []
+    for r in rows:
+        node = nodes.get(r.get("concept_node_id")) or {}
+        before, after = r.get("mastery_before"), r.get("mastery_after")
+        delta = round(after - before, 4) if before is not None and after is not None else None
+        attempts.append({
+            "quiz_id": r["id"],
+            "status": _attempt_status(r),
+            "concept_node_id": r.get("concept_node_id"),
+            "concept_name": node.get("concept_name"),
+            "course_id": node.get("course_id"),
+            "score": r.get("score"),
+            "total": r.get("total"),
+            "difficulty": r.get("difficulty"),
+            "mastery_before": before,
+            "mastery_after": after,
+            "mastery_delta": delta,
+            "created_at": r.get("created_at"),
+            "completed_at": r.get("completed_at"),
+        })
+    return {"total": total, "attempts": attempts, "limit": limit, "offset": offset}
+
+
+@router.get("/attempts/{attempt_id}")
+def get_attempt(attempt_id: str, request: Request):
+    """#542 D2: resume state for one attempt — enough to rebuild an
+    in-progress quiz client-side: questions WITHOUT the answer key, plus
+    the responses already recorded through /answer."""
+    attempt = _load_owned_attempt(attempt_id, request)
+
+    responses = table("quiz_responses").select(
+        "question_index,selected_index,is_correct,time_ms,confidence,answered_at",
+        filters={"attempt_id": f"eq.{attempt_id}"},
+        order="question_index.asc",
+    ) or []
+    last_activity = max(
+        (r.get("answered_at") for r in responses if r.get("answered_at")),
+        default=None,
+    )
+    status = _attempt_status(attempt, last_activity_at=last_activity)
+    # Answering keeps an attempt alive, so exempt it from the sweep.
+    _sweep_abandoned(
+        attempt["user_id"],
+        active_attempt_ids={attempt_id} if status == "in_progress" else None,
+    )
+
+    questions = decrypt_json_column(attempt["questions_json"]) or []
+    if questions and not all(_is_wire_question(q) for q in questions):
+        # A stored shape this code doesn't recognise has no safe keyless
+        # projection — passing it through would ship whatever key it holds
+        # (legacy rows store the answer under `a`). Refuse the resume.
+        logger.warning(
+            "quiz: attempt %s stores questions in an unrecognised shape; "
+            "refusing to resume", attempt_id,
+        )
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_RESUMABLE,
+            message="This quiz can't be resumed. Start a new one.",
+        )
+    # Only an in-progress attempt hands back questions: a completed or
+    # abandoned one would otherwise let a client keep answering (the write
+    # paths refuse it, but there's no reason to ship the payload at all).
+    resumable = status == "in_progress"
+    return {
+        "quiz_id": attempt["id"],
+        "status": status,
+        "resumable": resumable,
+        "difficulty": attempt.get("difficulty"),
+        "concept_node_id": attempt.get("concept_node_id"),
+        "questions": _strip_answer_key(questions) if resumable else [],
+        "responses": responses,
+        "score": attempt.get("score"),
+        "total": attempt.get("total"),
+        "mastery_before": attempt.get("mastery_before"),
+        "mastery_after": attempt.get("mastery_after"),
+        "created_at": attempt.get("created_at"),
+        "completed_at": attempt.get("completed_at"),
+    }
+
+
+@router.post("/attempts/{attempt_id}/answer")
+def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
+    """#541 C1: grade one question server-side and record the response.
+
+    Idempotent on (attempt_id, question_index): re-answering returns the
+    FIRST recorded response (`recorded: false` marks the replay) rather
+    than overwriting — no revision, decided for the #537 revamp flow.
+    """
+    attempt = _load_owned_attempt(attempt_id, request)
+    _refuse_if_completed(attempt)
+    _refuse_if_abandoned(attempt)
+
+    questions = decrypt_json_column(attempt["questions_json"]) or []
+    if body.question_index >= len(questions):
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+            message="That question isn't part of this quiz.",
+        )
+    question = questions[body.question_index]
+    options = question.get("options", [])
+    if body.selected_index >= len(options):
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+            message="That answer choice isn't part of this question.",
+        )
+    # Wire ids are 1-based, question_index is 0-based. When the client sends
+    # both, they must agree — otherwise passing the displayed id as the index
+    # silently grades the NEXT question and idempotency locks that in.
+    if body.question_id is not None and body.question_id != question.get("id"):
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+            message="That answer doesn't match the question it was sent for.",
+        )
+
+    # The correct option is a property of the question, not of the answer —
+    # resolve it once. -1 means a malformed item with no correct option,
+    # which must never grade correct (same rule as submit's #129 fix).
+    correct_index = next(
+        (i for i, o in enumerate(options) if o.get("correct")), -1
+    )
+
+    def _is_correct(selected_index: int) -> bool:
+        return correct_index >= 0 and correct_index == selected_index
+
+    recorded = True
+    response_row = None
+    existing = table("quiz_responses").select(
+        "*",
+        filters={
+            "attempt_id": f"eq.{attempt_id}",
+            "question_index": f"eq.{body.question_index}",
+        },
+    )
+    if existing:
+        recorded = False
+        response_row = existing[0]
+    else:
+        row = {
+            "attempt_id": attempt_id,
+            "question_index": body.question_index,
+            "selected_index": body.selected_index,
+            "is_correct": _is_correct(body.selected_index),
+            "time_ms": body.time_ms,
+            "confidence": body.confidence,
+        }
+        # ACCEPTED RISK (#597, #537 G4): this is the one quiz write path still
+        # guarded by a PRE-READ alone. Submit and abandon both arbitrate with a
+        # conditional claim on `quiz_attempts`; an INSERT into `quiz_responses`
+        # conditioned on another table's state has no atomic PostgREST form, so
+        # a Discard landing between the refusals above and this line records a
+        # graded response against a closed attempt.
+        #
+        # Inert rather than harmful: an abandoned attempt can never be
+        # submitted (submit's claim filters on `abandoned_at IS NULL`), so the
+        # orphan pays out no mastery, no XP and no achievement. It costs a
+        # stray row on a resume payload nobody can resume. Closing it properly
+        # needs a trigger or an RPC — i.e. a migration — which is what #597 is
+        # for.
+        try:
+            table("quiz_responses").insert(row)
+            response_row = row
+        except Exception:
+            # Lost a race with a concurrent answer for the same index — the
+            # UNIQUE arbitrates; return whatever won.
+            recorded = False
+            raced = table("quiz_responses").select(
+                "*",
+                filters={
+                    "attempt_id": f"eq.{attempt_id}",
+                    "question_index": f"eq.{body.question_index}",
+                },
+            )
+            if not raced:
+                raise
+            response_row = raced[0]
+
+    next_index = body.question_index + 1
+    next_question = (
+        _strip_answer_key([questions[next_index]])[0]
+        if next_index < len(questions)
+        else None
+    )
+    return {
+        # Echo both addressing schemes so a client that mixed them up sees
+        # it immediately rather than discovering it at submit time.
+        "question_index": body.question_index,
+        "question_id": question.get("id"),
+        "is_correct": _is_correct(response_row["selected_index"]),
+        "correct_index": correct_index,
+        "explanation": question.get("explanation", ""),
+        "next_question": next_question,
+        "recorded": recorded,
+    }
+
+
+@router.post("/attempts/{attempt_id}/abandon")
+def abandon_attempt(attempt_id: str, request: Request):
+    """#537 G4: close an unfinished attempt ON PURPOSE.
+
+    Before this route, quiz home's "Discard" was a localStorage flag
+    (`lib/quiz/session.ts::dismissAttempt`): the row stayed in_progress until
+    D2's 24h sweep found it, so the resume strip came back on the student's
+    phone, in a second tab, and in this browser the moment the key was
+    cleared. Nothing new is stored — the client writes the same `abandoned_at`
+    stamp `_sweep_abandoned` writes; it is just allowed to say "now".
+
+    Idempotent by design: a second abandon is a 200 no-op carrying the stamp
+    already on the row. The client fires this and forgets it, so a retry after
+    a dropped response must not surface as an error. A COMPLETED attempt 409s
+    instead — the score, mastery and XP are already paid out, and there is
+    nothing here that could take them back.
+    """
+    attempt = _load_owned_attempt(
+        attempt_id,
+        request,
+        # Not "*": the decision needs the owner and three timestamps, and
+        # there is no reason to drag the encrypted questions_json blob across
+        # the wire to write one column.
+        columns="id,user_id,created_at,completed_at,abandoned_at",
+    )
+    _refuse_if_completed(attempt)
+
+    abandoned_at = attempt.get("abandoned_at")
+    if not abandoned_at:
+        now = datetime.now(timezone.utc).isoformat()
+        # The same conditional claim submit uses: the FILTERS arbitrate, so a
+        # concurrent submit and abandon cannot both win the row. The read
+        # above is only the fast path.
+        #
+        # NOT `prefer_return_minimal`: the returned rows ARE the arbitration
+        # (`[]` means someone else won), and minimal mode returns `[]`
+        # unconditionally (db/connection.py) — every discard would read as
+        # lost.
+        #
+        # What the stamp means: `abandoned_at` records when the row was
+        # CLOSED, not when it went quiet. Discarding an attempt that was
+        # already dead by the TTL therefore writes the moment of the click.
+        # Nothing consumes the column as an elapsed time today — the derived
+        # status only asks whether it is set — and a consumer that wants "when
+        # did this go quiet" wants `created_at` plus the last response, which
+        # is what `_attempt_status` already computes.
+        claimed = table("quiz_attempts").update(
+            {"abandoned_at": now},
+            filters={
+                "id": f"eq.{attempt_id}",
+                "completed_at": "is.null",
+                "abandoned_at": "is.null",
+            },
+        )
+        if claimed:
+            # `now` is the value this request WROTE, so preferring the echoed
+            # column and falling back to it is the same timestamp either way.
+            abandoned_at = claimed[0].get("abandoned_at") or now
+        else:
+            # Losing the claim is not an error on its own — it means the row
+            # moved between the read and the write. Re-read to find out which
+            # way: a submit that got there first must 409 rather than be
+            # reported back as a successful discard.
+            current_rows = table("quiz_attempts").select(
+                "completed_at,abandoned_at",
+                filters={"id": f"eq.{attempt_id}"},
+            )
+            if not current_rows:
+                # Deleted under us. There is no stamp to report and no row to
+                # report it for — the same 404 the top of the route gives.
+                raise _attempt_not_found()
+            current = current_rows[0]
+            _refuse_if_completed(current)
+            # A concurrent abandon (or the sweep) won; its stamp is the
+            # answer. No `or now` fallback: this request wrote NOTHING, so
+            # substituting its own clock would invent a stamp for a row whose
+            # real state we just failed to explain. If the row somehow reads
+            # open here, that is what the response says (`abandoned_at: null`,
+            # status `in_progress`) — the honest answer to "we did not close
+            # it", rather than a fabricated success.
+            abandoned_at = current.get("abandoned_at")
+
+    return {
+        "quiz_id": attempt_id,
+        # DERIVED like every other status the quiz routes report, never the
+        # literal "abandoned" — this endpoint must not be the one place that
+        # can disagree with the read paths.
+        "status": _attempt_status({**attempt, "abandoned_at": abandoned_at}),
+        "abandoned_at": abandoned_at,
+    }
+
+
+def _gamification_block(
+    user_id: str, award: XpAward | None, quiz_id: str,
+) -> dict:
+    """G8: the XP/streak numbers the results screen needs, in the submit reply.
+
+    Before this the close screen had to read `GET /api/gamification/me` once
+    before the session and once after the submit and subtract — two extra
+    round trips whose race or failure showed the student a blank where their
+    XP should be (`frontend/src/lib/quiz/useGamificationDelta.ts`). The
+    snapshot is built by `services/gamification_service.me_snapshot`, the same
+    function `/api/gamification/me` serves, so the inline numbers and the
+    endpoint can never disagree.
+
+    The block has two independent halves, and each failure is reported as
+    itself rather than papered over with a plausible number:
+
+    * the AWARD half (`xp_awarded`, `leveled_up`, `duplicate`) comes off the
+      `XpAward` already in memory and costs no query. All three are `None`
+      TOGETHER when the XP write failed and `award_xp_safe` swallowed it —
+      there is no award to report, and the client's rule is to omit the XP
+      line rather than invent one.
+    * the CARD half is the `/me` snapshot. If that read fails the award half
+      still ships ALONE. It cost nothing to produce, the `/me` fallback that
+      would otherwise supply it is aimed at the same database that just
+      failed, and R-9a tells a migrated client to have dropped those reads
+      entirely — so the fallback is least likely to work on exactly the
+      request that needs it.
+
+    `leveled_up` and `duplicate` ride along because a client cannot
+    reconstruct either: three different paths all report `xp_awarded: 0` (a
+    disabled rule, a zero-amount rule, an idempotent replay), and spotting a
+    level-up without `leveled_up` means re-adding the round trip this block
+    exists to remove.
+
+    `xp_awarded` is what the `quiz_completed` award paid, which is the amount
+    written to the `xp_events` ledger. A badge earned by the same submit pays
+    its own XP separately; that is not in `xp_awarded` but IS in `total_xp`,
+    which is read after the achievement pass.
+    """
+    paid = {
+        "xp_awarded": award.awarded if award else None,
+        "leveled_up": award.leveled_up if award else None,
+        "duplicate": award.duplicate if award else None,
+    }
+    try:
+        snapshot = me_snapshot(user_id)
+    except Exception:
+        # Display data must never fail the action that earned it — the same
+        # rule `award_xp_safe` follows for the write itself. But swallowing it
+        # silently is what let #529 live 51 days undetected in this very
+        # function, so the log line is paired with a countable event exactly
+        # as `_update_context` pairs its own.
+        logger.exception(
+            "quiz: gamification snapshot failed quiz_id=%s user=%s",
+            quiz_id, user_id,
+        )
+        events_service.log_event(
+            "quiz.gamification_snapshot_failed",
+            category="error",
+            user_id=user_id,
+            request_id=current_request_id(),
+            payload={"quiz_id": quiz_id},
+        )
+        return paid
+    return {**paid, **snapshot}
 
 
 @router.post("/submit")
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
-    attempt_rows = table("quiz_attempts").select("*", filters={"id": f"eq.{body.quiz_id}"})
-    if not attempt_rows:
-        raise HTTPException(status_code=404, detail="Quiz not found")
-    attempt = attempt_rows[0]
-
-    questions = attempt["questions_json"]
-    if isinstance(questions, str):
-        questions = json.loads(questions)
+    attempt = _load_owned_attempt(body.quiz_id, request)
     user_id = attempt["user_id"]
-    require_self(user_id, request)
+
+    # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
+    questions = decrypt_json_column(attempt["questions_json"])
 
     # #129: completed_at is written on the first successful submit. A re-POST
     # of the same quiz_id must not re-run apply_graph_update (double mastery
@@ -392,10 +2372,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # quiz-context task, or achievements. 409 rather than replaying the original
     # 200: quiz_attempts stores no mastery_before/after, so faithfully
     # reconstructing the first response would need a migration.
-    if attempt.get("completed_at"):
-        raise HTTPException(
-            status_code=409, detail="Quiz attempt has already been submitted"
-        )
+    _refuse_if_completed(attempt)
+    # An abandoned attempt must not pay out mastery, XP or achievements —
+    # otherwise the TTL is a label and the sweep enforces nothing.
+    _refuse_if_abandoned(attempt)
     # The read above is only the fast path — two CONCURRENT submits (a
     # double-click on the final submit) would both pass it. The atomic claim
     # below (conditional update on completed_at IS NULL, PR #464 review) is
@@ -405,21 +2385,86 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # mastery. The final update further down fills score/total/answers_json.
     claimed = table("quiz_attempts").update(
         {"completed_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{body.quiz_id}", "completed_at": "is.null"},
+        filters={
+            "id": f"eq.{body.quiz_id}",
+            "completed_at": "is.null",
+            # Symmetric with abandon_attempt's claim (#537 G4). Without it the
+            # two claims can BOTH win — mid-quiz in one tab, Discard in
+            # another — and the row ends up completed AND abandoned.
+            # `_refuse_if_abandoned` above is only a pre-read; the filters are
+            # what actually arbitrate.
+            "abandoned_at": "is.null",
+        },
     )
     if not claimed:
-        raise HTTPException(
-            status_code=409, detail="Quiz attempt has already been submitted"
-        )
+        # Two ways to lose the claim now, and they are different sentences to
+        # the student ("already submitted" vs "you discarded this"). The
+        # pre-read cannot see a stamp written since, so re-read rather than
+        # assume the completed case.
+        #
+        # That re-read is a REFINEMENT of an answer this branch already has.
+        # Losing the claim used to be infallible — no I/O between the refusal
+        # and the response — so a transient PostgREST failure here must fall
+        # back to the 409 a double-submit always got, not turn an ordinary
+        # double-click into a 500.
+        try:
+            current_rows = table("quiz_attempts").select(
+                "abandoned_at", filters={"id": f"eq.{body.quiz_id}"},
+            )
+        except Exception:
+            logger.warning(
+                "quiz: submit re-read failed after a lost claim attempt=%s; "
+                "answering already-completed", body.quiz_id, exc_info=True,
+            )
+            current_rows = None
+        if current_rows is not None:
+            if not current_rows:
+                # Deleted under us: neither sentence is true any more.
+                raise _attempt_not_found()
+            _refuse_if_abandoned(current_rows[0])
+        raise _already_completed()
 
     concept_node_id = attempt["concept_node_id"]
 
+    # #541 C4: responses recorded through /attempts/{id}/answer are the
+    # source of truth — a payload answer for the same question is ignored
+    # (the recorded response was graded at answer time; letting the final
+    # POST override it would reopen the client-side-grading hole C exists
+    # to close). Questions never answered through C1 fall back to the
+    # submitted payload, so the current all-at-the-end client keeps working.
+    recorded_rows = table("quiz_responses").select(
+        "question_index,selected_index",
+        filters={"attempt_id": f"eq.{body.quiz_id}"},
+    ) or []
+    recorded_by_index = {r["question_index"]: r for r in recorded_rows}
+
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
     results = []
+    # The reconciled answer set — what was ACTUALLY graded, which is what
+    # answers_json must persist. Storing the raw payload instead left a
+    # recorded-only submit with a full score beside an empty answer list,
+    # and a contradicted payload answer stored despite losing to the
+    # recorded response.
+    graded_answers: list[dict] = []
     score = 0
-    for q in questions:
+    for q_index, q in enumerate(questions):
         qid = str(q["id"])
-        selected = answer_map.get(qid, "")
+        recorded = recorded_by_index.get(q_index)
+        if recorded is not None:
+            sel_idx = recorded.get("selected_index")
+            options = q.get("options", [])
+            selected = (
+                options[sel_idx]["label"]
+                if isinstance(sel_idx, int) and 0 <= sel_idx < len(options)
+                else ""
+            )
+        else:
+            selected = answer_map.get(qid, "")
+        if selected:
+            graded_answers.append({
+                "question_id": q["id"],
+                "selected_label": selected,
+            })
         correct_opt = next((o for o in q["options"] if o.get("correct")), None)
         correct_label = correct_opt["label"] if correct_opt else ""
         # #129: a malformed item with NO correct option must never grade as
@@ -448,19 +2493,32 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
     if not node_rows:
-        raise HTTPException(status_code=404, detail="Concept node not found")
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_CONCEPT_NOT_FOUND,
+            message="We couldn't find that concept in your knowledge graph.",
+        )
     node = node_rows[0]
     mastery_before = node["mastery_score"]
-    mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
-    mastery_delta = mastery_after - mastery_before
+    # #543 E1: the model is a named seam now (services/quiz_config.py).
+    # The numbers are unchanged — see docs/quiz-mastery-model.md for the
+    # options the revamp gets to choose from.
+    mastery_score_after = mastery_after(mastery_before, score=score, total=total)
+    mastery_delta = mastery_score_after - mastery_before
 
+    # E7: the categorical reading of the attempt, namespaced by producer.
+    # `node_mastery_events.event_type` has two independent writers and no
+    # CHECK constraint — this route and the tutor's `update_mastery_tool`
+    # (tutor_interaction / tutor_correction / tutor_quiz) — so an unprefixed
+    # "quiz" or "correct" would leave the column carrying two disjoint
+    # vocabularies with no way to tell which producer wrote a given row.
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
-        event_type = "correct"
+        event_type = "quiz_correct"
     elif score_ratio >= 0.4:
-        event_type = "partial"
+        event_type = "quiz_partial"
     else:
-        event_type = "confusion"
+        event_type = "quiz_confusion"
 
     # Route the mastery write through the sanctioned graph path. The graph
     # keys on the ABSTRACT course id; apply_graph_update looks the node up by
@@ -468,7 +2526,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # bumps times_studied/last_studied_at, records the event (now in
     # node_mastery_events), and updates the streak. We don't touch graph_nodes
     # or node_mastery_events directly — that's the graph slice's territory.
-    apply_graph_update(
+    applied = apply_graph_update(
         user_id,
         {
             "updated_nodes": [
@@ -482,12 +2540,34 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         },
         course_id=node.get("course_id"),
     )
+    # #542 D1 (review): persist what the GRAPH actually wrote, not what we
+    # predicted. apply_graph_update owns the write — it resolves the node by
+    # normalized concept name and clamps the result — so its reported
+    # before/after is the only value that can't disagree with graph_nodes.
+    # Falls back to the local computation if the call returned nothing
+    # recognisable (it degrades rather than raising).
+    for change in applied or []:
+        if isinstance(change, dict) and change.get("after") is not None:
+            mastery_before = change.get("before", mastery_before)
+            # NB: mastery_after is the imported model function (#543 E1);
+            # the value lives in mastery_score_after.
+            mastery_score_after = change["after"]
+            mastery_delta = mastery_score_after - mastery_before
+            break
 
     table("quiz_attempts").update(
         {
             "score": score,
             "total": total,
-            "answers_json": [a.model_dump() for a in body.answers],
+            # The reconciled set (recorded responses winning over payload),
+            # not the raw request — the attempt's stored answers must agree
+            # with the score computed from them.
+            "answers_json": encrypt_json(graded_answers),
+            # #542 D1: the mastery snapshot — without it a replayed/audited
+            # submit can't reconstruct what the student saw, and history
+            # can't show progression. Plaintext scalars (#521 rationale).
+            "mastery_before": mastery_before,
+            "mastery_after": mastery_score_after,
             # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},
@@ -510,19 +2590,70 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         .replace("{score}", str(score))
         .replace("{total}", str(total))
         .replace("{quiz_results_json}", json.dumps(results, indent=2))
+        # H2/#554: the wrong answers in WORDS. `results` carries labels only
+        # ("picked B, answer was C"), which is not something a model can turn
+        # into a misconception — it can only guess one. The option text lives
+        # in questions_json, one join away, and has been sitting unread since
+        # answers_json existed.
+        .replace(
+            "{distractor_profile_json}",
+            json.dumps(build_distractor_profile(questions, results), indent=2),
+        )
     )
 
-    def _update_context(prompt: str, uid: str, node_id: str):
+    # Correlate the background write with this request's trace.
+    ctx_request_id = getattr(request.state, "request_id", None) or current_request_id()
+
+    def _update_context(prompt: str, uid: str, node_id: str, quiz_id: str,
+                        request_id: str | None):
+        # #529/B3: this write was `except Exception: pass` for months while
+        # every attempt 42P10'd — the adaptive loop died silently. Failures
+        # are loud now: ERROR log with the attempt id + request id, a
+        # `quiz.context_write_failed` analytics event, and a re-raise in
+        # local/test envs so a regression fails CI instead of going quiet.
         try:
             result = record_agent_usage(
                 run_agent_sync(quiz_context_agent.run(prompt)),
                 feature="quiz", task="quiz_context", user_id=uid,
             )
             save_quiz_context(uid, node_id, result.output.model_dump())
+        except UnregisteredHandlerError:
+            # E2E function mode leaves quiz_context deliberately
+            # unregistered (agents/function_handlers_e2e.py) so no
+            # post-response DB write races the next test's re-seed. One
+            # WARNING, no traceback: the logscan oracle reports tracebacks.
+            logger.warning(
+                "quiz: context update skipped — quiz_context handler "
+                "unregistered (function-mode seam) quiz_id=%s", quiz_id,
+            )
         except Exception:
-            pass
+            logger.exception(
+                "quiz: context update failed quiz_id=%s concept=%s "
+                "request_id=%s", quiz_id, node_id, request_id,
+            )
+            events_service.log_event(
+                "quiz.context_write_failed",
+                category="error",
+                user_id=uid,
+                request_id=request_id,
+                payload={"quiz_id": quiz_id, "concept_node_id": node_id},
+            )
+            if config.IS_LOCAL:
+                raise
 
-    background_tasks.add_task(_update_context, ctx_prompt, user_id, concept_node_id)
+    background_tasks.add_task(
+        _update_context, ctx_prompt, user_id, concept_node_id,
+        body.quiz_id, ctx_request_id,
+    )
+
+    # XP + achievements: after the attempt row (score/total/answers_json) is
+    # persisted above (the atomic completed_at claim + the update at :486-494
+    # together gate this to exactly one successful submit per attempt id;
+    # a replay 409s before reaching here). source_id=body.quiz_id is the
+    # attempt id, so a hypothetical double-invocation is a no-op via the
+    # xp_events idempotency key rather than a double payout.
+    award = award_xp_safe(user_id, "quiz_completed", source_type="quiz",
+                          source_id=body.quiz_id)
 
     # Check for achievements after quiz completion
     try:
@@ -530,6 +2661,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         check_achievements(user_id, "quizzes_completed", {})
     except Exception:
         pass
+
+    # G8: read AFTER the achievement pass — a badge earned by this submit pays
+    # its own XP and moves earned_count, so a snapshot taken before it would
+    # be stale the moment it was serialized.
+    gamification = _gamification_block(user_id, award, body.quiz_id)
 
     # #117: quiz.completed on the success path only — a 409 replay (the
     # atomic completed_at claim above) or any earlier 4xx never reaches here.
@@ -550,6 +2686,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         "score": score,
         "total": total,
         "mastery_before": mastery_before,
-        "mastery_after": mastery_after,
+        "mastery_after": mastery_score_after,
         "results": results,
+        # G8, additive: what the award paid (`xp_awarded`, `leveled_up`,
+        # `duplicate`) plus the /api/gamification/me snapshot as of right now.
+        # Always present. If the snapshot read failed it carries the award
+        # half ALONE — see `_gamification_block` for why that half survives.
+        "gamification": gamification,
     }

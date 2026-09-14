@@ -37,6 +37,21 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      # This lane reaches `supabase start` through `make e2e-up` ->
+      # scripts/e2e-up.sh, so it has the SAME exposure integration.yml does:
+      # Supabase's ports sit inside Linux's ephemeral source-port range, and an
+      # outbound connection can take 54322 as its source port before Docker
+      # binds it (run 32624263094 — the full diagnosis is in the script's
+      # header). e2e-up.sh's stop-and-retry only ever mitigated that by luck.
+      #
+      # Deliberately here rather than immediately before `make e2e-up`: the
+      # reservation only excludes ports from AUTOMATIC assignment from the
+      # moment it is written, and npm ci + `playwright install` in between are
+      # this job's heaviest download phase — hundreds of outbound connections,
+      # any of which could take a Supabase port if this ran after them. Right
+      # after checkout is the earliest point supabase/config.toml exists.
+      - name: Preflight (reserve the Supabase ports)
+        run: scripts/preflight-ports.sh
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -83,6 +98,12 @@ jobs:
           # Dummy on purpose: the below-seam RAG embed path (#439) must not
           # be able to bill; its failures are swallowed by design.
           GEMINI_API_KEY: e2e-dummy-key-no-billing
+          # #537: the quiz-generation guard keeps its sliding window in a
+          # process-local dict, so ONE Playwright run shares a single
+          # 8-per-300s budget across every spec and the quiz specs that run
+          # last 429. e2e-up.sh sets the same value; kept here so what the
+          # lane actually runs under is visible beside the rest of the seam.
+          QUIZ_GENERATE_RATE_LIMIT: "1000"
         run: make e2e-up
 
       - name: Run Playwright suite

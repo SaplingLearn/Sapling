@@ -278,6 +278,42 @@ def backfill_room_messages(apply: bool) -> dict:
     return _encrypt_text_column("room_messages", ["text"], pk="id", apply=apply)
 
 
+def backfill_feedback(apply: bool) -> dict:
+    return _encrypt_text_column("feedback", ["comment", "topic"], pk="id", apply=apply)
+
+
+def backfill_issue_reports(apply: bool) -> dict:
+    return _encrypt_text_column(
+        "issue_reports", ["topic", "description"], pk="id", apply=apply
+    )
+
+
+def backfill_quiz_attempts(apply: bool) -> dict:
+    q = _encrypt_json_column("quiz_attempts", "questions_json", pk="id", apply=apply)
+    a = _encrypt_json_column("quiz_attempts", "answers_json", pk="id", apply=apply)
+    return {
+        "scanned": q["scanned"],
+        "questions_json": q["questions_json"],
+        "answers_json": a["answers_json"],
+    }
+
+
+def backfill_quiz_context(apply: bool) -> dict:
+    return _encrypt_json_column("quiz_context", "context_json", pk="id", apply=apply)
+
+
+def backfill_flashcards(apply: bool) -> dict:
+    return _encrypt_text_column("flashcards", ["front", "back"], pk="id", apply=apply)
+
+
+def backfill_study_guides(apply: bool) -> dict:
+    return _encrypt_json_column("study_guides", "content", pk="id", apply=apply)
+
+
+def backfill_room_summaries(apply: bool) -> dict:
+    return _encrypt_text_column("room_summaries", ["summary"], pk="room_id", apply=apply)
+
+
 RUNNERS: dict[str, Callable[[bool], dict]] = {
     "users": backfill_users,
     "user_settings": backfill_user_settings,
@@ -287,6 +323,13 @@ RUNNERS: dict[str, Callable[[bool], dict]] = {
     "sessions": backfill_sessions,
     "messages": backfill_messages,
     "room_messages": backfill_room_messages,
+    "feedback": backfill_feedback,
+    "issue_reports": backfill_issue_reports,
+    "quiz_attempts": backfill_quiz_attempts,
+    "quiz_context": backfill_quiz_context,
+    "flashcards": backfill_flashcards,
+    "study_guides": backfill_study_guides,
+    "room_summaries": backfill_room_summaries,
 }
 
 

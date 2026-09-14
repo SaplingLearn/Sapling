@@ -16,11 +16,12 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-# Point the Supabase CLI at the rootless podman socket only when podman exists;
-# under Docker leave DOCKER_HOST alone so the default daemon socket is used.
-if command -v podman >/dev/null 2>&1; then
-  export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}"
-fi
+# $CONTAINER_CMD / $VENV_PY / set_docker_host_for_podman. Sourced (rather than
+# inlining the DOCKER_HOST export as before) so up and down agree exactly on
+# which daemon they talk to — see the guard's comment in local-common.sh for
+# why exporting the Linux socket path unconditionally broke Windows.
+source "$REPO_ROOT/scripts/lib/local-common.sh"
+set_docker_host_for_podman
 
 E2E_DIR="$REPO_ROOT/.e2e"
 APPS_ONLY=0
@@ -42,6 +43,16 @@ stop_tracked() { # name pidfile
     if kill -0 "$pid" 2>/dev/null; then
       echo "  still running — sending SIGKILL"
       kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
+    fi
+    # Windows fallback. Without setsid (Git Bash) the recorded PID leads no
+    # process group, so both group kills above no-op and a plain SIGKILL to the
+    # `npm run start:test` wrapper leaves the real next-server child running
+    # and holding :3000 — the next e2e-up then fails its port preflight. Walk
+    # the actual process tree instead. Only reached when the PID survived the
+    # POSIX path, so it never fires on Linux/CI.
+    if kill -0 "$pid" 2>/dev/null && command -v taskkill >/dev/null 2>&1; then
+      echo "  still running — taskkill /T (no setsid on this platform)"
+      taskkill //T //F //PID "$pid" >/dev/null 2>&1 || true
     fi
   fi
   rm -f "$pidfile"

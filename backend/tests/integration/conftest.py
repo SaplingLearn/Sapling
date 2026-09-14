@@ -109,6 +109,7 @@ _TRUNCATE_DENYLIST = frozenset({
     "schema_migrations",
     "terms", "roles", "achievements", "achievement_triggers", "cosmetics",
     "schools", "courses", "course_offerings",
+    "growth_stages", "xp_rules",
 })
 
 

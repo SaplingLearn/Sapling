@@ -76,6 +76,7 @@ class TestSubmitFeedback:
         assert _is_uuid(data["id"])
 
     def test_insert_payload_round_trips_body_fields(self):
+        from services.encryption import decrypt
         recorded: list = []
         with patch("routes.feedback.table", side_effect=_factory(recorded)):
             client.post(
@@ -95,9 +96,10 @@ class TestSubmitFeedback:
         assert data["type"] == "session"
         assert data["rating"] == 4
         assert data["selected_options"] == ["clear"]
-        assert data["comment"] == "ok"
+        # comment and topic are encrypted; decrypt for verification.
+        assert decrypt(data["comment"]) == "ok"
         assert data["session_id"] == "sess_42"
-        assert data["topic"] == "algebra"
+        assert decrypt(data["topic"]) == "algebra"
         # Regression guard: the insert must carry exactly these keys.
         assert set(data.keys()) == {
             "id", "user_id", "type", "rating",
@@ -121,6 +123,7 @@ class TestSubmitFeedback:
 
 class TestSubmitIssueReport:
     def test_inserts_with_text_uuid_pk(self):
+        from services.encryption import decrypt
         recorded: list = []
         with patch("routes.feedback.table", side_effect=_factory(recorded)):
             r = client.post(
@@ -140,8 +143,9 @@ class TestSubmitIssueReport:
         assert name == "issue_reports"
         assert _is_uuid(data["id"])
         assert data["user_id"] == "user_andres"
-        assert data["topic"] == "bug"
-        assert data["description"] == "something broke"
+        # topic and description are encrypted; decrypt for verification.
+        assert decrypt(data["topic"]) == "bug"
+        assert decrypt(data["description"]) == "something broke"
         assert data["screenshot_urls"] == ["user_andres/a.png"]
         assert set(data.keys()) == {
             "id", "user_id", "topic", "description", "screenshot_urls",
@@ -218,3 +222,70 @@ class TestFeedbackAuth:
         assert r.status_code == 200
         _name, data = recorded[0]
         assert data["user_id"] == "session_user"
+
+
+class TestFeedbackEncryption:
+    """#520: free-text user input is ciphertext at rest."""
+
+    def test_feedback_comment_and_topic_encrypted(self):
+        from services.encryption import decrypt
+        recorded: list = []
+        with patch("routes.feedback.table", side_effect=_factory(recorded)):
+            r = client.post(
+                "/api/feedback",
+                json={
+                    "user_id": "user_andres",
+                    "type": "global",
+                    "rating": 4,
+                    "selected_options": ["tutor"],
+                    "comment": "The tutor cited the wrong lecture",
+                    "topic": "chat",
+                },
+            )
+        assert r.status_code == 200
+        (name, row), = recorded
+        assert name == "feedback"
+        # Ciphertext at rest…
+        assert row["comment"] != "The tutor cited the wrong lecture"
+        assert row["topic"] != "chat"
+        # …that round-trips.
+        assert decrypt(row["comment"]) == "The tutor cited the wrong lecture"
+        assert decrypt(row["topic"]) == "chat"
+        # Enum/scalar columns stay queryable plaintext.
+        assert row["type"] == "global"
+        assert row["rating"] == 4
+        assert row["selected_options"] == ["tutor"]
+
+    def test_feedback_none_comment_stays_none(self):
+        recorded: list = []
+        with patch("routes.feedback.table", side_effect=_factory(recorded)):
+            r = client.post(
+                "/api/feedback",
+                json={"user_id": "user_andres", "type": "global", "rating": 5},
+            )
+        assert r.status_code == 200
+        (_, row), = recorded
+        assert row["comment"] is None
+        assert row["topic"] is None
+
+    def test_issue_report_topic_and_description_encrypted(self):
+        from services.encryption import decrypt
+        recorded: list = []
+        with patch("routes.feedback.table", side_effect=_factory(recorded)):
+            r = client.post(
+                "/api/issue-reports",
+                json={
+                    "user_id": "user_andres",
+                    "topic": "upload stuck",
+                    "description": "Syllabus upload spins forever",
+                    "screenshot_urls": ["u1/a.png"],
+                },
+            )
+        assert r.status_code == 200
+        (name, row), = recorded
+        assert name == "issue_reports"
+        assert row["topic"] != "upload stuck"
+        assert row["description"] != "Syllabus upload spins forever"
+        assert decrypt(row["topic"]) == "upload stuck"
+        assert decrypt(row["description"]) == "Syllabus upload spins forever"
+        assert row["screenshot_urls"] == ["u1/a.png"]

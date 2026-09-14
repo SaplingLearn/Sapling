@@ -63,6 +63,18 @@ ORCHESTRATOR_LIMITS = UsageLimits(
     total_tokens_limit=100_000,
 )
 
+# #543 E2: the quiz generation top-up runs a SECOND agent call in the same
+# request. Reusing ORCHESTRATOR_LIMITS would hand it a fresh full budget,
+# silently doubling the per-request cost backstop that limit exists to be.
+# The retry only rewrites a handful of questions and already has the
+# concept context in its prompt, so a fraction of the budget is enough —
+# and it keeps one request's worst case close to the intended ceiling.
+TOPUP_LIMITS = UsageLimits(
+    request_limit=4,
+    tool_calls_limit=4,
+    total_tokens_limit=40_000,
+)
+
 # The chat tutor's own ceiling (#149): its tool surface grew to seven
 # (two graph readers joined the five ADR-0015 tools), so a legitimately
 # tool-heavy turn — a couple of reads plus graph writes — needs more

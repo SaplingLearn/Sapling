@@ -37,6 +37,20 @@ def check_rate_limit(key: str, *, limit: int, window_sec: int) -> int | None:
     return None
 
 
+def refund_rate_limit(key: str) -> None:
+    """Give back the most recent slot recorded for `key`.
+
+    For guards that must claim BEFORE doing the expensive work (so a
+    concurrent burst can't slip past the gate) but shouldn't charge the
+    caller when that work fails for reasons they didn't cause. Dropping
+    the newest timestamp — not the oldest — keeps the window's start
+    anchored to the caller's earliest real attempt.
+    """
+    bucket = _rate_state.get(key)
+    if bucket:
+        bucket.pop()
+
+
 async def read_within_limit(upload: UploadFile, max_bytes: int) -> bytes:
     """Read at most ``max_bytes`` (+1 to detect overflow) from an UploadFile so
     an oversize upload can't be pulled fully into memory before we reject it.

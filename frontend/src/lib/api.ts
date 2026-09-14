@@ -11,6 +11,7 @@ import type {
   AnalyticsBucket, LlmCostGroupBy,
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
   PublicRoom,
+  GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -23,18 +24,88 @@ export const API_URL = '';
  *
  * `message` stays the raw body for backward compatibility: callers that
  * stringify the error, or read `.message`, behave exactly as they did before.
+ *
+ * Since #537 it also carries what the coded envelope told us. Quiz routes
+ * answer with `{error: {code, message, request_id}, detail, request_id}`
+ * (backend/services/quiz_errors.py::quiz_error_body) plus a `Retry-After`
+ * header on 429; `code`/`requestId`/`retryAfterSec`/`body` surface that so
+ * `lib/quiz/errors.ts` can tell a rate limit from a daily cap from a generation
+ * timeout. All four are optional — routes outside the quiz router still answer
+ * with the legacy `{detail, request_id}` shape and leave them undefined.
  */
+export interface ApiErrorFields {
+  /** `error.code` off the coded envelope, when the route sent one. */
+  code?: string;
+  /** `error.request_id` / top-level `request_id` — the support handle. */
+  requestId?: string;
+  /** Whole-seconds `Retry-After`, when the response carried the header. */
+  retryAfterSec?: number;
+  /** The parsed JSON body, when the body was JSON. */
+  body?: unknown;
+}
+
 export class ApiError extends Error {
   readonly status: number;
+  readonly code?: string;
+  readonly requestId?: string;
+  readonly retryAfterSec?: number;
+  readonly body?: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, fields: ApiErrorFields = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = fields.code;
+    this.requestId = fields.requestId;
+    this.retryAfterSec = fields.retryAfterSec;
+    this.body = fields.body;
   }
 }
 
-async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
+function parseErrorBody(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+/** `Retry-After` is either whole seconds or an HTTP date. Only the numeric form
+ *  is honoured — a date needs clock-skew handling nobody here wants, and the one
+ *  route that sets the header (quiz.py:1238) always sends seconds. */
+function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const trimmed = header.trim();
+  if (!trimmed) return undefined;
+  const seconds = Number(trimmed);
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds) : undefined;
+}
+
+/** Pulls the coded-envelope fields out of a parsed error body, tolerating both
+ *  the quiz shape and the legacy `{detail, request_id}` one. */
+function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
+  if (body === null || typeof body !== 'object') return {};
+  const record = body as Record<string, unknown>;
+  const nested = record.error;
+  const error = nested !== null && typeof nested === 'object'
+    ? (nested as Record<string, unknown>)
+    : null;
+  const code = error && typeof error.code === 'string' ? error.code : undefined;
+  const requestId = [error?.request_id, record.request_id].find(
+    (v): v is string => typeof v === 'string' && v.length > 0,
+  );
+  return { code, requestId };
+}
+
+/**
+ * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
+ * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
+ * 2026-06-30 onboarding-loop bug). Exported since #537 so feature-scoped clients
+ * (`lib/quiz/api.ts`) can be thin wrappers over it instead of growing this file.
+ */
+export async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -42,10 +113,26 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new ApiError(err || `HTTP ${res.status}`, res.status);
+    const body = parseErrorBody(err);
+    throw new ApiError(err || `HTTP ${res.status}`, res.status, {
+      ...errorFieldsFrom(body),
+      retryAfterSec: parseRetryAfter(res.headers.get('Retry-After')),
+      body,
+    });
   }
   return res.json();
 }
+
+// Newsletter / beta list
+//
+// Backed by backend/routes/newsletter.py, which upserts on `email` — so a
+// repeat signup is a no-op rather than an error, and the caller can treat
+// success as "you're on the list" regardless of whether it was already there.
+export const subscribeToNewsletter = (email: string) =>
+  fetchJSON<{ ok: boolean }>('/api/newsletter/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
 
 // Users
 export const getUsers = () =>
@@ -427,18 +514,7 @@ export const resumeSession = (sessionId: string) =>
     messages: { id: string; role: string; content: string; created_at: string }[];
   }>(`/api/learn/sessions/${sessionId}/resume`);
 
-// Quiz
-export const generateQuiz = (userId: string, conceptNodeId: string, numQuestions: number, difficulty: string, useSharedContext = true) =>
-  fetchJSON<{ quiz_id: string; questions: any[] }>('/api/quiz/generate', {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId, concept_node_id: conceptNodeId, num_questions: numQuestions, difficulty, use_shared_context: useSharedContext }),
-  });
-
-export const submitQuiz = (quizId: string, answers: any[]) =>
-  fetchJSON<{ score: number; total: number; mastery_before: number; mastery_after: number; results: any[] }>('/api/quiz/submit', {
-    method: 'POST',
-    body: JSON.stringify({ quiz_id: quizId, answers }),
-  });
+// Quiz lives in `lib/quiz/api.ts` — its own client over all six quiz endpoints.
 
 // Calendar
 export interface Assignment {
@@ -1018,6 +1094,21 @@ export const adminApproveUser = (userId: string) =>
 
 export const adminUnapproveUser = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
+
+// Admin — feedback (#520; decrypted server-side, admin-only)
+export type AdminFeedbackEntry = {
+  id: string; user_id: string; user_name: string; type: string; rating: number;
+  selected_options: string[]; comment: string | null; session_id: string | null;
+  topic: string | null; created_at: string;
+};
+export type AdminIssueReport = {
+  id: string; user_id: string; user_name: string; topic: string;
+  description: string; screenshot_urls: string[]; created_at: string;
+};
+export const adminListFeedback = () =>
+  fetchJSON<{ feedback: AdminFeedbackEntry[] }>('/api/admin/feedback');
+export const adminListIssueReports = () =>
+  fetchJSON<{ reports: AdminIssueReport[] }>('/api/admin/issue-reports');
 
 // Admin — roles
 export const adminAssignRole = (userId: string, roleId: string) =>
@@ -1663,3 +1754,73 @@ export const generateQuizFromNote = (noteId: string, userId: string) =>
     `/api/notes/${noteId}/generate-quiz`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
+
+// ── Gamification ─────────────────────────────────────────────────────────────
+export const fetchGamificationMe = (userId: string) =>
+  fetchJSON<GamificationMe>(`/api/gamification/me?user_id=${encodeURIComponent(userId)}`);
+
+export const fetchLeaderboard = (userId: string, scope: 'everyone' | 'friends' | 'school') =>
+  fetchJSON<{ rows: LeaderboardRow[]; you: LeaderboardRow | null; resets_at: string }>(
+    `/api/gamification/leaderboard?user_id=${encodeURIComponent(userId)}&scope=${scope}`);
+
+export const fetchActivity = (userId: string) =>
+  fetchJSON<ActivityData>(`/api/gamification/activity?user_id=${encodeURIComponent(userId)}`);
+
+// ── Friends ──────────────────────────────────────────────────────────────────
+export const fetchFriends = (userId: string) =>
+  fetchJSON<{ friends: Friend[] }>(`/api/social/friends/${encodeURIComponent(userId)}`);
+
+export const fetchFriendRequests = (userId: string) =>
+  fetchJSON<{
+    incoming: { id: string; from_user_id: string; name: string; created_at: string }[];
+    outgoing: { id: string; to_user_id: string; name: string; created_at: string }[];
+  }>(`/api/social/friends/requests?user_id=${encodeURIComponent(userId)}`);
+
+export const sendFriendRequest = (fromUserId: string, toUserId: string) =>
+  fetchJSON<{ request: { id: string } }>('/api/social/friends/request', {
+    method: 'POST',
+    body: JSON.stringify({ from_user_id: fromUserId, to_user_id: toUserId }),
+  });
+
+export const acceptFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ accepted: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}/accept?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' });
+
+export const declineFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ declined: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}/decline?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' });
+
+export const removeFriend = (friendId: string, userId: string) =>
+  fetchJSON<{ removed: boolean }>(
+    `/api/social/friends/${encodeURIComponent(friendId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' });
+
+// ── Admin — XP rules and icons ───────────────────────────────────────────────
+export const adminListXpRules = () =>
+  fetchJSON<{ rules: { key: string; label: string; amount: number; enabled: boolean }[] }>(
+    '/api/admin/xp-rules');
+
+export const adminUpdateXpRule = (key: string, patch: { amount?: number; enabled?: boolean }) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/xp-rules/${encodeURIComponent(key)}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  });
+
+export const adminUpdateAchievement = (
+  achievementId: string,
+  patch: Partial<Pick<Achievement, 'name' | 'description' | 'category' | 'rarity' | 'is_secret'>>
+    & { xp_reward?: number; sort_order?: number; status?: 'draft' | 'live' },
+) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/achievements/${encodeURIComponent(achievementId)}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  });
+
+export const adminUploadAchievementIcon = (
+  achievementId: string, fileBase64: string, contentType: string,
+) =>
+  fetchJSON<{ icon_url: string }>(
+    `/api/admin/achievements/${encodeURIComponent(achievementId)}/icon`, {
+      method: 'POST',
+      body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
+    });

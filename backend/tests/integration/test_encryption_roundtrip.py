@@ -39,6 +39,20 @@ _TEXT_COLUMNS = [
     ("room_messages.text", "room_messages", "id",
      "11111111-1111-4111-8111-000000000001", "text",
      "Anyone up for reviewing recursion before the midterm?"),
+    ("feedback.comment", "feedback", "id", "rich-fb-1", "comment",
+     "The tutor cited the wrong lecture."),
+    ("feedback.topic", "feedback", "id", "rich-fb-1", "topic", "chat"),
+    ("issue_reports.topic", "issue_reports", "id", "rich-issue-1", "topic",
+     "Upload stuck"),
+    ("issue_reports.description", "issue_reports", "id", "rich-issue-1",
+     "description", "Syllabus upload spins forever."),
+    ("flashcards.front", "flashcards", "id", "rich-fc-cs-1", "front",
+     "What is a variable?"),
+    ("flashcards.back", "flashcards", "id", "rich-fc-cs-1", "back",
+     "A named storage location for a value."),
+    ("room_summaries.summary", "room_summaries", "room_id",
+     "rich-room-study-group", "summary",
+     "The group is reviewing recursion before the midterm."),
 ]
 
 # (label, id_value, column, expected_number)
@@ -92,6 +106,36 @@ def test_sessions_summary_json_is_ciphertext_at_rest_and_decrypts(db_conn):
     decoded = decrypt_json(raw)
     assert isinstance(decoded, dict) and "bullets" in decoded
     assert "Discussed base cases" in decoded["bullets"]
+
+
+def test_quiz_attempts_questions_json_is_ciphertext_and_decrypts(db_conn):
+    """#521: quiz_attempts.questions_json needs the JSON pair too."""
+    raw = _raw(db_conn, "quiz_attempts", "id", "rich-qa-cs-variables-1", "questions_json")
+    assert raw is not None
+    assert isinstance(raw, str), "questions_json stored as PLAINTEXT JSONB — encryption regressed"
+    decoded = decrypt_json(raw)
+    assert decoded[0]["q"] == "What keyword declares a variable in Python?"
+
+
+def test_quiz_attempts_answers_json_is_ciphertext_and_decrypts(db_conn):
+    raw = _raw(db_conn, "quiz_attempts", "id", "rich-qa-cs-variables-1", "answers_json")
+    assert isinstance(raw, str)
+    assert decrypt_json(raw)[0]["correct"] is True
+
+
+def test_quiz_context_context_json_is_ciphertext_and_decrypts(db_conn):
+    raw = _raw(db_conn, "quiz_context", "id", "rich-qc-cs-variables", "context_json")
+    assert isinstance(raw, str)
+    decoded = decrypt_json(raw)
+    assert decoded["asked"] == 2
+
+
+def test_study_guides_content_is_ciphertext_and_decrypts(db_conn):
+    """#518: study_guides.content needs the JSON pair (encrypt_json/decrypt_json)."""
+    raw = _raw(db_conn, "study_guides", "id", "rich-guide-cs-f25-mid", "content")
+    assert isinstance(raw, str), "content stored as PLAINTEXT JSONB — encryption regressed"
+    decoded = decrypt_json(raw)
+    assert decoded["exam"] == "Midterm Exam"
 
 
 def test_documents_concept_notes_uses_json_encryption(db_conn):

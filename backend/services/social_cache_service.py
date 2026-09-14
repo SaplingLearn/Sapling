@@ -12,6 +12,7 @@ import hashlib
 from datetime import datetime, timezone
 
 from db.connection import table
+from services.encryption import decrypt_if_present, encrypt_if_present
 
 
 def _compute_hash(member_summaries: list[str]) -> str:
@@ -26,7 +27,7 @@ def get_cached_summary(room_id: str, member_summaries: list[str]) -> str | None:
         filters={"room_id": f"eq.{room_id}"},
     )
     if rows and rows[0]["member_hash"] == current_hash:
-        return rows[0]["summary"]
+        return decrypt_if_present(rows[0]["summary"])
     return None
 
 
@@ -34,7 +35,7 @@ def save_summary(room_id: str, member_summaries: list[str], summary: str) -> Non
     table("room_summaries").upsert(
         {
             "room_id": room_id,
-            "summary": summary,
+            "summary": encrypt_if_present(summary),
             "member_hash": _compute_hash(member_summaries),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },

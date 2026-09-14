@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 120 120" width="100%" height="100%" style="display:block;overflow:visible">
+      <defs>
+        <radialGradient id="sky-soil" cx="42%" cy="26%" r="84%">
+          <stop offset="0%" stop-color="#eef1ea"/><stop offset="100%" stop-color="#dfe3d8"/>
+        </radialGradient>
+        <linearGradient id="soil-soil" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7a5a39" stop-opacity="1"/><stop offset="45%" stop-color="#5e4126"/><stop offset="100%" stop-color="#3d2b18"/>
+        </linearGradient>
+        <linearGradient id="turf-soil" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#5e9c52"/><stop offset="100%" stop-color="#37703f"/>
+        </linearGradient>
+        <clipPath id="clip-soil"><circle cx="60" cy="60" r="55"/></clipPath>
+      </defs>
+      <circle cx="60" cy="62.5" r="55" fill="rgba(19,38,16,0.20)"/>
+      <g clip-path="url(#clip-soil)">
+        <rect x="0" y="0" width="120" height="120" fill="url(#sky-soil)"/>
+        
+        <path d="M-6 93 Q60 84 126 93 L126 126 L-6 126 Z" fill="url(#soil-soil)"/>
+        
+        <path d="M-6 93 Q60 84 126 93 L126 100 Q60 91 -6 100 Z" fill="#7d5c3a" opacity="0.9"/>
+        <ellipse cx="42" cy="97" rx="3.4" ry="2.2" fill="#8f6b43"/><ellipse cx="41.4" cy="96.4" rx="1.8" ry="1.1" fill="#a5804f"/>
+        <ellipse cx="76" cy="101" rx="4.2" ry="2.6" fill="#5b3f26"/><ellipse cx="75.2" cy="100.2" rx="2.2" ry="1.2" fill="#78522f"/>
+        <ellipse cx="63" cy="95" rx="2.2" ry="1.5" fill="#96733f"/>
+        <ellipse cx="52" cy="104" rx="2.6" ry="1.7" fill="#6b4a2b"/>
+        <ellipse cx="59" cy="105" rx="6.2" ry="7.4" fill="#b9915f" transform="rotate(16 59 105)"/>
+        <path d="M59 98.4 C63.4 101.6 64.6 106.2 61.4 110.6 C60.6 107 59.4 102.4 59 98.4Z" fill="#d4b083" transform="rotate(16 59 105)"/>
+        <path d="M59 112 q-2 5 -3.4 8.4 M59 112 q2.2 4.6 3 8" stroke="#a58256" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.75"/>
+      </g>
+      <circle cx="60" cy="60" r="55" fill="none" stroke="#8a6a45" stroke-width="2.6"/>
+      <circle cx="60" cy="60" r="51.5" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>
+    </svg>

@@ -1,12 +1,18 @@
-// Pure selection logic for the quiz picker's two-step flow: choose a course
-// first, then a concept within that course.
+// Pure course/concept selection logic, unit-testable without rendering React.
 //
-// This lives apart from QuizPanel so the branching that decides which courses
-// and concepts are offered can be unit-tested without rendering React. The old
-// picker built a single flat dropdown straight from graph concept nodes, which
-// (a) never surfaced enrolled courses that had no concept nodes yet and
-// (b) listed concepts with the same name under different courses side by side,
-// reading as duplicates. Splitting the choice into course → concept fixes both.
+// Written for the old quiz picker's two-step flow (choose a course, then a
+// concept within it), which it fixed two bugs in: a single flat dropdown built
+// straight from graph nodes (a) never surfaced enrolled courses that had no
+// concept nodes yet, and (b) listed same-named concepts from different courses
+// side by side, reading as duplicates.
+//
+// That picker is gone. What survives it is `resolveInitialSelection`, now the
+// id half of `lib/quiz/proposals.ts::entrySelection` — the resolver behind
+// `/quiz?concept=<nodeId>`. Its "unknown id selects nothing" answer is the
+// reason the redesign reuses this rather than re-deriving it: a deep link into
+// a term the student is not viewing has to read as unresolved, not as a quiz on
+// something off-screen. `courseOptions` / `conceptOptionsForCourse` remain
+// available for any grouped picker that wants them.
 
 export interface QuizConcept {
   id: string;

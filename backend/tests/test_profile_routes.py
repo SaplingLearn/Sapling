@@ -992,3 +992,178 @@ class TestShareClassContextToggleRefresh:
             r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
         assert r.status_code == 200
         refresh.assert_not_called()
+
+
+# ── The user-facing achievements payload ────────────────────────────────────
+
+class TestAchievementPayloadShape:
+    """frontend/src/lib/types.ts::Achievement declares xp_reward, icon_url,
+    sort_order and status required, but the response is cast, never validated
+    — tsc passes on a payload that is missing all four. At runtime that is
+    `+undefined XP` in BadgeGrid/BadgeModal and, worse, `iconUrl={undefined}`,
+    which makes every admin-uploaded icon invisible to the users the icon was
+    uploaded for. Admins never notice: the wiki reads a different endpoint
+    that selects `*`."""
+
+    REQUIRED = {"id", "name", "slug", "description", "icon", "category",
+                "rarity", "is_secret", "xp_reward", "icon_url", "sort_order",
+                "status"}
+
+    def _run(self, all_achs, earned):
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = all_achs
+            elif name == "user_achievements":
+                m.select.return_value = earned
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect):
+            return client.get(f"/api/profile/{USER_ID}/achievements")
+
+    def _full(self, **over):
+        row = {
+            "id": "a1", "name": "On Fire", "slug": "on-fire",
+            "description": "7 day streak", "icon": "🔥",
+            "category": "activity", "rarity": "rare", "is_secret": False,
+            "xp_reward": 120, "icon_url": "https://cdn/on-fire.png",
+            "sort_order": 4, "status": "live",
+        }
+        row.update(over)
+        return row
+
+    def test_the_select_asks_for_every_required_column(self):
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "achievements":
+                def _select(cols, **kw):
+                    captured["cols"] = cols
+                    return []
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect):
+            client.get(f"/api/profile/{USER_ID}/achievements")
+
+        cols = set(captured["cols"].split(","))
+        assert self.REQUIRED <= cols
+
+    def test_an_earned_badge_carries_the_reward_and_icon_url(self):
+        r = self._run([self._full()],
+                      [{"achievement_id": "a1", "earned_at": "2026-01-01",
+                        "is_featured": False}])
+        assert r.status_code == 200
+        ach = r.json()["earned"][0]["achievement"]
+        assert self.REQUIRED <= set(ach)
+        assert ach["xp_reward"] == 120
+        assert ach["icon_url"] == "https://cdn/on-fire.png"
+
+    def test_a_locked_badge_carries_the_reward_and_icon_url(self):
+        r = self._run([self._full()], [])
+        ach = r.json()["available"][0]
+        assert self.REQUIRED <= set(ach)
+        assert ach["xp_reward"] == 120
+        assert ach["icon_url"] == "https://cdn/on-fire.png"
+
+    def test_a_masked_secret_badge_still_carries_them(self):
+        """The masked entry is hand-built rather than spread, so it is the one
+        that silently drifts out of shape. It must keep the required keys —
+        while still hiding name/description/icon."""
+        r = self._run(
+            [self._full(id="a2", slug="secret", name="Real Name",
+                        is_secret=True, xp_reward=250,
+                        icon_url="https://cdn/secret.png")],
+            [],
+        )
+        ach = r.json()["available"][0]
+        assert self.REQUIRED <= set(ach)
+        assert ach["name"] == "Secret Achievement"
+        assert ach["icon"] is None
+        assert ach["icon_url"] is None          # never leak the real art
+        assert ach["xp_reward"] == 250
+
+
+class TestAchievementsAuthGuard:
+    """The payload is per-user (earned state + progress counters computed for
+    `user_id`), so it is a self-only read like every other
+    /api/profile/{user_id}/... endpoint. conftest stubs require_self to a
+    no-op, so this re-patches it to prove the call happens."""
+
+    def test_it_checks_the_user_id(self):
+        with patch("routes.profile.table") as t, \
+             patch("routes.profile.require_self") as guard:
+            t.return_value.select.return_value = []
+            r = client.get(f"/api/profile/{USER_ID}/achievements")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == USER_ID
+
+    def test_a_rejection_propagates(self):
+        from fastapi import HTTPException
+        with patch("routes.profile.table"), \
+             patch("routes.profile.require_self",
+                   side_effect=HTTPException(status_code=403, detail="nope")):
+            r = client.get("/api/profile/someone-else/achievements")
+        assert r.status_code == 403
+
+
+class TestFeaturedAchievementsStatusFilter:
+    """_get_featured_achievements embeds achievements off user_achievements.
+    A PostgREST embed needs `!inner` before a filter can apply to the embedded
+    table at all — without it the showcase keeps serving badges the wiki has
+    unpublished (and the ten legacy seeds 0044 demotes to draft), to other
+    users, while the grid and the "N of M" count correctly exclude them. It
+    also means the wiki's Unpublish action is only partly effective."""
+
+    def test_the_embed_is_inner_and_filtered_to_live(self):
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_achievements":
+                def _select(cols, **kw):
+                    captured["cols"] = cols
+                    captured["filters"] = kw.get("filters")
+                    return []
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect):
+            from routes.profile import _get_featured_achievements
+            _get_featured_achievements(USER_ID)
+
+        assert "achievements!inner(" in captured["cols"]
+        assert captured["filters"]["achievements.status"] == "eq.live"
+
+    def test_the_export_deliberately_keeps_unpublished_badges(self):
+        """The counterpart: a user's own data export must NOT be filtered.
+        Omitting a badge they actually earned because it was later unpublished
+        would make the export lie about their own history."""
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_achievements":
+                def _select(cols, **kw):
+                    captured["filters"] = kw.get("filters")
+                    return []
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = [{"id": USER_ID}]
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect), \
+             patch("routes.profile._get_user_roles", return_value=[]), \
+             patch("routes.profile._get_or_create_settings", return_value={}), \
+             patch("routes.profile._get_user_or_404", return_value={"id": USER_ID}):
+            r = client.post(f"/api/profile/{USER_ID}/export")
+
+        assert r.status_code == 200
+        assert "achievements.status" not in (captured["filters"] or {})

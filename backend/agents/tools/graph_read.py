@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,6 +18,9 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services import prompt_dimensions
+from services.academics import user_offering_ids_for_course
+from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +106,27 @@ async def read_concepts_for_user_tool(
 
     rows = await resolve_retrieval(ctx.deps).concept_mastery(
         ctx.deps.user_id, ctx.deps.course_id
+    )
+    # F5: a student with a populated graph whose concept read comes back
+    # empty is a discrepancy, not a new student. Shared with the tutor,
+    # which registers this same tool — the fourth instance of this bug class
+    # is as likely to land there as in the quiz, hence `feature` off deps
+    # rather than a hardcoded name.
+    #
+    # The probe is scoped to the SAME course the read was scoped to. Probing
+    # the whole graph would flag every student who has concepts in one course
+    # and none in another — the ordinary case for anyone taking more than one
+    # class, and enough false alarms to make the signal worthless.
+    await report_empty_result_async(
+        "read_concepts_for_user",
+        user_id=ctx.deps.user_id,
+        count=len(rows),
+        expect=Expect.HAS_GRAPH,
+        feature=getattr(ctx.deps, "feature", "unknown"),
+        scope=(
+            {"course_id": f"eq.{ctx.deps.course_id}"} if ctx.deps.course_id else None
+        ),
+        payload={"course_id": ctx.deps.course_id},
     )
     n = max(0, int(limit))
     # #150 (PR #471 review): concept names are student-derived text — the
@@ -342,12 +367,35 @@ class Misconception(BaseModel):
     related_concept: str | None = None
 
 
+#: Row budget per offering. Applied per-offering rather than shared, so one
+#: class cannot starve another when a student holds two offerings of a course.
+_ROWS_PER_OFFERING = 20
+#: Ceiling on the misconception STRINGS handed to the model. Rows are not the
+#: unit that costs prompt tokens; entries are.
+_MAX_MISCONCEPTIONS = 40
+
+
 async def read_misconceptions_for_course(
-    offering_id: str | None,
+    offering_ids: Sequence[str] | None,
 ) -> list[Misconception]:
-    """Return aggregated misconception strings for an offering (a class in a
-    term). Anonymized (sourced from class-wide patterns, not any single student).
-    Returns [] when offering_id is None or the underlying table is empty.
+    """Return aggregated misconception strings for one or more offerings (a
+    class in a term). Anonymized (sourced from class-wide patterns, not any
+    single student). Returns [] when no offerings are given or the underlying
+    table has nothing for them.
+
+    Takes OFFERING ids, plural, and the plural is load-bearing twice over.
+
+    Keyspace (#553): `offering_concept_stats.offering_id` holds
+    `course_offerings.id`, which is a different keyspace from the abstract
+    `courses.id` the graph and the HTTP boundary carry. This function used to
+    be handed the latter, so it matched nothing for every student
+    indefinitely. Callers resolve course -> offerings via
+    `services/academics.py`; that module owns the resolution.
+
+    Plural: a student can be enrolled in more than one offering of the same
+    course (a repeat, or a course spanning terms — the rich seed's active user
+    holds CS in two). Scoping to a single "current" offering would silently
+    drop the other class's aggregates.
 
     Source: `offering_concept_stats` rows for the offering. Each row
     represents one concept and carries a `common_misconceptions` array
@@ -358,26 +406,61 @@ async def read_misconceptions_for_course(
 
     The tool contract (returning Misconception[]) is unchanged.
     """
-    if not offering_id:
+    # A bare `str` IS a Sequence[str], so an un-guarded comprehension would
+    # iterate it PER CHARACTER and build `in.(c,a,s,-,c,s,...)` — a filter that
+    # matches nothing while looking entirely well-formed. The same shape
+    # already bit this batch once (the quiz_history coercer spraying "- r"/
+    # "- e"/"- c" into the prompt), and the whole point of #553 is that a
+    # silently-matching-nothing filter can survive for months.
+    if isinstance(offering_ids, str):
+        offering_ids = [offering_ids]
+    ids = [str(o) for o in (offering_ids or []) if o]
+    if not ids:
         return []
 
     def _fetch() -> list[dict[str, Any]]:
-        try:
-            return (
-                table("offering_concept_stats").select(
-                    "concept_name,common_misconceptions",
-                    filters={"offering_id": f"eq.{offering_id}"},
-                    order="updated_at.desc",
-                    limit=20,
+        rows: list[dict[str, Any]] = []
+        # One read PER offering rather than one `in.(...)` read over all of
+        # them. A single query has to share one LIMIT, and the sort key does
+        # not break the tie usefully: `course_context_service` stamps every
+        # row of an aggregation pass with the same `updated_at`, so ordering
+        # within an offering is arbitrary. An offering with a full window of
+        # rows would then starve its sibling completely — reintroducing, per
+        # offering, exactly the silent drop that taking a LIST of offerings
+        # was meant to prevent. Students hold one or two offerings of a given
+        # course, so this is one or two indexed reads.
+        for offering_id in ids:
+            try:
+                rows.extend(
+                    table("offering_concept_stats").select(
+                        "concept_name,common_misconceptions",
+                        filters={
+                            "offering_id": f"eq.{offering_id}",
+                            # Spend the row budget only on rows that actually
+                            # carry text. The aggregation writes a stats row
+                            # per concept as soon as a class has activity and
+                            # fills this array only when it has something to
+                            # say, so text-bearing rows are the rare minority
+                            # (0 of 72 rows on staging, 0 of 73 on prod).
+                            # Unfiltered, the window fills with empty rows and
+                            # the tool returns [] for a class that genuinely
+                            # has misconceptions — the very symptom #553 is
+                            # about. It also keeps this read asking the same
+                            # question the F5 probe asks, so a legitimately
+                            # quiet class cannot look like a broken one.
+                            "common_misconceptions": "neq.{}",
+                        },
+                        order="updated_at.desc",
+                        limit=_ROWS_PER_OFFERING,
+                    )
+                    or []
                 )
-                or []
-            )
-        except Exception:
-            logger.exception(
-                "read_misconceptions_for_course failed for offering=%s",
-                offering_id,
-            )
-            return []
+            except Exception:
+                logger.exception(
+                    "read_misconceptions_for_course failed for offering=%s",
+                    offering_id,
+                )
+        return rows
 
     rows = await asyncio.to_thread(_fetch)
     out: list[Misconception] = []
@@ -393,6 +476,13 @@ async def read_misconceptions_for_course(
                 continue
             seen.add(key)
             out.append(Misconception(text=text, related_concept=concept))
+            # Cap what actually reaches the prompt. The old `limit=20` capped
+            # ROWS, and each row carries an unbounded array — so the block's
+            # real size was never bounded at all. F6 measured this tool's
+            # contribution to the prompt; bounding the unit that costs tokens
+            # is what makes that number hold.
+            if len(out) >= _MAX_MISCONCEPTIONS:
+                return out
     return out
 
 
@@ -409,7 +499,76 @@ async def read_misconceptions_for_course_tool(
     """
     from services.prompt_safety import neutralize_delimiters
 
-    out = await read_misconceptions_for_course(ctx.deps.course_id)
+    # Class-intel consent, enforced at the tool (#553 review finding 4).
+    #
+    # This tool is registered on quiz_agent unconditionally and system-prompt
+    # step 2 tells the model to call it on EVERY run; `use_shared_context`
+    # only ever APPENDED an extra routing sentence when true. That looked
+    # correct for as long as the read was keyspace-broken and returned []
+    # for everyone — fixing #553 would have quietly started feeding other
+    # students' aggregated misconceptions to a student who opted out.
+    #
+    # Enforced here rather than by editing the prompt or the toolset: a
+    # system-prompt instruction is a request to a model, and consent is not
+    # something to leave to one. Returning [] (not raising) keeps an opted-out
+    # run identical to a class with nothing to share.
+    if not getattr(ctx.deps, "share_class_context", True):
+        prompt_dimensions.record(misconceptions=0)
+        return []
+
+    # #553: resolve course -> the student's offerings BEFORE reading. The
+    # stats table is keyed on `course_offerings.id`; `ctx.deps.course_id` is
+    # the abstract `courses.id` the graph carries. Handing the second to a
+    # filter expecting the first matched nothing for every student since the
+    # tool was written, and looked exactly like a class with no misconceptions
+    # yet. Verified live 2026-08-22: staging 72/72 stats rows key on an
+    # offering id and 0 on a course id (prod 73/73); filtering by course id
+    # returned 0 in both, filtering by the student's offerings returned 68+4
+    # and 73.
+    #
+    # The resolution is now unconditional rather than probe-only: it is what
+    # the READ needs, not merely what the probe needs. It stays a single
+    # `academics` call whose two reads are the price of asking the right
+    # question at all.
+    offering_ids: list[str] = []
+    if ctx.deps.course_id:
+        try:
+            offering_ids = await asyncio.to_thread(
+                user_offering_ids_for_course, ctx.deps.user_id, ctx.deps.course_id
+            )
+        except Exception:
+            # Degrade to "no offerings" rather than raising: this is one
+            # optional personalization input, and the agent has others.
+            logger.warning(
+                "read_misconceptions_for_course: offering resolution failed; "
+                "returning no class misconceptions", exc_info=True,
+            )
+
+    out = await read_misconceptions_for_course(offering_ids)
+    # F5: THE canonical instance of this bug class. The probe asks whether
+    # aggregates CARRYING MISCONCEPTION TEXT exist for this student's
+    # offerings of this course — not merely whether they are enrolled, and
+    # not merely whether stats rows exist.
+    #
+    # The text qualifier matters as much as the scope. Both live environments
+    # today hold stats rows whose `common_misconceptions` arrays are all
+    # empty (0 of 72 on staging, 0 of 73 on prod — the aggregation runs, the
+    # classes just have no misconception text yet). A probe that fired on
+    # "any stats row exists" would therefore report a discrepancy on EVERY
+    # generation for EVERY student the moment #553 was fixed — the precise
+    # alarm-fatigue failure F5 exists to prevent.
+    if not out and offering_ids:
+        await report_empty_result_async(
+            "read_misconceptions_for_course",
+            user_id=ctx.deps.user_id,
+            count=len(out),
+            expect=Expect.COURSE_HAS_AGGREGATES,
+            feature=getattr(ctx.deps, "feature", "unknown"),
+            scope={"offering_id": f"in.({','.join(offering_ids)})"},
+            payload={"course_id": ctx.deps.course_id},
+        )
+    # F6: this block's contribution to the prompt.
+    prompt_dimensions.record(misconceptions=len(out))
     return [
         Misconception(
             text=neutralize_delimiters(m.text),

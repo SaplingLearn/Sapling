@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -10,11 +11,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from config import is_weak
 from db.connection import table
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -28,6 +30,8 @@ from services.flashcard_import_service import (
     gemini_cloze,
     generate_flashcards as _generate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -172,8 +176,13 @@ def _get_course_documents(
 
 def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
     """
-    Return concept names where the student has low mastery (score < 0.4)
-    for the given course/subject.
+    Return concept names the student is weak on — below the "learning" floor
+    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored".
+
+    Was a local `< 0.4` (#557), which is not any tier boundary: concepts in
+    [0.4, 0.45) read as "struggling" on the Tree but were never offered for
+    practice here — the surface whose entire job is drilling weak concepts
+    silently skipped a slice of them.
     """
     try:
         rows = table("graph_nodes").select(
@@ -186,12 +195,17 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
                 "concept_name,mastery_score",
                 filters={"user_id": f"eq.{user_id}"},
             )
-        weak = [
-            r["concept_name"]
-            for r in (rows or [])
-            if (r.get("mastery_score") or 0) < 0.4
-        ]
-        return weak[:15]  # cap to keep prompt reasonable
+        weak = sorted(
+            (r for r in (rows or []) if is_weak(r.get("mastery_score") or 0)),
+            key=lambda r: r.get("mastery_score") or 0,
+        )
+        # Weakest first, THEN cap. The cap used to truncate in PostgREST row
+        # order, which was survivable while the floor was 0.4 and is not now
+        # that #557 widened it to 0.45: the newly-admitted [0.4, 0.45)
+        # concepts could displace 0.0-0.1 ones purely on row order, leaving
+        # the surface whose job is drilling the weakest concepts drilling the
+        # least-weak of the weak.
+        return [r["concept_name"] for r in weak[:15]]
     except Exception:
         return []
 
@@ -236,8 +250,8 @@ def generate(body: GenerateFlashcardsBody, request: Request):
             "id": str(uuid.uuid4()),
             "user_id": body.user_id,
             "topic": body.topic,
-            "front": c["front"],
-            "back": c["back"],
+            "front": encrypt_if_present(c["front"]),
+            "back": encrypt_if_present(c["back"]),
             "times_reviewed": 0,
             "last_reviewed_at": None,
             "created_at": now,
@@ -261,8 +275,16 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     except Exception:
         pass
 
+    # rows_to_insert holds the ciphertext just written; the response the
+    # frontend renders (freshly generated cards, before any list re-fetch)
+    # must carry plaintext front/back, not the encrypted insert payload.
+    response_cards = [
+        {**row, "front": decrypt_if_present(row["front"]), "back": decrypt_if_present(row["back"])}
+        for row in rows_to_insert
+    ]
+
     return {
-        "flashcards": rows_to_insert,
+        "flashcards": response_cards,
         "context_used": {
             "documents_found": len(documents),
             "weak_concepts_found": len(weak_concepts),
@@ -291,6 +313,9 @@ def get_flashcards(
             "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
             filters=filters, order="created_at.desc"
         ) or []
+        for r in rows:
+            r["front"] = decrypt_if_present(r.get("front"))
+            r["back"] = decrypt_if_present(r.get("back"))
         if semester:
             # Term scoping (#141). This route is user-wide (no course id), so
             # the filter works on the cards' offering: cards from the selected
@@ -342,6 +367,19 @@ def rate_card(body: FlashcardRatingBody, request: Request):
         },
         filters={"id": f"eq.{body.card_id}"},
     )
+
+    # The review counter is the only thing that advances `flashcards_reviewed`
+    # (Quick Draw: review 100 cards), so this is its only possible dispatch
+    # point. Post-commit: the review is already recorded, so a failing check
+    # must not fail the rating.
+    try:
+        check_achievements(body.user_id, "flashcards_reviewed", {})
+    except Exception:
+        logger.exception(
+            "achievement dispatch failed after card rating user=%s card=%s",
+            body.user_id, body.card_id,
+        )
+
     return {"ok": True}
 
 
@@ -397,8 +435,8 @@ def import_commit(body: ImportCommitBody, request: Request):
             "user_id": body.user_id,
             "topic": body.topic,
             "offering_id": offering_id,
-            "front": c["front"],
-            "back": c["back"],
+            "front": encrypt_if_present(c["front"]),
+            "back": encrypt_if_present(c["back"]),
             "times_reviewed": 0,
             "last_reviewed_at": None,
             "created_at": now,

@@ -36,8 +36,18 @@ auth.login                    audit     method ("google" / "test_login")
 auth.permission_denied        audit     reason, route
 document.upload               usage     course_id, offering_id, char_count
 document.processed            usage     document_id, category, course_id, char_count
-quiz.started                  usage     quiz_id, concept_node_id, num_questions, difficulty
+quiz.started                  usage     quiz_id, concept_node_id, num_questions, difficulty,
+                                        + prompt dimensions (F6) from the route: blocks,
+                                        k_chunks, material_chars, recent_asked,
+                                        routing_chars, adaptive; plus, ONLY when the agent
+                                        actually called the tool that records them,
+                                        digest_present, digest_chars, recent_attempts,
+                                        misconceptions (see docs/quiz-prompt-budget.md)
 quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
+quiz.tool_empty               usage     tool, feature, expect, concept_node_id
+quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
+quiz.answer_key_served        usage     quiz_id
+quiz.answer_key_flag_omitted  usage     quiz_id
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
@@ -82,6 +92,48 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "document.processed",
     "quiz.started",
     "quiz.completed",
+    # #529/B3: the post-submit context write failed. category="error" so it
+    # surfaces in admin analytics — this failure was invisible for months
+    # precisely because nothing emitted when the background task died.
+    "quiz.context_write_failed",
+    # #544/F3: generation failed (agent error, timeout, or every question
+    # dropped). Same reasoning: a 502 the student sees should be a 502 an
+    # admin can count.
+    "quiz.generation_failed",
+    # #537/G8: the hero-card snapshot submit now returns inline failed to
+    # read, and was swallowed so the submit could still succeed.
+    # category="error" for the same reason quiz.context_write_failed is: a
+    # swallowed failure with only a log line behind it is how #529 stayed
+    # invisible for 51 days in this same handler. Fires at most once per
+    # submit, so the /errors feed can carry it without drowning. See the emit
+    # site, routes/quiz.py::_gamification_block.
+    "quiz.gamification_snapshot_failed",
+    # F5: a personalization input returned zero rows for a student who
+    # plausibly should have data. Three inputs were silently empty for
+    # months (#529's 42P10, the misconceptions offering-id filter, the
+    # digest key drift) because nothing distinguished "legitimately empty"
+    # from "the query is wrong". This is that distinction, made countable —
+    # and countable is the operative word: category="usage", because it
+    # fires once per generation for every student in a class whose
+    # aggregates exist, and the /errors feed would drown in it (same
+    # reasoning as quiz.rag_uncovered; see the emit site in
+    # services/tool_signals.py).
+    "quiz.tool_empty",
+    # E8: generation ran with no course-material grounding. Ungrounded
+    # generation is a legitimate mode (a course with nothing indexed), but
+    # it used to be indistinguishable from a retrieval that quietly failed.
+    # category="usage" for that reason — see the emit site in routes/quiz.py.
+    "quiz.rag_uncovered",
+    # #546: the deprecated `include_answer_key` flag, made countable. Its
+    # deletion is gated on "nobody still asks for the client-side answer
+    # key", and only a rollup can answer that — a log line can't. Two types,
+    # not one with a payload flag, because by_event_type doesn't break
+    # payloads out and the two populations mean opposite things: _served is
+    # the caller that BLOCKS deletion (it got the key), _flag_omitted is the
+    # flag-unaware caller for whom deletion is a no-op. See the emit site,
+    # routes/quiz.py::_record_answer_key_flag.
+    "quiz.answer_key_served",
+    "quiz.answer_key_flag_omitted",
     "chat.message_sent",
     "note.created",
     "session.started",

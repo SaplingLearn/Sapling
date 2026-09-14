@@ -75,7 +75,9 @@ def _make_factory(user_rows, earned_rows, insert_sink):
         return [{}]
 
     factory("user_achievements").insert.side_effect = _capture_insert
-    factory("achievements").select.return_value = [{"slug": "first_login"}]
+    factory("achievements").select.return_value = [{
+        "slug": "first_login", "name": "First Steps", "xp_reward": 0, "status": "live",
+    }]
     factory("achievement_cosmetics").select.return_value = []
     return factory, mocks
 

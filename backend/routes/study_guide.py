@@ -4,6 +4,7 @@ backend/routes/study_guide.py
 Study guide generation and caching.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -24,9 +25,17 @@ from services.academics import (
 )
 from services.graph_service import get_courses as graph_get_courses
 from services.auth_guard import require_self
-from services.encryption import decrypt_if_present, decrypt_json
+from services.exam_proximity import is_exam
+from services.encryption import (
+    decrypt_if_present,
+    decrypt_json,
+    decrypt_json_column,
+    encrypt_json,
+)
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -198,7 +207,7 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         "offering_id": offering_id,
         "exam_id": exam_id,
         "generated_at": now,
-        "content": content,
+        "content": encrypt_json(content),
     }
     table("study_guides").insert(row)
 
@@ -245,7 +254,14 @@ def get_cached_guides(user_id: str, request: Request):
 
     result = []
     for g in guides:
-        content = g.get("content") or {}
+        try:
+            content = decrypt_json_column(g.get("content")) or {}
+        except Exception:
+            logger.warning(
+                "get_cached_guides: content decrypt failed for guide %s; degrading",
+                g.get("id"),
+            )
+            content = {}
         course_id = offering_to_course.get(g.get("offering_id"))
         result.append({
             "id": g["id"],
@@ -288,15 +304,11 @@ def get_exams(
         order="due_date.asc",
     ) or []
 
-    exam_keywords = ["exam", "midterm", "final", "quiz"]
-    exams = []
-    for a in all_assignments:
-        atype = (a.get("assignment_type") or "").lower()
-        title = (a.get("title") or "").lower()
-        if atype == "exam" or any(kw in title for kw in exam_keywords):
-            exams.append(a)
-
-    return {"exams": exams}
+    # The heuristic moved to services/exam_proximity.py (#555), which needed
+    # the same question answered on the quiz path. One definition, two
+    # callers — a second copy would drift, which is the failure #557 spent a
+    # workstream undoing.
+    return {"exams": [a for a in all_assignments if is_exam(a)]}
 
 
 @router.get("/{user_id}/guide")
@@ -330,7 +342,7 @@ def get_guide(
     )
     if cached:
         row = cached[0]
-        return {"guide": row["content"], "generated_at": row["generated_at"], "cached": True}
+        return {"guide": decrypt_json_column(row["content"]), "generated_at": row["generated_at"], "cached": True}
 
     result = _generate_and_insert(user_id, offering_id, exam_id)
     return {"guide": result["content"], "generated_at": result["generated_at"], "cached": False}

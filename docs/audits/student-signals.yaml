@@ -1,0 +1,338 @@
+# Machine-readable signal matrix from docs/audits/student-data-inventory.md (Part 2).
+# Diff this file as the product grows.
+#
+# audited_at: origin/main @ 7681c481 (2026-08-12)
+# delta_since_pin: "#540/#547 (6081ec58) — adaptive difficulty enum + migration
+#   20260812204809, GET /api/quiz/config, resolved_difficulty, QuizAPIError; scope
+#   verified to routes/quiz.py + agents/quiz.py only"
+#
+# field vocabulary:
+#   state:        available_now | available_now_broken | derivable | needs_capture
+#   reaches_model: yes | wired_but_empty | no
+#   privacy_tier: own | class_aggregate | cross_student
+#   access_cost:  free-form; "indexed query" means an existing per-user index covers it
+#   value:        high | med-high | med | low-med | low  (for quiz personalization)
+
+meta:
+  audited_at_commit: "7681c481"
+  audited_on: "2026-08-12"
+  quiz_agent_tools_on_main:
+    - read_concepts_for_user        # agents/tools/graph_read.py:35-112
+    - read_misconceptions_for_course # agents/tools/graph_read.py:345-423
+    - read_recent_quiz_attempts     # agents/tools/quiz_history.py:89-249
+  rag_block: "routes/quiz.py:176-206 _course_material_block (not a tool; injected in user message)"
+  known_breaks:
+    - id: quiz-context-writes-fail
+      issue: 529
+      detail: "UNIQUE (user_id, concept_node_id) lost in 0025 recreate; upsert 42P10s inside except:pass (routes/quiz.py:517-527, services/quiz_context_service.py:28-38)"
+    - id: misconceptions-id-mismatch
+      detail: "tool passes abstract course_id as offering_id filter (agents/tools/graph_read.py:412 vs routes/quiz.py:311); offering_concept_stats keyed on course_offerings.id -> ~zero rows"
+
+signals:
+  - name: concept_mastery_list
+    definition: Per-concept mastery_score + last_reviewed_at, weakest first, course-scoped
+    source: graph_nodes (concept_name, mastery_score, last_studied_at)
+    state: available_now
+    reaches_model: yes
+    via: read_concepts_for_user (cap 25)
+    access_cost: 1 indexed query, no decrypt
+    staleness_risk: low
+    privacy_tier: own
+    value: high
+    cite: "agents/tools/graph_read.py:35-112"
+
+  - name: recent_attempt_accuracy
+    definition: Last-5 completed attempts' score/total/difficulty/completed_at + accuracy, per concept
+    source: quiz_attempts plaintext scalars
+    state: available_now
+    reaches_model: yes
+    via: read_recent_quiz_attempts
+    access_cost: 1 indexed query, no decrypt
+    staleness_risk: low
+    privacy_tier: own
+    value: high
+    cite: "agents/tools/quiz_history.py:130-219"
+
+  - name: personal_mistake_digest
+    definition: LLM-maintained rolling digest per (user, concept) — weak_areas, common_mistakes, questions_seen_summary, recommended_difficulty, notes
+    source: quiz_context.context_json (encrypted)
+    state: available_now_broken
+    reaches_model: wired_but_empty
+    breaks: [quiz-context-writes-fail]
+    also_broken: "digest coercer reads common_errors/misconceptions keys, agent writes common_mistakes (quiz_history.py:60-86); recommended_difficulty has no reader"
+    access_cost: 1 query + decrypt
+    staleness_risk: currently_infinite
+    privacy_tier: own
+    value: high_once_fixed
+    cite: "agents/quiz_context.py:22-45; routes/quiz.py:506-527"
+
+  - name: class_misconceptions
+    definition: Anonymized pooled misconception strings per (offering, concept)
+    source: offering_concept_stats.common_misconceptions
+    state: available_now_broken
+    reaches_model: wired_but_empty
+    breaks: [misconceptions-id-mismatch, quiz-context-writes-fail]
+    access_cost: 1 indexed query, no decrypt
+    staleness_risk: high_until_fixed
+    privacy_tier: class_aggregate   # opt-out share_class_context (0037); NO k-anonymity floor
+    value: high_once_fixed
+    cite: "agents/tools/graph_read.py:345-423; services/course_context_service.py:155-401"
+
+  - name: course_material_grounding
+    definition: Catalog chunk + top-5 RAG chunks retrieved by concept name, injected as COURSE MATERIAL
+    source: course_chunks (plaintext chunk_text, VECTOR(768))
+    state: available_now
+    reaches_model: yes
+    via: _course_material_block (user message)
+    access_cost: embedding call (bounded 60s, request path) + RPC
+    staleness_risk: "med — never term-scoped, never deleted, empty for unindexed courses (sync uploads never index)"
+    privacy_tier: cross_student     # shared per BU course_code pool
+    value: high
+    cite: "routes/quiz.py:176-206; services/rag_service.py:122-177"
+
+  - name: distractor_choice_history
+    definition: Which option (incl. which distractor) the student picked, per question, per attempt
+    source: quiz_attempts.answers_json JOIN questions_json (both encrypted)
+    state: derivable
+    reaches_model: no
+    note: "written on every submit; NOTHING ever reads answers_json back"
+    access_cost: 1 query + decrypt + in-code join
+    staleness_risk: low
+    privacy_tier: own
+    value: high
+    cite: "routes/quiz.py:488-496"
+
+  - name: questions_already_seen
+    definition: Past question stems/options shown to this student per concept
+    source: quiz_attempts.questions_json (encrypted, historical rows)
+    state: derivable
+    reaches_model: no
+    access_cost: 1 query + decrypt (N rows)
+    staleness_risk: low
+    privacy_tier: own
+    value: med-high
+    cite: "routes/quiz.py:354-360"
+
+  - name: mastery_trajectory
+    definition: Append-only mastery deltas; 14-day learning velocity already computed for the Tree
+    source: node_mastery_events
+    state: derivable
+    reaches_model: no
+    access_cost: 1 indexed query + small aggregation (velocity code exists in get_graph)
+    staleness_risk: low
+    privacy_tier: own
+    value: med
+    cite: "backend/services/graph_service.py:110-136,181-198"
+
+  - name: times_studied
+    definition: Exposure count per concept
+    source: graph_nodes.times_studied
+    state: derivable
+    reaches_model: no
+    access_cost: free (add column to existing tool select)
+    staleness_risk: low
+    privacy_tier: own
+    value: med
+    cite: "0023_graph_integrity.sql:17"
+
+  - name: exam_proximity
+    definition: Days until next exam-type assignment for the course
+    source: assignments.due_date (plaintext DATE, indexed) + type/title heuristic
+    state: derivable
+    reaches_model: no
+    note: "no 'exam in N days' computation exists anywhere; heuristic exists in study-guide picker"
+    access_cost: 1 indexed query, no decrypt
+    staleness_risk: low
+    privacy_tier: own
+    value: high
+    cite: "routes/study_guide.py:300-314; 0021_gradebook.sql:35,52"
+
+  - name: tutor_recency_and_topics
+    definition: Recent sessions (mode, topic, started_at) + concept names touched per turn
+    source: sessions + messages.graph_update_json (plaintext names)
+    state: derivable
+    reaches_model: no
+    access_cost: 2 indexed queries, no decrypt for names
+    staleness_risk: low
+    privacy_tier: own
+    value: med
+    cite: "routes/learn.py:276-284,1084-1112"
+
+  - name: session_summaries
+    definition: End-of-session digest (concepts_covered, time_spent_minutes; 3 of 5 fields always empty)
+    source: sessions.summary_json (encrypted)
+    state: derivable
+    reaches_model: no
+    only_reader_today: "flashcard generation (routes/flashcards.py:97-112)"
+    access_cost: query + decrypt
+    staleness_risk: med
+    privacy_tier: own
+    value: low-med
+    cite: "routes/learn.py:1032-1058"
+
+  - name: flashcard_review_state
+    definition: times_reviewed / last_rating (1-3) / last_reviewed_at per card+topic
+    source: flashcards (plaintext review columns)
+    state: derivable
+    reaches_model: no
+    access_cost: 1 indexed query, no decrypt
+    staleness_risk: low
+    privacy_tier: own
+    value: med
+    cite: "0025_study_integrity.sql:63-65; routes/flashcards.py:334-372"
+
+  - name: note_linked_concepts
+    definition: Concepts the student linked to their notes (with live mastery at read)
+    source: note_concepts JOIN graph_nodes
+    state: available_now
+    reaches_model: no
+    note: "used only as generate-quiz entry point (lowest-mastery pick); note text never reaches generation"
+    access_cost: 1 query
+    staleness_risk: low
+    privacy_tier: own
+    value: med
+    cite: "routes/notes.py:484-503"
+
+  - name: rag_coverage_per_course
+    definition: Chunk/document counts per course — is grounding even possible?
+    source: count(course_chunks) by course_code; count(documents) by offering
+    state: derivable
+    reaches_model: no
+    note: "no rollup exists anywhere; ungrounded generation is currently silent"
+    access_cost: 1 count query
+    staleness_risk: low
+    privacy_tier: class_aggregate
+    value: med
+    cite: "0039_rag_vector_store.sql:45-46"
+
+  - name: engagement_intensity
+    definition: Streak, per-day XP mix (which activities, how much, when)
+    source: users.streak_count/longest_streak + xp_events ledger
+    state: derivable
+    reaches_model: no
+    access_cost: 1-2 indexed queries
+    staleness_risk: low
+    privacy_tier: own
+    value: low-med
+    cite: "20260731193214_gamification.sql:10-20; services/streak_service.py:24-55"
+
+  - name: abandonment
+    definition: In-flight attempts (generated, never submitted) per concept
+    source: quiz_attempts WHERE completed_at IS NULL; quiz.started events without quiz.completed
+    state: derivable
+    reaches_model: no
+    note: "no status field or sweep; #542 tracks"
+    access_cost: 1 query
+    staleness_risk: med
+    privacy_tier: own
+    value: med
+    cite: "0025_study_integrity.sql:102; routes/quiz.py:354-360"
+
+  - name: profile_academic_context
+    definition: year, majors/minors, learning_style (self-reported at onboarding)
+    source: user_profiles (plaintext columns)
+    state: derivable
+    reaches_model: no
+    access_cost: 1 query
+    staleness_risk: high  # one-time, self-reported
+    privacy_tier: own
+    value: low
+    cite: "0024_identity_split.sql:16-19; routes/onboarding.py:75-78"
+
+  - name: grades
+    definition: Assignment scores, computed course grade, GPA
+    source: assignments.points_* (encrypted, decrypt_numeric) + gradebook math
+    state: derivable
+    reaches_model: no
+    note: "verified: no grade value reaches any prompt today; FERPA-adjacent — see constraints"
+    access_cost: query + decrypt_numeric + grade math
+    staleness_risk: med
+    privacy_tier: own
+    value: med_policy_gated
+    cite: "routes/gradebook.py:121-147; SECURITY.md §3.5"
+
+  - name: class_mastery_distribution
+    definition: avg mastery, pct struggling, prerequisite_gaps per (offering, concept)
+    source: offering_concept_stats (non-misconception columns)
+    state: derivable
+    reaches_model: no
+    access_cost: 1 indexed query
+    staleness_risk: med
+    privacy_tier: class_aggregate
+    value: med
+    cite: "0022_analytics.sql:7-21"
+
+  # ── needs new capture ──────────────────────────────────────────────────────
+
+  - name: response_time_per_question
+    definition: ms from question shown to answer locked
+    source: null
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "client timer + elapsed_ms in submit payload; inside encrypted answers_json — no migration"
+    privacy_tier: own
+    value: high
+
+  - name: confidence_per_answer
+    definition: Self-reported certainty at answer time
+    source: null
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "UI affordance + field in answers_json; UX friction is the real cost"
+    privacy_tier: own
+    value: med-high
+
+  - name: question_identity_provenance
+    definition: Stable question_hash + source chunk ids + model + prompt_version per generated question
+    source: null   # assembled at generation, then discarded (chunks: quiz.py:258-265; prompt hash: trace-only)
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "write-path shape change inside questions_json (no migration); pass chunk ids through _course_material_block"
+    privacy_tier: own
+    value: high
+    prerequisite_for: [item_statistics, distractor_misconception_tag, question_feedback]
+
+  - name: item_statistics
+    definition: Cross-student miss rate per question_hash
+    source: null
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "needs question_identity_provenance first; then event payload or small aggregate table (the one item wanting a migration); cross-student -> consent wording"
+    privacy_tier: class_aggregate
+    value: med-high
+
+  - name: distractor_misconception_tag
+    definition: Which misconception each distractor represents, emitted by the agent at generation
+    source: null
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "agent output-schema field (+ function-mode handler update); lives in questions_json"
+    privacy_tier: own
+    value: med-high
+
+  - name: question_feedback
+    definition: Student flags a question as confusing/wrong
+    source: null   # feedback table is app/session-scoped, not question-scoped
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "small endpoint + UI; worthless without question identity"
+    privacy_tier: own
+    value: med
+
+  - name: skip_revise_events
+    definition: Skips and answer changes within an attempt
+    source: null   # UI is one-shot (QuizPanel.tsx:142-148)
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "UI state + submit payload fields"
+    privacy_tier: own
+    value: low-med
+
+  - name: entry_context
+    definition: Where the quiz was launched from (Tree node, Notes, dashboard, exam prep) + exam pressure at launch
+    source: null   # deep links exist (?concept=/?topic=, notes generate-quiz) but source never recorded
+    state: needs_capture
+    reaches_model: no
+    capture_cost: "one source field on generate + server-side due-date lookup"
+    privacy_tier: own
+    value: med

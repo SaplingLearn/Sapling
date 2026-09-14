@@ -70,6 +70,8 @@ const TRUNCATE_DENYLIST = [
   "schools",
   "courses",
   "course_offerings",
+  "growth_stages",
+  "xp_rules",
 ];
 
 // One DO block = one statement: enumerate the mutable public tables and
@@ -157,4 +159,144 @@ export async function queryRaw(
   params: unknown[] = [],
 ): Promise<Record<string, unknown>[]> {
   return withDb(async (client) => (await client.query(sql, params)).rows);
+}
+
+/**
+ * Mint XP the same way the app does — for journeys that need "the user just
+ * earned XP" without driving a real quiz/session/upload through the UI
+ * (gamification.spec.ts, Task 17).
+ *
+ * This is a straight port of `backend/services/xp_service.py::award_xp`,
+ * NOT a call into the API (there is no XP-grant endpoint — every real award
+ * happens as a side effect of some other action). Keep it in lock-step with
+ * that module if the award path changes:
+ *   1. resolve the amount from `xp_rules` (unless the caller overrides it —
+ *      mirrors how achievement rewards pass an explicit `amount`);
+ *   2. insert one `xp_events` row keyed on the same idempotency key
+ *      (`rule_key:source_type:source_id`, `-` for a missing leg) via
+ *      `ON CONFLICT (idempotency_key) DO NOTHING` — the JS equivalent of
+ *      catching the Postgres 409 the Python side handles;
+ *   3. on a fresh insert (not a duplicate), recompute `users.total_xp` /
+ *      `users.level` from the ledger and write them back — `level` walks
+ *      the `growth_stages` curve exactly like `services/growth.py::level_for_xp`
+ *      (this is why `growth_stages`/`xp_rules` were added to
+ *      TRUNCATE_DENYLIST above: they're migration-seeded reference tables
+ *      `db/seed_local_rich.py` never re-inserts, so without the denylist
+ *      entry every per-test reset would leave both tables empty and this
+ *      helper — and the real HeroCard/LeaderboardTab/ActivityTab UI — with
+ *      no curve/rules to read).
+ */
+export async function awardXp(
+  userId: string,
+  ruleKey: string,
+  sourceType: string | null = null,
+  sourceId: string | null = null,
+  amount?: number,
+): Promise<{
+  awarded: number;
+  totalXp: number;
+  level: number;
+  leveledUp: boolean;
+  duplicate: boolean;
+}> {
+  return withDb(async (client) => {
+    const value = amount ?? (await ruleAmount(client, ruleKey));
+    const priorState = await userXpState(client, userId);
+    if (value <= 0) {
+      return { awarded: 0, totalXp: priorState.totalXp, level: priorState.level, leveledUp: false, duplicate: false };
+    }
+
+    const idempotencyKey = `${ruleKey}:${sourceType ?? "-"}:${sourceId ?? "-"}`;
+    const inserted = await client.query(
+      `INSERT INTO xp_events (user_id, rule_key, amount, source_type, source_id, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [userId, ruleKey, value, sourceType, sourceId, idempotencyKey],
+    );
+    if (inserted.rowCount === 0) {
+      // Already paid out — same as award_xp's 409 branch: report current
+      // state, don't touch the cache.
+      return { awarded: 0, totalXp: priorState.totalXp, level: priorState.level, leveledUp: false, duplicate: true };
+    }
+
+    const totalXp = priorState.totalXp + value;
+    const level = await levelForXp(client, totalXp);
+    await client.query("UPDATE users SET total_xp = $1, level = $2 WHERE id = $3", [
+      totalXp,
+      level,
+      userId,
+    ]);
+    return { awarded: value, totalXp, level, leveledUp: level > priorState.level, duplicate: false };
+  });
+}
+
+async function ruleAmount(client: Client, ruleKey: string): Promise<number> {
+  const rows = (
+    await client.query<{ amount: number; enabled: boolean }>(
+      "SELECT amount, enabled FROM xp_rules WHERE key = $1",
+      [ruleKey],
+    )
+  ).rows;
+  if (rows.length === 0 || !rows[0].enabled) return 0;
+  return Number(rows[0].amount) || 0;
+}
+
+async function userXpState(
+  client: Client,
+  userId: string,
+): Promise<{ totalXp: number; level: number }> {
+  const rows = (
+    await client.query<{ total_xp: number | null; level: number | null }>(
+      "SELECT total_xp, level FROM users WHERE id = $1",
+      [userId],
+    )
+  ).rows;
+  if (rows.length === 0) return { totalXp: 0, level: 1 };
+  return { totalXp: Number(rows[0].total_xp) || 0, level: Number(rows[0].level) || 1 };
+}
+
+/**
+ * Mirrors `services/growth.py::level_for_xp` — walk the `growth_stages`
+ * curve from level 1, spending XP per band, until it runs out or the
+ * terminal (highest `min_level`) band is reached. Bands are read fresh
+ * every call rather than cached: this is test-only code where a handful of
+ * extra round trips per journey is not a real cost, and staying uncached
+ * sidesteps ever needing an invalidation story here.
+ */
+async function levelForXp(client: Client, totalXp: number): Promise<number> {
+  const rows = (
+    await client.query<{ min_level: number; xp_to_complete: number | null }>(
+      "SELECT min_level, xp_to_complete FROM growth_stages ORDER BY min_level ASC",
+    )
+  ).rows;
+  if (rows.length === 0) return 1;
+
+  const maxLevel = rows[rows.length - 1].min_level;
+  const bands = rows.map((stage, i) => {
+    const next = rows[i + 1];
+    const span = next ? next.min_level - stage.min_level : 0;
+    const cost = stage.xp_to_complete;
+    return {
+      minLevel: stage.min_level,
+      perLevel: cost && span ? Math.floor(cost / span) : 0,
+    };
+  });
+  const xpForLevel = (level: number): number => {
+    let band: { minLevel: number; perLevel: number } | null = null;
+    for (const b of bands) {
+      if (level >= b.minLevel) band = b;
+      else break;
+    }
+    return band ? band.perLevel : 0;
+  };
+
+  let level = 1;
+  let spent = 0;
+  while (level < maxLevel) {
+    const cost = xpForLevel(level);
+    if (cost <= 0 || spent + cost > totalXp) break;
+    spent += cost;
+    level += 1;
+  }
+  return level;
 }
