@@ -2454,31 +2454,8 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .hero-info p  { font-size:12.5px !important; }
 }
 
-/* v5 navbar page-link row, restored from v4 (see landing-v5/Navbar.tsx).
-   The tabs/compact swap is v4's rule. The threshold tracks the bar: the row is
-   centred on the viewport, and the actions cluster (Ko-fi pill, Sign In, Get
-   Started) is what it runs into, measured at 0px apart at 1200px and 36px at
-   1280px. So a 1280px laptop keeps the row, and anything narrower folds. The
-   pill folds with the row, as it did when it closed the row. */
-@media (max-width: 1279px) {
-  .landing-v5 .nav-tabs    { display: none !important; }
-  .landing-v5 .nav-kofi    { display: none !important; }
-  .landing-v5 .nav-compact { display: flex !important; }
-}
-
-/* Ko-fi pill and Pages-panel hovers, ported from the v4 rules alongside the
-   markup. The pill's hover is Ko-fi brand orange, deliberately outside the
-   Sapling palette — it reads as a third-party affordance, which is the point. */
-.landing-v5 .ld-kofi:hover {
-  color: #12201A;
-  border-color: #FF5E1A;
-  background: #FFF3EC;
-}
-.landing-v5 .ld-navmenu-item:hover { background: rgba(12,86,56,0.07); color: #12201A; }
-
 /* v5 hover states (the source's `style-hover` attribute has no inline
-   React equivalent). The Ko-fi pill differs from v4: v5 tints the
-   background rather than swapping it to a solid cream. */
+   React equivalent). */
 .landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
 
 /* Gallery + feature lab hover states. */
