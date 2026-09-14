@@ -182,8 +182,19 @@ test("nodes do not move of their own accord while the page scrolls", async ({ pa
   // Sample every frame, in the page, so the measurement never depends on
   // round-trip timing. Each ring is measured against ITS OWN cluster, which
   // separates "the sim moved it" from "the section it belongs to is sticky".
+  // The document is not a fixed length: the engine folds each act down to one
+  // viewport once it has played (`foldActs` in engine/index.ts), and pulls
+  // `scrollY` back by the runway it cut. So the height is re-read on every
+  // pass rather than taken once at open, and the target is capped to leave the
+  // 30 × 40px wheel walk below somewhere to go — at 0.9 of a folded page there
+  // is otherwise nothing left under it and the walk scrolls zero.
+  expect(height).toBeGreaterThan(0);
   for (const fraction of [0.5, 0.8, 0.9]) {
-    await page.evaluate((y) => window.scrollTo(0, y), Math.round(height * fraction));
+    await page.evaluate((f) => {
+      const h = document.documentElement.scrollHeight;
+      const max = h - window.innerHeight;
+      window.scrollTo(0, Math.max(0, Math.min(Math.round(h * f), max - 1400)));
+    }, fraction);
     await page.waitForTimeout(700);
 
     await page.evaluate(() => {
@@ -234,10 +245,16 @@ test("nodes do not move of their own accord while the page scrolls", async ({ pa
           compared++;
         }
       }
+      // Travel, not net displacement: a fold mid-walk pulls scrollY back, so
+      // the end-to-start difference can be small on a page that moved plenty.
+      let scrolled = 0;
+      for (let i = 1; i < w.__frames.length; i++) {
+        scrolled += Math.abs(w.__frames[i].y - w.__frames[i - 1].y);
+      }
       return {
         worst: Math.max(0, ...travelled.values()),
         compared,
-        scrolled: w.__frames.at(-1)!.y - w.__frames[0].y,
+        scrolled,
       };
     });
 
@@ -319,11 +336,14 @@ test("a cluster holds still against its act, through the pin and the release", a
     }));
     return {
       spreads,
-      scrolled: w.__act.at(-1)!.y - w.__act[0].y,
+      // Where the act ended up, not how far scrollY moved: once the act has
+      // played the engine folds it to one viewport and pulls scrollY back by
+      // the runway it cut, so a pixel count under-reports a full crossing.
+      actBottom: document.getElementById("act-tutor")!.getBoundingClientRect().bottom,
     };
   });
 
-  expect(result.scrolled, "should have crossed the whole act").toBeGreaterThan(act.height * 0.7);
+  expect(result.actBottom, "should have crossed the whole act and come out below it").toBeLessThan(0);
   expect(result.spreads.length, "both act-tutor clusters should have been seen").toBe(2);
   for (const { k, samples, spread } of result.spreads) {
     expect(samples, `cluster ${k} should have been sampled`).toBeGreaterThan(30);
