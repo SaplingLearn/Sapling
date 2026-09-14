@@ -43,9 +43,18 @@ MAX_PROPERTIES_PER_OBJECT = 8
 MAX_OBJECT_DEPTH = 2
 MAX_TOTAL_PROPERTIES = 20
 
-# Modules that never define agents. `function_handlers_e2e` self-registers
-# E2E seam handlers on import — never import it from the hermetic lane.
-_SKIP_MODULES = {"function_handlers_e2e"}
+# Modules that never define agents. The `function_handlers_*` modules
+# self-register per-task handlers on the #391 seam as an IMPORT SIDE EFFECT,
+# and `AGENTS` below is built at module scope — i.e. at pytest COLLECTION,
+# in the same process that then runs every selected test, even when this
+# file's own tests are deselected (`-m integration`). Importing one here
+# registers its handlers over whatever SAPLING_FUNCTION_HANDLERS installed:
+# `function_handlers_showcase` (gallery screenshots, a different quiz answer
+# key) did exactly that to the integration lane's quiz tests the day it
+# landed (#586). Skip the whole family by prefix, not by name, so the
+# next fork cannot repeat it.
+_SKIP_MODULES = {"function_handlers_e2e", "function_handlers_showcase"}
+_SKIP_PREFIX = "function_handlers"
 
 # name -> has structured (BaseModel) output. Free-text (str) agents have no
 # output validation to retry; the streaming tutor's failure handling belongs
@@ -83,7 +92,11 @@ def _discover_agents() -> dict[str, Agent]:
     by identity (workers are re-imported by agents/document.py)."""
     found: dict[int, tuple[str, Agent]] = {}
     for info in pkgutil.iter_modules(agents_pkg.__path__):
-        if info.name.startswith("_") or info.name in _SKIP_MODULES:
+        if (
+            info.name.startswith("_")
+            or info.name in _SKIP_MODULES
+            or info.name.startswith(_SKIP_PREFIX)
+        ):
             continue
         module = importlib.import_module(f"agents.{info.name}")
         for attr_name in dir(module):
