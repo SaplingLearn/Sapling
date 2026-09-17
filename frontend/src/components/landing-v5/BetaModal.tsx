@@ -130,7 +130,7 @@ export function BetaModal({
       onClick={dismiss}
     >
       <HeroCard
-        className={`relative w-full ${closing ? 'modal-card-out' : 'modal-card-in'}`}
+        className={`relative w-full ld-betacard ${closing ? 'modal-card-out' : 'modal-card-in'}`}
         style={{
           maxWidth: 'min(1040px, 94vw)', width: '100%',
           display: 'grid', gridTemplateColumns: '1fr 1px 1fr',
@@ -158,7 +158,7 @@ export function BetaModal({
         </button>
 
         {/* ── left: brand + beta tester role ── */}
-        <div className="hero-surface" style={{ padding: '36px 36px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
+        <div className="hero-surface ld-beta-left" style={{ padding: '36px 36px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Image src="/sapling-icon.svg" alt="Sapling" width={22} height={22} />
             <span style={{ fontFamily: SPECTRAL, fontWeight: 700, fontSize: 17, color: 'var(--brand-forest)', letterSpacing: '-0.02em' }}>Sapling</span>
@@ -212,14 +212,14 @@ export function BetaModal({
           </div>
         </div>
 
-        <div style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
+        <div className="ld-beta-divider" style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
 
         {/* ── right: newsletter ── */}
-        <div className="hero-surface" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
+        <div className="hero-surface ld-beta-right" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
           <div style={{ fontFamily: JETBRAINS, fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10 }}>
             ● Issue 001 dropping soon
           </div>
-          <h1 id={labelId} style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
+          <h1 id={labelId} className="ld-beta-title" style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
             Join the<br />
             <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Newsletter</span>
           </h1>

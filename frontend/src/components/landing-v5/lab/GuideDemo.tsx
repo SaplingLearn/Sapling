@@ -57,7 +57,7 @@ export function GuideDemo() {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', minHeight: '100%', boxSizing: 'border-box' }}>
+    <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 220px', minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12, borderRight: '1px solid #ECE9DE' }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <select

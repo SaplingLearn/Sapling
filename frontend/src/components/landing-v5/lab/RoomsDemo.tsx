@@ -54,7 +54,7 @@ export function RoomsDemo() {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', minHeight: '100%', boxSizing: 'border-box' }}>
+    <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 300px', minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10, borderRight: '1px solid #ECE9DE' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 14, fontWeight: 600 }}>MA 242 Study Room</span>

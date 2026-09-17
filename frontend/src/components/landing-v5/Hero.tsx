@@ -313,7 +313,7 @@ export function Hero({
 
   return (
     <section
-      className="landing-page antialiased relative min-h-screen flex items-center justify-center"
+      className="landing-page antialiased relative min-h-svh flex items-center justify-center"
       style={{ fontFamily: 'var(--font-inter), sans-serif', color: 'var(--text, #1a1a1a)', background: 'transparent' }}
     >
       <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
@@ -440,7 +440,7 @@ export function Hero({
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 650ms',
-        }} className="font-dm-sans text-base md:text-lg font-medium text-[var(--text)] max-w-[560px] mx-auto mt-8 leading-[1.55] text-pretty">
+        }} className="font-dm-sans text-base md:text-lg font-medium text-[var(--text)] max-w-[560px] mx-auto mt-6 md:mt-8 leading-[1.55] text-pretty">
           Start with the syllabus for the class you&apos;re taking right now. Sapling reads your
           whole course, learns what you know, and drills what is slipping.
         </p>
@@ -449,7 +449,7 @@ export function Hero({
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 800ms',
-        }} className="flex flex-col items-center gap-4 mt-[52px]">
+        }} className="flex flex-col items-center gap-4 mt-10 md:mt-[52px]">
           <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
             <Button variant="primary" size="xl" onClick={onBeta}>
               Sign up for Beta Testing
@@ -461,7 +461,7 @@ export function Hero({
       {/* Scroll Indicator */}
       <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 z-20 landing-animate-float-indicator flex flex-col items-center">
         <div className="w-px h-14 landing-divider-v" />
-        <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
+        <span className="font-jetbrains text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
       </div>
     </section>
   );

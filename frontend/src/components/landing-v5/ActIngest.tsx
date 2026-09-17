@@ -107,14 +107,14 @@ export function ActIngest({
       {/* holds no clusters, but the element has to exist — see DragField */}
       <DragField section="act-ingest" />
 
-      <div style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
+      <div className="ld-stage" style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
           {MOTES.map((m, i) => (
             <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
           ))}
         </div>
 
-        <div ref={ingestSceneRef} style={{ position: 'relative', maxWidth: 1180, width: '100%', margin: '0 auto', padding: '0 24px', display: 'flex', flexDirection: 'column', gap: 26 }}>
+        <div ref={ingestSceneRef} className="ld-ingest-scene" style={{ position: 'relative', maxWidth: 1180, width: '100%', margin: '0 auto', padding: '0 24px', display: 'flex', flexDirection: 'column', gap: 26 }}>
           <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 20 }}>
             {/* The heading is ours to animate; the chips, tiles and doc lines
                 below are the engine's, addressed by [data-chip] and
@@ -125,14 +125,14 @@ export function ActIngest({
                 Drop in the whole <em style={{ color: '#0C5638' }}>course.</em>
               </h2>
             </FadeIn>
-            <div style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,520px)', gap: '14px clamp(28px,5vw,72px)', alignItems: 'start' }}>
-              <p style={{ margin: 0, maxWidth: '44ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
+            <div className="ld-ingest-copy" style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,520px)', gap: '14px clamp(28px,5vw,72px)', alignItems: 'start' }}>
+              <p className="ld-ingest-p1" style={{ margin: 0, maxWidth: '44ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
                 Ask ChatGPT for practice and you get generic exercises off the internet, then an
                 empty box again. It forgets. Sapling works only from{' '}
                 <em style={{ fontStyle: 'normal', color: '#12201A', fontWeight: 600 }}>your class&rsquo;s</em>{' '}
                 material: your professor&rsquo;s slides, the syllabus, lecture notes.
               </p>
-              <p style={{ margin: 0, maxWidth: '52ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
+              <p className="ld-ingest-p2" style={{ margin: 0, maxWidth: '52ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
                 And every student who adds their documents makes the AI understand the course
                 better. One person&rsquo;s lecture notes fill a gap in another&rsquo;s slides, so the model
                 learns what this professor actually emphasizes, how they word questions, which
@@ -142,9 +142,10 @@ export function ActIngest({
             </div>
           </div>
 
-          <div ref={ingestStageRef} style={{ position: 'relative', flex: '0 0 auto', height: 'min(376px, 44vh)' }}>
+          <div ref={ingestStageRef} className="ld-ingest-stage" style={{ position: 'relative', flex: '0 0 auto', height: 'min(376px, 44vh)' }}>
             <div
               data-ingest-fit="1"
+              className="ld-ingest-fit"
               style={{
                 position: 'absolute', left: 0, right: 0, top: 0, height: 376,
                 transformOrigin: 'top left', display: 'grid',
@@ -156,6 +157,7 @@ export function ActIngest({
               <div
                 data-ingest-doc="1"
                 data-tilt="1"
+                className="ld-ingest-doc"
                 style={{ position: 'relative', height: '100%', maxWidth: 340, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', background: '#FDFCF9', border: '1px solid #E8E5DA', borderRadius: 14, padding: '22px 22px 24px', boxShadow: '0 30px 80px rgba(18,32,26,0.16)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -188,7 +190,7 @@ export function ActIngest({
               </div>
 
               {/* ── destinations ── */}
-              <div style={{ position: 'relative', width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr', gap: 16 }}>
+              <div className="ld-ingest-tiles" style={{ position: 'relative', width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr', gap: 16 }}>
                 <div data-ingest-tile="0" style={TILE}>
                   <TileHead label="GRAPH" i={0} />
                   <div aria-hidden="true" style={{ position: 'relative', flex: 1, borderRadius: 10, background: '#F6F8F4', border: '1px solid #EBF1EC', overflow: 'hidden' }}>

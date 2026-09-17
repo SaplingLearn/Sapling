@@ -42,11 +42,11 @@ export function Journal({
   onSubscribe: () => void;
 }) {
   return (
-    <section id="newsletter" style={{ position: 'relative', padding: '120px 24px 100px', zIndex: 1 }}>
+    <section id="newsletter" className="ld-journal" style={{ position: 'relative', padding: '120px 24px 100px', zIndex: 1 }}>
       <DragField section="newsletter" />
 
       <div style={{ maxWidth: 1150, margin: '0 auto' }}>
-        <FadeIn style={{ display: 'grid', gridTemplateColumns: '7fr 4fr', gap: 48, alignItems: 'end', marginBottom: 56 }}>
+        <FadeIn className="ld-journal-head" style={{ display: 'grid', gridTemplateColumns: '7fr 4fr', gap: 48, alignItems: 'end', marginBottom: 56 }}>
           <div>
             <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
               The Sapling Journal
@@ -61,7 +61,7 @@ export function Journal({
           </p>
         </FadeIn>
 
-        <FadeIn style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 22 }}>
+        <FadeIn className="ld-journal-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 22 }}>
           {POSTS.map((p, i) => (
             <div key={p.title} style={{ display: 'flex', animation: 'cardFloat 7.5s ease-in-out infinite both', animationDelay: POST_FLOAT_DELAYS[i] }}>
               <a
@@ -96,7 +96,7 @@ export function Journal({
           if the literal reappears anywhere under src/. Same pixels, one owner.
         */}
         <FadeIn
-          className="hero-surface"
+          className="hero-surface ld-newsletter"
           style={{
             marginTop: 56,
             border: '1px solid rgba(255,255,255,0.7)', borderRadius: 20,
@@ -124,7 +124,7 @@ export function Journal({
               </p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="ld-newsletter-form" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <form onSubmit={(e) => { e.preventDefault(); onSubscribe(); }} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <input
                   value={email}

@@ -197,10 +197,28 @@ export function fitIngest(stage: HTMLElement | null): number {
   const grid = stage.querySelector<HTMLElement>('[data-ingest-tile]');
   const doc = stage.querySelector<HTMLElement>('[data-ingest-doc]');
   if (!inner || !grid || !doc || !grid.parentElement) return 1;
-  const natural = Math.max(doc.offsetHeight, grid.parentElement.offsetHeight, 1);
+  // The scene's unscaled height is the lower of the document's and the
+  // tiles' bottom edges — not the taller of the two boxes, which assumed they
+  // sit side by side. On a phone the grid stacks them, and the old measure
+  // fitted the tiles alone while the document pushed the scene past the
+  // stage. `offsetTop` is relative to `inner`, the nearest positioned box.
+  const tilesBox = grid.parentElement;
+  const natural = Math.max(
+    doc.offsetTop + doc.offsetHeight,
+    tilesBox.offsetTop + tilesBox.offsetHeight,
+    1,
+  );
   const hPx = natural + 'px';
   if (inner.style.height !== hPx) inner.style.height = hPx;
   const f = Math.min(1, stage.clientHeight / natural);
+  // A uniform scale shrinks the width by the same factor, which used to
+  // leave the scene huddled in the stage's left corner on short viewports —
+  // and on a phone, where the scene stacks and always scales, in less than
+  // three quarters of the width. Widen the unscaled box by 1/f first so the
+  // scaled result spans the stage exactly. (Widening can only reduce text
+  // wrap, so `natural` never grows from it; the next refit settles.)
+  const wPx = f < 0.999 ? (stage.clientWidth / f).toFixed(2) + 'px' : '';
+  if (inner.style.width !== wPx) inner.style.width = wPx;
   const tf = f < 0.999 ? 'scale(' + f.toFixed(4) + ')' : 'none';
   if (inner.style.transform !== tf) inner.style.transform = tf;
   return f;

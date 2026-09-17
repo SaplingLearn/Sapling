@@ -262,6 +262,11 @@ export class LandingEngine {
 
     if (!this.M || now - this.measuredAt > MEASURE_MS) {
       this.measuredAt = now;
+      // Refit before measuring: the fit is what the chip flight is measured
+      // against, and it drifts when a webfont lands after mount or when the
+      // fit's own width compensation changes how the tiles wrap. A resize is
+      // no longer the only thing that can move it.
+      fitIngest(this.refs.ingestStage);
       const r = measure(
         {
           root,

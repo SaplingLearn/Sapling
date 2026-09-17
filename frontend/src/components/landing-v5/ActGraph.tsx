@@ -126,6 +126,7 @@ export function ActGraph({
       style={{ height: '460vh', position: 'relative' }}
     >
       <div
+        className="ld-stage"
         style={{
           position: 'sticky', top: 0, height: '100vh', overflow: 'hidden',
           // the first two gradients feather the top and bottom edges so the act
@@ -149,11 +150,16 @@ export function ActGraph({
           ))}
         </div>
 
+        {/* `touch-action` flips with explore mode. The canvas covers the whole
+            pinned stage, so `none` outside explore would swallow every
+            vertical swipe on a phone and strand the reader inside a 460vh
+            act; `pan-y` leaves scrolling to the browser until a tap enters
+            explore, which locks body scroll and hands the drag to the orbit. */}
         <canvas
           ref={actCanvasRef}
           style={{
             position: 'absolute', inset: 0, zIndex: 1, width: '100%', height: '100%',
-            cursor: 'grab', touchAction: 'none',
+            cursor: 'grab', touchAction: exploring ? 'none' : 'pan-y',
           }}
         />
 
@@ -163,7 +169,7 @@ export function ActGraph({
           style={{ position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none', transition: 'opacity 520ms ease' }}
         >
           {CAPTIONS.map((c, i) => (
-            <div key={i} data-cap={i} style={CAP_BOX}>
+            <div key={i} data-cap={i} className="ld-cap" style={CAP_BOX}>
               <span aria-hidden="true" style={CAP_SCRIM} />
               {c.eyebrow && <span style={EYEBROW}>{c.eyebrow}</span>}
               <h2 style={CAP_H2}>{c.head}</h2>
@@ -238,13 +244,13 @@ export function ActGraph({
 
         {/* ── explore HUD ── */}
         {exploring && (
-          <div style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none', animation: 'panelFade 420ms ease 520ms both' }}>
-            <div style={{ position: 'absolute', left: 'max(3vw,20px)', top: 24, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div className={node ? 'ld-hud ld-hud--node' : 'ld-hud'} style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none', animation: 'panelFade 420ms ease 520ms both' }}>
+            <div className="ld-hud-course" style={{ position: 'absolute', left: 'max(3vw,20px)', top: 24, display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '0.28em', color: '#0C5638' }}>{COURSE.code}</span>
               <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 21, fontWeight: 600, color: '#12201A' }}>{COURSE.name}</span>
             </div>
 
-            <div style={{ position: 'absolute', left: 'max(3vw,20px)', bottom: 26, display: 'flex', flexDirection: 'column', gap: 9, padding: '14px 16px', borderRadius: 14, background: 'rgba(253,252,249,0.8)', border: '1px solid rgba(18,32,26,0.10)', backdropFilter: 'blur(10px)', pointerEvents: 'auto' }}>
+            <div className="ld-hud-legend" style={{ position: 'absolute', left: 'max(3vw,20px)', bottom: 26, display: 'flex', flexDirection: 'column', gap: 9, padding: '14px 16px', borderRadius: 14, background: 'rgba(253,252,249,0.8)', border: '1px solid rgba(18,32,26,0.10)', backdropFilter: 'blur(10px)', pointerEvents: 'auto' }}>
               <span style={{ ...MONO_TINY, letterSpacing: '0.24em' }}>
                 {COURSE.term} · {Math.max(0, nodes.length - 1)} CONCEPTS MAPPED
               </span>
@@ -257,12 +263,12 @@ export function ActGraph({
               ))}
             </div>
 
-            <span style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9, letterSpacing: '0.22em', color: '#61726A' }}>
+            <span className="ld-hud-hint" style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9, letterSpacing: '0.22em', color: '#61726A', whiteSpace: 'nowrap' }}>
               DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A CONCEPT
             </span>
 
             {node && (
-              <div style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(253,252,249,0.92)', border: '1px solid rgba(18,32,26,0.12)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
+              <div className="ld-hud-inspector" style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(253,252,249,0.92)', border: '1px solid rgba(18,32,26,0.12)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                   <span style={{ width: 10, height: 10, borderRadius: 99, flex: '0 0 auto', background: XTIER[node.tier] }} />
                   <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5, letterSpacing: '0.24em', color: XTIER[node.tier] }}>
@@ -342,7 +348,7 @@ export function ActGraph({
             <button
               onClick={onExitExplore}
               type="button"
-              className="ld-exitexplore"
+              className="ld-exitexplore ld-hud-exit"
               style={{ position: 'absolute', right: 'max(3vw,20px)', top: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)', background: 'rgba(253,252,249,0.85)', color: '#33443B', fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5, letterSpacing: '0.2em', cursor: 'pointer', pointerEvents: 'auto', transition: 'all 220ms' }}
             >
               ✕ EXIT EXPLORE

@@ -48,8 +48,8 @@ export function FeatureLab({
         ref={panelRef}
         style={{ position: 'absolute', inset: 0, background: '#FDFCF9', overflow: 'hidden', display: 'flex', flexDirection: 'column', willChange: 'transform' }}
       >
-        <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(320px,4fr) 7fr', animation: 'panelFade 420ms ease 160ms both' }}>
-          <div style={{ padding: 'clamp(28px,5vh,56px) clamp(28px,4vw,56px)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #ECE9DE', overflow: 'auto' }}>
+        <div className="ld-lab-grid" style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(320px,4fr) 7fr', animation: 'panelFade 420ms ease 160ms both' }}>
+          <div className="ld-lab-copy" style={{ padding: 'clamp(28px,5vh,56px) clamp(28px,4vw,56px)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #ECE9DE', overflow: 'auto' }}>
             <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.3em', color: '#0C5638', textTransform: 'uppercase' }}>
               {g.num} · {g.kicker}
             </span>
@@ -58,7 +58,7 @@ export function FeatureLab({
             </h3>
             <p style={{ margin: '18px 0 0', color: '#33443B', fontSize: 15, lineHeight: 1.75, maxWidth: '44ch' }}>{g.desc}</p>
 
-            <div style={{ marginTop: 26, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="ld-lab-bullets" style={{ marginTop: 26, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {g.bullets.map((b, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                   <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 99, background: '#E6F2E8', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
@@ -73,8 +73,8 @@ export function FeatureLab({
 
           </div>
 
-          <div style={{ background: '#F1F4F0', padding: 'clamp(20px,3.4vh,40px) clamp(20px,2.6vw,44px)', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
-            <div style={{ position: 'relative', width: '100%', height: '100%', maxHeight: 660, borderRadius: 20, overflow: 'hidden', border: '1px solid #E2E6DF', background: '#FDFCF9', boxShadow: '0 30px 70px -30px rgba(18,32,26,0.32)' }}>
+          <div className="ld-lab-demo" style={{ background: '#F1F4F0', padding: 'clamp(20px,3.4vh,40px) clamp(20px,2.6vw,44px)', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
+            <div className="ld-lab-demo-frame" style={{ position: 'relative', width: '100%', height: '100%', maxHeight: 660, borderRadius: 20, overflow: 'hidden', border: '1px solid #E2E6DF', background: '#FDFCF9', boxShadow: '0 30px 70px -30px rgba(18,32,26,0.32)' }}>
               <div style={{ position: 'absolute', inset: 0 }}>
                 <FeatureLabDemo kind={LAB_KIND[g.kind]} />
               </div>
@@ -83,6 +83,7 @@ export function FeatureLab({
         </div>
 
         <div
+          className="ld-lab-rail"
           style={{ flex: '0 0 auto', borderTop: '1px solid #ECE9DE', background: '#F6F8F4', padding: '12px clamp(20px,3vw,40px)', display: 'flex', gap: 10, overflowX: 'auto', animation: 'panelFade 420ms ease 260ms both' }}
         >
           {GAL.map((r, i) => {

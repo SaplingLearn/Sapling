@@ -80,7 +80,7 @@ export function NotesDemo() {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 240px', minHeight: '100%', boxSizing: 'border-box' }}>
+    <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 240px', minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 10, borderRight: '1px solid #ECE9DE' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <input
