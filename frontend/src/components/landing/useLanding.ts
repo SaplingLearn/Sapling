@@ -477,6 +477,12 @@ export function useLanding(props: LandingProps) {
       lastX = e.clientX;
       lastY = e.clientY;
     };
+    // Touch: with `touch-action: pan-y` on the canvas, a vertical swipe is
+    // handed to the scroller and arrives here as pointercancel, not pointerup.
+    const onCancel = () => {
+      dragging = false;
+      canvas.style.cursor = 'grab';
+    };
     const onUp = (e: PointerEvent) => {
       dragging = false;
       canvas.style.cursor = 'grab';
@@ -496,12 +502,14 @@ export function useLanding(props: LandingProps) {
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onCancel);
     canvas.addEventListener('pointerleave', onLeave);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       canvas.removeEventListener('pointerdown', onDown);
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointercancel', onCancel);
       canvas.removeEventListener('pointerleave', onLeave);
       canvas.removeEventListener('wheel', onWheel);
     };

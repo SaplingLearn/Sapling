@@ -30,7 +30,7 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
 
 export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
   return (
-    <section id="cta" style={{ position: 'relative', padding: '130px 24px 120px', zIndex: 1 }}>
+    <section id="cta" className="ld-cta" style={{ position: 'relative', padding: '130px 24px 120px', zIndex: 1 }}>
       <DragField section="cta" />
 
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
@@ -87,13 +87,13 @@ const FOOTER_LINK: React.CSSProperties = { color: '#61726A', fontSize: 13.5, tra
 
 export function SiteFooter() {
   return (
-    <footer style={{ borderTop: '1px solid rgba(18,32,26,0.08)', padding: '48px 32px 44px', position: 'relative', zIndex: 1 }}>
-      <div style={{ maxWidth: 1150, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
+    <footer className="ld-footer" style={{ borderTop: '1px solid rgba(18,32,26,0.08)', padding: '48px 32px 44px', position: 'relative', zIndex: 1 }}>
+      <div className="ld-footer-row" style={{ maxWidth: 1150, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
           <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#61726A' }}>Sapling · © 2026</span>
         </div>
-        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+        <div className="ld-footer-links" style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
           {FOOTER_LINKS.map((l) => (
             <Link key={l.href} href={l.href} className="ld-navlink" style={FOOTER_LINK}>{l.label}</Link>
           ))}

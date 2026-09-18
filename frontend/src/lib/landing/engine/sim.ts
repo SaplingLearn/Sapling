@@ -222,6 +222,18 @@ export function createSim(): SimController {
     for (const a of anchors) {
       if (!a.field.isConnected) continue;
       const r = a.field.getBoundingClientRect();
+      // The field is `display:none` below 1024px (globals.css), but the
+      // clusters were re-homed into the fixed overlay at build time and
+      // outlive it. A hidden field measures 0x0 at the viewport origin, so
+      // without this a window narrowed after init parked every cluster in
+      // the top-left corner of the screen, on every section including the
+      // hero. The overlay shell is hidden by the same media query; this is
+      // the belt to that brace.
+      if (r.width === 0 && r.height === 0) {
+        if (a.el.style.visibility !== 'hidden') a.el.style.visibility = 'hidden';
+        continue;
+      }
+      if (a.el.style.visibility) a.el.style.visibility = '';
       // How far the copy has pinned away from its field since build time.
       let dy = 0;
       if (a.track?.isConnected) {
