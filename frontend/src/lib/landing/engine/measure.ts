@@ -215,8 +215,10 @@ export function fitIngest(stage: HTMLElement | null): number {
   // leave the scene huddled in the stage's left corner on short viewports —
   // and on a phone, where the scene stacks and always scales, in less than
   // three quarters of the width. Widen the unscaled box by 1/f first so the
-  // scaled result spans the stage exactly. (Widening can only reduce text
-  // wrap, so `natural` never grows from it; the next refit settles.)
+  // scaled result spans the stage exactly. Widening only settles if no box's
+  // height follows its width: text wrap only shrinks, but the graph tile's
+  // SVG grew with it and fed each refit a taller scene (0.45 on a phone) —
+  // globals.css takes that SVG out of flow on phones.
   const wPx = f < 0.999 ? (stage.clientWidth / f).toFixed(2) + 'px' : '';
   if (inner.style.width !== wPx) inner.style.width = wPx;
   const tf = f < 0.999 ? 'scale(' + f.toFixed(4) + ')' : 'none';

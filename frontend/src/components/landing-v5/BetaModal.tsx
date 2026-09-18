@@ -1,12 +1,14 @@
 'use client';
 
 /**
- * Beta access + newsletter dialog.
+ * Beta waitlist dialog.
  *
  * This is the modal the previous landing page shipped — recovered rather than
- * reinvented, so what runs here is what has been on staging: a two-column
- * card, brand and beta-tester panel on the left, newsletter pitch and signup
- * on the right.
+ * reinvented: a two-column card, brand and beta-tester panel on the left,
+ * waitlist signup on the right. It used to lead with the newsletter, but
+ * the address lands in `newsletter_emails`, which is the beta waitlist
+ * (admins grant access from it via /api/admin/allowlist/approve). So the
+ * dialog leads with the waitlist, and the newsletter is the footnote.
  *
  * A departure from `Sapling Landing v5.dc.html`, which wires both beta CTAs
  * to scroll down to the newsletter section instead. Requested.
@@ -32,11 +34,13 @@ const SPECTRAL = "var(--font-spectral), 'Spectral', Georgia, serif";
 const JETBRAINS = "var(--font-jetbrains), 'JetBrains Mono', monospace";
 const DM = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
-/** The three newsletter perks, each with its own accent dot. */
+/** The three perks of being on the list, each with its own accent dot.
+ *  Waitlist perks first, the newsletter's last — phones show only the
+ *  first two. */
 const PERKS = [
   { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
-  { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
   { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
+  { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
 ];
 
 export function BetaModal({
@@ -112,10 +116,10 @@ export function BetaModal({
           aria-labelledby={labelId}
         >
           <h2 id={labelId} style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
-            You&apos;re on the <span style={{ fontStyle: 'italic', color: 'var(--brand-forest)' }}>tree.</span>
+            You&apos;re on the <span style={{ fontStyle: 'italic', color: 'var(--brand-forest)' }}>waitlist.</span>
           </h2>
           <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
-            See you in the inbox - The Team
+            We&apos;ll be in touch when your spot opens - The Team
           </p>
         </HeroCard>
       </div>
@@ -216,18 +220,15 @@ export function BetaModal({
 
         {/* ── right: newsletter ── */}
         <div className="hero-surface ld-beta-right" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontFamily: JETBRAINS, fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10 }}>
-            ● Issue 001 dropping soon
-          </div>
           <h1 id={labelId} className="ld-beta-title" style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
-            Join the<br />
-            <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Newsletter</span>
+            Join the{' '}
+            <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Waitlist</span>
           </h1>
           <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
-            Hear fun stories from students like you.
+            Leave your email and we&apos;ll let you in when your spot opens.
           </p>
 
-          <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="ld-beta-perks" style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
             {PERKS.map(({ dot, title, body }) => (
               <div key={title} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 12, alignItems: 'start' }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: dot, boxShadow: `0 0 8px ${dot}55`, marginTop: 8, flexShrink: 0 }} />
@@ -239,7 +240,7 @@ export function BetaModal({
             ))}
           </div>
 
-          <form onSubmit={submit} style={{ marginTop: 'auto', paddingTop: 28 }}>
+          <form onSubmit={submit} className="ld-beta-form" style={{ marginTop: 'auto', paddingTop: 28 }}>
             <div style={{ position: 'relative', marginBottom: 10 }}>
               <input
                 ref={inputRef}
@@ -278,10 +279,10 @@ export function BetaModal({
                 justifyContent: 'center', gap: 8, fontFamily: DM,
               }}
             >
-              {subscribing ? 'Planting your node…' : <>Sign Me Up <span style={{ opacity: 0.7 }}>→</span></>}
+              {subscribing ? 'Planting your node…' : <>Join the Waitlist <span style={{ opacity: 0.7 }}>→</span></>}
             </button>
             <p style={{ margin: '12px 0 0', fontSize: 11.5, color: '#6b7280', textAlign: 'center', lineHeight: 1.5 }}>
-              By joining the newsletter, you&apos;ll also be added to the beta waitlist.
+              You&apos;ll also get our occasional newsletter while you wait.
             </p>
           </form>
         </div>

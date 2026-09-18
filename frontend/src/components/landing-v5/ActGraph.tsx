@@ -203,7 +203,7 @@ export function ActGraph({
           ))}
 
           {/* the closing caption sits low and centred rather than left-aligned */}
-          <div data-cap="3" style={{ position: 'absolute', left: 0, right: 0, bottom: '9vh', zIndex: 4, textAlign: 'center', opacity: 0, pointerEvents: 'none' }}>
+          <div data-cap="3" className="ld-cap-close" style={{ position: 'absolute', left: 0, right: 0, bottom: '9vh', zIndex: 4, textAlign: 'center', opacity: 0, pointerEvents: 'none' }}>
             <span
               aria-hidden="true"
               style={{

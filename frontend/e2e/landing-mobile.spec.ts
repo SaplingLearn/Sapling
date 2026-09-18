@@ -78,12 +78,26 @@ test("a finger can scroll through the graph act", async ({ page }) => {
   ).toBe("pan-y");
 });
 
-test("the ingest act stacks its copy and fits its scene to the stage", async ({ page }) => {
+test("the graph act's closing caption keeps off the screen edges", async ({ page }) => {
+  await openLanding(page);
+  // "See what you know." spans the stage edge to edge; its line used to run
+  // from 2px to 388px on a 390px screen
+  const pad = await page.evaluate(() => {
+    const s = getComputedStyle(document.querySelector('[data-cap="3"]')!);
+    return Math.min(parseFloat(s.paddingLeft), parseFloat(s.paddingRight));
+  });
+  expect(pad).toBeGreaterThanOrEqual(20);
+});
+
+test("the ingest act leads with its copy and gives the scene the screen", async ({ page }) => {
   await openLanding(page);
 
-  // the collapsed grid gave this paragraph ~30px and one word per line
-  const copy = await page.locator(".ld-ingest-p1").boundingBox();
+  // The heading and pitch scroll in ahead of the pinned act. Pinned with the
+  // scene, they left it a third of the screen and it drew at 0.45. The
+  // collapsed grid before that gave the pitch ~30px and one word per line.
+  const copy = await page.locator(".ld-ingest-intro p").boundingBox();
   expect(copy!.width).toBeGreaterThan(300);
+  await expect(page.locator(".ld-ingest-head")).toBeHidden();
 
   await scrollInto(page, "#act-ingest", 1_200);
   const r = await page.evaluate(() => {
@@ -93,12 +107,16 @@ test("the ingest act stacks its copy and fits its scene to the stage", async ({ 
     const tiles = document.querySelectorAll("[data-ingest-tile]");
     const first = box(tiles[0]);
     const last = box(tiles[tiles.length - 1]);
+    const tf = (document.querySelector("[data-ingest-fit]") as HTMLElement).style.transform;
     return {
       stageBottom: stage.bottom, stageRight: stage.right, stageLeft: stage.left,
       docBottom: doc.bottom, firstTileTop: first.top, lastBottom: last.bottom, lastRight: last.right,
+      scale: tf.startsWith("scale(") ? parseFloat(tf.slice(6)) : 1,
       vh: window.innerHeight,
     };
   });
+  // drawn near full size, not as a thumbnail
+  expect(r.scale).toBeGreaterThan(0.85);
   // document above the destinations, not beside them
   expect(r.docBottom).toBeLessThanOrEqual(r.firstTileTop + 1);
   // the fitted scene ends inside its stage, and the stage inside the screen
@@ -133,6 +151,32 @@ test("the tutor act docks its card above the floor", async ({ page }) => {
   expect(r.faceRight).toBeLessThanOrEqual(VW);
 });
 
+test("the tutor cards stay card-sized on a tall phone", async ({ page }) => {
+  // Filling whatever height the phone had left made them 484px portrait
+  // slabs at 390x844; each face is trimmed to fit the capped card instead.
+  await page.setViewportSize({ width: VW, height: 844 });
+  await openLanding(page);
+  for (let i = 0; i < 2; i++) {
+    await page.evaluate(() => {
+      const el = document.getElementById("act-tutor")!;
+      window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY + el.offsetHeight - window.innerHeight - 10);
+    });
+    await page.waitForTimeout(1_500);
+  }
+  await page.waitForTimeout(2_500);
+  const face = await page.locator('[data-panel="0"]').boundingBox();
+  expect(face!.height).toBeLessThanOrEqual(370);
+  // the Socratic chat shows whole bubbles, not one cut off at the card's floor
+  const cut = await page.evaluate(() => {
+    const chat = document.querySelector(".ld-tface-chat")!;
+    const bottom = chat.getBoundingClientRect().bottom;
+    return Array.from(chat.children).filter(
+      (b) => (b as HTMLElement).offsetParent && b.getBoundingClientRect().bottom > bottom + 0.5,
+    ).length;
+  });
+  expect(cut).toBe(0);
+});
+
 test("narrowing a desktop window does not strand the drag clusters on screen", async ({ page }) => {
   // The sim re-homes the clusters into a fixed overlay once they scroll into
   // view at desktop width. Below 1024px the field is hidden, but the overlay
@@ -153,6 +197,13 @@ test("narrowing a desktop window does not strand the drag clusters on screen", a
     }).length,
   );
   expect(stray).toBe(0);
+});
+
+test("the gallery rails are tablet-and-up", async ({ page }) => {
+  await openLanding(page);
+  // "The rest of the grove": two drifting rails of 372px cards don't read at
+  // phone width. The feature lab stays reachable from the explore HUD.
+  await expect(page.locator("#gallery")).toBeHidden();
 });
 
 test("faq, journal and newsletter stack into one column", async ({ page }) => {
@@ -187,4 +238,9 @@ test("the beta dialog fits the phone and leads with the form", async ({ page }) 
   await expect(dialog.getByLabel("Email address")).toBeInViewport();
   // the brand panel is tablet-and-up; the form is the action
   await expect(page.locator(".ld-beta-left")).toBeHidden();
+  // two perks, not three: with all three the card stood 639px tall and
+  // scrolled inside itself
+  expect(
+    await page.locator(".ld-betacard").evaluate((el) => el.scrollHeight > el.clientHeight + 1),
+  ).toBe(false);
 });

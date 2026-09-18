@@ -2484,7 +2484,6 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .ld-tutor-carousel { width: min(430px, 60vw) !important; height: min(500px, 44vh) !important; }
   .landing-v5 .ld-faq-grid       { grid-template-columns: 1fr !important; gap: 40px !important; }
   .landing-v5 .ld-faq-intro      { position: static !important; }
-  .landing-v5 .ld-journal-head   { grid-template-columns: 1fr !important; gap: 18px !important; }
   .landing-v5 .ld-journal-cards  { grid-template-columns: 1fr 1fr !important; }
   /* feature lab: copy above, live demo below, rail along the bottom */
   .landing-v5 .ld-lab-grid       { grid-template-columns: 1fr !important; grid-template-rows: auto minmax(0, 1fr); }
@@ -2511,6 +2510,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .ld-cap            { left: 20px !important; right: 48px; max-width: none !important; }
   .landing-v5 .ld-cap h2         { font-size: clamp(2rem, 9.4vw, 2.4rem) !important; }
   .landing-v5 .ld-cap p          { font-size: 14.5px !important; }
+  /* the closing "See what you know." spans the stage edge to edge, so its
+     line ran from 2px to 388px on a 390px screen */
+  .landing-v5 .ld-cap-close      { padding: 0 24px; }
   .landing-v5 .ld-hud-course     { max-width: calc(100% - 200px); }
   .landing-v5 .ld-hud-course span:last-child { font-size: 16px !important; line-height: 1.2; }
   .landing-v5 .ld-hud-legend     { padding: 10px 12px !important; gap: 6px !important; }
@@ -2530,35 +2532,71 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
      matches so the strip below a short stage reads as the same ground */
   .landing-v5 #act-graph         { background: #DCE7DF; }
 
-  /* act II — the syllabus sits above the four destinations and the whole
-     scene scales to whatever the heading leaves it, with 28px of floor
-     clearance. The second paragraph (the network-effect pitch) is
-     tablet-and-up: with it the pinned stage has no room left for the
-     animation, which is the act. */
-  .landing-v5 .ld-ingest-scene   { padding: 48px 18px 28px !important; gap: 16px !important; }
-  .landing-v5 .ld-ingest-scene h2 { font-size: 2rem !important; }
-  .landing-v5 .ld-ingest-p1      { font-size: 13.5px !important; line-height: 1.6 !important; max-width: none !important; }
-  .landing-v5 .ld-ingest-p2      { display: none !important; }
-  .landing-v5 .ld-ingest-stage   { height: clamp(200px, calc(100vh - 340px), 560px) !important; height: clamp(200px, calc(100svh - 340px), 560px) !important; }
+  /* act II — the kicker, heading and pitch scroll in ahead of the act
+     (.ld-ingest-intro, outside the section) and the pinned stage is all
+     scene. With the copy pinned alongside, the scene got a third of the
+     screen and drew at under half size. The stage takes the screen less
+     64px under the nav (it slides back on any upward scroll, and would sit
+     on the syllabus header) and 28px of floor, up to the scene's natural
+     stacked height; the syllabus sits above the four destinations. The
+     second paragraph (the network-effect pitch) is tablet-and-up. */
+  /* the section's top 64px is nav clearance for the pinned scene; pulled
+     up under the intro so the pitch isn't followed by ~70px of empty space */
+  .landing-v5 .ld-ingest-intro   { display: block !important; z-index: 1; margin-bottom: -40px; }
+  .landing-v5 #act-ingest .ld-stage { align-items: flex-start !important; }
+  .landing-v5 .ld-ingest-head    { display: none !important; }
+  .landing-v5 .ld-ingest-scene   { padding: 64px 18px 28px !important; gap: 0 !important; }
+  .landing-v5 .ld-ingest-stage   { height: min(calc(100vh - 92px), 660px) !important; height: min(calc(100svh - 92px), 660px) !important; }
   .landing-v5 .ld-ingest-fit     { grid-template-columns: 1fr !important; gap: 14px !important; }
   .landing-v5 .ld-ingest-doc     { max-width: none !important; height: auto !important; padding: 16px !important; }
   .landing-v5 .ld-ingest-tiles   { gap: 10px !important; }
   .landing-v5 [data-ingest-tile] { min-height: 120px !important; }
+  /* The graph's SVG sized its tile from its aspect ratio, so each time the
+     fit widened the scene (engine/measure.ts fitIngest) the tile grew, the
+     scene got taller and the next fit shrank it further — it settled at
+     0.45 on a 664px screen. Out of flow, the tile's height is its own. */
+  .landing-v5 .ld-ingest-graph svg { position: absolute; inset: 0; }
 
   /* act III — heading, caption and pills above the prism. The carousel's
      box is inside a `zoom: 1.2403` subtree, so its CSS height is the
      on-screen budget divided by that. */
   .landing-v5 .ld-tutor-grid     { padding: 48px 18px 28px !important; }
   .landing-v5 .ld-tutor-h2       { font-size: clamp(1.9rem, 8.6vw, 2.4rem) !important; }
-  .landing-v5 .ld-tutor-caps     { min-height: 96px !important; margin-top: 14px !important; }
+  /* even rhythm: heading, caption, pills and card 20px apart. The three
+     captions cross-fade in one grid cell instead of an absolute stack under
+     a fixed min-height, so the box is exactly as tall as the longest one at
+     this width — the fixed height left 29px of dead space above the pills */
+  .landing-v5 .ld-tutor-caps     { display: grid; min-height: 0 !important; margin-top: 20px !important; }
+  .landing-v5 .ld-tutor-caps > [data-tcap] { position: relative !important; inset: auto !important; grid-area: 1 / 1; }
   .landing-v5 .ld-tutor-caps p   { font-size: 14px !important; }
-  .landing-v5 .ld-tutor-pills button { padding: 8px 12px !important; font-size: 9.5px !important; }
-  .landing-v5 .ld-tutor-carousel { width: min(430px, 68vw) !important; height: clamp(190px, calc((100vh - 360px) / 1.2403), 500px) !important; height: clamp(190px, calc((100svh - 360px) / 1.2403), 500px) !important; }
+  /* the pills and the card below share the copy's 18px edges: three equal
+     pills across the full width, the card as wide as the column (its CSS box
+     sits inside a `zoom: 1.2403` subtree, hence the division) */
+  .landing-v5 .ld-tutor-pills    { width: 100%; margin-top: 16px !important; }
+  .landing-v5 .ld-tutor-pills button { flex: 1 1 0; padding: 8px 0 !important; font-size: 9.5px !important; text-align: center; }
+  /* capped at 290px (360px on screen): filling whatever height the phone
+     had left made them tall portrait slabs — 484px on an 844px screen */
+  .landing-v5 .ld-tutor-carousel { width: min(430px, calc((100vw - 36px) / 1.2403)) !important; height: clamp(190px, calc((100vh - 360px) / 1.2403), 290px) !important; height: clamp(190px, calc((100svh - 360px) / 1.2403), 290px) !important; }
+  /* Each face was drawn for a ~500px card and overflowed even Jose's
+     phone height (243px with the toolbar showing): the chat cut off
+     mid-bubble, the rotation diagram squeezed to 18px, the coverage list to
+     nothing. On a phone each face keeps its point and drops the rest —
+     Socratic the opening question and answer, Expository the explanation
+     and its sources, TeachBack the student's words and the gap found. */
+  .landing-v5 .ld-tface-chat     { justify-content: flex-start !important; }
+  .landing-v5 .ld-tface-chat > :nth-child(n+3),
+  .landing-v5 .ld-tface-note,
+  .landing-v5 .ld-tface-diagram,
+  .landing-v5 .ld-tface-cases,
+  .landing-v5 .ld-tface-rec,
+  .landing-v5 .ld-tface-cover    { display: none !important; }
+  .landing-v5 .ld-tface-expo     { grid-template-rows: auto auto minmax(0,1fr) auto !important; }
+  .landing-v5 .ld-tface-teach    { grid-template-rows: auto minmax(0,1fr) auto !important; }
 
-  /* gallery */
-  .landing-v5 .ld-gal-head       { padding: 0 18px !important; }
-  .landing-v5 .ld-gal-head p     { font-size: 13.5px !important; }
-  .landing-v5 .ld-galcard        { width: min(372px, 84vw) !important; }
+  /* gallery — "The rest of the grove" is tablet-and-up. Two drifting rails
+     of 372px cards don't read at phone width; the feature lab it opens stays
+     reachable from the explore HUD. */
+  .landing-v5 #gallery           { display: none !important; }
 
   /* faq */
   .landing-v5 .ld-faq            { padding: 84px 18px !important; }
@@ -2587,7 +2625,13 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .ld-beta-left,
   .landing-v5 .ld-beta-divider   { display: none !important; }
   .landing-v5 .ld-beta-right     { padding: 40px 22px 26px !important; }
-  .landing-v5 .ld-beta-title     { font-size: 36px !important; }
+  /* one line across the top, clear of the close button down to 360px */
+  .landing-v5 .ld-beta-title     { font-size: min(36px, 9.3vw) !important; }
+  /* two perks, not three: with all three the dialog stood 639px tall and
+     scrolled inside itself on a 664px screen */
+  .landing-v5 .ld-beta-perks     { margin-top: 20px !important; }
+  .landing-v5 .ld-beta-perks > :nth-child(n+3) { display: none !important; }
+  .landing-v5 .ld-beta-form      { padding-top: 22px !important; }
 
   /* feature lab — the close button sits inside the copy pane's gutter */
   .landing-v5 .ld-lab-copy       { max-height: 38vh; padding: 20px 56px 16px 18px !important; }
@@ -2599,18 +2643,26 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 }
 
 /* Short phones (an SE, or any phone with the browser's toolbars showing):
-   the copy above the two illustrated stages tightens so the illustration
-   keeps its floor clearance instead of being scaled into illegibility. */
+   the copy above the tutor's stage tightens so the carousel keeps its floor
+   clearance instead of being scaled into illegibility. (The ingest act has
+   no copy in its stage on a phone.) */
 @media (max-width: 640px) and (max-height: 620px) {
-  .landing-v5 .ld-ingest-scene   { padding-top: 36px !important; gap: 10px !important; }
-  .landing-v5 .ld-ingest-scene h2 { font-size: 1.7rem !important; }
-  .landing-v5 .ld-ingest-p1      { font-size: 12.5px !important; line-height: 1.5 !important; }
-  .landing-v5 .ld-ingest-stage   { height: clamp(180px, calc(100vh - 300px), 560px) !important; height: clamp(180px, calc(100svh - 300px), 560px) !important; }
-  .landing-v5 .ld-tutor-grid     { padding-top: 36px !important; gap: 12px !important; }
+  .landing-v5 .ld-tutor-grid    { padding-top: 36px !important; gap: 12px !important; }
   .landing-v5 .ld-tutor-h2       { font-size: 1.7rem !important; }
-  .landing-v5 .ld-tutor-caps     { min-height: 72px !important; margin-top: 10px !important; }
+  .landing-v5 .ld-tutor-caps     { margin-top: 14px !important; }
+  .landing-v5 .ld-tutor-pills    { margin-top: 12px !important; }
   .landing-v5 .ld-tutor-caps p   { font-size: 13px !important; }
   .landing-v5 .ld-tutor-carousel { height: clamp(170px, calc((100vh - 320px) / 1.2403), 500px) !important; height: clamp(170px, calc((100svh - 320px) / 1.2403), 500px) !important; }
+  /* a ~186px card: Expository drops its title for the explanation */
+  .landing-v5 .ld-tface-expo h3  { display: none !important; }
+  .landing-v5 .ld-tface-expo     { grid-template-rows: auto minmax(0,1fr) auto !important; }
+}
+
+/* Under ~650px of height the tutor card is too short for the Socratic
+   question and its answer, so it keeps only the question. */
+@media (max-width: 640px) and (max-height: 650px) {
+  .landing-v5 .ld-tface-chat > :nth-child(n+2) { display: none !important; }
+  .landing-v5 .ld-tface-chat > :first-child { padding-top: 6px !important; padding-bottom: 6px !important; }
 }
 
 /* ── Companion pages (About, Team, Wiki, Gallery, News, FAQ) ───────

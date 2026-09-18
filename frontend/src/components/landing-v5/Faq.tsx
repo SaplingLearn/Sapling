@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * FAQ — a sticky question on the left, an accordion on the right.
+ * FAQ — a sticky title on the left, an accordion on the right.
  *
  * Ported from `Sapling Landing v5.dc.html`. The answer panels animate on
  * `max-height` rather than `height:auto`, which is what the source does and
@@ -9,6 +9,7 @@
  * interruptible without measuring.
  */
 
+import Link from 'next/link';
 import { FAQS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
@@ -61,23 +62,20 @@ export function Faq({
         */}
         <FadeIn data-drag-anchor="faq" className="ld-faq-intro" style={{ position: 'sticky', top: 110 }}>
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
-            Honest answers
+            FAQ
           </span>
           <h2 style={{ margin: '20px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#12201A' }}>
-            {/* Explicit space: a literal one after </em> sits on the text
-                node's leading edge and does not survive the JSX text trim —
-                the heading rendered as "forme?". Same fix as /about's
-                "Saplingis an". */}
-            &ldquo;Isn&rsquo;t AI just going to do it <em style={{ color: '#12201A' }}>for</em>{' '}me?&rdquo;
+            Honest answers about <em style={{ color: '#0C5638' }}>AI.</em>
           </h2>
           <p style={{ margin: '20px 0 0', color: '#33443B', fontSize: 15, lineHeight: 1.75, maxWidth: '38ch' }}>
-            Fair question, and the one we get most. Sapling exists because we think AI should
-            deepen understanding, not replace it. Here&rsquo;s where we stand.
+            The question we hear most: isn&rsquo;t AI just going to do the work for me? Sapling
+            exists because we think AI should deepen your understanding, not replace it. Here&rsquo;s
+            where we stand.
           </p>
           <div style={{ marginTop: 28, display: 'flex', alignItems: 'center' }}>
             <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.3em', color: '#61726A', textTransform: 'uppercase' }}>
               Still curious?{' '}
-              <a href="#faq" style={{ color: '#0C5638', textDecoration: 'underline' }}>Read the full FAQ</a>
+              <Link href="/faq" style={{ color: '#0C5638', textDecoration: 'underline' }}>Read the full FAQ</Link>
             </span>
           </div>
         </FadeIn>
