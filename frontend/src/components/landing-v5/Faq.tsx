@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * FAQ — a sticky question on the left, an accordion on the right.
+ * FAQ — a sticky title on the left, an accordion on the right.
  *
  * Ported from `Sapling Landing v5.dc.html`. The answer panels animate on
  * `max-height` rather than `height:auto`, which is what the source does and
@@ -9,6 +9,7 @@
  * interruptible without measuring.
  */
 
+import Link from 'next/link';
 import { FAQS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
@@ -39,6 +40,7 @@ export function Faq({
   return (
     <section
       id="faq"
+      className="ld-faq"
       style={{
         position: 'relative', padding: '120px 24px', zIndex: 1,
         background: 'linear-gradient(180deg, rgba(230,242,232,0) 0%, rgba(230,242,232,0.55) 18%, rgba(230,242,232,0.55) 82%, rgba(230,242,232,0) 100%)',
@@ -52,31 +54,28 @@ export function Faq({
         ))}
       </div>
 
-      <div style={{ maxWidth: 1150, margin: '0 auto', display: 'grid', gridTemplateColumns: '4fr 7fr', gap: 72, alignItems: 'start' }}>
+      <div className="ld-faq-grid" style={{ maxWidth: 1150, margin: '0 auto', display: 'grid', gridTemplateColumns: '4fr 7fr', gap: 72, alignItems: 'start' }}>
         {/*
           Sticky, so it holds while the accordion scrolls past — and named,
           because `DragField`'s `TRACKS` welds CS 112 and PH 150 to this
           column. If it stops being sticky, drop the entry there too.
         */}
-        <FadeIn data-drag-anchor="faq" style={{ position: 'sticky', top: 110 }}>
+        <FadeIn data-drag-anchor="faq" className="ld-faq-intro" style={{ position: 'sticky', top: 110 }}>
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
-            Honest answers
+            FAQ
           </span>
           <h2 style={{ margin: '20px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#12201A' }}>
-            {/* Explicit space: a literal one after </em> sits on the text
-                node's leading edge and does not survive the JSX text trim —
-                the heading rendered as "forme?". Same fix as /about's
-                "Saplingis an". */}
-            &ldquo;Isn&rsquo;t AI just going to do it <em style={{ color: '#12201A' }}>for</em>{' '}me?&rdquo;
+            Honest answers about <em style={{ color: '#0C5638' }}>AI.</em>
           </h2>
           <p style={{ margin: '20px 0 0', color: '#33443B', fontSize: 15, lineHeight: 1.75, maxWidth: '38ch' }}>
-            Fair question, and the one we get most. Sapling exists because we think AI should
-            deepen understanding, not replace it. Here&rsquo;s where we stand.
+            The question we hear most: isn&rsquo;t AI just going to do the work for me? Sapling
+            exists because we think AI should deepen your understanding, not replace it. Here&rsquo;s
+            where we stand.
           </p>
           <div style={{ marginTop: 28, display: 'flex', alignItems: 'center' }}>
             <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.3em', color: '#61726A', textTransform: 'uppercase' }}>
               Still curious?{' '}
-              <a href="#faq" style={{ color: '#0C5638', textDecoration: 'underline' }}>Read the full FAQ</a>
+              <Link href="/faq" style={{ color: '#0C5638', textDecoration: 'underline' }}>Read the full FAQ</Link>
             </span>
           </div>
         </FadeIn>
@@ -120,7 +119,7 @@ export function Faq({
                     transition: 'max-height 450ms cubic-bezier(0.22,1,0.36,1), opacity 350ms ease',
                   }}
                 >
-                  <p style={{ margin: 0, padding: '0 44px 24px 4px', color: '#33443B', fontSize: 14.5, lineHeight: 1.8 }}>
+                  <p className="ld-faq-a" style={{ margin: 0, padding: '0 44px 24px 4px', color: '#33443B', fontSize: 14.5, lineHeight: 1.8 }}>
                     {q.a}
                   </p>
                 </div>
