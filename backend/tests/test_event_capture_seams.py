@@ -111,6 +111,7 @@ def test_event_taxonomy_is_pinned():
         "session.ended",
         "rag.retrieval_failed",
         "rag.chunks_dropped",
+        "document.dedup_lookup_failed",
     })
 
 
