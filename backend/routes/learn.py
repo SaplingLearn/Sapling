@@ -131,6 +131,76 @@ def _new_run_text(result) -> str:
     return "".join(parts)
 
 
+#: Handed to the model when it ended a turn without saying anything (#646).
+#: Deliberately does NOT restate the student's question: the whole exchange,
+#: including every tool result, is already in the messages passed back, and
+#: re-asking invites a fresh answer that ignores the work just done.
+_CONTINUATION_NUDGE = (
+    "You ended your turn without replying to the student. Write that reply "
+    "now, using the tool results already in this conversation. Do not repeat "
+    "any earlier answer and do not mention this instruction."
+)
+
+#: run_kwargs keys a continuation may carry. `message_history` is REPLACED
+#: (the continuation's history is the failed run's own messages), and
+#: anything else — notably a future toolsets/usage_limits key — is dropped
+#: rather than forwarded blind.
+_CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
+
+
+async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
+    """Finish a turn the model abandoned after its tools ran (#646).
+
+    Roughly 25-40% of gemini-2.5-flash-lite turns end with no text part once
+    the tools have already executed, and Flash-Lite is the UI default. The
+    pre-#646 degrade for those turns was a visible "interrupted" error whose
+    only offered recovery — a manual retry — re-runs the turn, re-executes
+    the tools, and can apply the same append-only mastery event twice.
+
+    This is NOT a re-run. `run_result.all_messages()` already contains every
+    tool call AND its result, so the model composes the reply from them.
+
+    `override(tools=[], toolsets=[])` is what makes that a guarantee rather
+    than a hope: the continuation is handed NO tools, so it cannot write even
+    if the model tries. Without it the model could call `update_mastery_tool`
+    again and reintroduce the exact double-apply the writes-guard exists to
+    prevent — a re-run by a quieter name.
+
+    It has to be `override`, NOT `run(toolsets=[])`. A run-level `toolsets`
+    ADDS to the agent's own tools rather than replacing them, so
+    `run(toolsets=[])` leaves every tool in place — measured against
+    pydantic-ai 1.89.1, and pinned by
+    `tests/test_textless_turn_continuation.py` so a library change cannot
+    quietly re-arm the double-apply. `override` is ContextVar-scoped, so it
+    is task-local and safe under concurrent requests, and it composes with an
+    outer `override(model=...)` (the E2E seam and the agent tests) — the
+    outer model survives, verified in that same file.
+
+    The result is narrowed through `_new_run_text` for the same reason the
+    first run is: the continuation is itself a history-bearing run, so its
+    `.output` can resolve back to an earlier assistant message. A
+    continuation that produced no text of its own returns None, and the
+    caller degrades exactly as it did before this existed.
+
+    Usage is recorded under its own `feature` so the continuation's cost —
+    and how often this rung fires — is countable in `llm_usage` without
+    inventing a new `AgentTask` slot (the run IS a chat_tutor run).
+    """
+    carried = {k: run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in run_kwargs}
+    with agent.override(tools=[], toolsets=[]):
+        result = record_agent_usage(
+            await agent.run(
+                _CONTINUATION_NUDGE,
+                message_history=run_result.all_messages(),
+                **carried,
+            ),
+            feature="chat_tutor_continuation",
+            task="chat_tutor",
+            user_id=getattr(carried.get("deps"), "user_id", None),
+        )
+    return _new_run_text(result).strip() or None
+
+
 def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     """
     Find the course_id associated with a topic/concept for a user.
@@ -700,15 +770,36 @@ async def _chat_via_agent(
             # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
             # end-of-turn tool call with a bare-newline final text; and per the
             # narrowing above, a turn that ended after tool calls with no text
-            # part reaches here blank instead of replaying history. Either way
-            # this turn produced no reply: treat it as degenerate model output
-            # so the caller's UnexpectedModelBehavior handling — the route's
-            # 502 mapping, or the stream fallback's Rung-1 ladder — applies
-            # instead of persisting a stale or empty assistant row.
-            # Usage was recorded above — tokens were spent.
-            raise UnexpectedModelBehavior(
-                "chat_tutor produced no reply text this turn"
-            )
+            # part reaches here blank instead of replaying history.
+            #
+            # Try to FINISH the turn before failing it (#646). Unlike the
+            # streamed route there is no Rung-1 ladder below this — this IS
+            # that rung — so the alternative is a 502 for a turn whose tools
+            # have already run. Fire regardless of whether writes landed:
+            # nothing else will re-run, so there is no better answer waiting.
+            try:
+                rescued = await _continuation_text(agent, result, run_kwargs)
+            except Exception:
+                # Second model call; a failure here must degrade to the
+                # pre-#646 behaviour, never surface as its own error.
+                logger.warning(
+                    "Continuation after a textless JSON turn failed",
+                    exc_info=True,
+                )
+                rescued = None
+            if rescued:
+                logger.info("Textless JSON turn rescued by a continuation")
+                reply = rescued
+            else:
+                # Still nothing: this turn produced no reply. Treat it as
+                # degenerate model output so the caller's
+                # UnexpectedModelBehavior handling — the route's 502 mapping,
+                # or the stream fallback's Rung-1 ladder — applies instead of
+                # persisting a stale or empty assistant row.
+                # Usage was recorded above — tokens were spent.
+                raise UnexpectedModelBehavior(
+                    "chat_tutor produced no reply text this turn"
+                )
     except Exception as exc:
         # PR #472 review: THIS run's tools may have written graph/mastery
         # before the failure. Stamp the write-state so the streaming
@@ -896,6 +987,7 @@ async def chat_stream(body: ChatBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -1005,6 +1097,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -1329,11 +1422,25 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     reply = result.output if new_text.strip() else new_text
     if not reply.strip():
         # #153: degenerate whitespace-only output, or a turn that ended after
-        # tool calls with no text at all — surface through the guardrail
-        # mapping rather than persisting an empty or stale assistant row.
-        raise UnexpectedModelBehavior(
-            "chat_tutor produced no action reply text this turn"
-        )
+        # tool calls with no text at all. Finish the turn if the model will
+        # (#646) — an action turn has no fallback rung at all, so the
+        # alternative is failing work the tools already did.
+        try:
+            rescued = await _continuation_text(agent, result, run_kwargs)
+        except Exception:
+            logger.warning(
+                "Continuation after a textless action turn failed", exc_info=True
+            )
+            rescued = None
+        if rescued:
+            logger.info("Textless action turn rescued by a continuation")
+            reply = rescued
+        else:
+            # Surface through the guardrail mapping rather than persisting an
+            # empty or stale assistant row.
+            raise UnexpectedModelBehavior(
+                "chat_tutor produced no action reply text this turn"
+            )
 
     graph_update = merge_graph_updates(deps.graph_updates)
     save_message(body.session_id, "assistant", reply, graph_update or None)
