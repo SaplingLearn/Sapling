@@ -42,6 +42,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
+from services.encryption import decrypt_if_present  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 PAGE_SIZE = 1000
@@ -81,7 +82,14 @@ def plan_migration(rows: list[dict]) -> tuple[list[dict], list[str]]:
     """Group rows by content-hash id; return (records to upsert, ids to delete)."""
     groups: dict[str, list[dict]] = {}
     for row in rows:
-        groups.setdefault(chunk_id(row["course_id"], row["chunk_text"]), []).append(row)
+        # DECRYPT first (#484). `chunk_text` is ciphertext in the store, and
+        # `chunk_id` is defined over the plaintext — hashing the stored value
+        # would derive a different id for every row (AES-GCM draws a fresh nonce
+        # per write, so even two identical passages hash differently), which
+        # would destroy content-addressing rather than repair it. The row keeps
+        # its stored ciphertext in the upsert; only the hash input is plaintext.
+        plaintext = decrypt_if_present(row["chunk_text"])
+        groups.setdefault(chunk_id(row["course_id"], plaintext), []).append(row)
 
     upserts: list[dict] = []
     deletes: list[str] = []

@@ -212,6 +212,11 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("flashcards", "id", "back"),
     ("study_guides", "id", "content"),
     ("room_summaries", "room_id", "summary"),
+    # ADR 0025 / #484. UNIFORM across the table — document and catalog rows
+    # alike — which is exactly what makes it assertable here: "chunk_text is
+    # always ciphertext" is one invariant, while "ciphertext unless
+    # category='catalog'" is a rule this oracle could not express.
+    ("course_chunks", "id", "chunk_text"),
 )
 
 

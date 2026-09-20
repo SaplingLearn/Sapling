@@ -94,3 +94,51 @@ Write sites: `services/rag_service.py::index_document_chunks` and
 `services/rag_service.py::retrieve_chunks`, decrypting each returned chunk
 before `format_rag_context`. Plus the dedupe-script fix above, a backfill, and
 extending the `ciphertext` oracle to cover the column.
+
+## Correction, recorded at implementation (2026-09-20)
+
+Two things this ADR asserted turned out to be wrong or unfinished. Both are
+worth keeping, because a reader reaching for the threat model above would
+otherwise calibrate against a control that does not exist.
+
+**RLS is not enabled on `course_chunks`.** The threat model above says "the
+backend connects with the service-role key and RLS locks out
+`anon`/`authenticated` (#231)". No migration enables row-level security on this
+table — `0039_rag_vector_store.sql` codified the table, the ivfflat index and
+the RPC, and nothing else — and #231 was about Storage buckets, not Postgres
+RLS. So "a direct table read implies a Supabase credential compromise or an
+insider" is true only in the weaker sense that the anon key has no route to this
+table through PostgREST's schema exposure today. The bar this decision raises
+against a database-only compromise is real; the bar underneath it is lower than
+the paragraph implies.
+
+**The Implementation list was incomplete.** It named `index_document_chunks`,
+`ingest_catalog`, `retrieve_chunks`, the dedupe script, a backfill and the
+oracle. Two more read sites decrypt-or-break:
+
+- `routes/quiz.py`'s catalog de-dup compares retrieved `chunk_text` against the
+  catalog block by value. Two ciphertexts of one passage never compare equal, so
+  without the retrieval-side decrypt the course description goes to the model
+  twice and nothing says so.
+- `routes/learn.py::_get_catalog_chunk` has to decrypt *before* its
+  `"Prerequisites:"` test and its longest-chunk choice, not after. Against
+  ciphertext the first never matches and the second compares base64 lengths —
+  and still returns a chunk, which is how it would have shipped unnoticed.
+
+Both are handled by decrypting once in `retrieve_chunks_detailed` and once in
+`_get_catalog_chunk`, so every consumer downstream of them is unchanged.
+
+**One ordering constraint the ADR does not state.** Encryption must happen
+*after* the embed pass, because `_embed_documents_batch` reads `chunk_text` off
+the record it is handed. Encrypting when the record is built embeds base64: the
+upsert succeeds, the chunk count is right, the row looks indexed, and every
+vector is noise. There is no symptom at the write boundary at all — the same
+shape of silent failure as #628 — so it has its own test
+(`test_the_embedding_is_computed_from_PLAINTEXT`).
+
+**Deploy order.** There is no schema change to sequence against, but the
+backfill must run *after* the code, not before: encrypting while the old code is
+live would serve base64 straight into tutor and quiz prompts. Deploying first is
+safe and merely noisy — `decrypt_if_present` returns the raw value and logs a
+WARNING per plaintext row, which is the correct signal while the window is open
+and a real alarm once `scripts/backfill_encrypt_chunk_text.py` has run.

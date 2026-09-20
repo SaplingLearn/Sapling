@@ -18,6 +18,7 @@ from google.genai import types as genai_types
 from agents._providers import model_mode
 from db.connection import rpc, table
 from services.chunk_visibility import PRIVATE, SHARED, record_contributors
+from services.encryption import decrypt_if_present, encrypt_if_present
 from services.events_service import log_event
 
 logger = logging.getLogger(__name__)
@@ -241,9 +242,16 @@ def retrieve_chunks_detailed(
             "filter_user_id": user_id,
         }
         rows = rpc("match_course_chunks", params)
-        return Retrieval(
-            chunks=[r for r in rows if r.get("similarity", 0) >= min_similarity],
-        )
+        kept = [r for r in rows if r.get("similarity", 0) >= min_similarity]
+        # The single decrypt boundary for retrieval (#484). Every consumer —
+        # `format_rag_context`, the quiz's catalog de-dup, the benchmarks —
+        # reads `chunk_text` off these rows, so decrypting once here keeps them
+        # all unchanged rather than spreading the boundary over each of them.
+        # Ranking never touched this column (the RPC orders on `embedding`), so
+        # encryption costs retrieval nothing but ~k AES-GCM decrypts.
+        for row in kept:
+            row["chunk_text"] = decrypt_if_present(row.get("chunk_text"))
+        return Retrieval(chunks=kept)
     except _EmbeddingDisabled as e:
         # The #439 seam guard, not a failure: below-seam embedding is disabled
         # by design outside real mode, so every function-mode turn lands here.
@@ -435,6 +443,19 @@ def index_document_chunks(
 
     if not embedded:
         return 0
+
+    # ADR 0025 / #484: `chunk_text` is the same student text that
+    # `documents.extracted_text` has been encrypting since 0030, chunked. One
+    # column was treated as PII and the other was not, for no recorded reason.
+    #
+    # Encrypted HERE, last, and not when the record was built: the embed pass
+    # above reads `rec["chunk_text"]`, so encrypting earlier would embed
+    # ciphertext — every vector would be noise and retrieval would rank nothing,
+    # silently. Ids were computed on the plaintext, which is the other half of
+    # the ADR: AES-GCM draws a fresh nonce per call, so identical text encrypts
+    # differently every time and ciphertext can never be a dedup key.
+    for rec in embedded:
+        rec["chunk_text"] = encrypt_if_present(rec["chunk_text"])
 
     table("course_chunks").upsert(embedded, on_conflict="id")
     if visibility == SHARED:
