@@ -190,6 +190,7 @@ def test_unknown_expectation_degrades_to_silence(sink):
         (Expect.ENROLLED, "enrollments"),
         (Expect.HAS_ATTEMPTS, "quiz_attempts"),
         (Expect.HAS_GRAPH, "graph_nodes"),
+        (Expect.HAS_DOCUMENTS, "documents"),
     ],
 )
 def test_each_expectation_probes_its_own_table(sink, expect, table_name):
@@ -400,3 +401,37 @@ def test_the_probe_is_narrowed_to_the_scope_the_caller_supplied(sink):
 
     assert captured["course_id"] == "eq.c1"
     assert captured["user_id"] == "eq.u1"
+
+
+def test_the_documents_probe_is_course_scoped_through_the_fk_not_offering_ids(sink):
+    """`documents` keys on offering_id, and the tool that reads it resolves
+    course → offerings in app code. A probe scoped by those same ids shares the
+    read's keyspace and can only ever agree with it — the #553 blind spot. So
+    this probe joins `course_offerings` inside PostgREST and filters on the
+    abstract course: an independent route to "does this student have a live
+    document in this course". The embed must be `!inner` and must be in the
+    select, or PostgREST ignores the embedded filter."""
+    captured = {}
+
+    def factory(name):
+        m = MagicMock()
+
+        def _select(cols, **kw):
+            captured.update(kw)
+            captured["cols"] = cols
+            return []
+
+        m.select.side_effect = _select
+        return m
+
+    with patch("services.tool_signals.table", side_effect=factory):
+        report_empty_result(
+            "search_course_materials", user_id="u1", count=0,
+            expect=Expect.HAS_DOCUMENTS,
+            scope={"course_offerings.course_id": "eq.c1"},
+        )
+    assert "course_offerings!inner(course_id)" in captured["cols"]
+    assert captured["filters"]["course_offerings.course_id"] == "eq.c1"
+    assert captured["filters"]["user_id"] == "eq.u1"
+    assert captured["filters"]["deleted_at"] == "is.null"
+    assert captured["limit"] == 1

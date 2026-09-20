@@ -46,6 +46,7 @@ from pydantic_ai import RunContext
 from agents.deps import SaplingDeps
 from config import is_mastered, is_weak
 from db.connection import table
+from services.academics import course_offering_ids
 from services.encryption import decrypt_if_present, decrypt_json
 
 # Shared tokenizer (#149): factored to services/token_overlap.py so the
@@ -53,6 +54,7 @@ from services.encryption import decrypt_if_present, decrypt_json
 # this module ranks documents with. `_tokenize` stays importable under its
 # historical name for callers/tests.
 from services.token_overlap import tokenize as _tokenize
+from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,13 @@ def _score_material(query_tokens: set[str], doc: dict) -> int:
     return len(query_tokens & doc_tokens)
 
 
+# How many candidate documents to fetch per requested result. Keyword ranking
+# happens in Python after the fetch, so the query must return a POOL, not the
+# final answer — but it must still be bounded (every row is AES-decrypted on
+# the SSE path). 10x means a 5-result search reads at most 50 rows.
+_MATERIAL_CANDIDATE_FACTOR = 10
+
+
 async def search_course_materials(
     course_id: str | None,
     query: str,
@@ -119,8 +128,11 @@ async def search_course_materials(
     *,
     user_id: str,
 ) -> list[CourseMaterial]:
-    """Return the top `limit` documents owned by `user_id` in `course_id`,
-    ranked by keyword overlap with `query`.
+    """Return the top `limit` live documents owned by `user_id` in
+    `course_id`, ranked by keyword overlap with `query`.
+
+    Soft-deleted documents are excluded (`deleted_at is.null`) — a file the
+    student removed from their Library must stop reaching the tutor.
 
     #125: documents are user-scoped *within* a shared course, so the query
     MUST filter on user_id as well as course_id — otherwise another enrolled
@@ -134,23 +146,79 @@ async def search_course_materials(
     the chat tutor only grounds on materials inside the active course
     (cross-course search would leak other-class context into the chat).
 
-    Failures degrade silently to []. The agent can always answer from
-    its base knowledge — losing course materials downgrades quality but
-    shouldn't 500 the chat.
+    Failures degrade to [] rather than raising. The agent can always answer
+    from its base knowledge — losing course materials downgrades quality but
+    shouldn't 500 the chat. Every degrade path logs, including the
+    no-offering one: to the model an empty result is indistinguishable from
+    "this course has no materials", so a retrieval gap has to be visible in
+    the logs or it stays invisible forever.
     """
     if not course_id:
         return []
 
     def _fetch() -> list[dict[str, Any]]:
         try:
+            # `documents` keys on offering_id (0025) — it has no course_id
+            # column, so filtering on one 400s and the `except` below turns
+            # that into a silent []: the tutor loses every course document
+            # with no visible error. Resolve the abstract course to the
+            # user's offerings first, per the academics convention.
+            # Every offering of the course — the keyspace the WRITER stamps.
+            # Documents are written with `resolve_offering(course_id,
+            # create=True)` (routes/documents.py): current term at upload
+            # time, `enrollments` never consulted. Enrolled offerings, even
+            # unioned with TODAY's current-term offering, are strictly
+            # narrower: enrolled Fall-26, uploaded Spring-27, asked in
+            # Summer-27 — neither names Spring, so those uploads vanish from
+            # the tutor while the Library still lists them (the #553/#529
+            # shape; see `academics.course_offering_ids`). Widening costs no
+            # security: `user_id` below is the access boundary (#125), so
+            # this can only re-include the student's OWN uploads.
+            offering_ids = course_offering_ids(course_id)
+            if not offering_ids:
+                # Never silent. None is "could not tell" (the read failed or
+                # overran its scan cap), [] is a course with no offering at
+                # all; either way this is a RETRIEVAL GAP, but the model sees
+                # the same `[]` a materials-free course produces and narrates
+                # it as "your class doesn't cover this" — the failure mode
+                # that went unnoticed because nothing was logged. No user_id
+                # in the message (Style Guide: never log raw student
+                # identifiers).
+                logger.warning(
+                    "search_course_materials resolved no offering for "
+                    "course=%s (%s); returning no materials (retrieval gap, "
+                    "not an empty course)",
+                    course_id,
+                    "scope unknown" if offering_ids is None else "no offerings",
+                )
+                return []
             return (
                 table("documents").select(
                     "id,file_name,summary,concept_notes",
                     filters={
-                        "course_id": f"eq.{course_id}",
+                        # #125 user scope is preserved: documents are
+                        # user-scoped WITHIN a shared offering.
+                        "offering_id": f"in.({','.join(offering_ids)})",
                         "user_id": f"eq.{user_id}",
+                        # `documents` is soft-deleted (routes/documents.py
+                        # stamps deleted_at; every other reader filters it out
+                        # — study_guide.py, flashcards.py). Without this, a
+                        # file the student deleted from their Library keeps
+                        # getting decrypted into LLM context forever.
+                        "deleted_at": "is.null",
                     },
                     order="created_at.desc",
+                    # Bound the read. This runs on the latency-critical SSE
+                    # path and EVERY returned row gets AES-decrypted below
+                    # before the list is truncated to `limit`, so an unbounded
+                    # select makes a student with a large Library pay decrypt
+                    # cost for documents that can never be returned. The cap
+                    # is a multiple of `limit`, not `limit` itself: keyword
+                    # ranking happens after the fetch, so ranking over only
+                    # the 5 newest documents would silently turn this into
+                    # "most recent" instead of "most relevant". `created_at
+                    # .desc` means the cap drops the OLDEST documents.
+                    limit=max(1, int(limit)) * _MATERIAL_CANDIDATE_FACTOR,
                 )
                 or []
             )
@@ -272,6 +340,23 @@ async def search_course_materials_tool(
     materials = await resolve_retrieval(ctx.deps).course_materials(
         ctx.deps.course_id, query, limit, user_id=ctx.deps.user_id
     )
+    if getattr(ctx.deps, "retrieval", None) is None and ctx.deps.course_id:
+        # F5: this tool returned [] for every student for months (a filter on
+        # a dropped column, swallowed) and nothing noticed, because an empty
+        # list is what "no materials yet" looks like. Ranking never filters —
+        # any live document with content comes back — so an empty result for a
+        # student who HAS live documents in this course is a discrepancy.
+        # Skipped for an injected retrieval (evals, ADR 0023): a fixture has no
+        # database behind it to disagree with.
+        await report_empty_result_async(
+            "search_course_materials",
+            user_id=ctx.deps.user_id,
+            count=len(materials),
+            expect=Expect.HAS_DOCUMENTS,
+            feature=getattr(ctx.deps, "feature", "unknown"),
+            scope={"course_offerings.course_id": f"eq.{ctx.deps.course_id}"},
+            payload={"course_id": ctx.deps.course_id},
+        )
     return _harden_materials(materials)
 
 
