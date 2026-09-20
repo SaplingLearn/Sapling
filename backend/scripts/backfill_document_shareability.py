@@ -70,7 +70,7 @@ from db.connection import page_all, pg_quote_value, table  # noqa: E402
 from services.chunk_visibility import (  # noqa: E402
     COURSE_MATERIAL, PERSONAL_NOTES,
 )
-from services.chunker import chunk_for_category  # noqa: E402
+from services.chunker import chunk_document, chunk_prose  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
@@ -164,7 +164,7 @@ def main() -> None:
     print(f"{len(docs)} document(s) with no stored shareability.")
 
     counts: dict[str, int] = {}
-    deleted = shared_with_others = 0
+    deleted = shared_with_others = unlocated = 0
     for doc in docs:
         doc_id = doc["id"]
         user_id = doc.get("user_id") or ""
@@ -197,17 +197,44 @@ def main() -> None:
                 )
             continue
 
-        ids = [
+        # BOTH chunking strategies, unioned. `chunk_for_category` routes on the
+        # category, indexing used `classification.category`, and
+        # `documents.category` is user-editable via PATCH /doc/{id} — so a
+        # student who re-labels a solved problem set from `assignment` (prose
+        # windows) to `other` (block chunks) would make a category-routed
+        # re-chunk produce entirely different boundaries, different content
+        # hashes, and zero matches. Any chunker change since the rows were
+        # written does the same. There are only two strategies, so trying both
+        # costs nothing and removes the whole failure mode.
+        ids = sorted({
             chunk_id(code, c)
-            for c in chunk_for_category(text, doc.get("category") or "other")
-        ]
+            for chunker in (chunk_prose, chunk_document)
+            for c in chunker(text)
+        })
         present = _existing(ids)
+
+        if not present:
+            # LOUD, and shareability is deliberately NOT stored. The next run
+            # filters on `shareability is.null`, so writing it here would retire
+            # the document permanently while its chunks stayed in the shared
+            # pool — a clean-looking log over exactly the rows this script
+            # exists to withdraw.
+            print(
+                f"      !! located NONE of this document's {len(ids)} expected "
+                "chunk ids — NOT storing shareability, so a later run retries. "
+                "Likely the chunker changed, or the text differs from what was "
+                "indexed. Investigate before re-running."
+            )
+            unlocated += 1
+            continue
+
         sole, joint = _sole_contributor_ids(present, user_id)
         shared_with_others += len(joint)
+        print(f"      located {len(present)} chunk(s)")
         if joint:
             print(
-                f"      {len(joint)} chunk(s) also uploaded by someone else — "
-                "left shared, their classification stands"
+                f"      {len(joint)} also uploaded by someone else — left "
+                "shared, their classification stands"
             )
         if sole:
             print(f"      withdrawing {len(sole)} chunk(s)")
@@ -228,6 +255,11 @@ def main() -> None:
 
     print("\nSummary:", ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "nothing")
     print(f"chunks left shared (jointly uploaded): {shared_with_others}")
+    if unlocated:
+        print(
+            f"!! {unlocated} document(s) had NONE of their expected chunks "
+            "located and were left unclassified — re-run after investigating"
+        )
     if args.dry_run:
         print("(dry run — nothing written; pass --apply)")
     else:

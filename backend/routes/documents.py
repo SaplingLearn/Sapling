@@ -386,15 +386,47 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
 
 
 #: PostgREST's code for "column not found in the schema cache", plus the
-#: Postgres wording it wraps. Either shape means the column is genuinely absent
+#: Postgres wording it wraps. Either shape means a column is genuinely absent
 #: rather than the row being bad.
 _MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
 
+#: The only columns `_persist_document` is willing to ship ahead of. Anything
+#: else reported absent is a real schema problem and must surface.
+_DROPPABLE_COLUMNS = ("request_id", "shareability")
 
-def _looks_like_missing_column(exc: Exception) -> bool:
-    """True when `exc` reads like a write against a not-yet-migrated schema."""
-    text = str(exc)
-    return any(m in text for m in _MISSING_COLUMN_MARKERS)
+
+def _missing_column(exc: Exception) -> str | None:
+    """Which droppable column a PostgREST error says is absent, or None.
+
+    Reads the RESPONSE BODY, not `str(exc)`. `db/connection.py` raises through
+    httpx's `raise_for_status()`, whose message is only `Client error '400 Bad
+    Request' for url …` plus a link to MDN — the PGRST204 payload naming the
+    column never appears in it. A guard written against the exception string
+    therefore never fires, which is exactly how the first version of this
+    escape hatch shipped as dead code and left every upload failing in the one
+    window it existed to cover.
+
+    Returns the column NAME rather than a bool so the retry drops only that
+    one. Dropping both would lose `request_id` whenever `shareability` is the
+    absent one — and a client retrying with the same X-Request-ID would then no
+    longer be recognised as a replay, re-running the whole orchestrator and
+    persisting a duplicate document.
+    """
+    body = ""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            body = response.text or ""
+        except Exception:
+            body = ""
+    if not body:
+        body = str(exc)
+    if not any(m in body for m in _MISSING_COLUMN_MARKERS):
+        return None
+    for col in _DROPPABLE_COLUMNS:
+        if f"'{col}'" in body or f'"{col}"' in body:
+            return col
+    return None
 
 
 def _persist_document(
@@ -446,22 +478,24 @@ def _persist_document(
     try:
         inserted = table("documents").insert(row)
     except Exception as first:
-        # Schema may not yet have these columns; retry without them so
-        # deployments can ship the code before the migration runs. Losing
-        # `shareability` is safe in the direction that matters: an absent stored
-        # value reads as private at index time (#630), never as shareable.
+        # The schema may not yet have one of these columns; retry without THAT
+        # ONE so a deployment can ship the code before its migration runs.
+        # Losing `shareability` is safe in the direction that matters: an absent
+        # stored value reads as private at index time (#630), never as shareable.
         #
-        # Gated on the ERROR, not on which keys happen to be in the row. Keyed
-        # on presence, this became a universal retry the moment `shareability`
-        # started being set unconditionally: an FK violation on `offering_id` or
-        # a duplicate `request_id` would trigger a blind second insert with
-        # `request_id` STRIPPED — defeating the idempotent-replay detection it
-        # exists for — and would surface the retry's exception instead of the
-        # real one.
-        if not _looks_like_missing_column(first):
+        # Gated on the error BODY and narrowed to the column it names — not on
+        # which keys happen to be in the row, and not on `str(exc)`. Keyed on
+        # presence this was a universal retry that stripped `request_id` from
+        # every failure; read off the exception string it never fired at all.
+        column = _missing_column(first)
+        if column is None:
             raise
-        for col in ("request_id", "shareability"):
-            row.pop(col, None)
+        logger.warning(
+            "documents insert rejected %r as absent — retrying without it. "
+            "The migration that adds it has not run in this environment.",
+            column,
+        )
+        row.pop(column, None)
         inserted = table("documents").insert(row)
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary

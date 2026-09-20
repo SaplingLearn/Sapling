@@ -252,6 +252,11 @@ def _get_catalog_chunk(course_code: str) -> str:
             filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
             limit=5,
         )
+        # Decrypt BEFORE the "Prerequisites:" test and the longest-chunk choice
+        # below (#484): both read the text, and against ciphertext the first
+        # would never match and the second would compare base64 lengths.
+        for row in rows or []:
+            row["chunk_text"] = decrypt_if_present(row.get("chunk_text"))
         if rows:
             # Prefer a chunk that has an explicit Prerequisites line; fall back
             # to the longest chunk. Handles courses scraped from two listing
