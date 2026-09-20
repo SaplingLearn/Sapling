@@ -385,6 +385,18 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     return row
 
 
+#: PostgREST's code for "column not found in the schema cache", plus the
+#: Postgres wording it wraps. Either shape means the column is genuinely absent
+#: rather than the row being bad.
+_MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
+
+
+def _looks_like_missing_column(exc: Exception) -> bool:
+    """True when `exc` reads like a write against a not-yet-migrated schema."""
+    text = str(exc)
+    return any(m in text for m in _MISSING_COLUMN_MARKERS)
+
+
 def _persist_document(
     *,
     user_id: str,
@@ -419,6 +431,11 @@ def _persist_document(
         "offering_id": offering_id,
         "file_name": filename,
         "category": result.classification.category,
+        # #630: stored, not just acted on. Without a stored value, a re-index or
+        # a backfill has nothing to reproduce the sharing decision from, and
+        # `decide_visibility(None)` privatises everything — which is the same
+        # shape of silent corpus loss as #628.
+        "shareability": getattr(result.classification, "shareability", None),
         "summary": encrypt_if_present(summary),
         "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
@@ -428,14 +445,24 @@ def _persist_document(
         row["request_id"] = request_id
     try:
         inserted = table("documents").insert(row)
-    except Exception:
-        # Schema may not yet have the request_id column; retry without it
-        # so deployments can ship the code before the migration runs.
-        if "request_id" in row:
-            row.pop("request_id", None)
-            inserted = table("documents").insert(row)
-        else:
+    except Exception as first:
+        # Schema may not yet have these columns; retry without them so
+        # deployments can ship the code before the migration runs. Losing
+        # `shareability` is safe in the direction that matters: an absent stored
+        # value reads as private at index time (#630), never as shareable.
+        #
+        # Gated on the ERROR, not on which keys happen to be in the row. Keyed
+        # on presence, this became a universal retry the moment `shareability`
+        # started being set unconditionally: an FK violation on `offering_id` or
+        # a duplicate `request_id` would trigger a blind second insert with
+        # `request_id` STRIPPED — defeating the idempotent-replay detection it
+        # exists for — and would surface the retry's exception instead of the
+        # real one.
+        if not _looks_like_missing_column(first):
             raise
+        for col in ("request_id", "shareability"):
+            row.pop(col, None)
+        inserted = table("documents").insert(row)
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
@@ -984,7 +1011,7 @@ async def upload_document(
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
-                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", ""), classification.shareability, classification.confidence),
             )
         except Exception:
             logger.exception(
@@ -1089,6 +1116,8 @@ def _index_document_chunks(
     extracted_text: str,
     category: str,
     doc_summary: str = "",
+    shareability: str | None = None,
+    confidence: float | None = None,
 ) -> None:
     """Chunk, embed, and upsert a document into course_chunks.
 
@@ -1096,7 +1125,7 @@ def _index_document_chunks(
     is persisted, so it never blocks the SSE stream.
     """
     from services.chunker import chunk_for_category
-    from services.chunk_visibility import visibility_for
+    from services.chunk_visibility import decide_visibility
     from services.rag_service import index_document_chunks
     from services.encryption import encrypt_if_present
 
@@ -1125,18 +1154,23 @@ def _index_document_chunks(
         # used to `raise` for that case so the failure line would match an
         # allowlist entry in e2e_oracles/logscan.py — and that entry then hid
         # #628, a real TypeError on every catalog course.
-        # #629: the uploader's STORED Class Intel opt-in decides whether these
-        # chunks join the shared course pool at all. Read here, at the write
-        # boundary, rather than trusting the per-request `use_shared_context`
-        # flag the tutor/quiz bodies carry — that one is a read-side hint the
-        # tutor never even sets, and this is the write that becomes permanent.
-        visibility = visibility_for(user_id)
+        # Two gates, both resolved here at the write boundary because this is
+        # the write that becomes permanent. #629: the uploader's STORED Class
+        # Intel opt-in — never the per-request `use_shared_context` body flag,
+        # which is a read-side hint the tutor does not even set. #630: whether
+        # the document is the COURSE's to share at all, which the uploader's
+        # consent cannot answer — their own graded homework is not class
+        # material however willing they are to share.
+        visibility = decide_visibility(
+            user_id, shareability=shareability, confidence=confidence,
+        )
         count = index_document_chunks(
             course_code=bu_course_id,
             doc_id=doc_id,
             uploader_id=user_id,
             chunks=chunks,
             visibility=visibility,
+            category=category,
         )
         logger.info(
             "[RAG] indexed %d %s chunks for doc %s", count, visibility, doc_id

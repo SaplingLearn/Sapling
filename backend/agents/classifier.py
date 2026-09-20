@@ -30,6 +30,18 @@ DocumentCategory = Literal[
 ]
 
 
+#: Whose document this is, which decides whether it may enter the shared course
+#: pool at all (#630). A different question from the uploader's consent: a
+#: student can consent to sharing class material and still not be publishing
+#: their own answers. Mirrors `services.chunk_visibility.SHAREABILITY_VALUES`,
+#: pinned together by tests/test_document_shareability.py.
+Shareability = Literal[
+    "course_material",
+    "personal_notes",
+    "completed_work",
+]
+
+
 class DocumentClassification(BaseModel):
     """Typed output for the classifier agent."""
 
@@ -47,8 +59,20 @@ class DocumentClassification(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Self-reported confidence 0.0-1.0. Used for downstream routing "
-            "only; do not use as a hard gate."
+            "Self-reported confidence 0.0-1.0 in this classification. Below "
+            "chunk_visibility.MIN_SHARE_CONFIDENCE the document is not added "
+            "to the shared course pool, so this number gates sharing — it is "
+            "no longer advisory."
+        ),
+    )
+    shareability: Shareability | None = Field(
+        default=None,
+        description=(
+            "Whose document this is: course_material (produced by or for the "
+            "course, fine for any enrolled student to study from), "
+            "completed_work (this student's own answers, or anything graded), "
+            "or personal_notes (their own private material). Prefer the more "
+            "private bucket when a document could be read either way."
         ),
     )
     rationale: str = Field(
@@ -85,7 +109,26 @@ _SYSTEM_PROMPT = (
     "confidence is your self-reported certainty in [0, 1]. rationale "
     "is one or two sentences naming the signals you used (e.g., "
     "'weekly schedule and grading rubric present', 'numbered problem "
-    "sets throughout')."
+    "sets throughout').\n\n"
+    "shareability says whose document this is, which decides whether "
+    "other students in the course may ever see it. Answer it "
+    "independently of category — the same category appears in more than "
+    "one bucket.\n"
+    "- course_material: produced by or for the course, and legitimate "
+    "for any enrolled student to study from. Syllabi, lecture notes, "
+    "slides, assigned readings, and BLANK assignment handouts (the "
+    "questions, not the answers) are all course_material.\n"
+    "- completed_work: this student's own attempt or answers. Worked "
+    "solutions, filled-in problem sets, submitted essays, anything "
+    "carrying a score, a grade or instructor feedback. If the document "
+    "shows what a student answered, it is completed_work even when the "
+    "questions themselves came from the course.\n"
+    "- personal_notes: this student's private material — their own "
+    "study notes, plans, reminders, or anything that is neither of the "
+    "above.\n"
+    "When a document could be read either way, prefer the more private "
+    "bucket: sharing a classmate's answers is an academic-integrity "
+    "failure, while withholding a handout costs only convenience."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

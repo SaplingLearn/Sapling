@@ -23,7 +23,9 @@ def test_main_chunks_each_doc_independently():
 
     with patch.object(seed, "seed_fixture_course"), \
          patch.object(seed, "chunk_document", side_effect=fake_chunk) as m_chunk, \
-         patch.object(seed, "index_document_chunks", return_value=0) as m_index:
+         patch.object(
+             seed, "index_document_chunks", autospec=True, return_value=0,
+         ) as m_index:
         seed.main()
 
     # chunk_document called once PER FILE, never once on a joined blob.
@@ -38,3 +40,22 @@ def test_main_chunks_each_doc_independently():
         expected.extend(fake_chunk(p.read_text(encoding="utf-8")))
     passed_chunks = m_index.call_args.args[3]
     assert passed_chunks == expected
+
+
+def test_main_calls_indexing_with_a_signature_that_actually_binds():
+    """#630 review: `index_document_chunks` gained two REQUIRED keyword-only
+    args (`visibility`, `category`) and this caller was updated for the first
+    but not the second — a plain `TypeError` the moment anyone seeds the
+    benchmark fixture. A bare MagicMock swallows any signature, so the patch
+    above is `autospec=True` and this pins the two kwargs by name: they are the
+    privacy and the catalog-disjointness decisions, and a caller that guesses
+    them is the failure mode both were made required to prevent."""
+    with patch.object(seed, "seed_fixture_course"), \
+         patch.object(seed, "chunk_document", return_value=["c"]), \
+         patch.object(
+             seed, "index_document_chunks", autospec=True, return_value=0,
+         ) as m_index:
+        seed.main()
+
+    assert m_index.call_args.kwargs["visibility"] == "shared"
+    assert m_index.call_args.kwargs["category"] == "lecture_notes"

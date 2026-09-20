@@ -40,7 +40,7 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
 from services.chunker import chunk_for_category  # noqa: E402
-from services.chunk_visibility import visibility_for  # noqa: E402
+from services.chunk_visibility import decide_visibility  # noqa: E402
 from services.rag_service import course_relevance, index_document_chunks  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
 
@@ -75,7 +75,7 @@ def main() -> None:
         filters={"extracted_text": "is.null", "deleted_at": "is.null"},
     )
     docs = table("documents").select(
-        "id,file_name,user_id,offering_id,extracted_text,category",
+        "id,file_name,user_id,offering_id,extracted_text,category,shareability",
         filters={"extracted_text": "not.is.null", "deleted_at": "is.null"},
     )
 
@@ -133,12 +133,23 @@ def main() -> None:
             except Exception as e:
                 print(f"(relevance n/a: {e})", end=" ", flush=True)
 
-            # Honour the uploader's stored Class Intel opt-out (#629) — a
-            # backfill must not publish to the shared pool what the live
-            # upload path would have kept private.
+            # Reproduce the live upload path's two gates (#629 + #630) from
+            # what is stored: the uploader's Class Intel opt-in, and the
+            # document's own shareability. A document classified before #630
+            # has no stored shareability and therefore indexes PRIVATE — run
+            # scripts/backfill_document_shareability.py first to fill it in,
+            # or this backfill withdraws legitimate course material.
+            doc_category = doc.get("category") or "other"
             count = index_document_chunks(
                 course_code, doc_id, user_id, chunks,
-                visibility=visibility_for(user_id),
+                visibility=decide_visibility(
+                    user_id,
+                    shareability=doc.get("shareability"),
+                    # A stored decision needs no confidence gate: it was
+                    # already applied when the value was written.
+                    confidence=1.0 if doc.get("shareability") else None,
+                ),
+                category=doc_category,
             )
             if not count:
                 # index_document_chunks swallows embed errors and returns 0

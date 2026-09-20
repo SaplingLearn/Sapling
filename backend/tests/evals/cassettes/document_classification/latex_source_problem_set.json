@@ -2,5 +2,6 @@
   "category": "assignment",
   "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document contains numbered problems typical of a problem set or homework assignment."
+  "rationale": "The document is a problem set with explicitly stated problems, indicating it is an assignment.",
+  "shareability": "course_material"
 }

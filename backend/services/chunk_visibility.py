@@ -56,6 +56,34 @@ logger = logging.getLogger(__name__)
 SHARED = "shared"
 PRIVATE = "private"
 
+#: `documents.shareability` / the classifier's `shareability` field (#630).
+#: Whose document this is, which is a different question from whether its owner
+#: consents to sharing — completed homework must stay private even from a
+#: student who has consented, because it was never the course's material to
+#: share. Mirrored by a Literal in `agents/classifier.py`; the two are pinned
+#: together by `tests/test_chunk_visibility.py`.
+COURSE_MATERIAL = "course_material"
+PERSONAL_NOTES = "personal_notes"
+COMPLETED_WORK = "completed_work"
+SHAREABILITY_VALUES = (COURSE_MATERIAL, PERSONAL_NOTES, COMPLETED_WORK)
+
+#: Classifier self-reported confidence below which a document is not shared.
+#:
+#: A FLOOR AGAINST DRIFT, not a discriminator, and the measurement says so: over
+#: the 29 documents in tests/evals/cassettes/document_classification the minimum
+#: recorded confidence is 0.80 and nothing falls under 0.6, so on real input this
+#: gate does not fire. It is here to catch a future prompt or model change that
+#: starts producing hedged classifications, not to sort today's uploads.
+#:
+#: Know what it measures, because it is not quite the right thing: `confidence`
+#: is the model's certainty about the classification as a whole, not about
+#: `shareability` specifically. A document it is sure is course material but torn
+#: between `slides` and `lecture_notes` reports a middling number and is withheld
+#: (at INFO). Giving shareability its own confidence costs an output-schema slot
+#: (#153's budget), so the mismatch is accepted and recorded; #641 owns turning
+#: this into a measured decision-seam parameter.
+MIN_SHARE_CONFIDENCE = 0.6
+
 #: Ids per `in.(…)` filter. PostgREST takes the filter in the query string, so
 #: an unbounded list becomes an unbounded URL and a student with thousands of
 #: chunks would get a 414 instead of a paged read. 50 because these are quoted
@@ -110,6 +138,54 @@ def shares_class_context(user_id: str) -> bool:
 def visibility_for(user_id: str) -> str:
     """`SHARED` or `PRIVATE` for a new upload by `user_id`."""
     return SHARED if shares_class_context(user_id) else PRIVATE
+
+
+def decide_visibility(
+    user_id: str,
+    *,
+    shareability: str | None,
+    confidence: float | None,
+) -> str:
+    """Whether a new upload may join the shared course pool.
+
+    Two independent gates, and BOTH must pass (#630 on top of #629):
+
+    1. Is this document the course's to share? Only `course_material` is —
+       `completed_work` is the student's own answers, and serving those to a
+       classmate is an academic-integrity failure, not merely a privacy one.
+       `personal_notes` is private by default.
+    2. Does its uploader consent? That is `shares_class_context`.
+
+    Every unknown answer resolves to PRIVATE: a missing `shareability` (what
+    the output schema falls back to when the model omits the field), a missing
+    or low `confidence`, or a value from outside `SHAREABILITY_VALUES` — an
+    enum widened upstream must not arrive here as shareable by default.
+
+    The asymmetry is the point. A wrongly-private chunk costs its owner some
+    corpus reach and is repaired by a re-index; a wrongly-shared one has
+    already been served to the class and cannot be recalled.
+    """
+    if shareability is None:
+        logger.warning(
+            "[RAG] classifier returned no shareability for an upload by %s — "
+            "indexing PRIVATE (#630)", user_id,
+        )
+        return PRIVATE
+    if shareability not in SHAREABILITY_VALUES:
+        logger.warning(
+            "[RAG] unknown shareability %r for an upload by %s — indexing "
+            "PRIVATE (#630)", shareability, user_id,
+        )
+        return PRIVATE
+    if shareability != COURSE_MATERIAL:
+        return PRIVATE
+    if confidence is None or confidence < MIN_SHARE_CONFIDENCE:
+        logger.info(
+            "[RAG] course_material at confidence %s is below the %s share "
+            "floor — indexing PRIVATE (#630)", confidence, MIN_SHARE_CONFIDENCE,
+        )
+        return PRIVATE
+    return visibility_for(user_id)
 
 
 def record_contributors(chunk_ids: Iterable[str], user_id: str) -> None:

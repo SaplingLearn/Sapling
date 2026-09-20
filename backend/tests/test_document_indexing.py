@@ -64,6 +64,12 @@ def _tables(courses_rows, course_chunks_rows):
 
 
 def _run(doc_id="doc-1", category="lecture_notes", **kw):
+    """#630: `shareability`/`confidence` default to a confidently-classified
+    piece of course material, so the sharing decision here turns purely on the
+    uploader's consent — the #629 axis these tests are about. The other axis
+    (what the document IS) has its own file, tests/test_document_shareability.py."""
+    kw.setdefault("shareability", "course_material")
+    kw.setdefault("confidence", 0.9)
     _index_document_chunks(
         doc_id=doc_id,
         course_id="course-uuid-1",
@@ -103,6 +109,8 @@ class TestIndexDocumentChunks:
             # The uploader has no user_settings row, so the 0037 default (opted
             # in) applies — see TestVisibilityAtIndexTime for the other branch.
             visibility="shared",
+            # #630: the classifier's category, not the hardcoded "document".
+            category="lecture_notes",
         )
         assert not _scored(mock_event)
 
@@ -190,6 +198,7 @@ class TestIndexDocumentChunks:
             uploader_id="user-1",
             chunks=["chunk one"],
             visibility="shared",
+            category="lecture_notes",
         )
         assert _scored(mock_event)[0].kwargs["payload"]["score"] == 1.0
 
@@ -402,9 +411,10 @@ class TestVisibilityAtIndexTime:
             _tables(courses_rows=[{"course_code": "BIO-101"}], course_chunks_rows=[]),
             patch("services.chunker.chunk_for_category", return_value=["c1"]),
             patch("services.rag_service.index_document_chunks", return_value=1),
-            patch("services.chunk_visibility.visibility_for", return_value="shared") as mock_vis,
+            patch("services.chunk_visibility.shares_class_context",
+                  return_value=True) as mock_consent,
             patch("routes.documents.events_service.log_event"),
         ):
             _run()
 
-        mock_vis.assert_called_once_with("user-1")
+        mock_consent.assert_called_once_with("user-1")
