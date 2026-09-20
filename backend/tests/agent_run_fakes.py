@@ -26,12 +26,25 @@ class FakeRunResult:
     what makes the stale-output read detectable.
     """
 
-    def __init__(self, output: str, new_messages: list):
+    def __init__(self, output: str, new_messages: list, history: list | None = None):
         self.output = output
         self._new_messages = new_messages
+        self._history = list(history or [])
 
     def new_messages(self, **_kwargs) -> list:
         return list(self._new_messages)
+
+    def all_messages(self, **_kwargs) -> list:
+        """History PLUS this run's messages — what `_continuation_text` hands
+        back to the model (#646).
+
+        Omitting this was the same blind spot this module's docstring
+        describes one layer up: the routes would raise AttributeError inside
+        the continuation, the `except Exception` there would swallow it, and
+        every test would still go green down the pre-#646 path — proving
+        nothing about the rescue.
+        """
+        return self._history + list(self._new_messages)
 
 
 def run_result(output: str) -> FakeRunResult:

@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from agents import TUTOR_LIMITS
+from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
@@ -142,9 +142,11 @@ _CONTINUATION_NUDGE = (
 )
 
 #: run_kwargs keys a continuation may carry. `message_history` is REPLACED
-#: (the continuation's history is the failed run's own messages), and
-#: anything else — notably a future toolsets/usage_limits key — is dropped
-#: rather than forwarded blind.
+#: (the continuation's history is the failed run's own messages),
+#: `usage_limits` is REPLACED by CONTINUATION_LIMITS (a second call in one
+#: request must not inherit a fresh full TUTOR_LIMITS budget — see #543 E2
+#: and TOPUP_LIMITS), and anything else is dropped rather than forwarded
+#: blind.
 _CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
 
 
@@ -192,6 +194,7 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
             await agent.run(
                 _CONTINUATION_NUDGE,
                 message_history=run_result.all_messages(),
+                usage_limits=CONTINUATION_LIMITS,
                 **carried,
             ),
             feature="chat_tutor_continuation",
@@ -563,9 +566,30 @@ async def _start_session_agent(
         # hazard needs history in the run's message list.
         reply = result.output
         if not reply.strip():
-            raise UnexpectedModelBehavior(
-                "chat_tutor produced a whitespace-only session greeting"
-            )
+            # Same textless shape as the chat turns (#646), and this is the
+            # LAST rung on the opener path: a streamed /start-session/stream
+            # turn that goes textless with no writes degrades to Rung 1,
+            # which is this function on the fast tier — Flash-Lite, the
+            # model that produces textless turns in the first place. Raising
+            # here ends the student's very first interaction on "The tutor
+            # is unavailable". Finish the turn if the model will; the
+            # opener's tool results are in its messages just like a chat
+            # turn's.
+            try:
+                rescued = await _continuation_text(agent, result, run_kwargs)
+            except Exception:
+                logger.warning(
+                    "Continuation after a textless session greeting failed",
+                    exc_info=True,
+                )
+                rescued = None
+            if rescued:
+                logger.info("Textless session greeting rescued by a continuation")
+                reply = rescued
+            else:
+                raise UnexpectedModelBehavior(
+                    "chat_tutor produced a whitespace-only session greeting"
+                )
     except Exception as exc:
         # PR #472 review: THIS run's tools may have written graph/mastery
         # before the failure. Stamp the write-state so the streaming

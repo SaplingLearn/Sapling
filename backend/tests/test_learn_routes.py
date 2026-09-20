@@ -881,7 +881,10 @@ class TestStartSessionAgent:
 
     def test_blank_greeting_returns_502_and_stashes_nothing(self):
         """#153: a whitespace-only greeting must never be stashed as the
-        session's opening bubble — it maps to the retry-friendly 502."""
+        session's opening bubble — it maps to the retry-friendly 502.
+
+        Both the opening run AND the #646 continuation come back blank here,
+        so the turn still ends on the pre-#646 rung."""
         from routes.learn import PENDING_SESSIONS
         PENDING_SESSIONS.clear()
         agent = MagicMock()
@@ -891,6 +894,40 @@ class TestStartSessionAgent:
             r = self._post()
         assert r.status_code == 502
         assert PENDING_SESSIONS == {}
+
+    def test_textless_greeting_is_rescued_by_the_continuation(self):
+        """#646 on the opener. This is the LAST rung on the start-session
+        path — the streamed opener's own Rung-1 fallback is this function on
+        the fast tier, i.e. the very model that ends turns textless — so
+        without a rescue a student's first interaction ends on "The tutor is
+        unavailable"."""
+        from routes.learn import PENDING_SESSIONS
+        PENDING_SESSIONS.clear()
+        agent = MagicMock()
+        # First call: tools ran, no text part. Note the opener's textless
+        # shape is `.output == ""`, NOT the stale-reply shape the chat turns
+        # see — `_start_session_agent` passes `message_history=[]`, so there
+        # is no earlier assistant message for the library to recover. Second
+        # call (the continuation, under override(tools=[])): the greeting.
+        agent.run = AsyncMock(side_effect=[
+            textless_run_result(""),
+            run_result("Welcome! Let's start with eigenvalues."),
+        ])
+        tbl, afm, topic, off, graph = self._stack(agent, {})
+        try:
+            with tbl, afm, topic, off, graph:
+                r = self._post()
+            assert r.status_code == 200, r.text
+            data = r.json()
+            assert data["initial_message"] == "Welcome! Let's start with eigenvalues."
+            assert agent.run.await_count == 2, "the continuation never ran"
+            stashed = PENDING_SESSIONS[data["session_id"]]
+            assert stashed["assistant_reply"] == (
+                "Welcome! Let's start with eigenvalues."
+            )
+            assert stashed["offering_id"] == "off-1"
+        finally:
+            PENDING_SESSIONS.clear()
 
 
 # ── POST /api/learn/action (agent path, #151a D3-A1) ─────────────────────────

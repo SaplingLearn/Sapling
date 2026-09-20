@@ -86,4 +86,33 @@ TUTOR_LIMITS = UsageLimits(
     total_tokens_limit=100_000,
 )
 
-__all__ = ["WORKER_LIMITS", "ORCHESTRATOR_LIMITS", "TUTOR_LIMITS"]
+# #646: the textless-turn continuation is a SECOND chat_tutor call in the
+# same request — the same shape TOPUP_LIMITS exists for. Reusing
+# TUTOR_LIMITS (or, worse, passing nothing and inheriting pydantic-ai's
+# defaults, which cap requests at 50 and tokens not at all) would hand the
+# rescue a fresh full budget and silently double the per-turn cost
+# backstop. That is not an edge case here: the whole premise of #646 is
+# that 25-40% of Flash-Lite turns need the rescue.
+#
+# `tool_calls_limit=0` is deliberate belt-and-braces. The continuation
+# already runs under `override(tools=[], toolsets=[])`, so there is nothing
+# to call; this makes a regression in that override fail LOUDLY — as
+# UsageLimitExceeded, which every call site already degrades on — instead
+# of quietly re-applying a mastery write.
+#
+# The token ceiling is generous because the continuation resends the whole
+# conversation as its prompt, and stingy enough to bound the doubling.
+# Exceeding it raises UsageLimitExceeded, which the callers catch and turn
+# into the pre-#646 terminal rung: the rescue fails safe.
+CONTINUATION_LIMITS = UsageLimits(
+    request_limit=3,
+    tool_calls_limit=0,
+    total_tokens_limit=50_000,
+)
+
+__all__ = [
+    "WORKER_LIMITS",
+    "ORCHESTRATOR_LIMITS",
+    "TUTOR_LIMITS",
+    "CONTINUATION_LIMITS",
+]

@@ -268,3 +268,64 @@ def test_stripping_tools_does_not_clobber_an_outer_model_override():
     )
     assert recorder.tools_seen == [], "the inner agent's model was used at all"
     assert outer_calls[-1] == [], "the inner override failed to strip tools"
+
+
+def test_continuation_runs_under_its_own_bounded_budget():
+    """A second model call in one request must not inherit a fresh full
+    TUTOR_LIMITS budget, nor fall back to pydantic-ai's defaults (50
+    requests, NO token ceiling). Same reasoning as TOPUP_LIMITS (#543 E2):
+    otherwise the rescue silently doubles the per-turn cost backstop, on the
+    25-40% path rather than an edge case.
+
+    `tool_calls_limit=0` is the second lock on the no-writes guarantee: if
+    the `override(tools=[])` above ever regresses, the continuation fails
+    loudly instead of quietly re-applying a mastery write."""
+    from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
+
+    assert CONTINUATION_LIMITS.tool_calls_limit == 0
+    assert CONTINUATION_LIMITS.request_limit < TUTOR_LIMITS.request_limit
+    assert CONTINUATION_LIMITS.total_tokens_limit is not None
+    assert CONTINUATION_LIMITS.total_tokens_limit < TUTOR_LIMITS.total_tokens_limit
+
+    seen: list = []
+    real_run = Agent.run
+
+    async def spy(self, *a, **kw):
+        seen.append(kw.get("usage_limits"))
+        return await real_run(self, *a, **kw)
+
+    deps = _deps()
+    recorder = _Recorder()
+    agent, result, run_kwargs = _textless_run(recorder, deps)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Agent, "run", spy)
+        rescued = asyncio.run(_continuation_text(agent, result, run_kwargs))
+
+    assert rescued == RESCUED_REPLY
+    assert seen == [CONTINUATION_LIMITS], (
+        "the continuation ran without its own bounded budget"
+    )
+
+
+def test_a_continuation_over_budget_degrades_instead_of_escaping():
+    """UsageLimitExceeded from the rescue must reach the caller as an
+    ordinary exception, which every call site already turns into the
+    pre-#646 terminal rung. The rescue fails safe, never as a 500."""
+    from pydantic_ai.exceptions import UsageLimitExceeded
+    from pydantic_ai.usage import UsageLimits
+
+    deps = _deps()
+    recorder = _Recorder()
+    agent, result, run_kwargs = _textless_run(recorder, deps)
+
+    with pytest.MonkeyPatch.context() as mp:
+        # A ceiling the continuation's own prompt cannot fit under.
+        mp.setattr(
+            "routes.learn.CONTINUATION_LIMITS",
+            UsageLimits(request_limit=1, tool_calls_limit=0, total_tokens_limit=1),
+        )
+        with pytest.raises(UsageLimitExceeded):
+            asyncio.run(_continuation_text(agent, result, run_kwargs))
+
+    assert recorder.tool_calls == 1, "no write was re-applied on the way out"
