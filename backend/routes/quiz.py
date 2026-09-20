@@ -18,7 +18,7 @@ from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from agents.usage import record_agent_usage, served_model_name
-from db.connection import table
+from db.connection import pg_quote_value, table
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
@@ -789,7 +789,12 @@ def _course_chunk_coverage(bu_code: str, user_id: str | None) -> int | None:
     # diagnostic is the acceptable direction; a join per quiz is not.
     filters: dict = {"course_id": f"eq.{bu_code}"}
     if user_id:
-        filters["or"] = f"(visibility.eq.shared,uploader_id.eq.{user_id})"
+        # `pg_quote_value`: inside a logic tree a bare operand ends at the
+        # first comma or paren, so an id carrying either would reshape the
+        # filter rather than error.
+        filters["or"] = (
+            f"(visibility.eq.shared,uploader_id.eq.{pg_quote_value(user_id)})"
+        )
     else:
         filters["visibility"] = "eq.shared"
     try:

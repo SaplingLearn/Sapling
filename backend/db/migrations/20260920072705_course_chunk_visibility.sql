@@ -84,14 +84,37 @@ ON CONFLICT DO NOTHING;
 -- ── 3. the retrieval RPC ───────────────────────────────────────────────────
 --
 -- DROP then CREATE, not CREATE OR REPLACE: adding a parameter changes the
--- signature, and Postgres would keep the old 3-argument function as a live
--- OVERLOAD. That stale copy has no visibility filter at all, so anything that
--- resolved to it — a rollback, a hand-written call, PostgREST picking it from a
--- 3-key body — would read straight past the opt-out. An unfiltered overload is
--- the bug this migration exists to remove, so it must not survive the fix.
-DROP FUNCTION IF EXISTS match_course_chunks(VECTOR(768), INTEGER, TEXT);
+-- signature, and Postgres would keep the previous function as a live OVERLOAD.
+-- That stale copy has no visibility filter at all, so anything that resolved to
+-- it — a rollback, a hand-written call, PostgREST picking it from a 3-key body —
+-- would read straight past the opt-out. An unfiltered overload is the bug this
+-- migration exists to remove, so it must not survive the fix.
+--
+-- Dropping EVERY overload by name rather than `DROP FUNCTION IF EXISTS
+-- match_course_chunks(VECTOR(768), INTEGER, TEXT)`: that names one exact
+-- signature, and `course_chunks` plus this RPC existed as hand-written
+-- dashboard DDL on staging and production long before 0039 codified them (see
+-- the header of 0039). If either environment's live function differs by even a
+-- parameter type, the targeted DROP is a silent no-op and the unfiltered copy
+-- survives the migration that was supposed to remove it. This loop cannot miss.
+-- db/migrate.py runs every pending file inside ONE transaction and commits at
+-- the end, so there is no window in which retrieval has no function to call.
+DO $$
+DECLARE
+    fn record;
+BEGIN
+    FOR fn IN
+        SELECT p.oid::regprocedure AS sig
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE p.proname = 'match_course_chunks'
+           AND n.nspname = 'public'
+    LOOP
+        EXECUTE 'DROP FUNCTION ' || fn.sig;
+    END LOOP;
+END $$;
 
-CREATE OR REPLACE FUNCTION match_course_chunks(
+CREATE FUNCTION match_course_chunks(
     query_embedding  VECTOR(768),
     match_count      INTEGER DEFAULT 5,
     filter_course_id TEXT DEFAULT NULL,

@@ -35,7 +35,7 @@ stays private — which is the right default for a privacy control.
 import logging
 from collections.abc import Iterable
 
-from db.connection import page_all, table
+from db.connection import page_all, pg_quote_value, table
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,19 @@ def record_contributors(chunk_ids: Iterable[str], user_id: str) -> None:
         )
 
 
+def _in_list(values: list[str]) -> str:
+    """A PostgREST ``in.(…)`` operand list, each value quoted.
+
+    Chunk ids are sha256 hex and safe by construction, but user ids are not
+    ours to characterise — inside a logic list a bare value ends at the first
+    comma or paren, so one unlucky id would silently reshape the filter into a
+    different (wider or narrower) query rather than erroring. `pg_quote_value`
+    is the repo's rule for any interpolated value; applied uniformly here so
+    the two call sites cannot drift apart.
+    """
+    return f"in.({','.join(pg_quote_value(v) for v in values)})"
+
+
 def _share_flags(user_ids: Iterable[str]) -> dict[str, bool]:
     """Stored `share_class_context` per user id, defaulting to opted in.
 
@@ -127,7 +140,7 @@ def _share_flags(user_ids: Iterable[str]) -> dict[str, bool]:
         batch = ids[i : i + _ID_BATCH]
         rows = table("user_settings").select(
             "user_id,share_class_context",
-            filters={"user_id": f"in.({','.join(batch)})"},
+            filters={"user_id": _in_list(batch)},
         )
         for row in rows or []:
             flags[row["user_id"]] = row.get("share_class_context") is not False
@@ -151,6 +164,9 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
             table("course_chunk_contributors"),
             "chunk_id",
             filters={"user_id": f"eq.{user_id}"},
+            # Total order, as `page_all` requires: the PK is
+            # (chunk_id, user_id) and `user_id` is pinned by the filter, so
+            # `chunk_id` alone is unique across this result set.
             order="chunk_id",
         )
         if r.get("chunk_id")
@@ -167,7 +183,7 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
         batch = chunk_ids[i : i + _ID_BATCH]
         rows = table("course_chunk_contributors").select(
             "chunk_id,user_id",
-            filters={"chunk_id": f"in.({','.join(batch)})"},
+            filters={"chunk_id": _in_list(batch)},
         )
         for row in rows or []:
             contributors.setdefault(row["chunk_id"], set()).add(row["user_id"])
@@ -178,7 +194,7 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
     for i in range(0, len(chunk_ids), _ID_BATCH):
         batch = chunk_ids[i : i + _ID_BATCH]
         rows = table("course_chunks").select(
-            "id,visibility", filters={"id": f"in.({','.join(batch)})"},
+            "id,visibility", filters={"id": _in_list(batch)},
         )
         for row in rows or []:
             current[row["id"]] = row.get("visibility") or SHARED
@@ -188,6 +204,10 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
     for cid in chunk_ids:
         if cid not in current:
             continue
+        # The id came OUT of the ledger, so this user's row existed a moment
+        # ago; an empty set here means it was deleted between the two reads.
+        # Falling back to this user alone can only privatise a chunk that might
+        # have had other contributors, never publish one — the safe direction.
         users = contributors.get(cid) or {user_id}
         desired = SHARED if any(flags.get(u, True) for u in users) else PRIVATE
         if current[cid] == desired:
@@ -199,7 +219,7 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
             batch = ids[i : i + _ID_BATCH]
             table("course_chunks").update(
                 {"visibility": desired},
-                filters={"id": f"in.({','.join(batch)})"},
+                filters={"id": _in_list(batch)},
                 prefer_return_minimal=True,
             )
 

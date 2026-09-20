@@ -46,7 +46,9 @@ def test_coverage_count_is_scoped_to_what_this_student_could_retrieve():
     filters = mock_table.return_value.select_with_count.call_args.kwargs["filters"]
     assert "or" in filters, filters
     assert "visibility.eq.shared" in filters["or"]
-    assert "uploader_id.eq.user_1" in filters["or"]
+    # Quoted per `pg_quote_value` — a bare operand ends at the first comma or
+    # paren inside a logic tree.
+    assert 'uploader_id.eq."user_1"' in filters["or"]
 
 
 def test_coverage_count_without_a_reader_counts_shared_rows_only():
