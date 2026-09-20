@@ -95,7 +95,9 @@ describe('#171 per-page metadata', () => {
     }
   });
 
-  it('derives the job page title from the job', async () => {
+  // Skipped while JOBS is empty (no open roles) rather than deleted: the
+  // assertion is still the one we want the moment a role goes back in.
+  it.skipIf(JOBS.length === 0)('derives the job page title from the job', async () => {
     const job = JOBS[0];
     const meta = await slugMetadata({ params: Promise.resolve({ slug: job.slug }) });
     expect(String(meta.title)).toContain(job.title);
@@ -115,7 +117,7 @@ describe('#187 careers hard 404', () => {
     ).rejects.toBe(NOT_FOUND);
   });
 
-  it('renders for a known slug', async () => {
+  it.skipIf(JOBS.length === 0)('renders for a known slug', async () => {
     const el = await SlugPage({ params: Promise.resolve({ slug: JOBS[0].slug }) });
     expect(el).toBeTruthy();
   });

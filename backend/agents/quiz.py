@@ -171,6 +171,14 @@ _SYSTEM_PROMPT = (
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
+# Public alias. E5 stamps this into every generated question's provenance so
+# a stored item records which prompt wrote it — previously this value existed
+# only as trace metadata on the agent, which meant a question in the database
+# could not be attributed to a prompt version at all. Same value, one
+# definition: a second hash of the same string would silently diverge the
+# moment either call site was edited.
+PROMPT_VERSION = _PROMPT_HASH
+
 
 quiz_agent = Agent[SaplingDeps, Quiz](
     model=model_for("quiz"),

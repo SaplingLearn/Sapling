@@ -1278,7 +1278,7 @@ function LearnInner() {
               />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
+              <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} align="left" />
               <button data-testid="tutor-start" className="btn btn--primary" onClick={handleStart} disabled={!topicDraft.trim() || !userId}>
                 <Icon name="sparkle" size={13} /> Start learning
               </button>

@@ -17,8 +17,36 @@ import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { buildQuizHref } from "@/lib/quiz/source";
+import { listAttempts } from "@/lib/quiz/api";
+import { relativeStudied } from "@/lib/quiz/relativeTime";
+import type { AttemptSummary } from "@/lib/quiz/types";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
+
+/** One page of history is enough to find a single concept's attempts: the
+ *  endpoint has no concept filter (gap G2), so the page is filtered client-side
+ *  and 100 rows covers far more than the five we show. */
+const ATTEMPT_HISTORY_LIMIT = 100;
+/** Rows in the node panel's "Recent quizzes" block. */
+const RECENT_QUIZ_ROWS = 5;
+
+/** `mastery_delta` is a 0–1 fraction (`routes/quiz.py:1780`,
+ *  `mastery_after - mastery_before`); the panel speaks in whole percent, the
+ *  same unit as the Mastery tile above it. `null` is "the attempt recorded no
+ *  move", not zero — say so with an em dash rather than inventing a number. */
+function formatMasteryDelta(delta: number | null | undefined): string {
+  if (delta === null || delta === undefined || Number.isNaN(delta)) return "—";
+  const pct = Math.round(delta * 100);
+  return `${pct < 0 ? "−" : "+"}${Math.abs(pct)}%`;
+}
+
+/** Completed attempts sort by when they FINISHED; `created_at` is the fallback
+ *  for a row whose `completed_at` never landed. */
+function attemptTime(a: AttemptSummary): number {
+  const t = new Date(a.completed_at || a.created_at).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
 
 const TIER_META: Record<Exclude<Tier, "all">, { label: string; color: string }> = {
   mastered: { label: "Mastered", color: "var(--state-mastery)" },
@@ -34,6 +62,10 @@ export function Tree() {
   const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const suggest = search.get("suggest");
+  // `?node=<id>` — the quiz's return path (#537 R-10). `?suggest=` is the older,
+  // fuzzier twin (a concept NAME) and is untouched by this; they are written by
+  // different callers and are not expected together.
+  const focusNodeId = search.get("node");
 
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
   const [tier, setTier] = React.useState<Tier>("all");
@@ -49,6 +81,12 @@ export function Tree() {
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [loading, setLoading] = React.useState(true);
+
+  // Quiz history for the node panel's "Recent quizzes" block. `null` = not
+  // fetched yet (the block says "Loading…", never the lie "No quizzes yet");
+  // the ref records which user the cached page belongs to.
+  const [attempts, setAttempts] = React.useState<AttemptSummary[] | null>(null);
+  const attemptsFor = React.useRef<string | null>(null);
 
   // Manual add-concept composer (#330) — only offered when a single course
   // is selected: courseFilter is a FILTER whose "all" value gives no course
@@ -91,6 +129,43 @@ export function Tree() {
     }
   }, [userId, activeSemester]);
 
+  const loadAttempts = React.useCallback(async () => {
+    if (!userId) return;
+    attemptsFor.current = userId;
+    try {
+      const page = await listAttempts(userId, { limit: ATTEMPT_HISTORY_LIMIT });
+      setAttempts(page.attempts || []);
+    } catch (err) {
+      // History is decoration on a panel that already works; a failed read
+      // must never blank the panel. Keep whatever we hold, and settle `null`
+      // to `[]` so the block stops claiming it is still loading.
+      console.error("tree attempt history load failed", err);
+      setAttempts((prev) => prev ?? []);
+    }
+  }, [userId]);
+
+  // Fetched LAZILY, on the first concept-node selection: a student who only
+  // pans the graph never pays for a history page. Once per user for the
+  // screen's lifetime — the panel opens and closes constantly.
+  React.useEffect(() => {
+    if (!userId || !selected || selected.is_subject_root) return;
+    if (attemptsFor.current === userId) return;
+    setAttempts(null);
+    loadAttempts();
+  }, [userId, selected, loadAttempts]);
+
+  // A quiz submit announces itself (`lib/quiz/useQuizSession.ts`), which is the
+  // one moment this page's history goes stale while it is on screen. Only
+  // refresh a page we already hold; the lazy path above still owns the first
+  // fetch.
+  React.useEffect(() => {
+    const onGraphChanged = () => {
+      if (attemptsFor.current) loadAttempts();
+    };
+    window.addEventListener("sapling:graph-changed", onGraphChanged);
+    return () => window.removeEventListener("sapling:graph-changed", onGraphChanged);
+  }, [loadAttempts]);
+
   // Manual add-concept (#330): create-or-merge server-side (the backend
   // dedups case/whitespace-insensitively), then reload so the canonical row
   // and its anchor edge render from DB truth. The selected node anchors the
@@ -129,6 +204,26 @@ export function Tree() {
     const target = nodes.find(n => n.name.toLowerCase() === suggest.toLowerCase());
     if (target) setSelected(target);
   }, [suggest, nodes]);
+
+  // `?node=<id>` focus (#537 §6): select that node exactly as a tap would, so
+  // the detail panel opens on desktop and the bottom sheet slides up on mobile
+  // off the same `selected` state. That IS the whole focus gesture — neither
+  // graph renderer exposes a camera, only `highlightId` (a paint), so there is
+  // nothing here to centre on. An unknown id is ignored in silence: a student
+  // returning from a quiz on a concept they have since deleted should land on
+  // an ordinary tree, not an error.
+  // Applied once per param VALUE, unlike `?suggest=`: a graph reload (add or
+  // delete a concept) rebuilds `nodes`, and re-opening a panel the student
+  // deliberately closed would be a haunting.
+  const focusApplied = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!focusNodeId || !nodes.length) return;
+    if (focusApplied.current === focusNodeId) return;
+    const target = nodes.find(n => n.id === focusNodeId);
+    if (!target) return;
+    focusApplied.current = focusNodeId;
+    setSelected(target);
+  }, [focusNodeId, nodes]);
 
   useScrollLock(fullscreen);
 
@@ -169,6 +264,17 @@ export function Tree() {
     return sessions.filter(s => (s.topic || "").toLowerCase() === name);
   }, [selected, sessions]);
 
+  // `GET /api/quiz/attempts` is user-scoped and unfiltered (gaps G2/G3), so the
+  // concept and the completed-status filter both happen here. Subject roots
+  // have no attempts of their own — a course is never a `concept_node_id`.
+  const recentQuizzes = React.useMemo(() => {
+    if (!attempts || !selected || selected.is_subject_root) return [];
+    return attempts
+      .filter(a => a.concept_node_id === selected.id && a.status === "completed")
+      .sort((a, b) => attemptTime(b) - attemptTime(a))
+      .slice(0, RECENT_QUIZ_ROWS);
+  }, [attempts, selected]);
+
   const suggestId = React.useMemo(() => {
     if (!suggest) return undefined;
     const n = nodes.find(x => x.name.toLowerCase() === suggest.toLowerCase());
@@ -176,13 +282,32 @@ export function Tree() {
   }, [suggest, nodes]);
 
   const onLearn = (n: GraphNode) => router.push(learnHrefForNode(n));
-  // Subject-root (course) nodes have no single quiz topic — open the picker
-  // rather than seeding the course name (mirrors the tutor fix, #319). The
-  // Quiz screen only reads `topic`/`concept`, so the old `course_id` param was
-  // dead and is dropped.
-  const onQuiz = (n: GraphNode) => router.push(
-    n.is_subject_root ? "/quiz" : `/quiz?topic=${encodeURIComponent(n.name)}`,
-  );
+
+  // Quick quiz (#537 §6). Two things changed from the `?topic=<name>` link this
+  // replaces. First, a concept is addressed by ID: a name is only unique within
+  // a course, so the fuzzy link could seed the wrong node. Second, the link now
+  // carries where it came from, which is what lets every quiz exit come BACK
+  // here — to this node's open panel — instead of the hardcoded `/learn` that
+  // #537 found on every exit.
+  //
+  // Subject-root (course) nodes still have no single topic (the #319 fix), but
+  // "open the bare picker" is no longer the only honest answer: the quiz home
+  // takes an abstract `course` and proposes within it. The root carries that id
+  // directly (`graph_service.py` synthesizes `subject_root__{course_id}` with
+  // `course_id` set); the id is only unpicked as a belt-and-braces fallback.
+  const onQuiz = (n: GraphNode) => {
+    if (n.is_subject_root) {
+      const courseId = n.course_id || n.id.replace(/^subject_root__/, "");
+      router.push(buildQuizHref({ course: courseId }, { kind: "tree", returnTo: "/tree" }));
+      return;
+    }
+    router.push(
+      buildQuizHref(
+        { concept: n.id },
+        { kind: "tree", returnTo: `/tree?node=${encodeURIComponent(n.id)}`, conceptId: n.id },
+      ),
+    );
+  };
 
   const del = useConfirm(async () => {
     if (!userId || !selected) return;
@@ -247,6 +372,42 @@ export function Tree() {
         >
           <Icon name="x" size={13} /> {del.armed ? "Click again to confirm" : "Delete concept"}
         </button>
+      )}
+      {!selected.is_subject_root && (
+        <div data-testid="tree-node-recent-quizzes" style={{ marginTop: 18 }}>
+          <div className="label-micro" style={{ marginBottom: 8 }}>Recent quizzes</div>
+          {attempts === null ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
+          ) : recentQuizzes.length === 0 ? (
+            // No second CTA here on purpose: "Quick quiz" is a few pixels up
+            // and is the action this empty state would ask for.
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No quizzes yet</div>
+          ) : (
+            recentQuizzes.map(a => (
+              <div
+                key={a.quiz_id}
+                data-testid={`tree-node-recent-quiz-${a.quiz_id}`}
+                style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  gap: 8, padding: "8px 10px",
+                  background: "var(--bg-panel)", border: "1px solid var(--border)",
+                  borderRadius: "var(--r-sm)", marginBottom: 6,
+                }}
+              >
+                {/* Not a link: there is no finished-attempt review endpoint —
+                    `GET /attempts/{id}` answers `resumable: false, questions: []`
+                    for a completed row (gap G5). A row that navigated nowhere
+                    would be a broken promise. */}
+                <span style={{ fontSize: 12 }}>
+                  {relativeStudied(a.completed_at || a.created_at)}
+                </span>
+                <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.mastery_delta)} mastery
+                </span>
+              </div>
+            ))
+          )}
+        </div>
       )}
       {sessionsForSelected.length > 0 && (
         <div style={{ marginTop: 18 }}>

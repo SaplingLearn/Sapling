@@ -361,42 +361,11 @@ export function useLanding(props: LandingProps) {
     return () => clearInterval(iv);
   }, [loadCounter]);
 
-  // ── [data-reveal] fade-ups ────────────────────────────────────────────
-  useEffect(() => {
-    const root = refs.root.current;
-    if (!root) return;
-    const seen = new WeakSet<Element>();
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((en) => {
-          if (!en.isIntersecting) return;
-          const el = en.target as HTMLElement;
-          el.style.transition =
-            'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 800ms cubic-bezier(0.22,1,0.36,1)';
-          el.style.opacity = '1';
-          el.style.transform = 'translateY(0px)';
-          io.unobserve(el);
-        });
-      },
-      { threshold: 0.12 },
-    );
-    const scan = () => {
-      root.querySelectorAll<HTMLElement>('[data-reveal]').forEach((el) => {
-        if (seen.has(el)) return;
-        seen.add(el);
-        el.style.opacity = '0';
-        el.style.transform = 'translateY(28px)';
-        io.observe(el);
-      });
-    };
-    scan();
-    const iv = setInterval(scan, 900);
-    return () => {
-      clearInterval(iv);
-      io.disconnect();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Fade-ups used to live here as a `[data-reveal]` scan on a 900ms interval.
+  // They are now the `FadeIn` component in `components/landing/anim`, which
+  // declares the entrance where the block is written and shares one observer.
+  // It also drops a flash the scan had: it set `opacity:0` in an effect after
+  // paint, so a revealed block could show before hiding itself.
 
   // ── pause CSS animations in off-screen sections ───────────────────────
   // Set directly on the animated nodes: toggling a class on the section
@@ -508,6 +477,12 @@ export function useLanding(props: LandingProps) {
       lastX = e.clientX;
       lastY = e.clientY;
     };
+    // Touch: with `touch-action: pan-y` on the canvas, a vertical swipe is
+    // handed to the scroller and arrives here as pointercancel, not pointerup.
+    const onCancel = () => {
+      dragging = false;
+      canvas.style.cursor = 'grab';
+    };
     const onUp = (e: PointerEvent) => {
       dragging = false;
       canvas.style.cursor = 'grab';
@@ -527,12 +502,14 @@ export function useLanding(props: LandingProps) {
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onCancel);
     canvas.addEventListener('pointerleave', onLeave);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       canvas.removeEventListener('pointerdown', onDown);
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointercancel', onCancel);
       canvas.removeEventListener('pointerleave', onLeave);
       canvas.removeEventListener('wheel', onWheel);
     };

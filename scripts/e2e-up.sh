@@ -234,6 +234,20 @@ migrate_reload_seed
 # Same app entry as `python main.py` but without --reload: a file-watcher
 # restarting mid-test would make E2E runs nondeterministic.
 echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…"
+# #537: raise the quiz-generation rate limit for the lane. The guard
+# (services/quiz_config.py::QUIZ_GENERATE_RATE_LIMIT, 8 per 300s) keeps its
+# sliding window in a module-level dict, so it is neither per-test nor
+# per-spec: ONE Playwright run shares a single window across every worker,
+# and the per-test TRUNCATE + re-seed does not reset it — only a backend
+# restart does. The redesigned quiz lane makes ~20 real generations, so the
+# production number 429s the specs that happen to run last (alphabetically:
+# quiz.spec.ts after quiz-errors/quiz-integration). Under function mode a
+# generation is a scripted constant that costs nothing, which is the only
+# thing the limit exists to bound. Exported, so it beats backend/.env
+# (python-dotenv never overrides existing env); overridable for anyone who
+# wants to exercise the real guard.
+export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
+echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

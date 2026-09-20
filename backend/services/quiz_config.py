@@ -9,6 +9,41 @@ cap, and an "Adaptive" difficulty the route 400'd).
 Standalone constants module: no imports from models/routes/services so
 it can be imported from anywhere without cycles.
 """
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """A deployment override for one guard constant, read at import.
+
+    Deliberately fail-SAFE rather than fail-fast: an unparseable or
+    non-positive value falls back to the shipped default (the conservative
+    one) with a warning, so a stray env var cannot boot the app with a
+    disabled guard — or refuse to boot at all. Read once at import time,
+    which is also when `routes/quiz.py` binds the value, so a mid-process
+    `os.environ` change has no effect.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "quiz_config: %s=%r is not an integer — using the default %d",
+            name, raw, default,
+        )
+        return default
+    if value <= 0:
+        logger.warning(
+            "quiz_config: %s=%d is not positive — using the default %d",
+            name, value, default,
+        )
+        return default
+    return value
+
 
 QUIZ_MIN_QUESTIONS = 1
 
@@ -87,8 +122,18 @@ def mastery_after(before: float, *, score: int, total: int) -> float:
 # The rate limit is sized for a human: a student comparing difficulties or
 # retaking a concept might legitimately generate a handful of quizzes in a
 # few minutes; nobody legitimately generates 10 in one.
-QUIZ_GENERATE_RATE_LIMIT = 8
-QUIZ_GENERATE_RATE_WINDOW_SEC = 300   # 5 minutes
+#
+# Both are env-overridable (#537) for one reason: `request_limits._rate_state`
+# is a module-level dict, so a whole Playwright run — every spec, every
+# worker-shared window — spends ONE 8-per-300s budget that only a backend
+# restart clears. The redesigned quiz lane needs ~20 real generations, and a
+# function-mode generation costs nothing, so the E2E stacks raise the limit
+# (scripts/e2e-up.sh, .github/workflows/e2e.yml). Production sets neither and
+# keeps the defaults below.
+QUIZ_GENERATE_RATE_LIMIT = _positive_int_env("QUIZ_GENERATE_RATE_LIMIT", 8)
+QUIZ_GENERATE_RATE_WINDOW_SEC = _positive_int_env(
+    "QUIZ_GENERATE_RATE_WINDOW_SEC", 300,   # 5 minutes
+)
 
 # Daily per-user LLM spend ceiling. The SPEND it measures is cross-feature
 # (llm_usage records every agent call, not just quiz ones), but the ceiling

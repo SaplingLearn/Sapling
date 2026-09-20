@@ -1,0 +1,50 @@
+/* QuizPrimitivesGallery — the harness's own layout (#537).
+ *
+ * Co-located and imported by the fixture, not appended to globals.css: no
+ * route mounts the gallery, so ~45 lines of dev-only rules have no business
+ * being parsed on every page load. The App Router allows a global stylesheet
+ * import from any component, which is the same mechanism R-1 gives the quiz's
+ * per-screen CSS.
+ *
+ * Tokens only, like the primitives it displays. Nothing here styles a
+ * primitive — the harness only arranges them.
+ */
+
+.quiz-gallery {
+  max-width: 900px;
+  padding: var(--pad-xl);
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+}
+.quiz-gallery__title { margin: 0; font-size: var(--fs-4xl); }
+.quiz-gallery__section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.quiz-gallery__heading { margin: 0; }
+.quiz-gallery__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pad-lg);
+}
+.quiz-gallery__caption {
+  width: 200px;
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.quiz-gallery__specimens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+.quiz-gallery__answers {
+  width: 100%;
+  border-top: 1px solid var(--border);
+}

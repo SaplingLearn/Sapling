@@ -217,3 +217,47 @@ describe('ApiError integration', () => {
       .toBe("That's temporarily unavailable. Try again in a moment.");
   });
 });
+
+/**
+ * The coded envelope (#537). `error.message` is the student-readable sentence;
+ * top-level `detail` is legacy and, on a 422, a list of Pydantic dicts.
+ */
+describe('coded error envelope', () => {
+  it('prefers error.message over the legacy detail', () => {
+    const body = {
+      error: { code: 'QUIZ_RATE_LIMITED', message: 'Slow down a moment.', request_id: 'r1' },
+      detail: 'Slow down a moment.',
+      request_id: 'r1',
+    };
+    expect(extractErrorDetail({ ...body, status: 429 }))
+      .toEqual({ detail: 'Slow down a moment.', status: 429 });
+  });
+
+  it('reads error.message when detail is the 422 error list', () => {
+    const err = new ApiError(
+      JSON.stringify({
+        error: { code: 'QUIZ_COUNT_OUT_OF_RANGE', message: 'Quizzes can have between 1 and 10 questions.' },
+        detail: [{ loc: ['body', 'num_questions'], msg: 'less than or equal to 10', type: 'x' }],
+      }),
+      422,
+    );
+    // Without the error.* preference this returned the Pydantic `msg` fragment.
+    expect(humanizeError(err, FALLBACK)).toBe('Quizzes can have between 1 and 10 questions.');
+  });
+
+  it('reads the already-parsed ApiError.body without re-parsing the message', () => {
+    const err = new ApiError('(body text elided)', 409, {
+      code: 'QUIZ_ATTEMPT_ALREADY_COMPLETED',
+      body: { error: { code: 'QUIZ_ATTEMPT_ALREADY_COMPLETED', message: 'Already scored.' } },
+    });
+    expect(humanizeError(err, FALLBACK)).toBe('Already scored.');
+  });
+
+  it('still falls through to status copy when error.message is unusable', () => {
+    const err = new ApiError('', 500, {
+      body: { error: { code: 'QUIZ_INTERNAL_ERROR', message: '   ' } },
+    });
+    expect(humanizeError(err, FALLBACK))
+      .toBe('Something went wrong on our end. Try again in a moment.');
+  });
+});

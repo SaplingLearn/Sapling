@@ -171,6 +171,19 @@ def run_counts(args: argparse.Namespace) -> tuple[list[Finding], int]:
 
 # (table, pk_col, column) manifest — hardcoded, so identifiers never come from
 # user input; every value is read via a parameterized `%s`, never interpolated.
+#
+# This lists the ENCRYPTED columns only. Absences are therefore claims, and one
+# is worth stating outright because it looks like an oversight: `quiz_responses`
+# (#541 C2) is deliberately not here. Every column on that table —
+# `selected_index`, `is_correct`, `time_ms`, `confidence`, `question_index` —
+# is a plaintext behavioural scalar, the same category as `quiz_attempts.score`
+# and `.total`, which #521 also left plaintext on purpose so analytics can
+# aggregate without a decrypt. The table holds no free text, so there is
+# nothing on it for this oracle to check. A future column carrying student
+# prose (a per-question "why did you pick that?") would need encrypting AND a
+# row here; that is the trigger to revisit, not the table's mere existence.
+# Full rationale in the migration header:
+# db/migrations/20260812214402_quiz_responses.sql.
 _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("users", "id", "email"),
     ("user_profiles", "user_id", "name"),

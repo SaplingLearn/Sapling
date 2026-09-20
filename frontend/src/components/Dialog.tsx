@@ -14,6 +14,94 @@ const SIZE_WIDTH: Record<string, string> = {
   xl: '760px',
 };
 
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Everything a modal overlay has to get right that isn't its shape: portal
+ * readiness, the enter-transition flag, scroll-lock, initial focus, focus
+ * restore on close, Escape, and the Tab trap.
+ *
+ * Extracted from `Dialog` unchanged so `<Sheet>` (the side-anchored panel the
+ * quiz's "Ask about this" needs, #537) inherits the exact same behaviour
+ * rather than a second, subtly different implementation of it. `Dialog` and
+ * `Sheet` differ only in where the panel sits and how it animates in.
+ */
+export function useOverlayBehaviour({
+  open,
+  onClose,
+  dismissible = true,
+  initialFocusRef,
+}: {
+  open: boolean;
+  onClose: () => void;
+  dismissible?: boolean;
+  initialFocusRef?: React.RefObject<HTMLElement | null>;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<Element | null>(null);
+
+  // Lock the scrolling container while open so background content doesn't
+  // scroll-bleed behind the overlay (matches the other portal modals).
+  useScrollLock(open);
+
+  useEffect(() => { setMounted(true); }, []);
+
+  useEffect(() => {
+    if (!open) { setVisible(false); return; }
+    previousFocusRef.current = document.activeElement;
+    const raf = requestAnimationFrame(() => setVisible(true));
+
+    const focusTimer = setTimeout(() => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const preferred = initialFocusRef?.current;
+      if (preferred) { preferred.focus(); return; }
+      const focusable = panel.querySelector<HTMLElement>(FOCUSABLE);
+      (focusable ?? panel).focus();
+    }, 20);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(focusTimer);
+      const prev = previousFocusRef.current;
+      if (prev instanceof HTMLElement) prev.focus();
+    };
+  }, [open, initialFocusRef]);
+
+  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!open) return;
+
+    if (e.key === 'Escape' && dismissible) {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+
+    if (e.key === 'Tab' && panelRef.current) {
+      const panel = panelRef.current;
+      const focusable = Array.from(
+        panel.querySelectorAll<HTMLElement>(FOCUSABLE)
+      ).filter(el => !el.hasAttribute('data-focus-skip'));
+      if (focusable.length === 0) { e.preventDefault(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, [open, dismissible, onClose]);
+
+  return { mounted, visible, panelRef, onKeyDown };
+}
+
 interface DialogProps {
   open: boolean;
   onClose: () => void;
@@ -47,72 +135,14 @@ export default function Dialog({
   zIndex = 100,
   initialFocusRef,
 }: DialogProps) {
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<Element | null>(null);
   const autoTitleId = useId();
   const effectiveLabelledBy = labelledBy ?? (title ? autoTitleId : undefined);
-
-  // Lock the scrolling container while open so background content doesn't
-  // scroll-bleed behind the modal (matches the other portal modals).
-  useScrollLock(open);
-
-  useEffect(() => { setMounted(true); }, []);
-
-  useEffect(() => {
-    if (!open) { setVisible(false); return; }
-    previousFocusRef.current = document.activeElement;
-    const raf = requestAnimationFrame(() => setVisible(true));
-
-    const focusTimer = setTimeout(() => {
-      const panel = panelRef.current;
-      if (!panel) return;
-      const preferred = initialFocusRef?.current;
-      if (preferred) { preferred.focus(); return; }
-      const focusable = panel.querySelector<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
-      (focusable ?? panel).focus();
-    }, 20);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(focusTimer);
-      const prev = previousFocusRef.current;
-      if (prev instanceof HTMLElement) prev.focus();
-    };
-  }, [open, initialFocusRef]);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (!open) return;
-
-    if (e.key === 'Escape' && dismissible) {
-      e.stopPropagation();
-      onClose();
-      return;
-    }
-
-    if (e.key === 'Tab' && panelRef.current) {
-      const panel = panelRef.current;
-      const focusable = Array.from(
-        panel.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        )
-      ).filter(el => !el.hasAttribute('data-focus-skip'));
-      if (focusable.length === 0) { e.preventDefault(); return; }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  }, [open, dismissible, onClose]);
+  const { mounted, visible, panelRef, onKeyDown: handleKeyDown } = useOverlayBehaviour({
+    open,
+    onClose,
+    dismissible,
+    initialFocusRef,
+  });
 
   if (!mounted || !open) return null;
 

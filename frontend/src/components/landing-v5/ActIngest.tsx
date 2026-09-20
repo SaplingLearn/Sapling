@@ -22,6 +22,7 @@
  */
 
 import { DragField } from './DragField';
+import { FadeIn } from '@/components/landing/anim';
 
 /** Syllabus lines. The bold span is the concept a chip carries away. */
 const DOC_LINES: [string, string, string][] = [
@@ -85,6 +86,29 @@ const TILE_COUNT: React.CSSProperties = { fontFamily: "'Playfair Display',serif"
 /** Underline that marks a concept inside the document. */
 const MARK: React.CSSProperties = { fontWeight: 600, color: '#33443B', boxShadow: 'inset 0 -4px 0 rgba(14,158,90,0.18)' };
 
+/** Kicker and heading. Rendered twice — pinned in the stage from tablet up,
+ *  and in the phone intro that scrolls in ahead of the act. */
+function IngestHeading() {
+  return (
+    <FadeIn>
+      <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase' }}>Ingest</span>
+      <h2 style={{ margin: '14px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#12201A' }}>
+        Drop in the whole <em style={{ color: '#0C5638' }}>course.</em>
+      </h2>
+    </FadeIn>
+  );
+}
+
+/** The pitch, shared by the same two placements. */
+const PITCH = (
+  <>
+    Ask ChatGPT for practice and you get generic exercises off the internet, then an
+    empty box again. It forgets. Sapling works only from{' '}
+    <em style={{ fontStyle: 'normal', color: '#12201A', fontWeight: 600 }}>your class&rsquo;s</em>{' '}
+    material: your professor&rsquo;s slides, the syllabus, lecture notes.
+  </>
+);
+
 function TileHead({ label, i }: { label: string; i: number }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
@@ -102,33 +126,40 @@ export function ActIngest({
   ingestStageRef: React.RefObject<HTMLDivElement | null>;
 }) {
   return (
+    <>
+    {/* Phone only: globals.css shows this ≤640px and hides .ld-ingest-head.
+        A pinned stage is one screen, and with the heading and pitch in it the
+        scene drew at under half size. Here they scroll in ahead of the act,
+        which then pins with the whole screen for the scene. It sits outside
+        the section so the act's scrub progress, measured from the section's
+        own top, is untouched. */}
+    <div className="ld-ingest-intro" style={{ display: 'none', position: 'relative', padding: '12px 18px 0' }}>
+      <IngestHeading />
+      <p style={{ margin: '16px 0 0', color: '#61726A', fontSize: 14.5, lineHeight: 1.65 }}>{PITCH}</p>
+    </div>
+
     <section id="act-ingest" data-act="2" style={{ height: '320vh', position: 'relative' }}>
       {/* holds no clusters, but the element has to exist — see DragField */}
       <DragField section="act-ingest" />
 
-      <div style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
+      <div className="ld-stage" style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
           {MOTES.map((m, i) => (
             <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
           ))}
         </div>
 
-        <div ref={ingestSceneRef} style={{ position: 'relative', maxWidth: 1180, width: '100%', margin: '0 auto', padding: '0 24px', display: 'flex', flexDirection: 'column', gap: 26 }}>
-          <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 20 }}>
-            <div>
-              <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase' }}>Ingest</span>
-              <h2 style={{ margin: '14px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#12201A' }}>
-                Drop in the whole <em style={{ color: '#0C5638' }}>course.</em>
-              </h2>
-            </div>
-            <div style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,520px)', gap: '14px clamp(28px,5vw,72px)', alignItems: 'start' }}>
-              <p style={{ margin: 0, maxWidth: '44ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
-                Ask ChatGPT for practice and you get generic exercises off the internet, then an
-                empty box again. It forgets. Sapling works only from{' '}
-                <em style={{ fontStyle: 'normal', color: '#12201A', fontWeight: 600 }}>your class&rsquo;s</em>{' '}
-                material: your professor&rsquo;s slides, the syllabus, lecture notes.
+        <div ref={ingestSceneRef} className="ld-ingest-scene" style={{ position: 'relative', maxWidth: 1180, width: '100%', margin: '0 auto', padding: '0 24px', display: 'flex', flexDirection: 'column', gap: 26 }}>
+          <div className="ld-ingest-head" style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 20 }}>
+            {/* The heading is ours to animate; the chips, tiles and doc lines
+                below are the engine's, addressed by [data-chip] and
+                [data-ingest-tile]. Keep the fade off those subtrees. */}
+            <IngestHeading />
+            <div className="ld-ingest-copy" style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,520px)', gap: '14px clamp(28px,5vw,72px)', alignItems: 'start' }}>
+              <p className="ld-ingest-p1" style={{ margin: 0, maxWidth: '44ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
+                {PITCH}
               </p>
-              <p style={{ margin: 0, maxWidth: '52ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
+              <p className="ld-ingest-p2" style={{ margin: 0, maxWidth: '52ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
                 And every student who adds their documents makes the AI understand the course
                 better. One person&rsquo;s lecture notes fill a gap in another&rsquo;s slides, so the model
                 learns what this professor actually emphasizes, how they word questions, which
@@ -138,9 +169,10 @@ export function ActIngest({
             </div>
           </div>
 
-          <div ref={ingestStageRef} style={{ position: 'relative', flex: '0 0 auto', height: 'min(376px, 44vh)' }}>
+          <div ref={ingestStageRef} className="ld-ingest-stage" style={{ position: 'relative', flex: '0 0 auto', height: 'min(376px, 44vh)' }}>
             <div
               data-ingest-fit="1"
+              className="ld-ingest-fit"
               style={{
                 position: 'absolute', left: 0, right: 0, top: 0, height: 376,
                 transformOrigin: 'top left', display: 'grid',
@@ -152,6 +184,7 @@ export function ActIngest({
               <div
                 data-ingest-doc="1"
                 data-tilt="1"
+                className="ld-ingest-doc"
                 style={{ position: 'relative', height: '100%', maxWidth: 340, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', background: '#FDFCF9', border: '1px solid #E8E5DA', borderRadius: 14, padding: '22px 22px 24px', boxShadow: '0 30px 80px rgba(18,32,26,0.16)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -184,10 +217,10 @@ export function ActIngest({
               </div>
 
               {/* ── destinations ── */}
-              <div style={{ position: 'relative', width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr', gap: 16 }}>
+              <div className="ld-ingest-tiles" style={{ position: 'relative', width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr', gap: 16 }}>
                 <div data-ingest-tile="0" style={TILE}>
                   <TileHead label="GRAPH" i={0} />
-                  <div aria-hidden="true" style={{ position: 'relative', flex: 1, borderRadius: 10, background: '#F6F8F4', border: '1px solid #EBF1EC', overflow: 'hidden' }}>
+                  <div aria-hidden="true" className="ld-ingest-graph" style={{ position: 'relative', flex: 1, borderRadius: 10, background: '#F6F8F4', border: '1px solid #EBF1EC', overflow: 'hidden' }}>
                     <svg width="100%" height="100%" viewBox="0 0 230 84" preserveAspectRatio="xMidYMid meet">
                       <line x1="115" y1="42" x2="52" y2="20" stroke="rgba(12,86,56,0.24)" />
                       <line x1="115" y1="42" x2="44" y2="64" stroke="rgba(12,86,56,0.24)" />
@@ -285,5 +318,6 @@ export function ActIngest({
         </div>
       </div>
     </section>
+    </>
   );
 }

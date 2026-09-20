@@ -226,7 +226,10 @@ byte-for-byte match to one of `function_handlers_e2e.py`'s `E2E_DOC_*` (or
 `E2E_TUTOR_REPLY`, `E2E_QUIZ_*`) constants — here, `E2E_DOC_ABSTRACT`'s
 "gradient descent... loss surface... learning rate" wording and the fixed
 `lecture_notes` category. If a finding's "wrong" content matches one of
-those constants verbatim, it's the seam, not the app — drop it, and if it
+those constants verbatim, it's the seam, not the app (likewise the quiz's
+"Only 3 questions were ready for this concept" toast: the function-mode quiz handler always
+returns exactly 3 questions, so any requested length above 3 is reported as a short delivery —
+the honesty check working, not a generation bug) — drop it, and if it
 recurs, improve `scripts/explore/explorer-prompt.md`'s ground rules to name
 the pattern explicitly so a future explorer recognizes it before writing the
 stub, rather than filing an issue against the harness's own known-fixed

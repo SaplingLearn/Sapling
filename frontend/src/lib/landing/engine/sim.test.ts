@@ -333,6 +333,27 @@ describe('cluster anchoring', () => {
   });
 });
 
+describe('hidden field', () => {
+  // The field is `display:none` below 1024px, but the clusters were re-homed
+  // into the fixed overlay at build time and outlive it. A hidden field
+  // measures 0x0 at the viewport origin, so without this guard a window
+  // narrowed after init parked every cluster in the top-left corner of the
+  // screen, on every section including the hero.
+  it('hides a cluster whose field has collapsed to nothing, and restores it', () => {
+    frames(1);
+    expect(cluster.style.visibility).toBe('');
+
+    rect(field, () => ({ left: 0, top: 0, width: 0, height: 0 }));
+    frames(1);
+    expect(cluster.style.visibility).toBe('hidden');
+
+    rect(field, () => ({ left: 0, top: fieldTop(), width: VIEW_W, height: VIEW_H }));
+    frames(1);
+    expect(cluster.style.visibility).toBe('');
+    expect(clusterOrigin().x).toBeCloseTo(CLUSTER_X, 1);
+  });
+});
+
 describe('scroll freeze', () => {
   it('does not move a node while the page is scrolling', () => {
     // Settle first, so any movement during the scroll is unambiguous.

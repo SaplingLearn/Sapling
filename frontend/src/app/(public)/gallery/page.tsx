@@ -19,11 +19,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
+import { ZoomableShot } from '@/components/companion/ZoomableShot';
 import { GALLERY_FILTERS, GALLERY_SHOTS } from '@/lib/landing/companionContent';
-
-const MONO = "'JetBrains Mono',monospace";
-const SERIF = "'Spectral',Georgia,serif";
-const DISPLAY = "'Playfair Display',Georgia,serif";
+import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
 
 export default function GalleryPage() {
   const [filter, setFilter] = useState('all');
@@ -31,7 +29,7 @@ export default function GalleryPage() {
 
   return (
     <CompanionShell current="/gallery">
-      <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 1180, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box' }}>
+      <div>
         <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
           Inside the product
         </span>
@@ -78,11 +76,13 @@ export default function GalleryPage() {
                 animationDelay: `${Math.min(i * 50, 400)}ms`,
               }}
             >
-              <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', borderRadius: 14, overflow: 'hidden', background: '#ebe6dc', border: '1px solid rgba(42,39,31,0.10)', boxShadow: '0 10px 28px -16px rgba(26,24,20,0.45)' }}>
-                <span style={{ position: 'absolute', left: 10, top: 10, padding: '4px 9px', borderRadius: 6, background: 'rgba(250,248,243,0.9)', backdropFilter: 'blur(4px)', fontFamily: MONO, fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#3f3b31' }}>
-                  {s.route}
-                </span>
-              </div>
+              <ZoomableShot
+                src={`/gallery/${s.slot}.png`}
+                alt={`The ${s.title} screen in Sapling`}
+                title={s.title}
+                caption={s.body}
+                route={s.route}
+              />
               <figcaption style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
                   <span style={{ fontSize: 15, fontWeight: 600, color: '#1a1814', letterSpacing: '-0.01em' }}>{s.title}</span>
@@ -108,6 +108,7 @@ export default function GalleryPage() {
             Open the toolkit
           </Link>
         </div>
+
       </div>
     </CompanionShell>
   );

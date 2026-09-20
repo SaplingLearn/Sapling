@@ -33,12 +33,29 @@ class SaplingDeps:
         mastery_changes: Accumulates the real before/after mastery deltas
             returned by apply_graph_update so the route can surface them in
             the chat response for parity with the legacy path.
+        feature: Which product surface is driving this run ("quiz",
+            "tutor", …). Several tools are registered on more than one
+            agent — `read_concepts_for_user` is on both the quiz and the
+            tutor — so a tool cannot name its caller from its own module.
+            Observability that attributes per-feature (services/
+            tool_signals.py) reads it from here. Defaults to "unknown"
+            rather than to any real feature: a wrong attribution is worse
+            than an absent one.
         retrieval: Optional TutorRetrieval implementation (ADR 0023). When
             None (production), the tutor's read tools fall back to the
             Supabase-backed impl in agents/tools/retrieval.py — byte-
             identical behavior. Evals inject a FixtureRetrieval here so
             record/live runs never touch a database. Typed Any to avoid
             the circular import deps → retrieval → chat_context → deps.
+        share_class_context: Whether this student consented to class-derived
+            data (the "Class intel" toggle, migration 0037). Tools that read
+            OTHER students' aggregated work — `read_misconceptions_for_course`
+            — must return nothing when it is False. It lives here rather than
+            in the prompt because a system-prompt instruction is a request to
+            a model, and consent is not something to leave to one: the tool is
+            registered on quiz_agent unconditionally and the prompt tells the
+            model to call it every run. Defaults True to match the column
+            default; an explicit False is the only thing that suppresses.
     """
 
     user_id: str
@@ -46,6 +63,8 @@ class SaplingDeps:
     supabase: Any
     request_id: str
     session_id: str | None = None
+    feature: str = "unknown"
+    share_class_context: bool = True
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None

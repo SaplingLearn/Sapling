@@ -11,6 +11,12 @@ Score: {score}/{total}
 Questions and student's answers:
 {quiz_results_json}
 
+Wrong answers, with the option the student actually chose (empty if they got
+everything right, or if this attempt predates answer capture). This is the
+strongest evidence you have: a distractor is a specific belief, so name the
+belief rather than restating that the answer was wrong.
+{distractor_profile_json}
+
 Based on the quiz results, update your notes. Write analysis about:
 - What specific subtopics is the student weak on?
 - What misconceptions or common mistakes did they reveal?

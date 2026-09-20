@@ -212,3 +212,33 @@ class TestLedgerRecompute:
         calls = handles["xp_events"].select_with_count.call_args_list
         assert calls[0].kwargs["offset"] == 0
         assert calls[1].kwargs["offset"] == _XP_EVENTS_PAGE
+
+    def test_the_ledger_read_keeps_paging_when_the_total_reads_zero(self):
+        """PR #589 review E2, in the loop that sets `users.total_xp`.
+
+        `select_with_count` reports `total = 0` for a missing or unparseable
+        Content-Range, and every one of these loops stopped on `seen >= count`
+        — satisfied immediately, with a full page in hand. Here that writes a
+        truncated sum straight into the cache column the leaderboard and the
+        hero card read, and nothing afterwards reconciles it against the
+        ledger.
+        """
+        from services.xp_service import _XP_EVENTS_PAGE
+
+        full_page = [{"amount": 1} for _ in range(_XP_EVENTS_PAGE)]
+        short_page = [{"amount": 5}]
+
+        tbl, handles = _tables()
+        handles["xp_events"].select_with_count.side_effect = [
+            (full_page, 0), (short_page, 0),
+        ]
+        with patch("services.xp_service.table", side_effect=tbl), \
+             patch("services.xp_service.level_for_xp", return_value=1):
+            from services.xp_service import award_xp
+            result = award_xp("u1", "quiz_completed", source_type="quiz", source_id="q1")
+
+        assert result.total_xp == _XP_EVENTS_PAGE + 5, (
+            "an unparseable total truncated the ledger sum and wrote it to "
+            "users.total_xp"
+        )
+        assert handles["xp_events"].select_with_count.call_count == 2

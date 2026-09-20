@@ -8,6 +8,10 @@
  * transform and the drag-to-scrub, and clicking a card opens the feature lab
  * via a FLIP from the card's own rect.
  *
+ * The cards and section rhythm run a notch smaller than the source — the
+ * original two full-size rails stacked past any normal viewport height, and
+ * keeping both rows was chosen over one bigger rail.
+ *
  * Each track lists its cards TWICE. That duplication is the loop: the marquee
  * translates by exactly half the track width and wraps, so the second copy is
  * already in place when the first scrolls out. Removing it leaves a visible
@@ -18,6 +22,7 @@
  */
 
 import { GALLERY_MINIS } from './galleryMinis';
+import { FadeIn } from '@/components/landing/anim';
 
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
@@ -118,7 +123,7 @@ export function Gallery({
   onOpen: (i: number, el: HTMLElement | null) => void;
 }) {
   return (
-    <section id="gallery" style={{ position: 'relative', padding: '16vh 0 10vh', zIndex: 1, isolation: 'isolate' }}>
+    <section id="gallery" style={{ position: 'relative', padding: 'clamp(44px,7vh,92px) 0 clamp(30px,4.5vh,60px)', zIndex: 1, isolation: 'isolate' }}>
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
         {MOTES.map((m, i) => (
           <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
@@ -126,23 +131,23 @@ export function Gallery({
       </div>
 
       <div style={{ position: 'relative', zIndex: 1, maxWidth: 1220, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
-        <div data-reveal="1">
+        <FadeIn>
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
             And much more
           </span>
-          <h2 style={{ margin: '18px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.4rem,5vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
+          <h2 style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
             The rest of the <em style={{ color: '#0C5638' }}>grove.</em>
           </h2>
-          <p style={{ margin: '16px 0 0', color: '#61726A', fontSize: 15.5, lineHeight: 1.7, maxWidth: '52ch' }}>
+          <p style={{ margin: '14px 0 0', color: '#61726A', fontSize: 14, lineHeight: 1.65, maxWidth: '62ch' }}>
             Eight tools covering the whole arc of a course: quizzes and flashcards that test recall,
             notes and study guides that turn your materials into something usable, a tutor that
             talks you through what you missed, and a gradebook and calendar that keep the semester
             honest. Each one writes back to the same graph.
           </p>
-        </div>
+        </FadeIn>
       </div>
 
-      <div style={{ position: 'relative', zIndex: 1, marginTop: 40 }}>
+      <div style={{ position: 'relative', zIndex: 1, marginTop: 28 }}>
         {/* the mask feathers both ends so cards enter and leave rather than pop */}
         <div
           style={{

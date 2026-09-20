@@ -1,6 +1,6 @@
 "use client";
-import React from "react";
-import { useRouter } from "next/navigation";
+import React, { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { useUser } from "@/context/UserContext";
 import {
@@ -28,6 +28,7 @@ import type {
 import { now } from "@/lib/testMode";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
+import { buildQuizHref } from "@/lib/quiz/source";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -112,9 +113,23 @@ function apiConceptToConcept(c: ApiLinkedConcept, courseCode: string): Concept {
   };
 }
 
+/**
+ * `NotetakerScreen` reads `?note=<id>` off `useSearchParams`, which App Router
+ * requires to sit under a Suspense boundary (the same convention `/quiz` and
+ * `/dashboard` use — see their `page.tsx`).
+ */
 export default function NotetakerPage() {
+  return (
+    <Suspense fallback={null}>
+      <NotetakerScreen />
+    </Suspense>
+  );
+}
+
+function NotetakerScreen() {
   const { userId, userReady } = useUser();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
 
   const [courses, setCourses] = React.useState<Course[]>([]);
@@ -166,6 +181,20 @@ export default function NotetakerPage() {
       cancelled = true;
     };
   }, [userReady, userId]);
+
+  // `?note=<id>` reopens a specific note by URL — the arrival half of the
+  // "Generate quiz" round trip (returnTo: `/notetaker?note=<id>`, §6). Applied
+  // once per distinct `note` value, and only once notes have loaded: an id
+  // that matches a loaded note becomes active; an id that matches nothing is
+  // silently ignored (never traps the page on a blank state).
+  const appliedNoteParamRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const noteParam = searchParams.get("note");
+    if (!noteParam || notes.length === 0) return;
+    if (appliedNoteParamRef.current === noteParam) return;
+    appliedNoteParamRef.current = noteParam;
+    if (notes.some((n) => n.id === noteParam)) setActiveId(noteParam);
+  }, [searchParams, notes]);
 
   // Load linked concepts when the active note changes.
   const activeIdForConcepts = active?.id ?? null;
@@ -403,7 +432,7 @@ export default function NotetakerPage() {
     setBusy("quiz");
     try {
       const { concept_node_id } = await generateQuizFromNote(active.id, userId);
-      router.push(`/quiz?concept=${encodeURIComponent(concept_node_id)}`);
+      router.push(quizHrefForNote(active.id, concept_node_id));
     } catch (e) {
       console.error("Quiz failed", e);
       toast.error(humanizeError(e, "Couldn't generate a quiz from this note."));
@@ -1911,5 +1940,19 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         </button>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The "Generate quiz" deep link (#537 §6): a concept deep link sourced from
+ * this note, with a `returnTo` that reopens THIS note via the `?note=<id>`
+ * support above. Exported as a pure helper — rather than extracting the
+ * ~1900-line page's render tree — so the href-building logic is directly
+ * unit-testable without mounting the whole component.
+ */
+export function quizHrefForNote(noteId: string, conceptNodeId: string): string {
+  return buildQuizHref(
+    { concept: conceptNodeId },
+    { kind: "notes", returnTo: `/notetaker?note=${encodeURIComponent(noteId)}`, noteId },
   );
 }

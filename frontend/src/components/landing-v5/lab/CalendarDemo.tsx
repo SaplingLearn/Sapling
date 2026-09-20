@@ -54,7 +54,7 @@ export function CalendarDemo() {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 250px', minHeight: '100%', boxSizing: 'border-box' }}>
+    <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 250px', minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12, borderRight: '1px solid #ECE9DE' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 600 }}>October 2026</span>

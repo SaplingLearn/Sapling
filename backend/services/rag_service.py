@@ -8,6 +8,7 @@ then calls the match_course_chunks Supabase RPC for ANN retrieval.
 import hashlib
 import logging
 import os
+from typing import NamedTuple
 
 from google import genai
 from google.genai import types as genai_types
@@ -119,6 +120,27 @@ def _embed_documents_batch(texts: list[str]) -> list[list[float]]:
     return [list(e.values) for e in resp.embeddings]
 
 
+class Retrieval(NamedTuple):
+    """What one retrieval produced, and whether it actually ran.
+
+    `chunks` alone cannot answer that: [] is what "nothing relevant matched"
+    returns AND what a failed or disabled retrieval degrades to. A caller that
+    reports on grounding (quiz E8) has to tell those apart, or it ends up
+    asserting "this course's material doesn't cover the concept" about a
+    query that never reached the index.
+    """
+
+    #: The matched chunks, best-first. Empty on failure or when nothing
+    #: matched. Deliberately has NO default: a `= []` on a NamedTuple field is
+    #: evaluated once at class creation, so every no-arg `Retrieval()` would
+    #: hand back the SAME list, and one caller mutating it in place would
+    #: poison every future empty retrieval in the process.
+    chunks: list[dict]
+    #: True when retrieval RAISED. False for a clean empty result and for the
+    #: #439 seam skip, which is a deliberate mode rather than a fault.
+    failed: bool = False
+
+
 def retrieve_chunks(
     query: str,
     course_id: str | None = None,
@@ -128,7 +150,21 @@ def retrieve_chunks(
     """Return up to k chunks similar to query, optionally filtered by course_id.
 
     Each result: {"course_id": str, "chunk_text": str, "similarity": float}
+
+    Callers that need to distinguish "nothing matched" from "retrieval broke"
+    want `retrieve_chunks_detailed` instead; this stays the shape every
+    grounding-is-best-effort caller already expects.
     """
+    return retrieve_chunks_detailed(query, course_id, k, min_similarity).chunks
+
+
+def retrieve_chunks_detailed(
+    query: str,
+    course_id: str | None = None,
+    k: int = 5,
+    min_similarity: float = 0.55,
+) -> Retrieval:
+    """`retrieve_chunks`, plus whether the empty result is a fault or a fact."""
     try:
         embedding = _embed_query(query)
         params: dict = {
@@ -137,13 +173,18 @@ def retrieve_chunks(
             "filter_course_id": course_id,
         }
         rows = rpc("match_course_chunks", params)
-        return [r for r in rows if r.get("similarity", 0) >= min_similarity]
+        return Retrieval(
+            chunks=[r for r in rows if r.get("similarity", 0) >= min_similarity],
+        )
     except _EmbeddingDisabled as e:
         # The #439 seam guard, not a failure: below-seam embedding is disabled
         # by design outside real mode, so every function-mode turn lands here.
         # An error event per turn would drown the real signal below in noise.
         logger.info("[RAG] retrieve_chunks skipped: %s", e)
-        return []
+        # NOT `failed`: the seam being off is a configured mode, and marking
+        # it as a fault would make every function-mode E2E run report broken
+        # retrieval.
+        return Retrieval(chunks=[])
     except Exception as e:
         # Degrading to [] is deliberate (grounding is best-effort), but [] is
         # ALSO what "nothing relevant matched" returns — so without this the
@@ -155,7 +196,7 @@ def retrieve_chunks(
             category="error",
             payload={"course_id": course_id, "error_type": type(e).__name__},
         )
-        return []
+        return Retrieval(chunks=[], failed=True)
 
 
 def chunk_id(course_code: str, chunk_text: str) -> str:

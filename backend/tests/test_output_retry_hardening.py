@@ -32,6 +32,7 @@ from agents.note_summary import note_summary_agent
 from agents.quiz import quiz_agent
 from agents.usage import record_agent_usage
 from main import app
+from routes.quiz import CourseMaterial
 
 client = TestClient(app)
 
@@ -149,7 +150,7 @@ def test_quiz_route_degrades_to_typed_502_after_bounded_retries(monkeypatch):
 
     with (
         patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz._course_material_block", return_value=""),
+        patch("routes.quiz._course_material", return_value=CourseMaterial()),
         quiz_agent.override(model=model_for("quiz")),
     ):
         r = client.post("/api/quiz/generate", json={
