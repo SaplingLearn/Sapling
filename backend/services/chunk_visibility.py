@@ -31,11 +31,24 @@ and later opts back in does NOT retroactively share those uploads. Re-sharing
 them means re-indexing under the shared id (`scripts/backfill_document_chunks.py`),
 not a metadata flip. That asymmetry fails in the safe direction — private
 stays private — which is the right default for a privacy control.
+
+Two known costs of that remedy, unfixed here rather than unnoticed:
+
+* Re-indexing does not delete the private row, so for its owner BOTH rows then
+  match — the new one as `shared`, the old one through `uploader_id` — and
+  `retrieve_chunks_detailed` does not dedupe on text. That student spends two
+  retrieval slots on one passage until the private row is cleaned up. Dropping
+  duplicate text at retrieval belongs with #634's ranking work, not here (and
+  #484 encrypts `chunk_text`, which changes how such a comparison has to be
+  written).
+* `scripts/backfill_document_chunks.py` is invoked by nothing (#482), so the
+  remedy is an operator action, not a background repair.
 """
 import logging
 from collections.abc import Iterable
 
 from db.connection import page_all, pg_quote_value, table
+from services.events_service import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +57,13 @@ SHARED = "shared"
 PRIVATE = "private"
 
 #: Ids per `in.(…)` filter. PostgREST takes the filter in the query string, so
-#: an unbounded list becomes an unbounded URL; a student with thousands of
-#: chunks would blow past the server's request-line limit and the write would
-#: fail as a whole rather than page.
-_ID_BATCH = 200
+#: an unbounded list becomes an unbounded URL and a student with thousands of
+#: chunks would get a 414 instead of a paged read. 50 because these are quoted
+#: 64-char sha256 ids: 50 of them is ~3.4 KB of query string, comfortably under
+#: the 8 KB request-line default that usually sits in front of PostgREST, and it
+#: matches the repo's existing precedent for hex-id `in.()` reads
+#: (`scripts/dedupe_course_chunks.py`). 200 would have been ~13 KB.
+_ID_BATCH = 50
 
 
 def shares_class_context(user_id: str) -> bool:
@@ -61,9 +77,17 @@ def shares_class_context(user_id: str) -> bool:
     default: falling back to "opted in" would publish an opted-out student's
     upload to their whole class because PostgREST blipped for one request, and
     a content-addressed shared row cannot be un-published by re-running the
-    upload. Erring private costs that student some corpus reach and nothing
-    else, and `resync_user_chunk_visibility` repairs it the next time the
-    toggle moves.
+    upload.
+
+    Be clear about the cost, because it is not self-repairing. A blip here
+    indexes that upload into the PRIVATE id namespace with no ledger row, and
+    `resync_user_chunk_visibility` walks the ledger — so no later toggle flip
+    can ever bring those chunks back into the class pool. The only remedy is a
+    re-index under the shared id (`scripts/backfill_document_chunks.py`, which
+    resolves the flag again). That is still the right trade: one student's
+    document is missing from the shared corpus until an operator re-indexes,
+    versus another student's document published to a class that was told it
+    would not be.
     """
     try:
         rows = table("user_settings").select(
@@ -156,8 +180,33 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
     contributors through `match_course_chunks`' contributor clause and for
     nobody else.
 
-    Returns a counts dict so the caller can log what moved.
+    Returns a counts dict so the caller can log what moved. Raises nothing:
+    every read below raises on a PostgREST error, and this runs as a
+    post-response BackgroundTask where an exception would vanish — the student
+    would see the toggle succeed while their uploads stayed in classmates'
+    retrieval indefinitely. A failure is logged and counted
+    (`rag.visibility_resync_failed`) so the gap is visible and an operator can
+    re-run it; the function is idempotent, so re-running is always safe.
     """
+    try:
+        return _resync_user_chunk_visibility(user_id)
+    except Exception as e:
+        logger.error(
+            "[RAG] chunk-visibility resync FAILED for user %s — their Class "
+            "Intel setting is not yet reflected in course_chunks (#629)",
+            user_id, exc_info=True,
+        )
+        log_event(
+            "rag.visibility_resync_failed",
+            category="error",
+            user_id=user_id,
+            payload={"error_type": type(e).__name__},
+        )
+        return {"to_private": 0, "to_shared": 0, "considered": 0, "failed": True}
+
+
+def _resync_user_chunk_visibility(user_id: str) -> dict:
+    """`resync_user_chunk_visibility` without the error boundary."""
     contributed = [
         r["chunk_id"]
         for r in page_all(
@@ -178,14 +227,25 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
     # Every contributor of those chunks, not just this user: the rule is "any
     # opted-in contributor keeps it shared", so the other uploaders' flags
     # decide the outcome as much as this one's.
+    #
+    # PAGED, and that is load-bearing rather than tidiness. A popular chunk has
+    # one ledger row per uploader, so a class of 60 students who all uploaded
+    # the same slide deck puts ~60 rows behind every chunk id in the batch. A
+    # plain `select` would hit PostgREST's `max_rows` cap, which answers 206 —
+    # a 2xx, so `raise_for_status()` lets it through — and the chunks whose rows
+    # fell off the end would look uncontributed. Privatising THOSE is not the
+    # safe direction: it withdraws material 59 opted-in students legitimately
+    # shared, from the whole class, on the strength of a truncated read.
     contributors: dict[str, set[str]] = {}
     for i in range(0, len(chunk_ids), _ID_BATCH):
         batch = chunk_ids[i : i + _ID_BATCH]
-        rows = table("course_chunk_contributors").select(
+        for row in page_all(
+            table("course_chunk_contributors"),
             "chunk_id,user_id",
             filters={"chunk_id": _in_list(batch)},
-        )
-        for row in rows or []:
+            # Total order: (chunk_id, user_id) is the primary key.
+            order="chunk_id,user_id",
+        ):
             contributors.setdefault(row["chunk_id"], set()).add(row["user_id"])
 
     flags = _share_flags({u for users in contributors.values() for u in users})
@@ -204,11 +264,18 @@ def resync_user_chunk_visibility(user_id: str) -> dict:
     for cid in chunk_ids:
         if cid not in current:
             continue
-        # The id came OUT of the ledger, so this user's row existed a moment
-        # ago; an empty set here means it was deleted between the two reads.
-        # Falling back to this user alone can only privatise a chunk that might
-        # have had other contributors, never publish one — the safe direction.
-        users = contributors.get(cid) or {user_id}
+        users = contributors.get(cid)
+        if not users:
+            # The id came OUT of this user's ledger rows, so a complete read
+            # cannot return none for it: their own row was deleted between the
+            # two reads. SKIP rather than assume sole ownership — assuming it
+            # would privatise a chunk whose co-contributors we simply failed to
+            # see, and the chunk is no longer this user's to withdraw anyway.
+            logger.info(
+                "[RAG] chunk %s lost its contributor rows mid-resync for user "
+                "%s — leaving its visibility alone", cid, user_id,
+            )
+            continue
         desired = SHARED if any(flags.get(u, True) for u in users) else PRIVATE
         if current[cid] == desired:
             continue

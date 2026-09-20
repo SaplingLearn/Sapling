@@ -315,7 +315,8 @@ def index_document_chunks(
     doc_id: str,
     uploader_id: str,
     chunks: list[str],
-    visibility: str = SHARED,
+    *,
+    visibility: str,
 ) -> int:
     """Embed and upsert document chunks to course_chunks.
 
@@ -331,6 +332,13 @@ def index_document_chunks(
     persists the decision, it does not make it. A SHARED index also records the
     uploader in the contributor ledger, which is what lets a later opt-out
     withdraw a row whose `uploader_id` names somebody else.
+
+    REQUIRED and keyword-only, deliberately. A `= SHARED` default would make
+    the write side fail OPEN while retrieval fails closed: the next indexing
+    surface (notes, a room upload, a re-index route) that forgot the argument
+    would publish to the shared pool and reproduce the original bug verbatim,
+    with nothing failing in tests because the default IS the old behaviour. An
+    omission has to be a TypeError, not a silent leak.
     """
     if not chunks:
         return 0
@@ -420,7 +428,39 @@ def index_document_chunks(
         # shared under an id that could never merge with the shared row for the
         # same text (see services/chunk_visibility.py).
         record_contributors([r["id"] for r in embedded], uploader_id)
+        # Indexing is a detached post-roll thread, and the rows above cannot be
+        # written before the ledger rows that name them (the ledger has an FK to
+        # `course_chunks.id`). So there is a window: a student who flips Class
+        # Intel off while their upload is mid-index gets a resync that runs
+        # before these ledger rows land, finds nothing, and leaves the freshly
+        # shared chunks published — permanently, because nothing sweeps later.
+        # Re-reading consent AFTER the ledger write closes it down to the width
+        # of one read: whichever order the two interleave, at least one of them
+        # sees the other's effect.
+        _reconcile_if_consent_changed(uploader_id, [r["id"] for r in embedded])
     return len(embedded)
+
+
+def _reconcile_if_consent_changed(uploader_id: str, chunk_ids: list[str]) -> None:
+    """Privatise a just-shared index if consent flipped while it ran (#629)."""
+    from services.chunk_visibility import resync_user_chunk_visibility, shares_class_context
+
+    try:
+        if shares_class_context(uploader_id):
+            return
+        logger.info(
+            "[RAG] %s opted out while %s chunk(s) were indexing — resyncing",
+            uploader_id, len(chunk_ids),
+        )
+        resync_user_chunk_visibility(uploader_id)
+    except Exception:
+        # Best-effort by construction: the chunks and the ledger are already
+        # written, so the worst case here is the same window this exists to
+        # narrow, not a broken upload.
+        logger.warning(
+            "[RAG] post-index consent reconcile failed for %s", uploader_id,
+            exc_info=True,
+        )
 
 
 def format_rag_context(chunks: list[dict]) -> str:

@@ -278,6 +278,77 @@ class TestResyncUserChunkVisibility:
         assert chunks.update.call_count == 2
         assert result["to_private"] == n
 
+    def test_the_contributor_read_is_paged(self):
+        """A popular chunk has one ledger row per uploader, so a batch of ids
+        can sit behind thousands of rows. PostgREST caps the read at `max_rows`
+        and answers 206 — a 2xx that `raise_for_status()` lets through — so an
+        unpaged read returns a TRUNCATED contributor set, and the chunks whose
+        rows fell off the end look uncontributed. Privatising those withdraws
+        material every other uploader legitimately shared."""
+        from db.connection import MAX_ROWS
+        from services.chunk_visibility import resync_user_chunk_visibility
+
+        # One chunk, contributed by more uploaders than a single page holds.
+        page1 = [{"chunk_id": "c1", "user_id": f"u{i}"} for i in range(MAX_ROWS)]
+        page2 = [{"chunk_id": "c1", "user_id": "u-last"}]
+        contrib = MagicMock()
+        contrib.select.return_value = [{"chunk_id": "c1", "user_id": "u1"}]
+        contrib.select_with_count.side_effect = [
+            # page_all over this user's own rows (short page -> done)
+            ([{"chunk_id": "c1", "user_id": "u1"}], 1),
+            # page_all over every contributor of c1: full page, then the rest
+            (page1, 0),
+            (page2, 0),
+        ]
+        chunks = MagicMock()
+        chunks.select.return_value = [{"id": "c1", "visibility": "shared"}]
+        tables = _tables(
+            course_chunk_contributors=contrib,
+            # u1 opts out; u-last — visible only on the SECOND page — is still in.
+            user_settings=_settings([{"user_id": "u1", "share_class_context": False}]),
+            course_chunks=chunks,
+        )
+        with patch("services.chunk_visibility.table", side_effect=tables):
+            result = resync_user_chunk_visibility("u1")
+
+        # The second page is what saves the chunk. Without it, u1 reads as the
+        # only contributor of a row 1000 other students also fed.
+        chunks.update.assert_not_called()
+        assert result["to_private"] == 0
+
+    def test_a_chunk_whose_ledger_rows_vanished_is_left_alone(self):
+        """Absence after a COMPLETE read means this user's own row was deleted
+        mid-run, so the chunk is no longer theirs to withdraw. Inferring sole
+        ownership from an empty set is how a truncated read turns into
+        class-wide data loss — c2 below is legitimately withdrawn, c1 is not
+        touched, and the old fallback would have privatised both."""
+        from services.chunk_visibility import resync_user_chunk_visibility
+
+        contrib = MagicMock()
+        contrib.select_with_count.side_effect = [
+            # This user's own ledger rows name both chunks…
+            ([{"chunk_id": "c1", "user_id": "u1"},
+              {"chunk_id": "c2", "user_id": "u1"}], 2),
+            # …but the per-chunk read comes back with rows for c2 only.
+            ([{"chunk_id": "c2", "user_id": "u1"}], 1),
+        ]
+        chunks = MagicMock()
+        chunks.select.return_value = [
+            {"id": "c1", "visibility": "shared"},
+            {"id": "c2", "visibility": "shared"},
+        ]
+        tables = _tables(
+            course_chunk_contributors=contrib,
+            user_settings=_settings([{"user_id": "u1", "share_class_context": False}]),
+            course_chunks=chunks,
+        )
+        with patch("services.chunk_visibility.table", side_effect=tables):
+            result = resync_user_chunk_visibility("u1")
+
+        assert result["to_private"] == 1
+        assert "c2" in chunks.update.call_args.kwargs["filters"]["id"]
+        assert "c1" not in chunks.update.call_args.kwargs["filters"]["id"]
+
     def test_a_private_namespace_chunk_is_never_resurfaced(self):
         """A chunk uploaded while opted out lives under a private id namespace
         (`rag_service.chunk_id`) and has no contributor row, so opting back in
@@ -298,3 +369,39 @@ class TestResyncUserChunkVisibility:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+class TestResyncFailureIsVisible:
+    """#629 review: the resync runs as a post-response BackgroundTask, where an
+    exception vanishes. The student sees the toggle succeed while their uploads
+    stay in classmates' retrieval — the exact failure a privacy control cannot
+    have silently."""
+
+    def test_a_failed_resync_does_not_raise_and_is_counted(self, caplog):
+        from services.chunk_visibility import resync_user_chunk_visibility
+
+        broken = MagicMock()
+        broken.select_with_count.side_effect = Exception("PostgREST 503")
+        with (
+            patch("services.chunk_visibility.table",
+                  side_effect=_tables(course_chunk_contributors=broken)),
+            patch("services.chunk_visibility.log_event") as mock_log_event,
+        ):
+            with caplog.at_level("ERROR", logger="services.chunk_visibility"):
+                result = resync_user_chunk_visibility("u1")
+
+        assert result["failed"] is True
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+        assert mock_log_event.call_args.args[0] == "rag.visibility_resync_failed"
+
+    def test_a_successful_resync_emits_no_failure_event(self):
+        from services.chunk_visibility import resync_user_chunk_visibility
+
+        with (
+            patch("services.chunk_visibility.table", side_effect=_tables()),
+            patch("services.chunk_visibility.log_event") as mock_log_event,
+        ):
+            assert resync_user_chunk_visibility("u1") == {
+                "to_private": 0, "to_shared": 0, "considered": 0,
+            }
+        mock_log_event.assert_not_called()

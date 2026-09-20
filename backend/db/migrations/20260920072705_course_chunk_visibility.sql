@@ -11,6 +11,17 @@
 -- Three objects close it: a `visibility` column the retrieval RPC can filter
 -- on, a contributor ledger that makes "withdraw my chunks" answerable at all,
 -- and a replacement RPC that takes the reader.
+--
+-- APPLY THIS BEFORE DEPLOYING THE CODE. The application always sends
+-- `filter_user_id` now, and PostgREST resolves functions by argument name, so
+-- code running ahead of this migration gets a 404 on every match_course_chunks
+-- call — swallowed into `Retrieval(failed=True)`, i.e. the tutor and quiz lose
+-- ALL grounding with no user-visible error. `visibility` in the index payload
+-- would 400 for the same reason. The reverse order is safe (every new parameter
+-- has a default, so the old 3-key body still resolves), which is why
+-- `make promote` migrates before it merges. Note that migrate-staging.yml is
+-- currently a silent skip for want of a secret (#619) — check its log rather
+-- than assuming staging is migrated.
 
 -- ── 1. visibility ──────────────────────────────────────────────────────────
 --
