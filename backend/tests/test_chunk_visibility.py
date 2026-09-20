@@ -367,10 +367,6 @@ class TestResyncUserChunkVisibility:
         chunks.update.assert_not_called()
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
-
-
 class TestResyncFailureIsVisible:
     """#629 review: the resync runs as a post-response BackgroundTask, where an
     exception vanishes. The student sees the toggle succeed while their uploads
@@ -405,3 +401,111 @@ class TestResyncFailureIsVisible:
                 "to_private": 0, "to_shared": 0, "considered": 0,
             }
         mock_log_event.assert_not_called()
+
+# ── #630: shareability gates what may be shared at all ──────────────────────
+#
+# `share_class_context` answers "does this student consent to sharing?". It does
+# not answer "is this document even the student's to share?" — completed
+# homework, graded work and private notes all entered the shared pool on the
+# strength of that one consent flag, which is an academic-integrity problem as
+# much as a privacy one. `decide_visibility` composes the two.
+
+
+class TestDecideVisibility:
+    @staticmethod
+    def _opted(value):
+        return _tables(user_settings=_settings(
+            [{"user_id": "u1", "share_class_context": value}]
+        ))
+
+    def test_course_material_from_a_consenting_student_is_shared(self):
+        from services.chunk_visibility import SHARED, decide_visibility
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(True)):
+            assert decide_visibility(
+                "u1", shareability="course_material", confidence=0.9
+            ) == SHARED
+
+    def test_completed_work_is_private_even_from_a_consenting_student(self):
+        """The AC: a classmate must never be served this student's answers. The
+        consent flag is about sharing the COURSE's material, not about
+        publishing their homework."""
+        from services.chunk_visibility import PRIVATE, decide_visibility
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(True)):
+            assert decide_visibility(
+                "u1", shareability="completed_work", confidence=1.0
+            ) == PRIVATE
+
+    def test_personal_notes_are_private_by_default(self):
+        from services.chunk_visibility import PRIVATE, decide_visibility
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(True)):
+            assert decide_visibility(
+                "u1", shareability="personal_notes", confidence=1.0
+            ) == PRIVATE
+
+    def test_course_material_from_an_opted_out_student_is_still_private(self):
+        """Both gates have to pass, and the #629 consent gate is the second."""
+        from services.chunk_visibility import PRIVATE, decide_visibility
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(False)):
+            assert decide_visibility(
+                "u1", shareability="course_material", confidence=0.9
+            ) == PRIVATE
+
+    def test_a_low_confidence_classification_is_private(self):
+        from services.chunk_visibility import (
+            MIN_SHARE_CONFIDENCE, PRIVATE, decide_visibility,
+        )
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(True)):
+            assert decide_visibility(
+                "u1",
+                shareability="course_material",
+                confidence=MIN_SHARE_CONFIDENCE - 0.01,
+            ) == PRIVATE
+
+    def test_a_missing_shareability_is_private_and_says_so(self, caplog):
+        """`None` is what the output schema falls back to when the model omits
+        the field. Sharing on a missing answer is the one outcome that cannot
+        be undone, and a silent default would make an all-`None` regression
+        read as "everything is correctly private"."""
+        from services.chunk_visibility import PRIVATE, decide_visibility
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(True)):
+            with caplog.at_level("WARNING", logger="services.chunk_visibility"):
+                assert decide_visibility(
+                    "u1", shareability=None, confidence=1.0
+                ) == PRIVATE
+        assert any(r.levelname == "WARNING" for r in caplog.records)
+
+    def test_a_missing_confidence_is_private(self):
+        from services.chunk_visibility import PRIVATE, decide_visibility
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(True)):
+            assert decide_visibility(
+                "u1", shareability="course_material", confidence=None
+            ) == PRIVATE
+
+    def test_an_unknown_shareability_value_is_private(self):
+        """Neither an enum widened upstream nor a garbled value may default to
+        shareable — the fallback has to be the closed one."""
+        from services.chunk_visibility import PRIVATE, decide_visibility
+
+        with patch("services.chunk_visibility.table", side_effect=self._opted(True)):
+            assert decide_visibility(
+                "u1", shareability="public_domain", confidence=1.0
+            ) == PRIVATE
+
+    def test_consent_is_not_read_when_the_document_is_unshareable(self):
+        """A settings round trip per upload that could never be shared anyway."""
+        from services.chunk_visibility import decide_visibility
+
+        with patch("services.chunk_visibility.shares_class_context") as consent:
+            decide_visibility("u1", shareability="completed_work", confidence=1.0)
+        consent.assert_not_called()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

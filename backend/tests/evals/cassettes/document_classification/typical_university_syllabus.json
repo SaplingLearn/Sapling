@@ -2,5 +2,6 @@
   "category": "syllabus",
   "confidence": 1.0,
   "is_syllabus": true,
-  "rationale": "The document explicitly states the course schedule, grading policy, and late policy, which are key components of a syllabus."
+  "rationale": "The document includes a course title, instructor, lecture schedule, grading breakdown, and late policy.",
+  "shareability": "course_material"
 }

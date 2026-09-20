@@ -1,6 +1,7 @@
 {
   "category": "study_guide",
-  "confidence": 0.9,
+  "confidence": 1.0,
   "is_syllabus": true,
-  "rationale": "The document is explicitly labeled as a \"STUDY GUIDE\" and covers specific topics with practice questions and an answer key, indicating preparation for an exam. It also references the \"syllabus\" and covers material from specific \"weeks\", thus it is also a syllabus."
+  "rationale": "The document is explicitly labeled as a study guide and covers specific chapters and topics, indicating preparation for an exam. It also includes a course schedule by referencing syllabus weeks and lists topics to know, which implies it functions as a syllabus by defining course structure.",
+  "shareability": "course_material"
 }

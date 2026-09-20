@@ -1,6 +1,7 @@
 {
-  "category": "study_guide",
-  "confidence": 0.8,
+  "category": "assignment",
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document is formatted like an exam and includes point values for questions, indicating it is study material for an exam."
+  "rationale": "The document contains numbered questions with point values, typical of an examination or assignment handout.",
+  "shareability": "course_material"
 }

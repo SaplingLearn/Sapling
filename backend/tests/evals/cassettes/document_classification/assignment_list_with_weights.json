@@ -1,6 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.8,
+  "confidence": 0.9,
   "is_syllabus": true,
-  "rationale": "The document lists graded items for a course with point values and mentions submission deadlines, indicating a syllabus or grading policy."
+  "rationale": "The document lists graded items for a course, including their weights and submission method, which is characteristic of a syllabus or an assignment handout that specifies grading criteria.",
+  "shareability": "course_material"
 }

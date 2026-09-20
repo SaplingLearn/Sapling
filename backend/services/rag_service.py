@@ -317,6 +317,7 @@ def index_document_chunks(
     chunks: list[str],
     *,
     visibility: str,
+    category: str,
 ) -> int:
     """Embed and upsert document chunks to course_chunks.
 
@@ -339,7 +340,22 @@ def index_document_chunks(
     would publish to the shared pool and reproduce the original bug verbatim,
     with nothing failing in tests because the default IS the old behaviour. An
     omission has to be a TypeError, not a silent leak.
+
+    `category` is the classifier's category for the document (#630). It was
+    hardcoded to the literal "document" here, so every chunk in the store
+    claimed to be the same kind of thing even though the classifier's answer
+    had already reached the caller and chosen the chunking strategy. Required
+    for the same reason `visibility` is, and "catalog" is refused outright:
+    that value is the partition `learn._get_catalog_chunk` and the quiz's
+    catalog de-dup key on, so a document row claiming it would be served as
+    official BU course data.
     """
+    if category == "catalog":
+        raise ValueError(
+            "category='catalog' is the BU course-catalog partition "
+            "(scripts/ingest_catalog.py); a document chunk claiming it would "
+            "be served to students as official course data"
+        )
     if not chunks:
         return 0
 
@@ -359,7 +375,7 @@ def index_document_chunks(
             "chunk_text":  chunk_text,
             "chunk_hash":  cid,
             "embedding":   None,
-            "category":    "document",
+            "category":    category,
             "visibility":  visibility,
             "semester":    "current",
             "section_id":  None,

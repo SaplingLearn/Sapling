@@ -1,6 +1,7 @@
 {
   "category": "lecture_notes",
-  "confidence": 0.8,
+  "confidence": 0.9,
   "is_syllabus": false,
-  "rationale": "The document discusses lecture content on backpropagation and recalls previous concepts, typical of lecture notes."
+  "rationale": "The document discusses lecture content and recalls previous concepts, consistent with lecture notes.",
+  "shareability": "course_material"
 }

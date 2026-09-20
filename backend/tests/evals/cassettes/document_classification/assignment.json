@@ -2,5 +2,6 @@
   "category": "assignment",
   "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document contains numbered problems typical of a problem set or homework assignment, with a clear due date mentioned."
+  "rationale": "The document is an assignment handout containing numbered problems to be solved.",
+  "shareability": "course_material"
 }

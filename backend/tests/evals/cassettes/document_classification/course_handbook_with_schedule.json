@@ -1,6 +1,7 @@
 {
   "category": "syllabus",
-  "confidence": 1.0,
+  "confidence": 0.95,
   "is_syllabus": true,
-  "rationale": "The document explicitly states it is a \"handbook\" containing \"policies and the term schedule\" and includes a week-by-week breakdown of topics."
+  "rationale": "The document explicitly states it is a handbook containing policies and the term schedule, including weekly topics.",
+  "shareability": "course_material"
 }

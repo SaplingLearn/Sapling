@@ -99,6 +99,7 @@ def test_index_document_chunks_uses_retrieval_document_task_type(mock_client):
             uploader_id="user-123",
             chunks=["Dynamic programming covers memoization and tabulation techniques."],
             visibility="shared",
+            category="lecture_notes",
         )
 
     call_kwargs = mock_client.models.embed_content.call_args
@@ -118,6 +119,7 @@ def test_index_document_chunks_returns_count(mock_client):
             uploader_id="user-456",
             chunks=["chunk one about sorting", "chunk two about graphs", "chunk three about trees"],
             visibility="shared",
+            category="lecture_notes",
         )
     assert count == 3
 
@@ -125,7 +127,7 @@ def test_index_document_chunks_returns_count(mock_client):
 @patch("services.rag_service._client")
 def test_index_document_chunks_empty_returns_zero(mock_client):
     from services.rag_service import index_document_chunks
-    count = index_document_chunks("CAS CS 330", "doc-1", "user-1", [], visibility="shared")
+    count = index_document_chunks("CAS CS 330", "doc-1", "user-1", [], visibility="shared", category="lecture_notes")
     assert count == 0
     mock_client.models.embed_content.assert_not_called()
 
@@ -141,10 +143,10 @@ def test_chunk_ids_are_content_addressed_per_course(mock_client):
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
 
-        index_document_chunks("CAS CS 330", "doc-a", "user-1", ["memoization basics"], visibility="shared")
+        index_document_chunks("CAS CS 330", "doc-a", "user-1", ["memoization basics"], visibility="shared", category="lecture_notes")
         id_from_doc_a = mock_table.return_value.upsert.call_args[0][0][0]["id"]
 
-        index_document_chunks("CAS CS 330", "doc-b", "user-2", ["memoization basics"], visibility="shared")
+        index_document_chunks("CAS CS 330", "doc-b", "user-2", ["memoization basics"], visibility="shared", category="lecture_notes")
         id_from_doc_b = mock_table.return_value.upsert.call_args[0][0][0]["id"]
 
     assert id_from_doc_a == id_from_doc_b
@@ -160,10 +162,10 @@ def test_chunk_ids_differ_across_courses(mock_client):
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
 
-        index_document_chunks("CAS CS 330", "doc-a", "user-1", ["memoization basics"], visibility="shared")
+        index_document_chunks("CAS CS 330", "doc-a", "user-1", ["memoization basics"], visibility="shared", category="lecture_notes")
         id_cs330 = mock_table.return_value.upsert.call_args[0][0][0]["id"]
 
-        index_document_chunks("CAS CS 111", "doc-a", "user-1", ["memoization basics"], visibility="shared")
+        index_document_chunks("CAS CS 111", "doc-a", "user-1", ["memoization basics"], visibility="shared", category="lecture_notes")
         id_cs111 = mock_table.return_value.upsert.call_args[0][0][0]["id"]
 
     assert id_cs330 != id_cs111
@@ -185,6 +187,7 @@ def test_duplicate_chunks_within_one_document_are_deduped(mock_client):
             "user-1",
             ["Page header boilerplate", "actual content", "Page header boilerplate"],
             visibility="shared",
+            category="lecture_notes",
         )
         records = mock_table.return_value.upsert.call_args[0][0]
 
@@ -216,6 +219,7 @@ def test_index_document_chunks_drops_chunks_whose_embedding_failed(mock_embed):
             uploader_id="user-xyz",
             chunks=["chunk one", "chunk two", "chunk three"],
             visibility="shared",
+            category="lecture_notes",
         )
 
         # Still no exception — indexing stays best-effort, as before.
@@ -240,6 +244,7 @@ def test_index_document_chunks_keeps_the_chunks_that_did_embed(mock_embed):
             uploader_id="user-xyz",
             chunks=["one", "two", "three", "four", "five"],
             visibility="shared",
+            category="lecture_notes",
         )
 
         assert count == 2
@@ -359,6 +364,7 @@ def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypa
             uploader_id="user-1",
             chunks=["chunk one", "chunk two"],
             visibility="shared",
+            category="lecture_notes",
         )
 
     assert count == 0
@@ -436,7 +442,7 @@ def test_dropped_chunks_are_logged_and_counted(
     from services.rag_service import index_document_chunks
 
     with caplog.at_level("WARNING", logger="services.rag_service"):
-        count = index_document_chunks("CAS CS 330", "doc-1", "user-1", ["alpha", "beta"], visibility="shared")
+        count = index_document_chunks("CAS CS 330", "doc-1", "user-1", ["alpha", "beta"], visibility="shared", category="lecture_notes")
 
     # Nothing embedded => nothing persisted, and the caller is told zero.
     assert count == 0
@@ -603,6 +609,7 @@ def test_index_document_chunks_writes_a_shared_visibility(mock_embed):
         from services.rag_service import index_document_chunks
         index_document_chunks(
             "CAS CS 330", "doc-1", "u1", ["some content"], visibility="shared",
+            category="lecture_notes",
         )
         records = mock_table.return_value.upsert.call_args[0][0]
 
@@ -618,6 +625,7 @@ def test_index_document_chunks_writes_the_requested_visibility(mock_embed):
         from services.rag_service import index_document_chunks
         index_document_chunks(
             "CAS CS 330", "doc-1", "u1", ["some content"], visibility="private",
+            category="lecture_notes",
         )
         records = mock_table.return_value.upsert.call_args[0][0]
 
@@ -638,7 +646,7 @@ def test_a_shared_index_records_the_uploader_as_a_contributor(mock_embed):
          patch("services.rag_service.record_contributors") as mock_record:
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
-        index_document_chunks("CAS CS 330", "doc-1", "u1", ["one", "two"], visibility="shared")
+        index_document_chunks("CAS CS 330", "doc-1", "u1", ["one", "two"], visibility="shared", category="lecture_notes")
         records = mock_table.return_value.upsert.call_args[0][0]
 
     mock_record.assert_called_once()
@@ -658,6 +666,7 @@ def test_a_private_index_records_no_contributor(mock_embed):
         from services.rag_service import index_document_chunks
         index_document_chunks(
             "CAS CS 330", "doc-1", "u1", ["one"], visibility="private",
+            category="lecture_notes",
         )
 
     mock_record.assert_not_called()
@@ -669,7 +678,7 @@ def test_nothing_upserted_means_no_contributor_rows(mock_embed):
     with patch("services.rag_service.table") as mock_table, \
          patch("services.rag_service.record_contributors") as mock_record:
         from services.rag_service import index_document_chunks
-        assert index_document_chunks("CAS CS 330", "doc-1", "u1", ["one"], visibility="shared") == 0
+        assert index_document_chunks("CAS CS 330", "doc-1", "u1", ["one"], visibility="shared", category="lecture_notes") == 0
 
     mock_table.return_value.upsert.assert_not_called()
     mock_record.assert_not_called()
@@ -724,6 +733,7 @@ def test_a_shared_index_reconciles_if_consent_flipped_while_it_ran(mock_embed):
         from services.rag_service import index_document_chunks
         index_document_chunks(
             "CAS CS 330", "doc-1", "u1", ["content"], visibility="shared",
+            category="lecture_notes",
         )
 
     mock_resync.assert_called_once_with("u1")
@@ -742,6 +752,7 @@ def test_an_unchanged_consent_costs_no_resync(mock_embed):
         from services.rag_service import index_document_chunks
         index_document_chunks(
             "CAS CS 330", "doc-1", "u1", ["content"], visibility="shared",
+            category="lecture_notes",
         )
 
     mock_resync.assert_not_called()
@@ -760,6 +771,7 @@ def test_a_private_index_never_reconciles(mock_embed):
         from services.rag_service import index_document_chunks
         index_document_chunks(
             "CAS CS 330", "doc-1", "u1", ["content"], visibility="private",
+            category="lecture_notes",
         )
 
     mock_consent.assert_not_called()

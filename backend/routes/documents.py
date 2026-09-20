@@ -419,6 +419,11 @@ def _persist_document(
         "offering_id": offering_id,
         "file_name": filename,
         "category": result.classification.category,
+        # #630: stored, not just acted on. Without a stored value, a re-index or
+        # a backfill has nothing to reproduce the sharing decision from, and
+        # `decide_visibility(None)` privatises everything — which is the same
+        # shape of silent corpus loss as #628.
+        "shareability": getattr(result.classification, "shareability", None),
         "summary": encrypt_if_present(summary),
         "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
@@ -429,10 +434,16 @@ def _persist_document(
     try:
         inserted = table("documents").insert(row)
     except Exception:
-        # Schema may not yet have the request_id column; retry without it
-        # so deployments can ship the code before the migration runs.
-        if "request_id" in row:
-            row.pop("request_id", None)
+        # Schema may not yet have these columns; retry without them so
+        # deployments can ship the code before the migration runs. Losing
+        # `shareability` here is safe in the direction that matters: an absent
+        # stored value reads as private at index time (#630), never as
+        # shareable. Widened from a `request_id`-only retry rather than adding
+        # a second one-column special case.
+        optional = [c for c in ("request_id", "shareability") if c in row]
+        if optional:
+            for col in optional:
+                row.pop(col, None)
             inserted = table("documents").insert(row)
         else:
             raise
@@ -984,7 +995,7 @@ async def upload_document(
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
-                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", ""), classification.shareability, classification.confidence),
             )
         except Exception:
             logger.exception(
@@ -1089,6 +1100,8 @@ def _index_document_chunks(
     extracted_text: str,
     category: str,
     doc_summary: str = "",
+    shareability: str | None = None,
+    confidence: float | None = None,
 ) -> None:
     """Chunk, embed, and upsert a document into course_chunks.
 
@@ -1096,7 +1109,7 @@ def _index_document_chunks(
     is persisted, so it never blocks the SSE stream.
     """
     from services.chunker import chunk_for_category
-    from services.chunk_visibility import visibility_for
+    from services.chunk_visibility import decide_visibility
     from services.rag_service import index_document_chunks
     from services.encryption import encrypt_if_present
 
@@ -1125,18 +1138,23 @@ def _index_document_chunks(
         # used to `raise` for that case so the failure line would match an
         # allowlist entry in e2e_oracles/logscan.py — and that entry then hid
         # #628, a real TypeError on every catalog course.
-        # #629: the uploader's STORED Class Intel opt-in decides whether these
-        # chunks join the shared course pool at all. Read here, at the write
-        # boundary, rather than trusting the per-request `use_shared_context`
-        # flag the tutor/quiz bodies carry — that one is a read-side hint the
-        # tutor never even sets, and this is the write that becomes permanent.
-        visibility = visibility_for(user_id)
+        # Two gates, both resolved here at the write boundary because this is
+        # the write that becomes permanent. #629: the uploader's STORED Class
+        # Intel opt-in — never the per-request `use_shared_context` body flag,
+        # which is a read-side hint the tutor does not even set. #630: whether
+        # the document is the COURSE's to share at all, which the uploader's
+        # consent cannot answer — their own graded homework is not class
+        # material however willing they are to share.
+        visibility = decide_visibility(
+            user_id, shareability=shareability, confidence=confidence,
+        )
         count = index_document_chunks(
             course_code=bu_course_id,
             doc_id=doc_id,
             uploader_id=user_id,
             chunks=chunks,
             visibility=visibility,
+            category=category,
         )
         logger.info(
             "[RAG] indexed %d %s chunks for doc %s", count, visibility, doc_id

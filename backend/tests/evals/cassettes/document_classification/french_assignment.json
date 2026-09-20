@@ -1,6 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 1.0,
+  "confidence": 0.9,
   "is_syllabus": false,
-  "rationale": "The document is labeled \"Devoir\" (assignment) and contains numbered problems and instructions for a homework assignment."
+  "rationale": "The document lists tasks to be completed, including translation, paragraph writing, and verb conjugation, which are typical components of an assignment. It also specifies a due date and indicates it is individual work.",
+  "shareability": "course_material"
 }

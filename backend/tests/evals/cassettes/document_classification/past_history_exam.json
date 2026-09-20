@@ -1,6 +1,7 @@
 {
-  "category": "study_guide",
-  "confidence": 0.9,
+  "category": "assignment",
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document lists specific topics and questions for an exam, characteristic of a study guide or exam review."
+  "rationale": "The document lists examination questions, including identification terms and essay prompts, which are characteristic of an assignment or exam handout.",
+  "shareability": "course_material"
 }
