@@ -18,7 +18,14 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
-from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
+from models import (
+    StartSessionBody,
+    ChatBody,
+    EndSessionBody,
+    ActionBody,
+    ModeSwitchBody,
+    RenameSessionBody,
+)
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import require_self, get_session_user_id
 from services.chat_stream import merge_graph_updates, stream_agent_turn
@@ -28,6 +35,7 @@ from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
 from services.xp_service import award_xp_safe
+from services.tutor_context import needs_context
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +78,7 @@ def _resolve_model_pref(model_pref: str | None):
     if not model_pref:
         return None
     from agents._providers import _model_mode, google_model
+
     if _model_mode() != "real":
         # #391 seam: the per-request fast/smart override must not bypass
         # SAPLING_MODEL_MODE by constructing a live GoogleModel — the browser
@@ -97,6 +106,7 @@ def _build_pro_model_settings():
     """
     from google.genai.types import ThinkingConfig
     from pydantic_ai.models.google import GoogleModelSettings
+
     return GoogleModelSettings(
         google_thinking_config=ThinkingConfig(thinking_budget=_PRO_THINKING_BUDGET)
     )
@@ -142,7 +152,7 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     topic_trim = topic.strip()
     if not topic_trim:
         return ""
-    
+
     # First, check if topic matches a course code or name in user's enrolled
     # courses. Enrollment keys on an offering; the abstract course (which the
     # session + knowledge graph key on) sits behind
@@ -158,7 +168,9 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
             if not isinstance(offering, dict):
                 continue
             abstract_course_id = offering.get("course_id")
-            course = offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
+            course = (
+                offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
+            )
             course_code = course.get("course_code", "") or ""
             course_name = course.get("course_name", "") or ""
 
@@ -174,7 +186,7 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
                 return abstract_course_id
     except Exception as e:
         print(f"Failed to resolve course_id for topic={topic_trim!r} user_id={user_id!r}: {e}")
-    
+
     # Fallback: find via graph_nodes - look for nodes matching topic
     # that have a course_id
     node_rows = table("graph_nodes").select(
@@ -185,10 +197,10 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
         },
         limit=10,
     )
-    for row in (node_rows or []):
+    for row in node_rows or []:
         if row.get("course_id"):
             return row["course_id"]
-    
+
     # Try matching on subject field (legacy support)
     subject_rows = table("graph_nodes").select(
         "course_id",
@@ -198,10 +210,10 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
         },
         limit=1,
     )
-    for row in (subject_rows or []):
+    for row in subject_rows or []:
         if row.get("course_id"):
             return row["course_id"]
-    
+
     return ""
 
 
@@ -308,14 +320,16 @@ def _load_message_history(session_id: str) -> list:
 
 
 def save_message(session_id: str, role: str, content: str, graph_update: dict = None):
-    table("messages").insert({
-        "id": str(uuid.uuid4()),
-        "session_id": session_id,
-        "role": role,
-        "content": encrypt_if_present(content),
-        "graph_update_json": graph_update if graph_update else None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    table("messages").insert(
+        {
+            "id": str(uuid.uuid4()),
+            "session_id": session_id,
+            "role": role,
+            "content": encrypt_if_present(content),
+            "graph_update_json": graph_update if graph_update else None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
 def get_user_name(user_id: str) -> str:
@@ -346,7 +360,7 @@ def _consume_pending(session_id: str, user_id: str) -> None:
     pending = PENDING_SESSIONS.pop(session_id)
     if pending["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Session user mismatch")
-    
+
     # Sessions key on the offering (0025). The pending payload carries the
     # offering id (resolved at start-session) alongside the abstract course id.
     session_data = {
@@ -406,9 +420,7 @@ async def _agent_turn_or_http_error(turn, *, what: str):
         logger.warning("%s hit its usage budget; returning 413", what, exc_info=e)
         raise HTTPException(status_code=413, detail=_USAGE_LIMIT_DETAIL) from e
     except UnexpectedModelBehavior as e:
-        logger.warning(
-            "%s returned unexpected model behavior; returning 502", what, exc_info=e
-        )
+        logger.warning("%s returned unexpected model behavior; returning 502", what, exc_info=e)
         raise HTTPException(status_code=502, detail=_MODEL_TROUBLE_DETAIL) from e
     except HTTPException:
         # Known states raised inside the turn (auth, 404s) pass through.
@@ -484,7 +496,9 @@ async def _start_session_agent(
     try:
         result = record_agent_usage(
             await agent.run(assembled, **run_kwargs),
-            feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            feature="chat_tutor",
+            task="chat_tutor",
+            user_id=body.user_id,
         )
         # str — chat_tutor agents return plain Markdown. Safe to read
         # `.output` directly here (no `_new_run_text` narrowing): this call
@@ -493,9 +507,7 @@ async def _start_session_agent(
         # hazard needs history in the run's message list.
         reply = result.output
         if not reply.strip():
-            raise UnexpectedModelBehavior(
-                "chat_tutor produced a whitespace-only session greeting"
-            )
+            raise UnexpectedModelBehavior("chat_tutor produced a whitespace-only session greeting")
     except Exception as exc:
         # PR #472 review: THIS run's tools may have written graph/mastery
         # before the failure. Stamp the write-state so the streaming
@@ -514,8 +526,8 @@ async def _start_session_agent(
         "user_id": body.user_id,
         "mode": body.mode,
         "topic": body.topic,
-        "course_id": course_id,        # abstract — graph + shared-context key
-        "offering_id": offering_id,    # term-scoped — the session-row key
+        "course_id": course_id,  # abstract — graph + shared-context key
+        "offering_id": offering_id,  # term-scoped — the session-row key
         "use_shared_context": body.use_shared_context,
         "assistant_reply": reply,
         "graph_update": graph_update,
@@ -533,9 +545,7 @@ async def _start_session_agent(
 @router.post("/start-session")
 async def start_session(body: StartSessionBody, request: Request):
     require_self(body.user_id, request)
-    result = await _agent_turn_or_http_error(
-        _start_session_agent(body), what="start-session agent"
-    )
+    result = await _agent_turn_or_http_error(_start_session_agent(body), what="start-session agent")
     return {
         "session_id": result["session_id"],
         "initial_message": result["reply"],
@@ -573,7 +583,10 @@ def _prepare_chat_run(
         feature="tutor",
     )
 
-    bu_code = _get_course_info(course_id).get("course_code") if course_id else None
+    include_context = needs_context(user_message)
+    bu_code = (
+        _get_course_info(course_id).get("course_code") if course_id and include_context else None
+    )
     context_blocks: list[str] = []
     if bu_code:
         # Always inject the course catalog (prerequisites, description, credits)
@@ -581,27 +594,29 @@ def _prepare_chat_run(
         # relying on semantic similarity crossing a threshold.
         catalog_text = _get_catalog_chunk(bu_code)
         if catalog_text:
-            context_blocks.append("COURSE CATALOG INFO (official BU course data):\n\n" + catalog_text)
+            context_blocks.append(
+                "COURSE CATALOG INFO (official BU course data):\n\n" + catalog_text
+            )
 
         # Semantic RAG: per-message retrieval for concept-level context
         from services.rag_service import retrieve_chunks, format_rag_context
+
         # `user_id` is the READER (#629): shared course rows plus this
         # student's own uploads. Omitting it would silently cut an opted-out
         # student off from their own documents in their own tutor.
-        rag_chunks = retrieve_chunks(
-            user_message, course_id=bu_code, k=5, user_id=user_id
-        )
+        rag_chunks = retrieve_chunks(user_message, course_id=bu_code, k=5, user_id=user_id)
         rag_block = format_rag_context(rag_chunks)
         if rag_block:
             context_blocks.append(rag_block)
 
-    if course_id:
+    if course_id and include_context:
         # #149 AC(1): deterministic graph seed block — the student's tracked
         # concepts for THIS course (message-relevant first, weakest fill),
         # compact serialization, no ids. Placed after catalog/RAG so the
         # ordering matches the rest of the assembled context. The agent's
         # graph read tools exist to expand BEYOND this block mid-turn.
         from services.graph_context import build_graph_context_block
+
         graph_block = build_graph_context_block(user_id, course_id, user_message)
         if graph_block:
             context_blocks.append(graph_block)
@@ -611,8 +626,7 @@ def _prepare_chat_run(
 
     if not use_shared_context:
         user_message = (
-            user_message
-            + "\n\n[Constraint: do not call any class-aggregate tool — "
+            user_message + "\n\n[Constraint: do not call any class-aggregate tool — "
             "student opted out of shared context.]"
         )
 
@@ -633,6 +647,11 @@ def _prepare_chat_run(
     # "fast" (Lite has no thinking).
     if model_pref != "fast":
         run_kwargs["model_settings"] = _build_pro_model_settings()
+
+    # Do not pass google_cached_content here: Pydantic AI removes the current
+    # system instruction and tool config when an explicit cache is supplied,
+    # while tutor tools are dynamic per run. Provider-reported cache hits are
+    # still captured by the usage ledger for measurement.
 
     return agent, user_message, run_kwargs, deps
 
@@ -681,7 +700,9 @@ async def _chat_via_agent(
     try:
         result = record_agent_usage(
             await agent.run(user_message, **run_kwargs),
-            feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
+            feature="chat_tutor",
+            task="chat_tutor",
+            user_id=deps.user_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
         # puts `message_history` into `run_kwargs`, so a textless model
@@ -706,9 +727,7 @@ async def _chat_via_agent(
             # 502 mapping, or the stream fallback's Rung-1 ladder — applies
             # instead of persisting a stale or empty assistant row.
             # Usage was recorded above — tokens were spent.
-            raise UnexpectedModelBehavior(
-                "chat_tutor produced no reply text this turn"
-            )
+            raise UnexpectedModelBehavior("chat_tutor produced no reply text this turn")
     except Exception as exc:
         # PR #472 review: THIS run's tools may have written graph/mastery
         # before the failure. Stamp the write-state so the streaming
@@ -752,9 +771,7 @@ async def _chat_turn_json(
     # Unify with the middleware-stamped request ID so agent traces and
     # any downstream error payloads share the same correlation key.
     request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())
+        getattr(request.state, "request_id", None) or current_request_id() or str(uuid.uuid4())
     )
 
     # The session keys on the offering; the agent's graph tools key on the
@@ -803,9 +820,7 @@ async def _chat_turn_json(
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
-    return await _agent_turn_or_http_error(
-        _chat_turn_json(body, request), what="chat agent"
-    )
+    return await _agent_turn_or_http_error(_chat_turn_json(body, request), what="chat agent")
 
 
 @router.post("/chat/stream")
@@ -822,9 +837,7 @@ async def chat_stream(body: ChatBody, request: Request):
     _consume_pending(body.session_id, body.user_id)
 
     request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())
+        getattr(request.state, "request_id", None) or current_request_id() or str(uuid.uuid4())
     )
 
     offering_id = _get_session_offering_id(body.session_id)
@@ -883,7 +896,10 @@ async def chat_stream(body: ChatBody, request: Request):
         # #118: streaming turns report usage via the final AgentRunResultEvent,
         # surfaced by stream_agent_turn's on_usage hook after the run completes.
         record_agent_usage(
-            run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            run_result,
+            feature="chat_tutor",
+            task="chat_tutor",
+            user_id=body.user_id,
         )
 
     async def event_stream():
@@ -928,9 +944,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     """
     require_self(body.user_id, request)
     request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())
+        getattr(request.state, "request_id", None) or current_request_id() or str(uuid.uuid4())
     )
     session_id = str(uuid.uuid4())
 
@@ -992,7 +1006,10 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # #118: same hook as /chat/stream — the opener runs the same
         # chat_tutor agent, so it rolls up under the same feature/task.
         record_agent_usage(
-            run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            run_result,
+            feature="chat_tutor",
+            task="chat_tutor",
+            user_id=body.user_id,
         )
 
     async def event_stream():
@@ -1053,8 +1070,10 @@ def end_session(body: EndSessionBody, request: Request):
     # login_streak/session_count achievement check below) re-runs this, but
     # the xp_events idempotency key makes the repeat a clean no-op.
     award_xp_safe(
-        body.user_id, "session_completed",
-        source_type="session", source_id=body.session_id,
+        body.user_id,
+        "session_completed",
+        source_type="session",
+        source_id=body.session_id,
     )
 
     # touch_streak_safe shares this exact commit point: it's the same
@@ -1118,6 +1137,7 @@ def end_session(body: EndSessionBody, request: Request):
     newly_earned = []
     try:
         from services.achievement_service import check_achievements
+
         newly_earned = check_achievements(body.user_id, "login_streak", {})
         newly_earned += check_achievements(body.user_id, "session_count", {})
         # A finished session is the only thing that advances these. Without
@@ -1156,16 +1176,18 @@ def list_sessions(user_id: str, request: Request, limit: int = 10):
         if off_id and off_id not in offering_to_course:
             offering_to_course[off_id] = offering_course_id(off_id)
         msgs = table("messages").select("id", filters={"session_id": f"eq.{s['id']}"})
-        result.append({
-            "id": s["id"],
-            "topic": s["topic"],
-            "mode": s["mode"],
-            "course_id": offering_to_course.get(off_id),
-            "started_at": s["started_at"],
-            "ended_at": s.get("ended_at"),
-            "message_count": len(msgs),
-            "is_active": s.get("ended_at") is None,
-        })
+        result.append(
+            {
+                "id": s["id"],
+                "topic": s["topic"],
+                "mode": s["mode"],
+                "course_id": offering_to_course.get(off_id),
+                "started_at": s["started_at"],
+                "ended_at": s.get("ended_at"),
+                "message_count": len(msgs),
+                "is_active": s.get("ended_at") is None,
+            }
+        )
     return {"sessions": result}
 
 
@@ -1183,9 +1205,7 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
         pending["topic"] = topic
         return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
-    owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
+    owner_rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
     if not owner_rows:
         raise HTTPException(status_code=404, detail="Session not found")
     if owner_rows[0].get("user_id") != body.user_id:
@@ -1211,9 +1231,7 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
         PENDING_SESSIONS.pop(session_id, None)
         return {"deleted": True}
     # Verify the session belongs to the authenticated user before deleting
-    owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
+    owner_rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
     if owner_rows and owner_rows[0].get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="Session user mismatch")
     table("messages").delete({"session_id": f"eq.{session_id}"})
@@ -1270,9 +1288,7 @@ def resume_session(session_id: str, request: Request):
     )
     return {
         "session": session,
-        "messages": [
-            {**m, "content": decrypt_if_present(m["content"])} for m in msgs
-        ],
+        "messages": [{**m, "content": decrypt_if_present(m["content"])} for m in msgs],
     }
 
 
@@ -1294,9 +1310,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     action_message = f"[ACTION: {action_prompts.get(body.action_type, '')}]"
 
     request_id = (
-        getattr(request.state, "request_id", None)
-        or current_request_id()
-        or str(uuid.uuid4())
+        getattr(request.state, "request_id", None) or current_request_id() or str(uuid.uuid4())
     )
 
     # Session keys on the offering; the graph + shared context key on the
@@ -1319,7 +1333,9 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 
     result = record_agent_usage(
         await agent.run(assembled, **run_kwargs),
-        feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+        feature="chat_tutor",
+        task="chat_tutor",
+        user_id=body.user_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
     # would hand back the previous turn's assistant message when this turn's
@@ -1331,9 +1347,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         # #153: degenerate whitespace-only output, or a turn that ended after
         # tool calls with no text at all — surface through the guardrail
         # mapping rather than persisting an empty or stale assistant row.
-        raise UnexpectedModelBehavior(
-            "chat_tutor produced no action reply text this turn"
-        )
+        raise UnexpectedModelBehavior("chat_tutor produced no action reply text this turn")
 
     graph_update = merge_graph_updates(deps.graph_updates)
     save_message(body.session_id, "assistant", reply, graph_update or None)
@@ -1344,9 +1358,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
     _ensure_session_ready(body.session_id, body.user_id)
-    return await _agent_turn_or_http_error(
-        _action_turn(body, request), what="action agent"
-    )
+    return await _agent_turn_or_http_error(_action_turn(body, request), what="action agent")
 
 
 @router.post("/mode-switch")
@@ -1358,7 +1370,7 @@ def mode_switch(body: ModeSwitchBody, request: Request):
         "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
     )
     topic = session_rows[0]["topic"] if session_rows else "this topic"
-    
+
     mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)
 
     reply = (

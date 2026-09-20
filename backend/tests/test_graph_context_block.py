@@ -68,9 +68,7 @@ EDGES = [
 
 
 def test_overlap_selection_puts_message_matched_concepts_first():
-    block = graph_context_from_rows(
-        NODES, EDGES, "help me with derivatives please", max_concepts=3
-    )
+    block = graph_context_from_rows(NODES, EDGES, "help me with derivatives please", max_concepts=3)
     lines = block.splitlines()
     assert lines[0].startswith("GRAPH CONTEXT")
     # #150: concept lines ride inside the untrusted envelope.
@@ -97,9 +95,7 @@ def test_deterministic_ordering_no_message_is_mastery_then_name():
 
 def test_edges_render_only_among_selected_and_grouped_by_type():
     block = graph_context_from_rows(NODES, EDGES, "derivatives limits chain rule")
-    deriv_line = next(
-        line for line in block.splitlines() if line.startswith("- Derivatives")
-    )
+    deriv_line = next(line for line in block.splitlines() if line.startswith("- Derivatives"))
     assert "related: Limits, Chain Rule" in deriv_line or (
         "related:" in deriv_line and "Limits" in deriv_line and "Chain Rule" in deriv_line
     )
@@ -233,6 +229,20 @@ def test_prepare_chat_run_uses_tutor_limits():
     assert run_kwargs["usage_limits"] is TUTOR_LIMITS
 
 
+def test_prepare_chat_run_skips_all_context_for_acknowledgement():
+    with (
+        patch("routes.learn._get_course_info") as course_info,
+        patch("services.rag_service.retrieve_chunks") as retrieve,
+        patch("services.graph_context.build_graph_context_block") as graph,
+        patch("routes.learn._resolve_model_pref", return_value=None),
+    ):
+        _prepare(user_message="Thanks!")
+
+    course_info.assert_not_called()
+    retrieve.assert_not_called()
+    graph.assert_not_called()
+
+
 # ── /chat persists the RAW message, never the assembled prefix ────────────
 
 
@@ -277,9 +287,14 @@ def test_stream_route_saves_raw_body_message():
 
     async def fake_stream(**kwargs):
         from services.agent_events import SaplingEvent
+
         kwargs["on_complete"]("a reply", {}, [])
-        yield SaplingEvent(type="done", step="reply", message="Complete.",
-                           data={"reply": "a reply", "graph_update": {}, "mastery_changes": []})
+        yield SaplingEvent(
+            type="done",
+            step="reply",
+            message="Complete.",
+            data={"reply": "a reply", "graph_update": {}, "mastery_changes": []},
+        )
 
     with (
         patch("routes.learn.stream_agent_turn", fake_stream),

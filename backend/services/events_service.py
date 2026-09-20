@@ -89,71 +89,73 @@ logger = logging.getLogger("sapling.events")
 # The pinned #117 taxonomy (see the module docstring for payload shapes).
 # Shared constant so a rename breaks tests loudly; ``log_event`` deliberately
 # does NOT enforce membership — it must stay a cannot-raise sink.
-EVENT_TAXONOMY: frozenset[str] = frozenset({
-    "error.4xx",
-    "error.5xx",
-    "auth.login",
-    "auth.permission_denied",
-    "document.upload",
-    "document.processed",
-    "quiz.started",
-    "quiz.completed",
-    # #529/B3: the post-submit context write failed. category="error" so it
-    # surfaces in admin analytics — this failure was invisible for months
-    # precisely because nothing emitted when the background task died.
-    "quiz.context_write_failed",
-    # #544/F3: generation failed (agent error, timeout, or every question
-    # dropped). Same reasoning: a 502 the student sees should be a 502 an
-    # admin can count.
-    "quiz.generation_failed",
-    # #537/G8: the hero-card snapshot submit now returns inline failed to
-    # read, and was swallowed so the submit could still succeed.
-    # category="error" for the same reason quiz.context_write_failed is: a
-    # swallowed failure with only a log line behind it is how #529 stayed
-    # invisible for 51 days in this same handler. Fires at most once per
-    # submit, so the /errors feed can carry it without drowning. See the emit
-    # site, routes/quiz.py::_gamification_block.
-    "quiz.gamification_snapshot_failed",
-    # F5: a personalization input returned zero rows for a student who
-    # plausibly should have data. Three inputs were silently empty for
-    # months (#529's 42P10, the misconceptions offering-id filter, the
-    # digest key drift) because nothing distinguished "legitimately empty"
-    # from "the query is wrong". This is that distinction, made countable —
-    # and countable is the operative word: category="usage", because it
-    # fires once per generation for every student in a class whose
-    # aggregates exist, and the /errors feed would drown in it (same
-    # reasoning as quiz.rag_uncovered; see the emit site in
-    # services/tool_signals.py).
-    "quiz.tool_empty",
-    # E8: generation ran with no course-material grounding. Ungrounded
-    # generation is a legitimate mode (a course with nothing indexed), but
-    # it used to be indistinguishable from a retrieval that quietly failed.
-    # category="usage" for that reason — see the emit site in routes/quiz.py.
-    "quiz.rag_uncovered",
-    # #546: the deprecated `include_answer_key` flag, made countable. Its
-    # deletion is gated on "nobody still asks for the client-side answer
-    # key", and only a rollup can answer that — a log line can't. Two types,
-    # not one with a payload flag, because by_event_type doesn't break
-    # payloads out and the two populations mean opposite things: _served is
-    # the caller that BLOCKS deletion (it got the key), _flag_omitted is the
-    # flag-unaware caller for whom deletion is a no-op. See the emit site,
-    # routes/quiz.py::_record_answer_key_flag.
-    "quiz.answer_key_served",
-    "quiz.answer_key_flag_omitted",
-    "chat.message_sent",
-    "note.created",
-    "session.started",
-    "session.ended",
-    "rag.retrieval_failed",
-    "rag.chunks_dropped",
-    "rag.relevance_scored",
-    # #629: the Class Intel toggle moved but the resync that applies it to
-    # course_chunks.visibility failed. It runs as a post-response
-    # BackgroundTask, so without this the student sees the opt-out succeed
-    # while their uploads stay in classmates' retrieval, with nothing saying
-    # so. Rare and per-user, so category="error" is affordable on the feed.
-    "rag.visibility_resync_failed",
-})
+EVENT_TAXONOMY: frozenset[str] = frozenset(
+    {
+        "error.4xx",
+        "error.5xx",
+        "auth.login",
+        "auth.permission_denied",
+        "document.upload",
+        "document.processed",
+        "quiz.started",
+        "quiz.completed",
+        # #529/B3: the post-submit context write failed. category="error" so it
+        # surfaces in admin analytics — this failure was invisible for months
+        # precisely because nothing emitted when the background task died.
+        "quiz.context_write_failed",
+        # #544/F3: generation failed (agent error, timeout, or every question
+        # dropped). Same reasoning: a 502 the student sees should be a 502 an
+        # admin can count.
+        "quiz.generation_failed",
+        # #537/G8: the hero-card snapshot submit now returns inline failed to
+        # read, and was swallowed so the submit could still succeed.
+        # category="error" for the same reason quiz.context_write_failed is: a
+        # swallowed failure with only a log line behind it is how #529 stayed
+        # invisible for 51 days in this same handler. Fires at most once per
+        # submit, so the /errors feed can carry it without drowning. See the emit
+        # site, routes/quiz.py::_gamification_block.
+        "quiz.gamification_snapshot_failed",
+        # F5: a personalization input returned zero rows for a student who
+        # plausibly should have data. Three inputs were silently empty for
+        # months (#529's 42P10, the misconceptions offering-id filter, the
+        # digest key drift) because nothing distinguished "legitimately empty"
+        # from "the query is wrong". This is that distinction, made countable —
+        # and countable is the operative word: category="usage", because it
+        # fires once per generation for every student in a class whose
+        # aggregates exist, and the /errors feed would drown in it (same
+        # reasoning as quiz.rag_uncovered; see the emit site in
+        # services/tool_signals.py).
+        "quiz.tool_empty",
+        # E8: generation ran with no course-material grounding. Ungrounded
+        # generation is a legitimate mode (a course with nothing indexed), but
+        # it used to be indistinguishable from a retrieval that quietly failed.
+        # category="usage" for that reason — see the emit site in routes/quiz.py.
+        "quiz.rag_uncovered",
+        # #546: the deprecated `include_answer_key` flag, made countable. Its
+        # deletion is gated on "nobody still asks for the client-side answer
+        # key", and only a rollup can answer that — a log line can't. Two types,
+        # not one with a payload flag, because by_event_type doesn't break
+        # payloads out and the two populations mean opposite things: _served is
+        # the caller that BLOCKS deletion (it got the key), _flag_omitted is the
+        # flag-unaware caller for whom deletion is a no-op. See the emit site,
+        # routes/quiz.py::_record_answer_key_flag.
+        "quiz.answer_key_served",
+        "quiz.answer_key_flag_omitted",
+        "chat.message_sent",
+        "note.created",
+        "session.started",
+        "session.ended",
+        "rag.retrieval_failed",
+        "rag.chunks_dropped",
+        "rag.relevance_scored",
+        # #629: the Class Intel toggle moved but the resync that applies it to
+        # course_chunks.visibility failed. It runs as a post-response
+        # BackgroundTask, so without this the student sees the opt-out succeed
+        # while their uploads stay in classmates' retrieval, with nothing saying
+        # so. Rare and per-user, so category="error" is affordable on the feed.
+        "rag.visibility_resync_failed",
+    }
+)
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
 # the queue via reset_for_tests(maxsize=...).
@@ -178,7 +180,10 @@ _stop = threading.Event()
 def _logging_enabled() -> bool:
     """Read the kill switch each call so it can be toggled at runtime / in tests."""
     return os.getenv("EVENTS_LOGGING_ENABLED", "true").strip().lower() not in {
-        "false", "0", "no", "off",
+        "false",
+        "0",
+        "no",
+        "off",
     }
 
 
@@ -245,8 +250,14 @@ def log_llm_usage(
             "prompt_tokens": tokens["prompt_tokens"],
             "completion_tokens": tokens["completion_tokens"],
             "total_tokens": tokens["total_tokens"],
+            "cache_read_tokens": tokens["cache_read_tokens"],
+            "cache_write_tokens": tokens["cache_write_tokens"],
+            "thoughts_tokens": tokens["thoughts_tokens"],
             "cost_usd": llm_pricing.cost_usd(
-                model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                model,
+                tokens["prompt_tokens"],
+                tokens["completion_tokens"],
+                tokens["cache_read_tokens"],
             ),
         }
         _enqueue("llm_usage", row)
@@ -270,7 +281,8 @@ def _enqueue(table_name: str, row: dict) -> None:
         if n == 1 or n % 1000 == 0:
             logger.warning(
                 "events queue full (max=%d); dropped %d event(s) so far",
-                _queue.maxsize, n,
+                _queue.maxsize,
+                n,
             )
 
 
@@ -298,9 +310,10 @@ def _flush_batch(items: list[dict]) -> None:
             table(table_name).insert(rows)
         except Exception:
             logger.info(
-                "events bulk insert failed for table %r (%d row(s)); "
-                "retrying rows individually",
-                table_name, len(rows), exc_info=True,
+                "events bulk insert failed for table %r (%d row(s)); retrying rows individually",
+                table_name,
+                len(rows),
+                exc_info=True,
             )
             _flush_rows_individually(table_name, rows)
 
@@ -317,12 +330,15 @@ def _flush_rows_individually(table_name: str, rows: list[dict]) -> None:
             dropped += 1
             logger.debug(
                 "events row insert failed for table %r; row dropped",
-                table_name, exc_info=True,
+                table_name,
+                exc_info=True,
             )
     if dropped:
         logger.warning(
             "events flush dropped %d of %d row(s) for table %r after per-row retry",
-            dropped, len(rows), table_name,
+            dropped,
+            len(rows),
+            table_name,
         )
 
 
@@ -372,7 +388,9 @@ def start_worker() -> None:
             return
         _stop.clear()
         _worker = threading.Thread(
-            target=_worker_loop, name="sapling-events-worker", daemon=True,
+            target=_worker_loop,
+            name="sapling-events-worker",
+            daemon=True,
         )
         _worker.start()
 

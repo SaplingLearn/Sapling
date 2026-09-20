@@ -6,6 +6,7 @@ and a *fake Gemini usage_metadata* object, per the success criteria: the two
 SDKs name their token fields differently and both must reduce to the same
 prompt/completion/total triple before persistence.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -41,8 +42,18 @@ class FakeGeminiUsageMetadata:
     """Mirror of google.genai response.usage_metadata."""
 
     prompt_token_count: int
-    candidates_token_count: int
+    candidates_token_count: int | None
     total_token_count: int
+
+
+@dataclass
+class FakeCachedUsage:
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    details: dict[str, int] | None = None
 
 
 # ── normalize_usage ─────────────────────────────────────────────────────────
@@ -54,6 +65,9 @@ def test_normalize_pydantic_ai_usage():
         "prompt_tokens": 100,
         "completion_tokens": 40,
         "total_tokens": 140,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "thoughts_tokens": 0,
     }
 
 
@@ -63,44 +77,86 @@ def test_normalize_legacy_pydantic_ai_usage():
         "prompt_tokens": 7,
         "completion_tokens": 3,
         "total_tokens": 10,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "thoughts_tokens": 0,
     }
 
 
 def test_normalize_gemini_usage_metadata():
     usage = FakeGeminiUsageMetadata(
-        prompt_token_count=200, candidates_token_count=55, total_token_count=255,
+        prompt_token_count=200,
+        candidates_token_count=55,
+        total_token_count=255,
     )
     assert llm_pricing.normalize_usage(usage) == {
         "prompt_tokens": 200,
         "completion_tokens": 55,
         "total_tokens": 255,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "thoughts_tokens": 0,
     }
 
 
 def test_normalize_derives_total_when_missing_or_zero():
     """A provider may omit/zero the total; we derive prompt + completion."""
     usage = FakeGeminiUsageMetadata(
-        prompt_token_count=10, candidates_token_count=5, total_token_count=0,
+        prompt_token_count=10,
+        candidates_token_count=5,
+        total_token_count=0,
     )
     assert llm_pricing.normalize_usage(usage)["total_tokens"] == 15
 
 
 def test_normalize_handles_none_and_missing_fields():
     assert llm_pricing.normalize_usage(None) == {
-        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "thoughts_tokens": 0,
     }
     # A gemini metadata whose candidates count came back None (filtered reply).
     usage = FakeGeminiUsageMetadata(
-        prompt_token_count=12, candidates_token_count=None, total_token_count=12,
+        prompt_token_count=12,
+        candidates_token_count=None,
+        total_token_count=12,
     )
     assert llm_pricing.normalize_usage(usage) == {
-        "prompt_tokens": 12, "completion_tokens": 0, "total_tokens": 12,
+        "prompt_tokens": 12,
+        "completion_tokens": 0,
+        "total_tokens": 12,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "thoughts_tokens": 0,
     }
 
 
 def test_normalize_accepts_plain_dict():
     usage = {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
-    assert llm_pricing.normalize_usage(usage) == usage
+    assert llm_pricing.normalize_usage(usage) == {
+        **usage,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "thoughts_tokens": 0,
+    }
+
+
+def test_normalize_preserves_cache_and_thinking_details():
+    usage = FakeCachedUsage(
+        input_tokens=1000,
+        output_tokens=40,
+        total_tokens=1040,
+        cache_read_tokens=800,
+        cache_write_tokens=20,
+        details={"thoughts_tokens": 16},
+    )
+    normalized = llm_pricing.normalize_usage(usage)
+    assert normalized["cache_read_tokens"] == 800
+    assert normalized["cache_write_tokens"] == 20
+    assert normalized["thoughts_tokens"] == 16
 
 
 # ── cost_usd ────────────────────────────────────────────────────────────────
@@ -133,6 +189,11 @@ def test_cost_strips_provider_prefix():
     plain = llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0)
     prefixed = llm_pricing.cost_usd("google-gla:gemini-2.5-flash", 1000, 0)
     assert prefixed == plain
+
+
+def test_cost_uses_cached_input_rate_for_cached_tokens():
+    cost = llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0, cache_read_tokens=800)
+    assert cost == pytest.approx(0.000084)
 
 
 def test_cost_for_function_mode_model_is_none_and_silent(caplog):

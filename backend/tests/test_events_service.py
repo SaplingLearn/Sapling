@@ -5,6 +5,7 @@ The worker thread is never started in these tests; `flush_now()` drains the
 queue synchronously on the calling thread, which makes assertions
 deterministic (no races with a background drainer).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -63,8 +64,12 @@ def test_log_llm_usage_enqueues_normalized_row_with_cost(sink, monkeypatch):
         total_tokens = 2000
 
     events_service.log_llm_usage(
-        feature="quiz", task="quiz", model="gemini-2.5-flash", usage=FakeUsage(),
-        user_id="user_andres", request_id="req-1",
+        feature="quiz",
+        task="quiz",
+        model="gemini-2.5-flash",
+        usage=FakeUsage(),
+        user_id="user_andres",
+        request_id="req-1",
     )
     events_service.flush_now()
 
@@ -79,6 +84,9 @@ def test_log_llm_usage_enqueues_normalized_row_with_cost(sink, monkeypatch):
     assert row["prompt_tokens"] == 1000
     assert row["completion_tokens"] == 1000
     assert row["total_tokens"] == 2000
+    assert row["cache_read_tokens"] == 0
+    assert row["cache_write_tokens"] == 0
+    assert row["thoughts_tokens"] == 0
     assert row["user_id"] == "user_andres"
     assert row["request_id"] == "req-1"
     assert row["cost_usd"] == pytest.approx(0.0028)
@@ -91,7 +99,10 @@ def test_log_llm_usage_unknown_model_persists_null_cost(sink):
         total_tokens = 10
 
     events_service.log_llm_usage(
-        feature="notes", task="note_chat", model="mystery-model-9000", usage=FakeUsage(),
+        feature="notes",
+        task="note_chat",
+        model="mystery-model-9000",
+        usage=FakeUsage(),
     )
     events_service.flush_now()
 
@@ -106,13 +117,39 @@ def test_log_llm_usage_gemini_metadata_shape(sink):
         total_token_count = 42
 
     events_service.log_llm_usage(
-        feature="document", task=None, model="gemini-2.5-flash-lite",
-        usage=FakeMeta(), provider="gemini",
+        feature="document",
+        task=None,
+        model="gemini-2.5-flash-lite",
+        usage=FakeMeta(),
+        provider="gemini",
     )
     events_service.flush_now()
     row = sink[0][1][0]
     assert (row["prompt_tokens"], row["completion_tokens"], row["total_tokens"]) == (30, 12, 42)
     assert row["task"] is None
+
+
+def test_log_llm_usage_persists_cache_and_thinking_tokens(sink):
+    class FakeUsage:
+        input_tokens = 1000
+        output_tokens = 40
+        total_tokens = 1040
+        cache_read_tokens = 800
+        cache_write_tokens = 20
+        details = {"thoughts_tokens": 16}
+
+    events_service.log_llm_usage(
+        feature="chat_tutor",
+        task="chat_tutor",
+        model="gemini-2.5-flash",
+        usage=FakeUsage(),
+    )
+    events_service.flush_now()
+    row = sink[0][1][0]
+    assert row["cache_read_tokens"] == 800
+    assert row["cache_write_tokens"] == 20
+    assert row["thoughts_tokens"] == 16
+    assert row["cost_usd"] == pytest.approx(0.000184)
 
 
 # ── log_event + content fingerprinting ──────────────────────────────────────
@@ -121,7 +158,10 @@ def test_log_llm_usage_gemini_metadata_shape(sink):
 def test_log_event_hashes_content_and_never_stores_raw(sink):
     secret = "student's private essay body that must never be persisted"
     events_service.log_event(
-        "document.upload", category="usage", user_id="u1", content=secret,
+        "document.upload",
+        category="usage",
+        user_id="u1",
+        content=secret,
     )
     events_service.flush_now()
 
@@ -164,7 +204,9 @@ def test_calling_thread_never_hits_db(monkeypatch):
         total_tokens = 2
 
     # Neither call raises, because the (raising) insert only runs at flush time.
-    events_service.log_llm_usage(feature="quiz", task="quiz", model="gemini-2.5-flash", usage=FakeUsage())
+    events_service.log_llm_usage(
+        feature="quiz", task="quiz", model="gemini-2.5-flash", usage=FakeUsage()
+    )
     events_service.log_event("quiz.completed", category="usage")
 
 
@@ -175,8 +217,10 @@ def test_worker_insert_error_is_swallowed(monkeypatch, caplog):
     # never propagated.
     with caplog.at_level("WARNING"):
         events_service.flush_now()  # must not raise
-    assert any("simulated PostgREST failure" in r.getMessage() or "flush" in r.getMessage().lower()
-               for r in caplog.records)
+    assert any(
+        "simulated PostgREST failure" in r.getMessage() or "flush" in r.getMessage().lower()
+        for r in caplog.records
+    )
 
 
 def test_bulk_insert_failure_falls_back_to_per_row(monkeypatch, caplog):
@@ -230,7 +274,9 @@ def test_kill_switch_makes_helpers_noops(monkeypatch, sink):
         total_tokens = 2
 
     events_service.log_event("usage.tick", category="usage")
-    events_service.log_llm_usage(feature="quiz", task="quiz", model="gemini-2.5-flash", usage=FakeUsage())
+    events_service.log_llm_usage(
+        feature="quiz", task="quiz", model="gemini-2.5-flash", usage=FakeUsage()
+    )
     events_service.flush_now()
 
     assert sink == []
