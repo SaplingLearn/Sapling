@@ -113,6 +113,9 @@ def test_event_taxonomy_is_pinned():
         "rag.retrieval_failed",
         "rag.chunks_dropped",
         "rag.relevance_scored",
+        # #629: the Class Intel toggle moved but course_chunks.visibility did
+        # not follow. A privacy control that fails silently is not one.
+        "rag.visibility_resync_failed",
     })
 
 

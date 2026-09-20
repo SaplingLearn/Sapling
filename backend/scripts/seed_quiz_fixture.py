@@ -57,7 +57,11 @@ def main() -> None:
     chunks: list[str] = []
     for p in sorted((FIX / "docs").glob("*")):
         chunks.extend(chunk_document(p.read_text(encoding="utf-8")))
-    count = index_document_chunks(BU_CODE, DOC_ID, UPLOADER, chunks)
+    # Explicit, because `visibility` is required (#629): the benchmark's
+    # fixture course is meant to be readable by the benchmark's reader.
+    count = index_document_chunks(
+        BU_CODE, DOC_ID, UPLOADER, chunks, visibility="shared"
+    )
     print(f"Seeded {count} chunks for {BU_CODE} (doc {DOC_ID}).")
 
 

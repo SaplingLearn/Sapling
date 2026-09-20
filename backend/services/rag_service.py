@@ -17,6 +17,7 @@ from google.genai import types as genai_types
 
 from agents._providers import model_mode
 from db.connection import rpc, table
+from services.chunk_visibility import PRIVATE, SHARED, record_contributors
 from services.events_service import log_event
 
 logger = logging.getLogger(__name__)
@@ -203,16 +204,24 @@ def retrieve_chunks(
     course_id: str | None = None,
     k: int = 5,
     min_similarity: float = 0.55,
+    user_id: str | None = None,
 ) -> list[dict]:
     """Return up to k chunks similar to query, optionally filtered by course_id.
 
     Each result: {"course_id": str, "chunk_text": str, "similarity": float}
 
+    `user_id` names the READER (#629): the RPC returns shared rows plus the
+    rows this reader uploaded or contributed to. Omitting it asks for shared
+    rows only — the fail-closed default, so a caller that has not been threaded
+    through under-retrieves rather than leaking a classmate's private upload.
+
     Callers that need to distinguish "nothing matched" from "retrieval broke"
     want `retrieve_chunks_detailed` instead; this stays the shape every
     grounding-is-best-effort caller already expects.
     """
-    return retrieve_chunks_detailed(query, course_id, k, min_similarity).chunks
+    return retrieve_chunks_detailed(
+        query, course_id, k, min_similarity, user_id
+    ).chunks
 
 
 def retrieve_chunks_detailed(
@@ -220,6 +229,7 @@ def retrieve_chunks_detailed(
     course_id: str | None = None,
     k: int = 5,
     min_similarity: float = 0.55,
+    user_id: str | None = None,
 ) -> Retrieval:
     """`retrieve_chunks`, plus whether the empty result is a fault or a fact."""
     try:
@@ -228,6 +238,7 @@ def retrieve_chunks_detailed(
             "query_embedding": embedding,
             "match_count": k,
             "filter_course_id": course_id,
+            "filter_user_id": user_id,
         }
         rows = rpc("match_course_chunks", params)
         return Retrieval(
@@ -256,7 +267,13 @@ def retrieve_chunks_detailed(
         return Retrieval(chunks=[], failed=True)
 
 
-def chunk_id(course_code: str, chunk_text: str) -> str:
+def chunk_id(
+    course_code: str,
+    chunk_text: str,
+    *,
+    visibility: str = SHARED,
+    uploader_id: str | None = None,
+) -> str:
     """Content-addressed chunk id, scoped per course and per row kind.
 
     Identical text in the same course maps to one row no matter which
@@ -271,7 +288,25 @@ def chunk_id(course_code: str, chunk_text: str) -> str:
     so an un-namespaced hash would let a document chunk whose text
     byte-matches a catalog chunk silently overwrite the catalog row and
     flip its category — dropping it from every category=eq.catalog reader.
+
+    A PRIVATE chunk gets a third namespace segment plus its uploader (#629),
+    for the same structural reason: the shared upsert merges on id under
+    `resolution=merge-duplicates`, so an opted-out upload that hashed to the
+    shared id would merge INTO the classmates' row — leaving the opted-out
+    student's text in the shared pool under a row they can no longer withdraw.
+    Per-uploader, not merely per-visibility, so two opted-out students who
+    upload the same handout do not end up sharing one row with each other.
     """
+    if visibility == PRIVATE:
+        if not uploader_id:
+            raise ValueError(
+                "a private chunk id needs its uploader_id: without one the "
+                "private keyspace collapses back onto one key per course and "
+                "opted-out uploads re-merge with each other (#629)"
+            )
+        return hashlib.sha256(
+            f"{course_code}::document::private::{uploader_id}::{chunk_text}".encode()
+        ).hexdigest()
     return hashlib.sha256(f"{course_code}::document::{chunk_text}".encode()).hexdigest()
 
 
@@ -280,6 +315,8 @@ def index_document_chunks(
     doc_id: str,
     uploader_id: str,
     chunks: list[str],
+    *,
+    visibility: str,
 ) -> int:
     """Embed and upsert document chunks to course_chunks.
 
@@ -289,13 +326,28 @@ def index_document_chunks(
     of duplicating rows. Repeated text within one document is deduped
     before upsert — Postgres rejects an upsert payload that hits the same
     row twice.
+
+    `visibility` is the uploader's stored Class Intel opt-in, resolved by the
+    caller through `chunk_visibility.visibility_for` (#629) — this layer
+    persists the decision, it does not make it. A SHARED index also records the
+    uploader in the contributor ledger, which is what lets a later opt-out
+    withdraw a row whose `uploader_id` names somebody else.
+
+    REQUIRED and keyword-only, deliberately. A `= SHARED` default would make
+    the write side fail OPEN while retrieval fails closed: the next indexing
+    surface (notes, a room upload, a re-index route) that forgot the argument
+    would publish to the shared pool and reproduce the original bug verbatim,
+    with nothing failing in tests because the default IS the old behaviour. An
+    omission has to be a TypeError, not a silent leak.
     """
     if not chunks:
         return 0
 
     records_by_id: dict[str, dict] = {}
     for i, chunk_text in enumerate(chunks):
-        cid = chunk_id(course_code, chunk_text)
+        cid = chunk_id(
+            course_code, chunk_text, visibility=visibility, uploader_id=uploader_id
+        )
         if cid in records_by_id:
             continue
         records_by_id[cid] = {
@@ -308,6 +360,7 @@ def index_document_chunks(
             "chunk_hash":  cid,
             "embedding":   None,
             "category":    "document",
+            "visibility":  visibility,
             "semester":    "current",
             "section_id":  None,
             "school":      "",
@@ -368,7 +421,46 @@ def index_document_chunks(
         return 0
 
     table("course_chunks").upsert(embedded, on_conflict="id")
+    if visibility == SHARED:
+        # Only shared rows get a ledger entry. A private row's id already
+        # encodes its single possible owner, and keeping it out of the ledger
+        # is what stops `resync_user_chunk_visibility` from later flipping it
+        # shared under an id that could never merge with the shared row for the
+        # same text (see services/chunk_visibility.py).
+        record_contributors([r["id"] for r in embedded], uploader_id)
+        # Indexing is a detached post-roll thread, and the rows above cannot be
+        # written before the ledger rows that name them (the ledger has an FK to
+        # `course_chunks.id`). So there is a window: a student who flips Class
+        # Intel off while their upload is mid-index gets a resync that runs
+        # before these ledger rows land, finds nothing, and leaves the freshly
+        # shared chunks published — permanently, because nothing sweeps later.
+        # Re-reading consent AFTER the ledger write closes it down to the width
+        # of one read: whichever order the two interleave, at least one of them
+        # sees the other's effect.
+        _reconcile_if_consent_changed(uploader_id, [r["id"] for r in embedded])
     return len(embedded)
+
+
+def _reconcile_if_consent_changed(uploader_id: str, chunk_ids: list[str]) -> None:
+    """Privatise a just-shared index if consent flipped while it ran (#629)."""
+    from services.chunk_visibility import resync_user_chunk_visibility, shares_class_context
+
+    try:
+        if shares_class_context(uploader_id):
+            return
+        logger.info(
+            "[RAG] %s opted out while %s chunk(s) were indexing — resyncing",
+            uploader_id, len(chunk_ids),
+        )
+        resync_user_chunk_visibility(uploader_id)
+    except Exception:
+        # Best-effort by construction: the chunks and the ledger are already
+        # written, so the worst case here is the same window this exists to
+        # narrow, not a broken upload.
+        logger.warning(
+            "[RAG] post-index consent reconcile failed for %s", uploader_id,
+            exc_info=True,
+        )
 
 
 def format_rag_context(chunks: list[dict]) -> str:
