@@ -41,9 +41,15 @@ NEW_LOG_LINE_RE = re.compile(
 # The class-name prefix is optional so bare Error:/Exception:/etc. lines still match.
 KEY_RE = re.compile(r"^[\s|+]*(?:\w+(?:\.\w+)*)?(?:Error|Exception|Interrupt|Exit)\b.*")
 
-# #439 by-design noise: RAG indexing failures are retried and logged loudly but
-# don't represent a user-facing bug. Suppressed (counted, not reported).
-ALLOWLIST = (re.compile(r"\[RAG\] _index_document_chunks failed"),)
+# Tracebacks to suppress (counted, not reported). Deliberately EMPTY. It held
+# one entry — `[RAG] _index_document_chunks failed`, "#439 by-design noise",
+# because function mode raised inside the indexer on purpose — and that entry
+# also swallowed #628: a real TypeError that kept every catalog-course upload
+# out of retrieval for months. Function mode is now a quiet designed skip, so
+# nothing legitimate logs that line. Before adding an entry here, make the
+# by-design case stop logging a traceback instead: an allowlist cannot tell
+# the failure you expected from the one you didn't.
+ALLOWLIST: tuple[re.Pattern[str], ...] = ()
 
 _MAX_EXCERPT_LINES = 20
 _CONTEXT_LINES = 5

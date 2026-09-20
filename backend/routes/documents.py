@@ -1041,6 +1041,49 @@ def _check_upload_achievements(user_id: str) -> None:
         pass
 
 
+def _observe_course_relevance(
+    doc_id: str, course_code: str, user_id: str, category: str, sample_text: str
+) -> None:
+    """Record how on-topic an upload is for its course. OBSERVE-ONLY (#628).
+
+    This was a gate: below 0.35 the document was dropped from indexing. But it
+    never produced a score — it multiplied floats by PostgREST's string form
+    of the catalog vector and raised on every catalog course — so 0.35 was
+    never calibrated against anything, and it was a raw dot product besides.
+    It also compares a whole document against one paragraph of catalog blurb.
+    Until `rag.relevance_scored` shows what real uploads score, rejecting on
+    it would trade a loud bug for a silent one, so it only measures: no
+    outcome here, including a failed embed, can keep a document out of
+    retrieval. Turning it back into a gate is #641's call, from data.
+    """
+    import time
+    from services.rag_service import course_relevance
+
+    try:
+        score = course_relevance(course_code, sample_text)
+    except Exception:
+        logger.warning(
+            "[RAG] relevance score failed for doc %s (indexing anyway)",
+            doc_id, exc_info=True,
+        )
+        return
+    if score is None:
+        return
+    time.sleep(1.5)  # space the scoring embed from the batch embed (#482 removes)
+    logger.info("[RAG] doc %s relevance to %s is %.3f", doc_id, course_code, score)
+    events_service.log_event(
+        "rag.relevance_scored",
+        category="usage",
+        user_id=user_id,
+        payload={
+            "doc_id": doc_id,
+            "course_id": course_code,
+            "category": category,
+            "score": round(score, 4),
+        },
+    )
+
+
 def _index_document_chunks(
     doc_id: str,
     course_id: str,      # Sapling UUID — resolved to BU code internally
@@ -1054,12 +1097,9 @@ def _index_document_chunks(
     Runs in a background thread via _spawn_post_roll after the document
     is persisted, so it never blocks the SSE stream.
     """
-    import time
     from services.chunker import chunk_for_category
-    from services.rag_service import embed_document_text, index_document_chunks
+    from services.rag_service import index_document_chunks
     from services.encryption import encrypt_if_present
-
-    MIN_COURSE_RELEVANCE = 0.35
 
     try:
         # Resolve BU course code from Sapling UUID
@@ -1081,48 +1121,22 @@ def _index_document_chunks(
         except Exception:
             logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
 
-        # Relevance gate: skip docs that are off-topic for the course. The
-        # embedding-based check below routes through services.rag_service
-        # (#413) — the shared lazy client behind the #439 model_mode() gate —
-        # catalog_rows itself is a plain Supabase read (not gated) so the gate
-        # is only ever skipped when there's actually a catalog embedding to
-        # compare against.
-        catalog_rows = table("course_chunks").select(
-            "embedding",
-            filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
-            limit=1,
-        )
-        if catalog_rows and catalog_rows[0].get("embedding"):
-            if model_mode() != "real":
-                # #439: no google.genai.Client in non-real mode. Raising here
-                # (instead of silently skipping the gate) reproduces the exact
-                # behavior a real embed-call failure already produced: the
-                # outer `except` below aborts indexing and logs
-                # "_index_document_chunks failed for doc %s" — the line
-                # e2e_oracles/logscan.py's ALLOWLIST already expects. Function
-                # mode is now that same no-op, by design, not by accident of a
-                # swallowed exception.
-                raise RuntimeError(
-                    "RAG relevance-gate embedding skipped: "
-                    "SAPLING_MODEL_MODE != 'real' (#439)"
-                )
+        if model_mode() != "real":
+            # #439: no embedding exists outside real mode, so there is nothing
+            # to index. A designed, quiet skip — this used to `raise` into the
+            # outer `except` so the failure line matched an allowlist entry in
+            # e2e_oracles/logscan.py, and that entry then hid #628 (a real
+            # TypeError on every catalog course). No raise, no allowlist.
+            logger.info(
+                "[RAG] doc %s not indexed — embedding disabled "
+                "(SAPLING_MODEL_MODE != 'real', #439)",
+                doc_id,
+            )
+            return
 
-            # #413: no raw genai.Client here — a keyless run used to construct
-            # Client(api_key="") whose ValueError the outer `except` swallowed
-            # into a silent no-index degrade. rag_service's shared lazy client
-            # (dummy-key fallback + timeout) fails at call time with a clear
-            # API error instead, on the same degrade path.
-            catalog_vec = catalog_rows[0]["embedding"]
-            sample_text = doc_summary or chunks[0]
-            doc_sample_vec = embed_document_text(sample_text)
-            time.sleep(1.5)
-            dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
-            if dot < MIN_COURSE_RELEVANCE:
-                logger.warning(
-                    "[RAG] doc %s skipped — relevance to %s is %.3f (< %.2f)",
-                    doc_id, bu_course_id, dot, MIN_COURSE_RELEVANCE,
-                )
-                return
+        _observe_course_relevance(
+            doc_id, bu_course_id, user_id, category, doc_summary or chunks[0]
+        )
 
         count = index_document_chunks(
             course_code=bu_course_id,

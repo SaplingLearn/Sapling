@@ -442,3 +442,62 @@ def test_dropped_chunks_are_logged_and_counted(
     assert any(
         c.args and c.args[0] == "rag.chunks_dropped" for c in mock_log_event.call_args_list
     ), "expected a rag.chunks_dropped event"
+
+
+# --- #628: course relevance over the REAL PostgREST wire format -------------
+
+# PostgREST serialises a pgvector VECTOR column as its TEXT form — a JSON
+# *string*, not a JSON array (verified against live staging + prod,
+# 2026-09-20). Every fake that hands the code a Python list is testing a
+# shape the database never produces, which is how #628 shipped.
+def _pgvector_wire(vec: list[float]) -> str:
+    return "[" + ",".join(repr(v) for v in vec) + "]"
+
+
+def test_parse_vector_reads_the_postgrest_string_form():
+    from services.rag_service import parse_vector
+
+    assert parse_vector("[0.5,-0.25,1.0]") == [0.5, -0.25, 1.0]
+
+
+def test_parse_vector_passes_a_list_through():
+    from services.rag_service import parse_vector
+
+    assert parse_vector([0.5, -0.25]) == [0.5, -0.25]
+
+
+@patch("services.rag_service.table")
+@patch("services.rag_service._embed_document")
+def test_course_relevance_scores_against_a_string_catalog_embedding(mock_embed, mock_table):
+    mock_embed.return_value = [1.0, 0.0, 0.0]
+    mock_table.return_value.select.return_value = [
+        {"embedding": _pgvector_wire([1.0, 0.0, 0.0])}
+    ]
+    from services.rag_service import course_relevance
+
+    assert course_relevance("CAS CS 132", "intro to data structures") == pytest.approx(1.0)
+
+
+@patch("services.rag_service.table")
+@patch("services.rag_service._embed_document")
+def test_course_relevance_is_cosine_not_a_raw_dot_product(mock_embed, mock_table):
+    """gemini-embedding-001 at 768-d is NOT unit-normalised, and retrieval
+    ranks on cosine (`<=>`). A raw dot product here would put the score on a
+    different scale from everything else in the system: these two vectors
+    point the same way, so the answer is 1.0, not 6.0."""
+    mock_embed.return_value = [3.0, 0.0]
+    mock_table.return_value.select.return_value = [{"embedding": _pgvector_wire([2.0, 0.0])}]
+    from services.rag_service import course_relevance
+
+    assert course_relevance("CAS CS 132", "sample") == pytest.approx(1.0)
+
+
+@patch("services.rag_service.table")
+@patch("services.rag_service._embed_document")
+def test_course_relevance_is_none_without_a_catalog_embedding(mock_embed, mock_table):
+    """No catalog row => nothing to compare against, and no embed call spent."""
+    mock_table.return_value.select.return_value = []
+    from services.rag_service import course_relevance
+
+    assert course_relevance("TEST QG 101", "sample") is None
+    mock_embed.assert_not_called()

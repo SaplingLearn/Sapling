@@ -20,6 +20,13 @@ from unittest.mock import MagicMock, patch
 from routes.documents import _index_document_chunks
 
 
+def _pgvector_wire(vec):
+    """A pgvector column as PostgREST actually returns it: its TEXT form, a
+    JSON *string* — never a JSON array. Mocking it as a Python list is the
+    fidelity gap that let #628 through."""
+    return "[" + ",".join(repr(v) for v in vec) + "]"
+
+
 def _mock_table_for(courses_rows, course_chunks_rows):
     """Build a `table()` stand-in whose `.select()` return value depends on
     which table name it was called for."""
@@ -96,35 +103,31 @@ class TestIndexDocumentChunks:
 
         mock_index.assert_not_called()
 
-    def test_relevance_gate_skips_client_construction_outside_real_mode(self, monkeypatch, caplog):
-        """#439: the catalog-relevance embed call (routed through
-        rag_service.embed_document_text since #413 — no raw client remains
-        at this site) only fires
-        when a catalog embedding actually exists for the course. When one
-        does and mode != 'real', no client may be constructed — the whole
-        indexing call aborts exactly like an unlucky real embed-call failure
-        already did (the outer `except` logs "_index_document_chunks failed
-        for doc %s", the line e2e_oracles/logscan.py's ALLOWLIST already
-        expects), so services.rag_service.index_document_chunks is never
-        reached either.
-        """
+    def test_function_mode_is_a_designed_skip_not_a_logged_failure(self, monkeypatch, caplog):
+        """#439 + #628: outside real mode no embedding is possible, so indexing
+        is an explicit, quiet no-op — no client constructed, nothing indexed,
+        and NO error/traceback logged.
+
+        It used to `raise` into the outer `except` on purpose, which forced
+        e2e_oracles/logscan.py to allowlist "_index_document_chunks failed".
+        That allowlist entry then hid #628 — a real TypeError on every catalog
+        course — for months. A designed skip needs no allowlist."""
         monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
         ctor = MagicMock(side_effect=AssertionError(
             "genai.Client must not be constructed outside real mode"
         ))
         monkeypatch.setattr("google.genai.Client", ctor)
+        fake = _mock_table_for(
+            courses_rows=[{"course_code": "BIO-101"}],
+            course_chunks_rows=[{"embedding": _pgvector_wire([0.1] * 768)}],
+        )
 
         with (
-            patch(
-                "routes.documents.table",
-                side_effect=_mock_table_for(
-                    courses_rows=[{"course_code": "BIO-101"}],
-                    course_chunks_rows=[{"embedding": [0.1] * 768}],  # catalog row present
-                ),
-            ),
+            patch("routes.documents.table", side_effect=fake),
+            patch("services.rag_service.table", side_effect=fake),
             patch("services.chunker.chunk_for_category", return_value=["chunk one"]),
             patch("services.rag_service.index_document_chunks") as mock_index,
-            caplog.at_level(logging.ERROR, logger="routes.documents"),
+            caplog.at_level(logging.INFO, logger="routes.documents"),
         ):
             _index_document_chunks(
                 doc_id="doc-gate",
@@ -136,9 +139,123 @@ class TestIndexDocumentChunks:
 
         ctor.assert_not_called()
         mock_index.assert_not_called()
-        assert "_index_document_chunks failed for doc doc-gate" in caplog.text
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+            f"function mode must not log a failure: {[r.getMessage() for r in caplog.records]}"
+        )
+        assert "_index_document_chunks failed" not in caplog.text
+        assert "doc-gate" in caplog.text  # the skip itself is still visible at INFO
 
-    def test_relevance_gate_embeds_via_rag_service_not_raw_client(self, monkeypatch):
+    def test_indexes_a_catalog_course_when_the_embedding_arrives_as_a_string(self, monkeypatch):
+        """#628 regression. PostgREST returns the catalog row's pgvector
+        embedding as a STRING. The old gate zipped floats against that string's
+        characters -> TypeError -> swallowed -> the document was never indexed
+        while the upload reported success. Confirmed live: prod had 5 indexable
+        documents on a catalog course and 0 document chunks."""
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+        vec = [1.0] + [0.0] * 767
+        fake = _mock_table_for(
+            courses_rows=[{"course_code": "CAS CS 132"}],
+            course_chunks_rows=[{"embedding": _pgvector_wire(vec)}],
+        )
+
+        with (
+            patch("routes.documents.table", side_effect=fake),
+            patch("services.rag_service.table", side_effect=fake),
+            patch("services.chunker.chunk_for_category", return_value=["chunk one"]),
+            patch("services.rag_service._embed_document", return_value=vec),
+            patch(
+                "services.rag_service.index_document_chunks", return_value=1
+            ) as mock_index,
+            patch("time.sleep"),
+        ):
+            _index_document_chunks(
+                doc_id="doc-628",
+                course_id="course-uuid-1",
+                user_id="user-1",
+                extracted_text="some extracted text",
+                category="lecture_notes",
+            )
+
+        mock_index.assert_called_once_with(
+            course_code="CAS CS 132",
+            doc_id="doc-628",
+            uploader_id="user-1",
+            chunks=["chunk one"],
+        )
+
+    def test_low_relevance_is_recorded_but_does_not_block_indexing(self, monkeypatch):
+        """The relevance check is OBSERVE-ONLY (#628). It compares a whole
+        document against one paragraph of catalog blurb, on a threshold nobody
+        calibrated because the gate crashed before ever producing a score.
+        Until real scores exist it must never drop a student's upload — it
+        records the score so a threshold can be chosen from data."""
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+        fake = _mock_table_for(
+            courses_rows=[{"course_code": "CAS CS 132"}],
+            course_chunks_rows=[{"embedding": _pgvector_wire([1.0, 0.0])}],
+        )
+
+        with (
+            patch("routes.documents.table", side_effect=fake),
+            patch("services.rag_service.table", side_effect=fake),
+            patch("services.chunker.chunk_for_category", return_value=["chunk one"]),
+            patch("services.rag_service._embed_document", return_value=[0.0, 1.0]),  # orthogonal
+            patch(
+                "services.rag_service.index_document_chunks", return_value=1
+            ) as mock_index,
+            patch("routes.documents.events_service.log_event") as mock_event,
+            patch("time.sleep"),
+        ):
+            _index_document_chunks(
+                doc_id="doc-offtopic",
+                course_id="course-uuid-1",
+                user_id="user-1",
+                extracted_text="some extracted text",
+                category="assignment",
+            )
+
+        mock_index.assert_called_once()
+        scored = [c for c in mock_event.call_args_list if c.args[0] == "rag.relevance_scored"]
+        assert len(scored) == 1
+        assert scored[0].kwargs["category"] == "usage"
+        payload = scored[0].kwargs["payload"]
+        assert payload["doc_id"] == "doc-offtopic"
+        assert payload["course_id"] == "CAS CS 132"
+        assert payload["category"] == "assignment"
+        assert payload["score"] == 0.0
+
+    def test_a_failed_relevance_score_does_not_block_indexing(self, monkeypatch, caplog):
+        """An advisory measurement must not be able to lose a document: if the
+        scoring embed fails, indexing still runs."""
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+        fake = _mock_table_for(
+            courses_rows=[{"course_code": "CAS CS 132"}],
+            course_chunks_rows=[{"embedding": _pgvector_wire([1.0, 0.0])}],
+        )
+
+        with (
+            patch("routes.documents.table", side_effect=fake),
+            patch("services.rag_service.table", side_effect=fake),
+            patch("services.chunker.chunk_for_category", return_value=["chunk one"]),
+            patch("services.rag_service._embed_document", side_effect=Exception("embed 429")),
+            patch(
+                "services.rag_service.index_document_chunks", return_value=1
+            ) as mock_index,
+            patch("time.sleep"),
+            caplog.at_level(logging.WARNING, logger="routes.documents"),
+        ):
+            _index_document_chunks(
+                doc_id="doc-429",
+                course_id="course-uuid-1",
+                user_id="user-1",
+                extracted_text="some extracted text",
+                category="lecture_notes",
+            )
+
+        mock_index.assert_called_once()
+        assert "relevance" in caplog.text and "doc-429" in caplog.text
+
+    def test_relevance_embeds_via_rag_service_not_raw_client(self, monkeypatch):
         """#413: in real mode the relevance embed must go through
         services.rag_service.embed_document_text (shared lazy client:
         dummy-key fallback, request timeout, #439 gate) instead of
@@ -150,17 +267,15 @@ class TestIndexDocumentChunks:
             "raw genai.Client constructed below the seam (#413/#439)"
         ))
         monkeypatch.setattr("google.genai.Client", ctor)
-        # High-similarity vectors so the gate passes and indexing proceeds.
         vec = [1.0] + [0.0] * 767
+        fake = _mock_table_for(
+            courses_rows=[{"course_code": "BIO-101"}],
+            course_chunks_rows=[{"embedding": _pgvector_wire(vec)}],
+        )
 
         with (
-            patch(
-                "routes.documents.table",
-                side_effect=_mock_table_for(
-                    courses_rows=[{"course_code": "BIO-101"}],
-                    course_chunks_rows=[{"embedding": vec}],  # catalog row present
-                ),
-            ),
+            patch("routes.documents.table", side_effect=fake),
+            patch("services.rag_service.table", side_effect=fake),
             patch("services.chunker.chunk_for_category", return_value=["chunk one"]),
             patch(
                 "services.rag_service.embed_document_text", return_value=vec
@@ -168,7 +283,7 @@ class TestIndexDocumentChunks:
             patch(
                 "services.rag_service.index_document_chunks", return_value=1
             ) as mock_index,
-            patch("time.sleep"),  # the gate's rate-limit spacing
+            patch("time.sleep"),
         ):
             _index_document_chunks(
                 doc_id="doc-real",
