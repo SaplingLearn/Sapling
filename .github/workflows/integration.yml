@@ -42,7 +42,15 @@ jobs:
           python-version: '3.13'
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned, never `latest`. `latest` makes the action resolve the
+          # newest release through the UNAUTHENTICATED GitHub releases API
+          # (setup-cli v1 utils.ts: only `latest` takes that path), which is
+          # rate limited per runner IP. Two pushes to main on 2026-09-20 died
+          # at this step with "Failed to resolve latest Supabase CLI release:
+          # rate limit exceeded" — the suite never ran, so the lane went red
+          # having tested nothing. A concrete version skips the call entirely.
+          # 2.116.0 is the version the local stack is developed against.
+          version: 2.116.0
       - name: Start Supabase
         working-directory: .
         # Mirrors scripts/e2e-up.sh:219-226, the other runner of this command:
