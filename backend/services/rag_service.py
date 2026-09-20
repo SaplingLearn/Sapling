@@ -146,10 +146,16 @@ def course_relevance(course_code: str, sample_text: str) -> float | None:
     outside real mode) — callers treat the score as advisory and decide what a
     failure means.
     """
+    # Newest EMBEDDED row: ingest_catalog.py never deletes a superseded blurb,
+    # and on a double embed failure it inserts rows with a NULL embedding.
     rows = table("course_chunks").select(
         "embedding",
-        filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
-        order="id",
+        filters={
+            "course_id": f"eq.{course_code}",
+            "category": "eq.catalog",
+            "embedding": "not.is.null",
+        },
+        order="created_at.desc,id",
         limit=1,
     )
     if not rows or not rows[0].get("embedding"):

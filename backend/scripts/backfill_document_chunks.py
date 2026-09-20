@@ -133,6 +133,13 @@ def main() -> None:
                 print(f"(relevance n/a: {e})", end=" ", flush=True)
 
             count = index_document_chunks(course_code, doc_id, user_id, chunks)
+            if not count:
+                # index_document_chunks swallows embed errors and returns 0
+                # (bad/over-quota key, or SAPLING_MODEL_MODE != real leaking in
+                # from an e2e shell). Nothing landed: that is not an "ok".
+                print(f"FAIL: 0 of {len(chunks)} chunks indexed (embedding failed or disabled)")
+                fail += 1
+                continue
             print(f"{count} chunks indexed")
             ok += 1
             time.sleep(1.0)  # stay under embedding quota
@@ -144,6 +151,8 @@ def main() -> None:
         f"\nDone: {ok} ok, {skip} skipped (already indexed / no offering), "
         f"{fail} failed, {len(missing)} unrecoverable (no extracted_text)"
     )
+    if fail:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

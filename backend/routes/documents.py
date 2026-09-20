@@ -44,7 +44,6 @@ from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
-from agents._providers import model_mode
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
 from agents.concept_extraction import concept_extraction_agent
@@ -1042,35 +1041,31 @@ def _check_upload_achievements(user_id: str) -> None:
 
 
 def _observe_course_relevance(
-    doc_id: str, course_code: str, user_id: str, category: str, sample_text: str
+    doc_id: str, course_code: str, user_id: str, category: str, doc_summary: str, first_chunk: str
 ) -> None:
-    """Record how on-topic an upload is for its course. OBSERVE-ONLY (#628).
+    """Record how on-topic an indexed upload is for its course. OBSERVE-ONLY (#628).
 
     This was a gate: below 0.35 the document was dropped from indexing. But it
     never produced a score — it multiplied floats by PostgREST's string form
     of the catalog vector and raised on every catalog course — so 0.35 was
     never calibrated against anything, and it was a raw dot product besides.
-    It also compares a whole document against one paragraph of catalog blurb.
-    Until `rag.relevance_scored` shows what real uploads score, rejecting on
-    it would trade a loud bug for a silent one, so it only measures: no
-    outcome here, including a failed embed, can keep a document out of
-    retrieval. Turning it back into a gate is #641's call, from data.
+    Measured since: cosine against one paragraph of catalog blurb barely
+    separates a receipt (0.49) from an on-topic lecture (0.60). So it only
+    measures, and it runs AFTER indexing: no outcome here, including a failed
+    embed, can keep a document out of retrieval. Whether anything becomes a
+    gate again is #641's call, from the `rag.relevance_scored` data.
     """
-    import time
     from services.rag_service import course_relevance
 
+    sample = "summary" if doc_summary else "first_chunk"
     try:
-        score = course_relevance(course_code, sample_text)
+        score = course_relevance(course_code, doc_summary or first_chunk)
     except Exception:
-        logger.warning(
-            "[RAG] relevance score failed for doc %s (indexing anyway)",
-            doc_id, exc_info=True,
-        )
+        logger.warning("[RAG] relevance score failed for doc %s", doc_id, exc_info=True)
         return
     if score is None:
         return
-    time.sleep(1.5)  # space the scoring embed from the batch embed (#482 removes)
-    logger.info("[RAG] doc %s relevance to %s is %.3f", doc_id, course_code, score)
+    logger.info("[RAG] doc %s relevance to %s is %.3f (%s)", doc_id, course_code, score, sample)
     events_service.log_event(
         "rag.relevance_scored",
         category="usage",
@@ -1079,6 +1074,9 @@ def _observe_course_relevance(
             "doc_id": doc_id,
             "course_id": course_code,
             "category": category,
+            # An LLM abstract and a raw first chunk score on different
+            # distributions; a threshold needs to know which it is looking at.
+            "sample": sample,
             "score": round(score, 4),
         },
     )
@@ -1121,23 +1119,11 @@ def _index_document_chunks(
         except Exception:
             logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
 
-        if model_mode() != "real":
-            # #439: no embedding exists outside real mode, so there is nothing
-            # to index. A designed, quiet skip — this used to `raise` into the
-            # outer `except` so the failure line matched an allowlist entry in
-            # e2e_oracles/logscan.py, and that entry then hid #628 (a real
-            # TypeError on every catalog course). No raise, no allowlist.
-            logger.info(
-                "[RAG] doc %s not indexed — embedding disabled "
-                "(SAPLING_MODEL_MODE != 'real', #439)",
-                doc_id,
-            )
-            return
-
-        _observe_course_relevance(
-            doc_id, bu_course_id, user_id, category, doc_summary or chunks[0]
-        )
-
+        # Outside real mode (#439) this embeds nothing and returns 0, quietly:
+        # rag_service owns the seam rule, so it is not repeated here. The route
+        # used to `raise` for that case so the failure line would match an
+        # allowlist entry in e2e_oracles/logscan.py — and that entry then hid
+        # #628, a real TypeError on every catalog course.
         count = index_document_chunks(
             course_code=bu_course_id,
             doc_id=doc_id,
@@ -1145,6 +1131,11 @@ def _index_document_chunks(
             chunks=chunks,
         )
         logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
+
+        if count:
+            _observe_course_relevance(
+                doc_id, bu_course_id, user_id, category, doc_summary, chunks[0]
+            )
 
     except Exception:
         logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)

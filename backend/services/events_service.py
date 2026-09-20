@@ -54,7 +54,8 @@ session.started               usage     session_id, mode, offering_id (+ content
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
 rag.chunks_dropped            error     doc_id, dropped, total
-rag.relevance_scored          usage     doc_id, course_id (BU code), category, score (cosine
+rag.relevance_scored          usage     doc_id, course_id (BU code), category, sample
+                                        (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
 ============================  ========  =====================================================

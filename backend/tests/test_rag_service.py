@@ -501,3 +501,24 @@ def test_course_relevance_is_none_without_a_catalog_embedding(mock_embed, mock_t
 
     assert course_relevance("TEST QG 101", "sample") is None
     mock_embed.assert_not_called()
+
+
+@patch("services.rag_service.table")
+@patch("services.rag_service._embed_document")
+def test_course_relevance_reads_the_newest_embedded_catalog_row(mock_embed, mock_table):
+    """ingest_catalog.py content-addresses catalog rows and never deletes old
+    ones, and on a double embed failure it inserts rows with a NULL embedding.
+    "First row by sha256 id" could therefore be a stale blurb, or a NULL row
+    that silently turns the score into `None` while an embedded row sits right
+    beside it. (Semantics pinned for real in the integration lane.)"""
+    mock_embed.return_value = [1.0, 0.0]
+    select = mock_table.return_value.select
+    select.return_value = [{"embedding": _pgvector_wire([1.0, 0.0])}]
+    from services.rag_service import course_relevance
+
+    course_relevance("CAS CS 132", "sample")
+
+    kwargs = select.call_args.kwargs
+    assert kwargs["filters"]["embedding"] == "not.is.null"
+    assert kwargs["order"].startswith("created_at.desc")
+    assert kwargs["limit"] == 1
