@@ -416,10 +416,17 @@ CASES: list[Case[str, str]] = [
 #
 # The field that decides whether a chunk may enter the shared course pool at
 # all, so a wrong label here is an academic-integrity or privacy failure rather
-# than a routing annoyance. Scored per case, not dataset-wide: the 25 cases
-# above were labelled before this field existed and their cassettes carry no
-# recorded value for it, so scoring them would measure the schema default
-# instead of the model.
+# than a routing annoyance.
+#
+# Scored PER CASE rather than dataset-wide. Every cassette now carries a
+# recorded `shareability` — all 29 were re-recorded when the prompt gained these
+# definitions — so the limit is not the recording, it is the LABEL: the 25 older
+# cases have no human-labelled expectation for the field, and scoring them
+# against the model's own recorded answer would be circular, measuring nothing
+# while reading as coverage. Labelling those 25 is a worthwhile separate pass
+# (several are genuine judgement calls — is a past exam paper course material,
+# or completed work once answers are filled in?) and it belongs in its own
+# change, where the labels can be argued about on their own merits.
 
 
 @dataclass

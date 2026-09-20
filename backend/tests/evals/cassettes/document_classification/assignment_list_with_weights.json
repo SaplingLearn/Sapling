@@ -2,6 +2,6 @@
   "category": "assignment",
   "confidence": 0.9,
   "is_syllabus": true,
-  "rationale": "The document lists graded items for a course, including their weights and submission method, which is characteristic of a syllabus or an assignment handout that specifies grading criteria.",
+  "rationale": "The document lists graded items for a course, including their weights and submission method, which indicates it's part of the course structure and grading policy.",
   "shareability": "course_material"
 }

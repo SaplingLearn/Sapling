@@ -1,7 +1,7 @@
 {
   "category": "other",
-  "confidence": 0.9,
-  "is_syllabus": false,
-  "rationale": "The document outlines grading criteria and point values for an essay, which does not fit the definition of a syllabus, lecture notes, slides, reading, assignment, or study guide.",
+  "confidence": 0.8,
+  "is_syllabus": true,
+  "rationale": "The document outlines grading criteria and point allocation for an essay, which functions as a course requirement and implies a course structure.",
   "shareability": "course_material"
 }

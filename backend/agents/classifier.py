@@ -59,8 +59,10 @@ class DocumentClassification(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Self-reported confidence 0.0-1.0. Used for downstream routing "
-            "only; do not use as a hard gate."
+            "Self-reported confidence 0.0-1.0 in this classification. Below "
+            "chunk_visibility.MIN_SHARE_CONFIDENCE the document is not added "
+            "to the shared course pool, so this number gates sharing — it is "
+            "no longer advisory."
         ),
     )
     shareability: Shareability | None = Field(

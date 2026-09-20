@@ -2,6 +2,6 @@
   "category": "syllabus",
   "confidence": 1.0,
   "is_syllabus": true,
-  "rationale": "The document includes a course title, instructor, lecture schedule, grading breakdown, and late policy.",
-  "shareability": "course_material"
+  "rationale": "The document explicitly states the course name, instructor, schedule, grading breakdown, and late policy, which are defining characteristics of a syllabus.",
+  "shareability": null
 }

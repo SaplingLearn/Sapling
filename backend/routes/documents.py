@@ -385,6 +385,18 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     return row
 
 
+#: PostgREST's code for "column not found in the schema cache", plus the
+#: Postgres wording it wraps. Either shape means the column is genuinely absent
+#: rather than the row being bad.
+_MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
+
+
+def _looks_like_missing_column(exc: Exception) -> bool:
+    """True when `exc` reads like a write against a not-yet-migrated schema."""
+    text = str(exc)
+    return any(m in text for m in _MISSING_COLUMN_MARKERS)
+
+
 def _persist_document(
     *,
     user_id: str,
@@ -433,20 +445,24 @@ def _persist_document(
         row["request_id"] = request_id
     try:
         inserted = table("documents").insert(row)
-    except Exception:
+    except Exception as first:
         # Schema may not yet have these columns; retry without them so
         # deployments can ship the code before the migration runs. Losing
-        # `shareability` here is safe in the direction that matters: an absent
-        # stored value reads as private at index time (#630), never as
-        # shareable. Widened from a `request_id`-only retry rather than adding
-        # a second one-column special case.
-        optional = [c for c in ("request_id", "shareability") if c in row]
-        if optional:
-            for col in optional:
-                row.pop(col, None)
-            inserted = table("documents").insert(row)
-        else:
+        # `shareability` is safe in the direction that matters: an absent stored
+        # value reads as private at index time (#630), never as shareable.
+        #
+        # Gated on the ERROR, not on which keys happen to be in the row. Keyed
+        # on presence, this became a universal retry the moment `shareability`
+        # started being set unconditionally: an FK violation on `offering_id` or
+        # a duplicate `request_id` would trigger a blind second insert with
+        # `request_id` STRIPPED — defeating the idempotent-replay detection it
+        # exists for — and would surface the retry's exception instead of the
+        # real one.
+        if not _looks_like_missing_column(first):
             raise
+        for col in ("request_id", "shareability"):
+            row.pop(col, None)
+        inserted = table("documents").insert(row)
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes

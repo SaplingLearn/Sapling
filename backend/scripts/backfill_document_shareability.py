@@ -1,24 +1,48 @@
 #!/usr/bin/env python3
 """
 One-time backfill: fill `documents.shareability` for rows classified before #630,
-and bring the visibility of their chunks in line with the answer.
+and withdraw the chunks of anything that is not course material.
 
 Shareability has no cheaper source than the classifier. `documents.category`
 cannot substitute for it — a blank problem-set handout and the same student's
 worked solutions are both `category='assignment'`, and the whole point of the
 field is that those two must not share a corpus. So this re-runs the classifier
 over `documents.extracted_text` through the sanctioned agent seam and stores the
-answer, which makes every later re-index deterministic instead of needing another
-model pass.
+answer, which makes every later re-index deterministic instead of needing
+another model pass.
 
 Documents with no `extracted_text` (it is persisted inside the indexer, not in
 `_persist_document` — see #482) get `personal_notes`: nothing can be read, so
 nothing can be judged shareable.
 
-Chunks are then reconciled: a document whose shareability turns out not to be
-`course_material` has its chunks flipped to `visibility='private'`. The reverse
-flip is NOT performed — a chunk sitting private may be private because its
-uploader opted out (#629), and this script has no business overriding that.
+**Withdrawal is a DELETE, not a visibility flip, and that is the whole design.**
+A flip looked sufficient and is not, for two reasons that both bite:
+
+* `visibility='private'` on a SHARED-namespace id leaves the row reachable
+  through `match_course_chunks`' contributor clause, so every former contributor
+  keeps retrieving it — immediately, with no toggle involved.
+* The #629 resync recomputes visibility purely from contributor consent; it
+  knows nothing about shareability. The first time any contributor touches the
+  Class Intel toggle it would compute "an opted-in contributor remains" and flip
+  the row back to `shared`, re-publishing the student's answers permanently.
+
+Deleting the row takes its `course_chunk_contributors` entries with it (ON DELETE
+CASCADE), which is what makes the withdrawal stick. Re-indexing afterwards
+re-creates the content under the PRIVATE id namespace, where it belongs and
+where the resync cannot reach it. So:
+
+    python scripts/backfill_document_shareability.py --apply    # this script
+    python scripts/backfill_document_chunks.py --apply          # then re-index
+
+Chunks are located by re-deriving their content-addressed ids from the
+document's own text, NOT by `doc_id`. `doc_id` is last-writer-wins on a deduped
+row, so a filter on it misses exactly the leaking case: student A's
+`completed_work` created the row and student B's later upload overwrote
+`doc_id`, leaving A's answers shared and invisible to a `doc_id` query.
+
+A row that OTHER students also contributed is left alone and reported. The text
+is their upload too, their classification stands, and deleting it would withdraw
+material they legitimately shared.
 
 Dry-run by default. Run from backend/:
     python scripts/backfill_document_shareability.py            # preview
@@ -42,15 +66,20 @@ from agents import WORKER_LIMITS  # noqa: E402
 from agents._run import run_agent_sync  # noqa: E402
 from agents.classifier import classifier_agent  # noqa: E402
 from agents.deps import SaplingDeps  # noqa: E402
-from db.connection import table  # noqa: E402
+from db.connection import page_all, pg_quote_value, table  # noqa: E402
 from services.chunk_visibility import (  # noqa: E402
-    COURSE_MATERIAL, PERSONAL_NOTES, PRIVATE,
+    COURSE_MATERIAL, PERSONAL_NOTES,
 )
+from services.chunker import chunk_for_category  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
+from services.rag_service import chunk_id  # noqa: E402
 
 #: Enough text to judge. Below this the classifier invents a document (the same
 #: reasoning as routes/documents.py::MIN_EXTRACTED_CHARS).
 MIN_CHARS = 50
+
+#: Ids per `in.(…)` filter — see chunk_visibility._ID_BATCH for the reasoning.
+_ID_BATCH = 50
 
 
 def _classify(text: str) -> str:
@@ -65,25 +94,80 @@ def _classify(text: str) -> str:
     return result.output.shareability or PERSONAL_NOTES
 
 
+def _course_code(offering_id: str) -> str | None:
+    """BU course code for a document's offering — the `course_chunks` partition."""
+    if not offering_id:
+        return None
+    rows = table("course_offerings").select(
+        "course_id", filters={"id": f"eq.{offering_id}"}, limit=1,
+    )
+    if not rows:
+        return None
+    rows = table("courses").select(
+        "course_code", filters={"id": f"eq.{rows[0]['course_id']}"}, limit=1,
+    )
+    return (rows[0].get("course_code") or None) if rows else None
+
+
+def _in_list(values: list[str]) -> str:
+    return f"in.({','.join(pg_quote_value(v) for v in values)})"
+
+
+def _sole_contributor_ids(ids: list[str], user_id: str) -> tuple[list[str], list[str]]:
+    """Split `ids` into (this uploader's alone, also fed by someone else).
+
+    Ids absent from the ledger count as sole: a row with no contributor entry
+    predates #629's seeding or was never shared, and either way nobody else has
+    claimed it.
+    """
+    others: set[str] = set()
+    for i in range(0, len(ids), _ID_BATCH):
+        batch = ids[i : i + _ID_BATCH]
+        rows = table("course_chunk_contributors").select(
+            "chunk_id,user_id", filters={"chunk_id": _in_list(batch)},
+        )
+        for row in rows or []:
+            if row["user_id"] != user_id:
+                others.add(row["chunk_id"])
+    sole = [i for i in ids if i not in others]
+    return sole, sorted(others)
+
+
+def _existing(ids: list[str]) -> list[str]:
+    found: list[str] = []
+    for i in range(0, len(ids), _ID_BATCH):
+        batch = ids[i : i + _ID_BATCH]
+        rows = table("course_chunks").select("id", filters={"id": _in_list(batch)})
+        found.extend(r["id"] for r in rows or [])
+    return found
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Fill documents.shareability and privatise the chunks of "
+        description="Fill documents.shareability and withdraw the chunks of "
                     "anything that is not course material."
     )
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
 
-    docs = table("documents").select(
-        "id,file_name,extracted_text,category,shareability",
+    # PAGED. An unbounded read stops at PostgREST's max_rows and answers 206 —
+    # a 2xx — so the script would report a clean summary having silently skipped
+    # everything past the first page, and the operator would move on to the
+    # re-index, which privatises every untouched document (`shareability=None`).
+    docs = list(page_all(
+        table("documents"),
+        "id,file_name,user_id,offering_id,extracted_text,category,shareability",
         filters={"shareability": "is.null", "deleted_at": "is.null"},
-    )
+        order="id",
+    ))
     print(f"{len(docs)} document(s) with no stored shareability.")
 
     counts: dict[str, int] = {}
-    privatised = 0
+    deleted = shared_with_others = 0
     for doc in docs:
         doc_id = doc["id"]
+        user_id = doc.get("user_id") or ""
         text = decrypt_if_present(doc.get("extracted_text")) or ""
         if len(text.strip()) < MIN_CHARS:
             answer = PERSONAL_NOTES
@@ -94,27 +178,65 @@ def main() -> None:
         counts[answer] = counts.get(answer, 0) + 1
         print(f"  {doc_id[:8]} {doc.get('file_name', '')!r:40} -> {answer} ({why})")
 
+        if answer == COURSE_MATERIAL:
+            if not args.dry_run:
+                table("documents").update(
+                    {"shareability": answer}, filters={"id": f"eq.{doc_id}"},
+                )
+            continue
+
+        # Locate the chunks by re-deriving their ids from this document's own
+        # text, so the search does not depend on `doc_id` (last-writer-wins on a
+        # deduped row — a filter on it misses the leaking case exactly).
+        code = _course_code(doc.get("offering_id") or "")
+        if not code or not text:
+            print("      (no course code or no text — nothing to withdraw)")
+            if not args.dry_run:
+                table("documents").update(
+                    {"shareability": answer}, filters={"id": f"eq.{doc_id}"},
+                )
+            continue
+
+        ids = [
+            chunk_id(code, c)
+            for c in chunk_for_category(text, doc.get("category") or "other")
+        ]
+        present = _existing(ids)
+        sole, joint = _sole_contributor_ids(present, user_id)
+        shared_with_others += len(joint)
+        if joint:
+            print(
+                f"      {len(joint)} chunk(s) also uploaded by someone else — "
+                "left shared, their classification stands"
+            )
+        if sole:
+            print(f"      withdrawing {len(sole)} chunk(s)")
+
         if args.dry_run:
             continue
 
         table("documents").update(
             {"shareability": answer}, filters={"id": f"eq.{doc_id}"},
         )
-        if answer != COURSE_MATERIAL:
-            # Only ever tightens. A chunk already private may be private
-            # because its uploader opted out (#629), and this script must not
-            # reopen that.
-            rows = table("course_chunks").update(
-                {"visibility": PRIVATE},
-                filters={"doc_id": f"eq.{doc_id}", "visibility": "eq.shared"},
-            )
-            privatised += len(rows or [])
+        for i in range(0, len(sole), _ID_BATCH):
+            batch = sole[i : i + _ID_BATCH]
+            # DELETE, not a visibility flip: the flip leaves the row reachable
+            # through the contributor clause and the #629 resync would flip it
+            # back. The cascade takes the ledger rows with it.
+            table("course_chunks").delete(filters={"id": _in_list(batch)})
+            deleted += len(batch)
 
     print("\nSummary:", ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "nothing")
+    print(f"chunks left shared (jointly uploaded): {shared_with_others}")
     if args.dry_run:
         print("(dry run — nothing written; pass --apply)")
     else:
-        print(f"chunks flipped to private: {privatised}")
+        print(f"chunks withdrawn: {deleted}")
+        print(
+            "\nNow re-index, so the withdrawn content comes back under the "
+            "PRIVATE id namespace:\n"
+            "    python scripts/backfill_document_chunks.py --apply"
+        )
 
 
 if __name__ == "__main__":

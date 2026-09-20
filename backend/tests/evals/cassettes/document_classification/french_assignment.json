@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.9,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document lists tasks to be completed, including translation, paragraph writing, and verb conjugation, which are typical components of an assignment. It also specifies a due date and indicates it is individual work.",
+  "rationale": "The document contains a list of tasks and instructions for a student to complete, typical of an assignment. It specifies a due date and states \"Travail individuel,\" indicating it is a student assignment.",
   "shareability": "course_material"
 }

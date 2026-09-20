@@ -68,10 +68,20 @@ COMPLETED_WORK = "completed_work"
 SHAREABILITY_VALUES = (COURSE_MATERIAL, PERSONAL_NOTES, COMPLETED_WORK)
 
 #: Classifier self-reported confidence below which a document is not shared.
-#: A policy floor, not a calibrated threshold: `confidence` was read nowhere
-#: downstream before #630, so there is no measured distribution to set it
-#: against. It lives here as one constant so #641 can tune it from the
-#: `rag.relevance_scored` / decision-seam data rather than hunting a literal.
+#:
+#: A FLOOR AGAINST DRIFT, not a discriminator, and the measurement says so: over
+#: the 29 documents in tests/evals/cassettes/document_classification the minimum
+#: recorded confidence is 0.80 and nothing falls under 0.6, so on real input this
+#: gate does not fire. It is here to catch a future prompt or model change that
+#: starts producing hedged classifications, not to sort today's uploads.
+#:
+#: Know what it measures, because it is not quite the right thing: `confidence`
+#: is the model's certainty about the classification as a whole, not about
+#: `shareability` specifically. A document it is sure is course material but torn
+#: between `slides` and `lecture_notes` reports a middling number and is withheld
+#: (at INFO). Giving shareability its own confidence costs an output-schema slot
+#: (#153's budget), so the mismatch is accepted and recorded; #641 owns turning
+#: this into a measured decision-seam parameter.
 MIN_SHARE_CONFIDENCE = 0.6
 
 #: Ids per `in.(…)` filter. PostgREST takes the filter in the query string, so

@@ -266,3 +266,92 @@ def test_the_e2e_classifier_handler_supplies_a_shareability():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+# ── #630 review: the not-yet-migrated retry must stay an escape hatch ───────
+
+
+class TestPersistRetry:
+    """`_persist_document` retries the INSERT without `request_id` /
+    `shareability` so code can ship ahead of its migration. Keyed on which
+    columns happen to be in the row, that became a UNIVERSAL retry the moment
+    `shareability` started being set unconditionally: any insert failure would
+    trigger a blind second insert with `request_id` STRIPPED — defeating the
+    idempotent-replay detection it exists for — and would surface the retry's
+    exception instead of the real one."""
+
+    @staticmethod
+    def _result():
+        result = MagicMock()
+        result.classification.category = "lecture_notes"
+        result.classification.shareability = "course_material"
+        result.summary.abstract = "abstract"
+        result.concepts.concepts = []
+        return result
+
+    def _persist(self, insert_side_effect):
+        from routes.documents import _persist_document
+
+        calls: list[dict] = []
+
+        def _table(name):
+            m = MagicMock()
+            if name == "documents":
+                def _insert(row):
+                    calls.append(dict(row))
+                    exc = insert_side_effect(len(calls))
+                    if exc:
+                        raise exc
+                    return [dict(row)]
+                m.insert = _insert
+            return m
+
+        with (
+            patch("routes.documents.table", side_effect=_table),
+            patch("routes.documents.award_xp_safe"),
+            patch("routes.documents.events_service.log_event"),
+        ):
+            _persist_document(
+                user_id="u1", offering_id="off-1", filename="f.pdf",
+                result=self._result(), request_id="req-1",
+                course_id="c1", char_count=10,
+            )
+        return calls
+
+    def test_a_missing_column_error_retries_without_the_new_columns(self):
+        def fail_first(n):
+            if n == 1:
+                return Exception(
+                    "{'code': 'PGRST204', 'message': \"Could not find the "
+                    "'shareability' column of 'documents' in the schema cache\"}"
+                )
+            return None
+
+        calls = self._persist(fail_first)
+
+        assert len(calls) == 2
+        assert "shareability" in calls[0]
+        assert "shareability" not in calls[1]
+        assert "request_id" not in calls[1]
+
+    def test_an_unrelated_insert_failure_is_raised_not_retried(self):
+        """An FK violation or a transport error must surface as itself. Retrying
+        it silently strips `request_id`, and the caller is then told about the
+        second failure rather than the first."""
+        from routes.documents import _persist_document  # noqa: F401
+
+        boom = Exception(
+            'insert or update on table "documents" violates foreign key '
+            'constraint "documents_offering_id_fkey"'
+        )
+
+        with pytest.raises(Exception, match="foreign key"):
+            self._persist(lambda n: boom)
+
+    def test_the_retry_happens_at_most_once(self):
+        """A second missing-column failure is a real problem, not another
+        column to drop."""
+        missing = Exception("PGRST204 could not find the column")
+
+        with pytest.raises(Exception, match="PGRST204"):
+            self._persist(lambda n: missing)

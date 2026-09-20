@@ -2,6 +2,6 @@
   "category": "other",
   "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document is an essay submission with a score and instructor comments, which does not fit into the predefined categories of syllabus, lecture notes, slides, reading, assignment, or study guide. Therefore, it is classified as 'other'.",
+  "rationale": "The document is an essay submission with instructor comments and a grade, indicating it is a student's completed work.",
   "shareability": "completed_work"
 }
