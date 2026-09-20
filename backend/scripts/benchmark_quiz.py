@@ -27,7 +27,7 @@ from services.rag_service import retrieve_chunks  # noqa: E402
 import asyncio  # noqa: E402
 from _raw_gemini import call_gemini_json  # noqa: E402  (benchmark-only helper, ADR 0024)
 from routes.quiz import _quiz_via_agent  # noqa: E402
-from seed_quiz_fixture import FIXTURE_COURSE_ID, seed_fixture_course  # noqa: E402
+from seed_quiz_fixture import FIXTURE_COURSE_ID, UPLOADER, seed_fixture_course  # noqa: E402
 
 # Judge uses a DIFFERENT (stronger) model than the quiz generator to avoid
 # self-preference bias. gemini-2.5-pro judges; the quiz agent runs on
@@ -62,7 +62,9 @@ def run_layer1() -> list[dict]:
     results = []
     for concept in MANIFEST["concepts"]:
         name = concept["concept_name"]
-        chunks = retrieve_chunks(name, course_id=BU_CODE, k=5)
+        # Named reader (#629): the fixture's own uploader, so Layer 1 measures
+        # the pool a real request serves rather than the shared subset.
+        chunks = retrieve_chunks(name, course_id=BU_CODE, k=5, user_id=UPLOADER)
         s = score_retrieval(concept, chunks)
         results.append({"concept": name, **s})
         print(f"  [{concept['kind']:11}] {name:28} "

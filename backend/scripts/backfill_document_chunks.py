@@ -40,6 +40,7 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
 from services.chunker import chunk_for_category  # noqa: E402
+from services.chunk_visibility import visibility_for  # noqa: E402
 from services.rag_service import course_relevance, index_document_chunks  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
 
@@ -132,7 +133,13 @@ def main() -> None:
             except Exception as e:
                 print(f"(relevance n/a: {e})", end=" ", flush=True)
 
-            count = index_document_chunks(course_code, doc_id, user_id, chunks)
+            # Honour the uploader's stored Class Intel opt-out (#629) — a
+            # backfill must not publish to the shared pool what the live
+            # upload path would have kept private.
+            count = index_document_chunks(
+                course_code, doc_id, user_id, chunks,
+                visibility=visibility_for(user_id),
+            )
             if not count:
                 # index_document_chunks swallows embed errors and returns 0
                 # (bad/over-quota key, or SAPLING_MODEL_MODE != real leaking in

@@ -763,7 +763,7 @@ _UNKNOWN_MATERIAL = CourseMaterial(resolution_failed=True)
 _RAG_K = 5
 
 
-def _course_chunk_coverage(bu_code: str) -> int | None:
+def _course_chunk_coverage(bu_code: str, user_id: str | None) -> int | None:
     """How many chunks are indexed for this course, or None if unknown.
 
     Cheap: PostgREST's exact count with a one-row window — never pulls the
@@ -779,9 +779,22 @@ def _course_chunk_coverage(bu_code: str) -> int | None:
     distinction the reason taxonomy exists to draw. So a zero count with rows
     actually returned is treated as unknown.
     """
+    # Scoped to what THIS student could actually retrieve (#629). An unscoped
+    # count would report a course as covered on the strength of rows the
+    # reader is not allowed to see, which sends E8's grounding diagnosis the
+    # wrong way for precisely the students the privacy filter applies to.
+    # `uploader_id` rather than the contributor ledger: this is a diagnostic
+    # counter, and a shared row that an opt-out later flipped private can be
+    # reachable via the ledger while not counted here. Undercounting a
+    # diagnostic is the acceptable direction; a join per quiz is not.
+    filters: dict = {"course_id": f"eq.{bu_code}"}
+    if user_id:
+        filters["or"] = f"(visibility.eq.shared,uploader_id.eq.{user_id})"
+    else:
+        filters["visibility"] = "eq.shared"
     try:
         rows, total = table("course_chunks").select_with_count(
-            "id", filters={"course_id": f"eq.{bu_code}"}, limit=1,
+            "id", filters=filters, limit=1,
         )
         if total == 0 and rows:
             logger.warning(
@@ -798,7 +811,11 @@ def _course_chunk_coverage(bu_code: str) -> int | None:
 
 
 def _course_material(
-    course_id: str | None, concept_name: str, *, course: CourseRow | None = None
+    course_id: str | None,
+    concept_name: str,
+    *,
+    course: CourseRow | None = None,
+    user_id: str | None = None,
 ) -> CourseMaterial:
     """Best-effort catalog + document-chunk context for a concept.
 
@@ -809,6 +826,10 @@ def _course_material(
     "we could not look" from "there is nothing to look up".
 
     `course` injects a `courses` row the caller already read (see `CourseRow`).
+
+    `user_id` is the READER (#629). Shared course rows plus this student's own
+    uploads; omitting it asks for shared rows only, which is fail-closed but
+    would cut an opted-out student off from their own material.
     """
     lookup = _resolve_bu_code(course_id, course=course)
     bu_code = lookup.code
@@ -824,7 +845,9 @@ def _course_material(
     # `_detailed` because [] alone cannot say whether retrieval ran: it is
     # both "nothing matched" and "the index was unreachable". E8 reports on
     # that difference, so it has to be carried rather than inferred.
-    retrieval = retrieve_chunks_detailed(concept_name, course_id=bu_code, k=_RAG_K)
+    retrieval = retrieve_chunks_detailed(
+        concept_name, course_id=bu_code, k=_RAG_K, user_id=user_id
+    )
     chunks = retrieval.chunks
     # Drop any retrieved chunk that merely repeats the catalog block already
     # injected above — catalog chunks share the course_chunks store and can
@@ -847,7 +870,7 @@ def _course_material(
         chunk_ids=chunk_ids,
         k_chunks=len(chunks),
         has_catalog=bool(catalog),
-        course_chunks=None if chunks else _course_chunk_coverage(bu_code),
+        course_chunks=None if chunks else _course_chunk_coverage(bu_code, user_id),
         bu_code=bu_code,
         retrieval_failed=retrieval.failed,
     )
@@ -1142,7 +1165,8 @@ async def _quiz_via_agent(
     # failure they cannot catch (an unexpected raise on the way in or out).
     material, recent, exam_days_away, signals = await asyncio.gather(
         asyncio.to_thread(
-            _course_material, course_id, concept_name, course=course_row,
+            _course_material, course_id, concept_name,
+            course=course_row, user_id=user_id,
         ),
         asyncio.to_thread(
             recent_question_identities, user_id, concept_node_id

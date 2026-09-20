@@ -100,6 +100,9 @@ class TestIndexDocumentChunks:
             doc_id="doc-1",
             uploader_id="user-1",
             chunks=chunks,
+            # The uploader has no user_settings row, so the 0037 default (opted
+            # in) applies — see TestVisibilityAtIndexTime for the other branch.
+            visibility="shared",
         )
         assert not _scored(mock_event)
 
@@ -186,6 +189,7 @@ class TestIndexDocumentChunks:
             doc_id="doc-628",
             uploader_id="user-1",
             chunks=["chunk one"],
+            visibility="shared",
         )
         assert _scored(mock_event)[0].kwargs["payload"]["score"] == 1.0
 
@@ -361,3 +365,46 @@ class TestIndexDocumentChunks:
             _run(doc_id="doc-3", category="assignment")
 
         mock_chunk.assert_called_once_with("some extracted text", "assignment")
+
+
+class TestVisibilityAtIndexTime:
+    """#629: the uploader's STORED Class Intel opt-in decides whether the
+    chunks join the shared course pool. Before this, every upload did."""
+
+    def test_an_opted_in_upload_is_indexed_shared(self):
+        with (
+            _tables(courses_rows=[{"course_code": "BIO-101"}], course_chunks_rows=[]),
+            patch("services.chunker.chunk_for_category", return_value=["c1"]),
+            patch("services.rag_service.index_document_chunks", return_value=1) as mock_index,
+            patch("services.chunk_visibility.shares_class_context", return_value=True),
+            patch("routes.documents.events_service.log_event"),
+        ):
+            _run()
+
+        assert mock_index.call_args.kwargs["visibility"] == "shared"
+
+    def test_an_opted_out_upload_is_indexed_private(self):
+        with (
+            _tables(courses_rows=[{"course_code": "BIO-101"}], course_chunks_rows=[]),
+            patch("services.chunker.chunk_for_category", return_value=["c1"]),
+            patch("services.rag_service.index_document_chunks", return_value=1) as mock_index,
+            patch("services.chunk_visibility.shares_class_context", return_value=False),
+            patch("routes.documents.events_service.log_event"),
+        ):
+            _run()
+
+        assert mock_index.call_args.kwargs["visibility"] == "private"
+
+    def test_the_flag_is_read_for_the_UPLOADER(self):
+        """Not for some ambient user: the row being written belongs to whoever
+        uploaded it, and that is the consent that matters."""
+        with (
+            _tables(courses_rows=[{"course_code": "BIO-101"}], course_chunks_rows=[]),
+            patch("services.chunker.chunk_for_category", return_value=["c1"]),
+            patch("services.rag_service.index_document_chunks", return_value=1),
+            patch("services.chunk_visibility.visibility_for", return_value="shared") as mock_vis,
+            patch("routes.documents.events_service.log_event"),
+        ):
+            _run()
+
+        mock_vis.assert_called_once_with("user-1")

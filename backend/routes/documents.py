@@ -1096,6 +1096,7 @@ def _index_document_chunks(
     is persisted, so it never blocks the SSE stream.
     """
     from services.chunker import chunk_for_category
+    from services.chunk_visibility import visibility_for
     from services.rag_service import index_document_chunks
     from services.encryption import encrypt_if_present
 
@@ -1124,13 +1125,22 @@ def _index_document_chunks(
         # used to `raise` for that case so the failure line would match an
         # allowlist entry in e2e_oracles/logscan.py — and that entry then hid
         # #628, a real TypeError on every catalog course.
+        # #629: the uploader's STORED Class Intel opt-in decides whether these
+        # chunks join the shared course pool at all. Read here, at the write
+        # boundary, rather than trusting the per-request `use_shared_context`
+        # flag the tutor/quiz bodies carry — that one is a read-side hint the
+        # tutor never even sets, and this is the write that becomes permanent.
+        visibility = visibility_for(user_id)
         count = index_document_chunks(
             course_code=bu_course_id,
             doc_id=doc_id,
             uploader_id=user_id,
             chunks=chunks,
+            visibility=visibility,
         )
-        logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
+        logger.info(
+            "[RAG] indexed %d %s chunks for doc %s", count, visibility, doc_id
+        )
 
         if count:
             _observe_course_relevance(

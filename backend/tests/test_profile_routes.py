@@ -983,6 +983,34 @@ class TestShareClassContextToggleRefresh:
         # distinct offering.
         assert sorted(c.args[0] for c in refresh.call_args_list) == ["off-1", "off-2"]
 
+    def test_toggling_share_class_context_resyncs_chunk_visibility(self):
+        """#629: the toggle also has to reach rows already in `course_chunks`.
+        Without this, opting out stopped FUTURE uploads from being shared and
+        left every earlier one in the class pool — the opt-out would read as
+        applied while the data it was meant to withdraw stayed published."""
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context"),
+            patch("routes.profile.resync_user_chunk_visibility") as resync,
+        ):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"share_class_context": False}
+            )
+        assert r.status_code == 200
+        resync.assert_called_once_with(USER_ID)
+
+    def test_other_settings_do_not_resync_chunk_visibility(self):
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context"),
+            patch("routes.profile.resync_user_chunk_visibility") as resync,
+        ):
+            r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
+        assert r.status_code == 200
+        resync.assert_not_called()
+
     def test_other_settings_do_not_trigger_refresh(self):
         with (
             _mock_self(),

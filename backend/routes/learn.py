@@ -580,7 +580,12 @@ def _prepare_chat_run(
 
         # Semantic RAG: per-message retrieval for concept-level context
         from services.rag_service import retrieve_chunks, format_rag_context
-        rag_chunks = retrieve_chunks(user_message, course_id=bu_code, k=5)
+        # `user_id` is the READER (#629): shared course rows plus this
+        # student's own uploads. Omitting it would silently cut an opted-out
+        # student off from their own documents in their own tutor.
+        rag_chunks = retrieve_chunks(
+            user_message, course_id=bu_code, k=5, user_id=user_id
+        )
         rag_block = format_rag_context(rag_chunks)
         if rag_block:
             context_blocks.append(rag_block)

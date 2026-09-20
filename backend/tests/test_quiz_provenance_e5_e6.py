@@ -134,7 +134,7 @@ def _coverage(rows, total):
         return m
 
     with patch("routes.quiz.table", side_effect=factory):
-        return _course_chunk_coverage("CAS CS 330")
+        return _course_chunk_coverage("CAS CS 330", "user-1")
 
 
 def test_trustworthy_zero_count_is_reported():
@@ -163,7 +163,7 @@ def test_count_read_failure_is_unknown():
         return m
 
     with patch("routes.quiz.table", side_effect=factory):
-        assert _course_chunk_coverage("CAS CS 330") is None
+        assert _course_chunk_coverage("CAS CS 330", "user-1") is None
 
 
 # ── E5: identity + provenance are written ───────────────────────────────────

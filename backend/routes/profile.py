@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
 
+from services.chunk_visibility import resync_user_chunk_visibility
 from services.course_context_service import update_course_context
 from pydantic import BaseModel, Field
 
@@ -466,6 +467,12 @@ def update_settings(
         )
         for offering_id in {r["offering_id"] for r in enrollment_rows or []}:
             background_tasks.add_task(update_course_context, offering_id)
+        # #629: the aggregates above are recomputed from scratch, so dropping
+        # out of them is enough. RAG rows are not — an upload that already
+        # landed in the shared course pool stays there until something flips
+        # it, so opting out would read as applied while the documents it was
+        # meant to withdraw stayed published to the whole class.
+        background_tasks.add_task(resync_user_chunk_visibility, user_id)
 
     return _get_or_create_settings(user_id)
 
