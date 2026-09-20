@@ -24,6 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.tool_signals import Expect
+
 from agents.tools.chat_context import (
     CourseProgress,
     read_session_history,
@@ -56,7 +58,7 @@ class TestSearchCourseMaterialsUserScope:
         store these cases have to model. The resolution itself is covered by
         TestSearchCourseMaterialsOfferingScope."""
         with patch(
-            "agents.tools.chat_context.user_offering_ids_for_course",
+            "agents.tools.chat_context.course_offering_ids",
             return_value=["off_1"],
         ):
             yield
@@ -111,7 +113,7 @@ class TestSearchCourseMaterials:
     def _stub_offering_resolution(self):
         """See TestSearchCourseMaterialsUserScope._stub_offering_resolution."""
         with patch(
-            "agents.tools.chat_context.user_offering_ids_for_course",
+            "agents.tools.chat_context.course_offering_ids",
             return_value=["off_1"],
         ):
             yield
@@ -399,6 +401,52 @@ class TestToolWrappers:
             "course_cs101", "recursion", 3, user_id="user_andres"
         )
 
+    def test_search_tool_routes_an_empty_result_through_the_f5_signal(self):
+        """CLAUDE.md: an agent read tool that can return zero rows routes it
+        through `report_empty_result`. This tool returned [] for every student
+        for months (a filter on a dropped column, swallowed) and nothing
+        noticed — an empty list is what "no materials yet" looks like.
+
+        The probe is course-scoped through the documents→course_offerings FK,
+        NOT through the offering ids the tool just resolved: a probe that
+        shares the read's keyspace can only ever agree with it."""
+        with (
+            patch(
+                "agents.tools.chat_context.search_course_materials",
+                new_callable=AsyncMock, return_value=[],
+            ),
+            patch(
+                "agents.tools.chat_context.report_empty_result_async",
+                new_callable=AsyncMock,
+            ) as signal,
+        ):
+            _run(search_course_materials_tool(
+                self._ctx(feature="tutor", retrieval=None), "recursion"
+            ))
+
+        signal.assert_awaited_once()
+        assert signal.await_args.args == ("search_course_materials",)
+        kw = signal.await_args.kwargs
+        assert kw["user_id"] == "user_andres"
+        assert kw["count"] == 0
+        assert kw["expect"] is Expect.HAS_DOCUMENTS
+        assert kw["feature"] == "tutor"
+        assert kw["scope"] == {"course_offerings.course_id": "eq.course_cs101"}
+
+    def test_search_tool_does_not_signal_for_injected_retrieval(self):
+        """Evals inject a fixture retrieval (ADR 0023): there is no database
+        behind it to be discrepant with, and the lane must stay Supabase-free."""
+        fixture = SimpleNamespace(course_materials=AsyncMock(return_value=[]))
+        with patch(
+            "agents.tools.chat_context.report_empty_result_async",
+            new_callable=AsyncMock,
+        ) as signal:
+            _run(search_course_materials_tool(
+                self._ctx(feature="tutor", retrieval=fixture), "recursion"
+            ))
+
+        signal.assert_not_awaited()
+
     def test_history_tool_passes_session_id_from_deps(self):
         with patch(
             "agents.tools.chat_context.read_session_history",
@@ -479,6 +527,14 @@ class _FakeAcademicsDb:
     def _table(self, name):
         store = MagicMock()
         store.select.side_effect = lambda *a, **kw: self._select(name, *a, **kw)
+
+        def _with_count(*a, **kw):
+            # `academics.course_offering_ids` reads with a count so it can
+            # refuse a truncated offering list. The count is the UNCAPPED total.
+            uncapped = self._select(name, *a, **{**kw, "limit": None})
+            return self._select(name, *a, **kw), len(uncapped)
+
+        store.select_with_count.side_effect = _with_count
         return store
 
     def _select(self, name, *_args, **kwargs):
@@ -547,8 +603,9 @@ class TestSearchCourseMaterialsOfferingScope:
     documents.course_id does not exist"), and this tool's degrade-silently
     contract swallows that into `[]` — so the tutor loses EVERY course
     document with no user-visible error and answers from base knowledge
-    alone. The abstract course must be resolved to the user's offerings via
-    `academics.user_offering_ids_for_course` first.
+    alone. The abstract course must be resolved to its offerings via
+    `academics.course_offering_ids` first — the writer's keyspace, with
+    `user_id` as the access boundary.
 
     The fake below is schema-faithful on purpose: the existing mocks accept
     any filter, which is exactly how this survived.
@@ -582,6 +639,10 @@ class TestSearchCourseMaterialsOfferingScope:
                 return []
 
             store.select.side_effect = _select
+            # `academics.course_offering_ids` reads with a count.
+            store.select_with_count.side_effect = lambda *a, **kw: (
+                _select(*a, **kw), len(_select(*a, **kw))
+            )
             return store
 
         with patch("agents.tools.chat_context.table", side_effect=_table), \
@@ -651,7 +712,7 @@ class TestSearchCourseMaterialsOfferingScope:
         offering and has no enrollment row for it, so an enrollment-only read
         returns [] while the Library still lists the file: the tutor loses
         every document with no visible error. `user_id` is the access
-        boundary here (#125), so widening to the union of both resolvers can
+        boundary here (#125), so widening to every offering of the course can
         only re-include the student's OWN uploads.
         """
         doc = {
@@ -680,10 +741,74 @@ class TestSearchCourseMaterialsOfferingScope:
         assert calls.document_filters["offering_id"] == (
             "in.(off_cs132_f26,off_cs132_s27)"
         ), (
-            "the enrolled offering AND the writer's current-term offering "
-            "must both be in scope, in a stable order"
+            "every offering of the course must be in scope, in a stable order"
         )
         assert [m.document_id for m in result] == ["doc_new_term"]
+
+    def test_documents_from_an_earlier_unenrolled_term_are_still_found(self):
+        """Enrolled offerings + TODAY's current-term offering is still too
+        narrow. A student enrolled in Fall-26 uploads in Spring-27 (the doc is
+        stamped with the Spring offering, no enrollment row); by Summer-27 the
+        current term has moved on, so neither resolver names Spring any more
+        and every Spring upload vanishes from the tutor while the Library still
+        lists it. The writer's keyspace is "every offering of the course" —
+        `academics.course_offering_ids`, the #553/#529 shape — and `user_id`
+        stays the access boundary (#125)."""
+        doc = {
+            "id": "doc_spring",
+            "file_name": "cs132-spring-notes.pdf",
+            "summary": "voronoi diagrams",
+            "concept_notes": [],
+            "offering_id": "off_cs132_s27",   # not enrolled, no longer current
+            "deleted_at": None,
+        }
+        calls = _FakeAcademicsDb(
+            documents=[doc],
+            offerings=[
+                {"id": "off_cs132_f26", "term_id": "term_f26"},
+                {"id": "off_cs132_s27", "term_id": "term_s27"},
+                {"id": "off_cs132_su27", "term_id": "term_su27"},
+            ],
+            enrollments=[{"offering_id": "off_cs132_f26"}],
+            current_term_id="term_su27",
+        )
+
+        with calls.patched():
+            result = _run(
+                search_course_materials("course_cs132", "voronoi", user_id="user_mine")
+            )
+
+        assert [m.document_id for m in result] == ["doc_spring"]
+        assert calls.document_filters["offering_id"] == (
+            "in.(off_cs132_f26,off_cs132_s27,off_cs132_su27)"
+        )
+        assert calls.document_filters["user_id"] == "eq.user_mine"
+
+    def test_an_unknown_offering_scope_is_logged_not_silent(self, caplog):
+        """`course_offering_ids` answers None when it could not tell (the read
+        failed, or overran its scan cap). That is a retrieval gap too, and the
+        tool must not guess a partial scope or fail open onto user-wide docs."""
+        calls = _FakeAcademicsDb(
+            documents=[{"id": "d", "file_name": "f", "summary": "s",
+                        "concept_notes": [], "deleted_at": None}],
+            offerings=[], enrollments=[], current_term_id="term_f26",
+        )
+
+        with (
+            calls.patched(),
+            patch("agents.tools.chat_context.course_offering_ids", return_value=None),
+            caplog.at_level("WARNING"),
+        ):
+            result = _run(
+                search_course_materials("course_cs132", "x", user_id="user_mine")
+            )
+
+        assert result == []
+        assert calls.document_filters == {}, "documents must not be read with no offering scope"
+        assert any(
+            "search_course_materials" in r.getMessage() and "user_mine" not in r.getMessage()
+            for r in caplog.records if r.levelname == "WARNING"
+        )
 
     def test_documents_read_is_bounded(self):
         """The select must carry a `limit`.

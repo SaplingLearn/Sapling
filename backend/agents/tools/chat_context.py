@@ -46,7 +46,7 @@ from pydantic_ai import RunContext
 from agents.deps import SaplingDeps
 from config import is_mastered, is_weak
 from db.connection import table
-from services.academics import resolve_offering, user_offering_ids_for_course
+from services.academics import course_offering_ids
 from services.encryption import decrypt_if_present, decrypt_json
 
 # Shared tokenizer (#149): factored to services/token_overlap.py so the
@@ -54,6 +54,7 @@ from services.encryption import decrypt_if_present, decrypt_json
 # this module ranks documents with. `_tokenize` stays importable under its
 # historical name for callers/tests.
 from services.token_overlap import tokenize as _tokenize
+from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
 
@@ -120,36 +121,6 @@ def _score_material(query_tokens: set[str], doc: dict) -> int:
 _MATERIAL_CANDIDATE_FACTOR = 10
 
 
-def _material_offering_ids(user_id: str, course_id: str) -> list[str]:
-    """The offerings whose documents count as "this course's materials".
-
-    Must match the WRITER, not just the enrollment table. Documents are
-    written with `resolve_offering(course_id, create=True)`
-    (routes/documents.py) — current term, `enrollments` never consulted —
-    and the sibling readers (routes/study_guide.py, routes/flashcards.py)
-    use the writer's resolver too. `user_offering_ids_for_course` intersects
-    the course's offerings with the user's enrollment rows, which is
-    STRICTLY NARROWER: across a term boundary a student enrolled in Fall-26
-    who uploads next term gets `documents.offering_id` = the new offering
-    and has no enrollment row for it, so the enrollment-only read returns
-    [] while the Library still lists the file — the tutor silently loses
-    every document.
-
-    The intersection buys no security either: `user_id` is the access
-    boundary on `documents` (#125), so dropping offerings can only hide the
-    student's OWN uploads. Hence the union of both resolvers.
-
-    Order-stable and de-duplicated: the ids go into a PostgREST
-    `in.(...)` list, and a set would make that URL — and every test that
-    asserts on it — nondeterministic.
-    """
-    ids = list(user_offering_ids_for_course(user_id, course_id))
-    writer_offering = resolve_offering(course_id)
-    if writer_offering and writer_offering not in ids:
-        ids.append(writer_offering)
-    return ids
-
-
 async def search_course_materials(
     course_id: str | None,
     query: str,
@@ -192,20 +163,33 @@ async def search_course_materials(
             # that into a silent []: the tutor loses every course document
             # with no visible error. Resolve the abstract course to the
             # user's offerings first, per the academics convention.
-            offering_ids = _material_offering_ids(user_id, course_id)
+            # Every offering of the course — the keyspace the WRITER stamps.
+            # Documents are written with `resolve_offering(course_id,
+            # create=True)` (routes/documents.py): current term at upload
+            # time, `enrollments` never consulted. Enrolled offerings, even
+            # unioned with TODAY's current-term offering, are strictly
+            # narrower: enrolled Fall-26, uploaded Spring-27, asked in
+            # Summer-27 — neither names Spring, so those uploads vanish from
+            # the tutor while the Library still lists them (the #553/#529
+            # shape; see `academics.course_offering_ids`). Widening costs no
+            # security: `user_id` below is the access boundary (#125), so
+            # this can only re-include the student's OWN uploads.
+            offering_ids = course_offering_ids(course_id)
             if not offering_ids:
-                # Never silent. An unresolvable course is a RETRIEVAL FAILURE,
-                # but the model sees the same `[]` a materials-free course
-                # produces and narrates it as "your class doesn't cover this"
-                # — the exact failure mode this tool's offering fix exists to
-                # remove, and the one that went unnoticed because nothing was
-                # logged. No user_id in the message (Style Guide: never log
-                # raw student identifiers).
+                # Never silent. None is "could not tell" (the read failed or
+                # overran its scan cap), [] is a course with no offering at
+                # all; either way this is a RETRIEVAL GAP, but the model sees
+                # the same `[]` a materials-free course produces and narrates
+                # it as "your class doesn't cover this" — the failure mode
+                # that went unnoticed because nothing was logged. No user_id
+                # in the message (Style Guide: never log raw student
+                # identifiers).
                 logger.warning(
                     "search_course_materials resolved no offering for "
-                    "course=%s; returning no materials (retrieval gap, not "
-                    "an empty course)",
+                    "course=%s (%s); returning no materials (retrieval gap, "
+                    "not an empty course)",
                     course_id,
+                    "scope unknown" if offering_ids is None else "no offerings",
                 )
                 return []
             return (
@@ -356,6 +340,23 @@ async def search_course_materials_tool(
     materials = await resolve_retrieval(ctx.deps).course_materials(
         ctx.deps.course_id, query, limit, user_id=ctx.deps.user_id
     )
+    if getattr(ctx.deps, "retrieval", None) is None and ctx.deps.course_id:
+        # F5: this tool returned [] for every student for months (a filter on
+        # a dropped column, swallowed) and nothing noticed, because an empty
+        # list is what "no materials yet" looks like. Ranking never filters —
+        # any live document with content comes back — so an empty result for a
+        # student who HAS live documents in this course is a discrepancy.
+        # Skipped for an injected retrieval (evals, ADR 0023): a fixture has no
+        # database behind it to disagree with.
+        await report_empty_result_async(
+            "search_course_materials",
+            user_id=ctx.deps.user_id,
+            count=len(materials),
+            expect=Expect.HAS_DOCUMENTS,
+            feature=getattr(ctx.deps, "feature", "unknown"),
+            scope={"course_offerings.course_id": f"eq.{ctx.deps.course_id}"},
+            payload={"course_id": ctx.deps.course_id},
+        )
     return _harden_materials(materials)
 
 
