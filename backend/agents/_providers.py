@@ -331,10 +331,11 @@ def model_mode() -> str:
 
     `_model_mode` stays private to this module for `model_for`'s internal
     dispatch. This is the one sanctioned way a non-agent module reaches the
-    seam: `services/rag_service.py` and `routes/documents.py`'s RAG indexing
-    build raw `google.genai.Client`s directly (predating #391), so they gate
-    on `model_mode() == "real"` rather than importing the private name across
-    a package boundary (#439).
+    seam: `services/rag_service.py` builds a raw `google.genai.Client` for
+    embeddings (predating #391), so it gates on `model_mode() == "real"`
+    rather than importing the private name across a package boundary (#439).
+    Callers of rag_service — `routes/documents.py`'s indexing among them —
+    inherit that gate rather than repeating it (#628).
     """
     return _model_mode()
 

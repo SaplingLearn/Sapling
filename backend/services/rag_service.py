@@ -6,7 +6,9 @@ task types (RETRIEVAL_QUERY for queries, RETRIEVAL_DOCUMENT for indexing),
 then calls the match_course_chunks Supabase RPC for ANN retrieval.
 """
 import hashlib
+import json
 import logging
+import math
 import os
 from typing import NamedTuple
 
@@ -98,13 +100,68 @@ def embed_document_text(text: str) -> list[float]:
     """Embed one document-side text (RETRIEVAL_DOCUMENT, 768-dim).
 
     The sanctioned entry point for the one below-seam embed consumer outside
-    this module: routes/documents.py's catalog-relevance gate. Routing it
-    through here (lazy shared client with the dummy-key fallback, request
-    timeout, and the #439 real-mode gate) replaced a raw ``genai.Client``
-    built with an empty-string API-key fallback, whose keyless construction
-    ``ValueError`` was swallowed into a silent no-index degrade (#413).
+    this module: ``course_relevance`` below, behind routes/documents.py's
+    observe-only catalog-relevance score (#628). Routing it through here (lazy
+    shared client with the dummy-key fallback, request timeout, and the #439
+    real-mode gate) replaced a raw ``genai.Client`` built with an empty-string
+    API-key fallback, whose keyless construction ``ValueError`` was swallowed
+    into a silent no-index degrade (#413).
     """
     return _embed_document(text)
+
+
+def parse_vector(value) -> list[float]:
+    """A pgvector value as a list of floats, whatever shape it arrived in.
+
+    PostgREST serialises a ``VECTOR`` column as its TEXT form — the JSON
+    *string* ``"[0.012,-0.034,…]"``, not a JSON array — so an embedding read
+    back through ``table(...).select("embedding")`` is a ``str``. Zipping
+    floats against that string pairs each one with a single character, and
+    ``float * str`` raises TypeError (#628). Lists pass through, so a freshly
+    computed embedding and a stored one can be compared without caring which
+    is which.
+    """
+    if isinstance(value, str):
+        return [float(x) for x in json.loads(value)]
+    return [float(x) for x in value]
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    if not norm:
+        return 0.0
+    return sum(x * y for x, y in zip(a, b, strict=True)) / norm
+
+
+def course_relevance(course_code: str, sample_text: str) -> float | None:
+    """Cosine similarity of ``sample_text`` to the course's catalog embedding.
+
+    ``None`` when the course has no catalog embedding to compare against (and
+    no embed call is spent finding that out). Cosine, not a raw dot product:
+    768-d ``gemini-embedding-001`` output is not unit-normalised, and
+    ``match_course_chunks`` ranks on cosine (``<=>``), so this score sits on
+    the same scale as retrieval's ``similarity``.
+
+    Raises whatever the embed call raises (including ``_EmbeddingDisabled``
+    outside real mode) — callers treat the score as advisory and decide what a
+    failure means.
+    """
+    # Newest EMBEDDED row: ingest_catalog.py never deletes a superseded blurb,
+    # and on a double embed failure it inserts rows with a NULL embedding.
+    rows = table("course_chunks").select(
+        "embedding",
+        filters={
+            "course_id": f"eq.{course_code}",
+            "category": "eq.catalog",
+            "embedding": "not.is.null",
+        },
+        order="created_at.desc,id",
+        limit=1,
+    )
+    if not rows or not rows[0].get("embedding"):
+        return None
+    catalog_vec = parse_vector(rows[0]["embedding"])
+    return _cosine_similarity(embed_document_text(sample_text), catalog_vec)
 
 
 def _embed_documents_batch(texts: list[str]) -> list[list[float]]:

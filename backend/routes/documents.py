@@ -44,7 +44,6 @@ from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
-from agents._providers import model_mode
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
 from agents.concept_extraction import concept_extraction_agent
@@ -1041,6 +1040,48 @@ def _check_upload_achievements(user_id: str) -> None:
         pass
 
 
+def _observe_course_relevance(
+    doc_id: str, course_code: str, user_id: str, category: str, doc_summary: str, first_chunk: str
+) -> None:
+    """Record how on-topic an indexed upload is for its course. OBSERVE-ONLY (#628).
+
+    This was a gate: below 0.35 the document was dropped from indexing. But it
+    never produced a score — it multiplied floats by PostgREST's string form
+    of the catalog vector and raised on every catalog course — so 0.35 was
+    never calibrated against anything, and it was a raw dot product besides.
+    Measured since: cosine against one paragraph of catalog blurb barely
+    separates a receipt (0.49) from an on-topic lecture (0.60). So it only
+    measures, and it runs AFTER indexing: no outcome here, including a failed
+    embed, can keep a document out of retrieval. Whether anything becomes a
+    gate again is #641's call, from the `rag.relevance_scored` data.
+    """
+    from services.rag_service import course_relevance
+
+    sample = "summary" if doc_summary else "first_chunk"
+    try:
+        score = course_relevance(course_code, doc_summary or first_chunk)
+    except Exception:
+        logger.warning("[RAG] relevance score failed for doc %s", doc_id, exc_info=True)
+        return
+    if score is None:
+        return
+    logger.info("[RAG] doc %s relevance to %s is %.3f (%s)", doc_id, course_code, score, sample)
+    events_service.log_event(
+        "rag.relevance_scored",
+        category="usage",
+        user_id=user_id,
+        payload={
+            "doc_id": doc_id,
+            "course_id": course_code,
+            "category": category,
+            # An LLM abstract and a raw first chunk score on different
+            # distributions; a threshold needs to know which it is looking at.
+            "sample": sample,
+            "score": round(score, 4),
+        },
+    )
+
+
 def _index_document_chunks(
     doc_id: str,
     course_id: str,      # Sapling UUID — resolved to BU code internally
@@ -1054,12 +1095,9 @@ def _index_document_chunks(
     Runs in a background thread via _spawn_post_roll after the document
     is persisted, so it never blocks the SSE stream.
     """
-    import time
     from services.chunker import chunk_for_category
-    from services.rag_service import embed_document_text, index_document_chunks
+    from services.rag_service import index_document_chunks
     from services.encryption import encrypt_if_present
-
-    MIN_COURSE_RELEVANCE = 0.35
 
     try:
         # Resolve BU course code from Sapling UUID
@@ -1081,49 +1119,11 @@ def _index_document_chunks(
         except Exception:
             logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
 
-        # Relevance gate: skip docs that are off-topic for the course. The
-        # embedding-based check below routes through services.rag_service
-        # (#413) — the shared lazy client behind the #439 model_mode() gate —
-        # catalog_rows itself is a plain Supabase read (not gated) so the gate
-        # is only ever skipped when there's actually a catalog embedding to
-        # compare against.
-        catalog_rows = table("course_chunks").select(
-            "embedding",
-            filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
-            limit=1,
-        )
-        if catalog_rows and catalog_rows[0].get("embedding"):
-            if model_mode() != "real":
-                # #439: no google.genai.Client in non-real mode. Raising here
-                # (instead of silently skipping the gate) reproduces the exact
-                # behavior a real embed-call failure already produced: the
-                # outer `except` below aborts indexing and logs
-                # "_index_document_chunks failed for doc %s" — the line
-                # e2e_oracles/logscan.py's ALLOWLIST already expects. Function
-                # mode is now that same no-op, by design, not by accident of a
-                # swallowed exception.
-                raise RuntimeError(
-                    "RAG relevance-gate embedding skipped: "
-                    "SAPLING_MODEL_MODE != 'real' (#439)"
-                )
-
-            # #413: no raw genai.Client here — a keyless run used to construct
-            # Client(api_key="") whose ValueError the outer `except` swallowed
-            # into a silent no-index degrade. rag_service's shared lazy client
-            # (dummy-key fallback + timeout) fails at call time with a clear
-            # API error instead, on the same degrade path.
-            catalog_vec = catalog_rows[0]["embedding"]
-            sample_text = doc_summary or chunks[0]
-            doc_sample_vec = embed_document_text(sample_text)
-            time.sleep(1.5)
-            dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
-            if dot < MIN_COURSE_RELEVANCE:
-                logger.warning(
-                    "[RAG] doc %s skipped — relevance to %s is %.3f (< %.2f)",
-                    doc_id, bu_course_id, dot, MIN_COURSE_RELEVANCE,
-                )
-                return
-
+        # Outside real mode (#439) this embeds nothing and returns 0, quietly:
+        # rag_service owns the seam rule, so it is not repeated here. The route
+        # used to `raise` for that case so the failure line would match an
+        # allowlist entry in e2e_oracles/logscan.py — and that entry then hid
+        # #628, a real TypeError on every catalog course.
         count = index_document_chunks(
             course_code=bu_course_id,
             doc_id=doc_id,
@@ -1131,6 +1131,11 @@ def _index_document_chunks(
             chunks=chunks,
         )
         logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
+
+        if count:
+            _observe_course_relevance(
+                doc_id, bu_course_id, user_id, category, doc_summary, chunks[0]
+            )
 
     except Exception:
         logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)

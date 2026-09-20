@@ -40,10 +40,8 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
 from services.chunker import chunk_for_category  # noqa: E402
-from services.rag_service import embed_document_text, index_document_chunks  # noqa: E402
+from services.rag_service import course_relevance, index_document_chunks  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
-
-MIN_COURSE_RELEVANCE = 0.35
 
 
 def _get_course_code(course_id: str) -> str:
@@ -123,24 +121,25 @@ def main() -> None:
                 ok += 1
                 continue
 
-            # Relevance gate: skip docs the live pipeline would have rejected
-            # (see routes/documents.py::_index_document_chunks for the source
-            # of truth this replicates).
-            catalog_rows = table("course_chunks").select(
-                "embedding",
-                filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
-                limit=1,
-            )
-            if catalog_rows and catalog_rows[0].get("embedding"):
-                catalog_vec = catalog_rows[0]["embedding"]
-                doc_sample_vec = embed_document_text(chunks[0])
-                dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
-                if dot < MIN_COURSE_RELEVANCE:
-                    print(f"SKIP (relevance {dot:.2f})")
-                    skip += 1
-                    continue
+            # Relevance is OBSERVE-ONLY, as in the live pipeline
+            # (routes/documents.py::_observe_course_relevance, #628): print the
+            # cosine score for calibration, never skip on it, and never let a
+            # failed score lose the document.
+            try:
+                score = course_relevance(course_code, chunks[0])
+                if score is not None:
+                    print(f"(relevance {score:.2f})", end=" ", flush=True)
+            except Exception as e:
+                print(f"(relevance n/a: {e})", end=" ", flush=True)
 
             count = index_document_chunks(course_code, doc_id, user_id, chunks)
+            if not count:
+                # index_document_chunks swallows embed errors and returns 0
+                # (bad/over-quota key, or SAPLING_MODEL_MODE != real leaking in
+                # from an e2e shell). Nothing landed: that is not an "ok".
+                print(f"FAIL: 0 of {len(chunks)} chunks indexed (embedding failed or disabled)")
+                fail += 1
+                continue
             print(f"{count} chunks indexed")
             ok += 1
             time.sleep(1.0)  # stay under embedding quota
@@ -152,6 +151,8 @@ def main() -> None:
         f"\nDone: {ok} ok, {skip} skipped (already indexed / no offering), "
         f"{fail} failed, {len(missing)} unrecoverable (no extracted_text)"
     )
+    if fail:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
