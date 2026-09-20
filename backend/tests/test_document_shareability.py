@@ -318,7 +318,11 @@ class TestPersistRetry:
             )
         return calls
 
-    def test_a_missing_column_error_retries_without_the_new_columns(self):
+    def test_a_missing_column_error_retries_without_THAT_column(self):
+        """Only the column the error names is dropped. This test used to assert
+        both went — which was pinning the defect the #484 review found: losing
+        `request_id` stops a same-X-Request-ID retry from being recognised as a
+        replay, so the orchestrator re-runs and persists a duplicate document."""
         def fail_first(n):
             if n == 1:
                 return Exception(
@@ -332,7 +336,7 @@ class TestPersistRetry:
         assert len(calls) == 2
         assert "shareability" in calls[0]
         assert "shareability" not in calls[1]
-        assert "request_id" not in calls[1]
+        assert calls[1]["request_id"] == "req-1"
 
     def test_an_unrelated_insert_failure_is_raised_not_retried(self):
         """An FK violation or a transport error must surface as itself. Retrying
@@ -355,3 +359,160 @@ class TestPersistRetry:
 
         with pytest.raises(Exception, match="PGRST204"):
             self._persist(lambda n: missing)
+
+
+# ── #484 review: the escape hatch was dead code ─────────────────────────────
+
+
+class TestMissingColumnDetection:
+    """`db/connection.py` raises through httpx's `raise_for_status()`, whose
+    message is only `Client error '400 Bad Request' for url …` plus an MDN link.
+    The PostgREST payload naming the absent column is in the RESPONSE BODY and
+    never in the exception string — so the first version of this guard, which
+    read `str(exc)`, could never fire. That made the ship-code-before-migration
+    escape hatch it was written to preserve into dead code, and left every
+    upload failing where the older key-based retry had succeeded."""
+
+    @staticmethod
+    def _http_400(body: str):
+        import httpx
+
+        req = httpx.Request("POST", "http://localhost:54321/rest/v1/documents")
+        resp = httpx.Response(400, request=req, text=body)
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return e
+        raise AssertionError("expected raise_for_status to raise")
+
+    def test_the_column_is_read_off_the_response_body(self):
+        from routes.documents import _missing_column
+
+        exc = self._http_400(
+            '{"code":"PGRST204","message":"Could not find the '
+            "'shareability' column of 'documents' in the schema cache\"}"
+        )
+        assert _missing_column(exc) == "shareability"
+
+    def test_request_id_is_named_when_it_is_the_absent_one(self):
+        from routes.documents import _missing_column
+
+        exc = self._http_400(
+            '{"code":"PGRST204","message":"Could not find the '
+            "'request_id' column of 'documents' in the schema cache\"}"
+        )
+        assert _missing_column(exc) == "request_id"
+
+    def test_an_unrelated_failure_names_no_column(self):
+        from routes.documents import _missing_column
+
+        exc = self._http_400(
+            '{"code":"23503","message":"insert or update on table '
+            '\\"documents\\" violates foreign key constraint"}'
+        )
+        assert _missing_column(exc) is None
+
+    def test_a_missing_column_we_do_not_drop_names_nothing(self):
+        """Only the two columns this route is willing to ship ahead of are
+        droppable. Anything else absent is a real schema problem and must
+        surface, not be retried away."""
+        from routes.documents import _missing_column
+
+        exc = self._http_400(
+            '{"code":"PGRST204","message":"Could not find the '
+            "'offering_id' column of 'documents' in the schema cache\"}"
+        )
+        assert _missing_column(exc) is None
+
+    def test_an_exception_with_no_response_falls_back_to_its_text(self):
+        from routes.documents import _missing_column
+
+        assert _missing_column(
+            Exception("PGRST204 Could not find the 'shareability' column")
+        ) == "shareability"
+
+
+class TestRetryDropsOnlyTheNamedColumn:
+    """In the window this exists for, exactly ONE column is absent. Dropping
+    both loses `request_id` — so a client retrying with the same X-Request-ID is
+    no longer recognised as a replay, the whole orchestrator re-runs and a
+    duplicate document is persisted. That defeats the only thing `request_id`
+    is for."""
+
+    @staticmethod
+    def _result():
+        result = MagicMock()
+        result.classification.category = "lecture_notes"
+        result.classification.shareability = "course_material"
+        result.summary.abstract = "abstract"
+        result.concepts.concepts = []
+        return result
+
+    def _persist(self, body):
+        import httpx
+
+        from routes.documents import _persist_document
+
+        calls: list[dict] = []
+
+        def _table(name):
+            m = MagicMock()
+            if name == "documents":
+                def _insert(row):
+                    calls.append(dict(row))
+                    if len(calls) == 1:
+                        req = httpx.Request("POST", "http://x/rest/v1/documents")
+                        httpx.Response(400, request=req, text=body).raise_for_status()
+                    return [dict(row)]
+                m.insert = _insert
+            return m
+
+        with (
+            patch("routes.documents.table", side_effect=_table),
+            patch("routes.documents.award_xp_safe"),
+            patch("routes.documents.events_service.log_event"),
+        ):
+            _persist_document(
+                user_id="u1", offering_id="off-1", filename="f.pdf",
+                result=self._result(), request_id="req-1",
+                course_id="c1", char_count=10,
+            )
+        return calls
+
+    def test_a_missing_shareability_keeps_request_id(self):
+        calls = self._persist(
+            '{"code":"PGRST204","message":"Could not find the '
+            "'shareability' column of 'documents' in the schema cache\"}"
+        )
+        assert len(calls) == 2
+        assert "shareability" not in calls[1]
+        assert calls[1]["request_id"] == "req-1"
+
+    def test_a_missing_request_id_keeps_shareability(self):
+        calls = self._persist(
+            '{"code":"PGRST204","message":"Could not find the '
+            "'request_id' column of 'documents' in the schema cache\"}"
+        )
+        assert len(calls) == 2
+        assert "request_id" not in calls[1]
+        assert calls[1]["shareability"] == "course_material"
+
+
+def test_every_registered_classifier_handler_answers_shareability():
+    """#484 review: `function_handlers_showcase.py` has its own `classifier`
+    handler and was missed, so every showcase upload stored NULL, logged a
+    WARNING and indexed private. Pinning one module's constant could not catch
+    that; pinning the invariant across both modules can."""
+    import importlib
+
+    from services.chunk_visibility import SHAREABILITY_VALUES
+
+    for module in (
+        "agents.function_handlers_e2e",
+        "agents.function_handlers_showcase",
+    ):
+        mod = importlib.import_module(module)
+        names = [n for n in dir(mod) if n.endswith("_DOC_SHAREABILITY")]
+        assert names, f"{module} declares no *_DOC_SHAREABILITY constant"
+        for name in names:
+            assert getattr(mod, name) in SHAREABILITY_VALUES, f"{module}.{name}"

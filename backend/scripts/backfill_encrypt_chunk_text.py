@@ -20,6 +20,17 @@ no-op and an interrupted run can simply be re-run. Ids are NOT touched: they are
 content hashes over the PLAINTEXT and must stay that way (AES-GCM draws a fresh
 nonce per call, so a ciphertext-derived id would change on every write).
 
+That idempotence rests on one thing, so it is CHECKED before anything is
+written: `ENCRYPTION_KEY` must be the key this database was encrypted with.
+"Already ciphertext" is detected by trying to decrypt, and ciphertext written
+under a DIFFERENT key fails to decrypt exactly like plaintext does — so the
+wrong key turns "a second run is a no-op" into a silent double-encrypt of the
+whole table, after which the live app can decrypt nothing. That is not a remote
+hazard here: staging is a separate Supabase project with a different
+ENCRYPTION_KEY, and this docstring tells you to point the script at it. The
+guard below reads a column that is ALREADY encrypted in every environment
+(`users.email`) and aborts unless this key can decrypt it.
+
 Dry-run by default. Run from backend/:
     python scripts/backfill_encrypt_chunk_text.py            # preview
     python scripts/backfill_encrypt_chunk_text.py --apply
@@ -62,6 +73,41 @@ def _is_ciphertext(value: str) -> bool:
         return False
 
 
+#: A column encrypted in every environment since the 0024 identity split, used
+#: purely to prove the key matches the database. Nothing is written to it.
+_KEY_WITNESS = ("users", "email")
+
+
+def _assert_key_matches_database() -> None:
+    """Abort unless ENCRYPTION_KEY can decrypt something already encrypted here.
+
+    Distinguishes the two states `_is_ciphertext` cannot tell apart: a column
+    not yet encrypted (this script's job) versus a column encrypted under
+    another key (an env mix-up, or a rotation between runs). Without this, the
+    second looks exactly like the first and the script re-encrypts ciphertext.
+    """
+    table_name, column = _KEY_WITNESS
+    rows = table(table_name).select(
+        column, filters={column: "not.is.null"}, limit=20,
+    )
+    values = [r[column] for r in rows or [] if r.get(column)]
+    if not values:
+        print(
+            f"  ! no {table_name}.{column} rows to verify ENCRYPTION_KEY "
+            "against — proceeding, but confirm the key matches this database"
+        )
+        return
+    if not any(_is_ciphertext(v) for v in values):
+        sys.exit(
+            f"REFUSING to run: none of {len(values)} {table_name}.{column} "
+            "values decrypt with this ENCRYPTION_KEY, so the key does not "
+            "match this database. Encrypting course_chunks now would write "
+            "rows the live app cannot read, and a re-run would double-encrypt "
+            "them. Check which .env is loaded against which SUPABASE_URL."
+        )
+    print(f"  key verified against {table_name}.{column}")
+
+
 def _rows():
     """Every row, paged through `page_all` rather than a hand-rolled loop.
 
@@ -83,6 +129,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     args = parser.parse_args()
+
+    _assert_key_matches_database()
 
     seen = already = pending = written = 0
     todo: list[dict] = []

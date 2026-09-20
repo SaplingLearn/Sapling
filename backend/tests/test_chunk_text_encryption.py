@@ -255,3 +255,52 @@ def test_the_ciphertext_oracle_covers_the_column():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+# ── #484 review: the backfill's idempotence rests on the key matching ────────
+
+
+class TestBackfillKeyGuard:
+    """`_is_ciphertext` cannot tell "not yet encrypted" from "encrypted under a
+    DIFFERENT key" — both simply fail to decrypt. So the wrong key turns the
+    documented "a second run is a no-op" into a silent double-encrypt of the
+    whole table, after which the live app can decrypt nothing. Staging is a
+    separate Supabase project with a different ENCRYPTION_KEY and the script's
+    own docstring tells you to point it there, so this is a live hazard, not a
+    theoretical one."""
+
+    @staticmethod
+    def _tables(witness_values):
+        def _table(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"email": v} for v in witness_values]
+            else:
+                m.select.return_value = []
+            return m
+        return _table
+
+    def test_a_key_that_cannot_decrypt_this_database_aborts(self):
+        import scripts.backfill_encrypt_chunk_text as bf
+
+        # Ciphertext from another key is indistinguishable from plaintext here.
+        with patch.object(bf, "table", side_effect=self._tables(["not-our-ciphertext"])):
+            with pytest.raises(SystemExit) as exc:
+                bf._assert_key_matches_database()
+        assert "does not match this database" in str(exc.value)
+
+    def test_a_matching_key_proceeds(self):
+        import scripts.backfill_encrypt_chunk_text as bf
+
+        with patch.object(
+            bf, "table", side_effect=self._tables([encrypt("someone@example.com")])
+        ):
+            bf._assert_key_matches_database()  # no SystemExit
+
+    def test_no_witness_rows_warns_but_does_not_abort(self):
+        """A brand-new database has nothing to verify against; refusing there
+        would block the one case where running this is trivially safe."""
+        import scripts.backfill_encrypt_chunk_text as bf
+
+        with patch.object(bf, "table", side_effect=self._tables([])):
+            bf._assert_key_matches_database()
