@@ -12,6 +12,7 @@ same entry point the uploads and the sweeper use, so it cannot drift again.
 """
 import importlib
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -170,7 +171,7 @@ def test_one_document_by_id(backfill, monkeypatch):
 def test_the_script_makes_no_visibility_decision_of_its_own(backfill):
     """The confidence=1.0 bypass lived here. With the decision made only in
     index_document, from the stored confidence, it cannot come back quietly."""
-    source = open(backfill.__file__).read()
+    source = Path(backfill.__file__).read_text()
     assert "decide_visibility" not in source
     assert "index_document_chunks" not in source
 

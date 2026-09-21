@@ -10,6 +10,7 @@ honours the PostgREST filters the module actually sends, so the claim's
 compare-and-swap is exercised rather than mocked away.
 """
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 import pytest
@@ -559,7 +560,7 @@ def test_the_new_event_types_are_in_the_pinned_taxonomy():
     blind."""
     from services import events_service
 
-    source = open(events_service.__file__).read()
+    source = Path(events_service.__file__).read_text()
     for event_type in ("rag.index_failed", "rag.index_recovered"):
         assert f'"{event_type}"' in source, event_type
 
