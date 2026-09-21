@@ -51,6 +51,10 @@ Dry-run by default. Run from backend/:
 Reads .env; for staging/prod run under `dotenv -f .env.staging run -- ...`.
 Needs a REAL GEMINI_API_KEY and SAPLING_MODEL_MODE unset/real — the classifier
 is a live model call. Note that backend/.env.production's key is a placeholder.
+
+Needs the #482 migration too: it stores `shareability_confidence` beside each
+answer, the pair the live upload stores, so a later re-index reproduces the
+decision instead of reading a missing confidence as private.
 """
 import argparse
 import sys
@@ -82,7 +86,13 @@ MIN_CHARS = 50
 _ID_BATCH = 50
 
 
-def _classify(text: str) -> str:
+def _classify(text: str) -> tuple[str, float | None]:
+    """The classifier's shareability, and the confidence it was judged at.
+
+    The confidence is kept, not discarded (#482): decide_visibility reads a
+    missing one as PRIVATE, so a row stored without it could never be re-shared
+    by a re-index, however confidently it was judged course material.
+    """
     deps = SaplingDeps(
         user_id="backfill", course_id=None, supabase=None, request_id="backfill",
     )
@@ -91,7 +101,12 @@ def _classify(text: str) -> str:
             text[:20_000], deps=deps, usage_limits=WORKER_LIMITS,
         )
     )
-    return result.output.shareability or PERSONAL_NOTES
+    return result.output.shareability or PERSONAL_NOTES, result.output.confidence
+
+
+def _decision(answer: str, confidence: float | None) -> dict:
+    """The pair the live upload stores (#482), so a re-index reproduces it."""
+    return {"shareability": answer, "shareability_confidence": confidence}
 
 
 def _course_code(offering_id: str) -> str | None:
@@ -170,10 +185,10 @@ def main() -> None:
         user_id = doc.get("user_id") or ""
         text = decrypt_if_present(doc.get("extracted_text")) or ""
         if len(text.strip()) < MIN_CHARS:
-            answer = PERSONAL_NOTES
+            answer, confidence = PERSONAL_NOTES, None
             why = "no readable extracted_text"
         else:
-            answer = _classify(text)
+            answer, confidence = _classify(text)
             why = "classified"
         counts[answer] = counts.get(answer, 0) + 1
         print(f"  {doc_id[:8]} {doc.get('file_name', '')!r:40} -> {answer} ({why})")
@@ -181,7 +196,7 @@ def main() -> None:
         if answer == COURSE_MATERIAL:
             if not args.dry_run:
                 table("documents").update(
-                    {"shareability": answer}, filters={"id": f"eq.{doc_id}"},
+                    _decision(answer, confidence), filters={"id": f"eq.{doc_id}"},
                 )
             continue
 
@@ -193,7 +208,7 @@ def main() -> None:
             print("      (no course code or no text — nothing to withdraw)")
             if not args.dry_run:
                 table("documents").update(
-                    {"shareability": answer}, filters={"id": f"eq.{doc_id}"},
+                    _decision(answer, confidence), filters={"id": f"eq.{doc_id}"},
                 )
             continue
 
@@ -243,7 +258,7 @@ def main() -> None:
             continue
 
         table("documents").update(
-            {"shareability": answer}, filters={"id": f"eq.{doc_id}"},
+            _decision(answer, confidence), filters={"id": f"eq.{doc_id}"},
         )
         for i in range(0, len(sole), _ID_BATCH):
             batch = sole[i : i + _ID_BATCH]

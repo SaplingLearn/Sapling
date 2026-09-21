@@ -235,8 +235,29 @@ answer. This deliberately differs from `scripts/backfill_document_chunks.py`, wh
 already been gated. It had not: `_persist_document` stores the classifier's raw label and the 0.6
 floor is applied only at index time, so that script would re-index a low-confidence document
 **shared** that the live path had kept private. Task 8 routes the script through `index_document`,
-which closes that. Derived-`indexed` rows are never re-driven automatically, so this bites only on an
-explicit forced re-index.
+which closes that.
+
+*Corrected in review:* this does not bite "only on an explicit forced re-index". Rows the derivation
+backfill marks `pending` are re-driven by the sweeper automatically, and index private too. And the
+documented re-share remedy (a forced re-index) only works where a confidence was stored. The cost is
+reach, never privacy — the asymmetry `decide_visibility` is built on — and the source of new NULL
+rows is closed: `scripts/backfill_document_shareability.py` now stores the confidence it already had
+in hand instead of discarding it. Existing NULL rows need a fresh classification to re-share.
+
+## Review round 1 — corrections
+
+- **Every failure is recorded.** Only the rag call was inside a try; an exception from the course
+  read or the chunker escaped past `_finish`, stranding the claimed row in `indexing` with no error
+  class, and past the attempt budget for good. `_run` is now wrapped whole.
+- **`extracted_text` is decrypted strictly.** `decrypt_if_present` falls back to the raw value, so
+  a process with the wrong `ENCRYPTION_KEY` would have indexed the base64 ciphertext as course
+  material. Now `failed` / `decrypt_failed`, with the budget left for a correctly-keyed process.
+- **A re-drive that cannot embed changes nothing.** `skipped` describes the process, not the
+  document, and is terminal — recorded on a re-drive it moved the document out of every recovery
+  path (e.g. a backfill run from a shell still holding the E2E function-mode export). Only a
+  never-attempted upload records it; any other call restores the row as it found it.
+- **The sweeper claims one document per turn.** A batch claim started ten leases together and then
+  indexed them in sequence, so a slow batch could outlive the lease on its last documents.
 
 ## Risks
 

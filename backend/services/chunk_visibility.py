@@ -47,6 +47,12 @@ Two known costs of that remedy, unfixed here rather than unnoticed:
   `scripts/backfill_document_chunks.py --doc <id>` or
   `POST /api/admin/documents/{id}/reindex`, both of which force — not a
   background repair.
+* That remedy only re-shares a document whose classifier confidence was
+  STORED: uploads from #482 on, and rows `scripts/backfill_document_shareability.py`
+  classifies from #482 on. A row whose `shareability_confidence` is NULL
+  re-indexes PRIVATE, because a missing confidence is an unknown answer and
+  `decide_visibility` resolves every unknown to private — the confidence is
+  never assumed. Re-sharing one of those needs a fresh classification.
 """
 import logging
 from collections.abc import Iterable
