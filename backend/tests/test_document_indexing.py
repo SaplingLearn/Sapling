@@ -550,3 +550,111 @@ def test_no_such_document_writes_nothing(db, events, visibility, monkeypatch):
 
     assert index_document("nope").error == "no_such_document"
     assert calls == [] and db.updates == []
+
+
+# ── review round 1: nothing escapes unrecorded ──────────────────────────────
+
+
+def test_a_failure_before_the_rag_call_is_recorded_not_stranded(db, events,
+                                                                visibility, monkeypatch):
+    """The claim has already spent the attempt and set a lease. An exception
+    that escaped here used to skip _finish and _report: the row sat in
+    'indexing' with no error class until the lease expired, and once the
+    budget was gone it sat there for good, invisible to the admin list's error
+    column. The courses read is one such raiser — a transient 5xx."""
+    row = _doc(db)
+    monkeypatch.setattr(di, "_course_code", lambda off: (_ for _ in ()).throw(_http(503)))
+    calls = _rag(monkeypatch, _Chunks(4, 4))
+
+    out = index_document("doc-1")
+
+    assert out == IndexOutcome("failed", 0, "HTTPStatusError")
+    assert row["index_status"] == "failed"
+    assert row["index_error"] == "HTTPStatusError"
+    assert row["index_leased_at"] is None
+    assert calls == []
+    assert [kw["payload"]["error_type"] for e, kw in events if e == "rag.index_failed"] \
+        == ["HTTPStatusError"]
+
+
+def test_text_under_another_key_is_never_indexed_as_content(db, events, visibility,
+                                                             monkeypatch):
+    """decrypt_if_present falls back to the RAW value on failure. A re-drive
+    from a process holding the wrong ENCRYPTION_KEY would then have chunked the
+    base64 ciphertext and indexed it as course material. extracted_text has
+    been encrypted since the column was added (0030), so there is no legacy
+    plaintext to tolerate: decrypt strictly and refuse."""
+    row = _doc(db, extracted_text="bm90LXVuZGVyLXRoaXMta2V5LWF0LWFsbA==")
+    calls = _rag(monkeypatch, _Chunks(4, 4))
+
+    out = index_document("doc-1")
+
+    assert out.status == "failed"
+    assert out.error == "decrypt_failed"
+    assert calls == []
+    # An environment problem, not the document's: the budget is NOT spent, so
+    # the same row indexes the next time a correctly-keyed process drives it.
+    assert row["index_attempts"] < di.INDEX_MAX_ATTEMPTS
+
+
+# ── review round 1: a process that cannot embed changes nothing ─────────────
+
+
+def test_a_forced_re_drive_that_cannot_embed_leaves_the_row_as_it_was(
+        db, events, visibility, monkeypatch):
+    """`skipped` is a property of the PROCESS (embedding is off here), not of
+    the document. Recorded on a re-drive it was a trap: skipped is terminal, so
+    the document left the sweeper's queue, the admin list and the backfill's
+    default targets. Running scripts/backfill_document_chunks.py from a shell
+    that still had the E2E function-mode export would have moved every
+    unfinished document out of every recovery path — while printing that the
+    run had failed and should be repeated in real mode."""
+    row = _doc(db, index_status="failed", index_attempts=2, index_error="ServerError",
+               index_chunk_count=0)
+    _rag(monkeypatch, _Chunks(upserted=0, total=4, embedding_disabled=True))
+
+    out = index_document("doc-1", force=True)
+
+    assert out.status == "skipped"          # the caller is told what happened
+    assert row["index_status"] == "failed"  # ...and the row is not
+    assert row["index_attempts"] == 2
+    assert row["index_error"] == "ServerError"
+    assert row["index_leased_at"] is None
+
+
+def test_a_forced_re_drive_of_an_indexed_row_that_cannot_embed_stays_indexed(
+        db, events, visibility, monkeypatch):
+    row = _doc(db, index_status="indexed", index_attempts=1, index_chunk_count=4)
+    _rag(monkeypatch, _Chunks(upserted=0, total=4, embedding_disabled=True))
+
+    index_document("doc-1", force=True)
+
+    assert row["index_status"] == "indexed"
+    assert row["index_chunk_count"] == 4
+
+
+def test_a_sweeper_claim_that_cannot_embed_is_returned_to_the_queue(
+        db, events, visibility, monkeypatch):
+    """The claim already overwrote the status and spent an attempt. Neither
+    was real work: back to pending, with the attempt refunded."""
+    row = _doc(db, index_status="indexing", index_attempts=2,
+               index_leased_at="2026-09-21T00:00:00Z")
+    _rag(monkeypatch, _Chunks(upserted=0, total=4, embedding_disabled=True))
+
+    index_document("doc-1", claimed=True)
+
+    assert row["index_status"] == "pending"
+    assert row["index_attempts"] == 1
+    assert row["index_leased_at"] is None
+
+
+def test_a_never_attempted_upload_still_records_skipped(db, events, visibility,
+                                                        monkeypatch):
+    """The acceptance criterion this must not break: in function-mode E2E an
+    upload ends 'skipped', an explicit designed no-op."""
+    row = _doc(db)   # pending, attempts 0 — a fresh upload
+    _rag(monkeypatch, _Chunks(upserted=0, total=4, embedding_disabled=True))
+
+    index_document("doc-1")
+
+    assert row["index_status"] == "skipped"
