@@ -73,7 +73,9 @@ def _documents(doc: str | None, *, with_text: bool) -> list[dict]:
     else:
         filters["index_status"] = f"in.({','.join(_UNFINISHED)})"
     return list(page_all(
-        table("documents"), "id,file_name", filters=filters, order="created_at",
+        # A total order (unique tiebreaker), as page_all requires: ties on
+        # created_at could skip a document or drive one twice across pages.
+        table("documents"), "id,file_name", filters=filters, order="created_at,id",
     ))
 
 

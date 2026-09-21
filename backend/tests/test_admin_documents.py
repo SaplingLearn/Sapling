@@ -175,3 +175,10 @@ def test_a_failed_reindex_is_still_a_200_with_its_outcome(admin, exists,
 
     assert r.status_code == 200
     assert r.json()["error"] == "no_extracted_text"
+
+
+def test_the_list_pages_over_a_total_order(admin, listed):
+    """Review round 2: page_all's offset paging needs a unique tiebreaker, or
+    rows sharing a created_at can be skipped or repeated across pages."""
+    client.get(f"{BASE}/unindexed")
+    assert listed["order"] == "created_at.desc,id"

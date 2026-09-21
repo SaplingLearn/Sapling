@@ -39,7 +39,7 @@ def _stub(backfill, monkeypatch, *, targets, unrecoverable=(), outcome):
     reads = []
 
     def fake_page_all(handle, columns="*", *, filters=None, order):
-        reads.append(dict(filters or {}))
+        reads.append({**dict(filters or {}), "_order": order})
         if (filters or {}).get("extracted_text") == "is.null":
             return iter({"id": d} for d in unrecoverable)
         return iter({"id": d, "file_name": f"{d}.pdf"} for d in targets)
@@ -170,3 +170,13 @@ def test_the_script_makes_no_visibility_decision_of_its_own(backfill):
     source = open(backfill.__file__).read()
     assert "decide_visibility" not in source
     assert "index_document_chunks" not in source
+
+
+def test_targets_page_over_a_total_order(backfill, monkeypatch):
+    """Review round 2: ties on created_at alone could skip a document or drive
+    one twice across page boundaries."""
+    reads, _ = _stub(backfill, monkeypatch, targets=[], outcome=IndexOutcome("indexed", 4))
+
+    backfill.main([])
+
+    assert {r["_order"] for r in reads} == {"created_at,id"}
