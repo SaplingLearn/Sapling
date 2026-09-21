@@ -391,8 +391,13 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
 _MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
 
 #: The only columns `_persist_document` is willing to ship ahead of. Anything
-#: else reported absent is a real schema problem and must surface.
-_DROPPABLE_COLUMNS = ("request_id", "shareability")
+#: else reported absent is a real schema problem and must surface. The last
+#: three are #482's; `extracted_text` is deliberately NOT here — it predates
+#: this hatch (0030), and dropping it would silently cost the recovery text.
+_DROPPABLE_COLUMNS = (
+    "request_id", "shareability",
+    "index_status", "index_attempts", "shareability_confidence",
+)
 
 
 def _missing_column(exc: Exception) -> str | None:
@@ -429,6 +434,19 @@ def _missing_column(exc: Exception) -> str | None:
     return None
 
 
+def _stored_confidence(classification) -> float | None:
+    """The classifier's confidence as the row can hold it, or None.
+
+    Only a real number in [0, 1] is stored — anything else would be rejected by
+    `documents_shareability_confidence_check` and fail the whole insert. None
+    reads as private at index time (#630), the safe direction.
+    """
+    value = getattr(classification, "confidence", None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 0.0 <= value <= 1.0 else None
+
+
 def _persist_document(
     *,
     user_id: str,
@@ -438,6 +456,7 @@ def _persist_document(
     request_id: str | None = None,
     course_id: str | None = None,
     char_count: int | None = None,
+    extracted_text: str | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -449,7 +468,14 @@ def _persist_document(
     ``request_id`` (when provided) is stored verbatim for idempotent
     replay detection. ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
-    on the row. Returns (document_id, full_row).
+    on the row.
+
+    ``extracted_text`` IS persisted, encrypted, and the row is enqueued for
+    indexing (#482). The indexer used to write the text, which made the
+    recovery path depend on the thing that failed: a document whose indexer
+    never ran had nothing for a re-drive to work from. It is stripped from the
+    returned row — `/upload/sync` hands that row to the client verbatim.
+    Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
     concept_notes = [
@@ -468,6 +494,14 @@ def _persist_document(
         # `decide_visibility(None)` privatises everything — which is the same
         # shape of silent corpus loss as #628.
         "shareability": getattr(result.classification, "shareability", None),
+        # #482: the confidence the sharing decision was made at. A re-drive
+        # reads it back, because decide_visibility treats a missing confidence
+        # as private — without it, recovering a correctly shared document
+        # would silently privatise it.
+        "shareability_confidence": _stored_confidence(result.classification),
+        "extracted_text": encrypt_if_present(extracted_text),
+        "index_status": "pending",
+        "index_attempts": 0,
         "summary": encrypt_if_present(summary),
         "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
@@ -507,7 +541,8 @@ def _persist_document(
             row.pop(column)
     else:  # pragma: no cover — unreachable: each pass removes a column or raises
         raise RuntimeError("documents insert kept naming absent columns")
-    full_row = inserted[0] if inserted else row
+    full_row = dict(inserted[0] if inserted else row)
+    full_row.pop("extracted_text", None)
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
@@ -721,6 +756,7 @@ async def upload_document_sync(
         _persist_document, user_id=user_id, offering_id=offering_id,
         filename=filename, result=result, request_id=request_id,
         course_id=course_id, char_count=len(extracted_text),
+        extracted_text=extracted_text,
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
@@ -1045,6 +1081,7 @@ async def upload_document(
                 request_id=request_id,
                 course_id=course_id,
                 char_count=len(extracted_text) if extracted_text is not None else None,
+                extracted_text=extracted_text,
             )
 
             # BackgroundTasks runs after response close — useless for SSE since
