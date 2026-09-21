@@ -19,13 +19,21 @@ import { LandingEngine } from '@/lib/landing/engine';
 import type { BuiltGraph } from '@/lib/landing/engine/graph';
 import { armFlip, flipClose, flipOpen } from '@/lib/landing/engine/flip';
 import {
-  beginExitExplore, beginExplore, pickNode, settleExitExplore,
+  EXPLORE_FILL_MS, beginExitExplore, beginExplore, pickNode, settleExitExplore,
 } from '@/lib/landing/engine/graphView';
 
 /** How long the intro overlay holds before the hero takes over. */
 const INTRO_MS = 1900;
-/** Explore exit transition length, after which the camera hands back. */
-const EXPLORE_OUT_MS = 720;
+/**
+ * Explore exit transition length, after which the camera hands back.
+ *
+ * Tied to the longest clock inside `drawExplore` rather than chosen. At the
+ * old 720ms the renderer swapped while the camera was still 15% out and the
+ * staggered node reveal only 42% unwound, so the graph jumped the remainder
+ * in a single frame — worst where explore had been entered early, since every
+ * node the scroll view had not spawned yet popped out of existence at once.
+ */
+const EXPLORE_OUT_MS = EXPLORE_FILL_MS;
 const SCRAMBLE_TICK_MS = 30;
 
 /** One text slot scrambling into place during the intro cascade. */
@@ -411,6 +419,21 @@ export function useLanding(props: LandingProps) {
     const engine = engineRef.current;
     if (!engine || s.current.exploring) return;
     expOut.current = false;
+    // The act's stage is only flush with the viewport while the page sits
+    // inside the section's sticky range. Everything explore mode draws — the
+    // canvas, the course label, the legend, the detail panel, the exit pill —
+    // hangs off that stage, so clicking the canvas on the way in or out used
+    // to lock the whole mode against a half-scrolled stage: the graph centred
+    // above or below where it belongs, with the bottom of it cut off. Nothing
+    // could recover it either, because the next line freezes the page.
+    //
+    // So land on the pinned position that matches the progress the act has
+    // actually played — not merely the nearest one, which could sit at the
+    // end of a runway the reader never scrubbed. The engine eases the page
+    // there across the same window and the same curve the camera uses, so the
+    // correction is part of the transition rather than a cut inside it.
+    // Ordered before `beginExplore` only so both clocks start on this frame.
+    engine.glideToPinnedAct1();
     beginExplore(engine.view, engine.graph);
     document.body.style.overflow = 'hidden';
     const cinema = refs.cinema.current;

@@ -80,6 +80,25 @@ export function createGraphViewState(): GraphViewState {
 }
 
 /**
+ * How long the camera takes to settle into the explore framing, in ms.
+ *
+ * Exported because the page scroll rides the same curve: entering explore
+ * from a stage that is not flush with the viewport has to correct the scroll
+ * position, and doing that on a different clock reads as a jump cut against
+ * the camera move. See `LandingEngine.glideToPinnedAct1`.
+ */
+export const EXPLORE_CAM_MS = 850;
+
+/**
+ * How long the staggered node reveal takes to fill, in ms. The longest clock
+ * inside `drawExplore`, so it is what the exit has to wait for: hand back to
+ * the scroll renderer before this elapses and every node still part-way
+ * through its reveal pops to its scroll-view state. Exported so the exit
+ * cannot be timed independently and drift.
+ */
+export const EXPLORE_FILL_MS = 1250;
+
+/**
  * Snapshot the camera and each node's reveal progress so explore mode can
  * continue them rather than restart. Call before flipping into explore.
  */
@@ -285,7 +304,7 @@ export function drawExplore(
 
   const { nodes, edges, adj } = graph;
   const t = Date.now() * 0.001;
-  let k = clamp01((performance.now() - (st.expT0 || 0)) / 850);
+  let k = clamp01((performance.now() - (st.expT0 || 0)) / EXPLORE_CAM_MS);
   if (st.expOut) k = 1 - k;
   const e = smooth(k);
 
@@ -313,7 +332,7 @@ export function drawExplore(
     return { x: x * sc + cx, y: y * sc + cy, z, sc, n, i };
   });
 
-  let ck = clamp01((performance.now() - (st.expT0 || 0)) / 1250);
+  let ck = clamp01((performance.now() - (st.expT0 || 0)) / EXPLORE_FILL_MS);
   if (st.expOut) ck = 1 - ck;
 
   const sel = selected;
