@@ -178,8 +178,8 @@ def test_reads_everything_off_the_row(db, events, visibility, monkeypatch):
     assert calls[0]["n_chunks"] == len(chunk_for_category(TEXT, "lecture_notes"))
 
 
-def test_success_records_the_count_and_releases_the_lease(db, events, visibility,
-                                                          monkeypatch):
+def test_success_records_the_count_and_when_the_attempt_started(db, events,
+                                                                visibility, monkeypatch):
     row = _doc(db)
     _rag(monkeypatch, _Chunks(upserted=4, total=4))
 
@@ -187,9 +187,28 @@ def test_success_records_the_count_and_releases_the_lease(db, events, visibility
 
     assert row["index_status"] == "indexed"
     assert row["index_chunk_count"] == 4
-    assert row["index_leased_at"] is None
     assert row["index_error"] is None
     assert row["index_attempts"] == 1
+    # Kept, not cleared: on a finished row it is when the last attempt began,
+    # which the claim's retry backoff reads (review round 2).
+    assert row["index_leased_at"] is not None
+
+
+def test_a_failure_keeps_its_attempt_time_so_the_retry_waits(db, events,
+                                                             visibility, monkeypatch):
+    """Review round 2: clearing the timestamp on a failure let the claim's
+    `NULLS FIRST` hand the same document straight back to the sweeper in the
+    same pass. The SQL backoff (…_document_index_retry_backoff.sql) can only
+    make a retry wait if this half keeps the time the attempt began."""
+    row = _doc(db)
+    _rag(monkeypatch, _Chunks(0, 4, embed_error="ServerError"))
+
+    index_document("doc-1")
+
+    assert row["index_status"] == "failed"
+    claimed_at = db.updates[0][0]["index_leased_at"]
+    assert row["index_leased_at"] == claimed_at
+    assert all("index_leased_at" not in data for data, _ in db.updates[1:])
 
 
 # ── #630's decision is reproduced, never re-made ────────────────────────────
@@ -571,7 +590,7 @@ def test_a_failure_before_the_rag_call_is_recorded_not_stranded(db, events,
     assert out == IndexOutcome("failed", 0, "HTTPStatusError")
     assert row["index_status"] == "failed"
     assert row["index_error"] == "HTTPStatusError"
-    assert row["index_leased_at"] is None
+    assert row["index_leased_at"] is not None   # the attempt's start, for the backoff
     assert calls == []
     assert [kw["payload"]["error_type"] for e, kw in events if e == "rag.index_failed"] \
         == ["HTTPStatusError"]
@@ -610,7 +629,7 @@ def test_a_forced_re_drive_that_cannot_embed_leaves_the_row_as_it_was(
     unfinished document out of every recovery path — while printing that the
     run had failed and should be repeated in real mode."""
     row = _doc(db, index_status="failed", index_attempts=2, index_error="ServerError",
-               index_chunk_count=0)
+               index_chunk_count=0, index_leased_at="2026-09-20T10:00:00Z")
     _rag(monkeypatch, _Chunks(upserted=0, total=4, embedding_disabled=True))
 
     out = index_document("doc-1", force=True)
@@ -619,7 +638,8 @@ def test_a_forced_re_drive_that_cannot_embed_leaves_the_row_as_it_was(
     assert row["index_status"] == "failed"  # ...and the row is not
     assert row["index_attempts"] == 2
     assert row["index_error"] == "ServerError"
-    assert row["index_leased_at"] is None
+    # Its last real attempt's time too, or the retry backoff would be reset.
+    assert row["index_leased_at"] == "2026-09-20T10:00:00Z"
 
 
 def test_a_forced_re_drive_of_an_indexed_row_that_cannot_embed_stays_indexed(

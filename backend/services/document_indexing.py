@@ -100,7 +100,8 @@ def index_document(
     # is already past its claim). Needed to undo a re-drive that did nothing.
     prior = {
         col: row.get(col)
-        for col in ("index_status", "index_attempts", "index_error", "index_chunk_count")
+        for col in ("index_status", "index_attempts", "index_error",
+                    "index_chunk_count", "index_leased_at")
     }
     first_attempt = (
         not claimed and not force
@@ -361,11 +362,16 @@ def _observe_course_relevance(
 
 
 def _finish(doc_id: str, outcome: IndexOutcome) -> None:
+    # `index_leased_at` is deliberately left as the claim set it. On a
+    # finished row it records when the last attempt BEGAN, and the claim
+    # function's retry backoff reads it: a failed or partial row waits
+    # lease_seconds from then. Clearing it here let `NULLS FIRST` hand a
+    # just-failed document straight back to the sweeper in the same pass —
+    # three attempts in a few seconds, a whole budget spent on a brief outage.
     data = {
         "index_status": outcome.status,
         "index_chunk_count": outcome.chunk_count,
         "index_error": outcome.error,
-        "index_leased_at": None,
     }
     if outcome.error in _TERMINAL_ERRORS:
         data["index_attempts"] = INDEX_MAX_ATTEMPTS
@@ -384,7 +390,7 @@ def _finish(doc_id: str, outcome: IndexOutcome) -> None:
 
 
 def _restore(doc_id: str, prior: dict, *, claimed: bool) -> None:
-    """Put the row back as this call found it, releasing the lease."""
+    """Put the row back as this call found it."""
     if claimed:
         # The SQL claim already overwrote the status and spent an attempt, and
         # neither was real work: back to the queue, attempt refunded.
@@ -394,8 +400,9 @@ def _restore(doc_id: str, prior: dict, *, claimed: bool) -> None:
             "index_leased_at": None,
         }
     else:
-        data = {**prior, "index_attempts": prior["index_attempts"] or 0,
-                "index_leased_at": None}
+        # Everything as it was, the last real attempt's time included — or the
+        # retry backoff would restart from a call that did no work.
+        data = {**prior, "index_attempts": prior["index_attempts"] or 0}
     try:
         table("documents").update(
             data, filters={"id": f"eq.{doc_id}"}, prefer_return_minimal=True,

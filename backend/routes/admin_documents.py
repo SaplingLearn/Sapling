@@ -30,6 +30,8 @@ router = APIRouter()
 
 _UNFINISHED = (PENDING, INDEXING, PARTIAL, FAILED)
 
+#: `index_leased_at` on a finished row is when its last attempt BEGAN — the
+#: claim's retry backoff reads it — not a live lease.
 _LIST_COLUMNS = ",".join((
     "id", "file_name", "category", "offering_id", "created_at",
     "index_status", "index_attempts", "index_error", "index_chunk_count",
@@ -51,7 +53,10 @@ def list_unindexed(request: Request) -> dict:
             "index_status": f"in.({','.join(_UNFINISHED)})",
             "deleted_at": "is.null",
         },
-        order="created_at.desc",
+        # page_all needs a TOTAL order: offset paging over a sort with ties can
+        # skip or repeat rows at page boundaries (bulk-inserted rows share a
+        # created_at), and this list's `count` would then be wrong.
+        order="created_at.desc,id",
     ))
     for row in rows:
         row["exhausted"] = (row.get("index_attempts") or 0) >= INDEX_MAX_ATTEMPTS

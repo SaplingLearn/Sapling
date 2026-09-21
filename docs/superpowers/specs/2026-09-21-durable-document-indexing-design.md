@@ -259,6 +259,18 @@ in hand instead of discarding it. Existing NULL rows need a fresh classification
 - **The sweeper claims one document per turn.** A batch claim started ten leases together and then
   indexed them in sequence, so a slow batch could outlive the lease on its last documents.
 
+## Review round 2 — corrections
+
+- **A retry waits** — a defect round 1's one-per-turn claim introduced. `failed`/`partial` rows were
+  claimable at once and `_finish` cleared the lease, so the claim's `NULLS FIRST` handed a
+  just-failed document straight back in the same pass: three attempts in seconds, a whole budget
+  spent on a brief outage. `index_leased_at` now outlives the attempt — on a finished row it is when
+  the last attempt began — and `…_document_index_retry_backoff.sql` makes a failed or partial row
+  wait `lease_seconds` from then (signature unchanged; still one overload). Round 1's hermetic fake
+  missed it because it modelled the claim as a queue pop that never re-offers a row; the regression
+  now lives in the integration lane, against the real claim.
+- **Paged reads use a total order** (`created_at,id`), as `page_all` requires.
+
 ## Risks
 
 - **A re-drive re-decides privacy.** Mitigated by D4 plus reading the stored `shareability`; the
