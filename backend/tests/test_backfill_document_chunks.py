@@ -35,14 +35,17 @@ class _Handle:
         self.name = name
 
 
-def _stub(backfill, monkeypatch, *, targets, unrecoverable=(), outcome):
+def _stub(backfill, monkeypatch, *, targets, unrecoverable=(), terminal=(), outcome):
     reads = []
 
     def fake_page_all(handle, columns="*", *, filters=None, order):
-        reads.append({**dict(filters or {}), "_order": order})
+        reads.append({**dict(filters or {}), "_order": order, "_columns": columns})
         if (filters or {}).get("extracted_text") == "is.null":
             return iter({"id": d} for d in unrecoverable)
-        return iter({"id": d, "file_name": f"{d}.pdf"} for d in targets)
+        rows = [{"id": d, "file_name": f"{d}.pdf", "index_error": None} for d in targets]
+        rows += [{"id": d, "file_name": f"{d}.pdf", "index_error": err}
+                 for d, err in terminal]
+        return iter(rows)
 
     driven = []
 
@@ -180,3 +183,42 @@ def test_targets_page_over_a_total_order(backfill, monkeypatch):
     backfill.main([])
 
     assert {r["_order"] for r in reads} == {"created_at,id"}
+
+
+def test_a_terminal_failure_is_reported_not_forced_every_run(backfill, monkeypatch,
+                                                            capsys):
+    """Review round 3: a row that ended no_chunks or no_course still HAS text,
+    so it was a target of every run — forced, failed again, counted, exit 1.
+    Exactly the "exit 1 forever" the unrecoverable rule exists to prevent."""
+    _, driven = _stub(backfill, monkeypatch, targets=["doc-1"],
+                      terminal=[("dead-1", "no_chunks"), ("dead-2", "no_course")],
+                      outcome=IndexOutcome("indexed", 4))
+
+    backfill.main([])   # no SystemExit
+
+    assert [d for d, _ in driven] == ["doc-1"]
+    out = capsys.readouterr().out
+    assert "2 terminal" in out and "--doc" in out
+
+
+def test_a_retryable_failure_is_still_a_target(backfill, monkeypatch):
+    """decrypt_failed is an environment problem, not the document's: a
+    correctly keyed run should take it."""
+    _, driven = _stub(backfill, monkeypatch, targets=[],
+                      terminal=[("doc-9", "decrypt_failed")],
+                      outcome=IndexOutcome("indexed", 4))
+
+    backfill.main([])
+
+    assert [d for d, _ in driven] == ["doc-9"]
+
+
+def test_doc_forces_even_a_terminal_failure(backfill, monkeypatch):
+    _, driven = _stub(backfill, monkeypatch, targets=[],
+                      terminal=[("dead-1", "no_course")],
+                      outcome=IndexOutcome("failed", 0, "no_course"))
+
+    with pytest.raises(SystemExit):
+        backfill.main(["--doc", "dead-1"])
+
+    assert [d for d, _ in driven] == ["dead-1"]

@@ -23,7 +23,9 @@ It used to reimplement indexing, and drifted twice:
 Documents with no extracted_text have nothing to index from — the original
 file is discarded after upload, and Supabase Storage holds no document bytes.
 They are reported and skipped, never counted as failures, or every run in an
-environment that has any would exit 1 forever.
+environment that has any would exit 1 forever. The same goes for documents
+that ended on a failure no retry can fix (`no_chunks`, `no_course`); `--doc`
+still forces one of those deliberately.
 
 Run from backend/:
     python scripts/backfill_document_chunks.py              # every unfinished document
@@ -56,6 +58,7 @@ from services.document_indexing import (  # noqa: E402
     PARTIAL,
     PENDING,
     SKIPPED,
+    TERMINAL_ERRORS,
     index_document,
 )
 
@@ -75,7 +78,8 @@ def _documents(doc: str | None, *, with_text: bool) -> list[dict]:
     return list(page_all(
         # A total order (unique tiebreaker), as page_all requires: ties on
         # created_at could skip a document or drive one twice across pages.
-        table("documents"), "id,file_name", filters=filters, order="created_at,id",
+        table("documents"), "id,file_name,index_error", filters=filters,
+        order="created_at,id",
     ))
 
 
@@ -90,8 +94,15 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Project: {urlparse(REST_URL).hostname}")
     targets = _documents(args.doc, with_text=True)
     unrecoverable = _documents(args.doc, with_text=False)
+    # A document that ended on a failure no retry can fix (no_chunks,
+    # no_course) still HAS text, so without this it would be forced, fail and
+    # be counted on every run — the same "exit 1 forever" the unrecoverable
+    # rule above exists to prevent. Reported instead; `--doc` still forces one.
+    terminal = [] if args.doc else [d for d in targets if d.get("index_error") in TERMINAL_ERRORS]
+    targets = [d for d in targets if d not in terminal]
     print(f"{len(targets)} document(s) to re-drive, "
-          f"{len(unrecoverable)} unrecoverable (no extracted_text).")
+          f"{len(unrecoverable)} unrecoverable (no extracted_text), "
+          f"{len(terminal)} terminal (force one with --doc <id>).")
 
     ok = skip = fail = 0
     for doc in targets:
@@ -120,7 +131,8 @@ def main(argv: list[str] | None = None) -> None:
         time.sleep(1.0)  # stay under the embedding quota
 
     print(f"\nDone: {ok} ok, {skip} skipped (being indexed), {fail} failed, "
-          f"{len(unrecoverable)} unrecoverable (no extracted_text)")
+          f"{len(unrecoverable)} unrecoverable (no extracted_text), "
+          f"{len(terminal)} terminal (not retried; force one with --doc <id>)")
     if fail:
         sys.exit(1)
 
