@@ -26,6 +26,7 @@ from routes import graph, learn, quiz, calendar, social, extract, auth, document
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
+from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from services import quiz_config, quiz_errors
@@ -38,6 +39,7 @@ from services.storage_service import (
     ensure_bucket_exists,
 )
 from services.durable import init_dbos, shutdown_dbos
+from services.index_sweeper import start_sweeper, stop_sweeper
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -110,7 +112,12 @@ async def _lifespan(_app: FastAPI):
     # passthrough otherwise. Fails loudly (raises) if the operator opted in
     # and launch fails — see services/durable.py::init_dbos.
     init_dbos()
+    # #482: drain the document indexing queue. Without this, a document whose
+    # upload-time index attempt failed — or died with the process — would stay
+    # out of retrieval for good. No-op outside real model mode.
+    start_sweeper()
     yield
+    await stop_sweeper()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
@@ -280,6 +287,7 @@ app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
+app.include_router(admin_documents_router, prefix="/api/admin/documents")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")

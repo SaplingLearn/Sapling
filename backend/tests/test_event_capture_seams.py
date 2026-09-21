@@ -112,6 +112,10 @@ def test_event_taxonomy_is_pinned():
         "session.ended",
         "rag.retrieval_failed",
         "rag.chunks_dropped",
+        # #482: a document that did not finish indexing, and one the sweeper
+        # later recovered. Emit coverage lives in test_document_indexing.py.
+        "rag.index_failed",
+        "rag.index_recovered",
         "rag.relevance_scored",
         # #629: the Class Intel toggle moved but course_chunks.visibility did
         # not follow. A privacy control that fails silently is not one.

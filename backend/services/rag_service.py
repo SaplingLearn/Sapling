@@ -318,6 +318,24 @@ def chunk_id(
     return hashlib.sha256(f"{course_code}::document::{chunk_text}".encode()).hexdigest()
 
 
+class ChunkIndexResult(NamedTuple):
+    """What one indexing pass actually did (#482).
+
+    A bare count cannot answer the questions a re-drive needs. Embed failures
+    are swallowed per batch and simply lower the count, so "3" is ambiguous
+    between complete and partial without `total`; and a 0 means either "the
+    #439 seam turned embedding off" (a designed no-op) or "every embed failed"
+    (a failure) — only `embedding_disabled` tells them apart.
+    """
+
+    upserted: int
+    total: int
+    embedding_disabled: bool = False
+    #: Class name of the last embed exception swallowed, e.g. 'ServerError'.
+    #: The class only — an exception message can quote the chunk text.
+    embed_error: str | None = None
+
+
 def index_document_chunks(
     course_code: str,
     doc_id: str,
@@ -327,9 +345,30 @@ def index_document_chunks(
     visibility: str,
     category: str,
 ) -> int:
+    """Embed and upsert document chunks; the number of unique chunks upserted.
+
+    The count-only form, kept for callers that only log it. Anything deciding
+    whether a document is DONE needs `index_document_chunks_detailed`, because
+    a count alone cannot tell a partial index or a disabled seam from success.
+    """
+    return index_document_chunks_detailed(
+        course_code, doc_id, uploader_id, chunks,
+        visibility=visibility, category=category,
+    ).upserted
+
+
+def index_document_chunks_detailed(
+    course_code: str,
+    doc_id: str,
+    uploader_id: str,
+    chunks: list[str],
+    *,
+    visibility: str,
+    category: str,
+) -> ChunkIndexResult:
     """Embed and upsert document chunks to course_chunks.
 
-    Returns the number of unique chunks upserted. Uses RETRIEVAL_DOCUMENT
+    Returns what landed against what was attempted — see `ChunkIndexResult`. Uses RETRIEVAL_DOCUMENT
     task type for all embeddings. Chunk ids are content-addressed per
     course (see chunk_id), so re-uploads of the same content merge instead
     of duplicating rows. Repeated text within one document is deduped
@@ -365,7 +404,7 @@ def index_document_chunks(
             "be served to students as official course data"
         )
     if not chunks:
-        return 0
+        return ChunkIndexResult(upserted=0, total=0)
 
     records_by_id: dict[str, dict] = {}
     for i, chunk_text in enumerate(chunks):
@@ -397,6 +436,7 @@ def index_document_chunks(
     # Distinguishes "the seam turned embedding off" (#439, every function-mode
     # run) from "embedding broke" — only the latter is worth an error event.
     embedding_disabled = False
+    embed_error: str | None = None
     for i in range(0, len(records), BATCH):
         batch = records[i : i + BATCH]
         texts = [r["chunk_text"] for r in batch]
@@ -408,6 +448,7 @@ def index_document_chunks(
             embedding_disabled = True
             logger.info("[RAG] doc %s batch %s not embedded: %s", doc_id, i, e)
         except Exception as e:
+            embed_error = type(e).__name__
             logger.warning(
                 "[RAG] embed failed for doc %s batch %s: %s", doc_id, i, e, exc_info=True
             )
@@ -428,7 +469,8 @@ def index_document_chunks(
         # Silent data loss behind a successful-looking upload: the documents
         # row lands, the user sees success, and these chunks are simply absent
         # from retrieval forever. Countable so a partial-index rate is visible
-        # (#482); re-index with scripts/backfill_document_chunks.py.
+        # (#482). The caller records the document `partial` and the indexing
+        # sweeper re-drives it (services/document_indexing.py).
         logger.warning(
             "[RAG] doc %s: dropped %s/%s chunk(s) with no embedding — "
             "they would be unretrievable",
@@ -442,7 +484,10 @@ def index_document_chunks(
         )
 
     if not embedded:
-        return 0
+        return ChunkIndexResult(
+            upserted=0, total=len(records),
+            embedding_disabled=embedding_disabled, embed_error=embed_error,
+        )
 
     # ADR 0025 / #484: `chunk_text` is the same student text that
     # `documents.extracted_text` has been encrypting since 0030, chunked. One
@@ -475,7 +520,10 @@ def index_document_chunks(
         # of one read: whichever order the two interleave, at least one of them
         # sees the other's effect.
         _reconcile_if_consent_changed(uploader_id, [r["id"] for r in embedded])
-    return len(embedded)
+    return ChunkIndexResult(
+        upserted=len(embedded), total=len(records),
+        embedding_disabled=embedding_disabled, embed_error=embed_error,
+    )
 
 
 def _reconcile_if_consent_changed(uploader_id: str, chunk_ids: list[str]) -> None:

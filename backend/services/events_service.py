@@ -54,6 +54,11 @@ session.started               usage     session_id, mode, offering_id (+ content
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
 rag.chunks_dropped            error     doc_id, dropped, total
+rag.index_failed              error     doc_id, status (failed | partial), error_type
+                                        (an error CLASS or code, never a message),
+                                        attempts (#482)
+rag.index_recovered           usage     doc_id, attempts, chunk_count — a document that
+                                        failed or was stranded, later indexed (#482)
 rag.visibility_resync_failed  error     error_type (the Class Intel toggle moved but
                                         course_chunks.visibility was not updated, #629)
 rag.relevance_scored          usage     doc_id, course_id (BU code), category, sample
@@ -147,6 +152,12 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "rag.retrieval_failed",
     "rag.chunks_dropped",
     "rag.relevance_scored",
+    # #482: a document that did not finish indexing, and one that later did.
+    # Before these, a failed index was a WARNING in a background thread and a
+    # healthy-looking documents row; the pair makes the failure rate and the
+    # sweeper's recovery rate both countable.
+    "rag.index_failed",
+    "rag.index_recovered",
     # #629: the Class Intel toggle moved but the resync that applies it to
     # course_chunks.visibility failed. It runs as a post-response
     # BackgroundTask, so without this the student sees the opt-out succeed
