@@ -10,17 +10,23 @@ to be exempted; this route simply never calls `auth_guard`.
 The consumer keeps what it is told FOREVER (its store is append-only and
 first-write-wins per hour), and treats anything but a valid 200 as "write
 nothing this hour". That asymmetry sets every rule here: when this route cannot
-vouch for all three numbers it answers 5xx — never zeros, never a partial body.
+vouch for EVERY number in the body it answers 5xx — never zeros, never a
+partial body. Canopy would quietly drop a single bad key and keep the rest;
+refusing the whole response instead puts the failure in THIS app's logs, where
+the person who can fix it will see it.
 
-Privacy: the response is three integers. No ids, no emails, no per-user rows,
-no per-route breakdown. A future need is a NEW aggregate count with its own
-line in the contract, never a list of people.
+Privacy: the response is aggregate integers — distinct-user counts for the
+whole app, event/row counts, sums of tokens and cents. No ids, no emails, no
+per-user rows, no distinct-users-per-feature (in a small org "1 user used notes
+today" names them), no averages, no free text. A future need is a NEW aggregate
+with its own line in the contract, never a list of people.
 """
 
 from __future__ import annotations
 
 import hmac
 import logging
+import re
 
 from fastapi import APIRouter, Header, HTTPException
 
@@ -31,17 +37,23 @@ logger = logging.getLogger("sapling.internal_metrics")
 
 router = APIRouter()
 
-# The Postgres function behind the counts (migration
-# 20260921041555_canopy_active_users.sql). Takes no arguments, returns one row.
-ACTIVE_USERS_RPC = "canopy_active_users"
+# The Postgres function behind the whole body (migration
+# 20260921044914_canopy_metrics.sql). Takes no arguments and returns ONE JSONB
+# document, which PostgREST hands back as a bare JSON object.
+METRICS_RPC = "canopy_metrics"
 
-# function column -> wire key. The response is PROJECTED through this map, so a
-# column added to the function later cannot reach the wire by accident.
-_WINDOWS = (("d1", "24h"), ("d7", "7d"), ("d30", "30d"))
+# The three sections of contract v2, and the only top-level keys allowed out.
+_SECTIONS = ("active_users", "counts", "totals")
 
-# Canopy refuses a window outside 0..10,000,000. Checked here too so a refusal
-# shows up in THIS app's logs instead of as a silent drop on the other side.
-_MAX_COUNT = 10_000_000
+# Wire order of a windowed entry. Every entry has exactly these three.
+_WINDOWS = ("24h", "7d", "30d")
+
+# Canopy's own limits (its spec, section 3), checked here first so a refusal shows up in
+# THIS app's logs instead of as a silent drop on the other side.
+_MAX_ACTIVE_USERS = 10_000_000
+_MAX_VALUE = 1_000_000_000_000
+_MAX_KEYS = {"counts": 48, "totals": 24}
+_KEY_RE = re.compile(r"[a-z][a-z0-9_]{0,39}")
 
 # One body for every failure, saying nothing about which.
 _UNAVAILABLE = "Metrics temporarily unavailable"
@@ -68,29 +80,68 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _active_user_counts() -> dict[str, int]:
-    """All three windows from ONE database round trip, or raise.
+def _integer(value: object, ceiling: int, where: str) -> int:
+    """`value` as a real non-negative integer no larger than `ceiling`, or raise.
 
-    Validates everything Canopy will validate — one row, three real integers in
-    range, 24h <= 7d <= 30d — because a bad window must refuse the other two.
+    `type(...) is int`, not isinstance: bool is an int in Python (True would go
+    out as the JSON literal `true`), and a string or a float here means the wire
+    format changed under us. Error messages name the KEY, never the value.
     """
-    rows = rpc(ACTIVE_USERS_RPC, {})
-    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
-        raise ValueError(f"{ACTIVE_USERS_RPC} did not return exactly one row")
-    row = rows[0]
+    if type(value) is not int or not 0 <= value <= ceiling:
+        raise ValueError(f"{METRICS_RPC}: {where} is not an integer in range")
+    return value
 
-    counts: dict[str, int] = {}
-    for column, window in _WINDOWS:
-        value = row.get(column)
-        # `type(...) is int`, not isinstance: bool is an int in Python, and a
-        # string or float here means the wire format changed under us.
-        if type(value) is not int or not 0 <= value <= _MAX_COUNT:
-            raise ValueError(f"{ACTIVE_USERS_RPC}.{column} is not an integer in range")
-        counts[window] = value
 
-    if not counts["24h"] <= counts["7d"] <= counts["30d"]:
-        raise ValueError(f"{ACTIVE_USERS_RPC} windows do not nest")
-    return counts
+def _windows(entry: object, ceiling: int, where: str) -> dict[str, int]:
+    """One `{24h, 7d, 30d}` entry: exactly those keys, in range, nested."""
+    if not isinstance(entry, dict) or set(entry) != set(_WINDOWS):
+        raise ValueError(f"{METRICS_RPC}: {where} is not exactly the three windows")
+    # Rebuilt, in wire order — never the object the database handed over.
+    out = {w: _integer(entry[w], ceiling, f"{where}.{w}") for w in _WINDOWS}
+    if not out["24h"] <= out["7d"] <= out["30d"]:
+        raise ValueError(f"{METRICS_RPC}: {where} windows do not nest")
+    return out
+
+
+def _keyed(section: object, name: str) -> dict:
+    """A `counts` / `totals` object with contract-legal keys, within the cap."""
+    if not isinstance(section, dict):
+        raise ValueError(f"{METRICS_RPC}: {name} is not an object")
+    if len(section) > _MAX_KEYS[name]:
+        raise ValueError(f"{METRICS_RPC}: {name} has more than {_MAX_KEYS[name]} keys")
+    for key in section:
+        if not isinstance(key, str) or not _KEY_RE.fullmatch(key):
+            # repr + a cut: a hostile key must not get to write the log line.
+            raise ValueError(f"{METRICS_RPC}: {name} has an illegal key {key!r:.48}")
+    return section
+
+
+def _metrics_document() -> dict:
+    """The whole response from ONE database round trip, or raise.
+
+    Validates everything Canopy will validate — and refuses the WHOLE document
+    where Canopy would drop one key — then rebuilds it value by value, so
+    nothing the database returned reaches the wire unchecked.
+    """
+    doc = rpc(METRICS_RPC, {})
+    # PostgREST answers a scalar-returning function with the bare value. A
+    # one-element list is the same document from a server that wrapped it.
+    if isinstance(doc, list) and len(doc) == 1:
+        doc = doc[0]
+    if not isinstance(doc, dict) or set(doc) != set(_SECTIONS):
+        raise ValueError(f"{METRICS_RPC} did not return exactly {', '.join(_SECTIONS)}")
+
+    return {
+        "active_users": _windows(doc["active_users"], _MAX_ACTIVE_USERS, "active_users"),
+        "counts": {
+            key: _windows(entry, _MAX_VALUE, f"counts.{key}")
+            for key, entry in _keyed(doc["counts"], "counts").items()
+        },
+        "totals": {
+            key: _integer(value, _MAX_VALUE, f"totals.{key}")
+            for key, value in _keyed(doc["totals"], "totals").items()
+        },
+    }
 
 
 # No trailing slash and include_in_schema=False: Canopy never follows a
@@ -98,11 +149,36 @@ def _active_user_counts() -> dict[str, int]:
 # out of /docs and /openapi.json.
 @router.get("/metrics", include_in_schema=False)
 def internal_metrics(authorization: str | None = Header(default=None)) -> dict:
-    """Distinct active users over the trailing 24 hours / 7 days / 30 days.
+    """Aggregate usage numbers for the Canopy dashboard (its contract v2).
 
-        {"active_users": {"24h": 74, "7d": 318, "30d": 318}}
+        {"active_users": {"24h": 74, "7d": 318, "30d": 402},
+         "counts": {"signups": {"24h": 3, "7d": 21, "30d": 96}, ...},
+         "totals": {"users": 1204, "users_pending": 7, ...}}
 
-    **What "active" means here.** A user is active in a window when the `events`
+    `counts` are WINDOWED — how many of something happened in the trailing 24
+    hours / 7 days / 30 days. `totals` are POINT-IN-TIME — how many exist right
+    now. Every value is a non-negative JSON integer. Which keys exist, their
+    exact source column and what a deleted row does to each are documented ONCE,
+    next to the SQL that computes them: migration
+    `20260921044914_canopy_metrics.sql`. Three rules from there matter to a
+    caller:
+
+    - **A key is absent rather than approximated.** Absent reads "not reported"
+      on the dashboard; 0 reads as a measured zero. So the keys counted from the
+      `events` table (tutor_sessions, chat_messages, documents_uploaded, logins,
+      errors_*, the *_failed signals) appear only when `events` holds a row from
+      the last 30 days, and the llm_* keys only when `llm_usage` does — both
+      tables go silent under the `EVENTS_LOGGING_ENABLED=false` kill switch.
+      `study_guides` is never sent: that table is a cache.
+    - **`llm_cost_cents` is a LOWER bound.** It is `ROUND(SUM(cost_usd) * 100)`
+      — integer cents, half-up — and `cost_usd` is NULL for a model
+      `services/llm_pricing.py` has no price for; those calls add tokens but no
+      cents. With no priced call in 30 days the key is absent.
+    - **`counts` say what happened, `totals` what exists.** A soft-deleted
+      document, note, account or room message still counts in its window; it is
+      gone from the totals.
+
+    **What "active" means.** A user is active in a window when the `events`
     table holds at least one row attributed to them (`user_id` set) with
     `created_at` inside it. That is the same source, and the same "has a
     user_id" rule, as the admin dashboard's `distinct_active_users`
@@ -130,24 +206,27 @@ def internal_metrics(authorization: str | None = Header(default=None)) -> dict:
     hurts most. `EVENTS_LOGGING_ENABLED=false` (the events kill switch) or a
     dropped events batch also reads as inactivity.
 
-    **Nesting is by construction.** All three counts come from one SQL statement
-    over one 30-day row set with one `now()`, each narrower window a FILTER on
-    the wider one — so `24h <= 7d <= 30d` always, which Canopy checks. There is
-    deliberately no row-scan fallback: `admin_analytics` pages `events` into
-    Python and stops at a 100k-row cap with `truncated: true`, and a truncated
-    scan UNDERCOUNTS. `COUNT(DISTINCT ...)` in Postgres cannot truncate.
+    **Nesting and consistency are by construction.** The whole body is ONE SQL
+    statement — one snapshot, one `now()` — and every windowed entry is one
+    30-day row set with each narrower window a FILTER on the wider one, so
+    `24h <= 7d <= 30d` always and no two numbers can contradict each other.
+    There is deliberately no row-scan fallback: `admin_analytics` pages rows
+    into Python and stops at a 100k-row cap with `truncated: true`, and a
+    truncated scan UNDERCOUNTS. Aggregates in Postgres cannot truncate.
 
     Status codes: 404 when `CANOPY_METRICS_TOKEN` is unset or blank (feature
     off); 401, identical for every kind of wrong credential; 503 with a generic
-    body when the counts cannot be produced or do not validate.
+    body when the document cannot be produced or ANY part of it does not
+    validate — including code deployed before the migration is applied
+    (PostgREST 404s the RPC), which was the v1 behaviour too.
     """
     _authorize(authorization)
     try:
-        counts = _active_user_counts()
+        document = _metrics_document()
     except Exception:
         # Includes the function not existing yet (code deployed before the
         # migration: PostgREST 404s the RPC). The traceback names the Supabase
         # URL and status, never a credential — the token is not in scope here.
-        logger.exception("canopy metrics: active-user counts unavailable")
+        logger.exception("canopy metrics: document unavailable")
         raise HTTPException(status_code=503, detail=_UNAVAILABLE)
-    return {"active_users": counts}
+    return document
