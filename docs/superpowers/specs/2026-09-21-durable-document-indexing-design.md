@@ -271,6 +271,20 @@ in hand instead of discarding it. Existing NULL rows need a fresh classification
   now lives in the integration lane, against the real claim.
 - **Paged reads use a total order** (`created_at,id`), as `page_all` requires.
 
+## Review round 3 — corrections
+
+- **Only the lease holder records an outcome.** Retries inside one attempt can outlast the lease;
+  the row is then reclaimable, and a second attempt can finish first. `_finish` and `_restore` now
+  filter on `index_leased_at=eq.<the lease this attempt set>`, so a stale attempt writes nothing
+  (and says so in the log). The integration lane proves a lease read back through PostgREST matches
+  itself — a microsecond `now()` round-tripped as a string — since a lossy round trip would have
+  silently stopped every sweeper-driven outcome from recording.
+- **What landed is never reported as nothing.** An exception after a partial try now yields
+  `partial` with the best try's count, not `failed`/0.
+- **Terminal failures are reported, not forced every run.** `no_chunks`/`no_course` rows still
+  have text, so `backfill_document_chunks.py` forced them on every run and exited 1 forever — the
+  outcome its unrecoverable rule exists to prevent. `--doc` still forces one deliberately.
+
 ## Risks
 
 - **A re-drive re-decides privacy.** Mitigated by D4 plus reading the stored `shareability`; the

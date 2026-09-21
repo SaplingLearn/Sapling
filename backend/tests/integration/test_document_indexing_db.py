@@ -145,11 +145,12 @@ def test_force_takes_an_exhausted_failed_row(db_conn):
 
 
 def test_the_outcome_is_recorded_and_the_attempt_time_kept(db_conn):
-    from services.document_indexing import IndexOutcome, _finish
+    from services.document_indexing import IndexOutcome, _finish, _load
 
     _insert(db_conn, status="indexing", attempts=1, leased="now()")
+    lease = _load(DOC)["index_leased_at"]
 
-    _finish(DOC, IndexOutcome("partial", 3, "ServerError"))
+    _finish(DOC, IndexOutcome("partial", 3, "ServerError"), lease=lease)
 
     row = _row(db_conn)
     assert row["index_status"] == "partial"
@@ -176,14 +177,15 @@ def test_one_sweep_cannot_spend_a_documents_whole_budget(db_conn, monkeypatch):
     backoff, one pass claimed it, failed it, and was handed it again — three
     attempts inside a few seconds, then exhausted for good."""
     from services import index_sweeper
-    from services.document_indexing import IndexOutcome, _finish
+    from services.document_indexing import IndexOutcome, _finish, _load
 
     _insert(db_conn, status="failed", attempts=0, leased="NULL")
     driven = []
 
     def always_fails(doc_id, **kw):
         driven.append(doc_id)
-        _finish(doc_id, IndexOutcome("failed", 0, "ServerError"))
+        lease = _load(doc_id)["index_leased_at"]
+        _finish(doc_id, IndexOutcome("failed", 0, "ServerError"), lease=lease)
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")   # the sweeper runs only in real mode
     monkeypatch.setattr(index_sweeper, "index_document", always_fails)
@@ -195,11 +197,14 @@ def test_one_sweep_cannot_spend_a_documents_whole_budget(db_conn, monkeypatch):
 
 
 def test_a_terminal_failure_spends_the_budget(db_conn):
-    from services.document_indexing import INDEX_MAX_ATTEMPTS, IndexOutcome, _finish
+    from services.document_indexing import (
+        INDEX_MAX_ATTEMPTS, IndexOutcome, _finish, _load,
+    )
 
     _insert(db_conn, status="indexing", attempts=1, leased="now()")
+    lease = _load(DOC)["index_leased_at"]
 
-    _finish(DOC, IndexOutcome("failed", 0, "no_extracted_text"))
+    _finish(DOC, IndexOutcome("failed", 0, "no_extracted_text"), lease=lease)
 
     assert _row(db_conn)["index_attempts"] == INDEX_MAX_ATTEMPTS
 
@@ -210,3 +215,51 @@ def test_the_check_constraint_rejects_an_unknown_status(db_conn):
     _insert(db_conn)
     with pytest.raises(psycopg.errors.CheckViolation):
         db_conn.execute("UPDATE documents SET index_status = 'done' WHERE id = %s", (DOC,))
+
+
+# ── review round 3: only the lease holder records an outcome ────────────────
+
+
+def test_a_lease_read_back_through_postgrest_matches_itself(db_conn):
+    """The SQL claim's lease is a microsecond `now()`; PostgREST hands it back
+    as a string, and the finishing write filters on `index_leased_at=eq.<that
+    string>`. If the round trip lost precision or mangled the offset, EVERY
+    sweeper-driven outcome would silently fail to record."""
+    from db.connection import rpc
+    from services.document_indexing import IndexOutcome, _finish, _load
+
+    _insert(db_conn)
+    rpc("claim_documents_for_indexing",
+        {"max_attempts": 3, "lease_seconds": 600, "batch_size": 1})
+    lease = _load(DOC)["index_leased_at"]
+
+    _finish(DOC, IndexOutcome("indexed", 4), lease=lease)
+
+    row = _row(db_conn)
+    assert row["index_status"] == "indexed"
+    assert row["index_chunk_count"] == 4
+
+
+def test_an_own_claims_lease_matches_too(db_conn):
+    from services.document_indexing import IndexOutcome, _claim_one, _finish
+
+    _insert(db_conn)
+    lease = _claim_one({"id": DOC, "index_attempts": 0}, force=False)
+    assert lease is not None
+
+    _finish(DOC, IndexOutcome("indexed", 2), lease=lease)
+
+    assert _row(db_conn)["index_status"] == "indexed"
+
+
+def test_an_attempt_that_lost_its_lease_writes_nothing(db_conn):
+    from services.document_indexing import IndexOutcome, _finish
+
+    _insert(db_conn, status="indexed", attempts=2, leased="now()")
+
+    _finish(DOC, IndexOutcome("failed", 0, "ServerError"),
+            lease="2000-01-01T00:00:00Z")
+
+    row = _row(db_conn)
+    assert row["index_status"] == "indexed"
+    assert row["index_error"] is None

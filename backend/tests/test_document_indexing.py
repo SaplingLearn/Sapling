@@ -678,3 +678,116 @@ def test_a_never_attempted_upload_still_records_skipped(db, events, visibility,
     index_document("doc-1")
 
     assert row["index_status"] == "skipped"
+
+
+# ── review round 3: an attempt that outlived its lease owns nothing ─────────
+
+
+def test_a_stale_attempt_does_not_overwrite_the_newer_holder(db, events, visibility,
+                                                             monkeypatch):
+    """Retries inside one attempt can outlast INDEX_LEASE_SECONDS. The row is
+    then reclaimable, and another attempt can index it and finish first. The
+    slow one's outcome must not land on top: a fully indexed document would
+    read `failed`, go back on the stuck list and be indexed again."""
+    row = _doc(db)
+
+    def newer_holder_finishes_first(*a, **kw):
+        # Mid-attempt: the lease expired, another attempt claimed the row and
+        # recorded a clean result under its own lease.
+        row.update(index_status="indexed", index_chunk_count=4,
+                   index_leased_at="2026-09-21T09:00:00Z", index_error=None)
+        return _Chunks(upserted=1, total=4, embed_error="ServerError")
+
+    monkeypatch.setattr(di, "index_document_chunks_detailed", newer_holder_finishes_first)
+
+    index_document("doc-1")
+
+    assert row["index_status"] == "indexed"
+    assert row["index_chunk_count"] == 4
+    assert row["index_leased_at"] == "2026-09-21T09:00:00Z"
+
+
+def test_the_finishing_write_names_the_lease_it_holds(db, events, visibility,
+                                                      monkeypatch):
+    _doc(db)
+    _rag(monkeypatch, _Chunks(4, 4))
+
+    index_document("doc-1")
+
+    claim_data, _ = db.updates[0]
+    _, finish_filters = db.updates[-1]
+    assert finish_filters["index_leased_at"] == f"eq.{claim_data['index_leased_at']}"
+
+
+def test_a_sweeper_claimed_attempt_finishes_under_the_claims_lease(db, events,
+                                                                   visibility, monkeypatch):
+    _doc(db, index_status="indexing", index_attempts=1,
+         index_leased_at="2026-09-21T08:00:00.123456+00:00")
+    _rag(monkeypatch, _Chunks(4, 4))
+
+    index_document("doc-1", claimed=True)
+
+    _, finish_filters = db.updates[-1]
+    assert finish_filters["index_leased_at"] == "eq.2026-09-21T08:00:00.123456+00:00"
+
+
+def test_a_stale_undo_does_not_overwrite_the_newer_holder(db, events, visibility,
+                                                          monkeypatch):
+    row = _doc(db, index_status="failed", index_attempts=1,
+               index_leased_at="2026-09-20T10:00:00Z")
+
+    def reclaimed_meanwhile(*a, **kw):
+        row.update(index_status="indexed", index_leased_at="2026-09-21T09:00:00Z")
+        return _Chunks(0, 4, embedding_disabled=True)
+
+    monkeypatch.setattr(di, "index_document_chunks_detailed", reclaimed_meanwhile)
+
+    index_document("doc-1", force=True)
+
+    assert row["index_status"] == "indexed"
+
+
+# ── review round 3: what landed is never reported as nothing ───────────────
+
+
+def test_a_bug_after_a_partial_try_reports_what_landed(db, events, visibility,
+                                                       monkeypatch):
+    """Try 1 upserted 3 of 4 chunks — retrieval is already serving them — then
+    try 2 raised. Reporting `failed` with 0 chunks misstated both the row and
+    the rag.index_failed event, and skipped the relevance observation."""
+    row = _doc(db)
+    observed = []
+    monkeypatch.setattr(di, "_observe_course_relevance",
+                        lambda *a, **k: observed.append(a[0]))
+    _rag(monkeypatch, _Chunks(3, 4, embed_error="ServerError"),
+         TypeError("boom"))
+
+    out = index_document("doc-1")
+
+    assert out == IndexOutcome("partial", 3, "TypeError")
+    assert row["index_status"] == "partial"
+    assert row["index_chunk_count"] == 3
+    assert observed == ["doc-1"]
+    assert [kw["payload"]["status"] for e, kw in events if e == "rag.index_failed"] \
+        == ["partial"]
+
+
+def test_a_transient_error_on_the_last_try_keeps_the_best_count(db, events,
+                                                                 visibility, monkeypatch):
+    _doc(db)
+    _rag(monkeypatch, _Chunks(3, 4), _Chunks(2, 4), _http(503))
+
+    out = index_document("doc-1")
+
+    # Chunk ids are content-addressed, so what any try upserted is still there:
+    # the best try is the honest lower bound, not the last one.
+    assert out == IndexOutcome("partial", 3, "HTTPStatusError")
+
+
+def test_a_full_try_after_a_partial_one_is_indexed_with_no_error(db, events,
+                                                                 visibility, monkeypatch):
+    row = _doc(db)
+    _rag(monkeypatch, _Chunks(2, 4, embed_error="ServerError"), _Chunks(4, 4))
+
+    assert index_document("doc-1") == IndexOutcome("indexed", 4)
+    assert row["index_error"] is None

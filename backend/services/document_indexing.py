@@ -60,7 +60,7 @@ _BACKOFF_SECONDS = (1, 4)
 
 #: Failures no retry can fix. Recorded with the attempt budget spent, so they
 #: stay visible on the admin list and the sweeper never claims them again.
-_TERMINAL_ERRORS = frozenset({"no_extracted_text", "no_chunks", "no_course"})
+TERMINAL_ERRORS = frozenset({"no_extracted_text", "no_chunks", "no_course"})
 
 
 class IndexOutcome(NamedTuple):
@@ -108,6 +108,11 @@ def index_document(
         and prior["index_status"] == PENDING and not prior["index_attempts"]
     )
 
+    # The lease this attempt holds. Every write that records its outcome is
+    # conditional on it, so an attempt that outlived its lease — and whose row
+    # another attempt has since claimed — cannot overwrite the newer result.
+    lease = row.get("index_leased_at") if claimed else None
+
     if tracking and not claimed:
         status = row.get("index_status")
         if not force:
@@ -115,7 +120,8 @@ def index_document(
                 return IndexOutcome(status, row.get("index_chunk_count") or 0)
             if (row.get("index_attempts") or 0) >= INDEX_MAX_ATTEMPTS:
                 return IndexOutcome(status, error=row.get("index_error"))
-        if not _claim_one(row, force=force):
+        lease = _claim_one(row, force=force)
+        if lease is None:
             return IndexOutcome(INDEXING)
 
     was_recovery = claimed or row.get("index_status") in (PARTIAL, FAILED)
@@ -137,9 +143,9 @@ def index_document(
             # default targets — so a backfill run from a shell still holding the
             # E2E function-mode export would move every unfinished document out
             # of every recovery path. Only a never-attempted upload records it.
-            _restore(doc_id, prior, claimed=claimed)
+            _restore(doc_id, prior, claimed=claimed, lease=lease)
         else:
-            _finish(doc_id, outcome)
+            _finish(doc_id, outcome, lease=lease)
     _report(row, outcome, was_recovery=was_recovery, tracking=tracking,
             claimed=claimed, force=force)
     return outcome
@@ -178,8 +184,9 @@ def _utc(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _claim_one(row: dict, *, force: bool) -> bool:
-    """Take the row for this attempt. False means another caller has it.
+def _claim_one(row: dict, *, force: bool) -> str | None:
+    """Take the row for this attempt; the lease it set, or None if another
+    caller has the row.
 
     A compare-and-swap on `index_attempts`: two claimers that both read N
     cannot both win, because the loser's `index_attempts=eq.N` no longer
@@ -195,16 +202,17 @@ def _claim_one(row: dict, *, force: bool) -> bool:
     else:
         filters["index_status"] = f"in.({','.join(_RECLAIMABLE)})"
         next_attempts = attempts + 1
+    lease = _utc(now)
     won = table("documents").update(
         {
             "index_status": INDEXING,
-            "index_leased_at": _utc(now),
+            "index_leased_at": lease,
             "index_attempts": next_attempts,
             "index_error": None,
         },
         filters=filters,
     )
-    return bool(won)
+    return lease if won else None
 
 
 # ── the work ────────────────────────────────────────────────────────────────
@@ -271,7 +279,11 @@ def _run(row: dict) -> IndexOutcome:
         confidence=row.get("shareability_confidence"),
     )
 
-    result = None
+    # The best try, not the last: chunk ids are content-addressed, so whatever
+    # ANY try upserted is in course_chunks now, and the best count is the
+    # honest lower bound on what retrieval is serving.
+    best = None
+    error: str | None = None
     for attempt in range(_INLINE_TRIES):
         if attempt:
             time.sleep(_BACKOFF_SECONDS[min(attempt - 1, len(_BACKOFF_SECONDS) - 1)])
@@ -287,8 +299,11 @@ def _run(row: dict) -> IndexOutcome:
                     doc_id, attempt + 1, _INLINE_TRIES, type(exc).__name__,
                 )
                 continue
+            # Not `return FAILED` outright: an earlier try may already have
+            # landed chunks, and reporting nothing would misstate the row.
             logger.exception("[RAG] indexing doc %s failed", doc_id)
-            return IndexOutcome(FAILED, error=type(exc).__name__)
+            error = type(exc).__name__
+            break
 
         if result.embedding_disabled:
             # #439: the seam turned embedding off (every function-mode run).
@@ -296,25 +311,26 @@ def _run(row: dict) -> IndexOutcome:
             # no-op it is, so no log line has to be allowlisted to keep the
             # E2E logscan oracle quiet.
             return IndexOutcome(SKIPPED)
+        if best is None or result.upserted > best.upserted:
+            best = result
         if result.upserted >= result.total:
+            error = None
             break
+        error = result.embed_error or "embed_failed"
         logger.warning(
             "[RAG] doc %s indexed %d/%d chunks (try %d/%d)",
             doc_id, result.upserted, result.total, attempt + 1, _INLINE_TRIES,
         )
 
-    if result.upserted:
+    landed = best.upserted if best is not None else 0
+    if landed:
         _observe_course_relevance(
             doc_id, course_code, user_id, category,
             decrypt_if_present(row.get("summary")) or "", chunks[0],
         )
-    if result.upserted >= result.total:
-        return IndexOutcome(INDEXED, result.upserted)
-    return IndexOutcome(
-        PARTIAL if result.upserted else FAILED,
-        result.upserted,
-        result.embed_error or "embed_failed",
-    )
+    if best is not None and error is None and landed >= best.total:
+        return IndexOutcome(INDEXED, landed)
+    return IndexOutcome(PARTIAL if landed else FAILED, landed, error or "embed_failed")
 
 
 def _observe_course_relevance(
@@ -361,7 +377,31 @@ def _observe_course_relevance(
 # ── recording the outcome ───────────────────────────────────────────────────
 
 
-def _finish(doc_id: str, outcome: IndexOutcome) -> None:
+def _held(doc_id: str, lease: str | None) -> dict:
+    """Filters that match the row only while this attempt still holds it."""
+    return {
+        "id": f"eq.{doc_id}",
+        "index_leased_at": f"eq.{lease}" if lease is not None else "is.null",
+    }
+
+
+def _write_if_held(doc_id: str, data: dict, lease: str | None, what: str) -> None:
+    try:
+        written = table("documents").update(data, filters=_held(doc_id, lease))
+    except Exception:
+        # Only the bookkeeping failed. The row stays 'indexing' until its lease
+        # expires, and the sweeper then re-drives it — idempotently, since
+        # chunk ids are content-addressed.
+        logger.warning("[RAG] could not %s for doc %s", what, doc_id, exc_info=True)
+        return
+    if not written:
+        logger.warning(
+            "[RAG] doc %s: this attempt outlived its lease and another attempt "
+            "holds the row now — not recording its %s over theirs", doc_id, what,
+        )
+
+
+def _finish(doc_id: str, outcome: IndexOutcome, *, lease: str | None) -> None:
     # `index_leased_at` is deliberately left as the claim set it. On a
     # finished row it records when the last attempt BEGAN, and the claim
     # function's retry backoff reads it: a failed or partial row waits
@@ -373,23 +413,12 @@ def _finish(doc_id: str, outcome: IndexOutcome) -> None:
         "index_chunk_count": outcome.chunk_count,
         "index_error": outcome.error,
     }
-    if outcome.error in _TERMINAL_ERRORS:
+    if outcome.error in TERMINAL_ERRORS:
         data["index_attempts"] = INDEX_MAX_ATTEMPTS
-    try:
-        table("documents").update(
-            data, filters={"id": f"eq.{doc_id}"}, prefer_return_minimal=True,
-        )
-    except Exception:
-        # The chunks are already written; only the bookkeeping failed. The row
-        # stays 'indexing' until its lease expires, and the sweeper then
-        # re-drives it — idempotently, since chunk ids are content-addressed.
-        logger.warning(
-            "[RAG] could not record index outcome %s for doc %s",
-            outcome.status, doc_id, exc_info=True,
-        )
+    _write_if_held(doc_id, data, lease, f"index outcome {outcome.status!r}")
 
 
-def _restore(doc_id: str, prior: dict, *, claimed: bool) -> None:
+def _restore(doc_id: str, prior: dict, *, claimed: bool, lease: str | None) -> None:
     """Put the row back as this call found it."""
     if claimed:
         # The SQL claim already overwrote the status and spent an attempt, and
@@ -403,13 +432,7 @@ def _restore(doc_id: str, prior: dict, *, claimed: bool) -> None:
         # Everything as it was, the last real attempt's time included — or the
         # retry backoff would restart from a call that did no work.
         data = {**prior, "index_attempts": prior["index_attempts"] or 0}
-    try:
-        table("documents").update(
-            data, filters={"id": f"eq.{doc_id}"}, prefer_return_minimal=True,
-        )
-    except Exception:
-        logger.warning("[RAG] could not restore index state for doc %s", doc_id,
-                       exc_info=True)
+    _write_if_held(doc_id, data, lease, "restored index state")
 
 
 def _report(
