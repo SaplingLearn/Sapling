@@ -158,9 +158,10 @@ cd backend && venv/bin/python -m e2e_oracles [--json] [--check ciphertext|counts
   `[RAG] _index_document_chunks failed` as "#439 by-design noise", because
   function mode raised inside the indexer deliberately — and the same entry
   hid a real `TypeError` that kept every catalog-course upload out of
-  retrieval for months. Function mode is now a quiet designed skip (an INFO
-  line, no traceback), so any `_index_document_chunks failed` is a genuine
-  finding. The suppression mechanism remains ("N suppressed" in the summary
+  retrieval for months. Function mode is now a quiet designed skip — the
+  document ends `index_status='skipped'`, with an INFO line and no traceback —
+  so any `[RAG] indexing doc … failed` traceback (from
+  `services/document_indexing.py`, #482) is a genuine finding. The suppression mechanism remains ("N suppressed" in the summary
   line), but before adding an entry, make the by-design case stop logging a
   traceback instead — an allowlist can't tell the failure you expected from
   the one you didn't.
