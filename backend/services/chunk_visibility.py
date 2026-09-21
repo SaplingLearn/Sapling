@@ -28,8 +28,8 @@ for the same text, so the pool would hold two rows for one passage.
 
 The consequence, recorded deliberately: a student who uploads while opted out
 and later opts back in does NOT retroactively share those uploads. Re-sharing
-them means re-indexing under the shared id (`scripts/backfill_document_chunks.py`),
-not a metadata flip. That asymmetry fails in the safe direction — private
+them means re-indexing under the shared id (`scripts/backfill_document_chunks.py
+--doc <id>`), not a metadata flip. That asymmetry fails in the safe direction — private
 stays private — which is the right default for a privacy control.
 
 Two known costs of that remedy, unfixed here rather than unnoticed:
@@ -41,8 +41,12 @@ Two known costs of that remedy, unfixed here rather than unnoticed:
   duplicate text at retrieval belongs with #634's ranking work, not here (and
   #484 encrypts `chunk_text`, which changes how such a comparison has to be
   written).
-* `scripts/backfill_document_chunks.py` is invoked by nothing (#482), so the
-  remedy is an operator action, not a background repair.
+* Nothing re-drives an INDEXED document on its own: the indexing sweeper
+  (#482) only takes documents that have not finished, and these finished fine
+  under the private namespace. So the remedy is an operator action —
+  `scripts/backfill_document_chunks.py --doc <id>` or
+  `POST /api/admin/documents/{id}/reindex`, both of which force — not a
+  background repair.
 """
 import logging
 from collections.abc import Iterable

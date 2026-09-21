@@ -1,35 +1,45 @@
 """
-One-time backfill: chunk and index existing documents into course_chunks.
+Re-drive documents that have not finished indexing, now (#482).
 
-Architecture note (verified against the live schema before writing this
-script — see .superpowers/sdd/task-5-report.md for the full grep trail):
+The indexing sweeper (services/index_sweeper.py) does this on its own every
+few minutes, with a bounded attempt budget. This is the operator's version:
+it re-drives immediately, and with `force` it also resets the budget of a
+document the sweeper has given up on.
 
-  - The `documents` table has no `file_path` / `uploader_id` columns, and
-    no Supabase Storage bucket ever holds the raw uploaded bytes. Files
-    are read into memory by `POST /api/documents/upload`
-    (`routes/documents.py::upload_document`), extracted synchronously via
-    `services.extraction_service.extract_text_from_file`, and the raw
-    bytes are discarded once the request completes. There is nothing to
-    download and re-extract for documents that predate migration 0030.
-  - Consequently this script does NOT re-run OCR/extraction. Its actual
-    job is: chunk + index every document whose `extracted_text` column
-    is already populated (encrypted) but that has no rows yet in
-    `course_chunks` — e.g. documents processed before the chunker/
-    index_document_chunks wiring landed (Task 4), or where the
-    background indexing step previously failed or was skipped.
-  - Documents with `extracted_text IS NULL` have no recoverable source
-    text at all (their original file was never persisted anywhere). The
-    script reports their count and skips them; the only way to backfill
-    those is to have the student re-upload the file.
+It is a thin caller of `services.document_indexing.index_document` — the same
+entry point the uploads and the sweeper use — so it cannot drift from them.
+It used to reimplement indexing, and drifted twice:
+
+  - Its "already indexed?" check looked for any chunk carrying the document's
+    id. On a shared chunk that id names only the LAST uploader (#629), and a
+    partially indexed document looked finished. `index_status` answers this.
+  - It made its own sharing decision, assuming full confidence whenever a
+    shareability was stored, on the premise that a stored value had already
+    been gated. It had not: the upload stores the classifier's raw label and
+    the confidence floor is applied only at index time. So this script would
+    re-index as SHARED a document the live upload had kept private (#630).
+    The decision now happens in one place, from the stored confidence.
+
+Documents with no extracted_text have nothing to index from — the original
+file is discarded after upload, and Supabase Storage holds no document bytes.
+They are reported and skipped, never counted as failures, or every run in an
+environment that has any would exit 1 forever.
 
 Run from backend/:
-    python scripts/backfill_document_chunks.py              # staging
-    python scripts/backfill_document_chunks.py --dry-run    # preview only
+    python scripts/backfill_document_chunks.py              # every unfinished document
+    python scripts/backfill_document_chunks.py --dry-run    # list them only
+    python scripts/backfill_document_chunks.py --doc <id>   # one document, whatever its status
+
+Loads .env.staging without overriding what is already set, so run it under
+`dotenv -f .env.<env> run -- ...` for any other environment, and check the
+project it prints first. It embeds, so SAPLING_MODEL_MODE must be 'real' and
+GEMINI_API_KEY valid for that environment.
 """
 import argparse
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -38,137 +48,77 @@ load_dotenv(BASE / ".env.staging")
 
 sys.path.insert(0, str(BASE))
 
-from db.connection import table  # noqa: E402
-from services.chunker import chunk_for_category  # noqa: E402
-from services.chunk_visibility import decide_visibility  # noqa: E402
-from services.rag_service import course_relevance, index_document_chunks  # noqa: E402
-from services.encryption import decrypt_if_present  # noqa: E402
+from db.connection import REST_URL, page_all, table  # noqa: E402
+from services.document_indexing import (  # noqa: E402
+    FAILED,
+    INDEXED,
+    INDEXING,
+    PARTIAL,
+    PENDING,
+    SKIPPED,
+    index_document,
+)
+
+_UNFINISHED = (PENDING, INDEXING, PARTIAL, FAILED)
 
 
-def _get_course_code(course_id: str) -> str:
-    """Resolve a Sapling course UUID to its BU course_code, used as the
-    course_chunks partition key (matches routes/documents.py::_index_document_chunks).
-    """
-    rows = table("courses").select("course_code", filters={"id": f"eq.{course_id}"}, limit=1)
-    return (rows[0].get("course_code") or course_id) if rows else course_id
+def _documents(doc: str | None, *, with_text: bool) -> list[dict]:
+    filters = {
+        "deleted_at": "is.null",
+        # Presence is a filter, never a read of the (encrypted) text.
+        "extracted_text": "not.is.null" if with_text else "is.null",
+    }
+    if doc:
+        filters["id"] = f"eq.{doc}"
+    else:
+        filters["index_status"] = f"in.({','.join(_UNFINISHED)})"
+    return list(page_all(
+        table("documents"), "id,file_name", filters=filters, order="created_at",
+    ))
 
 
-def _already_indexed(doc_id: str) -> bool:
-    rows = table("course_chunks").select("id", filters={"doc_id": f"eq.{doc_id}"}, limit=1)
-    return bool(rows)
-
-
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "Backfill course_chunks for existing documents that already have "
-            "extracted_text but were never chunked/indexed. Documents missing "
-            "extracted_text are reported and skipped (no source file is "
-            "recoverable for them — see module docstring)."
-        )
+        description="Re-drive documents that have not finished indexing.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Preview only, no writes.")
-    args = parser.parse_args()
+    parser.add_argument("--dry-run", action="store_true", help="List only; index nothing.")
+    parser.add_argument("--doc", help="Re-drive this one document, whatever its status.")
+    args = parser.parse_args(argv)
 
-    missing = table("documents").select(
-        "id",
-        filters={"extracted_text": "is.null", "deleted_at": "is.null"},
-    )
-    docs = table("documents").select(
-        "id,file_name,user_id,offering_id,extracted_text,category,shareability",
-        filters={"extracted_text": "not.is.null", "deleted_at": "is.null"},
-    )
-
-    print(f"Found {len(docs)} documents with extracted_text, {len(missing)} without.")
-    if missing:
-        print(
-            f"  {len(missing)} document(s) have no extracted_text and no stored "
-            f"source file to re-extract from (Supabase Storage holds no raw "
-            f"document bytes; the original file is discarded after upload). "
-            f"These cannot be backfilled here and are skipped."
-        )
+    print(f"Project: {urlparse(REST_URL).hostname}")
+    targets = _documents(args.doc, with_text=True)
+    unrecoverable = _documents(args.doc, with_text=False)
+    print(f"{len(targets)} document(s) to re-drive, "
+          f"{len(unrecoverable)} unrecoverable (no extracted_text).")
 
     ok = skip = fail = 0
-    for doc in docs:
+    for doc in targets:
         doc_id = doc["id"]
-        filename = doc.get("file_name", "")
-        user_id = doc.get("user_id", "")
-        offering_id = doc.get("offering_id", "")
-
-        if _already_indexed(doc_id):
-            skip += 1
-            continue
-
-        off_rows = table("course_offerings").select(
-            "course_id", filters={"id": f"eq.{offering_id}"}, limit=1
-        )
-        if not off_rows:
-            print(f"  SKIP {doc_id[:8]} — no offering {offering_id}")
-            skip += 1
-            continue
-        course_code = _get_course_code(off_rows[0]["course_id"])
-
-        extracted = decrypt_if_present(doc.get("extracted_text")) or ""
-        print(f"  Processing {doc_id[:8]} ({filename}) -> {course_code} ...", end=" ", flush=True)
-
+        print(f"  {doc_id[:8]} ({doc.get('file_name', '')}) ...", end=" ", flush=True)
         if args.dry_run:
             print("(dry run)")
             continue
 
-        try:
-            chunks = chunk_for_category(extracted, doc.get("category") or "other")
-            if not chunks:
-                print("0 chunks (empty text)")
-                ok += 1
-                continue
-
-            # Relevance is OBSERVE-ONLY, as in the live pipeline
-            # (routes/documents.py::_observe_course_relevance, #628): print the
-            # cosine score for calibration, never skip on it, and never let a
-            # failed score lose the document.
-            try:
-                score = course_relevance(course_code, chunks[0])
-                if score is not None:
-                    print(f"(relevance {score:.2f})", end=" ", flush=True)
-            except Exception as e:
-                print(f"(relevance n/a: {e})", end=" ", flush=True)
-
-            # Reproduce the live upload path's two gates (#629 + #630) from
-            # what is stored: the uploader's Class Intel opt-in, and the
-            # document's own shareability. A document classified before #630
-            # has no stored shareability and therefore indexes PRIVATE — run
-            # scripts/backfill_document_shareability.py first to fill it in,
-            # or this backfill withdraws legitimate course material.
-            doc_category = doc.get("category") or "other"
-            count = index_document_chunks(
-                course_code, doc_id, user_id, chunks,
-                visibility=decide_visibility(
-                    user_id,
-                    shareability=doc.get("shareability"),
-                    # A stored decision needs no confidence gate: it was
-                    # already applied when the value was written.
-                    confidence=1.0 if doc.get("shareability") else None,
-                ),
-                category=doc_category,
-            )
-            if not count:
-                # index_document_chunks swallows embed errors and returns 0
-                # (bad/over-quota key, or SAPLING_MODEL_MODE != real leaking in
-                # from an e2e shell). Nothing landed: that is not an "ok".
-                print(f"FAIL: 0 of {len(chunks)} chunks indexed (embedding failed or disabled)")
-                fail += 1
-                continue
-            print(f"{count} chunks indexed")
+        outcome = index_document(doc_id, force=True)
+        if outcome.status == INDEXED:
+            print(f"{outcome.chunk_count} chunks indexed")
             ok += 1
-            time.sleep(1.0)  # stay under embedding quota
-        except Exception as e:
-            print(f"FAIL: {e}")
+        elif outcome.status == INDEXING:
+            print("SKIP — being indexed right now")
+            skip += 1
+        elif outcome.status == SKIPPED:
+            # Indexed NOTHING: that is never an ok.
+            print("FAIL: embedding is disabled — is SAPLING_MODEL_MODE still "
+                  "exported from an E2E cycle? It must be 'real'.")
             fail += 1
+        else:
+            print(f"FAIL: {outcome.status} ({outcome.error}, "
+                  f"{outcome.chunk_count} chunks landed)")
+            fail += 1
+        time.sleep(1.0)  # stay under the embedding quota
 
-    print(
-        f"\nDone: {ok} ok, {skip} skipped (already indexed / no offering), "
-        f"{fail} failed, {len(missing)} unrecoverable (no extracted_text)"
-    )
+    print(f"\nDone: {ok} ok, {skip} skipped (being indexed), {fail} failed, "
+          f"{len(unrecoverable)} unrecoverable (no extracted_text)")
     if fail:
         sys.exit(1)
 

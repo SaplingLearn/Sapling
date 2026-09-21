@@ -469,7 +469,8 @@ def index_document_chunks_detailed(
         # Silent data loss behind a successful-looking upload: the documents
         # row lands, the user sees success, and these chunks are simply absent
         # from retrieval forever. Countable so a partial-index rate is visible
-        # (#482); re-index with scripts/backfill_document_chunks.py.
+        # (#482). The caller records the document `partial` and the indexing
+        # sweeper re-drives it (services/document_indexing.py).
         logger.warning(
             "[RAG] doc %s: dropped %s/%s chunk(s) with no embedding — "
             "they would be unretrievable",
