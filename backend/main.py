@@ -26,6 +26,7 @@ from routes import graph, learn, quiz, calendar, social, extract, auth, document
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
+from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from services import quiz_config, quiz_errors
@@ -286,6 +287,7 @@ app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
+app.include_router(admin_documents_router, prefix="/api/admin/documents")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
