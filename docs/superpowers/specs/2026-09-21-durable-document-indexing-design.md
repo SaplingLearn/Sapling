@@ -158,6 +158,14 @@ never claimed. `indexing` is claimable only once its lease has expired.
 **Concrete defaults** (env-overridable): sweep interval 300s, batch size 10, `MAX` attempts 3,
 lease 600s, inline backoff 3 tries at 1s/4s/16s.
 
+**Every attempt is exactly one claim and one increment.** The sweeper claims in batches through
+the SQL function; the upload paths and the admin endpoint claim their single row with a
+conditional `PATCH ... WHERE index_status IN (pending, partial, failed)`. Both increment
+`index_attempts`, so a document that crashes the worker is bounded to `MAX` attempts rather than
+retried forever, and whichever caller flips a row to `indexing` first wins — the loser does nothing.
+Fresh `pending` rows get a two-minute grace from the sweeper so it does not contend with the
+upload's own inline attempt; correctness rests on the conditional claim, not on the grace.
+
 **`force=True`** (the admin endpoint only) resets `index_attempts` to 0 and re-drives regardless of
 current status, including `indexed`. It is the one path that can re-index an already-indexed
 document, and it exists so an operator can recover from a bad decision without hand-editing rows.
