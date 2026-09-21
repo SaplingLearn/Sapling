@@ -117,60 +117,75 @@ def test_index_document_chunks_refuses_to_guess_a_category():
 # ── The route feeds the decision ────────────────────────────────────────────
 
 
-def _tables_for(courses_rows):
-    def _table(name):
-        m = MagicMock()
-        if name == "courses":
-            m.select.return_value = courses_rows
-        elif name == "course_chunks":
-            m.select.return_value = []
-        else:
-            m.select.return_value = []
-        return m
-    return _table
+def _indexer_row(**kw):
+    from services.encryption import encrypt_if_present
+
+    row = {
+        "id": "doc-1", "user_id": "user-1", "offering_id": "off-1",
+        "category": "lecture_notes", "shareability": "course_material",
+        "shareability_confidence": 0.9,
+        "extracted_text": encrypt_if_present("some extracted text"),
+        "summary": None, "deleted_at": None,
+    }
+    if "confidence" in kw:
+        row["shareability_confidence"] = kw.pop("confidence")
+    row.update(kw)
+    return row
 
 
 def _run_indexer(**kw):
-    from routes.documents import _index_document_chunks
+    """Index one document the way every caller does since #482: through
+    `services.document_indexing.index_document`, which reads the category,
+    shareability and confidence off the STORED row. These tests used to pass
+    them to `routes.documents._index_document_chunks` as arguments; reading
+    them back is what lets a re-drive days later reproduce the upload's
+    decision instead of re-making it."""
+    from services.document_indexing import index_document
 
-    args = dict(
-        doc_id="doc-1",
-        course_id="course-uuid-1",
-        user_id="user-1",
-        extracted_text="some extracted text",
-        category="lecture_notes",
-        doc_summary="",
-        shareability="course_material",
-        confidence=0.9,
+    row = _indexer_row(**kw)
+
+    def _table(name):
+        m = MagicMock()
+        m.select.return_value = (
+            [{"course_code": "BIO-101"}] if name == "courses" else [row]
+        )
+        return m
+
+    with (
+        patch("services.document_indexing.table", side_effect=_table),
+        patch("services.document_indexing.offering_course_id",
+              return_value="course-uuid-1"),
+        patch("services.document_indexing.chunk_for_category", return_value=["c1"]),
+        patch("services.document_indexing._observe_course_relevance"),
+        patch("services.document_indexing.log_event"),
+    ):
+        index_document("doc-1")
+
+
+def _indexed_ok():
+    from services.rag_service import ChunkIndexResult
+
+    return patch(
+        "services.document_indexing.index_document_chunks_detailed",
+        return_value=ChunkIndexResult(upserted=1, total=1),
     )
-    args.update(kw)
-    _index_document_chunks(**args)
 
 
 class TestRouteWiring:
     def test_the_classifier_category_reaches_the_chunk_row(self):
-        fake = _tables_for([{"course_code": "BIO-101"}])
         with (
-            patch("routes.documents.table", side_effect=fake),
-            patch("services.rag_service.table", side_effect=fake),
-            patch("services.chunker.chunk_for_category", return_value=["c1"]),
-            patch("services.rag_service.index_document_chunks", return_value=1) as mock_index,
-            patch("services.chunk_visibility.decide_visibility", return_value="shared"),
-            patch("routes.documents.events_service.log_event"),
+            _indexed_ok() as mock_index,
+            patch("services.document_indexing.decide_visibility", return_value="shared"),
         ):
             _run_indexer(category="slides")
 
         assert mock_index.call_args.kwargs["category"] == "slides"
 
     def test_shareability_and_confidence_reach_the_decision(self):
-        fake = _tables_for([{"course_code": "BIO-101"}])
         with (
-            patch("routes.documents.table", side_effect=fake),
-            patch("services.rag_service.table", side_effect=fake),
-            patch("services.chunker.chunk_for_category", return_value=["c1"]),
-            patch("services.rag_service.index_document_chunks", return_value=1),
-            patch("services.chunk_visibility.decide_visibility", return_value="private") as decide,
-            patch("routes.documents.events_service.log_event"),
+            _indexed_ok(),
+            patch("services.document_indexing.decide_visibility",
+                  return_value="private") as decide,
         ):
             _run_indexer(shareability="completed_work", confidence=0.42)
 
@@ -180,31 +195,21 @@ class TestRouteWiring:
         }
 
     def test_completed_work_is_indexed_private_end_to_end(self):
-        """No mock on the decision: the route's inputs alone must produce a
-        private index for a student's own answers, even though this uploader has
+        """No mock on the decision: the stored row alone must produce a private
+        index for a student's own answers, even though this uploader has
         consented to sharing."""
-        fake = _tables_for([{"course_code": "BIO-101"}])
         with (
-            patch("routes.documents.table", side_effect=fake),
-            patch("services.rag_service.table", side_effect=fake),
-            patch("services.chunker.chunk_for_category", return_value=["c1"]),
-            patch("services.rag_service.index_document_chunks", return_value=1) as mock_index,
+            _indexed_ok() as mock_index,
             patch("services.chunk_visibility.shares_class_context", return_value=True),
-            patch("routes.documents.events_service.log_event"),
         ):
             _run_indexer(shareability="completed_work", confidence=1.0)
 
         assert mock_index.call_args.kwargs["visibility"] == "private"
 
     def test_course_material_from_a_consenting_uploader_is_indexed_shared(self):
-        fake = _tables_for([{"course_code": "BIO-101"}])
         with (
-            patch("routes.documents.table", side_effect=fake),
-            patch("services.rag_service.table", side_effect=fake),
-            patch("services.chunker.chunk_for_category", return_value=["c1"]),
-            patch("services.rag_service.index_document_chunks", return_value=1) as mock_index,
+            _indexed_ok() as mock_index,
             patch("services.chunk_visibility.shares_class_context", return_value=True),
-            patch("routes.documents.events_service.log_event"),
         ):
             _run_indexer(shareability="course_material", confidence=0.9)
 
