@@ -27,6 +27,7 @@ from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
+from routes.internal_metrics import router as internal_metrics_router
 from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
@@ -285,6 +286,9 @@ app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes")
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
 app.include_router(gamification.router, prefix="/api/gamification")
+# Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
+# session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
+app.include_router(internal_metrics_router, prefix="/api/internal")
 
 
 @app.get("/api/health")
