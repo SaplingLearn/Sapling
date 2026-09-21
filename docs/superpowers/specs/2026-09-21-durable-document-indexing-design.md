@@ -156,7 +156,7 @@ is retried because dropped chunks are exactly the recoverable case. `indexed` an
 never claimed. `indexing` is claimable only once its lease has expired.
 
 **Concrete defaults** (env-overridable): sweep interval 300s, batch size 10, `MAX` attempts 3,
-lease 600s, inline backoff 3 tries at 1s/4s/16s.
+lease 600s, inline: 3 tries sleeping 1s then 4s between them.
 
 **Every attempt is exactly one claim and one increment.** The sweeper claims in batches through
 the SQL function; the upload paths and the admin endpoint claim their single row with a
@@ -195,9 +195,18 @@ is the "visible to admins" surface, both behind `require_admin` (`services/auth_
 
 ### 5. Retry, and what counts as transient
 
-The first attempt runs inline as today, with bounded backoff on *transient* Gemini errors only. A
-`TypeError` like #628 is a bug and must fail loudly on the first attempt rather than being retried
-three times into a rate limit. New event types are registered in the pinned #117 taxonomy —
+**Retry is driven by the count, not by exceptions** — corrected during implementation.
+`rag_service.index_document_chunks` swallows embed failures per batch and returns a lower count, so
+a transient Gemini 503 arrives as a *short count* and never as an exception; retry-on-exception
+would never have fired for the most common failure. It also returns 0 both when the #439 seam
+disabled embedding and when every embed failed. A new `index_document_chunks_detailed` returns
+`(upserted, total, embedding_disabled, embed_error)`; the count-only form stays for callers that
+just log it.
+
+Exceptions that do escape — the upsert and the contributor-ledger write — are retried only when
+transient: an `httpx.TransportError`, or a PostgREST 429 / 5xx. A `TypeError` like #628, or a 400
+from a constraint, is a bug and fails on the first attempt rather than being retried into a rate
+limit. New event types are registered in the pinned #117 taxonomy —
 CLAUDE.md is explicit that `log_event` does not enforce membership, so an unregistered type is
 simply invisible, which is how #501's first draft nearly shipped blind.
 
@@ -218,6 +227,16 @@ Prod lands 5 `indexed` / 0 `pending` / 2 `failed`. No embedding spend, no re-cla
 - Turning DBOS on, or changing ADR 0011's streaming-route asymmetry.
 - Seeding the corpus — that is #645, in the same sprint.
 - Re-enabling the relevance gate as a gate; #644 made it observe-only on measured evidence.
+
+**Historical rows index private on a re-drive.** They have no stored confidence, and
+`index_document` passes `None` rather than inventing one — CLAUDE.md's rule for every unknown
+answer. This deliberately differs from `scripts/backfill_document_chunks.py`, which passed
+`confidence=1.0` whenever a shareability was stored, on the premise that a stored decision had
+already been gated. It had not: `_persist_document` stores the classifier's raw label and the 0.6
+floor is applied only at index time, so that script would re-index a low-confidence document
+**shared** that the live path had kept private. Task 8 routes the script through `index_document`,
+which closes that. Derived-`indexed` rows are never re-driven automatically, so this bites only on an
+explicit forced re-index.
 
 ## Risks
 
