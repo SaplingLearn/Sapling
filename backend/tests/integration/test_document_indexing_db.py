@@ -104,8 +104,8 @@ def test_the_own_claim_is_a_compare_and_swap(db_conn):
     _insert(db_conn)
     stale_read = {"id": DOC, "index_attempts": 0}
 
-    assert _claim_one(stale_read, force=False) is True
-    assert _claim_one(stale_read, force=False) is False
+    assert _claim_one(stale_read, force=False) is not None
+    assert _claim_one(stale_read, force=False) is None
     assert _row(db_conn)["index_attempts"] == 1
 
 
@@ -117,7 +117,7 @@ def test_a_live_lease_is_never_forced(db_conn):
 
     _insert(db_conn, status="indexing", attempts=1, leased="now()")
 
-    assert _claim_one({"id": DOC, "index_attempts": 1}, force=True) is False
+    assert _claim_one({"id": DOC, "index_attempts": 1}, force=True) is None
     assert _row(db_conn)["index_status"] == "indexing"
 
 
@@ -127,7 +127,7 @@ def test_an_expired_lease_can_be_forced(db_conn):
     _insert(db_conn, status="indexing", attempts=1,
             leased="now() - interval '1 hour'")
 
-    assert _claim_one({"id": DOC, "index_attempts": 1}, force=True) is True
+    assert _claim_one({"id": DOC, "index_attempts": 1}, force=True) is not None
     row = _row(db_conn)
     assert row["index_attempts"] == 1   # force reset the budget, then spent one
 
@@ -137,7 +137,7 @@ def test_force_takes_an_exhausted_failed_row(db_conn):
 
     _insert(db_conn, status="failed", attempts=3)
 
-    assert _claim_one({"id": DOC, "index_attempts": 3}, force=True) is True
+    assert _claim_one({"id": DOC, "index_attempts": 3}, force=True) is not None
     assert _row(db_conn)["index_status"] == "indexing"
 
 
