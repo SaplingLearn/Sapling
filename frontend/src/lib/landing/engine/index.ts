@@ -17,12 +17,13 @@ import { put } from './dom';
 import { createFlipState, type FlipState } from './flip';
 import { buildGraph, type BuiltGraph } from './graph';
 import {
-  createGraphViewState, drawExplore, drawScroll,
+  EXPLORE_CAM_MS, createGraphViewState, drawExplore, drawScroll,
   type GraphViewState,
 } from './graphView';
 import { createMarquee, type MarqueeController } from './marquee';
 import { fitIngest, measure, type Measured, type ViewportCache } from './measure';
 import { createPlantField, type PlantField } from './plant';
+import { createScrollGovernor, type ScrollGovernor } from './scrollGovernor';
 import { createSim, type SimController } from './sim';
 
 /** How often the layout measure pass may run, in ms. */
@@ -69,6 +70,14 @@ export class LandingEngine {
   readonly flip: FlipState = createFlipState();
   readonly marquee: MarqueeController;
   readonly sim: SimController = createSim();
+  /**
+   * Meters the wheel so a flick cannot cross an act between two frames.
+   *
+   * The acts are scroll-scrubbed and `actPeak` latches whatever progress a
+   * frame reports, so an unmetered momentum gesture doesn't play an act
+   * quickly — it steps over it. See `scrollGovernor.ts`.
+   */
+  private readonly governor: ScrollGovernor = createScrollGovernor();
 
   mouse: Mouse = { x: 0, y: 0 };
   parallaxY = 0;
@@ -129,14 +138,34 @@ export class LandingEngine {
   /** Previous frame's raw scroll position, for direction. -1 until first tick. */
   private lastRawSy = -1;
 
+  /** True while this frame's scroll moved down the page. See `peak`. */
+  private advancing = false;
+
+  // eased scroll correction on the way into explore mode
+  private gliding = false;
+  private glideFrom = 0;
+  private glideTo = 0;
+  private glideT0 = 0;
+
   /**
    * Latch raw scrubbed progress to its high-water mark.
+   *
+   * Only a downward frame may advance it, and that is the whole point. Raw
+   * progress is `(scrollY - top) / runway` clamped to 0..1, so a reader
+   * approaching an act *from below* — coming back up out of the gallery,
+   * say — reports progress already past the end on the first frame the act
+   * is visible. Latching that handed them the finale they never scrolled
+   * through, lit all four stage ticks, and folded the act away for good, so
+   * the stages could never play. Requiring a downward frame costs normal
+   * scrubbing nothing (raw only rises going down, and the high-water mark
+   * holds it going up) and leaves an act approached from below unplayed,
+   * ready to run properly the next time it is scrolled through.
    *
    * @param i   Act index, 0..2.
    * @param raw Progress straight off the scroll position, already clamped.
    */
   private peak(i: number, raw: number): number {
-    if (raw > this.actPeak[i]) this.actPeak[i] = raw;
+    if (this.advancing && raw > this.actPeak[i]) this.actPeak[i] = raw;
     return this.actPeak[i];
   }
 
@@ -161,27 +190,28 @@ export class LandingEngine {
    * otherwise the next frame reads a 360vh delta and either lerps through it
    * or trips the `jumping` bypass.
    *
-   * Two triggers, and between them upward scrolling is never pinned:
+   * One trigger, and only one: the act finished. Its runway is spent and
+   * drives nothing, so cutting it costs the reader nothing they have not
+   * already seen.
    *
-   * 1. The act finished. Its runway is spent and drives nothing.
-   * 2. The reader is scrolling up inside an act they have started. The pin
-   *    would otherwise hold them in place for the whole distance they just
-   *    came down, which reads as the page having stopped responding.
-   *
-   * Trigger 2 strands the act at whatever progress it had reached, because the
-   * runway that would finish it is exactly what gets cut. That is the intended
-   * trade: scrolling up out of a scene is a decision to leave it, and a scene
-   * frozen part-way still reads as a paused scene. Coming back down shows that
-   * state rather than replaying, which matches the `actPeak` rule.
+   * An unfinished act is deliberately *not* folded, not even when the reader
+   * is scrolling back up out of it. Folding there cuts exactly the runway
+   * that would have finished the act, stranding it mid-scene forever —
+   * `actPeak` never resets, so coming back down shows the frozen state rather
+   * than replaying. That turned one upward nudge at stage 1 into a permanent
+   * skip of the other three. The cost of holding the pin is that leaving an
+   * act early means scrolling back up through the runway you came down; the
+   * scroll governor keeps that distance honest by making the trip down cost
+   * the same.
    *
    * Scrolling up into an act from *below* needs no special case. Raw progress
-   * there is already past 1, so `actPeak` latches on the first frame and
-   * trigger 1 folds it — the reader gets the finished scene, then keeps going.
+   * there is already past 1, so `actPeak` latches on the first frame and the
+   * act folds — the reader gets the finished scene, then keeps going.
    *
    * @returns true if a fold happened, in which case the caller must abandon
    *          the frame: every cached offset below that act is now stale.
    */
-  private foldActs(M: Measured, vh: number, rawSy: number, goingUp: boolean): boolean {
+  private foldActs(M: Measured, vh: number, rawSy: number): boolean {
     const acts = [M.act1, M.act2, M.act3];
     for (let i = 0; i < 3; i++) {
       const a = acts[i];
@@ -189,9 +219,7 @@ export class LandingEngine {
       // 0.999, not 1: scrolling out the bottom drives raw progress past 1 and
       // clamp01 pins it, but reversing exactly on the boundary can leave a
       // float a hair short, and the last 0.1% of any act is invisible anyway
-      const done = this.actPeak[i] >= 0.999;
-      const leaving = goingUp && this.actPeak[i] > 0 && rawSy > a.o.top;
-      if (!done && !leaving) continue;
+      if (this.actPeak[i] < 0.999) continue;
       this.actFolded[i] = true;
       const runway = a.o.h - vh;
       if (runway <= 1) continue;
@@ -203,6 +231,11 @@ export class LandingEngine {
         window.scrollTo(0, to);
         if (this.sySmooth !== undefined) this.sySmooth -= shrink;
         this.syMedia -= shrink;
+        // An in-flight wheel gesture is metered against absolute positions,
+        // so rebase it by the same amount. Releasing instead would drop the
+        // rest of the gesture: the fold is invisible, so the visitor would
+        // see their flick simply stop producing movement.
+        this.governor.shift(-shrink);
         // direction is diffed against this; leaving the pre-fold value here
         // would read as one enormous upward scroll on the next frame
         this.lastRawSy = to;
@@ -222,14 +255,70 @@ export class LandingEngine {
     });
   }
 
+  /**
+   * The scroll position where act 1's stage is pinned *and* the page agrees
+   * with what the canvas is drawing.
+   *
+   * Explore mode freezes the page, so it can only be entered from a position
+   * where the sticky stage is flush with the viewport — otherwise the whole
+   * HUD locks against a half-scrolled stage. Every point in the sticky range
+   * satisfies that, but only this one also matches the act's latched
+   * progress: land anywhere else and the next downward frame advances
+   * `actPeak` to wherever the page happens to sit, jumping the scene past
+   * stages the reader never saw.
+   *
+   * Null until the act has been measured.
+   */
+  act1PinnedScroll(): number | null {
+    const a = this.M?.act1;
+    if (!a) return null;
+    // live rect rather than the cached offset: `measure` runs at most ~1.6x
+    // per second, and this is read on a click
+    const top = a.el.getBoundingClientRect().top + window.scrollY;
+    const runway = Math.max(0, a.el.offsetHeight - window.innerHeight);
+    return top + this.actPeak[0] * runway;
+  }
+
+  /**
+   * Ease the page to act 1's pinned position on the way into explore mode.
+   *
+   * Setting the position outright would be a jump cut. The stage can sit the
+   * better part of a viewport off when the click lands, and every piece of
+   * explore mode hangs off that stage, so the whole scene would leap at the
+   * exact moment the camera starts moving — a correction the reader reads as
+   * a glitch rather than as the transition doing its job.
+   *
+   * So ride the camera's own curve: `drawExplore` eases with `smooth()` over
+   * `EXPLORE_CAM_MS` from the same instant, so the stage slides into place
+   * across the same window the graph is already travelling in, and the two
+   * land together.
+   */
+  glideToPinnedAct1(): void {
+    const to = this.act1PinnedScroll();
+    if (to === null) return;
+    const from = window.scrollY;
+    if (Math.abs(to - from) <= 1) return;
+    // The governor meters wheel travel against absolute positions. Let it go
+    // now rather than have it fight the glide for the frame it takes to
+    // notice the page moved without its say-so.
+    this.governor.release();
+    this.glideFrom = from;
+    this.glideTo = to;
+    this.glideT0 = performance.now();
+    this.gliding = true;
+  }
+
   /** Programmatic scrolls call this so smoothing doesn't fight them. */
   markJump(): void {
     this.jumpUntil = Date.now() + JUMP_MS;
+    // A nav jump is meant to land 1:1; metering would fight it the whole way.
+    this.governor.release();
   }
 
   start(): void {
     if (!this.raf) this.raf = requestAnimationFrame(this.tick);
     if (!this.simRaf) this.simRaf = requestAnimationFrame(this.simTick);
+    this.governor.attach();
   }
 
   stop(): void {
@@ -237,6 +326,7 @@ export class LandingEngine {
     if (this.simRaf) cancelAnimationFrame(this.simRaf);
     this.raf = 0;
     this.simRaf = 0;
+    this.governor.detach();
     this.marquee.destroy();
     this.sim.destroy();
   }
@@ -258,6 +348,13 @@ export class LandingEngine {
     this.raf = requestAnimationFrame(this.tick);
     const root = this.refs.root;
     if (!root) return;
+    // Advance the metered scroll first: everything below reads `scrollY`.
+    this.governor.step();
+    if (this.gliding) {
+      const k = clamp01((performance.now() - this.glideT0) / EXPLORE_CAM_MS);
+      window.scrollTo(0, this.glideFrom + (this.glideTo - this.glideFrom) * smooth(k));
+      if (k >= 1) this.gliding = false;
+    }
     const now = Date.now();
 
     if (!this.M || now - this.measuredAt > MEASURE_MS) {
@@ -281,16 +378,17 @@ export class LandingEngine {
     const rawSy = window.scrollY;
     const inten = Number(this.hooks.getParallax() ?? 1);
 
-    // Reclaim the runway of any act that has finished, or that the reader is
-    // scrolling back up out of. Ahead of the smoothing block, which this
-    // shifts in step with the scroll position.
     // 0.5px deadband so sub-pixel jitter never reads as a direction change.
-    const goingUp = this.lastRawSy >= 0 && rawSy < this.lastRawSy - 0.5;
+    this.advancing = this.lastRawSy >= 0 && rawSy > this.lastRawSy + 0.5;
     this.lastRawSy = rawSy;
+
+    // Reclaim the runway of any act that has played all the way through.
+    // Ahead of the smoothing block, which this shifts in step with the
+    // scroll position.
     // Explore mode holds the reader inside act 1 on purpose; resizing the
     // section under them there would move the page out from under the graph.
     if (!this.hooks.getExploring() && !this.hooks.getExpOut()) {
-      if (this.foldActs(M, vh, rawSy, goingUp)) return;
+      if (this.foldActs(M, vh, rawSy)) return;
     }
 
     // ── double-lerp scroll smoothing: raw → scroll pass (0.05) → media pass (0.08)
