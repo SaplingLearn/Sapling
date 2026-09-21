@@ -475,28 +475,38 @@ def _persist_document(
     }
     if request_id:
         row["request_id"] = request_id
-    try:
-        inserted = table("documents").insert(row)
-    except Exception as first:
-        # The schema may not yet have one of these columns; retry without THAT
-        # ONE so a deployment can ship the code before its migration runs.
-        # Losing `shareability` is safe in the direction that matters: an absent
-        # stored value reads as private at index time (#630), never as shareable.
-        #
-        # Gated on the error BODY and narrowed to the column it names — not on
-        # which keys happen to be in the row, and not on `str(exc)`. Keyed on
-        # presence this was a universal retry that stripped `request_id` from
-        # every failure; read off the exception string it never fired at all.
-        column = _missing_column(first)
-        if column is None:
-            raise
-        logger.warning(
-            "documents insert rejected %r as absent — retrying without it. "
-            "The migration that adds it has not run in this environment.",
-            column,
-        )
-        row.pop(column, None)
-        inserted = table("documents").insert(row)
+    # The schema may not yet have some of these columns; retry without each one
+    # PostgREST names, so a deployment can ship the code before its migration
+    # runs. Losing `shareability` is safe in the direction that matters: an
+    # absent stored value reads as private at index time (#630), never as
+    # shareable.
+    #
+    # Gated on the error BODY and narrowed to the column it names — not on
+    # which keys happen to be in the row, and not on `str(exc)`. Keyed on
+    # presence this was a universal retry that stripped `request_id` from
+    # every failure; read off the exception string it never fired at all.
+    #
+    # A LOOP, not one retry (#482): a single migration can add several columns
+    # to this insert, and a hatch that drops one and gives up fails every
+    # upload in exactly the window it exists for. Bounded by the droppable
+    # set, and a column named again after it was dropped is raised — the drop
+    # is then not what is failing.
+    for _ in range(len(_DROPPABLE_COLUMNS) + 1):
+        try:
+            inserted = table("documents").insert(row)
+            break
+        except Exception as exc:
+            column = _missing_column(exc)
+            if column is None or column not in row:
+                raise
+            logger.warning(
+                "documents insert rejected %r as absent — retrying without it. "
+                "The migration that adds it has not run in this environment.",
+                column,
+            )
+            row.pop(column)
+    else:  # pragma: no cover — unreachable: each pass removes a column or raises
+        raise RuntimeError("documents insert kept naming absent columns")
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes

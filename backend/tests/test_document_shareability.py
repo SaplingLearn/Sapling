@@ -352,13 +352,53 @@ class TestPersistRetry:
         with pytest.raises(Exception, match="foreign key"):
             self._persist(lambda n: boom)
 
-    def test_the_retry_happens_at_most_once(self):
-        """A second missing-column failure is a real problem, not another
-        column to drop."""
+    def test_a_missing_column_error_naming_no_droppable_column_is_raised(self):
+        """A PGRST204 that names no column this route may ship ahead of is a
+        real schema problem, and must surface on the first attempt.
+
+        This test was called `test_the_retry_happens_at_most_once`, with the
+        stated policy that "a second missing-column failure is a real problem,
+        not another column to drop". #482 deliberately reversed that policy —
+        see the two tests below — and this assertion only ever held because the
+        error names no droppable column, which is what it now says."""
         missing = Exception("PGRST204 could not find the column")
 
         with pytest.raises(Exception, match="PGRST204"):
             self._persist(lambda n: missing)
+
+    @staticmethod
+    def _names(column):
+        return Exception(
+            "{'code': 'PGRST204', 'message': \"Could not find the "
+            f"'{column}' column of 'documents' in the schema cache\"}}"
+        )
+
+    def test_two_absent_columns_are_each_dropped_in_turn(self):
+        """#482: a single migration can add several columns to this insert. A
+        retry that drops exactly one and gives up would fail every upload in
+        precisely the ship-code-before-migration window the hatch exists for."""
+        errors = {1: self._names("shareability"), 2: self._names("request_id")}
+
+        calls = self._persist(lambda n: errors.get(n))
+
+        assert len(calls) == 3
+        assert "shareability" not in calls[2]
+        assert "request_id" not in calls[2]
+        # Each pass dropped only the column its error named.
+        assert "request_id" in calls[1]
+
+    def test_a_column_named_again_after_being_dropped_is_raised(self):
+        """If PostgREST keeps naming a column that is no longer in the row, the
+        drop is not what is failing. Raise instead of looping on it."""
+        calls_seen = []
+
+        def always_shareability(n):
+            calls_seen.append(n)
+            return self._names("shareability")
+
+        with pytest.raises(Exception, match="shareability"):
+            self._persist(always_shareability)
+        assert len(calls_seen) == 2
 
 
 # ── #484 review: the escape hatch was dead code ─────────────────────────────
@@ -413,8 +453,8 @@ class TestMissingColumnDetection:
         assert _missing_column(exc) is None
 
     def test_a_missing_column_we_do_not_drop_names_nothing(self):
-        """Only the two columns this route is willing to ship ahead of are
-        droppable. Anything else absent is a real schema problem and must
+        """Only the columns this route is willing to ship ahead of
+        (`_DROPPABLE_COLUMNS`) are droppable. Anything else absent is a real schema problem and must
         surface, not be retried away."""
         from routes.documents import _missing_column
 
