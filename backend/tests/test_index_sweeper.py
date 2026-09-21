@@ -22,13 +22,16 @@ def real_mode(monkeypatch):
 
 @pytest.fixture
 def claims(monkeypatch):
-    """Script what the claim RPC returns; record what it was asked."""
+    """A claimable queue: each call to the claim RPC hands out as many rows as
+    it asks for, like the SQL function, and records what it was asked."""
     asked = []
     state = {"rows": []}
 
     def fake_rpc(fn, params):
         asked.append((fn, dict(params)))
-        return state["rows"]
+        n = params["batch_size"]
+        taken, state["rows"] = state["rows"][:n], state["rows"][n:]
+        return taken
 
     monkeypatch.setattr(index_sweeper, "rpc", fake_rpc)
     return state, asked
@@ -59,7 +62,57 @@ def test_the_claim_carries_the_configured_bounds(real_mode, claims, driven):
     index_sweeper.sweep_once()
 
     assert asked == [("claim_documents_for_indexing",
-                      {"max_attempts": 3, "lease_seconds": 600, "batch_size": 10})]
+                      {"max_attempts": 3, "lease_seconds": 600, "batch_size": 1})]
+
+
+def test_each_lease_starts_when_its_own_work_does(real_mode, claims, monkeypatch):
+    """Review round 1: claiming ten at once started ten leases together, then
+    indexed them one by one — so a slow batch could outlive the lease on its
+    last documents, letting another instance or an admin force claim them
+    mid-queue and spend a second attempt on a healthy document. One claim per
+    document means no document ever waits on a running lease."""
+    state, _ = claims
+    state["rows"] = [{"id": "d1"}, {"id": "d2"}, {"id": "d3"}]
+    order = []
+    real_rpc = index_sweeper.rpc
+
+    def tracing_rpc(fn, params):
+        taken = real_rpc(fn, params)
+        order.extend(f"claim:{r['id']}" for r in taken)
+        return taken
+
+    monkeypatch.setattr(index_sweeper, "rpc", tracing_rpc)
+    monkeypatch.setattr(index_sweeper, "index_document",
+                        lambda d, **kw: order.append(f"index:{d}"))
+
+    assert index_sweeper.sweep_once() == 3
+    assert order == ["claim:d1", "index:d1", "claim:d2", "index:d2",
+                     "claim:d3", "index:d3"]
+
+
+def test_a_sweep_stops_at_its_batch_size(real_mode, claims, driven, monkeypatch):
+    state, asked = claims
+    state["rows"] = [{"id": f"d{i}"} for i in range(25)]
+    monkeypatch.setattr(index_sweeper, "BATCH_SIZE", 10)
+
+    assert index_sweeper.sweep_once() == 10
+    assert len(asked) == 10
+    assert len(state["rows"]) == 15   # left for the next sweep
+
+
+def test_a_claim_that_fails_mid_sweep_ends_the_sweep(real_mode, monkeypatch, driven):
+    calls = []
+
+    def flaky(fn, params):
+        calls.append(1)
+        if len(calls) == 1:
+            return [{"id": "d1"}]
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(index_sweeper, "rpc", flaky)
+
+    assert index_sweeper.sweep_once() == 1
+    assert len(calls) == 2
 
 
 def test_one_bad_document_does_not_abort_the_batch(real_mode, claims, monkeypatch):
