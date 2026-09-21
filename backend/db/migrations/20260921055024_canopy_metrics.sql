@@ -9,17 +9,29 @@
 -- and stores every number append-only, first-write-wins. A wrong number is
 -- therefore permanent, which decides everything below.
 --
--- THIS FILE REPLACES 20260921041555_canopy_active_users.sql, which existed only
--- on this unmerged branch. db/migrations/README.md forbids editing a migration
--- "that has been applied anywhere"; that one never was — migrate-staging.yml
--- applies from `main` only, and production only via `make promote`. So rather
--- than ship a create-then-drop pair, the PR carries ONE migration that leaves
--- ONE function. It has a NEW name on purpose: a scratch database that did run
--- the old file sees this one as pending and applies it, instead of silently
--- keeping a stale body under a recorded filename (the trap migrate-staging.yml
--- describes). The DROP below is for exactly that database; everywhere else it
--- is a no-op.
-DROP FUNCTION IF EXISTS canopy_active_users();
+-- THIS FILE BUILDS ON 20260921041555_canopy_active_users.sql AND LEAVES IT — AND
+-- ITS FUNCTION — ALONE. That migration merged with #654 and is applied on
+-- staging, so it is immutable (db/migrations/README.md). This one is a
+-- standalone successor that is correct in both worlds the ledger can be in:
+--   * v1 already applied (staging): the events index below already exists and
+--     IF NOT EXISTS skips it; canopy_active_users() is simply left in place.
+--   * neither applied (production until `make promote`, a fresh local stack):
+--     the runner applies v1 and then this, in filename order, in one go.
+--
+-- canopy_active_users() IS DELIBERATELY NOT DROPPED HERE. `migrate-staging`
+-- runs on merge while Railway deploys the new image at about the same time,
+-- and nothing orders the two. The code from #654 calls canopy_active_users();
+-- the code shipping with this file calls canopy_metrics(). Dropping the old
+-- function here would 503 the still-running old code until the new image is
+-- live, and would break a rollback to the previous image outright. Keeping it
+-- costs nothing: it is already REVOKEd from PUBLIC/anon/authenticated by v1,
+-- it is a read-only three-integer aggregate, and its body is the `active` CTE
+-- below — the two cannot disagree. The reverse window (new code live before
+-- this migration) is a 503 from the route, which Canopy reads as "no reading
+-- this hour", exactly as v1 behaved before ITS migration. A later cleanup
+-- migration can drop canopy_active_users() once no deployed image calls it —
+-- i.e. after this has reached production and a rollback past it is off the
+-- table.
 
 -- WHY ONE FUNCTION. PostgREST has no COUNT(DISTINCT), no SUM, no FILTER; the
 -- existing answer (routes/admin_analytics.py) pages rows into Python and stops
@@ -374,7 +386,10 @@ END $$;
 --   events      0035's three indexes lead with user_id / event_type / category.
 --               The per-type counts ride idx_events_type_created as it is; the
 --               active-user count and the "is anything being recorded" probe
---               need one that LEADS with created_at.
+--               need one that LEADS with created_at. v1 (20260921041555)
+--               already creates exactly this index, so wherever v1 ran this
+--               line is a skip. It is repeated so this file states everything
+--               canopy_metrics() depends on, and stays correct by itself.
 --   llm_usage   0035: (feature, created_at), (user_id, created_at).
 --   xp_events   20260731193214: (user_id, created_at).
 --   room_messages  0001: (room_id, created_at).

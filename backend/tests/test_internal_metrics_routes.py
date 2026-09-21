@@ -7,7 +7,7 @@ about the ways this route must REFUSE to answer: disabled (404), unauthenticated
 a partial body).
 
 The numbers themselves are one Postgres function (`canopy_metrics`, migration
-20260921044914) returning one JSONB document — `active_users`, `counts`,
+20260921055024) returning one JSONB document — `active_users`, `counts`,
 `totals` — reached through `db.connection.rpc`; these hermetic tests stub that
 seam. The SQL is exercised against a real database in
 `tests/integration/test_internal_metrics_db.py`.

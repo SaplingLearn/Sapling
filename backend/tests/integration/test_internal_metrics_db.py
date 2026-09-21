@@ -444,11 +444,29 @@ def test_only_the_backend_role_may_execute_the_function(db_conn):
     assert row == {"service": True, "anon": False, "authed": False}
 
 
-def test_the_function_this_one_replaced_is_gone(db_conn):
+def test_the_v1_function_is_kept_and_still_locked_down(db_conn):
+    """20260921055024 deliberately does NOT drop #654's canopy_active_users():
+    the previous image calls it, and nothing orders Railway's deploy against the
+    migration run. It must stay what v1 left — backend-only — and agree with the
+    document's `active_users`, since both read the same rows the same way."""
     row = db_conn.execute(
-        "SELECT count(*) AS n FROM pg_proc WHERE proname = 'canopy_active_users'"
+        """
+        SELECT has_function_privilege('service_role',  'canopy_active_users()', 'EXECUTE') AS service,
+               has_function_privilege('anon',          'canopy_active_users()', 'EXECUTE') AS anon,
+               has_function_privilege('authenticated', 'canopy_active_users()', 'EXECUTE') AS authed
+        """
     ).fetchone()
-    assert row["n"] == 0
+    assert row == {"service": True, "anon": False, "authed": False}
+
+    _event(db_conn, "it-u-today", "1 hour")
+    _event(db_conn, "it-u-week", "3 days")
+    _event(db_conn, None, "1 hour", "error.4xx", "error")
+    both = db_conn.execute(
+        "SELECT (SELECT to_jsonb(v) FROM canopy_active_users() v) AS v1,"
+        "       canopy_metrics() -> 'active_users' AS v2"
+    ).fetchone()
+    assert both["v1"] == {"d1": 1, "d7": 2, "d30": 2}
+    assert both["v2"] == {"24h": 1, "7d": 2, "30d": 2}
 
 
 def test_wrong_token_is_a_401_with_no_numbers(client, db_conn):

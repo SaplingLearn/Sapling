@@ -38,8 +38,11 @@ logger = logging.getLogger("sapling.internal_metrics")
 router = APIRouter()
 
 # The Postgres function behind the whole body (migration
-# 20260921044914_canopy_metrics.sql). Takes no arguments and returns ONE JSONB
-# document, which PostgREST hands back as a bare JSON object.
+# 20260921055024_canopy_metrics.sql). Takes no arguments and returns ONE JSONB
+# document, which PostgREST hands back as a bare JSON object. It supersedes
+# #654's canopy_active_users() (migration 20260921041555), which this module no
+# longer calls; that function is left in the database on purpose — see the
+# newer migration's header — so the previous image keeps working mid-deploy.
 METRICS_RPC = "canopy_metrics"
 
 # The three sections of contract v2, and the only top-level keys allowed out.
@@ -160,7 +163,7 @@ def internal_metrics(authorization: str | None = Header(default=None)) -> dict:
     now. Every value is a non-negative JSON integer. Which keys exist, their
     exact source column and what a deleted row does to each are documented ONCE,
     next to the SQL that computes them: migration
-    `20260921044914_canopy_metrics.sql`. Three rules from there matter to a
+    `20260921055024_canopy_metrics.sql`. Three rules from there matter to a
     caller:
 
     - **A key is absent rather than approximated.** Absent reads "not reported"
@@ -217,8 +220,10 @@ def internal_metrics(authorization: str | None = Header(default=None)) -> dict:
     Status codes: 404 when `CANOPY_METRICS_TOKEN` is unset or blank (feature
     off); 401, identical for every kind of wrong credential; 503 with a generic
     body when the document cannot be produced or ANY part of it does not
-    validate — including code deployed before the migration is applied
-    (PostgREST 404s the RPC), which was the v1 behaviour too.
+    validate — including this code going live before migration
+    20260921055024 is applied (PostgREST 404s the RPC; nothing orders Railway's
+    deploy against `migrate-staging`, and production migrates only on
+    `make promote`). Canopy reads a 503 as "no reading this hour".
     """
     _authorize(authorization)
     try:
