@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { WIKI_TOC } from '@/lib/landing/companionContent';
-import { MONO } from '@/lib/landing/companionType';
+import { DISPLAY, INK } from '@/lib/landing/companionType';
 
 /**
  * The wiki's contents rail, with a scrollspy.
@@ -29,7 +29,28 @@ import { MONO } from '@/lib/landing/companionType';
  */
 const SPY_LINE = 100;
 
-const LINK: React.CSSProperties = { fontSize: 13.5, padding: '4px 0', transition: 'color 120ms ease' };
+/**
+ * The rail's two tiers, sized so the parent outranks its children.
+ *
+ * The group labels used to be 10px tracked-out mono uppercase in the muted
+ * grey — the masthead's eyebrow treatment, borrowed. An eyebrow is a kicker
+ * above a title, though, and these are titles: "Learn" governs the six links
+ * under it. Set as an eyebrow it came out SMALLER and lighter than the links
+ * it governs, which is the hierarchy upside down, and five of them down a
+ * narrow column read as five captions rather than five groups.
+ *
+ * So the label takes the page's own heading voice — Playfair in ink, at the
+ * size the article column's h2 would be if you shrank it to rail scale — and
+ * the links stay DM Sans in the muted grey. The rail then mirrors the page
+ * beside it: display face for a heading, quieter face for its contents. Size
+ * and colour both run the same direction, so the tier is legible at a glance
+ * without a rule or an indent to prop it up.
+ */
+const GROUP: React.CSSProperties = {
+  fontFamily: DISPLAY, fontWeight: 500, fontSize: 18, lineHeight: 1.25,
+  letterSpacing: '-0.01em', color: INK, marginBottom: 8,
+};
+const LINK: React.CSSProperties = { fontSize: 14, lineHeight: 1.4, padding: '4px 0', transition: 'color 120ms ease' };
 
 export function WikiRail() {
   const [active, setActive] = React.useState('');
@@ -78,10 +99,32 @@ export function WikiRail() {
     /* Eighteen entries plus their group labels outgrow a short viewport, and
        a sticky element taller than the screen puts its last items out of
        reach. Bounded and scrollable so every section stays clickable. */
-    <aside style={{ position: 'sticky', top: 84, maxHeight: 'calc(100vh - 104px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <nav
+      aria-label="Contents"
+      style={{
+        position: 'sticky', top: 84, maxHeight: 'calc(100vh - 104px)', overflowY: 'auto',
+        display: 'flex', flexDirection: 'column', gap: 26,
+        /* Both columns start at the same grid row top, but they set Playfair
+           at different sizes, so their first lines sit at different baselines
+           — the rail's label floated 14px above the section heading beside
+           it. Half the leading difference between 18/1.25 here and the h2's
+           32/1.2, so the page opens on one line across both columns. */
+        paddingTop: 14,
+      }}
+    >
       {WIKI_TOC.map((section) => (
-        <div key={section.group} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', marginBottom: 6 }}>
+        /* `aria-labelledby` rather than a real <h2>: the groups are headings
+           of the rail, but the article column already owns h2 for its
+           eighteen sections, and five more would double every entry in the
+           document outline. This gives a screen reader the same grouping the
+           type now gives the eye, without competing with the page. */
+        <div
+          key={section.group}
+          role="group"
+          aria-labelledby={`rail-${section.group.toLowerCase()}`}
+          style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+        >
+          <span id={`rail-${section.group.toLowerCase()}`} style={GROUP}>
             {section.group}
           </span>
           {section.items.map((t) => {
@@ -103,6 +146,6 @@ export function WikiRail() {
           })}
         </div>
       ))}
-    </aside>
+    </nav>
   );
 }
