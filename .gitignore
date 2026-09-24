@@ -36,6 +36,7 @@ dist/
 
 # ---- RAG data (large files — stored in Supabase Storage) ----
 backend/data/*.json
+backend/data/*.bak
 
 # ---- Env / secrets ----
 .env
