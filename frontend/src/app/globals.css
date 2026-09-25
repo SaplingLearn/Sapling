@@ -508,6 +508,14 @@ body { font-size: 14px; line-height: 1.5; }
   }
 }
 
+/* SideNav's scrolling destinations region hides its scrollbar; Firefox and
+   current Chromium read `scrollbar-width: none` off the inline style, this
+   covers older WebKit/Blink where the global `*::-webkit-scrollbar` would
+   otherwise paint a 10px gutter inside the rail. */
+[data-sidenav-scroll]::-webkit-scrollbar {
+  display: none;
+}
+
 /* Settings' "label on the left, control on the right" profile rows. */
 .settings-field-row {
   display: grid;
@@ -578,6 +586,14 @@ body { font-size: 14px; line-height: 1.5; }
 }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* SideNav rows run edge to edge inside overflow-clipped containers (the
+   scrolling destinations region and the rail itself), so the global 2px
+   outset ring would be sheared off at the sides. Draw it inset instead. */
+[data-app-sidenav] a:focus-visible,
+[data-app-sidenav] button:focus-visible {
+  outline-offset: -2px;
+}
 
 .ph-stripes {
   background-image: repeating-linear-gradient(
