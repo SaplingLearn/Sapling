@@ -140,33 +140,44 @@ describe("SideNav — interactive row height floor", () => {
   });
 });
 
-describe("SideNav — the foot rule", () => {
-  it("puts the rule immediately above Settings, not on the profile block", () => {
+describe("SideNav — the account footer", () => {
+  const footerOf = (rail: HTMLElement) =>
+    rail.querySelector<HTMLElement>("[data-sidenav-footer]")!;
+
+  it("opens the footer with one full-width rule directly above Settings", () => {
     const rail = renderRail();
-    const settings = screen.getByText("Settings").closest("a")!;
-    const rule = settings.previousElementSibling as HTMLElement;
-    expect(rule).toBeTruthy();
-    expect(rule.getAttribute("aria-hidden")).toBe("true");
-    expect(rule.style.height).toBe("1px");
+    const footer = footerOf(rail);
+    expect(footer.style.borderTop).toBe("1px solid var(--border)");
+    // Settings is the footer's first row: nothing sits between it and the rule.
+    expect(footer.firstElementChild).toBe(screen.getByText("Settings").closest("a"));
 
     // The profile block (the one holding the avatar) owns no rule of its own.
-    const profile = screen.getByTestId("avatar").closest("div[style]")!;
-    let node: HTMLElement | null = profile as HTMLElement;
-    while (node && node !== rail) {
+    let node: HTMLElement | null = screen.getByTestId("avatar").closest("div[style]");
+    while (node && node !== footer) {
       expect(node.style.borderTop).toBe("");
       node = node.parentElement;
     }
+    expect(node).toBe(footer);
   });
 
   it("keeps Admin below the same single rule when the user is an admin", () => {
     mockUser.isAdmin = true;
-    renderRail();
+    const rail = renderRail();
     const settings = screen.getByText("Settings").closest("a")!;
     const admin = screen.getByText("Admin").closest("a")!;
     // Admin follows Settings directly — no second rule between them.
     expect(settings.nextElementSibling).toBe(admin);
-    // And the rule is above the pair, not inside it.
-    expect((settings.previousElementSibling as HTMLElement).style.height).toBe("1px");
+    expect(admin.parentElement).toBe(footerOf(rail));
+  });
+
+  it("pins the footer and scrolls only the destinations, scrollbar hidden", () => {
+    const rail = renderRail();
+    expect(rail.style.overflow).toBe("hidden");
+    const scroller = rail.querySelector<HTMLElement>("[data-sidenav-scroll]")!;
+    expect(scroller.style.overflowY).toBe("auto");
+    expect(scroller.getAttribute("style") || "").toMatch(/scrollbar-width:\s*none/);
+    expect(scroller.contains(screen.getByText("Quiz"))).toBe(true);
+    expect(scroller.contains(footerOf(rail))).toBe(false);
   });
 });
 
@@ -177,13 +188,13 @@ describe("SideNav — active vs inactive", () => {
     const quiz = screen.getByText("Quiz").closest("a")!;
     const tree = screen.getByText("Tree").closest("a")!;
 
-    // The selected row is a plain fill in the green scale; an unselected one
+    // The selected row is a plain neutral fill in the ink scale; an unselected one
     // has no background at all. Asserting the TOKEN rather than a computed
     // colour keeps this honest if the scale is retuned.
     expect(quiz.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-    expect(quiz.getAttribute("style") || "").toMatch(/--sap-100/);
+    expect(quiz.getAttribute("style") || "").toMatch(/--ink-200/);
     expect(tree.getAttribute("style") || "").toMatch(/font-weight:\s*400/);
-    expect(tree.getAttribute("style") || "").not.toMatch(/--sap-100/);
+    expect(tree.getAttribute("style") || "").not.toMatch(/--ink-200/);
   });
 
   it("treats / and /dashboard/... as the Dashboard route", () => {
@@ -201,11 +212,15 @@ describe("SideNav — collapsed state", () => {
     // Labels are gone in the narrow rail...
     expect(screen.queryByText("Learn")).toBeNull();
     expect(screen.queryByText("Tools")).toBeNull();
-    // ...replaced by hairlines: 3 group boundaries + the foot rule.
+    // ...replaced by hairlines at the 3 group boundaries; the footer keeps
+    // its own border-top rule in the narrow state too.
     const rules = Array.from(rail.querySelectorAll<HTMLElement>("[aria-hidden]")).filter(
       (el) => el.style.height === "1px",
     );
-    expect(rules).toHaveLength(4);
+    expect(rules).toHaveLength(3);
+    expect(rail.querySelector<HTMLElement>("[data-sidenav-footer]")!.style.borderTop).toBe(
+      "1px solid var(--border)",
+    );
 
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();

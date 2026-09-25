@@ -63,19 +63,18 @@ const RULE_INSET = 8;
 
 /* Active/hover surfaces.
  *
- * A plain highlight, the way it always was — just not in the old colour. The
- * selected row is a flat `--sap-100` fill (the soft end of the green scale)
- * where it used to be `--bg-soft`, so the marker reads as green against the
- * rail's warm `--bg-subtle` ground instead of as another shade of cream. No
- * rail, no hue on the label, nothing else: the fill IS the treatment, and at
- * 38px on a 4px radius it is a smaller one than the 44px slab it replaces.
+ * A plain neutral highlight. The selected row is a flat `--ink-200` fill — two
+ * steps off the rail's warm `--bg-subtle` ground — with the label in bold ink.
+ * The earlier `--sap-100` green read as a washed-out tint against the cream
+ * rail; keeping selection in the same warm-grey family as the shell lets green
+ * stay reserved for actions and brand moments. No rail, no hue on the label:
+ * the fill IS the treatment.
  *
- * Hover inherits the fill that active gave up. `--bg-soft` is one step off the
- * ground and neutral, so it is unmistakably the weaker, transient state and
- * cannot be confused with the green of a selection.
+ * Hover is `--bg-soft` (`--ink-100`), one step off the ground, so it is
+ * unmistakably the weaker, transient state and a step lighter than selection.
  *
  * Both are palette tokens rather than mixes, so they move with the scale. */
-const NAV_ACTIVE_BG = "var(--sap-100)";
+const NAV_ACTIVE_BG = "var(--ink-200)";
 const NAV_HOVER_BG = "var(--bg-soft)";
 
 function isActive(pathname: string, href: string): boolean {
@@ -118,8 +117,9 @@ export function SideNav() {
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
-        overflowY: "auto",
-        overflowX: "hidden",
+        // The rail itself never scrolls: only the destinations region below
+        // does, so the account footer stays pinned at the bottom.
+        overflow: "hidden",
         transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
       }}
     >
@@ -173,6 +173,25 @@ export function SideNav() {
         )}
       </Link>
 
+      {/* The destinations scroll on their own when the viewport is too short
+          for them, with the scrollbar hidden (`scrollbarWidth` here, the
+          WebKit pseudo-element in globals.css) — a 10px gutter in a 232px
+          rail read as clutter, and wheel/trackpad/keyboard scrolling all
+          still work. `minHeight: 0` is what lets a flex child shrink below
+          its content and scroll at all. */}
+      <div
+        data-sidenav-scroll=""
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          scrollbarWidth: "none",
+          display: "flex",
+          flexDirection: "column",
+          gap: NAV_GAP,
+        }}
+      >
       {SECTIONS.map((section, i) => (
         <React.Fragment key={section.label}>
           {!collapsed && (
@@ -205,18 +224,24 @@ export function SideNav() {
         </React.Fragment>
       ))}
 
-      <div style={{ flex: 1 }} />
+      </div>
 
-      {/* The one rule at the foot of the rail. It sits ABOVE the Settings +
-          Admin pair (not between them, and not on the profile block), so the
-          account-level items and the avatar below them read as a single
-          cluster split off from the main nav. Same inset as the collapsed
-          group rules above, so the two line up in the narrow state. */}
+      {/* The account footer — Settings, Admin and the profile block — sits
+          under one full-width rule, the same line as the logo's, so the pair
+          frames the rail top and bottom and the account cluster reads as split
+          off from the main nav. Pinned: it never scrolls with the list above. */}
       <div
-        style={{ height: 1, background: "var(--border)", margin: `10px ${RULE_INSET}px` }}
-        aria-hidden
-      />
-
+        data-sidenav-footer=""
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: NAV_GAP,
+          flexShrink: 0,
+          marginTop: 10,
+          paddingTop: 10,
+          borderTop: "1px solid var(--border)",
+        }}
+      >
       <NavLink
         entry={{ href: "/settings", label: "Settings", icon: "cog" }}
         active={isActive(pathname, "/settings")}
@@ -230,7 +255,7 @@ export function SideNav() {
         />
       )}
 
-      {/* The profile block carries no rule of its own — the one above Settings
+      {/* The profile block carries no rule of its own — the footer's rule
           already opened this cluster, and a second hairline here would box the
           avatar in. */}
       {isAuthenticated && (
@@ -339,6 +364,7 @@ export function SideNav() {
           )}
         </div>
       )}
+      </div>
     </aside>
   );
 }

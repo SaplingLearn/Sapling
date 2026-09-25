@@ -508,6 +508,14 @@ body { font-size: 14px; line-height: 1.5; }
   }
 }
 
+/* SideNav's scrolling destinations region hides its scrollbar; Firefox and
+   current Chromium read `scrollbar-width: none` off the inline style, this
+   covers older WebKit/Blink where the global `*::-webkit-scrollbar` would
+   otherwise paint a 10px gutter inside the rail. */
+[data-sidenav-scroll]::-webkit-scrollbar {
+  display: none;
+}
+
 /* Settings' "label on the left, control on the right" profile rows. */
 .settings-field-row {
   display: grid;
