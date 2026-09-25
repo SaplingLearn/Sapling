@@ -160,7 +160,8 @@ def _write(batch: list[dict]) -> None:
             f"update failed ({exc.response.status_code}) in a batch of "
             f"{len(batch)} starting at id={batch[0]['id']!r}: "
             f"{exc.response.text[:500]}\n"
-            "Rows before it are committed; re-run to resume."
+            "Earlier batches, and possibly some rows of this one (writes run "
+            "concurrently), are committed; re-run to resume."
         )
 
 
