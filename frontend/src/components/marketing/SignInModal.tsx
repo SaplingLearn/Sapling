@@ -293,7 +293,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
             cursor: waiting ? "wait" : "pointer",
             opacity: waiting ? 0.7 : 1,
             display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            fontFamily: "var(--font-dm-sans), var(--font-dm-sans), 'DM Sans', system-ui, sans-serif",
             transition: "all 0.18s",
             boxShadow: "0 4px 14px rgba(15,23,42,0.06)",
           }}
@@ -330,7 +330,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
               color: "#6b7280",
               fontSize: 12.5,
               cursor: "pointer",
-              fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+              fontFamily: "var(--font-dm-sans), var(--font-dm-sans), 'DM Sans', system-ui, sans-serif",
             }}
           >
             Cancel

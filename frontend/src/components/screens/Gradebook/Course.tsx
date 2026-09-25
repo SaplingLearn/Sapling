@@ -919,7 +919,7 @@ function GradeCompositionBar({
         <SectionHead label="Composition" onEdit={onEditWeights} />
         <div
           style={{
-            fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+            fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
             color: "var(--text-dim)",
             fontSize: 15,
             lineHeight: 1.55,
@@ -1185,7 +1185,7 @@ function GradeCompositionBar({
             >
               <div
                 style={{
-                  fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
                   fontSize: 12,
                   color: "var(--text)",
                   overflow: "hidden",

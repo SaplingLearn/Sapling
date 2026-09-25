@@ -22,6 +22,7 @@ import { clamp01, lerpColor, smooth } from '../color';
 import { XTIER_LABEL } from '../course';
 import { cv } from './dom';
 import type { BuiltGraph, GraphNode } from './graph';
+import { canvasFont } from '../fonts';
 
 /** Focal length for the perspective divide. */
 const FL = 1050;
@@ -246,7 +247,7 @@ export function drawScroll(
 
   if (p > 0.76) {
     const la = smooth((p - 0.76) / 0.1);
-    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.font = '11px ' + canvasFont('mono');
     proj.forEach((pr) => {
       if (!pr.n.hub) return;
       ctx.globalAlpha = la * 0.85;
@@ -265,9 +266,9 @@ export function drawScroll(
     const cp = smooth((p - hv.n.colorAt) / 0.09);
     const status = cp < 0.05 ? 'UNEXPLORED' : XTIER_LABEL[hv.n.tier].toUpperCase();
     const label = hv.n.label;
-    ctx.font = '600 12px "DM Sans", sans-serif';
+    ctx.font = '600 12px ' + canvasFont('sans');
     const tw = ctx.measureText(label).width;
-    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.font = '9px ' + canvasFont('mono');
     const sw = ctx.measureText(status).width;
     const bw = Math.max(tw, sw) + 24;
     const bh = 40;
@@ -283,10 +284,10 @@ export function drawScroll(
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = '#12201A';
-    ctx.font = '600 12px "DM Sans", sans-serif';
+    ctx.font = '600 12px ' + canvasFont('sans');
     ctx.fillText(label, bx + 12, by + 17);
     ctx.fillStyle = cp < 0.05 ? '#9a9a9a' : hv.n.final;
-    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.font = '9px ' + canvasFont('mono');
     ctx.fillText(status, bx + 12, by + 31);
   }
 }
@@ -432,10 +433,10 @@ export function drawExplore(
       if (show) {
         ctx.globalAlpha = dim * la * (n.hub ? 0.95 : 0.72);
         ctx.font = n.root
-          ? '600 14px "JetBrains Mono", monospace'
+          ? '600 14px ' + canvasFont('mono')
           : n.hub
-            ? '11px "JetBrains Mono", monospace'
-            : '11px "DM Sans", sans-serif';
+            ? '11px ' + canvasFont('mono')
+            : '11px ' + canvasFont('sans');
         ctx.fillStyle = n.root ? '#12201A' : n.hub ? '#33443B' : '#61726A';
         ctx.textAlign = 'center';
         ctx.fillText(n.hub ? n.label.toUpperCase() : n.label, pr.x, pr.y + ar + 15 * pr.sc + 4);

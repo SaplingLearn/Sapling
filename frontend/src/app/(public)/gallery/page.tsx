@@ -52,7 +52,7 @@ export default function GalleryPage() {
                 aria-pressed={on}
                 style={{
                   padding: '8px 15px', borderRadius: 99, cursor: 'pointer',
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 500,
+                  fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13, fontWeight: 500,
                   transition: 'all 200ms',
                   border: `1px solid ${on ? '#1B6C42' : 'rgba(42,39,31,0.16)'}`,
                   background: on ? '#1B6C42' : 'transparent',

@@ -186,7 +186,7 @@ export function TopNav() {
         <div style={{ display: "flex", flexDirection: "column", gap: "1px", alignItems: "center", textAlign: "center" }}>
           <span
             style={{
-              fontFamily: "'Spectral', Georgia, serif",
+              fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
               fontWeight: 700,
               fontSize: isMobile ? "17px" : "20px",
               color: "var(--brand-forest)",

@@ -8,6 +8,7 @@
  */
 
 import { cv } from './dom';
+import { canvasFont } from '../fonts';
 
 const STORAGE_KEY = 'sapling-planted-v3';
 /** Only the most recent 30 survive a reload. */
@@ -134,7 +135,7 @@ export function createPlantField(): PlantField {
         ctx.globalAlpha = 1;
       }
       if (n.label) {
-        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.font = '10px ' + canvasFont('mono');
         ctx.fillStyle = 'rgba(230,242,232,0.85)';
         ctx.fillText(n.label, n.x + 9, n.y + wob + 3);
       }

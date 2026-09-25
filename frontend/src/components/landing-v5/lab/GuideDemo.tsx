@@ -25,7 +25,7 @@ const RECENT = [
 
 const SELECT: React.CSSProperties = {
   padding: '9px 12px', borderRadius: 9, border: '1px solid #DCE7DE', background: '#FDFCF9',
-  fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: '#33443B', cursor: 'pointer',
+  fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13, color: '#33443B', cursor: 'pointer',
 };
 
 export function GuideDemo() {
@@ -85,7 +85,7 @@ export function GuideDemo() {
             onClick={generate}
             type="button"
             className="ld-labprimary"
-            style={{ marginLeft: 'auto', padding: '10px 18px', borderRadius: 9, border: 'none', background: '#12201A', color: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            style={{ marginLeft: 'auto', padding: '10px 18px', borderRadius: 9, border: 'none', background: '#12201A', color: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
           >
             {phase === 'guide' ? 'Regenerate' : 'Generate guide'}
           </button>
@@ -101,7 +101,7 @@ export function GuideDemo() {
         {phase === 'guide' && (
           <div style={{ flex: 1, overflow: 'auto', borderRadius: 12, border: '1px solid #E8E5DA', background: '#FDFCF9', padding: '18px 20px', animation: 'labIn 320ms ease both' }}>
             <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#8B9891' }}>{course.toUpperCase()} · STUDY GUIDE</span>
-            <h4 style={{ margin: '8px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
+            <h4 style={{ margin: '8px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
             <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.7, color: '#61726A' }}>{set.overview}</p>
             <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {set.topics.map((t) => (
