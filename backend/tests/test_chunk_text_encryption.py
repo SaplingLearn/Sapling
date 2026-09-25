@@ -257,6 +257,68 @@ if __name__ == "__main__":
     pytest.main([__file__])
 
 
+# ── the backfill writes UPDATE-ONLY: it can never re-create a deleted chunk ──
+
+
+def _run_backfill(bf, rows, *argv):
+    chunks = MagicMock()
+    with patch.object(bf, "_assert_key_matches_database"), \
+         patch.object(bf, "page_all", return_value=iter(rows)) as paged, \
+         patch.object(bf, "table", return_value=chunks), \
+         patch("sys.argv", ["backfill", "--apply", *argv]):
+        bf.main()
+    return chunks, paged
+
+
+def test_backfill_patches_each_row_by_id_and_never_upserts():
+    """An upsert whose payload satisfies NOT NULL would INSERT a row deleted
+    between read and write (a shareability withdrawal, a re-index) back into
+    the class pool as visibility='shared' with no contributors (#630). A PATCH
+    filtered on the id matches nothing for a deleted row."""
+    import scripts.backfill_encrypt_chunk_text as bf
+
+    rows = [{"id": "c1", "chunk_text": "plain passage"}]
+    chunks, paged = _run_backfill(bf, rows)
+
+    chunks.upsert.assert_not_called()
+    (data, filters), kwargs = chunks.update.call_args
+    assert filters == {"id": "eq.c1"}
+    assert set(data) == {"chunk_text"}          # nothing else is (re)written
+    assert decrypt(data["chunk_text"]) == "plain passage"
+    assert kwargs == {"prefer_return_minimal": True}
+    assert paged.call_args[0][1] == "id,chunk_text"
+
+
+def test_backfill_writes_every_row_and_skips_ciphertext():
+    import scripts.backfill_encrypt_chunk_text as bf
+
+    rows = [{"id": f"c{i}", "chunk_text": f"t{i}"} for i in range(7)]
+    rows.append({"id": "done", "chunk_text": encrypt("already")})
+    chunks, _ = _run_backfill(bf, rows, "--batch-size", "3")
+    patched = sorted(c[0][1]["id"] for c in chunks.update.call_args_list)
+    assert patched == sorted(f"eq.c{i}" for i in range(7))
+
+
+def test_backfill_failure_surfaces_postgrest_error_body():
+    """A bare `raise_for_status` reported only "500 Internal Server Error" on
+    prod; the Postgres code/message lives in the response body."""
+    import httpx
+    import scripts.backfill_encrypt_chunk_text as bf
+
+    req = httpx.Request("PATCH", "https://x.supabase.co/rest/v1/course_chunks")
+    resp = httpx.Response(
+        500, request=req,
+        text='{"code":"57014","message":"canceling statement due to statement timeout"}',
+    )
+    chunks = MagicMock()
+    chunks.update.side_effect = httpx.HTTPStatusError("500", request=req, response=resp)
+    with patch.object(bf, "table", return_value=chunks):
+        with pytest.raises(SystemExit) as exc:
+            bf._write([{"id": "c1", "chunk_text": "x"}])
+    msg = str(exc.value)
+    assert "57014" in msg and "statement timeout" in msg and "'c1'" in msg
+
+
 # ── #484 review: the backfill's idempotence rests on the key matching ────────
 
 
