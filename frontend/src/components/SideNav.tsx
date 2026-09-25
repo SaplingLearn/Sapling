@@ -78,6 +78,11 @@ const ROW = {
   wide: { inset: 0, padX: 12 },
   narrow: { inset: 0, padX: (RAIL_INNER_NARROW - ICON_SIZE) / 2 },
 };
+/* Wide-rail group header slot: space above the label, the label's line, and
+   space below it before the first row. Kept tight so the groups read as one
+   list with light dividers, not as separate blocks. */
+const HEADER = { above: 12, line: 14, below: 6 };
+
 const GEOMETRY_TRANSITION =
   "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";
 
@@ -239,22 +244,20 @@ export function SideNav() {
               above the first group — the logo rule already does that job).
               The slot's height tweens between the two so the rows below
               slide rather than jump, and label/hairline cross-fade.
-              Above: the first group needs its own value — it is the only one
-              introduced by the logo rule rather than by the group before it.
-              Below: every header stands clear of the items it labels. */}
+              Spacing lives in HEADER. */}
           <div
             aria-hidden={collapsed || undefined}
             style={{
               position: "relative",
               flexShrink: 0,
               overflow: "hidden",
-              height: collapsed ? (i === 0 ? 0 : 29) : (i === 0 ? 20 : 22) + 14 + 10,
+              height: collapsed ? (i === 0 ? 0 : 29) : HEADER.above + HEADER.line + HEADER.below,
               transition: GEOMETRY_TRANSITION,
             }}
           >
             <div
               className="label-micro"
-              style={{ position: "absolute", left: 10, bottom: 10, lineHeight: "14px", ...fade(collapsed) }}
+              style={{ position: "absolute", left: 10, bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
             >
               {section.label}
             </div>
