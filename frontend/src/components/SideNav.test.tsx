@@ -221,16 +221,24 @@ describe("SideNav — active vs inactive", () => {
 });
 
 describe("SideNav — collapsed state", () => {
-  it("keeps every row's inset and padding identical in both widths (no icon jump)", () => {
-    const geometry = () =>
+  it("centres rows by padding, never justify-content, so the move can tween", () => {
+    const rows = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-app-sidenav] a[href^='/']"))
-        .filter((a) => a.getAttribute("aria-label") !== "Sapling — home")
-        .map((a) => [a.style.marginLeft, a.style.paddingLeft, a.style.justifyContent].join("|"));
+        .filter((a) => a.getAttribute("aria-label") !== "Sapling — home");
     renderRail(false);
-    const wide = geometry();
+    for (const r of rows()) {
+      expect(r.style.justifyContent).toBe("");
+      expect(r.style.marginLeft).toBe("10px");
+      expect(r.style.transition).toMatch(/padding/);
+    }
     cleanup();
     renderRail(true);
-    expect(geometry()).toEqual(wide);
+    // 64px rail − 2×6px padding = 52px; a 15px icon centred → 18.5px.
+    for (const r of rows()) {
+      expect(r.style.justifyContent).toBe("");
+      expect(r.style.marginLeft).toBe("0px");
+      expect(r.style.paddingLeft).toBe("18.5px");
+    }
   });
 
   it("drops the section labels for separator rules and keeps the expand affordance", () => {

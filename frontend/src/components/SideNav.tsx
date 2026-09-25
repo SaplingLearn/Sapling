@@ -61,23 +61,34 @@ const NAV_GAP = 1;
    family instead of three different indents. */
 const RULE_INSET = 8;
 
-/* One geometry for both widths — the key to a clean collapse animation.
+/* Collapse/expand geometry.
  *
- * Nothing inside the rail changes position or size between the two states:
- * the rail animates its width and nothing else, `overflow: hidden` clips
- * whatever no longer fits, and text fades. Every icon therefore sits at the
- * same x in both widths (the centre of the 64px narrow rail), so opening and
- * closing reads as a panel sliding over fixed icons instead of every row
- * re-centring, re-padding and popping its label in mid-flight.
- *
- * The numbers fall out of that constraint: 8px rail padding + 4px row inset
- * leaves a 40px pill in the narrow rail, and the icon column is centred in
- * it. */
-const RAIL_PAD_X = 8;
-const ROW_INSET = 4;
+ * Each width keeps its own layout — wide rows inset 10px with the icon 12px
+ * inside the pill; narrow rows full-width with the icon centred — and the
+ * rail animates BETWEEN them rather than snapping. The trick is that nothing
+ * uses `justify-content: center` any more (it cannot be interpolated):
+ * centring in the narrow rail is expressed as a computed left padding, so
+ * margin and padding tween on the same curve and duration as the rail's
+ * width and every icon glides from its wide position to the centre. */
+const RAIL_PAD_X = { wide: 10, narrow: 6 };
+const RAIL_INNER_NARROW = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X.narrow;
 const ICON_SIZE = 15;
-const ROW_PAD_X = (SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X - 2 * ROW_INSET - ICON_SIZE) / 2;
-const RAIL_INNER = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X;
+const ROW = {
+  wide: { inset: 10, padX: 12 },
+  narrow: { inset: 0, padX: (RAIL_INNER_NARROW - ICON_SIZE) / 2 },
+};
+const GEOMETRY_TRANSITION =
+  "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";
+
+function rowGeometry(collapsed: boolean): React.CSSProperties {
+  const r = collapsed ? ROW.narrow : ROW.wide;
+  return {
+    marginLeft: r.inset,
+    marginRight: r.inset,
+    padding: `6px ${r.padX}px`,
+    overflow: "hidden",
+  };
+}
 
 /* Text fades rather than mounting/unmounting. Out: immediately and quickly,
    so nothing is visibly squeezed as the rail narrows. In: a beat late, so the
@@ -140,14 +151,14 @@ export function SideNav() {
         height: "100vh",
         borderRight: "1px solid var(--border)",
         background: "var(--bg-subtle)",
-        padding: `16px ${RAIL_PAD_X}px`,
+        padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
         // The rail itself never scrolls: only the destinations region below
         // does, so the account footer stays pinned at the bottom.
         overflow: "hidden",
-        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease)",
+        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
       }}
     >
       {/* Logo */}
@@ -158,9 +169,10 @@ export function SideNav() {
           display: "flex",
           alignItems: "center",
           gap: 2,
-          // Centres the 32px mark in the narrow rail; same offset when wide.
-          padding: `2px 0 14px ${(RAIL_INNER - 32) / 2}px`,
+          // Wide: the mark sits 6px in. Narrow: centred (computed, so it tweens).
+          padding: `2px 0 14px ${collapsed ? (RAIL_INNER_NARROW - 32) / 2 : 6}px`,
           overflow: "hidden",
+          transition: GEOMETRY_TRANSITION,
           borderBottom: "1px solid var(--border)",
           marginBottom: 8,
           textDecoration: "none",
@@ -222,20 +234,26 @@ export function SideNav() {
       >
       {SECTIONS.map((section, i) => (
         <React.Fragment key={section.label}>
-          {/* The header slot keeps one height in both widths so the rows
-              below never jump vertically. Wide: the group label. Narrow: a
-              hairline in the same slot (none above the first group — the
-              logo rule already does that job). The two cross-fade.
+          {/* Header slot. Wide: the group label. Narrow: a hairline (none
+              above the first group — the logo rule already does that job).
+              The slot's height tweens between the two so the rows below
+              slide rather than jump, and label/hairline cross-fade.
               Above: the first group needs its own value — it is the only one
               introduced by the logo rule rather than by the group before it.
               Below: every header stands clear of the items it labels. */}
           <div
             aria-hidden={collapsed || undefined}
-            style={{ position: "relative", flexShrink: 0, height: (i === 0 ? 20 : 22) + 14 + 10 }}
+            style={{
+              position: "relative",
+              flexShrink: 0,
+              overflow: "hidden",
+              height: collapsed ? (i === 0 ? 0 : 29) : (i === 0 ? 20 : 22) + 14 + 10,
+              transition: GEOMETRY_TRANSITION,
+            }}
           >
             <div
               className="label-micro"
-              style={{ position: "absolute", left: ROW_INSET, bottom: 10, lineHeight: "14px", ...fade(collapsed) }}
+              style={{ position: "absolute", left: 10, bottom: 10, lineHeight: "14px", ...fade(collapsed) }}
             >
               {section.label}
             </div>
@@ -247,7 +265,7 @@ export function SideNav() {
                   position: "absolute",
                   left: RULE_INSET,
                   right: RULE_INSET,
-                  top: "50%",
+                  top: 18,
                   height: 1,
                   background: "var(--border)",
                   opacity: collapsed ? 1 : 0,
@@ -286,15 +304,12 @@ export function SideNav() {
           flexShrink: 0,
           minHeight: NAV_ITEM_MIN_HEIGHT,
           marginTop: 6,
-          marginLeft: ROW_INSET,
-          marginRight: ROW_INSET,
-          padding: `6px ${ROW_PAD_X}px`,
-          overflow: "hidden",
+          ...rowGeometry(collapsed),
           borderRadius: "var(--r-xs)",
           color: "var(--text-dim)",
           fontSize: 13,
           textAlign: "left",
-          transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+          transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = NAV_HOVER_BG;
@@ -369,11 +384,12 @@ export function SideNav() {
                 gap: 10,
                 flex: 1,
                 minWidth: 0,
-                // Centres the 30px avatar in the narrow rail; same offset wide.
-                padding: `6px ${(RAIL_INNER - 30) / 2}px`,
+                // Wide: 12px in. Narrow: centred (computed, so it tweens).
+                padding: `6px ${collapsed ? (RAIL_INNER_NARROW - 30) / 2 : 12}px`,
                 borderRadius: "var(--r-sm)",
                 textAlign: "left",
                 overflow: "hidden",
+                transition: GEOMETRY_TRANSITION,
               }}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
@@ -415,19 +431,16 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         // the content box on its own and the margins below actually inset it.
         // `width: 100%` would have added to them and overflowed instead.
         minHeight: NAV_ITEM_MIN_HEIGHT,
-        // Same inset and padding in both widths (see RAIL_PAD_X): the pill's
-        // leading edge lines up with the group label, and the icon sits in
-        // the column centred on the narrow rail, so it never moves.
-        marginLeft: ROW_INSET,
-        marginRight: ROW_INSET,
-        padding: `6px ${ROW_PAD_X}px`,
-        overflow: "hidden",
+        // Wide: the pill is inset to the group header's own 10px, so its
+        // leading edge lines up with "LEARN", and the icon sits 12px inside
+        // it. Narrow: full width with the icon centred. See ROW.
+        ...rowGeometry(collapsed),
         borderRadius: "var(--r-xs)",
         background: active ? NAV_ACTIVE_BG : "transparent",
         color: active ? "var(--text)" : "var(--text-dim)",
         fontWeight: active ? 600 : 400,
         fontSize: 13,
-        transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+        transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
         textDecoration: "none",
       }}
       onMouseEnter={(e) => {
