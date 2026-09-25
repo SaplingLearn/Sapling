@@ -295,9 +295,14 @@ def test_env_module_registers_upload_pipeline_handlers_on_dispatch(monkeypatch):
     with classifier_agent.override(model=model_for("classifier")):
         result = classifier_agent.run_sync("week 3 lecture notes", deps=_deps())
 
-    from agents.function_handlers_e2e import E2E_DOC_CATEGORY
+    from agents.function_handlers_e2e import E2E_DOC_CATEGORY, E2E_DOC_SHAREABILITY
 
     assert result.output.category == E2E_DOC_CATEGORY
+    # #630: the handler has to answer the shareability field too. An omission
+    # would arrive as None and index every lane upload private — which no
+    # function-mode assertion could notice, because embedding is disabled below
+    # the seam (#439) and nothing is indexed at all.
+    assert result.output.shareability == E2E_DOC_SHAREABILITY
     assert result.output.is_syllabus is False
     for task in ("classifier", "summary", "concepts", "course_summary"):
         assert task in providers._FUNCTION_HANDLERS

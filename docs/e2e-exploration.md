@@ -154,13 +154,17 @@ cd backend && venv/bin/python -m e2e_oracles [--json] [--check ciphertext|counts
   results as untrustworthy when this happens, not just the failing check).
 - Needs the stack up (`make e2e-up` or `scripts/explore.sh up`) — it hits the
   local Postgres directly and the backend's `/api/health`-adjacent surface.
-- The `logscan` check allowlists known #439 RAG-indexing log noise. #439
-  itself is fixed (embeddings are now mode-gated), but the allowlist entry
-  stays as defense in depth — the mode-gate abort deliberately routes through
-  the same log line, so a real regression would still need to be
-  distinguishable from the expected abort path. An allowlisted hit still
-  counts toward "N suppressed" in the summary line, but doesn't produce a
-  `Finding`.
+- The `logscan` allowlist is **empty on purpose** (#628). It used to suppress
+  `[RAG] _index_document_chunks failed` as "#439 by-design noise", because
+  function mode raised inside the indexer deliberately — and the same entry
+  hid a real `TypeError` that kept every catalog-course upload out of
+  retrieval for months. Function mode is now a quiet designed skip — the
+  document ends `index_status='skipped'`, with an INFO line and no traceback —
+  so any `[RAG] indexing doc … failed` traceback (from
+  `services/document_indexing.py`, #482) is a genuine finding. The suppression mechanism remains ("N suppressed" in the summary
+  line), but before adding an entry, make the by-design case stop logging a
+  traceback instead — an allowlist can't tell the failure you expected from
+  the one you didn't.
 
 ## 7. Triage protocol
 

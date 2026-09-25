@@ -102,7 +102,26 @@ def test_repeated_identical_tracebacks_aggregate():
     assert findings[0].evidence["count"] == 2
 
 
-def test_rag_index_traceback_is_suppressed_not_reported():
+def test_rag_index_traceback_is_a_finding():
+    """#628: this line used to be allowlisted as "#439 by-design noise",
+    because function mode raised inside the indexer on purpose. The same
+    entry then hid a real TypeError that kept every catalog-course upload out
+    of retrieval. Function mode is now a quiet designed skip, so ANY
+    `_index_document_chunks failed` traceback is a real failure."""
+    findings, suppressed = _scan(RAG_TRACEBACK)
+    assert suppressed == 0
+    assert len(findings) == 1
+    assert "RuntimeError: embed failed" in findings[0].summary
+
+
+def test_allowlisted_traceback_is_suppressed_not_reported(monkeypatch):
+    """The suppression mechanism itself still works (block text or the
+    preceding context lines) — it just ships with no entries."""
+    import re
+
+    from e2e_oracles import logscan
+
+    monkeypatch.setattr(logscan, "ALLOWLIST", (re.compile(r"\[RAG\] _index_document_chunks failed"),))
     findings, suppressed = _scan(RAG_TRACEBACK)
     assert findings == []
     assert suppressed == 1

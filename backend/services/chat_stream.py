@@ -164,6 +164,7 @@ async def stream_agent_turn(
     nonstream_fallback: Callable[[], Awaitable[dict]] | None = None,
     on_usage: Callable[[Any], None] | None = None,
     request_id: str = "",
+    continuation: Callable[[Any], Awaitable[str | None]] | None = None,
 ) -> AsyncIterator[SaplingEvent]:
     """Stream one agent turn as SaplingEvents.
 
@@ -196,6 +197,23 @@ async def stream_agent_turn(
     in a terminal `error` carrying `retryable: False`, telling the client
     to skip its own JSON-fallback rung too. Every `error` event carries
     `retryable` (additive, #151a): True unless writes landed.
+
+    continuation(run_result) -> awaitable returning the text of a SECOND
+    model call seeded with this run's own messages, or None/"" if it
+    produced none (#646). Tried only on the textless-WITH-writes rung, and
+    it is what makes that rung survivable: ~25-40% of gemini-2.5-flash-lite
+    turns end with no text part after the tools have already run, and
+    Flash-Lite is the UI default. Failing them outright shows an
+    "interrupted" error for work the tutor already did, and the only
+    recovery on offer — a manual retry — re-runs the turn and can apply the
+    same mastery event twice. A continuation is NOT a re-run: the tool
+    results are already in the messages handed back, so the model writes its
+    reply from them. The caller owns the model call and MUST narrow the
+    result to text that run produced (the `message_history` stale-read of
+    #562 applies to the continuation too) and MUST run it without tools, so
+    it cannot write. It is an escape hatch for the writes-guard only — the
+    no-writes twin still takes Rung 1, where re-running is safe and yields a
+    better answer than nudging a model that just declined to speak.
 
     Invariant: AT MOST one of on_complete / nonstream_fallback runs per
     turn — never both. The error rungs run NEITHER: Rung 2 (failure after
@@ -309,7 +327,17 @@ async def stream_agent_turn(
         return
 
     joined = "".join(chunks)
-    reply = final_output if final_output is not None else joined
+    # `final_output` (run_result.output) is only trustworthy when this turn
+    # actually streamed text. It resolves out of the run's message list, and
+    # that list INCLUDES `message_history` — so a turn whose model response
+    # carries no text part (ended after tool calls) hands back the PREVIOUS
+    # turn's assistant message: fully formed, non-blank, and therefore
+    # invisible to the blank-reply ladder below. Persisting it makes the tutor
+    # answer a follow-up with a byte-identical copy of its own last answer
+    # (observed live on gemini-2.5-flash-lite; ~25% of turns). Text always
+    # reaches us as PartStart/PartDelta events, so "nothing streamed" means
+    # "this turn produced no text" — degrade instead of replaying history.
+    reply = final_output if (final_output is not None and joined.strip()) else joined
 
     # Usage first, persistence second: the tokens were spent regardless of
     # whether on_complete manages to persist — including on the degenerate
@@ -338,24 +366,63 @@ async def stream_agent_turn(
             # Tool writes ALREADY LANDED this turn (append-only mastery
             # events, graph upserts). The nonstream fallback would re-run
             # the whole turn and its tools would apply the writes AGAIN —
-            # double mastery for one student turn (PR #470 review). A
-            # terminal error is the honest degrade: the writes stay (they
-            # were real tool actions), nothing is persisted to the
-            # transcript, and the client's ADR-0020 interrupted+Retry
-            # treatment applies — with retryable: False so it never re-runs
-            # the turn via its JSON rung either.
-            logger.warning(
-                "Agent turn produced a blank reply AFTER %d graph write(s); "
-                "terminal error instead of a fallback that would re-apply "
-                "them", len(deps.graph_updates) + len(deps.mastery_changes),
-            )
-            yield SaplingEvent(
-                type="error",
-                step="reply",
-                message="The tutor was interrupted. Please retry.",
-                data={"request_id": request_id, "retryable": False},
-            )
-            return
+            # double mastery for one student turn (PR #470 review).
+            #
+            # Before conceding the turn, try to FINISH it (#646). A
+            # continuation hands the model its own messages back — tool
+            # results included — and asks for the reply it skipped. That
+            # re-executes nothing, so the writes-guard is not weakened: it
+            # is satisfied, not bypassed. Failure of any kind (no
+            # continuation wired, no text produced, or the call raising)
+            # falls through to the terminal rung below unchanged.
+            rescued = ""
+            if continuation is not None and run_result is not None:
+                try:
+                    rescued = (await continuation(run_result) or "").strip()
+                except Exception:
+                    # A continuation is a second model call: it can time
+                    # out, hit a usage limit, or blow up. None of that may
+                    # escape as a 500 — the turn already has a defined
+                    # degrade below.
+                    logger.warning(
+                        "Continuation after a textless turn failed; "
+                        "falling through to the terminal error",
+                        exc_info=True,
+                    )
+                    rescued = ""
+
+            if rescued:
+                logger.info(
+                    "Textless turn with %d write(s) rescued by a continuation",
+                    len(deps.graph_updates) + len(deps.mastery_changes),
+                )
+                # Nothing streamed on this turn, so the student has an empty
+                # bubble. Emit the rescued text as a token before `done` —
+                # the client renders from token events and would otherwise
+                # show the reply only after the turn closed.
+                yield SaplingEvent(
+                    type="token", step="reply", message="", data={"delta": rescued}
+                )
+                reply = rescued
+            else:
+                # A terminal error is the honest degrade: the writes stay
+                # (they were real tool actions), nothing is persisted to the
+                # transcript, and the client's ADR-0020 interrupted+Retry
+                # treatment applies — with retryable: False so it never
+                # re-runs the turn via its JSON rung either.
+                logger.warning(
+                    "Agent turn produced a blank reply AFTER %d graph "
+                    "write(s) and no continuation rescued it; terminal "
+                    "error instead of a fallback that would re-apply them",
+                    len(deps.graph_updates) + len(deps.mastery_changes),
+                )
+                yield SaplingEvent(
+                    type="error",
+                    step="reply",
+                    message="The tutor was interrupted. Please retry.",
+                    data={"request_id": request_id, "retryable": False},
+                )
+                return
         else:
             logger.warning(
                 "Agent turn produced a blank reply and no writes; "

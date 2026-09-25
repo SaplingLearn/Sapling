@@ -5,9 +5,17 @@ One-time dedupe: migrate course_chunks document rows to content-hash ids.
 Chunk ids used to be sha256(doc_id::index::text), so the same lecture
 slides uploaded by N students stored N copies of every chunk.
 services/rag_service.py::chunk_id now scopes ids to
-sha256(course_id::text); this script rewrites existing rows to that
-scheme and collapses duplicates. Catalog rows (category=catalog) use
+sha256(course_id::document::text); this script rewrites existing rows to
+that scheme and collapses duplicates. Catalog rows (category=catalog) use
 their own id scheme and are untouched.
+
+PRIVATE rows are untouched too, and that exclusion is not cosmetic (#629).
+An opted-out student's chunks live under a per-uploader private id
+namespace; re-deriving their ids through the SHARED form would rewrite them
+onto the shared id, merge them with the classmates' row, and publish to the
+whole class exactly what the opt-out exists to withhold. This script is a
+one-shot with documented run instructions, so the filter has to live in the
+code rather than in a reader's memory.
 
 For each group of rows sharing chunk_id(course_id, chunk_text), the
 winner is the first row (id-ascending) that already has an embedding
@@ -34,6 +42,7 @@ load_dotenv(BASE / ".env")
 sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
+from services.encryption import decrypt_if_present  # noqa: E402
 from services.rag_service import chunk_id  # noqa: E402
 
 PAGE_SIZE = 1000
@@ -42,7 +51,7 @@ DELETE_BATCH = 50
 
 COLUMNS = (
     "id,course_id,doc_id,uploader_id,chunk_index,chunk_text,chunk_hash,"
-    "embedding,category,semester,section_id,school"
+    "embedding,category,visibility,semester,section_id,school"
 )
 
 
@@ -52,7 +61,13 @@ def fetch_document_rows() -> list[dict]:
     while True:
         page, total = table("course_chunks").select_with_count(
             COLUMNS,
-            filters={"category": "eq.document"},
+            # `neq.catalog` rather than `eq.document`: "document rows" is the
+            # complement of the catalog namespace, not one literal category —
+            # #630 replaces the hardcoded 'document' with the classifier's real
+            # category, at which point `eq.document` would quietly stop matching
+            # anything. `visibility=eq.shared` is the #629 exclusion explained in
+            # the module docstring.
+            filters={"category": "neq.catalog", "visibility": "eq.shared"},
             order="id.asc",
             limit=PAGE_SIZE,
             offset=offset,
@@ -67,7 +82,14 @@ def plan_migration(rows: list[dict]) -> tuple[list[dict], list[str]]:
     """Group rows by content-hash id; return (records to upsert, ids to delete)."""
     groups: dict[str, list[dict]] = {}
     for row in rows:
-        groups.setdefault(chunk_id(row["course_id"], row["chunk_text"]), []).append(row)
+        # DECRYPT first (#484). `chunk_text` is ciphertext in the store, and
+        # `chunk_id` is defined over the plaintext — hashing the stored value
+        # would derive a different id for every row (AES-GCM draws a fresh nonce
+        # per write, so even two identical passages hash differently), which
+        # would destroy content-addressing rather than repair it. The row keeps
+        # its stored ciphertext in the upsert; only the hash input is plaintext.
+        plaintext = decrypt_if_present(row["chunk_text"])
+        groups.setdefault(chunk_id(row["course_id"], plaintext), []).append(row)
 
     upserts: list[dict] = []
     deletes: list[str] = []

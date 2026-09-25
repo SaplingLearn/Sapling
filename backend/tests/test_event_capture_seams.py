@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from services import events_service
+from tests.agent_run_fakes import run_result
 
 client = TestClient(app)
 
@@ -111,6 +112,14 @@ def test_event_taxonomy_is_pinned():
         "session.ended",
         "rag.retrieval_failed",
         "rag.chunks_dropped",
+        # #482: a document that did not finish indexing, and one the sweeper
+        # later recovered. Emit coverage lives in test_document_indexing.py.
+        "rag.index_failed",
+        "rag.index_recovered",
+        "rag.relevance_scored",
+        # #629: the Class Intel toggle moved but course_chunks.visibility did
+        # not follow. A privacy control that fails silently is not one.
+        "rag.visibility_resync_failed",
     })
 
 
@@ -969,7 +978,7 @@ SECRET_MESSAGE = "my very private question about recursion and my grades"
 
 def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
-    agent.run = AsyncMock(return_value=SimpleNamespace(output="A reply."))
+    agent.run = AsyncMock(return_value=run_result("A reply."))
     with (
         patch("routes.learn.table", side_effect=_learn_table_factory()),
         patch("routes.learn.agent_for_mode", return_value=agent),
@@ -1247,9 +1256,7 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
                            data=fallback_result)
 
     fallback_agent = MagicMock()
-    fallback_agent.run = AsyncMock(
-        return_value=SimpleNamespace(output="a fallback reply")
-    )
+    fallback_agent.run = AsyncMock(return_value=run_result("a fallback reply"))
 
     with (
         patch.object(learn_routes, "stream_agent_turn", fake_stream),

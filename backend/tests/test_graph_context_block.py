@@ -304,3 +304,21 @@ def test_stream_route_saves_raw_body_message():
         "the persisted user row must be the raw body.message — "
         "never the assembled catalog/RAG/graph prefix"
     )
+
+
+# ── #629: the tutor's retrieval names its reader ────────────────────────────
+
+
+def test_prepare_chat_run_passes_the_student_as_the_retrieval_reader():
+    """`retrieve_chunks` without a `user_id` asks for shared rows only, so an
+    opted-out student would stop seeing their OWN uploads in their own tutor."""
+    with (
+        patch("routes.learn._get_course_info", return_value={"course_code": "CS101"}),
+        patch("routes.learn._get_catalog_chunk", return_value=""),
+        patch("services.rag_service.retrieve_chunks", return_value=[]) as mock_retrieve,
+        patch("services.graph_context.build_graph_context_block", return_value=""),
+        patch("routes.learn._resolve_model_pref", return_value=None),
+    ):
+        _prepare()
+
+    assert mock_retrieve.call_args.kwargs["user_id"] == "u1"

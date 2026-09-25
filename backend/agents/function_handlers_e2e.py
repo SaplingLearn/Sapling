@@ -174,6 +174,11 @@ register_function_handler("quiz", _quiz_handler)
 # route itself performs the graph merge and persistence.
 
 E2E_DOC_CATEGORY = "lecture_notes"
+# #630: the handler must answer the shareability field too. Lecture notes are
+# the course's material, so this keeps the lane's uploads SHARED — which is what
+# the pre-#630 lane did, so no spec assertion moves. (Nothing is actually
+# indexed in function mode: embedding is disabled below the seam per #439.)
+E2E_DOC_SHAREABILITY = "course_material"
 E2E_DOC_HEADLINE = "Deterministic E2E lecture notes on gradient descent."
 # Asserted (as a substring, rendered + decrypted-readback) by
 # frontend/e2e/upload.spec.ts. Keep the literals in sync.
@@ -213,6 +218,7 @@ register_function_handler(
         "category": E2E_DOC_CATEGORY,
         "is_syllabus": False,
         "confidence": 0.95,
+        "shareability": E2E_DOC_SHAREABILITY,
         "rationale": "Scripted E2E classification: narrative notes, no schedule.",
     }),
 )

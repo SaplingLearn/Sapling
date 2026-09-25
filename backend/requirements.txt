@@ -48,6 +48,9 @@ playwright>=1.45,<2
 # Testing
 pytest==9.1.1
 pytest-anyio==0.0.0
+# Coverage for the Canopy dashboard's canopy/coverage commit status (ci.yml's
+# canopy-metrics job, push to main only). Never part of the gating pytest run.
+pytest-cov==7.1.0
 
 # Linting (#193): `ruff check` is gated in CI against the baseline in ruff.toml.
 ruff==0.15.18

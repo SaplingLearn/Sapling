@@ -3,8 +3,9 @@
 Run as evals (default mode = replay; SAPLING_EVAL_MODE=record|live for others):
     python tests/evals/document_classification.py
 
-Cases cover the seven-category taxonomy in agents/classifier.py and the
-is_syllabus boolean. The original 10 hand-picked smoke cases are kept
+Cases cover the seven-category taxonomy in agents/classifier.py, the
+is_syllabus boolean, and (#630) the shareability bucket that decides whether a
+document may enter the shared course pool at all. The original 10 hand-picked smoke cases are kept
 verbatim; 15 additional cases were added to catch prompt/model
 regressions across the long tail (lab handouts, programming projects,
 reading lists, slides, math-heavy notes, exams, study guides, rubrics,
@@ -409,6 +410,111 @@ CASES: list[Case[str, str]] = [
         metadata={"is_syllabus": False},
     ),
 ]
+
+
+# ── #630: shareability ──────────────────────────────────────────────────────
+#
+# The field that decides whether a chunk may enter the shared course pool at
+# all, so a wrong label here is an academic-integrity or privacy failure rather
+# than a routing annoyance.
+#
+# Scored PER CASE rather than dataset-wide. Every cassette now carries a
+# recorded `shareability` — all 29 were re-recorded when the prompt gained these
+# definitions — so the limit is not the recording, it is the LABEL: the 25 older
+# cases have no human-labelled expectation for the field, and scoring them
+# against the model's own recorded answer would be circular, measuring nothing
+# while reading as coverage. Labelling those 25 is a worthwhile separate pass
+# (several are genuine judgement calls — is a past exam paper course material,
+# or completed work once answers are filled in?) and it belongs in its own
+# change, where the labels can be argued about on their own merits.
+
+
+@dataclass
+class ShareabilityEvaluator(Evaluator[str, DocumentClassification]):
+    """Pass when the predicted shareability matches the labeled bucket.
+
+    `None` never passes. It is what the schema falls back to when the model
+    omits the field, and the route treats it as private — so a silent
+    all-`None` regression would otherwise read as "everything is correctly
+    private" instead of "the classifier stopped answering".
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[str, DocumentClassification]) -> float:
+        expected = (ctx.metadata or {}).get("shareability")
+        return 1.0 if ctx.output.shareability == expected else 0.0
+
+
+SHAREABILITY_CASES: list[Case[str, str]] = [
+    # ── COMPLETED WORK — a solved problem set ────────────────────────────
+    Case(
+        name="share_solved_problem_set",
+        inputs=(
+            "Math 314 — Problem Set 7\nName: Jordan Reyes\n\n"
+            "Problem 1. Let G be a finite group of order p^2.\n"
+            "My solution: Let Z(G) be the center. By the class equation "
+            "|G| = |Z(G)| + sum of conjugacy class sizes, so |Z(G)| is "
+            "divisible by p. If |Z(G)| = p then G/Z(G) has order p, hence "
+            "cyclic, hence G is abelian — contradiction. So |Z(G)| = p^2 and "
+            "G = Z(G) is abelian. QED\n\n"
+            "Problem 2. My answer: Z/nZ is a field iff every nonzero class is "
+            "invertible iff gcd(k, n) = 1 for all 0 < k < n iff n is prime."
+        ),
+        expected_output="assignment",
+        metadata={"is_syllabus": False, "shareability": "completed_work"},
+        evaluators=(ShareabilityEvaluator(),),
+    ),
+    # ── COMPLETED WORK — graded, with instructor feedback ────────────────
+    Case(
+        name="share_graded_essay_with_feedback",
+        inputs=(
+            "HI 201 Essay 2 — Score: 84/100 (B)\n"
+            "Student: A. Okafor\n\n"
+            "The Marshall Plan is best understood less as charity than as "
+            "containment by other means...\n\n"
+            "--- Instructor comments ---\n"
+            "Thesis is clear but under-evidenced in section 2. Cite Hogan "
+            "directly rather than paraphrasing. Grammar: watch comma splices. "
+            "Rubric: Argument 26/30, Evidence 20/30, Style 22/25, Mechanics "
+            "16/15."
+        ),
+        expected_output="other",
+        metadata={"is_syllabus": False, "shareability": "completed_work"},
+        evaluators=(ShareabilityEvaluator(),),
+    ),
+    # ── PERSONAL NOTES — the student's own planning ──────────────────────
+    Case(
+        name="share_personal_study_plan",
+        inputs=(
+            "my plan for finals week (private)\n"
+            "- CS330 midterm is the one I'm actually scared of, start Sunday\n"
+            "- ask Priya for her notes from the week I was sick\n"
+            "- email Prof about the extension, mention the doctor's note\n"
+            "- skip the optional reading, not worth it\n"
+            "- gym Tue/Thu only, no more doomscrolling before bed"
+        ),
+        expected_output="other",
+        metadata={"is_syllabus": False, "shareability": "personal_notes"},
+        evaluators=(ShareabilityEvaluator(),),
+    ),
+    # ── COURSE MATERIAL — an unsolved handout is the course's, not a student's
+    Case(
+        name="share_unsolved_assignment_handout",
+        inputs=(
+            "CS 330 — Homework 4\nDue: Friday, October 17 at 11:59pm\n"
+            "Submit a single PDF to Gradescope.\n\n"
+            "1. Give an O(n log n) algorithm for the maximum-subarray problem "
+            "and prove its running time.\n"
+            "2. Show that the fractional knapsack problem admits a greedy "
+            "optimal solution, and that the 0/1 version does not.\n"
+            "3. (Extra credit) Give a linear-time selection algorithm."
+        ),
+        expected_output="assignment",
+        metadata={"is_syllabus": False, "shareability": "course_material"},
+        evaluators=(ShareabilityEvaluator(),),
+    ),
+]
+
+CASES += SHAREABILITY_CASES
 
 
 # Map eval inputs to case names so the (input-only) task callable can look

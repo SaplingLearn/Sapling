@@ -82,6 +82,15 @@ class Expect(str, Enum):
     #: exactly how #553 (course id passed where offering id was expected)
     #: presents.
     COURSE_HAS_AGGREGATES = "course_has_aggregates"
+    #: Has at least one live (not soft-deleted) document — so a course-materials
+    #: read could return rows. The caller scopes it to a course with
+    #: ``{"course_offerings.course_id": "eq.<course>"}``, which PostgREST
+    #: resolves through the documents→course_offerings FK (see
+    #: ``_PROBE_SELECT``). Deliberately NOT scoped by offering ids: the tool
+    #: that reads documents resolves course → offerings in app code, so a probe
+    #: keyed on those same ids shares the read's keyspace and can only ever
+    #: agree with it — the #553 blind spot, rebuilt.
+    HAS_DOCUMENTS = "has_documents"
 
 
 # (table, extra filters, owner_scoped). Each probe is a single indexed read
@@ -104,6 +113,14 @@ _PROBES: dict[Expect, tuple[str, dict, bool]] = {
     Expect.COURSE_HAS_AGGREGATES: (
         "offering_concept_stats", {"common_misconceptions": "neq.{}"}, False,
     ),
+    Expect.HAS_DOCUMENTS: ("documents", {"deleted_at": "is.null"}, True),
+}
+
+# Probes that need more than `id` selected. PostgREST only honours a filter on
+# an embedded resource when that resource is in the select, and only drops the
+# parent row on a non-match when the embed is `!inner`.
+_PROBE_SELECT: dict[Expect, str] = {
+    Expect.HAS_DOCUMENTS: "id,course_offerings!inner(course_id)",
 }
 
 
@@ -137,7 +154,9 @@ def _user_plausibly_has_data(
     if owner_scoped:
         filters["user_id"] = f"eq.{user_id}"
     try:
-        rows = table(table_name).select("id", filters=filters, limit=1)
+        rows = table(table_name).select(
+            _PROBE_SELECT.get(expect, "id"), filters=filters, limit=1,
+        )
     except Exception:
         # WARNING, not debug: a probe that can never answer makes this whole
         # seam silently inert — the exact failure mode F5 exists to end, one

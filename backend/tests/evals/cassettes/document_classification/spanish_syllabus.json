@@ -1,6 +1,7 @@
 {
   "category": "syllabus",
-  "confidence": 1.0,
+  "confidence": 0.95,
   "is_syllabus": true,
-  "rationale": "The document explicitly states it is a \"Programa del curso\" (Course Program) and includes a grading policy with percentages and a class schedule indicating 16 weeks."
+  "rationale": "The document includes a course title, professor, grading policy (partial, homework, final exam), and a 16-week class schedule, all indicative of a syllabus.",
+  "shareability": "course_material"
 }

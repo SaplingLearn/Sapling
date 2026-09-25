@@ -54,9 +54,20 @@ session.started               usage     session_id, mode, offering_id (+ content
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
 rag.chunks_dropped            error     doc_id, dropped, total
+rag.index_failed              error     doc_id, status (failed | partial), error_type
+                                        (an error CLASS or code, never a message),
+                                        attempts (#482)
+rag.index_recovered           usage     doc_id, attempts, chunk_count — a document that
+                                        failed or was stranded, later indexed (#482)
+rag.visibility_resync_failed  error     error_type (the Class Intel toggle moved but
+                                        course_chunks.visibility was not updated, #629)
+rag.relevance_scored          usage     doc_id, course_id (BU code), category, sample
+                                        (summary | first_chunk — what was scored), score (cosine
+                                        of the upload vs the course's catalog embedding —
+                                        observe-only, #628: the data a threshold gets picked from)
 ============================  ========  =====================================================
 
-Note on the two ``rag.*`` rows (#482): they are ``category="error"``, but
+Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
 ``/api/admin/analytics/errors`` filters on ``event_type like error.*`` and
 projects an HTTP shape (path / method / status_code / duration_ms), so these
 surface through ``/usage/summary``'s ``by_event_type`` breakdown instead of
@@ -140,6 +151,19 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "session.ended",
     "rag.retrieval_failed",
     "rag.chunks_dropped",
+    "rag.relevance_scored",
+    # #482: a document that did not finish indexing, and one that later did.
+    # Before these, a failed index was a WARNING in a background thread and a
+    # healthy-looking documents row; the pair makes the failure rate and the
+    # sweeper's recovery rate both countable.
+    "rag.index_failed",
+    "rag.index_recovered",
+    # #629: the Class Intel toggle moved but the resync that applies it to
+    # course_chunks.visibility failed. It runs as a post-response
+    # BackgroundTask, so without this the student sees the opt-out succeed
+    # while their uploads stay in classmates' retrieval, with nothing saying
+    # so. Rare and per-user, so category="error" is affordable on the feed.
+    "rag.visibility_resync_failed",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

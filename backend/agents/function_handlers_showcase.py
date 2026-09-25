@@ -186,12 +186,19 @@ SHOWCASE_DOC_CONCEPTS = [
     ("Call Stack", "The frames holding each pending call's locals and return address.", 0.7),
 ]
 
+# #630: this module has its OWN classifier handler, and it was missed when the
+# e2e one gained the field — so every showcase upload stored NULL, logged
+# "[RAG] classifier returned no shareability" at WARNING, and indexed private.
+# Lecture notes are the course's material.
+SHOWCASE_DOC_SHAREABILITY = "course_material"
+
 register_function_handler(
     "classifier",
     _structured_output({
         "category": SHOWCASE_DOC_CATEGORY,
         "is_syllabus": False,
         "confidence": 0.96,
+        "shareability": SHOWCASE_DOC_SHAREABILITY,
         "rationale": "Narrative lecture notes with worked examples; no schedule or grading table.",
     }),
 )

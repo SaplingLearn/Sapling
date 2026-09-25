@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents.deps import SaplingDeps
+from tests.agent_run_fakes import run_result
 from agents.tools.graph import (
     ConceptMasteryUpdate,
     GraphUpdateInput,
@@ -338,9 +339,7 @@ class TestOrchestratorLimitsWired:
         from agents import TUTOR_LIMITS
 
         mock_agent = MagicMock()
-        run_result = MagicMock()
-        run_result.output = "Great question!"
-        mock_agent.run = AsyncMock(return_value=run_result)
+        mock_agent.run = AsyncMock(return_value=run_result("Great question!"))
 
         with (
             patch("routes.learn.agent_for_mode", return_value=mock_agent),
@@ -427,14 +426,13 @@ class TestOrchestratorLimitsWired:
             saved_calls.append({"role": role, "graph_update": graph_update})
 
         mock_agent = MagicMock()
-        run_result = MagicMock()
-        run_result.output = "Here's the answer."
+        result = run_result("Here's the answer.")
 
         # Simulate the agent having called apply_graph_update_tool once
         def fake_run_side_effect(msg, **kwargs):
             deps = kwargs["deps"]
             deps.graph_updates.append({"new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}]})
-            return run_result
+            return result
 
         mock_agent.run = AsyncMock(side_effect=fake_run_side_effect)
 

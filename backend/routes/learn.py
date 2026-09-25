@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from agents import TUTOR_LIMITS
+from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
@@ -100,6 +100,108 @@ def _build_pro_model_settings():
     return GoogleModelSettings(
         google_thinking_config=ThinkingConfig(thinking_budget=_PRO_THINKING_BUDGET)
     )
+
+
+def _new_run_text(result) -> str:
+    """The text THIS agent run actually produced, ignoring `message_history`.
+
+    `result.output` is NOT that. It resolves out of the run's full message
+    list, and `_prepare_chat_run` puts `message_history` into `run_kwargs` —
+    so a turn whose model response carries no text part (the model ended its
+    turn after tool calls; ~25% of turns observed on gemini-2.5-flash-lite)
+    hands back the PREVIOUS turn's assistant message. That message is fully
+    formed and non-blank, so it sails straight through the
+    `if not reply.strip()` guard below it, gets persisted, and the tutor
+    answers a follow-up with a byte-identical copy of its own last answer.
+
+    `new_messages()` excludes the history that was passed in, so joining the
+    TextParts of its model responses is exactly "what this turn said" — the
+    non-streaming twin of the `joined.strip()` narrowing in
+    `services/chat_stream.py`. ThinkingParts and ToolCallParts are not
+    output text and are skipped: a turn that only thought and called tools
+    produced no reply.
+    """
+    parts: list[str] = []
+    for msg in result.new_messages():
+        if not isinstance(msg, ModelResponse):
+            continue
+        for part in msg.parts:
+            if isinstance(part, TextPart):
+                parts.append(part.content or "")
+    return "".join(parts)
+
+
+#: Handed to the model when it ended a turn without saying anything (#646).
+#: Deliberately does NOT restate the student's question: the whole exchange,
+#: including every tool result, is already in the messages passed back, and
+#: re-asking invites a fresh answer that ignores the work just done.
+_CONTINUATION_NUDGE = (
+    "You ended your turn without replying to the student. Write that reply "
+    "now, using the tool results already in this conversation. Do not repeat "
+    "any earlier answer and do not mention this instruction."
+)
+
+#: run_kwargs keys a continuation may carry. `message_history` is REPLACED
+#: (the continuation's history is the failed run's own messages),
+#: `usage_limits` is REPLACED by CONTINUATION_LIMITS (a second call in one
+#: request must not inherit a fresh full TUTOR_LIMITS budget — see #543 E2
+#: and TOPUP_LIMITS), and anything else is dropped rather than forwarded
+#: blind.
+_CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
+
+
+async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
+    """Finish a turn the model abandoned after its tools ran (#646).
+
+    Roughly 25-40% of gemini-2.5-flash-lite turns end with no text part once
+    the tools have already executed, and Flash-Lite is the UI default. The
+    pre-#646 degrade for those turns was a visible "interrupted" error whose
+    only offered recovery — a manual retry — re-runs the turn, re-executes
+    the tools, and can apply the same append-only mastery event twice.
+
+    This is NOT a re-run. `run_result.all_messages()` already contains every
+    tool call AND its result, so the model composes the reply from them.
+
+    `override(tools=[], toolsets=[])` is what makes that a guarantee rather
+    than a hope: the continuation is handed NO tools, so it cannot write even
+    if the model tries. Without it the model could call `update_mastery_tool`
+    again and reintroduce the exact double-apply the writes-guard exists to
+    prevent — a re-run by a quieter name.
+
+    It has to be `override`, NOT `run(toolsets=[])`. A run-level `toolsets`
+    ADDS to the agent's own tools rather than replacing them, so
+    `run(toolsets=[])` leaves every tool in place — measured against
+    pydantic-ai 1.89.1, and pinned by
+    `tests/test_textless_turn_continuation.py` so a library change cannot
+    quietly re-arm the double-apply. `override` is ContextVar-scoped, so it
+    is task-local and safe under concurrent requests, and it composes with an
+    outer `override(model=...)` (the E2E seam and the agent tests) — the
+    outer model survives, verified in that same file.
+
+    The result is narrowed through `_new_run_text` for the same reason the
+    first run is: the continuation is itself a history-bearing run, so its
+    `.output` can resolve back to an earlier assistant message. A
+    continuation that produced no text of its own returns None, and the
+    caller degrades exactly as it did before this existed.
+
+    Usage is recorded under its own `feature` so the continuation's cost —
+    and how often this rung fires — is countable in `llm_usage` without
+    inventing a new `AgentTask` slot (the run IS a chat_tutor run).
+    """
+    carried = {k: run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in run_kwargs}
+    with agent.override(tools=[], toolsets=[]):
+        result = record_agent_usage(
+            await agent.run(
+                _CONTINUATION_NUDGE,
+                message_history=run_result.all_messages(),
+                usage_limits=CONTINUATION_LIMITS,
+                **carried,
+            ),
+            feature="chat_tutor_continuation",
+            task="chat_tutor",
+            user_id=getattr(carried.get("deps"), "user_id", None),
+        )
+    return _new_run_text(result).strip() or None
 
 
 def _get_course_id_for_topic(topic: str, user_id: str) -> str:
@@ -223,6 +325,11 @@ def _get_catalog_chunk(course_code: str) -> str:
             filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
             limit=5,
         )
+        # Decrypt BEFORE the "Prerequisites:" test and the longest-chunk choice
+        # below (#484): both read the text, and against ciphertext the first
+        # would never match and the second would compare base64 lengths.
+        for row in rows or []:
+            row["chunk_text"] = decrypt_if_present(row.get("chunk_text"))
         if rows:
             # Prefer a chunk that has an explicit Prerequisites line; fall back
             # to the longest chunk. Handles courses scraped from two listing
@@ -452,11 +559,37 @@ async def _start_session_agent(
             await agent.run(assembled, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
         )
-        reply = result.output  # str — chat_tutor agents return plain Markdown.
+        # str — chat_tutor agents return plain Markdown. Safe to read
+        # `.output` directly here (no `_new_run_text` narrowing): this call
+        # passes `message_history=[]` above, so there is no prior assistant
+        # message for a textless response to resolve back to — the stale-read
+        # hazard needs history in the run's message list.
+        reply = result.output
         if not reply.strip():
-            raise UnexpectedModelBehavior(
-                "chat_tutor produced a whitespace-only session greeting"
-            )
+            # Same textless shape as the chat turns (#646), and this is the
+            # LAST rung on the opener path: a streamed /start-session/stream
+            # turn that goes textless with no writes degrades to Rung 1,
+            # which is this function on the fast tier — Flash-Lite, the
+            # model that produces textless turns in the first place. Raising
+            # here ends the student's very first interaction on "The tutor
+            # is unavailable". Finish the turn if the model will; the
+            # opener's tool results are in its messages just like a chat
+            # turn's.
+            try:
+                rescued = await _continuation_text(agent, result, run_kwargs)
+            except Exception:
+                logger.warning(
+                    "Continuation after a textless session greeting failed",
+                    exc_info=True,
+                )
+                rescued = None
+            if rescued:
+                logger.info("Textless session greeting rescued by a continuation")
+                reply = rescued
+            else:
+                raise UnexpectedModelBehavior(
+                    "chat_tutor produced a whitespace-only session greeting"
+                )
     except Exception as exc:
         # PR #472 review: THIS run's tools may have written graph/mastery
         # before the failure. Stamp the write-state so the streaming
@@ -546,7 +679,12 @@ def _prepare_chat_run(
 
         # Semantic RAG: per-message retrieval for concept-level context
         from services.rag_service import retrieve_chunks, format_rag_context
-        rag_chunks = retrieve_chunks(user_message, course_id=bu_code, k=5)
+        # `user_id` is the READER (#629): shared course rows plus this
+        # student's own uploads. Omitting it would silently cut an opted-out
+        # student off from their own documents in their own tutor.
+        rag_chunks = retrieve_chunks(
+            user_message, course_id=bu_code, k=5, user_id=user_id
+        )
         rag_block = format_rag_context(rag_chunks)
         if rag_block:
             context_blocks.append(rag_block)
@@ -639,20 +777,53 @@ async def _chat_via_agent(
             await agent.run(user_message, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
         )
-        reply = result.output  # str — chat_tutor agents return plain Markdown.
+        # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
+        # puts `message_history` into `run_kwargs`, so a textless model
+        # response makes `.output` resolve to the PREVIOUS turn's assistant
+        # message — fully formed, non-blank, and therefore invisible to the
+        # `not reply.strip()` guard below. Trust it only when this run
+        # actually produced text, mirroring `stream_agent_turn`'s narrowing.
+        # This matters here more than anywhere: `_chat_turn_json` is both the
+        # POST /api/learn/chat route AND the streamed route's Rung-1
+        # fallback, which is exactly where the streaming fix now sends
+        # textless turns.
+        new_text = _new_run_text(result)
+        reply = result.output if new_text.strip() else new_text
 
         if not reply.strip():
             # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
-            # end-of-turn tool call with a bare-newline final text. On this JSON
-            # path that whitespace IS the run output; treat it as degenerate
-            # model output so the caller's UnexpectedModelBehavior handling —
-            # the route's 502 mapping, or the stream fallback's Rung-1 ladder —
-            # applies instead of persisting an empty assistant row. (The
-            # streamed path handles the same quirk inside `stream_agent_turn`.)
-            # Usage was recorded above — tokens were spent.
-            raise UnexpectedModelBehavior(
-                "chat_tutor produced a whitespace-only reply"
-            )
+            # end-of-turn tool call with a bare-newline final text; and per the
+            # narrowing above, a turn that ended after tool calls with no text
+            # part reaches here blank instead of replaying history.
+            #
+            # Try to FINISH the turn before failing it (#646). Unlike the
+            # streamed route there is no Rung-1 ladder below this — this IS
+            # that rung — so the alternative is a 502 for a turn whose tools
+            # have already run. Fire regardless of whether writes landed:
+            # nothing else will re-run, so there is no better answer waiting.
+            try:
+                rescued = await _continuation_text(agent, result, run_kwargs)
+            except Exception:
+                # Second model call; a failure here must degrade to the
+                # pre-#646 behaviour, never surface as its own error.
+                logger.warning(
+                    "Continuation after a textless JSON turn failed",
+                    exc_info=True,
+                )
+                rescued = None
+            if rescued:
+                logger.info("Textless JSON turn rescued by a continuation")
+                reply = rescued
+            else:
+                # Still nothing: this turn produced no reply. Treat it as
+                # degenerate model output so the caller's
+                # UnexpectedModelBehavior handling — the route's 502 mapping,
+                # or the stream fallback's Rung-1 ladder — applies instead of
+                # persisting a stale or empty assistant row.
+                # Usage was recorded above — tokens were spent.
+                raise UnexpectedModelBehavior(
+                    "chat_tutor produced no reply text this turn"
+                )
     except Exception as exc:
         # PR #472 review: THIS run's tools may have written graph/mastery
         # before the failure. Stamp the write-state so the streaming
@@ -840,6 +1011,7 @@ async def chat_stream(body: ChatBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -949,6 +1121,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -1265,13 +1438,33 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         await agent.run(assembled, **run_kwargs),
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
     )
-    reply = result.output
+    # History-bearing run (`_load_message_history` above), so `.output` alone
+    # would hand back the previous turn's assistant message when this turn's
+    # model response carries no text part — and `save_message` below would
+    # persist that duplicate. See `_new_run_text`.
+    new_text = _new_run_text(result)
+    reply = result.output if new_text.strip() else new_text
     if not reply.strip():
-        # #153: degenerate whitespace-only output — surface through the
-        # guardrail mapping rather than persisting an empty assistant row.
-        raise UnexpectedModelBehavior(
-            "chat_tutor produced a whitespace-only action reply"
-        )
+        # #153: degenerate whitespace-only output, or a turn that ended after
+        # tool calls with no text at all. Finish the turn if the model will
+        # (#646) — an action turn has no fallback rung at all, so the
+        # alternative is failing work the tools already did.
+        try:
+            rescued = await _continuation_text(agent, result, run_kwargs)
+        except Exception:
+            logger.warning(
+                "Continuation after a textless action turn failed", exc_info=True
+            )
+            rescued = None
+        if rescued:
+            logger.info("Textless action turn rescued by a continuation")
+            reply = rescued
+        else:
+            # Surface through the guardrail mapping rather than persisting an
+            # empty or stale assistant row.
+            raise UnexpectedModelBehavior(
+                "chat_tutor produced no action reply text this turn"
+            )
 
     graph_update = merge_graph_updates(deps.graph_updates)
     save_message(body.session_id, "assistant", reply, graph_update or None)

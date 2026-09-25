@@ -464,7 +464,11 @@ def test_blank_reply_after_tool_call_with_writes_is_terminal_error():
     would apply the writes AGAIN, double-counting one student turn in the
     append-only mastery ledger (PR #470 review). Terminal error instead: the
     tool writes stay, nothing persists to the transcript, the client offers
-    Retry."""
+    Retry.
+
+    This pins the NO-CONTINUATION configuration. Since #646 the routes wire a
+    `continuation`, which gets first refusal on this rung; the terminal error
+    below is what remains when none is wired or it produces nothing."""
     async def run():
         deps = make_deps()
 
@@ -703,5 +707,341 @@ def test_fallback_failure_without_writes_stays_retryable():
         )
         assert events[-1].type == "error"
         assert events[-1].data["retryable"] is True
+
+    asyncio.run(run())
+
+
+def test_textless_turn_never_replays_the_previous_turns_reply():
+    """A turn whose model response carries NO text part must not persist the
+    PREVIOUS turn's reply.
+
+    `run_result.output` resolves out of the run's message list, and that list
+    includes `message_history` — so a tool-only turn hands back the last
+    assistant message from an EARLIER turn: fully formed, non-blank, and
+    therefore invisible to the blank-reply ladder below. Taking it verbatim
+    makes the tutor answer a follow-up with a byte-identical copy of its own
+    previous answer (observed live on gemini-2.5-flash-lite; ~25% of turns
+    when the model ends its turn after tool calls).
+
+    Nothing streamed this turn, so there is no reply of this turn's to
+    persist: the turn degrades exactly like any other blank one.
+    """
+    PRIOR = "A Markov chain is a stochastic model describing a sequence of events."
+
+    async def run():
+        agent = FakeAgent([
+            FunctionToolCallEvent("read_graph_neighborhood"),
+            FunctionToolResultEvent(),          # no writes landed
+            AgentRunResultEvent(PRIOR),         # stale: from message_history
+        ])
+        on_complete_calls = []
+
+        async def fake_fallback():
+            return {"reply": "fresh reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect(
+            agent, make_deps(),
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            nonstream_fallback=fake_fallback,
+        )
+        assert on_complete_calls == [], "prior-turn text must never persist as this turn's reply"
+        assert all(
+            PRIOR not in (e.data or {}).get("delta", "") for e in events if e.type == "token"
+        ), "prior-turn text must never reach the student's bubble"
+        assert events[-1].data["reply"] == "fresh reply"
+        assert events[-1].data["reply"] != PRIOR
+
+    asyncio.run(run())
+
+
+def test_textless_turn_with_writes_is_a_terminal_error_not_a_replay():
+    """The LIKELIER shape of a textless turn: a tool WROTE first.
+
+    Every tutor agent registers `apply_graph_update_tool` and
+    `update_mastery_tool` (agents/chat_tutor.py), and a model that ends its
+    turn after tool calls has by definition just called tools — so the
+    textless turn usually arrives with `deps.graph_updates` /
+    `deps.mastery_changes` already populated. That lands on the
+    write-guard rung, not Rung 1: re-running the turn would apply the same
+    mastery event twice (PR #470 review), so the honest degrade is a terminal
+    `retryable: False` error.
+
+    Also pins the no-continuation configuration — see #646 and
+    `test_textless_turn_with_writes_is_rescued_by_the_continuation` for the
+    wired behaviour that supersedes this rung in production.
+
+    Distinct from `test_blank_reply_after_tool_call_with_writes_is_terminal_error`,
+    which streams a whitespace text part. Here NOTHING streams and
+    `run_result.output` is a fully-formed reply from an EARLIER turn — the
+    shape that sails through a bare `if not reply.strip()` guard.
+    """
+    PRIOR = "Gradient descent walks downhill along the steepest direction."
+
+    async def run():
+        deps = make_deps()
+
+        def write():
+            deps.mastery_changes.append(
+                {"concept": "Gradient descent", "before": 0.3, "after": 0.5}
+            )
+
+        agent = FakeAgent([
+            FunctionToolCallEvent("update_mastery_tool"),
+            FunctionToolResultEvent(on_fire=write),   # the write lands
+            AgentRunResultEvent(PRIOR),               # stale: from message_history
+        ])
+        on_complete_calls = []
+        fallback_calls = []
+
+        async def fake_fallback():
+            fallback_calls.append(1)
+            return {"reply": "fresh reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            nonstream_fallback=fake_fallback,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False, (
+            "mastery already moved this turn — neither the server fallback "
+            "nor a client retry may re-run it"
+        )
+        assert fallback_calls == [], (
+            "a fallback after real tool writes would double-apply mastery"
+        )
+        assert on_complete_calls == [], (
+            "the prior turn's reply must not be persisted as this turn's"
+        )
+        assert all(
+            PRIOR not in (e.data or {}).get("delta", "")
+            for e in events if e.type == "token"
+        ), "prior-turn text must never reach the student's bubble"
+        # The write was a real tool action — it stays.
+        assert deps.mastery_changes
+
+    asyncio.run(run())
+
+
+# ── textless-with-writes continuation (#646) ──────────────────────────────
+#
+# The rung above is the COMMON case, not an edge: by #562's measurements
+# roughly 25-40% of gemini-2.5-flash-lite turns end textless, and Flash-Lite
+# is the UI default (Pro is opt-in). Failing those turns outright shows the
+# student "The tutor was interrupted" after the tutor has already done the
+# work, and the only recovery offered — a manual retry — re-runs the tools
+# and can apply the same mastery event twice.
+#
+# A continuation asks the model to finish the turn it abandoned, passing the
+# run's own messages back. The tool results are already IN those messages, so
+# the model writes its reply from them instead of calling the tools again.
+
+
+async def collect_with_continuation(
+    agent, deps, on_complete, continuation, nonstream_fallback=None, on_usage=None
+):
+    events = []
+    async for ev in stream_agent_turn(
+        agent=agent, user_message="hi", run_kwargs={}, deps=deps,
+        on_complete=on_complete, nonstream_fallback=nonstream_fallback,
+        on_usage=on_usage, request_id="r1", continuation=continuation,
+    ):
+        events.append(ev)
+    return events
+
+
+def _textless_agent_with_write(deps, stale_output="PRIOR TURN REPLY"):
+    """A run that calls a tool (which writes), then ends with no text part —
+    `run_result.output` resolving to an earlier turn's reply."""
+    def write():
+        deps.mastery_changes.append(
+            {"concept": "Gradient descent", "before": 0.3, "after": 0.5}
+        )
+
+    return FakeAgent([
+        FunctionToolCallEvent("update_mastery_tool"),
+        FunctionToolResultEvent(on_fire=write),
+        AgentRunResultEvent(stale_output),
+    ])
+
+
+def test_textless_turn_with_writes_is_rescued_by_the_continuation():
+    """The #646 fix: instead of a terminal error, finish the turn.
+
+    The student gets the reply the tutor had already earned, the transcript
+    gets a row, and the tools ran exactly once — so there is nothing left for
+    a retry to double-apply."""
+    async def run():
+        deps = make_deps()
+        agent = _textless_agent_with_write(deps)
+        on_complete_calls = []
+        fallback_calls = []
+        continuation_calls = []
+
+        async def fake_continuation(run_result):
+            continuation_calls.append(run_result)
+            return "Gradient descent steps opposite the gradient."
+
+        async def fake_fallback():
+            fallback_calls.append(1)
+            return {"reply": "fallback", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect_with_continuation(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r) or {},
+            continuation=fake_continuation,
+            nonstream_fallback=fake_fallback,
+        )
+
+        assert events[-1].type == "done", "the turn completes instead of erroring"
+        assert events[-1].data["reply"] == "Gradient descent steps opposite the gradient."
+        assert on_complete_calls == ["Gradient descent steps opposite the gradient."], (
+            "the rescued reply is persisted to the transcript"
+        )
+        assert len(continuation_calls) == 1, "continuation runs once"
+        assert fallback_calls == [], (
+            "the nonstream fallback re-runs the TURN and would re-apply the "
+            "mastery write — the continuation exists precisely to avoid it"
+        )
+        # The mastery write stays exactly once: the continuation replays no tools.
+        assert len(deps.mastery_changes) == 1
+        # The student must actually SEE the text, not just get it in `done`.
+        streamed = "".join(
+            (e.data or {}).get("delta", "") for e in events if e.type == "token"
+        )
+        assert streamed == "Gradient descent steps opposite the gradient."
+
+    asyncio.run(run())
+
+
+def test_continuation_that_is_also_textless_falls_through_to_terminal_error():
+    """The contract is unchanged when the rescue fails: #470's writes-guard
+    still holds, so the turn ends `retryable: False` and persists nothing."""
+    async def run():
+        deps = make_deps()
+        agent = _textless_agent_with_write(deps)
+        on_complete_calls = []
+        fallback_calls = []
+
+        async def empty_continuation(run_result):
+            return ""
+
+        async def fake_fallback():
+            fallback_calls.append(1)
+            return {"reply": "fallback", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect_with_continuation(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            continuation=empty_continuation,
+            nonstream_fallback=fake_fallback,
+        )
+
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
+        assert on_complete_calls == []
+        assert fallback_calls == [], "still never safe after a write"
+
+    asyncio.run(run())
+
+
+def test_continuation_raising_degrades_to_the_terminal_error():
+    """A continuation is a second model call: it can time out or blow up.
+    That must land on the same terminal rung, never escape as a 500."""
+    async def run():
+        deps = make_deps()
+        agent = _textless_agent_with_write(deps)
+
+        async def exploding_continuation(run_result):
+            raise RuntimeError("continuation model call failed")
+
+        events = await collect_with_continuation(
+            agent, deps,
+            on_complete=lambda r, g, m: None,
+            continuation=exploding_continuation,
+        )
+
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
+
+    asyncio.run(run())
+
+
+def test_continuation_never_replays_the_previous_turns_reply():
+    """The continuation carries `message_history` too, so it inherits the
+    very stale-read hazard #562 fixed: its own `.output` can resolve back to
+    an earlier assistant message. Whatever the caller injects must be
+    narrowed to THIS run's text — a continuation that produced nothing is
+    textless, however non-blank `.output` looks."""
+    PRIOR = "Gradient descent walks downhill along the steepest direction."
+
+    async def run():
+        deps = make_deps()
+        agent = _textless_agent_with_write(deps, stale_output=PRIOR)
+        on_complete_calls = []
+
+        async def stale_continuation(run_result):
+            # What a correct caller returns when the continuation run added
+            # no text of its own: None, NOT run_result.output.
+            return None
+
+        events = await collect_with_continuation(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            continuation=stale_continuation,
+        )
+
+        assert events[-1].type == "error"
+        assert on_complete_calls == [], "a stale reply must never be persisted"
+        assert all(
+            PRIOR not in (e.data or {}).get("delta", "")
+            for e in events if e.type == "token"
+        )
+
+    asyncio.run(run())
+
+
+def test_no_continuation_supplied_keeps_the_pre_646_contract():
+    """`continuation` is optional: every existing caller (and every test
+    above) must keep the terminal-error behaviour without passing one."""
+    async def run():
+        deps = make_deps()
+        agent = _textless_agent_with_write(deps)
+        events = await collect(agent, deps, on_complete=lambda r, g, m: None)
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
+
+    asyncio.run(run())
+
+
+def test_continuation_is_not_attempted_when_nothing_was_written():
+    """The no-writes twin still belongs to Rung 1: re-running the whole turn
+    is SAFE there and produces a better answer than nudging a model that
+    just declined to speak. The continuation is a writes-guard escape hatch,
+    not a general blank-reply handler."""
+    async def run():
+        deps = make_deps()
+        agent = FakeAgent([AgentRunResultEvent("")])
+        continuation_calls = []
+        fallback_calls = []
+
+        async def fake_continuation(run_result):
+            continuation_calls.append(1)
+            return "should not be used"
+
+        async def fake_fallback():
+            fallback_calls.append(1)
+            return {"reply": "fallback reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect_with_continuation(
+            agent, deps,
+            on_complete=lambda r, g, m: None,
+            continuation=fake_continuation,
+            nonstream_fallback=fake_fallback,
+        )
+
+        assert continuation_calls == []
+        assert fallback_calls == [1]
+        assert events[-1].type == "done"
 
     asyncio.run(run())
