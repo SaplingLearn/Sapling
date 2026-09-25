@@ -192,9 +192,9 @@ describe("SideNav — active vs inactive", () => {
     // has no background at all. Asserting the TOKEN rather than a computed
     // colour keeps this honest if the scale is retuned.
     expect(quiz.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-    expect(quiz.getAttribute("style") || "").toMatch(/--ink-200/);
+    expect(quiz.getAttribute("style") || "").toMatch(/--bg-soft/);
     expect(tree.getAttribute("style") || "").toMatch(/font-weight:\s*400/);
-    expect(tree.getAttribute("style") || "").not.toMatch(/--ink-200/);
+    expect(tree.getAttribute("style") || "").not.toMatch(/--bg-soft/);
   });
 
   it("treats / and /dashboard/... as the Dashboard route", () => {

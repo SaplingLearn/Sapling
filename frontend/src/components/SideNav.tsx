@@ -63,19 +63,17 @@ const RULE_INSET = 8;
 
 /* Active/hover surfaces.
  *
- * A plain neutral highlight. The selected row is a flat `--ink-200` fill — two
- * steps off the rail's warm `--bg-subtle` ground — with the label in bold ink.
- * The earlier `--sap-100` green read as a washed-out tint against the cream
- * rail; keeping selection in the same warm-grey family as the shell lets green
- * stay reserved for actions and brand moments. No rail, no hue on the label:
- * the fill IS the treatment.
+ * A plain neutral highlight. The selected row is a flat `--bg-soft`
+ * (`--ink-100`) fill — one step off the rail's warm `--bg-subtle` ground —
+ * with the label in bold ink. The earlier `--sap-100` green read as a
+ * washed-out tint against the cream rail, and `--ink-200` read as too heavy;
+ * one step of the shell's own warm grey is enough once the label goes bold.
+ * No rail, no hue on the label: the fill IS the treatment.
  *
- * Hover is `--bg-soft` (`--ink-100`), one step off the ground, so it is
- * unmistakably the weaker, transient state and a step lighter than selection.
- *
- * Both are palette tokens rather than mixes, so they move with the scale. */
-const NAV_ACTIVE_BG = "var(--ink-200)";
-const NAV_HOVER_BG = "var(--bg-soft)";
+ * Hover is the same colour at half strength, so it is unmistakably the
+ * weaker, transient state and never reads as a second selection. */
+const NAV_ACTIVE_BG = "var(--bg-soft)";
+const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
