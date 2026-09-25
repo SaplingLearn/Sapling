@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { WIKI_TOC } from '@/lib/landing/companionContent';
 import { DISPLAY, INK } from '@/lib/landing/companionType';
+import { useWikiSearch } from './WikiSearch';
 
 /**
  * The wiki's contents rail, with a scrollspy.
@@ -52,8 +53,23 @@ const GROUP: React.CSSProperties = {
 };
 const LINK: React.CSSProperties = { fontSize: 14, lineHeight: 1.4, padding: '4px 0', transition: 'color 120ms ease' };
 
+/**
+ * The group label — "Learn", "Capture", "Semester".
+ *
+ * Sized to read as a heading rather than as a caption. At 10px these sat
+ * below the 13.5px links they head, so the rail read as one undifferentiated
+ * column and the grouping did no work. The tracking comes down as the size
+ * goes up: 0.14em is tuned for small caps, and left alone it turns a 12.5px
+ * label into a line wide enough to wrap inside a 190px rail.
+ */
+const GROUP: React.CSSProperties = {
+  fontFamily: MONO, fontSize: 12.5, letterSpacing: '0.1em', textTransform: 'uppercase',
+  color: '#4a4436', fontWeight: 600, marginBottom: 8,
+};
+
 export function WikiRail() {
   const [active, setActive] = React.useState('');
+  const { query, q, prose } = useWikiSearch();
 
   React.useEffect(() => {
     // TOC order is DOM order, which is what lets the loop below stop early.
@@ -95,6 +111,19 @@ export function WikiRail() {
     };
   }, []);
 
+  /* A group survives only if something in it matched, so the rail collapses
+     to the answer instead of leaving empty headings behind. Matching the
+     group name too means "capture" finds the whole Capture set, which is how
+     people search a contents list. */
+  const groups = WIKI_TOC.map((section) => ({
+    group: section.group,
+    items: section.items.filter((t) =>
+      !q
+      || t.title.toLowerCase().includes(q)
+      || section.group.toLowerCase().includes(q)
+      || (prose[t.href.slice(1)] ?? '').includes(q)),
+  })).filter((section) => section.items.length > 0);
+
   return (
     /* Eighteen entries plus their group labels outgrow a short viewport, and
        a sticky element taller than the screen puts its last items out of
@@ -112,7 +141,13 @@ export function WikiRail() {
         paddingTop: 14,
       }}
     >
-      {WIKI_TOC.map((section) => (
+      {groups.length === 0 && (
+        <span style={{ fontSize: 13, color: '#8d866f', lineHeight: 1.5 }}>
+          Nothing matches “{query.trim()}”.
+        </span>
+      )}
+
+      {groups.map((section) => (
         /* `aria-labelledby` rather than a real <h2>: the groups are headings
            of the rail, but the article column already owns h2 for its
            eighteen sections, and five more would double every entry in the
