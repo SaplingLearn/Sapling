@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ZoomableShot } from '@/components/companion/ZoomableShot';
 import { WikiRail } from './WikiRail';
+import { WikiSearchBox, WikiSearchProvider } from './WikiSearch';
 import {
   WIKI_ACHIEVEMENT_TERMS, WIKI_CALENDAR_SPECS, WIKI_CLASS_TERMS, WIKI_DATA_FACTS,
   WIKI_FLASHCARD_NOTES, WIKI_FLASHCARD_RATINGS, WIKI_GRADE_NOTES, WIKI_GRAPH_TERMS,
@@ -53,8 +54,24 @@ export const metadata: Metadata = {
  * text further and so run shorter, into the 60s. Their cells hold a sentence
  * or two, not running prose, and widening them would cost the row rhythm.
  *
- * Everything else on the page — keys, values, captions, headings — is scaled
- * by the same ~1.24 the body took, so the rows keep their rhythm.
+ * Everything else on the page is scaled by the same ~1.24 the body took, so
+ * the rows keep their rhythm. One size per role, and no role has two:
+ *
+ *   46px  h1, from the shared companion display scale
+ *   32px  h2, a section title
+ *   22px  PROSE   full-column prose: ledes, fact lists, the deck
+ *   18px  DEF     a row's definition cell, and any detail under a row value
+ *   17px  VALUE   what a row states, including a letter grade
+ *   16.5  the caption under a figure
+ *   13.5  every mono label: keys, ranges, values, step numbers, minimums
+ *   12.5  the uppercase mono eyebrow, matching the contents rail's groups
+ *
+ * The sizes that used to sit off this scale were all small drifts that read
+ * as sloppiness rather than as hierarchy: mono labels at 12, 13 and 13.5 in
+ * three adjacent row shapes, a letter grade a pixel under every other row
+ * value, and — the one that actually misled — a data fact's detail set at
+ * the 22px full-column size while sitting in a row beneath its own 17px
+ * lead-in, so the explanation was larger than the thing it explained.
  */
 const H2: React.CSSProperties = {
   margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 32,
@@ -229,6 +246,10 @@ function FactList({ items }: { items: readonly string[] }) {
 export default function WikiPage() {
   return (
     <CompanionShell current="/wiki">
+      {/* One provider over both slots: the box lives in the masthead, the
+          results in the rail below it, and the eighteen sections between
+          them stay server-rendered children that pass straight through. */}
+      <WikiSearchProvider>
       <div>
         {/*
           One stack: eyebrow, the word, the sentence under it.
@@ -243,7 +264,7 @@ export default function WikiPage() {
         */}
         <header style={{ paddingBottom: MASTHEAD_PAD, borderBottom: '1px solid rgba(42,39,31,0.12)' }}>
           <div style={{ animation: 'fadeUp 700ms ease both' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 12.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#6f6857' }}>
               Reference
             </span>
             {/* The shared companion display scale, not a local size: at a flat
@@ -255,6 +276,11 @@ export default function WikiPage() {
           <p style={{ ...PROSE, margin: '20px 0 0', animation: 'fadeUp 700ms ease 140ms both' }}>
             Exact definitions for the terms and numbers Sapling puts on screen.
           </p>
+          {/* Under the deck, not in the rail: here it reads as "search this
+              reference" against the page's own title, where in the rail it
+              read as a filter on the list it happened to sit above. It
+              still drives the rail — see WikiSearch.tsx. */}
+          <WikiSearchBox style={{ margin: '26px 0 0', animation: 'fadeUp 700ms ease 220ms both' }} />
         </header>
 
         <div style={{ marginTop: MASTHEAD_GAP, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
@@ -289,7 +315,7 @@ export default function WikiPage() {
             <Section
               id="deltas"
               title="How mastery moves"
-              lede="Mastery moves on demonstrated understanding, not time spent — which means several things you might expect to move it do not. Every change is appended to your graph with a reason attached."
+              lede="Mastery moves on demonstrated understanding, not time spent, which means several things you might expect to move it do not. Every change is appended to your graph with a reason attached."
             >
               {/* The formula reads as an equation, so it gets to look like one. */}
               <div style={{ padding: '16px 18px', borderRadius: 10, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', fontFamily: MONO, fontSize: 15, lineHeight: 1.6, color: '#1a1814', overflowX: 'auto' }}>
@@ -297,7 +323,7 @@ export default function WikiPage() {
               </div>
               <p style={{ ...LEDE, marginTop: 14 }}>
                 That is one quiz. Around seventeen correct answers in a row take a concept from
-                nothing to mastered — roughly three or four full quizzes.
+                nothing to mastered, roughly three or four full quizzes.
               </p>
               <div style={{ marginTop: 14 }}>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -331,7 +357,7 @@ export default function WikiPage() {
             <Section
               id="tutor"
               title="Tutor modes"
-              lede="Three ways to work the same concept. You pick one per conversation, and it changes the tutor's stance rather than its knowledge — all three read your graph and the documents you uploaded."
+              lede="Three ways to work the same concept. You pick one per conversation, and it changes the tutor's stance rather than its knowledge; all three read your graph and the documents you uploaded."
             >
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_MODES.map((m) => (
@@ -389,7 +415,7 @@ export default function WikiPage() {
                 {WIKI_FLASHCARD_RATINGS.map((r) => (
                   <div key={r.label} style={{ border: '1px solid rgba(42,39,31,0.10)', borderRadius: 12, padding: 18, background: '#faf8f3', display: 'flex', alignItems: 'center', gap: 9 }}>
                     <span style={{ ...VALUE, color: cssColor(r.tone) }}>{r.label}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 12, color: '#6f6857' }}>KEY {r.key}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 13.5, color: '#6f6857' }}>KEY {r.key}</span>
                   </div>
                 ))}
               </div>
@@ -422,8 +448,8 @@ export default function WikiPage() {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {WIKI_LETTERS.map((l) => (
                   <span key={l.letter} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '8px 14px', borderRadius: 8, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)' }}>
-                    <b style={{ fontSize: 16, fontWeight: 600, color: '#1a1814' }}>{l.letter}</b>
-                    <span style={{ fontFamily: MONO, fontSize: 13, color: '#6f6857' }}>{l.min}</span>
+                    <b style={{ ...VALUE }}>{l.letter}</b>
+                    <span style={{ fontFamily: MONO, fontSize: 13.5, color: '#6f6857' }}>{l.min}</span>
                   </span>
                 ))}
               </div>
@@ -473,7 +499,7 @@ export default function WikiPage() {
                     </svg>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                       <span style={{ ...VALUE, lineHeight: 1.5 }}>{d.fact}</span>
-                      <span style={PROSE}>{d.detail}</span>
+                      <span style={DEF}>{d.detail}</span>
                     </span>
                   </div>
                 ))}
@@ -482,6 +508,7 @@ export default function WikiPage() {
           </div>
         </div>
       </div>
+      </WikiSearchProvider>
     </CompanionShell>
   );
 }
