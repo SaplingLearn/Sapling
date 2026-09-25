@@ -51,10 +51,17 @@ sys.path.insert(0, str(BASE))
 from db.connection import page_all, table  # noqa: E402
 from services.encryption import decrypt, encrypt  # noqa: E402
 
-#: `merge-duplicates` updates only the columns present in the payload, and
-#: `course_id` rides along because it is NOT NULL (the INSERT branch never
-#: fires — every id already exists — but PostgREST validates the payload).
 WRITE_BATCH = 100
+
+#: Columns re-sent UNCHANGED alongside the new `chunk_text`. The write is an
+#: upsert (`INSERT ... ON CONFLICT (id) DO UPDATE`), and Postgres checks NOT
+#: NULL on the proposed INSERT row BEFORE the conflict turns it into an update
+#: — so every NOT NULL column without a default must be in the payload even
+#: though the INSERT branch never fires. Missing `chunk_hash`/`semester` 400'd
+#: the first batch on prod (2026-09-25). `merge-duplicates` only overwrites the
+#: columns present, and these carry the row's own values, so they are no-ops.
+#: Keep in sync with course_chunks' NOT NULL / no-default columns.
+CARRIED_COLUMNS = ("course_id", "chunk_hash", "semester")
 
 
 def _is_ciphertext(value: str) -> bool:
@@ -118,7 +125,9 @@ def _rows():
     offset while rewriting is stable.
     """
     return page_all(
-        table("course_chunks"), "id,course_id,chunk_text", order="id",
+        table("course_chunks"),
+        ",".join(("id", "chunk_text", *CARRIED_COLUMNS)),
+        order="id",
     )
 
 
@@ -145,7 +154,7 @@ def main() -> None:
         pending += 1
         todo.append({
             "id": row["id"],
-            "course_id": row["course_id"],
+            **{col: row[col] for col in CARRIED_COLUMNS},
             "chunk_text": encrypt(text),
         })
         if not args.dry_run and len(todo) >= WRITE_BATCH:

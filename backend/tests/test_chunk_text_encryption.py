@@ -257,6 +257,38 @@ if __name__ == "__main__":
     pytest.main([__file__])
 
 
+# ── the backfill's upsert must satisfy NOT NULL on the proposed INSERT row ───
+
+
+def test_backfill_payload_carries_every_not_null_column():
+    """Postgres checks NOT NULL on an upsert's proposed INSERT row before
+    ON CONFLICT turns it into an update. The first --apply against prod 400'd
+    because the payload lacked `chunk_hash` and `semester` (NOT NULL, no
+    default). Each written row must carry them — with the row's OWN values,
+    since merge-duplicates overwrites every column it is given."""
+    import scripts.backfill_encrypt_chunk_text as bf
+
+    row = {"id": "c1", "course_id": "CAS CS 330", "chunk_text": "plain passage",
+           "chunk_hash": "h-1", "semester": "Fall 2026"}
+    chunks = MagicMock()
+    with patch.object(bf, "_assert_key_matches_database"), \
+         patch.object(bf, "page_all", return_value=iter([row])) as paged, \
+         patch.object(bf, "table", return_value=chunks), \
+         patch("sys.argv", ["backfill", "--apply"]):
+        bf.main()
+
+    # It SELECTs every column it carries, or row[col] would KeyError.
+    selected = set(paged.call_args[0][1].split(","))
+    assert {"id", "chunk_text", "course_id", "chunk_hash", "semester"} <= selected
+
+    written = chunks.upsert.call_args[0][0][0]
+    assert written["id"] == "c1"
+    assert written["course_id"] == "CAS CS 330"
+    assert written["chunk_hash"] == "h-1"
+    assert written["semester"] == "Fall 2026"
+    assert decrypt(written["chunk_text"]) == "plain passage"
+
+
 # ── #484 review: the backfill's idempotence rests on the key matching ────────
 
 
