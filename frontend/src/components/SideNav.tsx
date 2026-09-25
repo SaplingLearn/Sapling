@@ -288,8 +288,8 @@ export function SideNav() {
       </div>
 
       {/* Collapse/expand sits just above the footer rule, pinned with it, and
-          is built like a nav row: "‹ Collapse" in the wide rail, the bare
-          chevron (pointing out) in the narrow one — the usual sidebar toggle.
+          is built like a nav row: panel icon + "Collapse" in the wide rail, the
+          bare icon in the narrow one — the usual sidebar toggle.
           Same insets, padding and row height as NavLink so it lines up with
           the destinations above it. */}
       <button
@@ -320,18 +320,7 @@ export function SideNav() {
           e.currentTarget.style.color = "var(--text-dim)";
         }}
       >
-        <span
-          style={{
-            display: "inline-flex",
-            width: ICON_SIZE,
-            flexShrink: 0,
-            justifyContent: "center",
-            transform: collapsed ? "none" : "rotate(180deg)",
-            transition: "transform var(--dur) var(--ease)",
-          }}
-        >
-          <Icon name="chev" size={13} />
-        </span>
+        <PanelToggleIcon collapsed={collapsed} />
         <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
       </button>
 
@@ -464,3 +453,36 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
   );
 }
 
+/* The sidebar-toggle glyph: a panel with its left column ruled off and a
+   chevron in the open area. Only the chevron moves — it points in (close)
+   when the rail is wide and flips to point out (open) when narrow, turning
+   about its own centre on the rail's duration so it animates with the
+   collapse. Stroke weight and caps match `Icon`. */
+function PanelToggleIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      width={ICON_SIZE}
+      height={ICON_SIZE}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      style={{ flexShrink: 0 }}
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2.5" />
+      <path d="M9 3v18" />
+      <path
+        d="M16 9l-3 3 3 3"
+        style={{
+          transformBox: "fill-box",
+          transformOrigin: "center",
+          transform: collapsed ? "rotate(180deg)" : "none",
+          transition: "transform var(--dur) var(--ease)",
+        }}
+      />
+    </svg>
+  );
+}
