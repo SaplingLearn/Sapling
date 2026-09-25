@@ -29,11 +29,34 @@ export function createFlipState(): FlipState {
   return { rect: null, el: null, ran: false };
 }
 
-/** Capture the source card. Pass `null` when opening without one. */
+/**
+ * Capture the source card. Pass `null` when opening without one.
+ *
+ * Re-arming RESTORES whatever the previous open hid. `flipOpen` takes the
+ * card out of the rail with `visibility: hidden` so the panel can stand in
+ * for it, and only `flipClose` puts it back — so overwriting `st.el` used to
+ * drop the one reference that could ever un-hide that card, stranding it
+ * invisible in the marquee for the rest of the session. Every re-arm is a
+ * point where that could happen, so the restore belongs here rather than at
+ * each call site.
+ */
 export function armFlip(st: FlipState, from: HTMLElement | null): void {
+  if (st.el && st.el !== from) st.el.style.visibility = '';
   st.rect = from ? from.getBoundingClientRect() : null;
   st.el = from;
   st.ran = false;
+}
+
+/**
+ * Re-measure the card already armed, without changing which card it is.
+ *
+ * The rail drifts continuously, so a rect captured when the visitor clicked
+ * is stale by the time they switch demos. Re-reading it keeps the expansion
+ * anchored to where that card actually is now. A hidden element still has a
+ * box, so `visibility: hidden` does not get in the way.
+ */
+export function remeasureFlip(st: FlipState): void {
+  if (st.el) st.rect = st.el.getBoundingClientRect();
 }
 
 /**
@@ -58,10 +81,18 @@ export function flipFrames(st: FlipState, panel: HTMLElement): Keyframe[] | null
   ];
 }
 
-/** Play the card → panel expansion. Hides the card while the panel stands in. */
+/**
+ * Play the card → panel expansion. Hides the card while the panel stands in.
+ *
+ * Any animation already on the panel is cancelled first. Replaying the
+ * expansion for a demo switch would otherwise stack a second animation on
+ * top of one still filling `both`, and the two compose into a transform
+ * neither keyframe asked for.
+ */
 export function flipOpen(st: FlipState, panel: HTMLElement): void {
   const f = flipFrames(st, panel);
   if (!f) return;
+  panel.getAnimations().forEach((a) => a.cancel());
   if (st.el) st.el.style.visibility = 'hidden';
   panel.animate(f, { duration: OPEN_MS, easing: OPEN_EASE, fill: 'both' });
 }
