@@ -20,7 +20,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import { render, screen, cleanup, act, within } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/dashboard"),
@@ -174,13 +174,15 @@ describe("SideNav — the account footer", () => {
     let rail = renderRail(false);
     const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
     expect(footerOf(rail).previousElementSibling).toBe(collapse);
-    // Wide rail: a labelled row. Narrow rail: the chevron alone.
-    expect(collapse.textContent).toBe("Collapse");
+    // Wide rail: a labelled row. Narrow rail: the chevron alone (the label
+    // stays mounted so it can fade, but is invisible and aria-hidden).
+    const collapseLabel = within(collapse).getByText("Collapse");
+    expect(collapseLabel.style.opacity).toBe("1");
     cleanup();
     rail = renderRail(true);
     const expand = screen.getByRole("button", { name: "Expand sidebar" });
     expect(footerOf(rail).previousElementSibling).toBe(expand);
-    expect(expand.textContent).toBe("");
+    expect(within(expand).getByText("Collapse").style.opacity).toBe("0");
   });
 
   it("pins the footer and scrolls only the destinations, scrollbar hidden", () => {
@@ -219,18 +221,33 @@ describe("SideNav — active vs inactive", () => {
 });
 
 describe("SideNav — collapsed state", () => {
+  it("keeps every row's inset and padding identical in both widths (no icon jump)", () => {
+    const geometry = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-app-sidenav] a[href^='/']"))
+        .filter((a) => a.getAttribute("aria-label") !== "Sapling — home")
+        .map((a) => [a.style.marginLeft, a.style.paddingLeft, a.style.justifyContent].join("|"));
+    renderRail(false);
+    const wide = geometry();
+    cleanup();
+    renderRail(true);
+    expect(geometry()).toEqual(wide);
+  });
+
   it("drops the section labels for separator rules and keeps the expand affordance", () => {
     const rail = renderRail(true);
 
-    // Labels are gone in the narrow rail...
-    expect(screen.queryByText("Learn")).toBeNull();
-    expect(screen.queryByText("Tools")).toBeNull();
-    // ...replaced by hairlines at the 3 group boundaries; the footer keeps
-    // its own border-top rule in the narrow state too.
-    const rules = Array.from(rail.querySelectorAll<HTMLElement>("[aria-hidden]")).filter(
-      (el) => el.style.height === "1px",
-    );
+    // Labels stay mounted so the collapse can fade them, but in the narrow
+    // rail they are invisible and hidden from assistive tech...
+    for (const label of ["Learn", "Tools"]) {
+      const el = screen.getByText(label);
+      expect(el.style.opacity).toBe("0");
+      expect(el.closest("[aria-hidden='true']")).toBeTruthy();
+    }
+    // ...and a hairline shows at each of the 3 group boundaries instead; the
+    // footer keeps its own border-top rule in the narrow state too.
+    const rules = Array.from(rail.querySelectorAll<HTMLElement>("[data-sidenav-group-rule]"));
     expect(rules).toHaveLength(3);
+    for (const r of rules) expect(r.style.opacity).toBe("1");
     expect(rail.querySelector<HTMLElement>("[data-sidenav-footer]")!.style.borderTop).toBe(
       "1px solid var(--border)",
     );

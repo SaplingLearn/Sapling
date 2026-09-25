@@ -61,6 +61,35 @@ const NAV_GAP = 1;
    family instead of three different indents. */
 const RULE_INSET = 8;
 
+/* One geometry for both widths — the key to a clean collapse animation.
+ *
+ * Nothing inside the rail changes position or size between the two states:
+ * the rail animates its width and nothing else, `overflow: hidden` clips
+ * whatever no longer fits, and text fades. Every icon therefore sits at the
+ * same x in both widths (the centre of the 64px narrow rail), so opening and
+ * closing reads as a panel sliding over fixed icons instead of every row
+ * re-centring, re-padding and popping its label in mid-flight.
+ *
+ * The numbers fall out of that constraint: 8px rail padding + 4px row inset
+ * leaves a 40px pill in the narrow rail, and the icon column is centred in
+ * it. */
+const RAIL_PAD_X = 8;
+const ROW_INSET = 4;
+const ICON_SIZE = 15;
+const ROW_PAD_X = (SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X - 2 * ROW_INSET - ICON_SIZE) / 2;
+const RAIL_INNER = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X;
+
+/* Text fades rather than mounting/unmounting. Out: immediately and quickly,
+   so nothing is visibly squeezed as the rail narrows. In: a beat late, so the
+   label arrives once there is room for it. */
+function fade(collapsed: boolean): React.CSSProperties {
+  return {
+    opacity: collapsed ? 0 : 1,
+    whiteSpace: "nowrap",
+    transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "0ms" : "90ms"}`,
+  };
+}
+
 /* Active/hover surfaces.
  *
  * A plain neutral highlight. The selected row is a flat `--bg-soft`
@@ -111,14 +140,14 @@ export function SideNav() {
         height: "100vh",
         borderRight: "1px solid var(--border)",
         background: "var(--bg-subtle)",
-        padding: collapsed ? "16px 6px" : "16px 10px",
+        padding: `16px ${RAIL_PAD_X}px`,
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
         // The rail itself never scrolls: only the destinations region below
         // does, so the account footer stays pinned at the bottom.
         overflow: "hidden",
-        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
+        transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease)",
       }}
     >
       {/* Logo */}
@@ -128,9 +157,10 @@ export function SideNav() {
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: collapsed ? "center" : "flex-start",
           gap: 2,
-          padding: collapsed ? "2px 0 14px" : "2px 8px 14px",
+          // Centres the 32px mark in the narrow rail; same offset when wide.
+          padding: `2px 0 14px ${(RAIL_INNER - 32) / 2}px`,
+          overflow: "hidden",
           borderBottom: "1px solid var(--border)",
           marginBottom: 8,
           textDecoration: "none",
@@ -146,14 +176,15 @@ export function SideNav() {
             width: 32,
             height: 32,
             marginTop: -4,
-            marginLeft: collapsed ? 0 : -2,
-            marginRight: collapsed ? 0 : -4,
+            marginRight: -4,
             alignSelf: "center",
             flexShrink: 0,
           }}
         />
-        {!collapsed && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-start" }}>
+        <div
+            aria-hidden={collapsed || undefined}
+            style={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-start", ...fade(collapsed) }}
+          >
             <span
               style={{
                 fontFamily: "'Spectral', Georgia, serif",
@@ -168,7 +199,6 @@ export function SideNav() {
               Sapling
             </span>
           </div>
-        )}
       </Link>
 
       {/* The destinations scroll on their own when the viewport is too short
@@ -192,25 +222,40 @@ export function SideNav() {
       >
       {SECTIONS.map((section, i) => (
         <React.Fragment key={section.label}>
-          {!collapsed && (
+          {/* The header slot keeps one height in both widths so the rows
+              below never jump vertically. Wide: the group label. Narrow: a
+              hairline in the same slot (none above the first group — the
+              logo rule already does that job). The two cross-fade.
+              Above: the first group needs its own value — it is the only one
+              introduced by the logo rule rather than by the group before it.
+              Below: every header stands clear of the items it labels. */}
+          <div
+            aria-hidden={collapsed || undefined}
+            style={{ position: "relative", flexShrink: 0, height: (i === 0 ? 20 : 22) + 14 + 10 }}
+          >
             <div
               className="label-micro"
-              /* Above: the first group needs its own value — it is the only
-                 one introduced by the logo rule rather than by the group
-                 before it, and inherits nothing from a preceding item.
-                 Below: every header stands clear of the items it labels, so
-                 the header reads as a heading and not as the first row. */
-              style={{ padding: i === 0 ? "20px 10px 10px" : "22px 10px 10px" }}
+              style={{ position: "absolute", left: ROW_INSET, bottom: 10, lineHeight: "14px", ...fade(collapsed) }}
             >
               {section.label}
             </div>
-          )}
-          {collapsed && i > 0 && (
-            <div
-              style={{ height: 1, background: "var(--border)", margin: `18px ${RULE_INSET}px 10px` }}
-              aria-hidden
-            />
-          )}
+            {i > 0 && (
+              <div
+                data-sidenav-group-rule=""
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  left: RULE_INSET,
+                  right: RULE_INSET,
+                  top: "50%",
+                  height: 1,
+                  background: "var(--border)",
+                  opacity: collapsed ? 1 : 0,
+                  transition: "opacity var(--dur-fast) var(--ease)",
+                }}
+              />
+            )}
+          </div>
           {section.items.map(item => (
             <NavLink
               key={item.href}
@@ -237,14 +282,14 @@ export function SideNav() {
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: collapsed ? "center" : "flex-start",
           gap: 10,
           flexShrink: 0,
           minHeight: NAV_ITEM_MIN_HEIGHT,
           marginTop: 6,
-          marginLeft: collapsed ? 0 : 10,
-          marginRight: collapsed ? 0 : 10,
-          padding: collapsed ? "6px 0" : "6px 12px",
+          marginLeft: ROW_INSET,
+          marginRight: ROW_INSET,
+          padding: `6px ${ROW_PAD_X}px`,
+          overflow: "hidden",
           borderRadius: "var(--r-xs)",
           color: "var(--text-dim)",
           fontSize: 13,
@@ -263,14 +308,16 @@ export function SideNav() {
         <span
           style={{
             display: "inline-flex",
-            width: 15,
+            width: ICON_SIZE,
+            flexShrink: 0,
             justifyContent: "center",
-            transform: collapsed ? undefined : "rotate(180deg)",
+            transform: collapsed ? "none" : "rotate(180deg)",
+            transition: "transform var(--dur) var(--ease)",
           }}
         >
           <Icon name="chev" size={13} />
         </span>
-        {!collapsed && <span style={{ flex: 1 }}>Collapse</span>}
+        <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
       </button>
 
       {/* The account footer — Settings, Admin and the profile block — sits
@@ -306,12 +353,11 @@ export function SideNav() {
           already opened this cluster, and a second hairline here would box the
           avatar in. */}
       {isAuthenticated && (
-        <div style={{ padding: collapsed ? "10px 0 4px" : "10px 6px 4px" }}>
+        <div style={{ padding: "10px 0 4px" }}>
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: collapsed ? 0 : 4,
               width: "100%",
             }}
           >
@@ -323,15 +369,15 @@ export function SideNav() {
                 gap: 10,
                 flex: 1,
                 minWidth: 0,
-                padding: "6px 6px",
+                // Centres the 30px avatar in the narrow rail; same offset wide.
+                padding: `6px ${(RAIL_INNER - 30) / 2}px`,
                 borderRadius: "var(--r-sm)",
                 textAlign: "left",
-                justifyContent: collapsed ? "center" : "flex-start",
+                overflow: "hidden",
               }}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
-              {!collapsed && (
-                <div style={{ minWidth: 0, flex: 1 }}>
+                <div aria-hidden={collapsed || undefined} style={{ minWidth: 0, flex: 1, ...fade(collapsed) }}>
                   <div
                     style={{
                       fontSize: 13,
@@ -346,7 +392,6 @@ export function SideNav() {
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Account</div>
                 </div>
-              )}
             </div>
           </div>
         </div>
@@ -365,20 +410,18 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
       style={{
         display: "flex",
         alignItems: "center",
-        justifyContent: collapsed ? "center" : "flex-start",
         gap: 10,
         // No explicit width: the rail is a flex column, so a row stretches to
         // the content box on its own and the margins below actually inset it.
         // `width: 100%` would have added to them and overflowed instead.
         minHeight: NAV_ITEM_MIN_HEIGHT,
-        // The pill is inset to the group header's own 10px, so its leading
-        // edge lines up with "LEARN" rather than running to the rail's walls,
-        // and it stops the same distance short on the right. The icon then
-        // sits 12px inside that — which is what puts the destinations a step
-        // in from the label they belong to.
-        marginLeft: collapsed ? 0 : 10,
-        marginRight: collapsed ? 0 : 10,
-        padding: collapsed ? "6px 0" : "6px 12px",
+        // Same inset and padding in both widths (see RAIL_PAD_X): the pill's
+        // leading edge lines up with the group label, and the icon sits in
+        // the column centred on the narrow rail, so it never moves.
+        marginLeft: ROW_INSET,
+        marginRight: ROW_INSET,
+        padding: `6px ${ROW_PAD_X}px`,
+        overflow: "hidden",
         borderRadius: "var(--r-xs)",
         background: active ? NAV_ACTIVE_BG : "transparent",
         color: active ? "var(--text)" : "var(--text-dim)",
@@ -398,8 +441,12 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         e.currentTarget.style.color = "var(--text-dim)";
       }}
     >
-      <Icon name={entry.icon} size={15} />
-      {!collapsed && <span style={{ flex: 1 }}>{entry.label}</span>}
+      <span style={{ display: "inline-flex", flexShrink: 0 }}>
+        <Icon name={entry.icon} size={ICON_SIZE} />
+      </span>
+      <span aria-hidden={collapsed || undefined} style={{ flex: 1, ...fade(collapsed) }}>
+        {entry.label}
+      </span>
     </Link>
   );
 }
