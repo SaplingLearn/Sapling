@@ -215,18 +215,25 @@ function HandNote() {
       </span>
       <svg
         aria-hidden="true"
-        width="118"
-        height="90"
-        viewBox="0 0 118 90"
+        width="80"
+        height="92"
+        viewBox="0 0 80 92"
         fill="none"
-        style={{ marginTop: -2, overflow: 'visible' }}
+        style={{ marginTop: 18, overflow: 'visible' }}
       >
-        {/* the sweep: centred under the sentence rather than hung off its
-            right end, so it drops out of the middle of the line and falls
-            away to the left, reaching down far enough that the head lands
-            over the rail rather than in the gap above it */}
+        {/* The sweep sits in the middle third of the line, and is centred on
+            its own INK rather than on its box.
+            Two separate things had to be fixed to get here. Centring the
+            <svg> is not centring the stroke: the curve used to start at x=104
+            of a 118-wide viewBox, so a perfectly centred box still hung it
+            under the last word. And even once the ink was centred, a sweep
+            spanning nearly the whole sentence still READ as coming from the
+            right, because its mass is diagonal — the eye takes the high end
+            as the origin. Narrowing it to the middle band fixes that: the ink
+            runs x=16..64, whose midpoint is the viewBox centre, so the line
+            drops out of the middle of the sentence and falls away short. */}
         <path
-          d="M104 5 C97 28, 86 40, 68 52 C55 61, 42 68, 27 76"
+          d="M64 8 C60 34, 50 50, 36 62 C29 68, 23 72, 16 78"
           stroke="#0C5638"
           strokeWidth="2.1"
           strokeLinecap="round"
@@ -234,8 +241,8 @@ function HandNote() {
         />
         {/* two barbs straddling the incoming direction, drawn slightly uneven
             so the head looks written rather than constructed */}
-        <path d="M27 76 L47 71" stroke="#0C5638" strokeWidth="2.1" strokeLinecap="round" opacity="0.85" />
-        <path d="M27 76 L38 59" stroke="#0C5638" strokeWidth="2.1" strokeLinecap="round" opacity="0.85" />
+        <path d="M16 78 L34 73" stroke="#0C5638" strokeWidth="2.1" strokeLinecap="round" opacity="0.85" />
+        <path d="M16 78 L24 61" stroke="#0C5638" strokeWidth="2.1" strokeLinecap="round" opacity="0.85" />
       </svg>
     </div>
   );
