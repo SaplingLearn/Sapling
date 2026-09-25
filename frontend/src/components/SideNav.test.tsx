@@ -172,14 +172,15 @@ describe("SideNav — the account footer", () => {
 
   it("puts the collapse toggle directly above the footer rule in both widths", () => {
     let rail = renderRail(false);
-    expect(footerOf(rail).previousElementSibling).toBe(
-      screen.getByRole("button", { name: "Collapse sidebar" }),
-    );
+    const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
+    expect(footerOf(rail).previousElementSibling).toBe(collapse);
+    // Wide rail: a labelled row. Narrow rail: the chevron alone.
+    expect(collapse.textContent).toBe("Collapse");
     cleanup();
     rail = renderRail(true);
-    expect(footerOf(rail).previousElementSibling).toBe(
-      screen.getByRole("button", { name: "Expand sidebar" }),
-    );
+    const expand = screen.getByRole("button", { name: "Expand sidebar" });
+    expect(footerOf(rail).previousElementSibling).toBe(expand);
+    expect(expand.textContent).toBe("");
   });
 
   it("pins the footer and scrolls only the destinations, scrollbar hidden", () => {

@@ -224,27 +224,31 @@ export function SideNav() {
 
       </div>
 
-      {/* Collapse/expand sits just above the footer rule, pinned with it, so
-          the control is in the same place in both widths and belongs to the
-          rail rather than to the profile block. Right-aligned to the pill
-          edge when expanded; centred in the narrow rail. 44px tall (#110). */}
+      {/* Collapse/expand sits just above the footer rule, pinned with it, and
+          is built like a nav row: "‹ Collapse" in the wide rail, the bare
+          chevron (pointing out) in the narrow one — the usual sidebar toggle.
+          Same insets, padding and row height as NavLink so it lines up with
+          the destinations above it. */}
       <button
         type="button"
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : undefined}
         onClick={() => setCollapsed(!collapsed)}
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "center",
-          alignSelf: collapsed ? "stretch" : "flex-end",
-          width: collapsed ? "auto" : 44,
-          height: 44,
+          justifyContent: collapsed ? "center" : "flex-start",
+          gap: 10,
           flexShrink: 0,
+          minHeight: NAV_ITEM_MIN_HEIGHT,
           marginTop: 6,
+          marginLeft: collapsed ? 0 : 10,
           marginRight: collapsed ? 0 : 10,
-          borderRadius: "var(--r-sm)",
-          color: "var(--text-muted)",
+          padding: collapsed ? "6px 0" : "6px 12px",
+          borderRadius: "var(--r-xs)",
+          color: "var(--text-dim)",
+          fontSize: 13,
+          textAlign: "left",
           transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
         }}
         onMouseEnter={(e) => {
@@ -253,12 +257,20 @@ export function SideNav() {
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = "transparent";
-          e.currentTarget.style.color = "var(--text-muted)";
+          e.currentTarget.style.color = "var(--text-dim)";
         }}
       >
-        <span style={{ display: "inline-flex", transform: collapsed ? "rotate(180deg)" : undefined }}>
-          <Icon name="chev" size={12} />
+        <span
+          style={{
+            display: "inline-flex",
+            width: 15,
+            justifyContent: "center",
+            transform: collapsed ? undefined : "rotate(180deg)",
+          }}
+        >
+          <Icon name="chev" size={13} />
         </span>
+        {!collapsed && <span style={{ flex: 1 }}>Collapse</span>}
       </button>
 
       {/* The account footer — Settings, Admin and the profile block — sits
