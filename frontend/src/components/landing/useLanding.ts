@@ -17,7 +17,7 @@ import { humanizeError } from '@/lib/errorMessage';
 import { SCRAMBLE } from '@/lib/landing/content';
 import { LandingEngine } from '@/lib/landing/engine';
 import type { BuiltGraph } from '@/lib/landing/engine/graph';
-import { armFlip, flipClose, flipOpen } from '@/lib/landing/engine/flip';
+import { armFlip, flipClose, flipOpen, remeasureFlip } from '@/lib/landing/engine/flip';
 import {
   EXPLORE_FILL_MS, beginExitExplore, beginExplore, pickNode, settleExitExplore,
 } from '@/lib/landing/engine/graphView';
@@ -545,11 +545,30 @@ export function useLanding(props: LandingProps) {
     const engine = engineRef.current;
     if (!engine) return;
     document.body.style.overflow = 'hidden';
-    armFlip(engine.flip, from);
-    flipRan.current = false;
+
+    // Switching demos from inside the lab arrives with no card: the rail
+    // passes null, as do the graph act's "Quiz me" / "Ask the tutor". Re-arming
+    // with null there would throw away the card the visitor actually clicked —
+    // which both strands it at `visibility: hidden` for the rest of the
+    // session and loses the rect the expansion flies from. Keep it instead,
+    // re-measured, since the rail has drifted since the click.
+    const switching = s.current.galIdx >= 0 && !from;
+    if (switching) remeasureFlip(engine.flip);
+    else armFlip(engine.flip, from);
+
     setGalIdx(i);
     setModalAnim(true);
-     
+
+    if (switching) {
+      // The panel div carries no key, so changing the index re-renders the
+      // same DOM node and `registerPanel` is never called again. Nothing
+      // would replay the expansion, and a switch would simply cut to the new
+      // demo — so play it here, from the card that was clicked.
+      const panel = refs.panel.current;
+      if (panel) flipOpen(engine.flip, panel);
+    } else {
+      flipRan.current = false;
+    }
   }, []);
 
   const closeGal = useCallback(() => {
