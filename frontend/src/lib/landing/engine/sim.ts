@@ -46,20 +46,38 @@ const SCROLL_QUIET_MS = 140;
  * it, "drag down" ends at the bottom of the screen.
  */
 const EDGE_BAND_PX = 110;
+/**
+ * How far outside the viewport a group still simulates, in px.
+ *
+ * Generous because the autoscroll above exists precisely so a node can be
+ * carried far from where it started: the test that uses this has to cover
+ * both a cluster sitting in its own section and a node parked most of a
+ * document away from it.
+ */
+const VIS_BAND_PX = 900;
 /** Peak autoscroll speed in px/frame, reached at the very edge of the band. */
 const EDGE_SPEED_PX = 22;
 
 /**
  * How much of the idle breathing drift a placed node keeps.
  *
- * A free node traces a ~20px excursion over its 15s period. A node the
- * visitor put somewhere should still be breathing — dropping one used to kill
- * it stone dead, which reads as a bug rather than as precision — but at the
- * full amplitude it looks like it is wandering off rather than sitting where
- * it was left. A third is the compromise: a few px of life, well inside the
- * radius anyone would call "where I put it".
+ * All of it. A free node traces a ~20px excursion over its 15s period, and a
+ * node the visitor moved should go on breathing exactly as it did before they
+ * touched it — carrying a node across the field is not an instruction to
+ * settle it down.
+ *
+ * This was a third, on the reading that full amplitude "looks like wandering
+ * off rather than sitting where it was left". Measured in the browser, a
+ * third plus the stiffer `PLACED_ANCHOR` left a dropped node covering 2.0px
+ * of a 9.8px excursion over six seconds — a quarter of its former motion,
+ * which on a large display is not a quieter sway, it is a stopped one.
+ *
+ * What keeps it from wandering is `PLACED_ANCHOR`, not this: the sway is an
+ * excursion around the drop point and the anchor is what bounds it. The
+ * earlier departure this was blamed for — 3.6px growing to 17px and still
+ * climbing — was measured against the *free* spring, eight times weaker.
  */
-const PLACED_SWAY = 0.33;
+const PLACED_SWAY = 1;
 
 /**
  * Anchor-spring gain for a placed node, holding it to the spot it was left.
@@ -67,7 +85,9 @@ const PLACED_SWAY = 0.33;
  * Fixed rather than scaled by alpha, and ~8x the free spring's settled gain.
  * The two numbers work together: `PLACED_SWAY` decides how hard the node is
  * pushed, this decides how far that push gets it, and their ratio is the
- * excursion. Around 7px at these values.
+ * excursion — now ~21px, matching what the node had while it was free. The
+ * anchor is deliberately left stiff: it is what makes that an excursion
+ * around the drop point rather than a walk away from it.
  */
 const PLACED_ANCHOR = 0.003;
 
@@ -164,6 +184,10 @@ interface ClusterBox {
 interface SimGroup {
   field: HTMLElement;
   clusters: HTMLElement[];
+  /** Each cluster's svg, index-aligned with `clusters`. The visibility test
+   *  maps node positions through these, and doing it per frame off a
+   *  `querySelector` would be a DOM lookup on the frame path. */
+  svgs: SVGSVGElement[];
   nodes: SimNode[];
   links: SimLink[];
   /** Scratch for `holdArms()`: node positions before the solve. Preallocated
@@ -320,9 +344,11 @@ export function createSim(): SimController {
 
       const nodes: SimNode[] = [];
       const links: SimLink[] = [];
+      const svgs: SVGSVGElement[] = [];
       clusters.forEach((cl, ci) => {
         const svg = cl.querySelector('svg');
         if (!svg) return;
+        svgs[ci] = svg;
         const rings = Array.from(svg.querySelectorAll<SVGCircleElement>('[data-sim]'));
         const lines = Array.from(svg.querySelectorAll('line'));
         const base = nodes.length;
@@ -377,7 +403,7 @@ export function createSim(): SimController {
 
       nodes.forEach((n) => { n.hx = n.x; n.hy = n.y; });
       built.push({
-        field, clusters, nodes, links, alpha: 1, target: 0, drag: null,
+        field, clusters, svgs, nodes, links, alpha: 1, target: 0, drag: null,
         armX: new Array<number>(nodes.length).fill(0),
         armY: new Array<number>(nodes.length).fill(0),
       });
@@ -869,9 +895,25 @@ const PLACED_YIELD = 0.12;
     const scrolling = t - lastScrollAt < SCROLL_QUIET_MS;
     for (const f of groups) {
       let anyVisible = false;
-      for (const cl of f.clusters) {
-        const b = cl.getBoundingClientRect();
-        if (b.bottom > -900 && b.top < vh + 900) { anyVisible = true; break; }
+      for (let ci = 0; ci < f.clusters.length && !anyVisible; ci++) {
+        const b = f.clusters[ci].getBoundingClientRect();
+        if (b.bottom > -VIS_BAND_PX && b.top < vh + VIS_BAND_PX) { anyVisible = true; break; }
+        // The cluster's box is welded to its field anchor and never follows a
+        // node that was dragged out of it, so the box alone is the wrong
+        // question — a node carried far from its cluster froze on screen
+        // while its box sat out of band. Ask where the nodes actually are.
+        const svg = f.svgs[ci];
+        if (!svg) continue;
+        const r = svg.getBoundingClientRect();
+        if (!r.height) continue;
+        const vb = svg.viewBox.baseVal;
+        const sy = vb && vb.height ? r.height / vb.height : 1;
+        const vby = vb ? vb.y : 0;
+        for (const n of f.nodes) {
+          if (n.cluster !== ci) continue;
+          const top = r.top + (n.y - vby - n.r) * sy;
+          if (top + n.r * 2 * sy > -VIS_BAND_PX && top < vh + VIS_BAND_PX) { anyVisible = true; break; }
+        }
       }
       // re-resolve the held node against the cursor's screen position after
       // the anchors move, so dragging survives a scroll underneath it

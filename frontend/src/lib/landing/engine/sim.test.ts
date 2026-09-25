@@ -50,12 +50,17 @@ const SECTION_H = 3000;
 
 /**
  * The envelope a dropped node stays inside: its breathing, plus the small
- * share of an arm correction it yields (`PLACED_YIELD`). Measured at 3.7-14px
- * across these fixtures. The bound is what separates "alive where I left it"
- * from "wandered off"; it is deliberately not zero, because a node that
- * refused to yield at all would hold an arm stretched instead.
+ * share of an arm correction it yields (`PLACED_YIELD`). The bound is what
+ * separates "alive where I left it" from "wandered off"; it is deliberately
+ * not zero, because a node that refused to yield at all would hold an arm
+ * stretched instead.
+ *
+ * Was 18, when a placed node kept only a third of its breathing. It now keeps
+ * all of it (`PLACED_SWAY`), so the excursion is the ~21.9px these fixtures
+ * measure — the same motion the node had while it was free, which is the
+ * point. The headroom above that is the arm-yield share.
  */
-const SWAY_PX = 18;
+const SWAY_PX = 28;
 
 /**
  * Transient headroom on the arm ceiling while a placed node is being towed.
@@ -459,8 +464,8 @@ describe('placement', () => {
     // period to have reeled it back in if any of them were going to.
     frames(1200);
 
-    // Not identical: a placed node keeps a third of the breathing drift, so
-    // it breathes around the drop point rather than freezing on it. SWAY_PX
+    // Not identical: a placed node keeps its full breathing drift, so it goes
+    // on breathing around the drop point rather than freezing on it. SWAY_PX
     // is the envelope that buys — anything beyond it is a walk, not a sway.
     expect(Math.hypot(ringLocal(1).x - dropped.x, ringLocal(1).y - dropped.y))
       .toBeLessThan(SWAY_PX);
@@ -593,16 +598,18 @@ describe('placement', () => {
       .toBeLessThan(SWAY_PX);
   });
 
-  it('keeps breathing once dropped, but only just', () => {
+  it('keeps breathing once dropped, as freely as before', () => {
     const start = ringLocal(1);
     const to = screenOf({ x: start.x + 6, y: start.y + 6 });
     dropAt(1, to.x, to.y);
     const dropped = ringLocal(1);
 
-    // A free node wanders ~20px over its 15s period. A placed one keeps a
-    // third of that: enough that it is visibly alive, little enough that it
-    // is still sitting where it was left. Dead still is the bug this pins —
-    // a dropped node used to stop moving entirely.
+    // A free node wanders ~20px over its 15s period, and a placed one keeps
+    // the same: being moved is not a reason to go quiet. The anchor spring,
+    // not a reduced amplitude, is what keeps it sitting where it was left.
+    // Dead still is the bug this pins — measured in the browser, the old
+    // third-amplitude version retained 0.20x of its idle motion after a drag,
+    // which on a large display reads as stopped.
     frames(900);
     const moved = Math.hypot(ringLocal(1).x - dropped.x, ringLocal(1).y - dropped.y);
     expect(moved).toBeGreaterThan(0);
