@@ -40,6 +40,7 @@ check the project ref first — this rewrites every row in the table.
 """
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -52,22 +53,11 @@ sys.path.insert(0, str(BASE))
 from db.connection import page_all, table  # noqa: E402
 from services.encryption import decrypt, encrypt  # noqa: E402
 
-#: Rows per upsert. Every rewritten row is a new tuple version that goes
-#: back into BOTH of prod's HNSW indexes on `embedding`, and PostgREST runs
-#: under the `authenticator` role's 8s statement_timeout — 100 rows per
-#: statement 500'd on prod (2026-09-25). Small batches keep each statement
-#: far inside it; `--batch-size` tunes it.
+#: Rows encrypted per round. Each row is its own PATCH (see `_write`), issued
+#: concurrently across WRITE_WORKERS threads; the batch only bounds how much
+#: ciphertext is held in memory and how often progress prints.
 WRITE_BATCH = 25
-
-#: Columns re-sent UNCHANGED alongside the new `chunk_text`. The write is an
-#: upsert (`INSERT ... ON CONFLICT (id) DO UPDATE`), and Postgres checks NOT
-#: NULL on the proposed INSERT row BEFORE the conflict turns it into an update
-#: — so every NOT NULL column without a default must be in the payload even
-#: though the INSERT branch never fires. Missing `chunk_hash`/`semester` 400'd
-#: the first batch on prod (2026-09-25). `merge-duplicates` only overwrites the
-#: columns present, and these carry the row's own values, so they are no-ops.
-#: Keep in sync with course_chunks' NOT NULL / no-default columns.
-CARRIED_COLUMNS = ("course_id", "chunk_hash", "semester")
+WRITE_WORKERS = 8
 
 
 def _is_ciphertext(value: str) -> bool:
@@ -131,30 +121,46 @@ def _rows():
     offset while rewriting is stable.
     """
     return page_all(
-        table("course_chunks"),
-        ",".join(("id", "chunk_text", *CARRIED_COLUMNS)),
-        order="id",
+        table("course_chunks"), "id,chunk_text", order="id",
+    )
+
+
+def _patch_one(row: dict) -> None:
+    table("course_chunks").update(
+        {"chunk_text": row["chunk_text"]},
+        {"id": f"eq.{row['id']}"},
+        prefer_return_minimal=True,
     )
 
 
 def _write(batch: list[dict]) -> None:
-    """Upsert one batch, surfacing PostgREST's own error on failure.
+    """Write one batch of new `chunk_text` values — UPDATE-ONLY, one row each.
 
-    `raise_for_status` alone reports only "500 Internal Server Error"; the
-    response body carries the Postgres code and message (57014 = statement
-    timeout, 23502 = NOT NULL, ...) that say what actually went wrong. A
-    PostgREST upsert is one statement, so a failed batch wrote nothing and a
-    re-run resumes cleanly (already-encrypted rows are skipped).
+    Deliberately not an upsert. An upsert is `INSERT ... ON CONFLICT DO
+    UPDATE`: once its payload satisfies every NOT NULL column, a row deleted
+    between this script reading it and writing it (a withdrawal by the
+    shareability backfill, a re-index, the sweeper) would be INSERTED back —
+    with `visibility` defaulting to 'shared', no doc, no embedding and no
+    contributor rows, i.e. withdrawn student text in the class pool that no
+    one can withdraw again (#630). A PATCH filtered on the id matches nothing
+    for a deleted row, so it can only ever rewrite what still exists. One row
+    per statement also keeps each far inside PostgREST's 8s statement_timeout
+    (100-row upserts timed out on prod, where every rewritten row re-enters
+    two HNSW indexes).
+
+    On failure, exits with PostgREST's own error body — `raise_for_status`
+    alone reports only the status line. Every row is independent and already-
+    encrypted rows are skipped on a re-run, so a re-run resumes cleanly.
     """
     try:
-        table("course_chunks").upsert(batch, on_conflict="id")
+        with ThreadPoolExecutor(max_workers=WRITE_WORKERS) as pool:
+            list(pool.map(_patch_one, batch))
     except httpx.HTTPStatusError as exc:
         sys.exit(
-            f"upsert failed ({exc.response.status_code}) on a batch of "
+            f"update failed ({exc.response.status_code}) in a batch of "
             f"{len(batch)} starting at id={batch[0]['id']!r}: "
             f"{exc.response.text[:500]}\n"
-            "That batch wrote nothing; earlier batches are committed. Re-run "
-            "to resume (try a smaller --batch-size if this was a timeout)."
+            "Rows before it are committed; re-run to resume."
         )
 
 
@@ -166,7 +172,7 @@ def main() -> None:
     parser.add_argument("--apply", dest="dry_run", action="store_false")
     parser.add_argument(
         "--batch-size", type=int, default=WRITE_BATCH,
-        help=f"rows per upsert (default {WRITE_BATCH})",
+        help=f"rows per round of concurrent updates (default {WRITE_BATCH})",
     )
     args = parser.parse_args()
     batch_size = max(1, args.batch_size)
@@ -184,11 +190,7 @@ def main() -> None:
             already += 1
             continue
         pending += 1
-        todo.append({
-            "id": row["id"],
-            **{col: row[col] for col in CARRIED_COLUMNS},
-            "chunk_text": encrypt(text),
-        })
+        todo.append({"id": row["id"], "chunk_text": encrypt(text)})
         if not args.dry_run and len(todo) >= batch_size:
             _write(todo[:batch_size])
             written += len(todo[:batch_size])

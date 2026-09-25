@@ -257,37 +257,46 @@ if __name__ == "__main__":
     pytest.main([__file__])
 
 
-# ── the backfill's upsert must satisfy NOT NULL on the proposed INSERT row ───
+# ── the backfill writes UPDATE-ONLY: it can never re-create a deleted chunk ──
 
 
-def test_backfill_payload_carries_every_not_null_column():
-    """Postgres checks NOT NULL on an upsert's proposed INSERT row before
-    ON CONFLICT turns it into an update. The first --apply against prod 400'd
-    because the payload lacked `chunk_hash` and `semester` (NOT NULL, no
-    default). Each written row must carry them — with the row's OWN values,
-    since merge-duplicates overwrites every column it is given."""
-    import scripts.backfill_encrypt_chunk_text as bf
-
-    row = {"id": "c1", "course_id": "CAS CS 330", "chunk_text": "plain passage",
-           "chunk_hash": "h-1", "semester": "Fall 2026"}
+def _run_backfill(bf, rows, *argv):
     chunks = MagicMock()
     with patch.object(bf, "_assert_key_matches_database"), \
-         patch.object(bf, "page_all", return_value=iter([row])) as paged, \
+         patch.object(bf, "page_all", return_value=iter(rows)) as paged, \
          patch.object(bf, "table", return_value=chunks), \
-         patch("sys.argv", ["backfill", "--apply"]):
+         patch("sys.argv", ["backfill", "--apply", *argv]):
         bf.main()
+    return chunks, paged
 
-    # It SELECTs every column it carries, or row[col] would KeyError.
-    selected = set(paged.call_args[0][1].split(","))
-    assert {"id", "chunk_text", "course_id", "chunk_hash", "semester"} <= selected
 
-    written = chunks.upsert.call_args[0][0][0]
-    assert written["id"] == "c1"
-    assert written["course_id"] == "CAS CS 330"
-    assert written["chunk_hash"] == "h-1"
-    assert written["semester"] == "Fall 2026"
-    assert decrypt(written["chunk_text"]) == "plain passage"
+def test_backfill_patches_each_row_by_id_and_never_upserts():
+    """An upsert whose payload satisfies NOT NULL would INSERT a row deleted
+    between read and write (a shareability withdrawal, a re-index) back into
+    the class pool as visibility='shared' with no contributors (#630). A PATCH
+    filtered on the id matches nothing for a deleted row."""
+    import scripts.backfill_encrypt_chunk_text as bf
 
+    rows = [{"id": "c1", "chunk_text": "plain passage"}]
+    chunks, paged = _run_backfill(bf, rows)
+
+    chunks.upsert.assert_not_called()
+    (data, filters), kwargs = chunks.update.call_args
+    assert filters == {"id": "eq.c1"}
+    assert set(data) == {"chunk_text"}          # nothing else is (re)written
+    assert decrypt(data["chunk_text"]) == "plain passage"
+    assert kwargs == {"prefer_return_minimal": True}
+    assert paged.call_args[0][1] == "id,chunk_text"
+
+
+def test_backfill_writes_every_row_and_skips_ciphertext():
+    import scripts.backfill_encrypt_chunk_text as bf
+
+    rows = [{"id": f"c{i}", "chunk_text": f"t{i}"} for i in range(7)]
+    rows.append({"id": "done", "chunk_text": encrypt("already")})
+    chunks, _ = _run_backfill(bf, rows, "--batch-size", "3")
+    patched = sorted(c[0][1]["id"] for c in chunks.update.call_args_list)
+    assert patched == sorted(f"eq.c{i}" for i in range(7))
 
 
 def test_backfill_failure_surfaces_postgrest_error_body():
@@ -296,32 +305,19 @@ def test_backfill_failure_surfaces_postgrest_error_body():
     import httpx
     import scripts.backfill_encrypt_chunk_text as bf
 
-    req = httpx.Request("POST", "https://x.supabase.co/rest/v1/course_chunks")
+    req = httpx.Request("PATCH", "https://x.supabase.co/rest/v1/course_chunks")
     resp = httpx.Response(
         500, request=req,
         text='{"code":"57014","message":"canceling statement due to statement timeout"}',
     )
     chunks = MagicMock()
-    chunks.upsert.side_effect = httpx.HTTPStatusError("500", request=req, response=resp)
+    chunks.update.side_effect = httpx.HTTPStatusError("500", request=req, response=resp)
     with patch.object(bf, "table", return_value=chunks):
         with pytest.raises(SystemExit) as exc:
             bf._write([{"id": "c1", "chunk_text": "x"}])
     msg = str(exc.value)
     assert "57014" in msg and "statement timeout" in msg and "'c1'" in msg
 
-
-def test_backfill_honours_batch_size():
-    import scripts.backfill_encrypt_chunk_text as bf
-
-    rows = [{"id": f"c{i}", "course_id": "C", "chunk_text": f"t{i}",
-             "chunk_hash": f"h{i}", "semester": "S"} for i in range(7)]
-    chunks = MagicMock()
-    with patch.object(bf, "_assert_key_matches_database"), \
-         patch.object(bf, "page_all", return_value=iter(rows)), \
-         patch.object(bf, "table", return_value=chunks), \
-         patch("sys.argv", ["backfill", "--apply", "--batch-size", "3"]):
-        bf.main()
-    assert [len(c[0][0]) for c in chunks.upsert.call_args_list] == [3, 3, 1]
 
 # ── #484 review: the backfill's idempotence rests on the key matching ────────
 
