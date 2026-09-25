@@ -170,6 +170,18 @@ describe("SideNav — the account footer", () => {
     expect(admin.parentElement).toBe(footerOf(rail));
   });
 
+  it("puts the collapse toggle directly above the footer rule in both widths", () => {
+    let rail = renderRail(false);
+    expect(footerOf(rail).previousElementSibling).toBe(
+      screen.getByRole("button", { name: "Collapse sidebar" }),
+    );
+    cleanup();
+    rail = renderRail(true);
+    expect(footerOf(rail).previousElementSibling).toBe(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    );
+  });
+
   it("pins the footer and scrolls only the destinations, scrollbar hidden", () => {
     const rail = renderRail();
     expect(rail.style.overflow).toBe("hidden");

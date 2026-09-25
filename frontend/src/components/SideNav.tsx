@@ -224,6 +224,43 @@ export function SideNav() {
 
       </div>
 
+      {/* Collapse/expand sits just above the footer rule, pinned with it, so
+          the control is in the same place in both widths and belongs to the
+          rail rather than to the profile block. Right-aligned to the pill
+          edge when expanded; centred in the narrow rail. 44px tall (#110). */}
+      <button
+        type="button"
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        onClick={() => setCollapsed(!collapsed)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          alignSelf: collapsed ? "stretch" : "flex-end",
+          width: collapsed ? "auto" : 44,
+          height: 44,
+          flexShrink: 0,
+          marginTop: 6,
+          marginRight: collapsed ? 0 : 10,
+          borderRadius: "var(--r-sm)",
+          color: "var(--text-muted)",
+          transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = NAV_HOVER_BG;
+          e.currentTarget.style.color = "var(--text)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = "var(--text-muted)";
+        }}
+      >
+        <span style={{ display: "inline-flex", transform: collapsed ? "rotate(180deg)" : undefined }}>
+          <Icon name="chev" size={12} />
+        </span>
+      </button>
+
       {/* The account footer — Settings, Admin and the profile block — sits
           under one full-width rule, the same line as the logo's, so the pair
           frames the rail top and bottom and the account cluster reads as split
@@ -235,7 +272,7 @@ export function SideNav() {
           flexDirection: "column",
           gap: NAV_GAP,
           flexShrink: 0,
-          marginTop: 10,
+          marginTop: 4,
           paddingTop: 10,
           borderTop: "1px solid var(--border)",
         }}
@@ -299,67 +336,7 @@ export function SideNav() {
                 </div>
               )}
             </div>
-            {!collapsed && (
-              <button
-                type="button"
-                aria-label="Collapse sidebar"
-                title="Collapse sidebar"
-                onClick={() => setCollapsed(true)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  flexShrink: 0,
-                  borderRadius: "var(--r-sm)",
-                  color: "var(--text-muted)",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-soft)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-              >
-                <Icon name="chev" size={12} />
-              </button>
-            )}
           </div>
-          {collapsed && (
-            <button
-              type="button"
-              aria-label="Expand sidebar"
-              title="Expand sidebar"
-              onClick={() => setCollapsed(false)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "100%",
-                height: 44,
-                marginTop: 6,
-                borderRadius: "var(--r-sm)",
-                color: "var(--text-muted)",
-                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-soft)";
-                e.currentTarget.style.color = "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "var(--text-muted)";
-              }}
-            >
-              <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
-                <Icon name="chev" size={12} />
-              </span>
-            </button>
-          )}
         </div>
       )}
       </div>
