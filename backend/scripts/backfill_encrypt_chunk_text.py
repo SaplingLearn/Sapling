@@ -42,6 +42,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 
 BASE = Path(__file__).parent.parent
@@ -51,7 +52,12 @@ sys.path.insert(0, str(BASE))
 from db.connection import page_all, table  # noqa: E402
 from services.encryption import decrypt, encrypt  # noqa: E402
 
-WRITE_BATCH = 100
+#: Rows per upsert. Every rewritten row is a new tuple version that goes
+#: back into BOTH of prod's HNSW indexes on `embedding`, and PostgREST runs
+#: under the `authenticator` role's 8s statement_timeout — 100 rows per
+#: statement 500'd on prod (2026-09-25). Small batches keep each statement
+#: far inside it; `--batch-size` tunes it.
+WRITE_BATCH = 25
 
 #: Columns re-sent UNCHANGED alongside the new `chunk_text`. The write is an
 #: upsert (`INSERT ... ON CONFLICT (id) DO UPDATE`), and Postgres checks NOT
@@ -131,13 +137,39 @@ def _rows():
     )
 
 
+def _write(batch: list[dict]) -> None:
+    """Upsert one batch, surfacing PostgREST's own error on failure.
+
+    `raise_for_status` alone reports only "500 Internal Server Error"; the
+    response body carries the Postgres code and message (57014 = statement
+    timeout, 23502 = NOT NULL, ...) that say what actually went wrong. A
+    PostgREST upsert is one statement, so a failed batch wrote nothing and a
+    re-run resumes cleanly (already-encrypted rows are skipped).
+    """
+    try:
+        table("course_chunks").upsert(batch, on_conflict="id")
+    except httpx.HTTPStatusError as exc:
+        sys.exit(
+            f"upsert failed ({exc.response.status_code}) on a batch of "
+            f"{len(batch)} starting at id={batch[0]['id']!r}: "
+            f"{exc.response.text[:500]}\n"
+            "That batch wrote nothing; earlier batches are committed. Re-run "
+            "to resume (try a smaller --batch-size if this was a timeout)."
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Encrypt course_chunks.chunk_text in place (idempotent)."
     )
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
+    parser.add_argument(
+        "--batch-size", type=int, default=WRITE_BATCH,
+        help=f"rows per upsert (default {WRITE_BATCH})",
+    )
     args = parser.parse_args()
+    batch_size = max(1, args.batch_size)
 
     _assert_key_matches_database()
 
@@ -157,14 +189,15 @@ def main() -> None:
             **{col: row[col] for col in CARRIED_COLUMNS},
             "chunk_text": encrypt(text),
         })
-        if not args.dry_run and len(todo) >= WRITE_BATCH:
-            table("course_chunks").upsert(todo[:WRITE_BATCH], on_conflict="id")
-            written += len(todo[:WRITE_BATCH])
-            todo = todo[WRITE_BATCH:]
-            print(f"  encrypted {written:,}…", flush=True)
+        if not args.dry_run and len(todo) >= batch_size:
+            _write(todo[:batch_size])
+            written += len(todo[:batch_size])
+            todo = todo[batch_size:]
+            if written % 500 < batch_size:
+                print(f"  encrypted {written:,}…", flush=True)
 
     if not args.dry_run and todo:
-        table("course_chunks").upsert(todo, on_conflict="id")
+        _write(todo)
         written += len(todo)
 
     print(

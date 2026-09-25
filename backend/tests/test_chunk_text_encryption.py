@@ -289,6 +289,40 @@ def test_backfill_payload_carries_every_not_null_column():
     assert decrypt(written["chunk_text"]) == "plain passage"
 
 
+
+def test_backfill_failure_surfaces_postgrest_error_body():
+    """A bare `raise_for_status` reported only "500 Internal Server Error" on
+    prod; the Postgres code/message lives in the response body."""
+    import httpx
+    import scripts.backfill_encrypt_chunk_text as bf
+
+    req = httpx.Request("POST", "https://x.supabase.co/rest/v1/course_chunks")
+    resp = httpx.Response(
+        500, request=req,
+        text='{"code":"57014","message":"canceling statement due to statement timeout"}',
+    )
+    chunks = MagicMock()
+    chunks.upsert.side_effect = httpx.HTTPStatusError("500", request=req, response=resp)
+    with patch.object(bf, "table", return_value=chunks):
+        with pytest.raises(SystemExit) as exc:
+            bf._write([{"id": "c1", "chunk_text": "x"}])
+    msg = str(exc.value)
+    assert "57014" in msg and "statement timeout" in msg and "'c1'" in msg
+
+
+def test_backfill_honours_batch_size():
+    import scripts.backfill_encrypt_chunk_text as bf
+
+    rows = [{"id": f"c{i}", "course_id": "C", "chunk_text": f"t{i}",
+             "chunk_hash": f"h{i}", "semester": "S"} for i in range(7)]
+    chunks = MagicMock()
+    with patch.object(bf, "_assert_key_matches_database"), \
+         patch.object(bf, "page_all", return_value=iter(rows)), \
+         patch.object(bf, "table", return_value=chunks), \
+         patch("sys.argv", ["backfill", "--apply", "--batch-size", "3"]):
+        bf.main()
+    assert [len(c[0][0]) for c in chunks.upsert.call_args_list] == [3, 3, 1]
+
 # ── #484 review: the backfill's idempotence rests on the key matching ────────
 
 
