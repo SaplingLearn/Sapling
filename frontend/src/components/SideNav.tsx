@@ -63,8 +63,9 @@ const RULE_INSET = 8;
 
 /* Collapse/expand geometry.
  *
- * Each width keeps its own layout — wide rows inset 10px with the icon 12px
- * inside the pill; narrow rows full-width with the icon centred — and the
+ * Each width keeps its own layout — wide rows run the full width of the rail
+ * with the icon 12px inside the pill (so icons line up with the avatar);
+ * narrow rows full-width with the icon centred — and the
  * rail animates BETWEEN them rather than snapping. The trick is that nothing
  * uses `justify-content: center` any more (it cannot be interpolated):
  * centring in the narrow rail is expressed as a computed left padding, so
@@ -74,7 +75,7 @@ const RAIL_PAD_X = { wide: 10, narrow: 6 };
 const RAIL_INNER_NARROW = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X.narrow;
 const ICON_SIZE = 15;
 const ROW = {
-  wide: { inset: 10, padX: 12 },
+  wide: { inset: 0, padX: 12 },
   narrow: { inset: 0, padX: (RAIL_INNER_NARROW - ICON_SIZE) / 2 },
 };
 const GEOMETRY_TRANSITION =
@@ -420,9 +421,9 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         // the content box on its own and the margins below actually inset it.
         // `width: 100%` would have added to them and overflowed instead.
         minHeight: NAV_ITEM_MIN_HEIGHT,
-        // Wide: the pill is inset to the group header's own 10px, so its
-        // leading edge lines up with "LEARN", and the icon sits 12px inside
-        // it. Narrow: full width with the icon centred. See ROW.
+        // Wide: the pill runs the rail's full width and the icon sits 12px
+        // inside it, on the same line as the avatar below. Narrow: the icon
+        // is centred. See ROW.
         ...rowGeometry(collapsed),
         borderRadius: "var(--r-xs)",
         background: active ? NAV_ACTIVE_BG : "transparent",

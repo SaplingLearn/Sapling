@@ -228,7 +228,8 @@ describe("SideNav — collapsed state", () => {
     renderRail(false);
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
-      expect(r.style.marginLeft).toBe("10px");
+      expect(r.style.marginLeft).toBe("0px");
+      expect(r.style.paddingLeft).toBe("12px");
       expect(r.style.transition).toMatch(/padding/);
     }
     cleanup();
