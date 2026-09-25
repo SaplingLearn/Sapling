@@ -40,8 +40,10 @@ check the project ref first — this rewrites every row in the table.
 """
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 
 BASE = Path(__file__).parent.parent
@@ -51,10 +53,11 @@ sys.path.insert(0, str(BASE))
 from db.connection import page_all, table  # noqa: E402
 from services.encryption import decrypt, encrypt  # noqa: E402
 
-#: `merge-duplicates` updates only the columns present in the payload, and
-#: `course_id` rides along because it is NOT NULL (the INSERT branch never
-#: fires — every id already exists — but PostgREST validates the payload).
-WRITE_BATCH = 100
+#: Rows encrypted per round. Each row is its own PATCH (see `_write`), issued
+#: concurrently across WRITE_WORKERS threads; the batch only bounds how much
+#: ciphertext is held in memory and how often progress prints.
+WRITE_BATCH = 25
+WRITE_WORKERS = 8
 
 
 def _is_ciphertext(value: str) -> bool:
@@ -118,8 +121,48 @@ def _rows():
     offset while rewriting is stable.
     """
     return page_all(
-        table("course_chunks"), "id,course_id,chunk_text", order="id",
+        table("course_chunks"), "id,chunk_text", order="id",
     )
+
+
+def _patch_one(row: dict) -> None:
+    table("course_chunks").update(
+        {"chunk_text": row["chunk_text"]},
+        {"id": f"eq.{row['id']}"},
+        prefer_return_minimal=True,
+    )
+
+
+def _write(batch: list[dict]) -> None:
+    """Write one batch of new `chunk_text` values — UPDATE-ONLY, one row each.
+
+    Deliberately not an upsert. An upsert is `INSERT ... ON CONFLICT DO
+    UPDATE`: once its payload satisfies every NOT NULL column, a row deleted
+    between this script reading it and writing it (a withdrawal by the
+    shareability backfill, a re-index, the sweeper) would be INSERTED back —
+    with `visibility` defaulting to 'shared', no doc, no embedding and no
+    contributor rows, i.e. withdrawn student text in the class pool that no
+    one can withdraw again (#630). A PATCH filtered on the id matches nothing
+    for a deleted row, so it can only ever rewrite what still exists. One row
+    per statement also keeps each far inside PostgREST's 8s statement_timeout
+    (100-row upserts timed out on prod, where every rewritten row re-enters
+    two HNSW indexes).
+
+    On failure, exits with PostgREST's own error body — `raise_for_status`
+    alone reports only the status line. Every row is independent and already-
+    encrypted rows are skipped on a re-run, so a re-run resumes cleanly.
+    """
+    try:
+        with ThreadPoolExecutor(max_workers=WRITE_WORKERS) as pool:
+            list(pool.map(_patch_one, batch))
+    except httpx.HTTPStatusError as exc:
+        sys.exit(
+            f"update failed ({exc.response.status_code}) in a batch of "
+            f"{len(batch)} starting at id={batch[0]['id']!r}: "
+            f"{exc.response.text[:500]}\n"
+            "Earlier batches, and possibly some rows of this one (writes run "
+            "concurrently), are committed; re-run to resume."
+        )
 
 
 def main() -> None:
@@ -128,7 +171,12 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--apply", dest="dry_run", action="store_false")
+    parser.add_argument(
+        "--batch-size", type=int, default=WRITE_BATCH,
+        help=f"rows per round of concurrent updates (default {WRITE_BATCH})",
+    )
     args = parser.parse_args()
+    batch_size = max(1, args.batch_size)
 
     _assert_key_matches_database()
 
@@ -143,19 +191,16 @@ def main() -> None:
             already += 1
             continue
         pending += 1
-        todo.append({
-            "id": row["id"],
-            "course_id": row["course_id"],
-            "chunk_text": encrypt(text),
-        })
-        if not args.dry_run and len(todo) >= WRITE_BATCH:
-            table("course_chunks").upsert(todo[:WRITE_BATCH], on_conflict="id")
-            written += len(todo[:WRITE_BATCH])
-            todo = todo[WRITE_BATCH:]
-            print(f"  encrypted {written:,}…", flush=True)
+        todo.append({"id": row["id"], "chunk_text": encrypt(text)})
+        if not args.dry_run and len(todo) >= batch_size:
+            _write(todo[:batch_size])
+            written += len(todo[:batch_size])
+            todo = todo[batch_size:]
+            if written % 500 < batch_size:
+                print(f"  encrypted {written:,}…", flush=True)
 
     if not args.dry_run and todo:
-        table("course_chunks").upsert(todo, on_conflict="id")
+        _write(todo)
         written += len(todo)
 
     print(
