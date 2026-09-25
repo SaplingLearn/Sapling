@@ -89,7 +89,7 @@ function Cluster({ c }: { c: DragCluster }) {
                 <text
                   key={`label-${i}`}
                   x={label.x} y={label.y} textAnchor="middle"
-                  fontFamily={i === 0 ? "'Playfair Display',Georgia,serif" : "'DM Sans',sans-serif"}
+                  fontFamily={i === 0 ? "var(--font-playfair), 'Playfair Display', Georgia, serif" : "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif"}
                   fontSize={i === 0 ? '12.5' : '9'}
                   fontWeight={i === 0 ? '600' : undefined}
                   fill={i === 0 ? c.color : '#3f3b31'}

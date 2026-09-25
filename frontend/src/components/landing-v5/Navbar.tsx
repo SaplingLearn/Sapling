@@ -37,7 +37,7 @@ import Image from 'next/image';
 import type { NavTheme } from './navTheme';
 
 const TAB: React.CSSProperties = {
-  fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: 16,
+  fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontWeight: 700, fontSize: 16,
   letterSpacing: '0.02em', transition: 'color 400ms', whiteSpace: 'nowrap',
 };
 
@@ -84,7 +84,7 @@ export function Navbar({
           />
           <span
             style={{
-              fontFamily: "'Spectral',Georgia,serif", fontWeight: 700, fontSize: 25,
+              fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 25,
               color: theme.logo, letterSpacing: '-0.02em', lineHeight: 1.1,
               transition: 'color 500ms',
             }}
@@ -105,7 +105,7 @@ export function Navbar({
             onClick={onGetStarted}
             style={{
               background: theme.btnBg, color: theme.btnFg, border: 'none', borderRadius: 7,
-              padding: '11px 21px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
+              padding: '11px 21px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontWeight: 600,
               fontSize: 16, cursor: 'pointer', boxShadow: theme.lift,
               transition: 'filter 200ms, background 500ms, color 500ms',
             }}

@@ -13,7 +13,7 @@ import { FAQS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
 
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
+const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
 
 const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.25, s: { left: '7.4%', top: '8.0%', width: 6.1, height: 6.1, background: '#2E7D52', opacity: 0.39, animation: 'nodeFloatB 13s ease-in-out -4s infinite' } },
@@ -62,7 +62,7 @@ export function Faq({
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
             Honest answers
           </span>
-          <h2 style={{ margin: '20px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#12201A' }}>
+          <h2 style={{ margin: '20px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.2rem, 4vw, 3.4rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.02em', color: '#12201A' }}>
             {/* Explicit space: a literal one after </em> sits on the text
                 node's leading edge and does not survive the JSX text trim —
                 the heading rendered as "forme?". Same fix as /about's
@@ -91,7 +91,7 @@ export function Faq({
                   aria-expanded={open}
                   style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '22px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, textAlign: 'left' }}
                 >
-                  <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 19, fontWeight: 600, letterSpacing: '-0.01em', color: open ? '#0C5638' : '#12201A', transition: 'color 300ms' }}>
+                  <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 19, fontWeight: 600, letterSpacing: '-0.01em', color: open ? '#0C5638' : '#12201A', transition: 'color 300ms' }}>
                     {q.q}
                   </span>
                   <span

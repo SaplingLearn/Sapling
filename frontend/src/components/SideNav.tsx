@@ -158,7 +158,7 @@ export function SideNav() {
           <div style={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-start" }}>
             <span
               style={{
-                fontFamily: "'Spectral', Georgia, serif",
+                fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
                 fontWeight: 700,
                 fontSize: 20,
                 color: "var(--brand-forest)",

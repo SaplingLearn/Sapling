@@ -57,13 +57,13 @@ const CAP_BOX: React.CSSProperties = {
 
 const EYEBROW: React.CSSProperties = {
   position: 'relative', display: 'inline-block',
-  fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5,
+  fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 10.5,
   letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase',
   textShadow: '0 1px 10px rgba(240,244,242,0.9)',
 };
 
 const CAP_H2: React.CSSProperties = {
-  position: 'relative', margin: '18px 0 0', fontFamily: "'Playfair Display',serif",
+  position: 'relative', margin: '18px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
   fontSize: 'clamp(2.4rem,4.6vw,4rem)', fontWeight: 600, lineHeight: 1.06,
   letterSpacing: '-0.02em', color: '#12201A',
   textShadow: '0 2px 26px rgba(240,244,242,0.85)',
@@ -75,7 +75,7 @@ const CAP_P: React.CSSProperties = {
 };
 
 const MONO_TINY: React.CSSProperties = {
-  fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5,
+  fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 8.5,
   letterSpacing: '0.22em', color: '#61726A',
 };
 
@@ -182,7 +182,7 @@ export function ActGraph({
                       />
                       <span
                         style={{
-                          fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
+                          fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 11,
                           letterSpacing: '0.14em',
                           color: t === 'mastered' ? '#12201A' : '#33443B',
                         }}
@@ -209,7 +209,7 @@ export function ActGraph({
             />
             <h2
               style={{
-                position: 'relative', margin: 0, fontFamily: "'Playfair Display',serif",
+                position: 'relative', margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
                 fontSize: 'clamp(3rem,7vw,6.4rem)', fontWeight: 600, lineHeight: 1.02,
                 letterSpacing: '-0.025em', color: '#12201A', textShadow: '0 3px 34px rgba(240,244,242,0.85)',
               }}
@@ -219,7 +219,7 @@ export function ActGraph({
             <p style={{ position: 'relative', margin: '14px 0 0', color: '#33443B', fontSize: 16, textShadow: '0 1px 14px rgba(240,244,242,0.9)' }}>
               Your whole semester, one living map, updated as you learn.
             </p>
-            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 18, fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.22em', color: '#0C5638' }}>
+            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 18, fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: '0.22em', color: '#0C5638' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0C5638" strokeWidth="2" strokeLinecap="round">
                 <path d="M5 9l-3 3 3 3" /><path d="M9 5l3-3 3 3" /><path d="M15 19l-3 3-3-3" />
                 <path d="M19 9l3 3-3 3" /><path d="M2 12h20" /><path d="M12 2v20" />
@@ -240,8 +240,8 @@ export function ActGraph({
         {exploring && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none', animation: 'panelFade 420ms ease 520ms both' }}>
             <div style={{ position: 'absolute', left: 'max(3vw,20px)', top: 24, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '0.28em', color: '#0C5638' }}>{COURSE.code}</span>
-              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 21, fontWeight: 600, color: '#12201A' }}>{COURSE.name}</span>
+              <span style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 11, letterSpacing: '0.28em', color: '#0C5638' }}>{COURSE.code}</span>
+              <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 21, fontWeight: 600, color: '#12201A' }}>{COURSE.name}</span>
             </div>
 
             <div style={{ position: 'absolute', left: 'max(3vw,20px)', bottom: 26, display: 'flex', flexDirection: 'column', gap: 9, padding: '14px 16px', borderRadius: 14, background: 'rgba(253,252,249,0.8)', border: '1px solid rgba(18,32,26,0.10)', backdropFilter: 'blur(10px)', pointerEvents: 'auto' }}>
@@ -252,12 +252,12 @@ export function ActGraph({
                 <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 11.5, color: '#33443B' }}>
                   <span style={{ width: 9, height: 9, borderRadius: 99, flex: '0 0 auto', background: XTIER[t] }} />
                   {XTIER_LABEL[t]}
-                  <b style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono',monospace", fontSize: 10, fontWeight: 400, color: '#61726A' }}>{counts[t]}</b>
+                  <b style={{ marginLeft: 'auto', fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 10, fontWeight: 400, color: '#61726A' }}>{counts[t]}</b>
                 </span>
               ))}
             </div>
 
-            <span style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9, letterSpacing: '0.22em', color: '#61726A' }}>
+            <span style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 9, letterSpacing: '0.22em', color: '#61726A' }}>
               DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A CONCEPT
             </span>
 
@@ -265,10 +265,10 @@ export function ActGraph({
               <div style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(253,252,249,0.92)', border: '1px solid rgba(18,32,26,0.12)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                   <span style={{ width: 10, height: 10, borderRadius: 99, flex: '0 0 auto', background: XTIER[node.tier] }} />
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5, letterSpacing: '0.24em', color: XTIER[node.tier] }}>
+                  <span style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 8.5, letterSpacing: '0.24em', color: XTIER[node.tier] }}>
                     {XTIER_LABEL[node.tier].toUpperCase()}
                   </span>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, letterSpacing: '0.16em', color: '#61726A' }}>
+                  <span style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 8, letterSpacing: '0.16em', color: '#61726A' }}>
                     {node.root
                       ? 'COURSE'
                       : node.hub
@@ -284,14 +284,14 @@ export function ActGraph({
                     ×
                   </button>
                 </div>
-                <h4 style={{ margin: '12px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#12201A' }}>{node.label}</h4>
+                <h4 style={{ margin: '12px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#12201A' }}>{node.label}</h4>
                 <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.65, color: '#33443B' }}>{node.blurb}</p>
 
                 <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ flex: 1, height: 6, borderRadius: 99, background: 'rgba(18,32,26,0.10)', overflow: 'hidden' }}>
                     <span style={{ display: 'block', height: '100%', borderRadius: 99, transition: 'width 420ms cubic-bezier(0.22,1,0.36,1)', width: `${Math.round(node.mastery * 100)}%`, background: XTIER[node.tier] }} />
                   </span>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#12201A' }}>{Math.round(node.mastery * 100)}%</span>
+                  <span style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 11, color: '#12201A' }}>{Math.round(node.mastery * 100)}%</span>
                 </div>
                 <span style={{ display: 'block', marginTop: 5, ...MONO_TINY, letterSpacing: '0.16em', color: '#61726A' }}>
                   MASTERY SCORE · UPDATED AFTER EVERY SESSION
@@ -307,7 +307,7 @@ export function ActGraph({
                       onClick={() => onSelectNode(j)}
                       type="button"
                       className="ld-expchip"
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)', background: 'rgba(18,32,26,0.04)', color: '#12201A', fontFamily: "'DM Sans',sans-serif", fontSize: 11.5, cursor: 'pointer', transition: 'all 200ms' }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)', background: 'rgba(18,32,26,0.04)', color: '#12201A', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 11.5, cursor: 'pointer', transition: 'all 200ms' }}
                     >
                       <span style={{ width: 7, height: 7, borderRadius: 99, background: XTIER[nodes[j].tier] }} />
                       {nodes[j].label}
@@ -319,17 +319,17 @@ export function ActGraph({
                 <div style={{ marginTop: 9, display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {nodeUses(node, neighbours.length).map((u, i) => (
                     <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 11, borderLeft: '2px solid rgba(12,86,56,0.3)' }}>
-                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5, letterSpacing: '0.16em', color: '#0C5638' }}>{u.tag}</span>
+                      <span style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 8.5, letterSpacing: '0.16em', color: '#0C5638' }}>{u.tag}</span>
                       <span style={{ fontSize: 12, lineHeight: 1.6, color: '#33443B' }}>{u.text}</span>
                     </div>
                   ))}
                 </div>
 
                 <div style={{ marginTop: 18, display: 'flex', gap: 8 }}>
-                  <button onClick={onQuiz} type="button" className="ld-expquiz" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: 'none', background: '#0C5638', color: '#fff', fontFamily: "'DM Sans',sans-serif", fontSize: 12.5, fontWeight: 600, cursor: 'pointer', transition: 'background 200ms' }}>
+                  <button onClick={onQuiz} type="button" className="ld-expquiz" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: 'none', background: '#0C5638', color: '#fff', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: 'pointer', transition: 'background 200ms' }}>
                     Quiz me on this
                   </button>
-                  <button onClick={onLearn} type="button" className="ld-explearn" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: '1px solid rgba(18,32,26,0.2)', background: 'transparent', color: '#12201A', fontFamily: "'DM Sans',sans-serif", fontSize: 12.5, cursor: 'pointer', transition: 'background 200ms' }}>
+                  <button onClick={onLearn} type="button" className="ld-explearn" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: '1px solid rgba(18,32,26,0.2)', background: 'transparent', color: '#12201A', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12.5, cursor: 'pointer', transition: 'background 200ms' }}>
                     Ask the tutor
                   </button>
                 </div>
@@ -343,7 +343,7 @@ export function ActGraph({
               onClick={onExitExplore}
               type="button"
               className="ld-exitexplore"
-              style={{ position: 'absolute', right: 'max(3vw,20px)', top: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)', background: 'rgba(253,252,249,0.85)', color: '#33443B', fontFamily: "'JetBrains Mono',monospace", fontSize: 9.5, letterSpacing: '0.2em', cursor: 'pointer', pointerEvents: 'auto', transition: 'all 220ms' }}
+              style={{ position: 'absolute', right: 'max(3vw,20px)', top: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)', background: 'rgba(253,252,249,0.85)', color: '#33443B', fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 9.5, letterSpacing: '0.2em', cursor: 'pointer', pointerEvents: 'auto', transition: 'all 220ms' }}
             >
               ✕ EXIT EXPLORE
             </button>

@@ -13,10 +13,15 @@
  * so the hierarchy is doing the work, not decoration.
  */
 :root {
-  --font-display: 'Playfair Display', 'Spectral', georgia, serif;
-  --font-serif: 'Spectral', 'Playfair Display', georgia, serif;
-  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  /* Each role leads with the loader's variable, not the human family name.
+     `next/font/local` registers every face under a generated name, so a bare
+     'Playfair Display' matches nothing and silently renders Times — see
+     lib/landing/fonts.ts. The human names stay behind the variable as a
+     courtesy to anyone who has the font installed. */
+  --font-display: var(--font-playfair), 'Playfair Display', var(--font-spectral), 'Spectral', georgia, serif;
+  --font-serif: var(--font-spectral), 'Spectral', var(--font-playfair), 'Playfair Display', georgia, serif;
+  --font-sans: var(--font-dm-sans), 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
   --brand-forest: #1B6C42;
@@ -2332,6 +2337,18 @@ input[type="reset"]:disabled {
   .landing-dc .floating-card { display: none !important; }
   .landing-dc .drag-field    { display: none !important; }
 }
+
+/* The gallery's handwritten "click to demo the features!" note.
+   Its whole meaning is positional — an arrow sweeping down-left onto the
+   first rail of cards. Once the header row wraps, the note is no longer
+   beside the rails and the arrow points at the body copy instead, so it
+   comes off rather than lying about where to click. */
+@media (max-width: 899px) {
+  /* `!important` for the same reason the two rules above carry it: the note
+     sets `display: flex` inline, and an inline declaration outranks any
+     stylesheet rule without it. */
+  .landing-dc .ld-handnote { display: none !important; }
+}
 /* The grove's cards keep one size at every viewport height.
    Two `max-height` rules used to tighten them in steps — the demo pane to
    124px under 1020px of viewport, 110px under 880px — so the header and both
@@ -2454,12 +2471,31 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .hero-info p  { font-size:12.5px !important; }
 }
 
+/* Gallery card responsive scale (#624). `--gal-scale` drives a uniform
+   `transform: scale()` on `.ld-galcard` (see Gallery.tsx's `CARD`/`SLOT`) so
+   the illustration, type, and every keyframe animation shrink together —
+   not the width-only resize that left the v4 grove cards squashed (see the
+   note above `.landing-dc .gal-rail`). One card fully visible plus a peek
+   of the next is what both breakpoints are tuned for. */
+.landing-v5 #gallery { --gal-scale: 1; }
+@media (max-width: 899px) {
+  .landing-v5 #gallery { --gal-scale: 0.84; }
+}
+@media (max-width: 599px) {
+  .landing-v5 #gallery { --gal-scale: 0.68; }
+}
+
 /* v5 hover states (the source's `style-hover` attribute has no inline
    React equivalent). */
 .landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
 
-/* Gallery + feature lab hover states. */
-.landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
+/* Gallery + feature lab hover states.
+   `.ld-galcard` carries a base `transform: scale(var(--gal-scale))` for the
+   responsive shrink (#624), so the hover rule has to restate that scale
+   alongside the lift — replacing it outright would snap the card back to
+   full size the instant a cursor lands on it. */
+.landing-v5 .ld-galcard        { transform: scale(var(--gal-scale, 1)); }
+.landing-v5 .ld-galcard:hover  { transform: scale(var(--gal-scale, 1)) translateY(-5px); }
 .landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
 .landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
 .landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }

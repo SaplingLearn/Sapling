@@ -75,7 +75,7 @@ export function IntroOverlay({
         </svg>
         <div
           style={{
-            marginTop: 13, fontFamily: "'Spectral',Georgia,serif", fontWeight: 700,
+            marginTop: 13, fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700,
             fontSize: 33, letterSpacing: '-0.025em', color: '#0C5638', lineHeight: 1,
             animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
@@ -93,7 +93,7 @@ export function IntroOverlay({
         <div
           style={{
             marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 9,
-            fontFamily: "'JetBrains Mono',monospace", fontSize: 10,
+            fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace", fontSize: 10,
             letterSpacing: '0.3em', color: '#9AA5A0',
             animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}

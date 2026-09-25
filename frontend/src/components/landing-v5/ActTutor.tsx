@@ -17,8 +17,9 @@
 
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
+import { FONT_MONO } from '@/lib/landing/fonts';
 
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
+const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
 
 const CAPTIONS = [
   ['SOCRATIC', 'Never hands you the answer. It asks the question that gets you there yourself.'],
@@ -100,7 +101,7 @@ export function ActTutor({
                 a second animation on them would fight the scrub. */}
             <FadeIn>
               <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase' }}>AI tutor</span>
-              <h2 style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
+              <h2 style={{ margin: '16px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
                 Three ways to learn this. Your <em style={{ color: '#0C5638' }}>pick.</em>
               </h2>
             </FadeIn>
@@ -148,7 +149,7 @@ export function ActTutor({
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#0C5638' }}>SOCRATIC MODE</span>
-                  <span style={{ fontFamily: "'Playfair Display',serif", fontStyle: 'italic', fontSize: 22, color: '#0C5638' }}>?</span>
+                  <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontStyle: 'italic', fontSize: 22, color: '#0C5638' }}>?</span>
                 </div>
                 <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 5, overflow: 'hidden' }}>
                   <div style={{ alignSelf: 'flex-start', maxWidth: '88%', background: '#E6F2E8', borderRadius: '14px 14px 14px 4px', padding: '8px 12px', fontSize: 12, lineHeight: 1.45, color: '#12201A' }}>
@@ -191,7 +192,7 @@ export function ActTutor({
                     <path d="M12 6.5v13.4" />
                   </svg>
                 </div>
-                <h3 style={{ margin: 0, fontFamily: "'Playfair Display',serif", fontSize: 18, fontWeight: 600, color: '#12201A' }}>AVL rotations, plainly.</h3>
+                <h3 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 18, fontWeight: 600, color: '#12201A' }}>AVL rotations, plainly.</h3>
                 <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: '#33443B' }}>
                   Every node&rsquo;s <span style={{ background: '#E6F2E8', borderRadius: 4, padding: '0 3px', color: '#0C5638', fontWeight: 600 }}>balance factor</span> stays in {'{−1, 0, +1}'}. When an insert breaks that, one of four <span style={{ background: '#E6F2E8', borderRadius: 4, padding: '0 3px', color: '#0C5638', fontWeight: 600 }}>rotations</span> restores it in O(1).
                 </p>
@@ -201,7 +202,7 @@ export function ActTutor({
                       <line x1="82" y1="12" x2="52" y2="34" stroke="#DCE7DE" strokeWidth="1.5" />
                       <line x1="52" y1="34" x2="26" y2="54" stroke="#DCE7DE" strokeWidth="1.5" />
                       <circle cx="82" cy="12" r="9" fill="#E27A63" />
-                      <text x="82" y="15.5" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="8" fill="#FDFCF9">+2</text>
+                      <text x="82" y="15.5" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize="8" fill="#FDFCF9">+2</text>
                       <circle cx="52" cy="34" r="7" fill="#4FA574" />
                       <circle cx="26" cy="54" r="6" fill="#8FD9A8" />
                     </svg>
@@ -213,7 +214,7 @@ export function ActTutor({
                       <line x1="60" y1="16" x2="34" y2="46" stroke="#4FA574" strokeWidth="1.5" />
                       <line x1="60" y1="16" x2="88" y2="46" stroke="#4FA574" strokeWidth="1.5" />
                       <circle cx="60" cy="16" r="9" fill="#0C5638" />
-                      <text x="60" y="19.5" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="8" fill="#E6F2E8">0</text>
+                      <text x="60" y="19.5" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize="8" fill="#E6F2E8">0</text>
                       <circle cx="34" cy="46" r="7" fill="#4FA574" />
                       <circle cx="88" cy="46" r="7" fill="#8FD9A8" />
                     </svg>

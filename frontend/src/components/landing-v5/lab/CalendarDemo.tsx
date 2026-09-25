@@ -57,7 +57,7 @@ export function CalendarDemo() {
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 250px', minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12, borderRight: '1px solid #ECE9DE' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 600 }}>October 2026</span>
+          <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 20, fontWeight: 600 }}>October 2026</span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5' }}>
             {VIEWS.map((v) => {
               const on = view === v.key;
@@ -67,7 +67,7 @@ export function CalendarDemo() {
                   onClick={() => setView(v.key)}
                   type="button"
                   aria-pressed={on}
-                  style={{ padding: '6px 13px', borderRadius: 7, border: 'none', fontFamily: "'DM Sans',sans-serif", fontSize: 12, cursor: 'pointer', transition: 'all 180ms', background: on ? '#12201A' : 'transparent', color: on ? '#FDFCF9' : '#61726A', fontWeight: on ? 600 : 400 }}
+                  style={{ padding: '6px 13px', borderRadius: 7, border: 'none', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12, cursor: 'pointer', transition: 'all 180ms', background: on ? '#12201A' : 'transparent', color: on ? '#FDFCF9' : '#61726A', fontWeight: on ? 600 : 400 }}
                 >
                   {v.label}
                 </button>
@@ -93,7 +93,7 @@ export function CalendarDemo() {
                 style={{
                   position: 'relative', minHeight: 44, borderRadius: 8, padding: 5,
                   display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start',
-                  fontFamily: "'DM Sans',sans-serif", transition: 'all 160ms',
+                  fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", transition: 'all 160ms',
                   ...(c.blank
                     ? { background: 'transparent', border: 'none', cursor: 'default' }
                     : {

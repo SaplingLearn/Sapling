@@ -89,7 +89,7 @@ export function ConnectedAccounts() {
           </h1>
           <p
             style={{
-              fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+              fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
               fontSize: 15,
               lineHeight: 1.6,
               color: "var(--text-dim)",
@@ -218,7 +218,7 @@ function ProviderCard({
         </div>
         <p
           style={{
-            fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+            fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
             fontSize: 13,
             lineHeight: 1.55,
             color: "var(--text-dim)",

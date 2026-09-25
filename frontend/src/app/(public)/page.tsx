@@ -75,7 +75,7 @@ export default function LandingPage() {
       ref={rootRef}
       className="landing-dc landing-v5"
       style={{
-        fontFamily: "'DM Sans',system-ui,sans-serif", color: '#12201A', fontSize: 14,
+        fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", color: '#12201A', fontSize: 14,
         lineHeight: 1.6, backgroundColor: '#f0f4f2',
         backgroundImage:
           'radial-gradient(ellipse 100% 60% at 50% -10%, rgba(255,255,255,0.55) 0%, transparent 50%), radial-gradient(ellipse 80% 50% at 100% 40%, rgba(255,255,255,0.2) 0%, transparent 45%)',

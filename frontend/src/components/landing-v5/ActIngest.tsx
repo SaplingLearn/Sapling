@@ -23,6 +23,7 @@
 
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
+import { FONT_MONO, FONT_SANS } from '@/lib/landing/fonts';
 
 /** Syllabus lines. The bold span is the concept a chip carries away. */
 const DOC_LINES: [string, string, string][] = [
@@ -74,7 +75,7 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.35, s: { left: '11.2%', top: '43.9%', width: 8.8, height: 8.8, background: '#6FBF8F', opacity: 0.4, boxShadow: '0 0 21px #6FBF8F66', animation: 'nodeFloatA 15.2s ease-in-out -13.9s infinite' } },
 ];
 
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
+const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
 const TILE: React.CSSProperties = {
   background: '#FDFCF9', border: '1px solid #E8E5DA', borderRadius: 16,
   padding: '14px 15px', minHeight: 150, position: 'relative', overflow: 'hidden',
@@ -82,7 +83,7 @@ const TILE: React.CSSProperties = {
   transition: 'transform 220ms ease, box-shadow 220ms ease',
 };
 const TILE_LABEL: React.CSSProperties = { ...MONO, fontSize: 9, letterSpacing: '0.24em', color: '#0C5638' };
-const TILE_COUNT: React.CSSProperties = { fontFamily: "'Playfair Display',serif", fontSize: 21, fontWeight: 600, lineHeight: 1, color: '#12201A' };
+const TILE_COUNT: React.CSSProperties = { fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 21, fontWeight: 600, lineHeight: 1, color: '#12201A' };
 /** Underline that marks a concept inside the document. */
 const MARK: React.CSSProperties = { fontWeight: 600, color: '#33443B', boxShadow: 'inset 0 -4px 0 rgba(14,158,90,0.18)' };
 
@@ -121,7 +122,7 @@ export function ActIngest({
                 [data-ingest-tile]. Keep the fade off those subtrees. */}
             <FadeIn>
               <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase' }}>Ingest</span>
-              <h2 style={{ margin: '14px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#12201A' }}>
+              <h2 style={{ margin: '14px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#12201A' }}>
                 Drop in the whole <em style={{ color: '#0C5638' }}>course.</em>
               </h2>
             </FadeIn>
@@ -198,11 +199,11 @@ export function ActIngest({
                       <line x1="115" y1="42" x2="186" y2="24" stroke="rgba(12,86,56,0.24)" />
                       <line x1="115" y1="42" x2="176" y2="66" stroke="rgba(12,86,56,0.14)" />
                       <circle cx="115" cy="42" r="8" fill="#0E9E5A" />
-                      <text x="115" y="45" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="6.5" fill="#FDFCF9">112</text>
-                      <circle cx="52" cy="20" r="4.5" fill="#4FA574" /><text x="52" y="12" textAnchor="middle" fontFamily="DM Sans" fontSize="7" fill="#8B9891">Trees</text>
-                      <circle cx="44" cy="64" r="4.5" fill="#4FA574" /><text x="44" y="78" textAnchor="middle" fontFamily="DM Sans" fontSize="7" fill="#8B9891">Hashing</text>
-                      <circle cx="186" cy="24" r="4.5" fill="#4FA574" /><text x="186" y="16" textAnchor="middle" fontFamily="DM Sans" fontSize="7" fill="#8B9891">Graphs</text>
-                      <circle cx="176" cy="66" r="4" fill="#C3CCC6" /><text x="176" y="79" textAnchor="middle" fontFamily="DM Sans" fontSize="7" fill="#9AA5A0">DP</text>
+                      <text x="115" y="45" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize="6.5" fill="#FDFCF9">112</text>
+                      <circle cx="52" cy="20" r="4.5" fill="#4FA574" /><text x="52" y="12" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#8B9891">Trees</text>
+                      <circle cx="44" cy="64" r="4.5" fill="#4FA574" /><text x="44" y="78" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#8B9891">Hashing</text>
+                      <circle cx="186" cy="24" r="4.5" fill="#4FA574" /><text x="186" y="16" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#8B9891">Graphs</text>
+                      <circle cx="176" cy="66" r="4" fill="#C3CCC6" /><text x="176" y="79" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize="7" fill="#9AA5A0">DP</text>
                     </svg>
                     <span style={{ position: 'absolute', left: 9, bottom: 6, ...MONO, fontSize: 7, letterSpacing: '0.14em', color: '#9AA5A0' }}>
                       MASTERY 0%  ·  UNEXPLORED
@@ -215,7 +216,7 @@ export function ActIngest({
                   <div aria-hidden="true" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ flex: 1, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, justifyContent: 'center' }}>
                       <span style={{ ...MONO, fontSize: 6.5, letterSpacing: '0.2em', color: '#9AA5A0' }}>FRONT · AUTO-GENERATED</span>
-                      <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 11, fontWeight: 600, lineHeight: 1.25, color: '#12201A' }}>What does Big-O actually bound?</span>
+                      <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 11, fontWeight: 600, lineHeight: 1.25, color: '#12201A' }}>What does Big-O actually bound?</span>
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
                       {([['FORGOT', 'rgba(178,88,85,0.4)', 'rgba(178,88,85,0.08)', '#9c4b48'],

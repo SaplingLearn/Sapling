@@ -28,7 +28,7 @@ import { submitJobApplication } from '@/lib/api';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from '@/lib/landing/companionType';
 
-const SANS = "'DM Sans',system-ui,sans-serif";
+const SANS = "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
 
 /**
  * Warm brick for the required-field marks and submit errors. Hardcoded like

@@ -458,7 +458,7 @@ function CategoryGroup({
                 >
                   <span
                     style={{
-                      fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                      fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
                       fontWeight: 500,
                       fontSize: 15,
                       color: isDropped ? "var(--text-muted)" : "var(--text)",
@@ -585,7 +585,7 @@ function EmptyEntries({ onAdd }: { onAdd: () => void }) {
       </h3>
       <p
         style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 16,
           lineHeight: 1.6,
           color: "var(--text-dim)",

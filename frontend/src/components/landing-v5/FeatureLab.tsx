@@ -19,7 +19,7 @@
 import { GAL, LAB_KIND } from '@/lib/landing/content';
 import { FeatureLabDemo } from './lab';
 
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
+const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
 
 export function FeatureLab({
   index,
@@ -53,7 +53,7 @@ export function FeatureLab({
             <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.3em', color: '#0C5638', textTransform: 'uppercase' }}>
               {g.num} · {g.kicker}
             </span>
-            <h3 style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#12201A' }}>
+            <h3 style={{ margin: '16px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#12201A' }}>
               {g.title}
             </h3>
             <p style={{ margin: '18px 0 0', color: '#33443B', fontSize: 15, lineHeight: 1.75, maxWidth: '44ch' }}>{g.desc}</p>
@@ -97,7 +97,7 @@ export function FeatureLab({
                 style={{
                   flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 2,
                   textAlign: 'left', padding: '9px 15px', borderRadius: 11, cursor: 'pointer',
-                  fontFamily: "'DM Sans',sans-serif",
+                  fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif",
                   transition: 'all 220ms cubic-bezier(0.22,1,0.36,1)',
                   background: on ? '#0C5638' : '#FDFCF9',
                   border: `1px solid ${on ? '#0C5638' : '#E8E5DA'}`,

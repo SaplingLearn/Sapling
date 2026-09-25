@@ -29,8 +29,8 @@ import { useScrollLock } from '@/lib/useScrollLock';
 
 const PLAYFAIR = "var(--font-playfair), 'Playfair Display', Georgia, serif";
 const SPECTRAL = "var(--font-spectral), 'Spectral', Georgia, serif";
-const JETBRAINS = "var(--font-jetbrains), 'JetBrains Mono', monospace";
-const DM = "var(--font-dm-sans), 'DM Sans', sans-serif";
+const JETBRAINS = "var(--font-jetbrains), var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace";
+const DM = "var(--font-dm-sans), var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
 
 /** The three newsletter perks, each with its own accent dot. */
 const PERKS = [

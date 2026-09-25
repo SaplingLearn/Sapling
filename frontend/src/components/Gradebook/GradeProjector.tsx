@@ -237,7 +237,7 @@ export function GradeProjector({
       <div
         style={{
           padding: "32px 0",
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 15,
           lineHeight: 1.6,
           color: "var(--text-dim)",

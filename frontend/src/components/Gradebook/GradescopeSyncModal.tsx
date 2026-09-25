@@ -400,7 +400,7 @@ export function GradescopeSyncModal({
             <form onSubmit={onSubmitCredentials}>
               <p
                 style={{
-                  fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
                   fontSize: 14,
                   lineHeight: 1.6,
                   color: "var(--text-dim)",
@@ -506,7 +506,7 @@ export function GradescopeSyncModal({
             <div>
               <p
                 style={{
-                  fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
                   fontSize: 14,
                   lineHeight: 1.6,
                   color: "var(--text-dim)",
@@ -587,7 +587,7 @@ export function GradescopeSyncModal({
             <div>
               <p
                 style={{
-                  fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
                   fontSize: 14,
                   lineHeight: 1.6,
                   color: "var(--text-dim)",
@@ -636,7 +636,7 @@ export function GradescopeSyncModal({
             <div>
               <p
                 style={{
-                  fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
                   fontSize: 14,
                   lineHeight: 1.6,
                   color: "var(--text-dim)",
@@ -698,7 +698,7 @@ export function GradescopeSyncModal({
             <div>
               <p
                 style={{
-                  fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
                   fontSize: 15,
                   lineHeight: 1.6,
                   color: "var(--text)",
@@ -800,7 +800,7 @@ function ChooseModeStep({
     <div>
       <p
         style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 14,
           lineHeight: 1.6,
           color: "var(--text-dim)",
@@ -861,7 +861,7 @@ function BuSsoFormStep({
     <form onSubmit={onSubmit}>
       <p
         style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 14,
           lineHeight: 1.6,
           color: "var(--text-dim)",
@@ -1004,7 +1004,7 @@ function BuSsoWaitingStep() {
       </div>
       <p
         style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 13,
           lineHeight: 1.6,
           color: "var(--text-dim)",
@@ -1082,7 +1082,7 @@ function ModeCard({
       </div>
       <div
         style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 13,
           lineHeight: 1.5,
           color: "var(--text-dim)",
@@ -1113,7 +1113,7 @@ function CookiePasteStep({
     <form onSubmit={onSubmit}>
       <p
         style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 14,
           lineHeight: 1.6,
           color: "var(--text-dim)",
@@ -1126,7 +1126,7 @@ function CookiePasteStep({
       </p>
       <ol
         style={{
-          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
           fontSize: 13,
           lineHeight: 1.6,
           color: "var(--text-dim)",

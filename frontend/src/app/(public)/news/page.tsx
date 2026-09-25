@@ -84,7 +84,7 @@ export default function NewsPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search posts"
             aria-label="Search posts"
-            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: '#1a1814' }}
+            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, color: '#1a1814' }}
           />
           {query && (
             <button
@@ -106,7 +106,7 @@ export default function NewsPage() {
               type="button"
               aria-haspopup="listbox"
               aria-expanded={menuOpen}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "'DM Sans',sans-serif", fontSize: 13.5, fontWeight: 500, color: '#1a1814', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, fontWeight: 500, color: '#1a1814', cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               {activeLabel}
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#6f6857" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transition: 'transform 220ms', transform: menuOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>
@@ -131,7 +131,7 @@ export default function NewsPage() {
                   role="option"
                   aria-selected={f.key === filter}
                   className="cp-menuitem"
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "'DM Sans',sans-serif", fontSize: 13.5, color: f.key === filter ? '#1a1814' : '#6f6857', fontWeight: f.key === filter ? 600 : 500, cursor: 'pointer' }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, color: f.key === filter ? '#1a1814' : '#6f6857', fontWeight: f.key === filter ? 600 : 500, cursor: 'pointer' }}
                 >
                   {f.label}
                   {f.key === filter && (
@@ -156,7 +156,7 @@ export default function NewsPage() {
             <button
               onClick={() => { setQuery(''); setFilter('all'); }}
               type="button"
-              style={{ marginTop: 10, padding: '11px 20px', borderRadius: 8, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3', fontFamily: "'DM Sans',sans-serif", fontSize: 13.5, color: '#1a1814', cursor: 'pointer' }}
+              style={{ marginTop: 10, padding: '11px 20px', borderRadius: 8, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, color: '#1a1814', cursor: 'pointer' }}
             >
               Clear filters
             </button>
