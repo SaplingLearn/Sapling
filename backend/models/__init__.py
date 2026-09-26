@@ -335,6 +335,8 @@ class UpdateSettingsBody(BaseModel):
     accent_color: Optional[str] = None
     # #72: Class Intel opt-out (user_settings.share_class_context, 0037)
     share_class_context: Optional[bool] = None
+    # Learning loop PKG-00: per-user opt-in (user_settings.learning_loop_beta)
+    learning_loop_beta: Optional[bool] = None
 
 
 class EquipCosmeticBody(BaseModel):
@@ -385,6 +387,7 @@ class SettingsResponse(BaseModel):
     theme: str = "light"
     font_size: str = "medium"
     accent_color: Optional[str] = None
+    learning_loop_beta: bool = False
 
 
 # ── Roles (Admin) ────────────────────────────────────────────────────────────
