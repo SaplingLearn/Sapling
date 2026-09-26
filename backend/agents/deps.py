@@ -56,6 +56,14 @@ class SaplingDeps:
             registered on quiz_agent unconditionally and the prompt tells the
             model to call it every run. Defaults True to match the column
             default; an explicit False is the only thing that suppresses.
+        learning_loop: Result of `learning.gate.learning_loop_active` for this
+            request; selects the loop tool set and routes. Defaults False —
+            the legacy path.
+        loop_state: The session's typed loop state (PKG-06); None on the
+            legacy path.
+        pending_evidence: `learning.evidence.Evidence` dicts accumulated by
+            `graded_check_tool` (PKG-05) for the ROUTE to persist through
+            `apply_graph_update` — tools never write graph tables.
     """
 
     user_id: str
@@ -68,3 +76,6 @@ class SaplingDeps:
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None
+    learning_loop: bool = False
+    loop_state: Any = None
+    pending_evidence: list = field(default_factory=list)
