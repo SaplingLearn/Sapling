@@ -40,6 +40,10 @@ ALLOWED_EMAIL_DOMAINS = [
     if d.strip()
 ]
 
+# Learning loop series (docs/superpowers/specs/2026-09-26-learning-loop-design.md §7).
+# Only "true" (any case) enables; everything else, including unset, is off.
+LEARNING_LOOP_ENABLED = os.getenv("LEARNING_LOOP_ENABLED", "false").strip().lower() == "true"
+
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
