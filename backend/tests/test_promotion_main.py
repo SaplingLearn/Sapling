@@ -32,6 +32,8 @@ database is contacted by anything in this file.
   `staging-unknown` preflight finding, not abort the whole run before the
   operator ever sees a report.
 """
+import os
+import shutil
 import subprocess
 
 import psycopg
@@ -364,6 +366,98 @@ def test_git_is_ancestor_maps_exit_codes_and_fails_closed(monkeypatch):
     returncode = 128
     with pytest.raises(RuntimeError, match="bad ref"):
         git.is_ancestor("origin/production", "origin/main")
+
+
+@pytest.fixture
+def scratch_repo(tmp_path, monkeypatch):
+    """A throwaway real git repo, cwd'd into (the Git port runs bare `git`).
+    Global/system config is masked so a signing or hook setting on the host
+    can't change the history these tests build."""
+    if shutil.which("git") is None:
+        pytest.skip("git not installed")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "t")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "t@example.com")
+
+    def git(*args):
+        return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(path, text, message):
+        (tmp_path / path).write_text(text)
+        git("add", path)
+        git("commit", "-q", "-m", message)
+
+    git("init", "-q", "-b", "main")
+    commit("app.py", "v1\n", "base")
+    git("branch", "production")
+    commit("app.py", "v2\n", "feature on main")
+    # A promotion: main merged into production with a merge commit that
+    # exists ONLY on production (what `gh pr merge --merge` does in stage 6).
+    git("checkout", "-q", "production")
+    git("merge", "-q", "--no-ff", "-m", "promote", "main")
+    git("checkout", "-q", "main")
+    commit("app.py", "v3\n", "next feature on main")
+    return git, commit
+
+
+def test_tree_matches_merge_base_allows_merge_only_divergence(scratch_repo):
+    """#666: the promotion merge commit makes production a non-ancestor of
+    main, but it carries no content of its own — the next run must pass."""
+    git_port = promotion_main.Git()
+    assert git_port.is_ancestor("production", "main") is False
+    assert git_port.tree_matches_merge_base("production", "main") is True
+
+
+def test_tree_matches_merge_base_blocks_a_hotfix_on_production(scratch_repo):
+    """The case the guard exists for: real content on production that main
+    never got. Merging would conflict after migrations applied."""
+    git, commit = scratch_repo
+    git("checkout", "-q", "production")
+    commit("hotfix.py", "fix\n", "hotfix straight on production")
+    git("checkout", "-q", "main")
+    assert promotion_main.Git().tree_matches_merge_base("production", "main") is False
+
+
+def test_tree_matches_merge_base_allows_a_hotfix_that_was_reverted(scratch_repo):
+    """Net content is what matters: a hotfix and its revert, both only on
+    production, leave nothing a merge could lose or conflict on."""
+    git, commit = scratch_repo
+    git("checkout", "-q", "production")
+    commit("app.py", "hotfixed\n", "hotfix")
+    git("revert", "--no-edit", "HEAD")
+    git("checkout", "-q", "main")
+    assert promotion_main.Git().tree_matches_merge_base("production", "main") is True
+
+
+def test_tree_matches_merge_base_fails_closed_on_unrelated_or_criss_cross(scratch_repo):
+    """No merge base, or several, is not a state to reason about
+    automatically — both read as divergence (blocked), never as a pass."""
+    git, commit = scratch_repo
+    git_port = promotion_main.Git()
+
+    git("checkout", "-q", "--orphan", "unrelated")
+    commit("other.py", "x\n", "unrelated root")
+    assert git_port.tree_matches_merge_base("unrelated", "main") is False
+
+    # Criss-cross: a and b each merge the other's first commit.
+    git("checkout", "-q", "-b", "a", "main")
+    commit("a.py", "a\n", "a1")
+    git("checkout", "-q", "-b", "b", "main~1")
+    commit("b.py", "b\n", "b1")
+    git("checkout", "-q", "a")
+    git("merge", "-q", "--no-ff", "-m", "a2", "b~0")
+    git("checkout", "-q", "b")
+    git("merge", "-q", "--no-ff", "-m", "b2", "a~1")
+    assert len(git("merge-base", "--all", "a", "b").split()) == 2
+    assert git_port.tree_matches_merge_base("b", "a") is False
+
+
+def test_tree_matches_merge_base_raises_on_a_bad_ref(scratch_repo):
+    with pytest.raises(RuntimeError, match="merge-base"):
+        promotion_main.Git().tree_matches_merge_base("no-such-ref", "main")
 
 
 def test_preflight_data_reads_the_ledger_through_the_shared_primitives(monkeypatch):

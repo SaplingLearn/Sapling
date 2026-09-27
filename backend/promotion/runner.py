@@ -279,18 +279,30 @@ def run(ports: Ports, options: Options) -> int:
     # Git-side guard facts, resolved AFTER the fetch and BEFORE any DDL can
     # apply. Both are blocking in preflight.evaluate: a migrations dir that
     # differs from origin/main (content, presence, or untracked strays), and
-    # an origin/production that is not an ancestor of origin/main. is_ancestor
-    # fails CLOSED — a git error raises here, caught by __main__'s catch-all,
+    # an origin/production carrying content origin/main lacks. Both git reads
+    # fail CLOSED — a git error raises here, caught by __main__'s catch-all,
     # and nothing has been migrated yet.
     migrations_drift = ports.git.migrations_drift()
     production_is_ancestor = ports.git.is_ancestor("origin/production", "origin/main")
+    # Not an ancestor is the NORMAL state after a promotion: stage 6's merge
+    # commit exists only on production (#666). It blocks only when the
+    # production-only commits change the tree — a hotfix or revert that was
+    # never back-merged. Merge-only divergence merges cleanly to main's tree.
+    production_merge_only = not production_is_ancestor and ports.git.tree_matches_merge_base(
+        "origin/production", "origin/main"
+    )
+    if production_merge_only:
+        out(
+            "origin/production has commit(s) not on origin/main that change no "
+            "content (a previous promotion's merge commit) — no back-merge needed."
+        )
 
     with ports.connect() as conn:
         data = ports.preflight_data(conn)
         findings = preflight.evaluate(
             commits_ahead=commits_ahead,
             migrations_drift=migrations_drift,
-            production_is_ancestor=production_is_ancestor,
+            production_diverged=not production_is_ancestor and not production_merge_only,
             allow_destructive=options.allow_destructive,
             skip_staging_check=options.skip_staging_check,
             **data,
