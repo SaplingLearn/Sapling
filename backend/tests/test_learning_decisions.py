@@ -5,6 +5,7 @@ events captured by patching events_service.log_event. No DB, no network."""
 from __future__ import annotations
 
 import asyncio
+import json
 import pathlib
 import re
 import sys
@@ -420,3 +421,61 @@ def test_spec_3_6_settings_and_ownership(seam):
     )  # #641/#640
     for path in (BACKEND / "learning").glob("*.py"):
         assert not re.search(r"services(\.| import )decisions", path.read_text()), path.name
+
+
+# ── Task 4: decision.* events ──────────────────────────────────────────────
+
+
+def _app_files():
+    for top in sorted(BACKEND.iterdir()):
+        if top.name not in {"venv", ".venv", "tests", "__pycache__"}:
+            yield from (
+                [top] if top.suffix == ".py" else sorted(top.rglob("*.py")) if top.is_dir() else []
+            )
+
+
+def test_decision_events_are_in_the_taxonomy():
+    from services.events_service import EVENT_TAXONOMY
+
+    assert {"decision.made", "decision.shadow", "decision.fallback"} <= EVENT_TAXONOMY
+
+
+def test_decision_made_payload_is_ids_enums_numbers(seam, grader_spy, events):
+    asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps()))
+    [(et, kw)] = events
+    assert (et, kw["category"], kw["user_id"]) == ("decision.made", "usage", "u1")
+    p = kw["payload"]
+    assert set(p) == {"decision", "backend", "request_id", "latency_ms", "confidence", "fallback"}
+    assert (p["decision"], p["backend"], p["fallback"]) == ("grade_rubric_items", "gemini", False)
+    assert isinstance(p["latency_ms"], int)
+    assert all(not isinstance(v, str) or len(v) <= seam.EVENT_ENUM_MAX_CHARS for v in p.values())
+    assert not any(t in json.dumps(kw) for t in (QUESTION, REFERENCE, "It stops the calls."))
+
+
+def test_emit_shadow_payload_refuses_text_and_has_no_caller(seam, events, caplog):
+    shadow = dict(
+        primary_value="w_loop",
+        shadow_value="none",
+        primary_confidence=0.8,
+        shadow_confidence=0.6,
+        agreement=False,
+        shadow_latency_ms=90,
+        shadow_input_tokens=300,
+    )
+    seam.emit_shadow("match_wrong_reason", deps=_deps(), **shadow)
+    [(et, kw)] = events
+    assert (et, kw["category"]) == ("decision.shadow", "usage")
+    assert set(kw["payload"]) == {"decision", "request_id", "error_code", *shadow}
+    with caplog.at_level("WARNING"):
+        seam.emit_shadow(
+            "match_wrong_reason",
+            deps=_deps(),
+            **{**shadow, "primary_value": "it just loops forever"},
+        )
+    assert len(events) == 1 and any(
+        "decision.shadow dropped" in r.getMessage() for r in caplog.records
+    )
+    assert [
+        p.relative_to(BACKEND).as_posix() for p in _app_files() if "emit_shadow(" in p.read_text()
+    ] == ["services/decisions.py"]
+    assert (BACKEND / "services" / "decisions.py").read_text().count("emit_shadow(") == 1

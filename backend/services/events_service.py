@@ -65,6 +65,15 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+decision.made                 usage     decision, backend, request_id, latency_ms, confidence,
+                                        fallback — one answered decision of the learning loop's
+                                        typed decision seam (PKG-05b, spec §6, §13 A24)
+decision.shadow               usage     decision, request_id, primary_value, shadow_value,
+                                        primary_confidence, shadow_confidence, agreement,
+                                        shadow_latency_ms, shadow_input_tokens, error_code —
+                                        PKG-15 plumbing, never fired in the series; enums only
+decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
+                                        / both_failed; PKG-15 adds the Jev error enums), request_id
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -171,6 +180,15 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # withdrawal that failed after the response (reason WithdrawalError,
     # document_id and course_id null). Never any item text.
     "learn.check_items_failed",
+    # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
+    # (services/decisions.py). `made` = one answered decision, with the backend
+    # that answered; `fallback` = served by another backend (reason jev_absent)
+    # or by none (both_failed: nothing is recorded for either outcome);
+    # `shadow` = PKG-15 plumbing, never fired in the series. Payloads carry
+    # ids, enums and numbers only — never state text.
+    "decision.made",
+    "decision.shadow",
+    "decision.fallback",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
