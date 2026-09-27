@@ -3,10 +3,10 @@ counts, enums and bools only — never student or tutor text.
 
 Keyword-only thin wrappers over `services.events_service.log_event`. Like
 log_event they never raise into a request: a payload that cannot be built, or
-that holds a string longer than PAYLOAD_STR_MAX or a value that is not
-None/bool/int/float/str/list/dict (a caller bug that could log student or
-tutor text into the plaintext events table), is dropped with a log line. Emitted by nobody in PKG-06; PKG-07,
-PKG-08 and PKG-10 call them.
+that holds a string longer than params.EVENT_PAYLOAD_STR_MAX or a value that
+is not None/bool/int/float/str/list/dict (a caller bug that could log student
+or tutor text into the plaintext events table), is dropped with a log line.
+Emitted by nobody in PKG-06; PKG-07, PKG-08 and PKG-10 call them.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Literal
 
+from learning import params
 from learning.evidence import Channel
 from learning.ladder import Rung
 from learning.leak import Detector
@@ -26,7 +27,6 @@ Phase = Literal["probe", "plan", "teach", "check", "feedback", "close", "posttes
 Rating = Literal["too_easy", "appropriate", "too_hard"]
 BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
 GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]  # spec §5 (A22/A24)
-PAYLOAD_STR_MAX = 64  # a sha256 question_hash is exactly this long; nothing longer is an id
 
 
 def _is_plain(value: object) -> bool:
@@ -35,7 +35,7 @@ def _is_plain(value: object) -> bool:
     if value is None or isinstance(value, (bool, int, float)):
         return True
     if isinstance(value, str):
-        return len(value) <= PAYLOAD_STR_MAX
+        return len(value) <= params.EVENT_PAYLOAD_STR_MAX
     if isinstance(value, list):
         return all(_is_plain(v) for v in value)
     if isinstance(value, dict):

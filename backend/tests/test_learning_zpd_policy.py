@@ -44,6 +44,7 @@ PARAM_NAMES = (
     "LOOP_RAG_K_TEACH_SOFT",
     "LOOP_SOURCE_CHUNKS_MAX",
     "LOOP_TIER_DEEP_MIN_FAILS",
+    "EVENT_PAYLOAD_STR_MAX",
 )
 
 
@@ -87,6 +88,32 @@ def test_pkg06_param_values_are_the_spec_values():
     assert params.LOOP_RAG_K_TEACH_SOFT == 3
     assert params.LOOP_SOURCE_CHUNKS_MAX == 2
     assert params.LOOP_TIER_DEEP_MIN_FAILS == 2
+    assert params.EVENT_PAYLOAD_STR_MAX == 64  # a sha256 question_hash (Behaviour 10)
+
+
+def test_pkg06_modules_hold_no_numeral():
+    """Every threshold is a params.NAME: the only bare numerals in the PKG-06
+    modules are 0 / 1 (identity, empty) and the Rung member values."""
+    import ast
+
+    for name in _PKG06_MODULES:
+        tree = ast.parse((BACKEND / "learning" / f"{name}.py").read_text())
+        rung_body = {
+            id(n)
+            for c in ast.walk(tree)
+            if isinstance(c, ast.ClassDef) and c.name == "Rung"
+            for n in ast.walk(c)
+        }
+        stray = [
+            (name, node.lineno, node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, (int, float))
+            and not isinstance(node.value, bool)
+            and node.value not in (0, 1)
+            and id(node) not in rung_body
+        ]
+        assert stray == [], stray
 
 
 def test_fsrs_rating_names_are_the_fsrs_rating_values():
@@ -1775,7 +1802,8 @@ def test_emit_helpers_drop_a_payload_that_could_carry_text(monkeypatch, caplog):
     from learning import zpd_events
     from learning.policy import BandAction
 
-    assert zpd_events.PAYLOAD_STR_MAX == PAYLOAD_STR_MAX
+    assert params.EVENT_PAYLOAD_STR_MAX == PAYLOAD_STR_MAX
+    assert not hasattr(zpd_events, "PAYLOAD_STR_MAX")  # one value, one name (params)
     calls = _recorder(monkeypatch)
     wheel = dict(user_id="u", request_id="r", opps=6, unassisted_next=0.2, htc_k=None)
     band = dict(user_id="u", request_id="r", direction=BandAction.HOLD, trigger="high")

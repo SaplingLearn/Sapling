@@ -206,6 +206,9 @@ LOOP_RAG_K_TEACH = 5  # teach-phase RAG k (unchanged from legacy)
 LOOP_RAG_K_TEACH_SOFT = 3  # † teach RAG k at the soft (and hard) budget level
 LOOP_SOURCE_CHUNKS_MAX = 2  # † the item's own source chunks for hint/feedback turns and H2
 LOOP_TIER_DEEP_MIN_FAILS = 2  # LOOP_MODEL_TIER: "≥ 2 failed genuine attempts" → deep
+# §6 zpd.* payloads carry ids, counts, enums and bools only (PKG-06 Behaviour
+# 10): no payload string is longer than a sha256 question_hash (64 hex chars).
+EVENT_PAYLOAD_STR_MAX = 64
 
 
 def gate_seconds(name: str, scale: float = 1.0) -> float:
