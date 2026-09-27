@@ -6,12 +6,15 @@ the supervisor architecture's deterministic solution stripper). Two rules:
 - ngram: any LEAK_NGRAM consecutive tokens of the reference appear
   consecutively in the emitted text (a reference shorter than LEAK_NGRAM
   tokens: its whole token run, as PKG-04's checks.leak_in_prompt compares);
-- final_answer: the reference's final answer (the clause after its last '=';
-  else its last standalone number that is not a numbered-step label, an
-  exponent or a power's base, so scientific notation gives its mantissa;
-  else its last power term, "3x^2"; Markdown emphasis read as its text)
-  appears as a consecutive token run, or with every number compared by value
-  ("1,250" = "1250", "2.50" = "2.5"), so a reformatted answer still leaks.
+- final_answer: the final answer appears as a consecutive token run, or with
+  every number compared by value ("1,250" = "1250", "2.50" = "2.5"), so a
+  reformatted answer still leaks. The final answer is the item's numeric
+  canonical_answer when the caller passes one (PKG-04's, decrypted; the
+  reference is then not parsed for it); else the reference's: the clause
+  after its last '='; else its last standalone number that is not a
+  numbered-step label, an exponent or a power's base, so scientific notation
+  gives its mantissa; else its last power term, "3x^2"; Markdown emphasis
+  read as its text.
 
 Tokens are ASCII alphanumeric runs, lowercased (`[a-z0-9]+` over lowercase for
 ASCII text). The stripper tokenizes the same way over the original text, so
@@ -80,6 +83,12 @@ _CLAUSE_BREAK = re.compile(r"(?<!\d),|,(?!\d{3}(?!\d))|[;\n]|\band\b|\bso\b|[.!?
 _VALUE_TOKEN = re.compile(
     r"([0-9]{1,3}(?:,[0-9]{3})+(?![0-9])(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)|[A-Za-z0-9]+"
 )
+# PKG-04's canonical_answer is "one number as plain decimal text" (float()-
+# parseable at write time). A sign and an e-notation exponent are read as the
+# text rule reads them (not part of the number, group 1); ASCII digits only.
+_CANONICAL = re.compile(
+    r"[-+]?((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?"
+)
 
 
 class LeakVerdict(NamedTuple):
@@ -125,14 +134,16 @@ def _final_answer_text(reference: str) -> str:
     return powers[-1] if powers else ""
 
 
-def final_answer(reference: str) -> tuple[str, ...]:
-    """Token run of the reference's final answer: the clause after its last '=';
-    else its last standalone number that is not a numbered-step label, an
-    exponent (after "^" / a "**" touching its base) or a power's base (so
-    "6.02 x 10^23" gives its mantissa); else its last whitespace-delimited power
-    term ("3x^2", "cos(x^2)", "5^2"); () when it has none. Markdown emphasis
-    ("**42**") is read as its text first."""
-    return tuple(tokens(_final_answer_text(reference)))
+def final_answer(reference: str, *, canonical_answer: str | None = None) -> tuple[str, ...]:
+    """Token run of the final answer. With a usable `canonical_answer` (PKG-04's
+    numeric value, decrypted by the caller) it is that value's canonical
+    spelling and the reference is not parsed. Otherwise the reference's: the
+    clause after its last '='; else its last standalone number that is not a
+    numbered-step label, an exponent (after "^" / a "**" touching its base) or a
+    power's base (so "6.02 x 10^23" gives its mantissa); else its last
+    whitespace-delimited power term ("3x^2", "cos(x^2)", "5^2"); () when it has
+    none. Markdown emphasis ("**42**") is read as its text first."""
+    return _answer_runs(reference, canonical_answer)[0]
 
 
 def _number_value(text: str) -> str:
@@ -158,8 +169,29 @@ def _value_tokens(text: str) -> list[_ValueToken]:
     return out
 
 
-def _value_run(reference: str) -> tuple[str, ...]:
-    return tuple(t.value for t in _value_tokens(_final_answer_text(reference)))
+def _canonical_text(canonical_answer: str | None) -> str | None:
+    """PKG-04's numeric canonical_answer as the final answer's text: its
+    mantissa's canonical spelling ("2.50" → "2.5", "1250.0" → "1250", "-3" →
+    "3", "6.022e23" → "6.022", as the text rule reads a number); None when the
+    item has none or the value is not a plain ASCII number."""
+    if canonical_answer is None:
+        return None
+    m = _CANONICAL.fullmatch(canonical_answer.strip())
+    return _number_value(m.group(1)) if m else None
+
+
+def _answer_text(reference: str, canonical_answer: str | None) -> str:
+    canonical = _canonical_text(canonical_answer)
+    return _final_answer_text(reference) if canonical is None else canonical
+
+
+def _answer_runs(
+    reference: str, canonical_answer: str | None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(token run, by-value run) of the final answer: detect_leak and
+    strip_leak read the same two, so a strip is always detect-clean."""
+    text = _answer_text(reference, canonical_answer)
+    return tuple(tokens(text)), tuple(t.value for t in _value_tokens(text))
 
 
 def _ngrams(seq: list[str], n: int) -> set[tuple[str, ...]]:
@@ -178,17 +210,23 @@ def _reference_grams(reference: str) -> tuple[int, set[tuple[str, ...]]]:
     return n, _ngrams(ref, n)
 
 
-def detect_leak(reference_answer: str, emitted: str, rung: Rung) -> LeakVerdict:
+def detect_leak(
+    reference_answer: str, emitted: str, rung: Rung, *, canonical_answer: str | None = None
+) -> LeakVerdict:
     """`rung` is the rung the text is served at; at H6 the reference is the
-    content (under gates.h6_allowed), so nothing is a leak."""
+    content (under gates.h6_allowed), so nothing is a leak. `canonical_answer`
+    is the item's decrypted numeric canonical_answer when it has one: the
+    final-answer rule then compares that value and does not parse the
+    reference; the n-gram rule always reads the reference."""
     if Rung(rung) >= Rung.H6:
         return LeakVerdict(False, "none")
     n, grams = _reference_grams(reference_answer)
     em = tokens(emitted)
     if grams & _ngrams(em, n):
         return LeakVerdict(True, "ngram")
-    if _contains_run(em, final_answer(reference_answer)) or _contains_run(
-        [t.value for t in _value_tokens(emitted)], _value_run(reference_answer)
+    answer, value_run = _answer_runs(reference_answer, canonical_answer)
+    if _contains_run(em, answer) or _contains_run(
+        [t.value for t in _value_tokens(emitted)], value_run
     ):
         return LeakVerdict(True, "final_answer")
     return LeakVerdict(False, "none")
@@ -248,15 +286,16 @@ def _strip_segment(
     return "".join(out)
 
 
-def strip_leak(emitted: str, reference: str) -> str:
+def strip_leak(emitted: str, reference: str, *, canonical_answer: str | None = None) -> str:
     """Replace every maximal run of leaked tokens (an n-gram of the reference or
-    its final answer, a number matched by value) with WITHHELD, the text between
-    runs untouched; a number touched by a run is withheld whole. One pass
-    leaves nothing detect_leak(reference, ·, H0) flags (unless the reference
-    itself contains the word "withheld"), and a second pass is a no-op: existing
-    WITHHELD markers are never re-matched."""
+    the final answer — `canonical_answer` as in detect_leak — a number matched
+    by value) with WITHHELD, the text between runs untouched; a number touched
+    by a run is withheld whole. One pass leaves nothing
+    detect_leak(reference, ·, H0, canonical_answer=<same>) flags (unless the
+    reference itself contains the word "withheld"), and a second pass is a
+    no-op: existing WITHHELD markers are never re-matched."""
     n, grams = _reference_grams(reference)
-    answer, value_run = final_answer(reference), _value_run(reference)
+    answer, value_run = _answer_runs(reference, canonical_answer)
     return WITHHELD.join(
         _strip_segment(seg, n, grams, answer, value_run) for seg in emitted.split(WITHHELD)
     )

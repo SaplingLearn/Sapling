@@ -1818,6 +1818,99 @@ def test_final_answer_reads_through_markdown_emphasis():
     assert final_answer("Use x ** 2 then 4") == ("4",)
 
 
+# Coordinator decision 2(a): PKG-04's numeric canonical_answer, decrypted by
+# the caller, is the final answer; the reference text is not parsed for it.
+REF_SLIDE = "The block slides 14 m before it stops; friction removes 3 J per metre of travel."
+
+
+def test_canonical_answer_is_the_final_answer_when_the_item_has_one():
+    """With `canonical_answer` the final-answer rule compares that value (by
+    value, as today) and never parses the reference for one, so an
+    intermediate number in the reference is no leak and a paraphrase of the
+    real answer is; the n-gram rule still runs on the reference."""
+    from learning.ladder import Rung
+    from learning.leak import WITHHELD, detect_leak, final_answer, strip_leak
+
+    assert final_answer(REF_SLIDE) == ("3",)  # the text fallback's pick
+    assert final_answer(REF_SLIDE, canonical_answer="14") == ("14",)
+    hint_3 = "Where do the 3 J go?"
+    assert detect_leak(REF_SLIDE, hint_3, Rung.H3).leaked
+    assert detect_leak(REF_SLIDE, hint_3, Rung.H3, canonical_answer="14") == (False, "none")
+    assert strip_leak(hint_3, REF_SLIDE, canonical_answer="14") == hint_3
+    hint_14 = "So it should travel about 14.0 metres."
+    assert detect_leak(REF_SLIDE, hint_14, Rung.H3) == (False, "none")
+    assert detect_leak(REF_SLIDE, hint_14, Rung.H3, canonical_answer="14") == (
+        True,
+        "final_answer",
+    )
+    once = strip_leak(hint_14, REF_SLIDE, canonical_answer="14")
+    assert once == f"So it should travel about {WITHHELD} metres."
+    assert detect_leak(REF_SLIDE, once, Rung.H0, canonical_answer="14") == (False, "none")
+    assert strip_leak(once, REF_SLIDE, canonical_answer="14") == once
+    # the canonical value is compared by value, on either side
+    for canonical, hint in (
+        ("1250", "It comes to 1,250 J."),
+        ("1250.0", "It comes to 1250 J."),
+        ("2.50", "So v is 2.5 m/s."),
+        ("0.5", "About 0.50 of it."),
+        (".5", "About 0.5 of it."),
+        ("-3", "The root is -3."),
+        ("+42", "It is 42."),
+        ("6.022e23", "About 6.022 x 10^23 of them."),
+        (" 7 ", "Is it 7?"),
+    ):
+        v = detect_leak(REF_SLIDE, hint, Rung.H3, canonical_answer=canonical)
+        assert v == (True, "final_answer"), (canonical, hint)
+        once = strip_leak(hint, REF_SLIDE, canonical_answer=canonical)
+        assert WITHHELD in once, (canonical, once)
+        assert detect_leak(REF_SLIDE, once, Rung.H0, canonical_answer=canonical).leaked is False
+    assert detect_leak(REF_SLIDE, "It is 12,500 J.", Rung.H3, canonical_answer="1250") == (
+        False,
+        "none",
+    )
+    # the n-gram rule still reads the reference
+    copied = "It slides 14 m before it stops, see?"
+    assert detect_leak(REF_SLIDE, copied, Rung.H3, canonical_answer="99") == (True, "ngram")
+    assert detect_leak(REF_SLIDE, REF_SLIDE, Rung.H6, canonical_answer="14").leaked is False
+
+
+def test_a_missing_or_unusable_canonical_answer_falls_back_to_the_text():
+    """None, blank or a value that is not a plain ASCII number (a stored row
+    PKG-04 should never write) leaves the text fallback in charge."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer, strip_leak
+
+    for canonical in (None, "", "   ", "abc", "nan", "inf", "٣", "1_000", "7 m", "x = 7"):
+        assert final_answer(REF_SLIDE, canonical_answer=canonical) == ("3",), canonical
+        assert detect_leak(REF_SLIDE, "Where do the 3 J go?", Rung.H3, canonical_answer=canonical)
+        assert strip_leak("3 J", REF_SLIDE, canonical_answer=canonical) == "[withheld] J"
+    with pytest.raises(TypeError):
+        detect_leak(REF_SLIDE, "hint", Rung.H3, "14")  # keyword-only
+    with pytest.raises(TypeError):
+        strip_leak("hint", REF_SLIDE, "14")
+
+
+def test_strip_leak_with_a_canonical_answer_is_safe_and_idempotent():
+    """The strip property test, over canonical values: one strip leaves nothing
+    detect_leak flags with the same canonical_answer, and a second is a no-op."""
+    import random
+
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    rng = random.Random(2606)
+    seps = [" ", ", ", "\n", "(", ") ", "/", " = ", "^", " x ", "."]
+    for canonical in ("14", "1250", "2.50", "0.5", "-3", "6.022e23", "7"):
+        words = REF_SLIDE.split() + ["14", "14.0", "1,250", "1250", "2.5", "0.50", "3", "-3"]
+        words += ["6.022", "10^23", "7", "7.00", "007", "0", "5"]
+        for _ in range(200):
+            text = "".join(rng.choice(words) + rng.choice(seps) for _ in range(rng.randint(1, 25)))
+            once = strip_leak(text, REF_SLIDE, canonical_answer=canonical)
+            verdict = detect_leak(REF_SLIDE, once, Rung.H0, canonical_answer=canonical)
+            assert verdict.leaked is False, (canonical, text, once)
+            assert strip_leak(once, REF_SLIDE, canonical_answer=canonical) == once
+
+
 def test_final_answer_runs_in_linear_time():
     """References and hints are model text of any length: the fallback's
     Markdown, exponent and power-term scans stay linear."""
