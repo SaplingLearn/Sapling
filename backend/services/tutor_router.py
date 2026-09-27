@@ -203,8 +203,9 @@ def observe_tutor_turn(
     complexity: ``model_pref_requested`` is the raw request field (the
     toggle; None when the client sent none), ``model_tier`` the tier that
     served (``fast`` | ``smart`` | ``default`` — the stream's Rung-1 fallback
-    is ``fast`` whatever was requested), and ``tutor_model`` the served model
-    name.
+    is ``fast`` whatever was requested, and a pref the route did not honour,
+    e.g. any non-real model mode, is ``default``), and ``tutor_model`` the
+    served model name.
 
     Returns the scheduled task (tests await it) or None when the seam is off
     or scheduling failed. Never raises, never blocks: the caller's turn runs

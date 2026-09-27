@@ -348,6 +348,12 @@ def test_successful_stream_is_one_decision_with_the_served_model(router_on, sink
     spy.replay()
     (event,) = _decision_events(sink)
     assert event["payload"]["model_tier"] == "smart"
+    # #672 review: the router's decision runs as a detached task, outside the
+    # request contextvar; its llm_usage row must still join to the turn.
+    usage = [r for r in sink if "prompt_tokens" in r and r.get("task") == "decision"]
+    assert len(usage) == 1
+    assert usage[0]["request_id"] == kw["request_id"] == event["request_id"]
+    assert usage[0]["request_id"] is not None
 
 
 def test_stream_rung1_fallback_is_one_decision_on_the_fast_tier(router_on):
@@ -410,17 +416,87 @@ def test_failed_json_turn_routes_nothing(router_on):
     assert spy.calls == []
 
 
-def test_off_does_no_router_work_at_the_persist_point():
+def test_off_schedules_nothing_at_the_persist_point():
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("reply"))
+    scheduled: list = []
+    real_observe = tutor_router.observe_tutor_turn
+
+    def spy(**kw):
+        scheduled.append(real_observe(**kw))
+        return scheduled[-1]
+
     with (
         patch("routes.learn.table", side_effect=_table_factory),
         patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn.observe_tutor_turn") as observe,
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
         r = _post_chat()
     assert r.status_code == 200
-    observe.assert_not_called()
+    assert scheduled == [None], "off: the router is asked, and schedules nothing"
+
+
+def test_the_seam_switch_is_read_once_per_turn(router_on, monkeypatch):
+    """#672 review: learn.py re-checked decisions.enabled() before calling
+    observe_tutor_turn, which checks it itself. One owner: the router."""
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=run_result("reply"))
+    reads: list = []
+
+    def enabled():
+        reads.append(1)
+        return True
+
+    async def no_route(*a, **k):
+        return None
+
+    monkeypatch.setattr(decisions, "enabled", enabled)
+    monkeypatch.setattr(tutor_router, "_route", no_route)
+    with (
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+    ):
+        r = _post_chat()
+    assert r.status_code == 200
+    assert len(reads) == 1
+
+
+def test_function_mode_labels_the_tier_the_turn_really_ran_on(router_on, monkeypatch):
+    """#672 review: outside real mode `_resolve_model_pref` ignores the pref
+    (#391), so a `fast` request runs the seam's default model — the event
+    must say `default`, agreeing with `tutor_model`, not echo `fast`."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=run_result("reply"))
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        r = _post_chat(model_pref="fast")
+    assert r.status_code == 200
+    (kw,) = spy.calls
+    assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
+        "fast", "default", "function:chat_tutor")
+
+
+def test_model_labels_come_from_config_without_building_a_model(monkeypatch):
+    """#672 review: no private `_model_mode` import and no Model construction
+    per turn — the labels are configuration reads."""
+    import agents._providers as providers
+    from routes import learn
+
+    def boom(*a, **k):
+        raise AssertionError("model_for must not be called to label an event")
+
+    monkeypatch.setattr(providers, "model_for", boom)
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    assert learn._served_model_name("fast") == "function:chat_tutor"
+    monkeypatch.delenv("SAPLING_MODEL_MODE")
+    assert learn._served_model_name("smart") == "gemini-2.5-pro"
+    assert learn._served_model_name(None) == providers.model_name_for("chat_tutor")
+    assert learn._served_tier("turbo") == "default"
 
 
 def test_router_failure_cannot_fail_the_turn():
@@ -489,8 +565,9 @@ def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
     r_off, call_off, retr_off, spy_off = run_turn(None)
     r_on, call_on, retr_on, spy_on = run_turn("flash_lite")
 
-    assert spy_off.calls == [], "off: nothing scheduled"
-    assert len(spy_on.calls) == 1, "on: the router was scheduled"
+    # The route always hands the persisted turn to the router, which owns the
+    # on/off check (test_off_schedules_nothing_at_the_persist_point).
+    assert len(spy_off.calls) == len(spy_on.calls) == 1
     assert r_on.status_code == r_off.status_code == 200
     assert r_on.json() == r_off.json()
     assert retr_on == retr_off and len(retr_on) == 1, "retrieval still runs"
