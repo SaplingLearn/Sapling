@@ -3064,6 +3064,50 @@ class TestFinalAnswerEval:
         scores = json.loads(baselines.read_text())["check_items"]
         assert scores["FinalAnswerValidEvaluator"] == 1.0
 
+    def test_final_answer_valid_measures_the_verbatim_copy(self):
+        """validate_draft already rejects a final answer that is not in the
+        reference AFTER normalisation, so an evaluator repeating that check
+        scores 1.0 whatever the model does. FinalAnswerValid checks the A34
+        contract validate_draft cannot: the final answer is copied character
+        for character from the reference's closing sentence."""
+        import importlib.util
+        from types import SimpleNamespace
+
+        from learning.checks import validate_draft
+
+        import sys
+
+        path = pathlib.Path(__file__).parent / "evals" / "check_items.py"
+        spec = importlib.util.spec_from_file_location("_eval_check_items", path)
+        mod = importlib.util.module_from_spec(spec)
+        saved = list(sys.path)  # the eval module prepends tests/evals to sys.path
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path[:] = saved
+
+        def score(*drafts):
+            ctx = SimpleNamespace(output=SimpleNamespace(items=list(drafts)))
+            return mod.FinalAnswerValidEvaluator().evaluate(ctx)
+
+        verbatim = _draft(
+            reference_answer="It scales each step. Final answer: The size of each update step.",
+        )
+        assert validate_draft(verbatim) == []
+        assert score(verbatim) == 1.0
+        # accepted by validate_draft (same answer tokens), but not a copy
+        for final, reference in (
+            ("6x\u00b2", "The derivative is 6x^2. Final answer: 6x^2."),
+            ("the size of each update step", "Final answer: The size of each update step."),
+            ("6 x ^ 2", "The derivative is 6x^2. Final answer: 6x^2."),
+        ):
+            draft = _draft(reference_answer=reference, final_answer=final)
+            assert validate_draft(draft) == [], final
+            assert score(draft) == 0.0, final
+            assert score(verbatim, draft) == 0.0, final
+        # no accepted draft: nothing shows the contract holds
+        assert score(_draft(final_answer="")) == 0.0
+
 
 class TestProjectRef:
     @pytest.mark.parametrize(

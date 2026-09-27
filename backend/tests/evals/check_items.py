@@ -17,9 +17,13 @@ CHECK_ITEM_MIN_WRONG paired, unique wrong reasons, cites only input chunk ids,
 never leaks its reference into the prompt, and passes validate_draft (the A22
 option / numeric / stepwise rules and the A34 final_answer rules included).
 FinalAnswerValid (spec §13 A34) is required at 1.0: every accepted draft states
-a final_answer that occurs verbatim in its reference_answer (after
-checks.answer_tokens' normalisation) and not in its prompt — the answer the
-tutor's leak check matches.
+a final_answer copied character for character from its reference_answer (a
+substring, surrounding whitespace and a closing period aside) that is not in
+its prompt — the answer the tutor's leak check matches. validate_draft already
+rejects an answer missing from the reference after checks.answer_tokens'
+normalisation, so repeating that check here would score 1.0 whatever the
+model wrote; the verbatim copy is what the prompt asks for and code does not
+enforce.
 """
 
 from __future__ import annotations
@@ -144,17 +148,23 @@ class DraftValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return sum(validate_draft(i) == [] for i in items) / len(items) if items else 0.0
 
 
+def _copied(final_answer: str, text: str) -> bool:
+    """A34's "copied verbatim": the final answer, trimmed of surrounding
+    whitespace and a closing period, is a substring of `text`."""
+    core = final_answer.strip().rstrip(".").strip()
+    return bool(core) and core in text
+
+
 @dataclass
 class FinalAnswerValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
     """A34, required 1.0: every accepted draft (validate_draft == []) states a
-    final_answer that occurs in its reference_answer and not in its prompt;
-    0.0 when no draft is accepted."""
+    final_answer copied verbatim from its reference_answer and not in its
+    prompt; 0.0 when no draft is accepted."""
 
     def evaluate(self, ctx: _Ctx) -> float:
         accepted = [i for i in ctx.output.items if validate_draft(i) == []]
         ok = all(
-            answer_in(i.reference_answer, i.final_answer)
-            and not answer_in(i.prompt, i.final_answer)
+            _copied(i.final_answer, i.reference_answer) and not answer_in(i.prompt, i.final_answer)
             for i in accepted
         )
         return 1.0 if accepted and ok else 0.0
