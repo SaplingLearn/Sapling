@@ -23,7 +23,6 @@ from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self
-from services.posthog_client import get_posthog_client
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
@@ -1944,16 +1943,6 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             **prompt_dimensions.snapshot(),
         },
     )
-    posthog_client = get_posthog_client()
-    if posthog_client is not None:
-        posthog_client.capture(
-            "quiz_started",
-            properties={
-                "question_count": len(questions),
-                "difficulty": body.difficulty,
-                "is_adaptive": body.difficulty == "adaptive",
-            },
-        )
     prompt_dimensions.clear()
     # #541 C3 / #546: the answer key (per-option `correct` booleans) ships
     # to the client only behind the deprecated include_answer_key flag.
@@ -2721,16 +2710,6 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             "mastery_delta": mastery_delta,
         },
     )
-    posthog_client = get_posthog_client()
-    if posthog_client is not None:
-        posthog_client.capture(
-            "quiz_completed",
-            properties={
-                "score": score,
-                "question_count": total,
-                "mastery_delta": mastery_delta,
-            },
-        )
 
     return {
         "score": score,
