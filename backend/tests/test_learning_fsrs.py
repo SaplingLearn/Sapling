@@ -170,10 +170,18 @@ def test_s0_good_matches_params():
     assert initial_stability(Rating.GOOD) == FSRS_S0_GOOD == FSRS_W[2]
 
 
-@pytest.mark.parametrize("bad", [0, 5, -1, 2.5, "3"])
+@pytest.mark.parametrize("bad", [0, 5, -1, 2.5, "3", math.nan, math.inf, -math.inf], ids=repr)
 def test_bad_rating_rejected(bad):
+    """±inf used to escape as OverflowError from int(), breaking the module's
+    "every public function raises ValueError" contract (CodeRabbit PR #673)."""
     with pytest.raises(ValueError):
         next_state(None, None, bad, 0.0)
+    with pytest.raises(ValueError):
+        next_state(5.0, 3.0, bad, 1.0)
+    with pytest.raises(ValueError):
+        initial_stability(bad)
+    with pytest.raises(ValueError):
+        initial_difficulty(bad)
 
 
 # --- later ratings: reference trajectory from a first Good ------------------

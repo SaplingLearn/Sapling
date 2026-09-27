@@ -124,9 +124,10 @@ def _clamp_d(d: float) -> float:
 
 
 def _check_rating(rating: int) -> int:
+    """``rating`` as an int in 1..4; NaN, ±inf, 2.5, "3" and None raise ValueError."""
     try:
         g = int(rating)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # int(±inf) is OverflowError
         raise ValueError(f"rating must be 1..4, got {rating!r}") from None
     if g != rating or g not in (Rating.AGAIN, Rating.HARD, Rating.GOOD, Rating.EASY):
         raise ValueError(f"rating must be 1..4, got {rating!r}")
