@@ -865,7 +865,12 @@ def _apply_evidence(
         if row.get("course_id"):
             touched_courses.add(row["course_id"])
 
-        for target_id, channel, target_correct, weight in _propagation_targets(user_id, ev):
+        # The propagated observation carries the evidence's own weight too
+        # (spec §5: weight = product of the applicable §3.1 weights) †, and
+        # w == 0.0 (correct after H4..H6, §3.3 "no upward BKT evidence")
+        # moves no neighbour, so its edges are not even read.
+        targets = _propagation_targets(user_id, ev) if w > 0.0 else []
+        for target_id, channel, target_correct, weight in targets:
             trow = by_id.get(target_id)
             if trow is None or target_id == ev.node_id:
                 continue
@@ -875,7 +880,7 @@ def _apply_evidence(
                     user_id=user_id, node_id=target_id
                 )
                 states[target_id] = tst
-            tst.p_known = bkt.update(tst.p_known, channel, target_correct, weight=weight)
+            tst.p_known = bkt.update(tst.p_known, channel, target_correct, weight=weight * w)
             tst.last_evidence_at = now
             write_state(tst, now=now)
             tst.exists = True

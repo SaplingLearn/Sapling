@@ -970,6 +970,69 @@ class TestApplyEvidence:
         assert [w["node_id"] for w in _state_writes(mocks)] == ["n1"]
         assert [f for f, _ in _node_updates(mocks)] == ["eq.n1"]
 
+    def test_no_credit_evidence_does_not_propagate(self):
+        """Spec §3.3: a correct answer after H4–H6 is NO upward BKT evidence —
+        for the node's prerequisite parents as much as for the node itself."""
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {
+                        "node_id": "n1",
+                        "channel": "free_response",
+                        "correct": True,
+                        "max_rung": RUNG_NO_CREDIT_MIN,
+                    },
+                ]
+                * 4
+            }
+        )
+        assert [w["node_id"] for w in _state_writes(mocks)] == ["n1"] * 4, "parent n0 unwritten"
+        assert [f for f, _ in _node_updates(mocks)] == ["eq.n1"] * 4
+        assert "graph_edges" not in mocks, "no edge read for evidence that cannot propagate"
+
+    def test_propagation_carries_the_evidences_own_weight(self):
+        """The propagated observation's weight is WEIGHT_PROPAGATION times the
+        evidence's own §3.1 weight (spec §5: weight = the product of the
+        applicable weights), so a discounted answer cannot move a neighbour
+        more than it moves the node it was about."""
+        from learning import bkt
+        from learning.evidence import PROPAGATION_CHANNEL
+
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {"node_id": "n1", "channel": "free_response", "correct": True, "max_rung": 2},
+                ]
+            }
+        )
+        writes = {w["node_id"]: w for w in _state_writes(mocks)}
+        assert writes["n0"]["p_known"] == pytest.approx(
+            bkt.update(
+                BKT_L0, PROPAGATION_CHANNEL, True, weight=WEIGHT_PROPAGATION * WEIGHT_ASSISTED
+            )
+        )
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {
+                        "node_id": "n1",
+                        "channel": "free_response",
+                        "correct": False,
+                        "confidence": 0.1,
+                    },
+                ]
+            }
+        )
+        writes = {w["node_id"]: w for w in _state_writes(mocks)}
+        assert writes["n2"]["p_known"] == pytest.approx(
+            bkt.update(
+                BKT_L0,
+                PROPAGATION_CHANNEL,
+                False,
+                weight=WEIGHT_PROPAGATION * WEIGHT_LOW_CONFIDENCE,
+            )
+        )
+
     def test_unowned_node_is_skipped_with_a_warning(self, caplog):
         with caplog.at_level("WARNING"):
             result, mocks, streak = _apply(
