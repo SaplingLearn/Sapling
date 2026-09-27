@@ -23,6 +23,8 @@ options pass every A37 option rule, and a case with no mc_reason draft scores
 0.0 — the live sequence test of 2026-09-27 stored 0 of 12 when the options were
 parallel arrays. McReasonValid is the share of mc_reason drafts stored (the A34
 final_answer rules included), gated at its recorded rate.
+McCorrectNotLongest (review of A37) is the share of stored mc_reason drafts
+whose correct option is not strictly the longest, gated at its recorded rate.
 FinalAnswerValid (spec §13 A34) is required at 1.0: every accepted draft states
 a final_answer copied character for character from its reference_answer (a
 substring, surrounding whitespace and a closing period aside) that is not in
@@ -195,6 +197,30 @@ class McOptionsValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return _mc_share(ctx, options_ok)
 
 
+def _correct_is_longest(draft) -> bool:
+    """Whether the option marked correct is STRICTLY the longest by
+    characters (whitespace runs collapsed): a student who picks the longest
+    option finds it. A tie hides it."""
+    lengths = [(len(" ".join(o.text.split())), o.is_correct) for o in draft.options]
+    right = [n for n, correct in lengths if correct]
+    others = [n for n, correct in lengths if not correct]
+    return len(right) == 1 and bool(others) and right[0] > max(others)
+
+
+@dataclass
+class McCorrectNotLongestEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37 review: the share of the case's STORED mc_reason drafts whose
+    correct option is not strictly the longest — the length cue that let
+    "pick the longest" find the answer in 10 of 12 live HIST200 items. Gated
+    at its recorded rate (the prompt asks for options alike in length; code
+    cannot shorten an option, and a drop rule cost most of the yield); 0.0
+    when the case stores no mc_reason draft."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        stored = [i for i in ctx.output.items if i.format == "mc_reason" and _stored(i)]
+        return sum(not _correct_is_longest(i) for i in stored) / len(stored) if stored else 0.0
+
+
 def _copied(final_answer: str, text: str) -> bool:
     """A34's "copied verbatim": the final answer, trimmed of surrounding
     whitespace and a closing period, is a substring of `text`."""
@@ -249,6 +275,7 @@ def make_dataset() -> Dataset[CheckItemsInput, CheckItemsOutput]:
             DraftValidEvaluator(),
             McReasonValidEvaluator(),
             McOptionsValidEvaluator(),
+            McCorrectNotLongestEvaluator(),
             FinalAnswerValidEvaluator(),
         ],
     )

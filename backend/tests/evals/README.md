@@ -68,7 +68,12 @@ leaks into the prompt) and `FinalAnswerValid` (spec §13 A34, required 1.0:
 every accepted draft's final answer is a verbatim copy from its reference).
 Its baseline was re-recorded by PKG-06's A34 reopen of PKG-04 (29af030; one
 recording on the final prompt — DraftValid 0.722, WrongReasonCount 0.667,
-both lower than the first recording; HANDOFF-04/HANDOFF-06).
+both lower than the first recording; HANDOFF-04/HANDOFF-06), then by the A37
+reopen (spec §13 A37: the mc_reason options as objects, 48a65bc) and its
+review round (options alike in length). `McOptionsValid` (required 1.0) and
+`McReasonValid` score the mc_reason drafts; `McCorrectNotLongest` is the
+share of stored mc_reason drafts whose correct option is not strictly the
+longest, gated at its recorded rate.
 
 `chat_tutor` records against the committed fixture course
 (`fixtures/tutor_course.json`) through the TutorRetrieval seam

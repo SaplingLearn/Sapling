@@ -4023,13 +4023,17 @@ class TestMcReasonEval:
     def test_the_baselines_pin_the_option_contract_and_the_recorded_yield(self):
         """McOptionsValid — every recorded mc_reason draft passes every A37
         option rule — is required at 1.0. McReasonValid is the recorded share
-        of mc_reason drafts stored (16/18: the two drops are A34 final_answer
-        rules — the answer printed in the stem, the concept's own name — that
-        every format meets); a re-record changes it here consciously."""
+        of mc_reason drafts stored (17/18 in the recording of the A37 review
+        round: the one drop is an A34 final_answer rule — the answer printed
+        in the stem — that every format meets). McCorrectNotLongest is the
+        recorded mean per case of stored mc_reason drafts whose correct
+        option is not strictly the longest (12 of 17 drafts). A re-record
+        changes them here consciously."""
         baselines = pathlib.Path(__file__).parent / "evals" / "baselines.json"
         scores = json.loads(baselines.read_text())["check_items"]
         assert scores["McOptionsValidEvaluator"] == 1.0
-        assert scores["McReasonValidEvaluator"] == round(16 / 18, 6)
+        assert scores["McReasonValidEvaluator"] == round(17 / 18, 6)
+        assert scores["McCorrectNotLongestEvaluator"] == round(25 / 36, 6)
 
     def test_options_valid_reads_only_the_a37_option_rules(self):
         from learning.checks import MC_OPTION_RULES
@@ -4050,6 +4054,50 @@ class TestMcReasonEval:
         assert self._options_score(a34_only, repairable, _draft(rubric=[])) == 1.0
         assert self._options_score(_mc_draft(), shared) == 0.5
         assert self._options_score(_draft()) == 0.0  # no mc_reason draft at all is a miss
+
+    @staticmethod
+    def _length_score(*drafts):
+        import importlib.util
+        import sys
+        from types import SimpleNamespace
+
+        path = pathlib.Path(__file__).parent / "evals" / "check_items.py"
+        spec = importlib.util.spec_from_file_location("_eval_check_items_len", path)
+        mod = importlib.util.module_from_spec(spec)
+        saved = list(sys.path)
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path[:] = saved
+        ctx = SimpleNamespace(output=SimpleNamespace(items=list(drafts)))
+        return mod.McCorrectNotLongestEvaluator().evaluate(ctx)
+
+    def test_correct_not_longest_scores_the_length_cue_of_stored_mc_drafts(self):
+        """Review of A37: the correct option was the single longest in 10 of
+        12 live items, so "pick the longest" beat the secret slot. The
+        evaluator is the share of stored mc_reason drafts whose correct option
+        is NOT strictly the longest by characters (a tie hides it), gated at
+        its recorded rate; drafts that would not be stored do not count."""
+        long_right = _mc_draft(
+            options=_opts(
+                ("The update step size along the gradient", True, None), _ITER, _LOSS, _SIGN
+            ),
+            final_answer="The update step size along the gradient",
+            reference_answer=(
+                "The rate scales each step. Final answer: The update step size along the gradient."
+            ),
+        )
+        longer = ("The number of iterations run", False, _ITER[2])
+        short_right = _mc_draft(options=_opts(_CORRECT, longer, _LOSS, _SIGN))
+        tie = _mc_draft(
+            options=_opts(_CORRECT, ("The iteration counts", False, _ITER[2]), _LOSS, _SIGN)
+        )
+        broken = _mc_draft(options=_opts(_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN))
+        assert self._length_score(short_right, tie) == 1.0  # a tie at 20 characters hides it
+        assert self._length_score(_mc_draft()) == 0.0  # 20 characters against 19
+        assert self._length_score(long_right) == 0.0
+        assert self._length_score(short_right, long_right, broken) == 0.5
+        assert self._length_score(_draft()) == 0.0  # no stored mc_reason draft is a miss
 
     def test_it_scores_the_share_of_mc_reason_drafts_that_would_be_stored(self):
         repairable = _mc_draft(

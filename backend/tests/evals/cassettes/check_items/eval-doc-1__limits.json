@@ -11,73 +11,71 @@
       "final_answer": "A limit is the value a function approaches as its input approaches a point.",
       "format": "free",
       "options": [],
-      "prompt": "In your own words, what is a limit in the context of functions?",
-      "reference_answer": "A limit describes the value that a function gets closer and closer to as the input to the function gets closer and closer to a particular point. It's the value the function approaches, not necessarily the value the function actually reaches at that point. Final answer: A limit is the value a function approaches as its input approaches a point.",
+      "prompt": "In your own words, what is a limit in mathematics?",
+      "reference_answer": "A limit is the value that a function approaches as the input of that function approaches a certain point. It's a foundational concept for understanding derivatives.\nFinal answer: A limit is the value a function approaches as its input approaches a point.",
       "rubric": [
-        "Student correctly identifies that a limit is about the value a function approaches.",
-        "Student correctly identifies that the input to the function approaches a point."
+        "Identifies limit as a value a function approaches.",
+        "Mentions the input approaching a point."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_with_value_at_point"
+        "approaches_value_not_limit"
       ],
       "wrong_texts": [
-        "Confuses the limit with the function's value at the point."
+        "Confuses the limit with the function's actual value at the point."
       ]
     },
     {
       "answer_kind": "numeric",
-      "canonical_answer": "9",
+      "canonical_answer": "5",
       "chunk_ids": [
         "eval-doc-1:c1"
       ],
       "concept": "Limits",
       "difficulty": 2,
-      "final_answer": "9.",
+      "final_answer": "5.",
       "format": "free",
       "options": [],
-      "prompt": "Consider the function f(x) = x^2. What value does f(x) approach as x approaches 3?",
-      "reference_answer": "As x gets closer and closer to 3, x^2 gets closer and closer to 3^2, which is 9. The function approaches 9. Final answer: 9.",
+      "prompt": "If a function's value gets closer and closer to 5 as the input gets closer and closer to 2, what is the limit of the function as the input approaches 2?",
+      "reference_answer": "The limit of the function as the input approaches 2 is the value that the function approaches. In this case, the function approaches 5.\nFinal answer: 5.",
       "rubric": [
-        "Student correctly calculates the value the function approaches.",
-        "Student correctly identifies the input value being approached."
+        "Correctly identifies the value the function approaches.",
+        "Understands that this value is the limit."
       ],
       "stepwise": false,
-      "tolerance": "0",
+      "tolerance": "",
       "wrong_keys": [
-        "calculates_function_at_point_instead_of_limit"
+        "limit_is_input"
       ],
       "wrong_texts": [
-        "Calculates the function's value at the point instead of the limit."
+        "Confuses the limit with the input value."
       ]
     },
     {
       "answer_kind": "free",
       "canonical_answer": "",
       "chunk_ids": [
-        "eval-doc-1:c0",
-        "eval-doc-1:c1",
-        "eval-doc-1:c2"
+        "eval-doc-1:c1"
       ],
       "concept": "Limits",
       "difficulty": 3,
-      "final_answer": "Derivatives are defined as limits of difference quotients.",
+      "final_answer": "The limit is the value approached, not always the value at the point.",
       "format": "free",
       "options": [],
-      "prompt": "Why are limits considered the foundation of derivatives?",
-      "reference_answer": "Derivatives are defined as the limit of difference quotients. This means that the concept of a limit is essential for understanding and calculating the instantaneous rate of change, which is what a derivative represents. Without limits, the definition of a derivative could not be formed. Final answer: Derivatives are defined as limits of difference quotients.",
+      "prompt": "A student claims that the limit of a function at a point is always the same as the function's value at that point. Explain why this is not necessarily true, referencing the definition of a limit.",
+      "reference_answer": "The limit of a function at a point is the value the function *approaches* as the input approaches that point, not necessarily the value *at* the point itself. A function might be undefined at a point, or have a different value at the point than what it approaches.\nFinal answer: The limit is the value approached, not always the value at the point.",
       "rubric": [
-        "Student correctly states that derivatives are defined using limits.",
-        "Student correctly mentions difference quotients in relation to derivatives and limits."
+        "Distinguishes between the value approached and the value at the point.",
+        "Explains that the limit is about the approach."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_derivative_with_limit"
+        "limit_equals_function_value"
       ],
       "wrong_texts": [
-        "Confuses the definition of a derivative with the definition of a limit."
+        "Assumes the limit must equal the function's value at the point."
       ]
     },
     {
@@ -88,22 +86,49 @@
       ],
       "concept": "Limits",
       "difficulty": 1,
-      "final_answer": "A limit is the value a function approaches as the input approaches a point.",
+      "final_answer": "A limit is the value a function approaches near a point.",
       "format": "teachback",
       "options": [],
-      "prompt": "Explain to a classmate who missed the lecture what a limit of a function is.",
-      "reference_answer": "A limit is basically what y-value a function is heading towards as your x-value gets really, really close to a certain number. It's about the trend, not necessarily the exact point. Final answer: A limit is the value a function approaches as the input approaches a point.",
+      "prompt": "Explain to a classmate who missed the lecture what a limit is in calculus.",
+      "reference_answer": "A limit describes what value a function gets really close to as the input into the function gets really close to a particular number. It's about the trend of the function near a point, not necessarily the exact value at that point.\nFinal answer: A limit is the value a function approaches near a point.",
       "rubric": [
-        "Student explains that a limit is a value a function approaches.",
-        "Student explains that the input to the function approaches a point."
+        "Explains limit as a value the function approaches.",
+        "Mentions the input approaching a specific value."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_limit_with_function_output"
+        "limit_is_output_at_point"
       ],
       "wrong_texts": [
-        "Confuses the limit with the actual output of the function at the point."
+        "Defines the limit as the function's output at the point itself."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1",
+        "eval-doc-1:c2"
+      ],
+      "concept": "Limits",
+      "difficulty": 2,
+      "final_answer": "The derivative is the limit of the difference quotient.",
+      "format": "teachback",
+      "options": [],
+      "prompt": "Explain to a classmate how the concept of a limit is used to define a derivative.",
+      "reference_answer": "The derivative is defined as the limit of a difference quotient. This means we're looking at the slope of secant lines between two points on a curve, and seeing what value that slope approaches as those two points get infinitely close to each other.\nFinal answer: The derivative is the limit of the difference quotient.",
+      "rubric": [
+        "Connects derivative definition to limits.",
+        "Mentions difference quotients."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "derivative_is_limit_of_function"
+      ],
+      "wrong_texts": [
+        "Incorrectly states the derivative is the limit of the function itself, not the difference quotient."
       ]
     },
     {
@@ -113,51 +138,23 @@
         "eval-doc-1:c1"
       ],
       "concept": "Limits",
-      "difficulty": 2,
-      "final_answer": "The function approaches 9 as x approaches 4.",
-      "format": "teachback",
-      "options": [],
-      "prompt": "Explain to a classmate how to find the limit of f(x) = 2x + 1 as x approaches 4.",
-      "reference_answer": "Okay, so imagine x is getting super close to 4, like 3.9, 3.99, 3.999. You can see that 2x + 1 is getting closer and closer to 2(4) + 1, which is 9. So the limit is 9. Final answer: The function approaches 9 as x approaches 4.",
-      "rubric": [
-        "Student explains the concept of approaching a value.",
-        "Student correctly identifies the value the function approaches."
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "confuses_approaching_with_reaching"
-      ],
-      "wrong_texts": [
-        "Confuses the idea of approaching a value with reaching it."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-1:c0",
-        "eval-doc-1:c1",
-        "eval-doc-1:c2"
-      ],
-      "concept": "Limits",
       "difficulty": 3,
-      "final_answer": "Derivatives are defined as the limit of difference quotients.",
+      "final_answer": "The limit depends on the approach, not the value at the point.",
       "format": "teachback",
       "options": [],
-      "prompt": "Explain to a classmate why understanding limits is crucial before learning about derivatives.",
-      "reference_answer": "Derivatives tell us the instantaneous rate of change of a function. To figure that out, we use a special formula called the difference quotient, and then we have to see what that formula approaches as the interval gets infinitely small. That 'approaching' part is exactly what a limit is. So, we need limits to even define what a derivative is. Final answer: Derivatives are defined as the limit of difference quotients.",
+      "prompt": "Imagine a function has a 'hole' at x=2, but the function values approach 7 as x gets close to 2 from both sides. Explain to a classmate why the limit exists even though the function value at x=2 might be different or undefined.",
+      "reference_answer": "Even if there's a hole at x=2, the limit is about what value the function *approaches* as x gets *close* to 2. Since the function approaches 7 from both sides, the limit as x approaches 2 is 7, regardless of whether f(2) exists or is equal to 7.\nFinal answer: The limit depends on the approach, not the value at the point.",
       "rubric": [
-        "Student explains that derivatives are based on limits.",
-        "Student mentions the role of difference quotients."
+        "Emphasizes that limit concerns the approach to a value.",
+        "States that the function's value at the point is irrelevant to the limit."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "defines_derivative_without_mentioning_limit"
+        "limit_undefined_if_hole"
       ],
       "wrong_texts": [
-        "Defines the derivative without mentioning its dependence on limits."
+        "Incorrectly concludes that a limit does not exist if there is a hole in the graph."
       ]
     },
     {
@@ -168,153 +165,150 @@
       ],
       "concept": "Limits",
       "difficulty": 1,
-      "final_answer": "The value a function approaches as the input approaches a point.",
+      "final_answer": "as the input approaches a point.",
       "format": "mc_reason",
       "options": [
         {
           "is_correct": true,
-          "text": "The value a function approaches as the input approaches a point.",
+          "text": "as the input approaches a point.",
           "wrong_key": null
         },
         {
           "is_correct": false,
-          "text": "The exact value of the function at a specific point.",
-          "wrong_key": "confuses_limit_with_function_value"
+          "text": "at the point the function is evaluated.",
+          "wrong_key": "limit_equals_function_value"
         },
         {
           "is_correct": false,
-          "text": "The slope of the secant line.",
-          "wrong_key": "confuses_limit_with_secant_slope"
+          "text": "where the function's derivative is zero.",
+          "wrong_key": "confuses_limit_with_derivative_zero"
         },
         {
           "is_correct": false,
-          "text": "The instantaneous rate of change of the function.",
+          "text": "as the function's output increases indefinitely.",
+          "wrong_key": "confuses_limit_with_infinity"
+        }
+      ],
+      "prompt": "According to the definition, a limit describes the value that a function approaches:",
+      "reference_answer": "The definition of a limit states it is the value a function approaches as the input approaches a certain point. This means the limit is concerned with the behavior of the function near a point, not necessarily its value exactly at that point.\nFinal answer: as the input approaches a point.",
+      "rubric": [
+        "Selects the correct description of what a limit relates to.",
+        "Provides a valid reason based on the definition of a limit."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "limit_equals_function_value",
+        "confuses_limit_with_derivative_zero",
+        "confuses_limit_with_infinity"
+      ],
+      "wrong_texts": [
+        "Incorrectly equates the limit with the function's value at the specific point.",
+        "Confuses the concept of a limit with conditions where a derivative might be zero.",
+        "Confuses the concept of a limit with the behavior of a function approaching infinity."
+      ]
+    },
+    {
+      "answer_kind": "numeric",
+      "canonical_answer": "10",
+      "chunk_ids": [
+        "eval-doc-1:c1"
+      ],
+      "concept": "Limits",
+      "difficulty": 2,
+      "final_answer": "10.",
+      "format": "mc_reason",
+      "options": [
+        {
+          "is_correct": true,
+          "text": "10",
+          "wrong_key": null
+        },
+        {
+          "is_correct": false,
+          "text": "3",
+          "wrong_key": "limit_is_input"
+        },
+        {
+          "is_correct": false,
+          "text": "The function is undefined at 3.",
+          "wrong_key": "limit_depends_on_value_at_point"
+        },
+        {
+          "is_correct": false,
+          "text": "It depends on the derivative at 3.",
           "wrong_key": "confuses_limit_with_derivative"
         }
       ],
-      "prompt": "What does the limit of a function describe?",
-      "reference_answer": "The passage states that a limit is 'The value a function approaches as the input approaches a point'. Final answer: The value a function approaches as the input approaches a point.",
+      "prompt": "Consider a function f(x) where as x gets closer to 3, f(x) gets closer to 10. What is the limit of f(x) as x approaches 3?",
+      "reference_answer": "The limit of a function is the value it approaches as the input approaches a certain point. In this scenario, as x approaches 3, the function f(x) approaches 10. Therefore, the limit is 10.\nFinal answer: 10.",
       "rubric": [
-        "Student correctly identifies that a limit is about the value approached.",
-        "Student correctly identifies that the input approaches a point.",
-        "Student's reason correctly explains why the chosen option is right."
+        "Correctly identifies the value the function approaches as the limit.",
+        "Selects the limit value, not the input value."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_limit_with_function_value",
-        "confuses_limit_with_secant_slope",
+        "limit_is_input",
+        "limit_depends_on_value_at_point",
         "confuses_limit_with_derivative"
       ],
       "wrong_texts": [
-        "Confuses the limit with the function's actual value at the point.",
-        "Confuses the limit with the slope of a secant line, which involves two points.",
-        "Confuses the limit with the derivative, which is defined using a limit."
-      ]
-    },
-    {
-      "answer_kind": "numeric",
-      "canonical_answer": "24",
-      "chunk_ids": [
-        "eval-doc-1:c1"
-      ],
-      "concept": "Limits",
-      "difficulty": 2,
-      "final_answer": "24.",
-      "format": "mc_reason",
-      "options": [
-        {
-          "is_correct": true,
-          "text": "24",
-          "wrong_key": null
-        },
-        {
-          "is_correct": false,
-          "text": "25",
-          "wrong_key": "forgets_to_subtract_one"
-        },
-        {
-          "is_correct": false,
-          "text": "5",
-          "wrong_key": "confuses_limit_with_input_value"
-        },
-        {
-          "is_correct": false,
-          "text": "undefined",
-          "wrong_key": "incorrectly_identifies_as_undefined"
-        }
-      ],
-      "prompt": "As x approaches 5, what value does the function f(x) = x^2 - 1 approach?",
-      "reference_answer": "As x approaches 5, x^2 approaches 25. Therefore, x^2 - 1 approaches 25 - 1 = 24. Final answer: 24.",
-      "rubric": [
-        "Student correctly computes the value the function approaches.",
-        "Student correctly substitutes the limit value into the function.",
-        "Student's reason accurately describes the calculation."
-      ],
-      "stepwise": false,
-      "tolerance": "0",
-      "wrong_keys": [
-        "forgets_to_subtract_one",
-        "confuses_limit_with_input_value",
-        "incorrectly_identifies_as_undefined"
-      ],
-      "wrong_texts": [
-        "Forgot to subtract 1 from the squared value.",
-        "Mistook the limit for the input value itself.",
-        "Incorrectly assumed the limit is undefined without proper analysis."
+        "Mistakes the input value (3) for the limit value.",
+        "Incorrectly believes the limit depends on the function's exact value at the point.",
+        "Confuses the concept of a limit with the derivative of the function."
       ]
     },
     {
       "answer_kind": "free",
       "canonical_answer": "",
       "chunk_ids": [
-        "eval-doc-1:c0",
+        "eval-doc-1:c1",
         "eval-doc-1:c2"
       ],
       "concept": "Limits",
       "difficulty": 3,
-      "final_answer": "Limits.",
+      "final_answer": "The approach from the left differs from the approach from the right.",
       "format": "mc_reason",
       "options": [
         {
           "is_correct": true,
-          "text": "Limits",
+          "text": "The approach from the left differs from the approach from the right.",
           "wrong_key": null
         },
         {
           "is_correct": false,
-          "text": "Difference quotients",
-          "wrong_key": "confuses_definition_with_method"
+          "text": "The function value at the corner is undefined.",
+          "wrong_key": "limit_depends_on_value_at_point"
         },
         {
           "is_correct": false,
-          "text": "Chain rule",
-          "wrong_key": "confuses_with_related_rule"
+          "text": "The difference quotient is always zero at a corner.",
+          "wrong_key": "misinterprets_difference_quotient_at_corner"
         },
         {
           "is_correct": false,
-          "text": "Instantaneous rate of change",
-          "wrong_key": "confuses_result_with_foundation"
+          "text": "The limit only exists if the function is smooth.",
+          "wrong_key": "limit_requires_smoothness"
         }
       ],
-      "prompt": "The definition of the derivative relies on which fundamental concept?",
-      "reference_answer": "The passage states that derivatives are 'defined as a limit of difference quotients'. This indicates that limits are the foundational concept. Final answer: Limits.",
+      "prompt": "The derivative of a function at a point is defined as the limit of the difference quotient. If a function has a sharp corner at a point, why might the limit (and thus the derivative) not exist?",
+      "reference_answer": "A limit exists only if the function approaches the same value from both the left and the right. A sharp corner means the function approaches different values (or slopes, in the case of difference quotients) from the left and the right, so the limit does not exist at that point.\nFinal answer: The approach from the left differs from the approach from the right.",
       "rubric": [
-        "Student correctly identifies limits as the fundamental concept.",
-        "Student's reason explains the foundational role of limits in derivative definition.",
-        "Student correctly references the definition of the derivative."
+        "Identifies the condition for limit existence (same approach from both sides).",
+        "Relates the sharp corner to differing approaches."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_definition_with_method",
-        "confuses_with_related_rule",
-        "confuses_result_with_foundation"
+        "limit_depends_on_value_at_point",
+        "misinterprets_difference_quotient_at_corner",
+        "limit_requires_smoothness"
       ],
       "wrong_texts": [
-        "Confuses the method (difference quotients) with the foundational concept (limits).",
-        "Confuses limits with the chain rule, another calculus concept.",
-        "Confuses the result (instantaneous rate of change) with the concept it's built upon."
+        "Incorrectly assumes the limit depends on the function's value at the point.",
+        "Incorrectly assumes the difference quotient is zero at a corner.",
+        "Overgeneralizes that limits only exist for smooth functions, ignoring piecewise definitions."
       ]
     }
   ]
