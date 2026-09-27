@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import os
 import pathlib
 import re
 import subprocess
@@ -192,21 +193,33 @@ def test_inv_08_series_migrations_named_and_never_modified():
         check=False,
     ).stdout.strip()
     assert out == "", f"series migrations were modified after creation: {out}"
-    shallow = subprocess.run(
+    if _is_shallow_clone():
+        # A depth-1 clone (actions/checkout's default) lists every file as
+        # Added in its one grafted commit, so the check above cannot fail there.
+        # CI must enforce it (ci.yml checks out with fetch-depth: 0), so there a
+        # shallow clone is a failure; a shallow local clone only warns.
+        vacuous = "inv_08: shallow clone, so the never-modified half is vacuous here"
+        if _in_ci():
+            pytest.fail(
+                f"{vacuous}; CI must check out full history (actions/checkout fetch-depth: 0)"
+            )
+        warnings.warn(f"{vacuous}; it only bites on a full clone", stacklevel=1)
+
+
+def _is_shallow_clone(cwd: pathlib.Path = BACKEND.parent) -> bool:
+    out = subprocess.run(
         ["git", "rev-parse", "--is-shallow-repository"],
-        cwd=BACKEND.parent,
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
     ).stdout.strip()
-    if shallow == "true":
-        # A depth-1 clone (actions/checkout's default) lists every file as
-        # Added in its one grafted commit, so the check above cannot fail there.
-        warnings.warn(
-            "inv_08: shallow clone, so the never-modified half is vacuous here; "
-            "it only bites on a full clone (CI needs actions/checkout fetch-depth: 0)",
-            stacklevel=1,
-        )
+    return out == "true"
+
+
+def _in_ci() -> bool:
+    """GitHub Actions (like most CI) sets CI=true; unset, empty, 0 or false is local."""
+    return os.environ.get("CI", "").strip().lower() not in ("", "0", "false", "no")
 
 
 def test_inv_09_no_unique_or_eq_on_encrypted_learning_columns():

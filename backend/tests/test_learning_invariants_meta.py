@@ -16,6 +16,8 @@ so these checks live in their own module.
 from __future__ import annotations
 
 import os
+import subprocess
+import warnings
 
 import dotenv
 import pytest
@@ -144,3 +146,62 @@ def test_imports_of_passes_a_clean_pure_module(tmp_path):
     )
     roots = inv._imports_of(pkg / "policy.py")
     assert not [r for r in roots if r in inv.FORBIDDEN_IMPORT_ROOTS], roots
+
+
+# --- inv_08 on a shallow clone: fail in CI, warn locally (CodeRabbit PR #673) ---
+#
+# A depth-1 checkout makes inv_08's never-modified half vacuous. CI now checks
+# out full history (ci.yml fetch-depth: 0), and a shallow clone under CI=true
+# fails instead of warning, so the check cannot silently stop biting there.
+
+
+@pytest.fixture
+def shallow_clone(monkeypatch):
+    monkeypatch.setattr(inv, "_is_shallow_clone", lambda *a, **k: True)
+
+
+@pytest.mark.parametrize("ci", ["true", "1", "TRUE"])
+def test_inv_08_fails_on_a_shallow_clone_in_ci(monkeypatch, shallow_clone, ci):
+    monkeypatch.setenv("CI", ci)
+    with pytest.raises(pytest.fail.Exception, match="fetch-depth: 0"):
+        inv.test_inv_08_series_migrations_named_and_never_modified()
+
+
+@pytest.mark.parametrize("ci", [None, "", "false", "0"])
+def test_inv_08_only_warns_on_a_shallow_local_clone(monkeypatch, shallow_clone, ci):
+    if ci is None:
+        monkeypatch.delenv("CI", raising=False)
+    else:
+        monkeypatch.setenv("CI", ci)
+    with pytest.warns(UserWarning, match="shallow clone"):
+        inv.test_inv_08_series_migrations_named_and_never_modified()
+
+
+def test_inv_08_is_silent_on_a_full_clone_in_ci(monkeypatch):
+    monkeypatch.setattr(inv, "_is_shallow_clone", lambda *a, **k: False)
+    monkeypatch.setenv("CI", "true")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        inv.test_inv_08_series_migrations_named_and_never_modified()
+
+
+def _git(cwd, *args):
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_is_shallow_clone_detects_a_depth_one_clone(tmp_path):
+    full, shallow = tmp_path / "full", tmp_path / "shallow"
+    full.mkdir()
+    _git(full, "init", "-q")
+    for i in range(2):
+        (full / "f.txt").write_text(str(i))
+        _git(full, "add", "f.txt")
+        _git(full, "commit", "-q", "-m", f"c{i}")
+    _git(tmp_path, "clone", "-q", "--depth", "1", full.as_uri(), str(shallow))
+    assert inv._is_shallow_clone(full) is False
+    assert inv._is_shallow_clone(shallow) is True

@@ -80,7 +80,7 @@ _SETTINGS_COLS = (
     "user_id,"
     "profile_visibility,activity_status_visible,"
     "notification_email,notification_push,notification_in_app,"
-    "theme,font_size,accent_color,share_class_context,learning_loop_beta,"
+    "theme,font_size,accent_color,share_class_context,"
     "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
     "featured_role_id,featured_achievement_ids,updated_at"
 )
@@ -437,8 +437,6 @@ def update_settings(
         # (course_context_service.update_course_context) can honor it; the
         # SharedContextToggle PATCHes it best-effort (migration 0037).
         "share_class_context",
-        # Learning loop PKG-00: per-user opt-in half of learning.gate (migration *_learning_loop_beta).
-        "learning_loop_beta",
     }
     incoming = body.model_dump(exclude_none=True)
     updates = {k: v for k, v in incoming.items() if k in ALLOWED}

@@ -22,6 +22,12 @@ jobs:
         working-directory: ./backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the learning-loop invariant inv_08 ("series
+          # migrations are never modified") reads `git log --diff-filter=M`,
+          # which is vacuous on the default depth-1 clone, so it FAILS on a
+          # shallow clone under CI=true.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -135,6 +141,10 @@ jobs:
           # Test code and pip packages run in this job; do not leave the
           # statuses-capable token in .git/config for them to read.
           persist-credentials: false
+          # Full history, as in `backend`: this job runs the same suite, and
+          # inv_08 fails on a shallow clone under CI=true, which would cost
+          # the coverage reading (it is only posted off a passing run).
+          fetch-depth: 0
 
       # First, because it needs nothing but the checkout — a pip or pytest
       # problem further down cannot cost this reading.
