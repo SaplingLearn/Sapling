@@ -1526,7 +1526,7 @@ class TestQueueMaxParsing:
 
 
 class TestDeployOrderRace:
-    """Code live before migration 20260927033814: settings keep working, the
+    """Code live before migration 20260927220057: settings keep working, the
     PATCH says 503, and consent treats the missing column as "no"."""
 
     def _tables(self, *, first_select_error=None, update_error=None):
@@ -1819,7 +1819,7 @@ class TestMigrationHeader:
 
         sql = (
             Path(__file__).resolve().parents[1]
-            / "db" / "migrations" / "20260927033814_user_settings_analytics_opt_out.sql"
+            / "db" / "migrations" / "20260927220057_llm_cost_precision_and_analytics_opt_out.sql"
         ).read_text()
         assert "ai_observability" not in sql
         assert "posthog_client" in sql and "analytics_consent" in sql

@@ -93,7 +93,7 @@ _SETTINGS_COLS = (
 _SETTINGS_ETAG_VERSION = "2"
 
 #: The same list minus the ADR 0028 opt-out, for the deploy-order window in
-#: which this code is live but migration 20260927033814 has not run yet.
+#: which this code is live but migration 20260927220057 has not run yet.
 _SETTINGS_COLS_WITHOUT_OPT_OUT = _SETTINGS_COLS.replace("analytics_opt_out,", "")
 
 
