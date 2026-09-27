@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,10 +13,14 @@ from pydantic import BaseModel
 
 from config import is_weak
 from db.connection import table
+from learning.fsrs import Rating, interval, next_state, order_due
+from learning.gate import learning_loop_active
+from learning.params import FLASHCARD_RATING_TO_FSRS, FSRS_RETENTION_DEFAULT
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
+from services.timestamps import parse_ts
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -51,7 +55,10 @@ class GenerateFlashcardsBody(BaseModel):
 class FlashcardRatingBody(BaseModel):
     user_id: str
     card_id: str
-    rating: int  # 1 = forgot, 2 = hard, 3 = easy
+    # 1 = forgot, 2 = hard, 3 = easy. With the learning loop on (PKG-11) this
+    # maps to FSRS Again/Hard/Good via learning.params.FLASHCARD_RATING_TO_FSRS
+    # and any other value is a 422; the legacy path stores any int as-is.
+    rating: int
 
 
 class CardInput(BaseModel):
@@ -292,14 +299,56 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     }
 
 
+_LEGACY_LIST_COLS = (
+    "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,"
+    "last_reviewed_at,created_at"
+)
+_FSRS_LIST_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
+
+
+def _order_due_rows(rows: list[dict], now: datetime) -> list[dict]:
+    """PKG-11: due cards in learning.fsrs.order_due's order (|R − threshold|
+    ascending, spec §3.2). ADAPTER (HANDOFF-02: `order_due(items, now, *,
+    stability_key="fsrs_s", last_review_key=...)`): a flashcard's stability
+    is `fsrs_s` and its last review is `last_reviewed_at`. If PKG-02's
+    signature changes, change THIS function only."""
+    if not rows:
+        return []
+    return list(order_due(rows, now, last_review_key="last_reviewed_at"))
+
+
+def _loop_order(rows: list[dict], now: datetime) -> tuple[list[dict], list[dict]]:
+    """PKG-11: (ordered rows, due rows). Due first (`due_at` <= now, in
+    _order_due_rows order), then never rated on the loop path (`fsrs_s` null,
+    query order), then not yet due by `due_at` ascending. A null `due_at` is
+    never due."""
+    due, fresh, later = [], [], []
+    for r in rows:
+        due_at = parse_ts(r.get("due_at"))
+        if due_at is not None and due_at <= now:
+            due.append(r)
+        elif r.get("fsrs_s") is None:
+            fresh.append(r)
+        else:
+            later.append(r)
+    later.sort(key=lambda r: parse_ts(r.get("due_at")) or now)
+    ordered_due = _order_due_rows(due, now)
+    return ordered_due + fresh + later, ordered_due
+
+
 @router.get("/user/{user_id}")
 def get_flashcards(
     user_id: str,
     request: Request,
     topic: str | None = None,
     semester: str | None = None,
+    due_only: bool = False,
 ):
     require_self(user_id, request)
+    # PKG-11 (spec §7): evaluated once, at route entry. With
+    # LEARNING_LOOP_ENABLED unset this is a constant False and no read, and
+    # `due_only` is ignored.
+    loop_on = learning_loop_active(user_id)
 
     if not user_id:
         return {"flashcards": []}
@@ -310,7 +359,7 @@ def get_flashcards(
 
     try:
         rows = table("flashcards").select(
-            "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
+            _LEGACY_LIST_COLS + (_FSRS_LIST_COLS if loop_on else ""),
             filters=filters, order="created_at.desc"
         ) or []
         for r in rows:
@@ -334,6 +383,12 @@ def get_flashcards(
                 r for r in rows
                 if r.get("offering_id") is None or r["offering_id"] in allowed
             ]
+        if loop_on:
+            now = datetime.now(timezone.utc)
+            rows, due = _loop_order(rows, now)
+            if due_only:
+                rows = due
+            return {"flashcards": rows, "due_count": len(due)}
         return {"flashcards": rows}
     except Exception as e:
         err_str = str(e).lower()
@@ -342,13 +397,58 @@ def get_flashcards(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_ONE_DAY = timedelta(days=1)
+
+
+def _fsrs_advance(row: dict, fsrs_rating: int, now: datetime) -> dict:
+    """PKG-11: the five FSRS columns after one rating (spec §3.2).
+
+    ADAPTER around learning.fsrs.next_state/interval (HANDOFF-02:
+    `next_state(d, s, rating, days_since, *, same_day, mc_unassisted)`) —
+    if PKG-02's signature changes, change THIS function only. A first rating
+    passes `None, None` and PKG-02 seeds D0(G)/S0(G). A review less than one
+    day after the last takes FSRS's same-day branch, the rule PKG-03's
+    graph_service._fsrs_after uses. A flashcard is never an MC check, so the
+    MC stability cap never applies. Errors propagate: the caller has not
+    written the legacy columns yet, so the card stays unchanged.
+    """
+    last = parse_ts(row.get("last_reviewed_at"))
+    days_since, same_day = 0.0, False
+    if last is not None:
+        days_since = max(0.0, (now - last) / _ONE_DAY)
+        same_day = now - last < _ONE_DAY
+    d_new, s_new = next_state(
+        row.get("fsrs_d"), row.get("fsrs_s"), fsrs_rating, days_since, same_day=same_day
+    )
+    due_at = now + timedelta(days=interval(FSRS_RETENTION_DEFAULT, s_new))
+    return {
+        "fsrs_d": d_new,
+        "fsrs_s": s_new,
+        "due_at": due_at.isoformat(),
+        "reps": (row.get("reps") or 0) + 1,
+        "lapses": (row.get("lapses") or 0) + (1 if fsrs_rating == Rating.AGAIN else 0),
+    }
+
+
 @router.post("/rate")
 def rate_card(body: FlashcardRatingBody, request: Request):
     require_self(body.user_id, request)
+    # PKG-11 (spec §7): evaluated once, at route entry. With
+    # LEARNING_LOOP_ENABLED unset this is a constant False and no read.
+    loop_on = learning_loop_active(body.user_id)
 
+    fsrs_rating: int | None = None
+    if loop_on:
+        fsrs_rating = FLASHCARD_RATING_TO_FSRS.get(body.rating)
+        if fsrs_rating is None:
+            raise HTTPException(status_code=422, detail="rating must be one of 1, 2, 3")
+
+    cols = "id,times_reviewed"
+    if loop_on:
+        cols = "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
     try:
         rows = table("flashcards").select(
-            "id,times_reviewed",
+            cols,
             filters={"id": f"eq.{body.card_id}", "user_id": f"eq.{body.user_id}"},
             limit=1,
         )
@@ -358,15 +458,16 @@ def rate_card(body: FlashcardRatingBody, request: Request):
     if not rows:
         raise HTTPException(status_code=404, detail="Flashcard not found")
 
+    now = datetime.now(timezone.utc)
     current = rows[0]["times_reviewed"] or 0
-    table("flashcards").update(
-        {
-            "times_reviewed": current + 1,
-            "last_rating": body.rating,
-            "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
-        },
-        filters={"id": f"eq.{body.card_id}"},
-    )
+    payload = {
+        "times_reviewed": current + 1,
+        "last_rating": body.rating,
+        "last_reviewed_at": now.isoformat(),
+    }
+    if loop_on:
+        payload.update(_fsrs_advance(rows[0], fsrs_rating, now))
+    table("flashcards").update(payload, filters={"id": f"eq.{body.card_id}"})
 
     # The review counter is the only thing that advances `flashcards_reviewed`
     # (Quick Draw: review 100 cards), so this is its only possible dispatch
@@ -380,6 +481,8 @@ def rate_card(body: FlashcardRatingBody, request: Request):
             body.user_id, body.card_id,
         )
 
+    if loop_on:
+        return {"ok": True, "due_at": payload["due_at"], "fsrs_rating": fsrs_rating}
     return {"ok": True}
 
 

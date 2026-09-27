@@ -14,6 +14,7 @@ scoring and generation correctness.
 - E4: concurrency — double-submit, double-answer on one index,
   generate-while-generating for the same concept.
 """
+import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -525,3 +526,272 @@ class TestConcurrency:
         assert r1.status_code == 200 and r2.status_code == 200
         assert r1.json()["quiz_id"] != r2.json()["quiz_id"]
         assert len({row["id"] for row in inserted}) == 2
+
+
+# ── PKG-11: learning loop — evidence instead of the flat delta ──────────────
+#
+# Fixture questions carry the STORED wire shape (`question` + option `text`,
+# routes/quiz.py::_agent_question_to_wire). Q1 carries a stored
+# question_hash (post-E5 row); Q2 does not (pre-E5 row) so the recompute
+# branch of wire_question_hash is exercised too.
+
+LOOP_QUESTIONS = [
+    {
+        "id": 1,
+        "question": "What does a for-loop do?",
+        "options": [
+            {"label": "A", "text": "iterates", "correct": True},
+            {"label": "B", "text": "allocates", "correct": False},
+        ],
+        "explanation": "A.",
+        "question_hash": "deadbeefdeadbeef",
+    },
+    {
+        "id": 2,
+        "question": "What is a function?",
+        "options": [
+            {"label": "C", "text": "a loop", "correct": False},
+            {"label": "D", "text": "a reusable block", "correct": True},
+        ],
+        "explanation": "D.",
+    },
+]
+
+
+# Every table() the legacy submit_quiz opens for this fixture, in order:
+# attempt load, the atomic completed_at claim, the quiz_responses read, the concept
+# node, the snapshot write, the quiz-context node read. Recorded against the
+# pre-series route (base a1a416b) by the PKG-11 review; the flag-off path must
+# not add a table to it.
+LEGACY_SUBMIT_TABLES = [
+    "quiz_attempts", "quiz_attempts", "quiz_responses",
+    "graph_nodes", "quiz_attempts", "graph_nodes",
+]
+
+
+def _loop_table(questions=LOOP_QUESTIONS, tables: list | None = None):
+    def factory(name):
+        if tables is not None:
+            tables.append(name)
+        mock = MagicMock()
+        if name == "quiz_attempts":
+            mock.select.return_value = [{
+                "id": "quiz1",
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "difficulty": "medium",
+                "questions_json": questions,
+            }]
+        elif name == "graph_nodes":
+            mock.select.return_value = [{
+                "mastery_score": 0.5,
+                "concept_name": "Loops",
+                "course_id": "course1",
+            }]
+        else:
+            mock.select.return_value = []
+        mock.update.return_value = [{"id": "updated"}]
+        return mock
+    return factory
+
+
+def _noop_ctx_agent():
+    return AsyncMock(
+        return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
+    )
+
+
+def _submit_one_right_one_wrong(
+    *, gate: bool | None, apply_mock: MagicMock, mastery_after_mock: MagicMock,
+    tables: list | None = None,
+):
+    """`gate=None` runs the REAL learning.gate (the caller sets the flag)."""
+    ctx_run = _noop_ctx_agent()
+    gate_cm = (
+        contextlib.nullcontext() if gate is None
+        else patch("routes.quiz.learning_loop_active", return_value=gate)
+    )
+    with (
+        patch("routes.quiz.table", side_effect=_loop_table(tables=tables)),
+        gate_cm,
+        patch("routes.quiz.apply_graph_update", new=apply_mock),
+        patch("routes.quiz.mastery_after", new=mastery_after_mock),
+        patch("routes.quiz.get_quiz_context", return_value={}),
+        patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
+        patch("routes.quiz.save_quiz_context"),
+    ):
+        r = client.post("/api/quiz/submit", json={
+            "quiz_id": "quiz1",
+            "answers": [
+                {"question_id": 1, "selected_label": "A"},   # correct
+                {"question_id": 2, "selected_label": "C"},   # wrong
+            ],
+        })
+    return r, ctx_run
+
+
+class TestLearningLoopEvidencePath:
+    def test_gate_on_submits_one_evidence_per_question(self):
+        from services.quiz_identity import question_hash
+
+        apply_mock = MagicMock(return_value=[
+            {"before": 0.5, "after": 0.58},
+            {"before": 0.58, "after": 0.51},
+        ])
+        mastery_after_mock = MagicMock(side_effect=AssertionError("legacy delta on the loop path"))
+        r, _ = _submit_one_right_one_wrong(
+            gate=True, apply_mock=apply_mock, mastery_after_mock=mastery_after_mock,
+        )
+        assert r.status_code == 200, r.text
+        apply_mock.assert_called_once()
+        args, kwargs = apply_mock.call_args
+        assert args[0] == "user_andres"
+        assert kwargs["course_id"] == "course1"
+        payload = args[1]
+        assert set(payload) == {"evidence"}, "no updated_nodes on the loop path"
+        ev = payload["evidence"]
+        assert len(ev) == 2
+        for e in ev:
+            assert set(e) == {
+                "node_id", "channel", "correct", "question_hash",
+                "check_item_id", "session_id",
+            }
+            assert e["node_id"] == "node1"
+            assert e["channel"] == "mc"
+            assert e["check_item_id"] is None and e["session_id"] is None
+        assert [e["correct"] for e in ev] == [True, False]
+        assert ev[0]["question_hash"] == "deadbeefdeadbeef"          # stored hash trusted
+        assert ev[1]["question_hash"] == question_hash(                # recomputed
+            "What is a function?", ["a loop", "a reusable block"],
+        )
+        mastery_after_mock.assert_not_called()
+
+    def test_gate_on_snapshot_spans_first_before_to_last_after(self):
+        apply_mock = MagicMock(return_value=[
+            {"before": 0.5, "after": 0.58},
+            {"before": 0.58, "after": 0.51},
+        ])
+        r, _ = _submit_one_right_one_wrong(
+            gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock(),
+        )
+        data = r.json()
+        assert data["mastery_before"] == pytest.approx(0.5)
+        assert data["mastery_after"] == pytest.approx(0.51)
+
+    def test_gate_on_unrecognisable_return_reports_no_change(self):
+        apply_mock = MagicMock(return_value=[])
+        r, _ = _submit_one_right_one_wrong(
+            gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock(),
+        )
+        data = r.json()
+        assert data["mastery_before"] == pytest.approx(0.5)
+        assert data["mastery_after"] == pytest.approx(0.5)
+
+    def test_gate_on_keeps_the_quiz_context_background_update(self):
+        apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
+        r, ctx_run = _submit_one_right_one_wrong(
+            gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock(),
+        )
+        assert r.status_code == 200
+        assert ctx_run.call_count == 1, "quiz_context update must still run on the loop path"
+
+    def test_gate_on_hash_is_none_when_the_stored_item_has_no_identity(self):
+        legacy_shape = [{
+            "id": 1,
+            "text": "no stem key, no option text",
+            "options": [{"label": "A", "correct": True}, {"label": "B", "correct": False}],
+            "explanation": "A.",
+        }]
+        apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
+        ctx_run = _noop_ctx_agent()
+        with (
+            patch("routes.quiz.table", side_effect=_loop_table(legacy_shape)),
+            patch("routes.quiz.learning_loop_active", return_value=True),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "A"}],
+            })
+        assert r.status_code == 200
+        ev = apply_mock.call_args[0][1]["evidence"]
+        assert ev == [{
+            "node_id": "node1", "channel": "mc", "correct": True,
+            "question_hash": None, "check_item_id": None, "session_id": None,
+        }]
+
+    def test_gate_off_is_the_legacy_delta_path(self):
+        from services.quiz_config import mastery_after as real_mastery_after
+
+        apply_mock = MagicMock(return_value=[])
+        mastery_after_mock = MagicMock(side_effect=real_mastery_after)
+        tables: list = []
+        r, _ = _submit_one_right_one_wrong(
+            gate=False, apply_mock=apply_mock, mastery_after_mock=mastery_after_mock,
+            tables=tables,
+        )
+        assert r.status_code == 200
+        assert tables == LEGACY_SUBMIT_TABLES, "the flag-off path opens no new table"
+        mastery_after_mock.assert_called_once_with(0.5, score=1, total=2)
+        payload = apply_mock.call_args[0][1]
+        assert set(payload) == {"updated_nodes"}, "the legacy payload must not change"
+        node = payload["updated_nodes"][0]
+        assert set(node) == {"concept_name", "mastery_delta", "reason", "event_type"}
+        assert node["reason"] == "Quiz: 1/2 correct"
+        assert node["event_type"] == "quiz_partial"
+        # 1 right, 1 wrong → +PER_CORRECT − PER_WRONG, exactly the seam's arithmetic.
+        assert node["mastery_delta"] == pytest.approx(real_mastery_after(0.5, score=1, total=2) - 0.5)
+
+    def test_real_gate_flag_off_reads_nothing_and_takes_the_legacy_path(self, monkeypatch):
+        """The real gate, not a patched one: with LEARNING_LOOP_ENABLED off it
+        opens no table, and the route opens exactly the legacy tables."""
+        import config
+        from services.quiz_config import mastery_after as real_mastery_after
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+        gate_table = MagicMock(side_effect=AssertionError("flag off, yet the gate opened a table"))
+        monkeypatch.setattr("learning.gate.table", gate_table)
+        apply_mock = MagicMock(return_value=[])
+        tables: list = []
+        r, _ = _submit_one_right_one_wrong(
+            gate=None, apply_mock=apply_mock,
+            mastery_after_mock=MagicMock(side_effect=real_mastery_after), tables=tables,
+        )
+        assert r.status_code == 200, r.text
+        gate_table.assert_not_called()
+        assert tables == LEGACY_SUBMIT_TABLES
+        assert set(apply_mock.call_args[0][1]) == {"updated_nodes"}
+
+    def test_gate_is_evaluated_once_per_submit(self):
+        gate = MagicMock(return_value=True)
+        apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
+        with (
+            patch("routes.quiz.table", side_effect=_loop_table()),
+            patch("routes.quiz.learning_loop_active", new=gate),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "A"}],
+            })
+        gate.assert_called_once_with("user_andres")
+
+    def test_gate_on_evidence_validates_as_pkg03_evidence(self):
+        """The route sends plain dicts; apply_graph_update validates them with
+        learning.evidence.Evidence before any write (HANDOFF-03). A quiz answer
+        is unassisted, rung 0, full weight, and carries no grader confidence."""
+        from learning.evidence import Evidence
+
+        apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
+        _submit_one_right_one_wrong(gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock())
+        evs = [Evidence.model_validate(e) for e in apply_mock.call_args[0][1]["evidence"]]
+        assert [(e.channel, e.correct) for e in evs] == [("mc", True), ("mc", False)]
+        for e in evs:
+            assert (e.assisted, e.max_rung, e.idk, e.same_session_recheck) == (False, 0, False, False)
+            assert e.weight == 1.0 and e.confidence is None

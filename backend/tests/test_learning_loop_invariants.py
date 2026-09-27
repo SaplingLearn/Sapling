@@ -22,6 +22,13 @@ MIGRATIONS = BACKEND / "db" / "migrations"
 
 PURE_MODULES = ("bkt.py", "fsrs.py", "policy.py", "gates.py", "ladder.py", "leak.py")
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
+# PKG-11: the two routes on the loop path, named explicitly in inv_01.
+ROUTE_GRAPH_CALLERS = ("routes/quiz.py", "routes/flashcards.py")
+_GRAPH_WRITE = re.compile(
+    r'table\(\s*"(graph_nodes|graph_edges|node_mastery_events|learner_state)"\s*\)'
+    r"\s*\.\s*(insert|update|upsert|delete)\s*\(",
+    re.S,
+)
 
 
 def reload_gate(monkeypatch, env_value: str | None):
@@ -286,6 +293,16 @@ def test_inv_01_single_graph_writer():
     # learner_state.py defines write_state and must not call it itself.
     assert _write_state_call_lines(BACKEND / LEARNER_STATE_MODULE) == [], (
         f"{LEARNER_STATE_MODULE} calls write_state; only {GRAPH_WRITER_FUNCS} may"
+    )
+
+    # PKG-11: the two routes on the loop path never write graph tables
+    # directly; the quiz route reaches the graph only through apply_graph_update.
+    for rel in ROUTE_GRAPH_CALLERS:
+        text = (BACKEND / rel).read_text()
+        hits = [m.group(0) for m in _GRAPH_WRITE.finditer(text)]
+        assert not hits, f"{rel} writes a graph table directly: {hits}"
+    assert "apply_graph_update(" in (BACKEND / "routes/quiz.py").read_text(), (
+        "routes/quiz.py must reach the graph through apply_graph_update"
     )
 
 

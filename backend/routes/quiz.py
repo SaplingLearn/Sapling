@@ -19,6 +19,7 @@ from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from agents.usage import record_agent_usage, served_model_name
 from db.connection import pg_quote_value, table
+from learning.gate import learning_loop_active
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
@@ -2387,10 +2388,54 @@ def _gamification_block(
     return {**paid, **snapshot}
 
 
+def _quiz_evidence(concept_node_id: str, questions: list, results: list[dict]) -> list[dict]:
+    """PKG-11: one `learning.evidence.Evidence` dict per graded question.
+
+    `channel` is always "mc": the quiz wire carries a selected label and no
+    reason text, so it can never be the stronger "mc_reasoned" channel
+    (spec §3.1, §13 A10). `question_hash` reads the stored identity (E5) or
+    recomputes it; None when the stored item has none. The other Evidence
+    fields keep their model defaults — a quiz is unassisted, rung 0, and the
+    weight is derived by the model. The student's self-reported confidence is
+    NOT Evidence.confidence (that field is grader confidence, spec §5).
+    """
+    return [
+        {
+            "node_id": concept_node_id,
+            "channel": "mc",
+            "correct": bool(result["correct"]),
+            "question_hash": wire_question_hash(question),
+            "check_item_id": None,
+            "session_id": None,
+        }
+        for question, result in zip(questions, results)
+    ]
+
+
+def _mastery_span(applied, default_before: float) -> tuple[float, float]:
+    """PKG-11: (first before, last after) over the changes the graph reported.
+
+    The loop path applies one evidence per question, so the attempt's
+    before/after snapshot spans the whole sequence. An unrecognisable
+    return degrades to "no change", as the legacy reduction does.
+    """
+    recognised = [
+        c for c in (applied or [])
+        if isinstance(c, dict) and c.get("after") is not None
+    ]
+    if not recognised:
+        return default_before, default_before
+    before = recognised[0].get("before", default_before)
+    return before, recognised[-1]["after"]
+
+
 @router.post("/submit")
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
     attempt = _load_owned_attempt(body.quiz_id, request)
     user_id = attempt["user_id"]
+    # PKG-11 (spec §7): evaluated once, at route entry. With
+    # LEARNING_LOOP_ENABLED unset this is a constant False and no read.
+    loop_on = learning_loop_active(user_id)
 
     # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
     questions = decrypt_json_column(attempt["questions_json"])
@@ -2529,60 +2574,72 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         )
     node = node_rows[0]
     mastery_before = node["mastery_score"]
-    # #543 E1: the model is a named seam now (services/quiz_config.py).
-    # The numbers are unchanged — see docs/quiz-mastery-model.md for the
-    # options the revamp gets to choose from.
-    mastery_score_after = mastery_after(mastery_before, score=score, total=total)
-    mastery_delta = mastery_score_after - mastery_before
-
-    # E7: the categorical reading of the attempt, namespaced by producer.
-    # `node_mastery_events.event_type` has two independent writers and no
-    # CHECK constraint — this route and the tutor's `update_mastery_tool`
-    # (tutor_interaction / tutor_correction / tutor_quiz) — so an unprefixed
-    # "quiz" or "correct" would leave the column carrying two disjoint
-    # vocabularies with no way to tell which producer wrote a given row.
-    score_ratio = score / total if total > 0 else 0.0
-    if score_ratio >= 0.7:
-        event_type = "quiz_correct"
-    elif score_ratio >= 0.4:
-        event_type = "quiz_partial"
+    if loop_on:
+        # PKG-11: graded evidence, not a flat per-item delta (spec §5). The
+        # graph runs BKT per question and writes event_type='evidence' rows;
+        # this route only reports what it wrote.
+        applied = apply_graph_update(
+            user_id,
+            {"evidence": _quiz_evidence(concept_node_id, questions, results)},
+            course_id=node.get("course_id"),
+        )
+        mastery_before, mastery_score_after = _mastery_span(applied, mastery_before)
+        mastery_delta = mastery_score_after - mastery_before
     else:
-        event_type = "quiz_confusion"
+        # #543 E1: the model is a named seam now (services/quiz_config.py).
+        # The numbers are unchanged — see docs/quiz-mastery-model.md for the
+        # options the revamp gets to choose from.
+        mastery_score_after = mastery_after(mastery_before, score=score, total=total)
+        mastery_delta = mastery_score_after - mastery_before
 
-    # Route the mastery write through the sanctioned graph path. The graph
-    # keys on the ABSTRACT course id; apply_graph_update looks the node up by
-    # (normalized) concept_name within (user_id, course_id), clamps mastery,
-    # bumps times_studied/last_studied_at, records the event (now in
-    # node_mastery_events), and updates the streak. We don't touch graph_nodes
-    # or node_mastery_events directly — that's the graph slice's territory.
-    applied = apply_graph_update(
-        user_id,
-        {
-            "updated_nodes": [
-                {
-                    "concept_name": node["concept_name"],
-                    "mastery_delta": mastery_delta,
-                    "reason": f"Quiz: {score}/{total} correct",
-                    "event_type": event_type,
-                }
-            ]
-        },
-        course_id=node.get("course_id"),
-    )
-    # #542 D1 (review): persist what the GRAPH actually wrote, not what we
-    # predicted. apply_graph_update owns the write — it resolves the node by
-    # normalized concept name and clamps the result — so its reported
-    # before/after is the only value that can't disagree with graph_nodes.
-    # Falls back to the local computation if the call returned nothing
-    # recognisable (it degrades rather than raising).
-    for change in applied or []:
-        if isinstance(change, dict) and change.get("after") is not None:
-            mastery_before = change.get("before", mastery_before)
-            # NB: mastery_after is the imported model function (#543 E1);
-            # the value lives in mastery_score_after.
-            mastery_score_after = change["after"]
-            mastery_delta = mastery_score_after - mastery_before
-            break
+        # E7: the categorical reading of the attempt, namespaced by producer.
+        # `node_mastery_events.event_type` has two independent writers and no
+        # CHECK constraint — this route and the tutor's `update_mastery_tool`
+        # (tutor_interaction / tutor_correction / tutor_quiz) — so an unprefixed
+        # "quiz" or "correct" would leave the column carrying two disjoint
+        # vocabularies with no way to tell which producer wrote a given row.
+        score_ratio = score / total if total > 0 else 0.0
+        if score_ratio >= 0.7:
+            event_type = "quiz_correct"
+        elif score_ratio >= 0.4:
+            event_type = "quiz_partial"
+        else:
+            event_type = "quiz_confusion"
+
+        # Route the mastery write through the sanctioned graph path. The graph
+        # keys on the ABSTRACT course id; apply_graph_update looks the node up by
+        # (normalized) concept_name within (user_id, course_id), clamps mastery,
+        # bumps times_studied/last_studied_at, records the event (now in
+        # node_mastery_events), and updates the streak. We don't touch graph_nodes
+        # or node_mastery_events directly — that's the graph slice's territory.
+        applied = apply_graph_update(
+            user_id,
+            {
+                "updated_nodes": [
+                    {
+                        "concept_name": node["concept_name"],
+                        "mastery_delta": mastery_delta,
+                        "reason": f"Quiz: {score}/{total} correct",
+                        "event_type": event_type,
+                    }
+                ]
+            },
+            course_id=node.get("course_id"),
+        )
+        # #542 D1 (review): persist what the GRAPH actually wrote, not what we
+        # predicted. apply_graph_update owns the write — it resolves the node by
+        # normalized concept name and clamps the result — so its reported
+        # before/after is the only value that can't disagree with graph_nodes.
+        # Falls back to the local computation if the call returned nothing
+        # recognisable (it degrades rather than raising).
+        for change in applied or []:
+            if isinstance(change, dict) and change.get("after") is not None:
+                mastery_before = change.get("before", mastery_before)
+                # NB: mastery_after is the imported model function (#543 E1);
+                # the value lives in mastery_score_after.
+                mastery_score_after = change["after"]
+                mastery_delta = mastery_score_after - mastery_before
+                break
 
     table("quiz_attempts").update(
         {
