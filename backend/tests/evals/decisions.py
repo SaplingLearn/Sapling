@@ -3,8 +3,8 @@
     cd backend && SAPLING_EVAL_MODE=record|replay python tests/evals/decisions.py
 
 Gold is synthetic or consented_deidentified ONLY (A24): `load_gold` refuses any
-other provenance, and any gold file over DECISION_EVAL_MAX_CASES cases (the
-series' eval-recording budget; the whole dataset stays inside it too). Measures
+other provenance, and any gold file over DECISION_EVAL_MAX_CASES cases (a per-file
+cap; PKG-05b recorded 8 cases in all under its session budget, HANDOFF-05b). Measures
 the Gemini baseline through the production prompts — the grading decisions
 through agents/grader.py's message builder on the State-rebuilt item, the rest
 through services/decisions.py's `decision_request` — and `promotion_checks()`
@@ -100,7 +100,6 @@ def all_cases() -> list[Case]:
 
 
 CASES = all_cases()
-assert len(CASES) <= DECISION_EVAL_MAX_CASES, len(CASES)  # the recording budget, dataset-wide
 
 
 async def _decision_cassette(case_name: str, message: str, output_type: type[BaseModel]):

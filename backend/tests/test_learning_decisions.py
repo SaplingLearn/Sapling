@@ -854,6 +854,35 @@ def test_gold_loader_refuses_unconsented_provenance_and_fixtures_comply(ev, tmp_
     )
 
 
+def test_eval_caps_each_gold_file_not_the_whole_dataset(tmp_path):
+    """Behaviour 11: DECISION_EVAL_MAX_CASES caps each gold FILE (load_gold). This
+    session's 8-case recording budget is not a dataset invariant: a later package
+    that adds a 9th case in another file must not break the eval module's import."""
+    import types
+
+    path = BACKEND / "tests" / "evals" / "decisions.py"
+    src = path.read_text()
+    fixtures = 'Path(__file__).parent / "fixtures" / "decisions"'
+    assert src.count(fixtures) == 1
+    per_file = 5  # each file within the cap; 10 in all
+    for stem in ("judge_leak", "item_answerable"):
+        cases = [{"name": f"c{i}", "state": {}, "gold": {"answer": "no"}} for i in range(per_file)]
+        doc = {"decision": stem, "provenance": "synthetic", "cases": cases}
+        (tmp_path / f"{stem}.json").write_text(json.dumps(doc))
+    mod = types.ModuleType("decisions_eval_wide")
+    mod.__file__ = str(path)
+    saved = list(sys.path)
+    try:
+        # dont_inherit: this file's `from __future__ import annotations` must not leak in
+        # (the eval module's dataclasses need real annotations outside sys.modules).
+        src = src.replace(fixtures, f"Path({str(tmp_path)!r})")
+        code = compile(src, str(path), "exec", dont_inherit=True)
+        exec(code, mod.__dict__)
+    finally:
+        sys.path[:] = saved
+    assert per_file <= mod.DECISION_EVAL_MAX_CASES < len(mod.CASES) == 2 * per_file
+
+
 def test_promotion_checks_pass_an_identical_candidate_and_catch_a_worse_one(ev):
     base = _results(ev)
     same = ev.promotion_checks(base, base)
