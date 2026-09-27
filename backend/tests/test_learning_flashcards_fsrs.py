@@ -272,3 +272,195 @@ class TestRateCard:
         assert calls["update"]["times_reviewed"] == 4 and calls["update"]["last_rating"] == 5
         ns.assert_not_called()
         iv.assert_not_called()
+
+
+# ── get_flashcards ───────────────────────────────────────────────────────────
+
+
+def _card(cid, *, created, due=None, s=None, d=None, reps=0, lapses=0, last=None):
+    return {
+        "id": cid,
+        "user_id": USER_ID,
+        "topic": "T",
+        "offering_id": None,
+        "front": "q",
+        "back": "a",
+        "times_reviewed": reps,
+        "last_rating": None,
+        "last_reviewed_at": last,
+        "created_at": created,
+        "fsrs_d": d,
+        "fsrs_s": s,
+        "due_at": due,
+        "reps": reps,
+        "lapses": lapses,
+    }
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+# Query order is created_at.desc (newest first), as the route requests it.
+LIST_ROWS = [
+    _card(
+        "later-b",
+        created="2026-09-26T00:00:00Z",
+        due=_iso(NOW + timedelta(days=3)),
+        s=6.0,
+        d=5.0,
+        reps=2,
+    ),
+    _card("fresh-new", created="2026-09-25T00:00:00Z"),
+    _card(
+        "due-old",
+        created="2026-09-24T00:00:00Z",
+        due=_iso(NOW - timedelta(days=2)),
+        s=2.0,
+        d=5.0,
+        reps=1,
+    ),
+    _card("fresh-older", created="2026-09-23T00:00:00Z"),
+    _card(
+        "due-recent",
+        created="2026-09-22T00:00:00Z",
+        due=_iso(NOW - timedelta(hours=1)),
+        s=4.0,
+        d=5.0,
+        reps=3,
+    ),
+    _card(
+        "later-a",
+        created="2026-09-21T00:00:00Z",
+        due=_iso(NOW + timedelta(days=1)),
+        s=6.0,
+        d=5.0,
+        reps=2,
+    ),
+]
+
+
+def _list(*, gate: bool, query: str = "", order_due=None, rows=None):
+    calls: dict = {}
+    source = LIST_ROWS if rows is None else rows
+
+    def side_effect(name):
+        m = MagicMock()
+        if name == "flashcards":
+
+            def _select(cols, **kw):
+                calls["select_cols"] = cols
+                calls["select_kwargs"] = kw
+                return [dict(r) for r in source]
+
+            m.select.side_effect = _select
+        else:
+            m.select.return_value = []
+        return m
+
+    # HANDOFF-02: order_due(items, now, *, stability_key, last_review_key).
+    od = order_due or MagicMock(side_effect=lambda rows, now, **kw: list(reversed(rows)))
+    with (
+        patch("routes.flashcards.table", side_effect=side_effect),
+        patch("routes.flashcards.learning_loop_active", return_value=gate),
+        patch("routes.flashcards.order_due", new=od),
+    ):
+        r = client.get(f"/api/flashcards/user/{USER_ID}{query}")
+    return r, calls, od
+
+
+class TestListFlashcards:
+    def test_gate_on_selects_fsrs_columns_with_the_same_query(self):
+        r, calls, _ = _list(gate=True)
+        assert r.status_code == 200, r.text
+        assert calls["select_cols"] == LEGACY_LIST_COLS + FSRS_COLS
+        assert calls["select_kwargs"] == {
+            "filters": {"user_id": f"eq.{USER_ID}"},
+            "order": "created_at.desc",
+        }
+
+    def test_gate_on_orders_due_then_fresh_then_later(self):
+        r, _, od = _list(gate=True)
+        ids = [c["id"] for c in r.json()["flashcards"]]
+        # order_due is patched to REVERSE its input, proving the route honours
+        # its output rather than the query order.
+        assert ids == ["due-recent", "due-old", "fresh-new", "fresh-older", "later-a", "later-b"]
+        od.assert_called_once()
+        passed_ids = [c["id"] for c in od.call_args[0][0]]
+        assert passed_ids == ["due-old", "due-recent"]
+        # Flashcards keep their last review in last_reviewed_at (HANDOFF-02).
+        assert od.call_args.kwargs == {"last_review_key": "last_reviewed_at"}
+        assert r.json()["due_count"] == 2
+
+    def test_gate_on_due_only_returns_the_due_bucket_only(self):
+        r, _, _ = _list(gate=True, query="?due_only=true")
+        ids = [c["id"] for c in r.json()["flashcards"]]
+        assert ids == ["due-recent", "due-old"]
+        assert r.json()["due_count"] == 2
+
+    def test_gate_on_a_null_due_at_is_not_due(self):
+        r, _, _ = _list(gate=True, query="?due_only=true")
+        assert not any(c["id"].startswith("fresh") for c in r.json()["flashcards"])
+
+    def test_gate_on_response_rows_carry_the_fsrs_columns(self):
+        r, _, _ = _list(gate=True)
+        first = r.json()["flashcards"][0]
+        assert FSRS_KEYS <= set(first)
+
+    def test_gate_on_real_order_due_ranks_by_distance_from_threshold(self):
+        """Unpatched learning.fsrs.order_due through the adapter: the due card
+        whose recall probability is nearest REVIEW_ORDER_THRESHOLD comes first."""
+        from learning import fsrs
+
+        rows = [
+            # reviewed 4 d ago at S = 4 d: R = 0.9, just due (newest, so first
+            # in the query's created_at.desc order)
+            _card(
+                "just-due",
+                created="2026-09-24T00:00:00Z",
+                s=4.0,
+                d=5.0,
+                reps=1,
+                due=_iso(NOW - timedelta(minutes=5)),
+                last=_iso(NOW - timedelta(days=4)),
+            ),
+            # reviewed 10 d ago at S = 2 d: R ≈ 0.76, nearer the threshold
+            _card(
+                "long-overdue",
+                created="2026-09-23T00:00:00Z",
+                s=2.0,
+                d=5.0,
+                reps=1,
+                due=_iso(NOW - timedelta(days=8)),
+                last=_iso(NOW - timedelta(days=10)),
+            ),
+        ]
+        dist = {
+            row["id"]: abs(
+                fsrs.item_retrievability(row, NOW, last_review_key="last_reviewed_at")
+                - fsrs.REVIEW_ORDER_THRESHOLD
+            )
+            for row in rows
+        }
+        assert dist["long-overdue"] < dist["just-due"]
+        r, _, _ = _list(gate=True, rows=rows, order_due=fsrs.order_due)
+        body = r.json()
+        assert [c["id"] for c in body["flashcards"]] == ["long-overdue", "just-due"]
+        assert body["due_count"] == 2
+
+    def test_gate_off_is_byte_identical(self):
+        r, calls, od = _list(gate=False, query="?due_only=true")
+        assert r.status_code == 200
+        assert calls["select_cols"] == LEGACY_LIST_COLS
+        assert calls["select_kwargs"] == {
+            "filters": {"user_id": f"eq.{USER_ID}"},
+            "order": "created_at.desc",
+        }
+        body = r.json()
+        assert set(body) == {"flashcards"}, "no due_count on the legacy path"
+        assert [c["id"] for c in body["flashcards"]] == [c["id"] for c in LIST_ROWS]
+        od.assert_not_called()
+
+    def test_gate_off_topic_filter_unchanged(self):
+        r, calls, _ = _list(gate=False, query="?topic=T")
+        assert calls["select_kwargs"]["filters"] == {"user_id": f"eq.{USER_ID}", "topic": "eq.T"}
