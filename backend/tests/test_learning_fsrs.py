@@ -519,15 +519,72 @@ def test_fsrs_import_detector(source, expected):
     assert _imports_fsrs(source) is expected
 
 
+def _calls_gate(source: str) -> bool:
+    """True when `source` CALLS learning_loop_active (bare or as an attribute).
+    A comment, a string, or an import of the name alone is not a call."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "learning_loop_active":
+                return True
+            if isinstance(func, ast.Attribute) and func.attr == "learning_loop_active":
+                return True
+    return False
+
+
+def _route_violates_gate_rule(source: str) -> bool:
+    """Behaviour 10's standing rule for a route module: importing learning.fsrs
+    requires a learning_loop_active(...) call in the same module."""
+    return _imports_fsrs(source) and not _calls_gate(source)
+
+
+_UNGATED_ROUTE = """
+from learning.fsrs import next_state
+# TODO: wrap in learning_loop_active later
+def h(row):
+    return next_state(row["d"], row["s"], 3, 1.0)
+"""
+
+
+@pytest.mark.parametrize(
+    "source, violates",
+    [
+        (_UNGATED_ROUTE, True),  # the gate named only in a comment
+        ("from learning.gate import learning_loop_active\nfrom learning import fsrs", True),
+        ("from learning import fsrs\nGATE = 'learning_loop_active'", True),
+        (
+            "from learning import fsrs\nfrom learning.gate import learning_loop_active\n"
+            "def h(uid):\n    if learning_loop_active(uid):\n        fsrs.order_due([], 0)",
+            False,
+        ),
+        (
+            "from learning import fsrs, gate\ndef h(uid):\n    return gate.learning_loop_active(uid)",
+            False,
+        ),
+        ("from learning.gate import learning_loop_active\ndef h(uid):\n    return 1", False),
+    ],
+)
+def test_route_gate_rule_detector(source, violates):
+    assert _route_violates_gate_rule(source) is violates
+
+
 def test_routes_import_fsrs_only_behind_the_gate():
-    """Any route that imports learning.fsrs must also consult the gate; today none does."""
+    """Every module under routes/ that imports learning.fsrs calls learning_loop_active.
+
+    This pins the standing rule, not the PKG-02 state "nothing imports fsrs":
+    PKG-03 (services/graph_service.py), PKG-11 (routes/flashcards.py) and
+    PKG-12 (its review service) add sanctioned importers, and PKG-03/PKG-11 may
+    not edit this module. The zero-importer state is acceptance 8's grep.
+    """
     routes = pathlib.Path(__file__).resolve().parents[1] / "routes"
     paths = sorted(routes.rglob("*.py"))
     assert paths, "routes/ not found"
-    for path in paths:
-        text = path.read_text()
-        if _imports_fsrs(text):
-            assert "learning_loop_active" in text, f"{path.name} imports fsrs without the gate"
+    offenders = [
+        str(path.relative_to(routes))
+        for path in paths
+        if _route_violates_gate_rule(path.read_text())
+    ]
+    assert offenders == [], f"routes import learning.fsrs without calling the gate: {offenders}"
 
 
 # --- successive relearning --------------------------------------------------
