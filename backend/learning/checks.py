@@ -590,9 +590,12 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     final_answer is that option's text: the draft states its answer twice,
     explicitly and in agreement, and only the sentence quoting it is missing.
     A reference whose closing sentence names something else is a
-    contradiction, not an omission, and stays dropped; so does a free or
-    teachback reference, whose final answer has no second statement to agree
-    with (A34's containment check is what ties it to the reference).
+    contradiction, not an omission, and stays dropped. So does a reference
+    that contains any distractor's text anywhere: it may be arguing for that
+    option, and telling an endorsement from a rebuttal would be a guess. So
+    does a free or teachback reference, whose final answer has no second
+    statement to agree with (A34's containment check is what ties it to the
+    reference).
 
     chunk_marker — a "[chunk <id>]" or "[passage]" marker the agent copied
     from its prompt into any text the item stores (prompt, reference, final
@@ -627,13 +630,17 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
             "was cleared (repaired)"
         )
     final = answer_run(fixed.final_answer)
+    reference = answer_run(fixed.reference_answer)
     if (
         mc_one
         and final
         and final == answer_run(correct[0].text)
         and fixed.reference_answer.strip()
         and not _FINAL_LABEL.search(fixed.reference_answer)
-        and not contains_run(answer_run(fixed.reference_answer), final)
+        and not contains_run(reference, final)
+        and not any(
+            contains_run(reference, answer_run(o.text)) for o in fixed.options if not o.is_correct
+        )
     ):
         fixed.reference_answer = _closed(fixed.reference_answer, fixed.final_answer)
         repairs.append(

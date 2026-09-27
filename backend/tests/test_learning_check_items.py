@@ -844,6 +844,10 @@ class TestRepairAndOptions:
             },
             # nothing to close
             {"reference_answer": "   "},
+            # the reference names a distractor: it may argue for it, and code
+            # cannot tell an endorsement from a rebuttal (review of A37)
+            {"reference_answer": "The rate scales each step, so it is the loss value."},
+            {"reference_answer": "Not the loss value: the rate scales each step."},
         ],
     )
     def test_the_final_answer_repair_never_guesses(self, over):
@@ -854,6 +858,31 @@ class TestRepairAndOptions:
         assert not [r for r in repairs if r.startswith("final_answer")], repairs
         assert fixed.reference_answer == draft.reference_answer
         assert validate_draft(fixed) != []
+
+    def test_the_final_answer_repair_never_closes_a_reference_that_concludes_a_distractor(self):
+        """Review of A37, its repro: the reference argues its way to a
+        distractor's text with no "Final answer" label. Appending "Final
+        answer: <the flagged option>." would store a key that argues both
+        ways, and choosing between them would be a 2-of-3 vote — a guess."""
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _mc_draft(
+            prompt="A 2x2 matrix has trace 7 and determinant 10. Which are its eigenvalues?",
+            reference_answer=(
+                "The eigenvalues are read straight off the trace and the determinant, "
+                "so the eigenvalues are 7 and 10."
+            ),
+            final_answer="5 and 2",
+            options=_opts(
+                ("5 and 2", True, None),
+                ("7 and 10", False, "rate_is_iterations"),
+                ("3 and 4", False, "rate_is_loss"),
+                ("-5 and -2", False, "rate_is_sign"),
+            ),
+        )
+        fixed, repairs = repair_draft(draft)
+        assert repairs == [] and fixed == draft
+        assert any(r.startswith("final_answer") for r in validate_draft(fixed))
 
     def test_the_final_answer_repair_is_mc_reason_only(self):
         """A free or teachback final answer has no second statement to agree
