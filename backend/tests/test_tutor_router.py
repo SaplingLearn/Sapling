@@ -177,6 +177,30 @@ def test_backstop_timeout_emits_defaults(monkeypatch, sink):
     assert event["payload"]["session_id"] == "s1"
 
 
+def test_router_error_still_emits_one_decision(monkeypatch, sink, caplog):
+    """#672 review: an unexpected failure in the router task left NO event, so
+    one-decision-per-persisted-turn silently broke on the error path."""
+    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+
+    async def broken(*a, **k):
+        raise RuntimeError("bug in the seam")
+
+    monkeypatch.setattr(decisions, "decide", broken)
+
+    async def run():
+        return await _observe()
+
+    with caplog.at_level("DEBUG", logger="sapling.tutor_router"):
+        result = asyncio.run(run())
+    assert result.fallback_reason == "router_error"
+    (event,) = _decision_events(sink)
+    p = event["payload"]
+    assert p["fallback_reason"] == "router_error" and p["backend"] == "none"
+    assert p["session_id"] == "s1" and event["request_id"] == "req-9"
+    loud = [r for r in caplog.records if r.levelno >= 30]
+    assert loud and all(r.exc_info is None for r in loud), "WARN, no traceback"
+
+
 def test_function_mode_routes_with_the_e2e_handler(monkeypatch, sink):
     """The E2E lane's shape: function mode, no backend env, the env-named
     handlers module — the router runs and every key is answered above floor."""
@@ -385,10 +409,8 @@ def test_stream_rung1_fallback_is_one_decision_on_the_fast_tier(router_on):
 
 
 def test_json_chat_without_a_pref_logs_the_default_model(router_on):
-    from agents._providers import model_name_for
-
     agent = MagicMock()
-    agent.run = AsyncMock(return_value=run_result("reply"))
+    agent.run = AsyncMock(return_value=_served_by("reply", "gemini-2.5-pro"))
     spy = _RouterSpy()
     with (
         patch("routes.learn.table", side_effect=_table_factory),
@@ -399,7 +421,7 @@ def test_json_chat_without_a_pref_logs_the_default_model(router_on):
     assert r.status_code == 200
     (kw,) = spy.calls
     assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
-        None, "default", model_name_for("chat_tutor"))
+        None, "default", "gemini-2.5-pro")
 
 
 def test_failed_json_turn_routes_nothing(router_on):
@@ -467,7 +489,7 @@ def test_function_mode_labels_the_tier_the_turn_really_ran_on(router_on, monkeyp
     must say `default`, agreeing with `tutor_model`, not echo `fast`."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     agent = MagicMock()
-    agent.run = AsyncMock(return_value=run_result("reply"))
+    agent.run = AsyncMock(return_value=_served_by("reply", "function:chat_tutor"))
     spy = _RouterSpy()
     with (
         patch("routes.learn.table", side_effect=_table_factory),
@@ -481,22 +503,60 @@ def test_function_mode_labels_the_tier_the_turn_really_ran_on(router_on, monkeyp
         "fast", "default", "function:chat_tutor")
 
 
-def test_model_labels_come_from_config_without_building_a_model(monkeypatch):
-    """#672 review: no private `_model_mode` import and no Model construction
-    per turn — the labels are configuration reads."""
+def _served_by(output: str, model_name: str):
+    """A run result whose response names the model that served it."""
+    from tests.agent_run_fakes import FakeRunResult
+
+    return FakeRunResult(output, [ModelResponse(parts=[TextPart(content=output)],
+                                                model_name=model_name)])
+
+
+def test_json_turn_labels_the_model_the_run_reports(router_on, monkeypatch):
+    """#672 review: tutor_model came from re-deriving config; it must be what
+    actually ran — the run result's model (what llm_usage records), with the
+    tier from the override `_prepare_chat_run` really applied."""
     import agents._providers as providers
-    from routes import learn
 
     def boom(*a, **k):
-        raise AssertionError("model_for must not be called to label an event")
+        raise AssertionError("labelling must not build a model")
 
-    monkeypatch.setattr(providers, "model_for", boom)
-    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    assert learn._served_model_name("fast") == "function:chat_tutor"
-    monkeypatch.delenv("SAPLING_MODEL_MODE")
-    assert learn._served_model_name("smart") == "gemini-2.5-pro"
-    assert learn._served_model_name(None) == providers.model_name_for("chat_tutor")
-    assert learn._served_tier("turbo") == "default"
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=_served_by("reply", "gemini-2.5-flash-lite-preview-09"))
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        r = _post_chat(model_pref="fast")
+        monkeypatch.setattr(providers, "model_for", boom)
+    assert r.status_code == 200
+    assert "_ran_on" not in r.json(), "the internal label never reaches the wire"
+    (kw,) = spy.calls
+    assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
+        "fast", "fast", "gemini-2.5-flash-lite-preview-09")
+
+
+def test_stream_labels_the_model_its_run_reports(router_on):
+    from services.agent_events import SaplingEvent
+
+    async def fake_stream(**kwargs):
+        kwargs["on_usage"](_served_by("streamed", "gemini-2.5-pro-exp"))
+        extra = kwargs["on_complete"]("streamed", {}, [])
+        yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
+
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.stream_agent_turn", fake_stream),
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=MagicMock()),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        r = _post_stream(model_pref="smart")
+    assert r.status_code == 200
+    (kw,) = spy.calls
+    assert (kw["model_tier"], kw["tutor_model"]) == ("smart", "gemini-2.5-pro-exp")
 
 
 def test_router_failure_cannot_fail_the_turn():

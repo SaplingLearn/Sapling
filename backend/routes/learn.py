@@ -14,7 +14,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
-from agents.usage import record_agent_usage
+from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
@@ -85,49 +85,35 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
-def _pref_honoured(model_pref: str | None) -> bool:
-    """Whether `_resolve_model_pref` actually applies this pref: only in real
-    mode (#391 — every other mode runs the agent's own seam model) and only
-    for a pref the toggle map knows."""
-    from agents._providers import model_mode
+def _ran_on(result, agent, run_kwargs: dict, model_pref: str | None) -> tuple[str, str | None]:
+    """(model_tier, tutor_model) for the run that ACTUALLY served a turn.
 
-    return model_mode() == "real" and model_pref in _PREF_MODEL_NAMES
-
-
-def _served_tier(model_pref: str | None) -> str:
-    """The tier a chat turn ACTUALLY ran on for this effective pref: `fast` /
-    `smart` when the pref was honoured, else `default` (the agent's own
-    model_for slot) — so the logged tier always agrees with `tutor_model`."""
-    return model_pref if _pref_honoured(model_pref) else "default"
-
-
-def _served_model_name(model_pref: str | None) -> str | None:
-    """The model NAME a chat turn ran on for this effective pref — the same
-    resolution `_resolve_model_pref` + the agent default perform, as data,
-    from configuration only (no Model is built).
-
-    Real mode: the honoured pref's Gemini model, else
-    `model_name_for("chat_tutor")`. Function mode: the seam's FunctionModel,
-    named `function:<task>` by agents/_providers.py. Never raises: this only
-    labels an event.
+    The tier is what `_prepare_chat_run` resolved: `fast`/`smart` when it put
+    a model override into `run_kwargs` for that pref, else `default` (no pref,
+    an unknown one, or a mode where the pref is not honoured, #391). The name
+    is the model the run result reports (`served_model_name`, the same
+    answer the llm_usage row records), falling back to the override's or the
+    agent's own model name when a result carries none. Never raises: this
+    only labels an event.
     """
     try:
-        from agents._providers import model_mode, model_name_for
-
-        mode = model_mode()
-        if mode == "real":
-            if _pref_honoured(model_pref):
-                return _PREF_MODEL_NAMES[model_pref]
-            return model_name_for("chat_tutor")
-        if mode == "function":
-            return "function:chat_tutor"
-        return None
+        override = run_kwargs.get("model")
+        tier = model_pref if (override is not None and model_pref) else "default"
+        name = served_model_name(result) if result is not None else "unknown"
+        if name == "unknown":
+            source = override if override is not None else getattr(agent, "model", None)
+            name = getattr(source, "model_name", None)
+        return tier, (name if isinstance(name, str) else None)
     except Exception:
-        return None
+        return "default", None
 
 
 def _observe_persisted_turn(
-    body: ChatBody, *, history: list, effective_pref: str | None, request_id: str
+    body: ChatBody,
+    *,
+    history: list,
+    ran_on: tuple[str, str | None],
+    request_id: str,
 ) -> None:
     """#640: schedule the observe-only tutor router for a turn that has JUST
     been persisted. Called from both persist points — `_chat_turn_json` and
@@ -147,8 +133,8 @@ def _observe_persisted_turn(
             user_id=body.user_id, session_id=body.session_id, message=body.message,
             history=history, mode=body.mode,
             model_pref_requested=body.model_pref,
-            model_tier=_served_tier(effective_pref),
-            tutor_model=_served_model_name(effective_pref),
+            model_tier=ran_on[0],
+            tutor_model=ran_on[1],
             request_id=request_id,
         )
     except Exception:
@@ -914,6 +900,9 @@ async def _chat_via_agent(
         # Real before/after deltas accumulated by update_mastery_tool.
         # Empty when no mastery moved this turn.
         "mastery_changes": deps.mastery_changes,
+        # Internal, popped by `_chat_turn_json` before anything is returned:
+        # what this run actually ran on, for the #640 router's event.
+        "_ran_on": _ran_on(result, agent, run_kwargs, model_pref),
     }
 
 
@@ -958,7 +947,6 @@ async def _chat_turn_json(
     # state up to (but not including) the current turn.
     message_history = _load_message_history(body.session_id)
 
-    effective_pref = model_pref if model_pref is not None else body.model_pref
     response = await _chat_via_agent(
         user_id=body.user_id,
         session_id=body.session_id,
@@ -968,8 +956,9 @@ async def _chat_turn_json(
         message_history=message_history,
         use_shared_context=body.use_shared_context,
         request_id=request_id,
-        model_pref=effective_pref,
+        model_pref=model_pref if model_pref is not None else body.model_pref,
     )
+    ran_on = response.pop("_ran_on", None) or ("default", None)
 
     # Encryption happens inside save_message (`encrypt_if_present`).
     save_message(body.session_id, "user", body.message)
@@ -989,8 +978,7 @@ async def _chat_turn_json(
         content=body.message,
     )
     _observe_persisted_turn(
-        body, history=message_history, effective_pref=effective_pref,
-        request_id=request_id,
+        body, history=message_history, ran_on=ran_on, request_id=request_id,
     )
 
     return response
@@ -1047,6 +1035,10 @@ async def chat_stream(body: ChatBody, request: Request):
     # SAPLING_MODEL_MODE=function — forcing a GoogleModel here would bypass
     # the e2e seam and re-create the cross-loop client problem #453 solved.
 
+    #: What the streamed run actually ran on — set by `_usage` (on_usage runs
+    #: before on_complete), read by `_persist` for the #640 router's event.
+    ran: dict = {}
+
     def _persist(reply: str, graph_update: dict, mastery_changes: list) -> dict:
         # Mirrors chat()'s ordering: user row, then assistant row. Runs only
         # after the agent run completes, so a disconnect mid-generation
@@ -1065,9 +1057,11 @@ async def chat_stream(body: ChatBody, request: Request):
             payload={"mode": body.mode, "session_id": body.session_id},
             content=body.message,
         )
-        # #640: the streamed twin of `_chat_turn_json`'s router call.
+        # #640: the streamed twin of `_chat_turn_json`'s router call, labelled
+        # with the run `_usage` saw (on_usage runs before on_complete).
         _observe_persisted_turn(
-            body, history=message_history, effective_pref=body.model_pref,
+            body, history=message_history,
+            ran_on=ran.get("on") or _ran_on(None, agent, run_kwargs, body.model_pref),
             request_id=request_id,
         )
         return {}
@@ -1087,6 +1081,7 @@ async def chat_stream(body: ChatBody, request: Request):
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
         )
+        ran["on"] = _ran_on(run_result, agent, run_kwargs, body.model_pref)
 
     async def event_stream():
         async for ev in stream_agent_turn(

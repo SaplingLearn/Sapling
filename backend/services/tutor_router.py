@@ -174,9 +174,19 @@ async def _route(state: dict, *, user_id: str | None, request_id: str | None,
         decisions.emit(result, feature=FEATURE, user_id=user_id,
                        request_id=request_id, extra=extra)
         return result
-    except Exception:  # decide() never raises; belt and braces
-        logger.debug("tutor router task failed", exc_info=True)
-        return decisions.defaults_result(QUESTIONS, reason="router_error")
+    except Exception as exc:
+        # decide() never raises, so this is a bug — in decide(), or in the
+        # decision seam's imports. It must still leave a trace: one
+        # decision.made per persisted turn holds on the error path too (the
+        # timeout backstop above does the same). Type name only at WARNING —
+        # the E2E logscan oracle treats tracebacks as findings; detail at DEBUG.
+        logger.warning("tutor router task failed (%s); logging defaults",
+                       type(exc).__name__)
+        logger.debug("tutor router failure detail", exc_info=True)
+        result = decisions.defaults_result(QUESTIONS, reason="router_error")
+        decisions.emit(result, feature=FEATURE, user_id=user_id,
+                       request_id=request_id, extra=extra)
+        return result
 
 
 def observe_tutor_turn(
