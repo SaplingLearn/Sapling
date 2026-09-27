@@ -6,7 +6,7 @@ via env vars without touching code:
     SAPLING_MODEL_CLASSIFIER=gemini-2.5-flash-lite
     SAPLING_MODEL_SUMMARY=gemini-2.5-flash-lite
     SAPLING_MODEL_CONCEPTS=gemini-2.5-flash
-    SAPLING_MODEL_SYLLABUS=gemini-3.1-flash-lite
+    SAPLING_MODEL_SYLLABUS=gemini-2.5-flash
     SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
     SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
     SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
@@ -53,15 +53,7 @@ _DEFAULTS: dict[AgentTask, str] = {
     "classifier": "gemini-2.5-flash-lite",
     "summary": "gemini-2.5-flash-lite",
     "concepts": "gemini-2.5-flash",
-    # Syllabus moved off 2.5 Flash on 2026-09-26: 3.1 Flash-Lite scored
-    # identically on every syllabus_extraction evaluator at ~70% less per call
-    # (it doesn't think by default; 2.5 Flash's thought tokens bill as output).
-    # The same swap was measured and REJECTED for `concepts` (~20% fewer
-    # concepts extracted, 124 -> 100 over the eval set; a thinking budget
-    # didn't recover it) and for `study_guide` (~35% fewer topics, ~45% fewer
-    # bullets) — it gets cheaper by writing less, so don't generalize this
-    # line to the other quality-tier slots without measuring them.
-    "syllabus": "gemini-3.1-flash-lite",
+    "syllabus": "gemini-2.5-flash",
     # Quiz generation defaults to lite: it's a single-shot non-streaming
     # call where the agent pulls structured graph data via tools, so the
     # bulk of the value is in tool wiring, not raw model strength.

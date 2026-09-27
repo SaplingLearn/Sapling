@@ -1,13 +1,13 @@
 {
   "assignments": [
     {
-      "description": "Midterm examination.",
+      "description": null,
       "due_date": "2026-10-15",
       "title": "Midterm",
       "weight_pct": 40.0
     },
     {
-      "description": "Final examination.",
+      "description": null,
       "due_date": "2026-12-12",
       "title": "Final",
       "weight_pct": 60.0

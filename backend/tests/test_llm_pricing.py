@@ -151,15 +151,20 @@ def test_cost_for_function_mode_model_is_none_and_silent(caplog):
 
 
 def test_every_default_task_model_is_priced():
-    """A default model missing from MODEL_PRICING records `cost_usd = NULL`
-    for every call on that task — the per-task rollups in /api/admin/analytics
-    then under-count spend with only a one-time warning to show for it. Moving
-    a `_DEFAULTS` slot to a new model must add its price in the same change."""
+    """A configured model missing from MODEL_PRICING records `cost_usd = NULL`
+    for every call on it — the per-task rollups in /api/admin/analytics then
+    under-count spend with only a one-time warning to show for it. Covers the
+    per-task `_DEFAULTS`, the health probe, and the tutor/quiz fast/smart maps
+    (which bypass `_DEFAULTS`). It checks CONFIGURED names only: a served
+    `model_version` that differs from the configured id is not covered here."""
     from agents._providers import HEALTH_PROBE_MODEL, _DEFAULTS
+    from routes.learn import _PREF_MODEL_NAMES as learn_prefs
+    from routes.quiz import _PREF_MODEL_NAMES as quiz_prefs
 
-    unpriced = sorted(
-        {m for m in (*_DEFAULTS.values(), HEALTH_PROBE_MODEL) if m not in llm_pricing.MODEL_PRICING}
-    )
+    configured = {
+        *_DEFAULTS.values(), HEALTH_PROBE_MODEL, *learn_prefs.values(), *quiz_prefs.values(),
+    }
+    unpriced = sorted(m for m in configured if m not in llm_pricing.MODEL_PRICING)
     assert not unpriced, f"default models with no MODEL_PRICING entry: {unpriced}"
 
 

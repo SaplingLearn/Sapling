@@ -1,13 +1,7 @@
 {
   "assignments": [
     {
-      "description": "Required to be brought to every studio session.",
-      "due_date": null,
-      "title": "Sketchbook",
-      "weight_pct": null
-    },
-    {
-      "description": "The final submission for the course.",
+      "description": "A portfolio showcasing term work.",
       "due_date": null,
       "title": "Final portfolio",
       "weight_pct": null

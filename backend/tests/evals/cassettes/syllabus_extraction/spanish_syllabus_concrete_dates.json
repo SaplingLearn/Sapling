@@ -1,25 +1,25 @@
 {
   "assignments": [
     {
-      "description": "Primera tarea del curso.",
+      "description": null,
       "due_date": "2026-02-10",
       "title": "Tarea 1",
       "weight_pct": null
     },
     {
-      "description": "Examen parcial.",
+      "description": null,
       "due_date": "2026-03-15",
       "title": "Parcial",
-      "weight_pct": 30.0
+      "weight_pct": null
     },
     {
-      "description": "Examen final del curso.",
+      "description": null,
       "due_date": "2026-05-05",
       "title": "Examen final",
-      "weight_pct": 50.0
+      "weight_pct": null
     }
   ],
-  "course_title": "C\u00e1lculo I",
+  "course_title": "C\u00e1lculo I \u2014 Semestre primavera 2026",
   "grading_categories": [
     {
       "name": "Tareas",

@@ -1,37 +1,37 @@
 {
   "assignments": [
     {
-      "description": "A series of reading responses worth 40 points total.",
+      "description": null,
       "due_date": null,
       "title": "Reading responses",
-      "weight_pct": 20.0
+      "weight_pct": null
     },
     {
-      "description": "Midterm essay worth 60 points.",
+      "description": null,
       "due_date": null,
       "title": "Midterm essay",
-      "weight_pct": 30.0
+      "weight_pct": null
     },
     {
-      "description": "Final essay worth 100 points.",
+      "description": null,
       "due_date": null,
       "title": "Final essay",
-      "weight_pct": 50.0
+      "weight_pct": null
     }
   ],
   "course_title": "PHIL 101",
   "grading_categories": [
     {
       "name": "Reading responses",
-      "weight": 20.0
+      "weight": 40.0
     },
     {
       "name": "Midterm essay",
-      "weight": 30.0
+      "weight": 60.0
     },
     {
       "name": "Final essay",
-      "weight": 50.0
+      "weight": 100.0
     }
   ],
   "instructor": null
