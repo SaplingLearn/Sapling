@@ -38,6 +38,7 @@ class TestParams:
         assert params.CHECK_ITEM_FLEX_RETRIES >= 0
         assert params.CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE == 1
         assert params.CHECK_ITEM_DRAFT_WORKERS >= 1
+        assert params.CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS == 20  # † A34
 
     def test_initial_set_is_every_pair_and_covers_its_consumers(self):
         from learning import params
@@ -107,6 +108,38 @@ class TestMigration:
         ) in sql
 
 
+# ── A34: check_items.final_answer (PKG-06 reopen of PKG-04) ─────────────────
+
+
+def _final_answer_migration() -> tuple[pathlib.Path, str]:
+    hits = sorted(MIG_DIR.glob("*_learning_check_items_final_answer.sql"))
+    assert len(hits) == 1, f"expected exactly one final_answer migration, got {hits}"
+    return hits[0], hits[0].read_text()
+
+
+class TestFinalAnswerMigration:
+    def test_named_after_the_check_items_migration_and_header_names_a34(self):
+        path, sql = _final_answer_migration()
+        assert re.fullmatch(r"\d{14}_learning_check_items_final_answer\.sql", path.name), path.name
+        (base,) = sorted(MIG_DIR.glob("*_learning_check_items.sql"))
+        assert path.name > base.name, "the column follows its table"
+        assert "PKG-04" in sql and "A34" in sql and "encrypted" in sql
+
+    def test_adds_one_nullable_text_column_and_nothing_else(self):
+        _, sql = _final_answer_migration()
+        body = [ln for ln in sql.splitlines() if ln.strip() and not ln.lstrip().startswith("--")]
+        assert body == [
+            "ALTER TABLE public.check_items ADD COLUMN IF NOT EXISTS final_answer text;"
+        ], body
+        assert "UNIQUE" not in sql.upper() and "NOT NULL" not in sql.upper()
+
+    def test_final_answer_is_an_encrypted_learning_column_for_invariant_9(self):
+        import test_learning_loop_invariants as inv
+
+        assert "final_answer" in inv.ENCRYPTED_LEARNING_COLUMNS
+        assert inv._FILTER_ON_ENCRYPTED.search('filters={"final_answer": "eq.x"}')
+
+
 # ── learning/checks.py ─────────────────────────────────────────────────────
 
 
@@ -119,6 +152,7 @@ def _draft(**over):
         difficulty=1,
         prompt="In one sentence, what does the learning rate control?",
         reference_answer="The size of each update step along the negative gradient.",
+        final_answer="The size of each update step",
         rubric=["Names the step size.", "Ties it to the gradient direction."],
         wrong_keys=["rate_is_iterations"],
         wrong_texts=["Confuses the rate with the number of iterations."],
@@ -132,7 +166,8 @@ def _mc_draft(**over):
     base = dict(
         format="mc_reason",
         prompt="Which quantity does the learning rate scale? Pick one and give your reason.",
-        reference_answer="A: it scales each step taken along the negative gradient.",
+        reference_answer="A: The update step size — it scales each step along the negative gradient.",
+        final_answer="The update step size",
         wrong_keys=["rate_is_iterations", "rate_is_loss", "rate_is_sign"],
         wrong_texts=[
             "Counts iterations.",
@@ -166,6 +201,7 @@ def _item(**over):
         difficulty=1,
         prompt=prompt,
         reference_answer="The condition that stops recursion.",
+        final_answer="The condition that stops recursion",
         rubric=[RubricItem(id="r1", text="stops"), RubricItem(id="r2", text="condition")],
         common_wrong=[WrongReason(key="no_stop", text="thinks recursion never stops")],
         source_chunk_ids=[],
@@ -173,6 +209,99 @@ def _item(**over):
         created_at=None,
     )
     return CheckItem(**{**base, **over})
+
+
+class TestAnswerTokens:
+    """A34's answer normalisation: the one reading of a final answer that
+    validate_draft (here) and leak.detect_leak / strip_leak (PKG-06) share."""
+
+    @pytest.mark.parametrize(
+        "text,run",
+        [
+            ("6x^2", ("6", "x", "^", "2")),
+            ("6 x ^ 2", ("6", "x", "^", "2")),
+            ("6x\u00b2", ("6", "x", "^", "2")),  # superscript two
+            ("6*x**2", ("6", "x", "^", "2")),  # '**' is '^', '*' is juxtaposition
+            ("6\u00d7x\u00b7x", ("6", "x", "x")),  # times sign, middle dot
+            ("x\u207b\u00b9", ("x", "^", "-", "1")),  # a superscript run is one exponent
+            ("10\u00b2\u00b3", ("10", "^", "23")),
+            ("\u22123", ("-", "3")),  # unicode minus sign
+            ("x \u2013 3", ("x", "-", "3")),  # en dash read as minus
+            ("0.5", ("0.5",)),
+            (".50", ("0.5",)),  # numbers by value
+            ("0,500.0", ("500",)),
+            ("1,250 J", ("1250", "j")),
+            ("9.80 m/s\u00b2", ("9.8", "m", "/", "s", "^", "2")),
+            ("(6x^2).", ("6", "x", "^", "2")),  # surrounding punctuation and brackets
+            ("\u201cThe Mitochondria!\u201d", ("the", "mitochondria")),
+            ("\uff16x", ("6", "x")),  # NFKC: fullwidth digit
+            ("F = m a", ("f", "=", "m", "a")),
+            ("", ()),
+            ("...  ?!", ()),
+        ],
+    )
+    def test_normalisation(self, text, run):
+        from learning.checks import answer_run
+
+        assert answer_run(text) == run
+
+    def test_spans_point_into_the_original_text(self):
+        from learning.checks import answer_tokens
+
+        text = "So 6*x**2, i.e. 6x\u00b2 (1,250)"
+        toks = answer_tokens(text)
+        assert [text[t.start : t.end] for t in toks] == [
+            "So",
+            "6",
+            "x",
+            "**",
+            "2",
+            "i",
+            "e",
+            "6",
+            "x",
+            "\u00b2",
+            "\u00b2",
+            "1,250",
+        ]
+        assert [t.value for t in toks][-3:] == ["^", "2", "1250"]
+        assert [t.number for t in toks] == [
+            False,
+            True,
+            False,
+            False,
+            True,
+            False,
+            False,
+            True,
+            False,
+            False,
+            True,
+            True,
+        ]
+
+    def test_answer_in_is_whole_token_run_containment(self):
+        from learning.checks import answer_in
+
+        assert answer_in("the derivative of 2x^3 + 5 is 6x^2.", "6x\u00b2")
+        assert answer_in("so g = 9.8 m/s^2", "9.80 m/s\u00b2")
+        assert not answer_in("Solve 12x = 4", "2x")  # a number never matches inside another
+        assert not answer_in("It is 2.5", "2")
+        assert not answer_in("It is 12,500 J", "1,250")
+        assert not answer_in("anything", "")  # an empty answer occurs nowhere
+        assert not answer_in("anything", "  ...  ")
+
+    def test_normalisation_is_linear_time(self):
+        import time
+
+        from learning.checks import answer_in, answer_tokens
+
+        big = 20_000
+        for text in ("*" * big, "\u00b2" * big, "1," * big, "x" * big, "6x^2 " * (big // 5)):
+            start = time.perf_counter()
+            answer_tokens(text)
+            answer_in(text, "6x^2 + 1")
+            assert time.perf_counter() - start < 1.0, text[:10]
 
 
 class TestQuestionHash:
@@ -272,19 +401,54 @@ class TestPosttestReserve:
         assert posttest_reserve_hash([]) is None
 
 
+class TestServable:
+    """A34: an item with no stated final answer cannot be leak-checked, so
+    selection never serves it (fail closed)."""
+
+    @pytest.mark.parametrize("missing", [None, "", "   ", "..."])
+    def test_select_item_never_serves_an_item_without_a_final_answer(self, missing):
+        from learning.checks import is_servable, select_item
+
+        bare = _item(id="bare", prompt="p-bare", final_answer=missing)
+        kept = _item(id="kept", difficulty=3, prompt="p-kept")
+        assert not is_servable(bare) and is_servable(kept)
+        assert select_item([bare, kept], format="free", difficulty=1).id == "kept"
+        assert select_item([bare], format="free", difficulty=1) is None
+
+    def test_the_posttest_reserve_is_a_servable_item(self):
+        from learning.checks import posttest_reserve_hash
+        from learning.params import CHECK_ITEM_DIFFICULTIES
+
+        mid = CHECK_ITEM_DIFFICULTIES[1]
+        items = [
+            _item(id=f"f{i}", difficulty=mid, prompt=f"free {i}", final_answer=None)
+            for i in range(3)
+        ]
+        assert posttest_reserve_hash(items) is None
+        kept = _item(id="k", difficulty=mid, prompt="kept")
+        assert posttest_reserve_hash([*items, kept]) == kept.question_hash
+
+
 class TestValidateDraft:
     def test_valid_drafts_have_no_reasons(self):
         from learning.checks import validate_draft
 
         assert validate_draft(_draft()) == []
         assert validate_draft(_mc_draft()) == []
-        assert validate_draft(_draft(answer_kind="numeric", canonical_answer="0.01")) == []
+        rate = {"reference_answer": "The worked example uses 0.01.", "final_answer": "0.01"}
+        assert validate_draft(_draft(answer_kind="numeric", canonical_answer="0.01", **rate)) == []
+        three = {"reference_answer": "It takes 3 steps.", "final_answer": "3 steps"}
         assert (
-            validate_draft(_draft(answer_kind="numeric", canonical_answer="3", tolerance="0.5"))
+            validate_draft(
+                _draft(answer_kind="numeric", canonical_answer="3", tolerance="0.5", **three)
+            )
             == []
         )
         steps = "1. Compute the gradient.\n2) Step against it by the rate."
-        assert validate_draft(_draft(stepwise=True, reference_answer=steps)) == []
+        final = "Step against it by the rate"
+        assert (
+            validate_draft(_draft(stepwise=True, reference_answer=steps, final_answer=final)) == []
+        )
 
     @pytest.mark.parametrize(
         "over,reason",
@@ -380,6 +544,164 @@ class TestValidateDraft:
             "c2",
             "c1",
         ]
+
+
+class TestFinalAnswerRules:
+    """A34: every draft states the final answer its reference concludes with;
+    validate_draft names each broken rule with the word "final_answer"."""
+
+    @pytest.mark.parametrize(
+        "over,why",
+        [
+            ({"final_answer": ""}, "empty"),
+            ({"final_answer": "  ...  "}, "empty"),
+            ({"final_answer": "the gradient"}, "reference"),
+            ({"final_answer": "a negative gradient step"}, "reference"),
+            # in the prompt: an answer printed in the question is not secret
+            (
+                {
+                    "prompt": "What does the size of each update step depend on?",
+                    "final_answer": "the size of each update step",
+                },
+                "prompt",
+            ),
+            # (part of) the concept name: it would block every hint that names it
+            (
+                {
+                    "concept": "Update step",
+                    "reference_answer": "The update step moves the weights.",
+                    "final_answer": "update step",
+                },
+                "concept",
+            ),
+            (
+                {
+                    "concept": "Learning rate schedule",
+                    "reference_answer": "The learning rate shrinks over time.",
+                    "final_answer": "learning rate",
+                },
+                "concept",
+            ),
+        ],
+    )
+    def test_each_final_answer_rule_names_itself(self, over, why):
+        from learning.checks import validate_draft
+
+        reasons = [r for r in validate_draft(_draft(**over)) if "final_answer" in r]
+        assert any(why in r for r in reasons), reasons
+
+    def test_the_final_answer_is_at_most_the_token_cap(self):
+        from learning.checks import answer_run, validate_draft
+        from learning.params import CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS as cap
+
+        import string
+
+        words = " ".join(string.ascii_lowercase[: cap + 1])
+        long = _draft(reference_answer=f"It is {words}.", final_answer=words)
+        assert len(answer_run(words)) == cap + 1
+        assert any("final_answer" in r and str(cap) in r for r in validate_draft(long))
+        ok = " ".join(words.split()[:cap])
+        assert validate_draft(_draft(reference_answer=f"It is {words}.", final_answer=ok)) == []
+
+    def test_the_rules_read_the_normalised_answer(self):
+        from learning.checks import validate_draft
+
+        ref = "Differentiate term by term: the derivative of 2x^3 + 5 is 6x^2."
+        for final in ("6x^2", "6x\u00b2", "6 x ^ 2", "6*x**2", "(6x^2)."):
+            assert validate_draft(_draft(reference_answer=ref, final_answer=final)) == [], final
+        g = "The ball falls freely, so g = 9.8 m/s^2"
+        assert validate_draft(_draft(reference_answer=g, final_answer="9.80 m/s\u00b2")) == []
+
+    @pytest.mark.parametrize(
+        "canonical,reference,final,ok",
+        [
+            ("0.01", "The example uses 0.01.", "0.01", True),
+            ("0.01", "The example uses 0.010 per step.", "0.010 per step", True),
+            ("-3", "The root is -3.", "-3", True),
+            ("-3", "The root is \u22123 m.", "\u22123 m", True),
+            ("1250", "The work done is 1,250 J.", "1,250 J", True),
+            ("6.022e23", "N = 6.022 \u00d7 10^23 per mole.", "6.022 \u00d7 10^23", True),
+            ("6.022e23", "N = 6.022 x 10^23 per mole.", "6.022 x 10^23", True),
+            ("6.022e23", "N is 6.022e23.", "6.022e23", True),
+            ("0.01", "The example uses 0.1.", "0.1", False),
+            ("3", "The root is -3.", "-3", False),
+            ("6.022e23", "N is about 6.022.", "6.022", False),
+            ("0.01", "The rate is small.", "small", False),  # no number at all
+        ],
+    )
+    def test_a_numeric_final_answer_has_the_canonical_value(self, canonical, reference, final, ok):
+        from learning.checks import validate_draft
+
+        d = _draft(
+            answer_kind="numeric",
+            canonical_answer=canonical,
+            reference_answer=reference,
+            final_answer=final,
+        )
+        reasons = [r for r in validate_draft(d) if "final_answer" in r]
+        assert (reasons == []) is ok, reasons
+        if not ok:
+            assert any("canonical" in r for r in reasons), reasons
+
+    def test_an_unparseable_canonical_is_reported_once_by_its_own_rule(self):
+        from learning.checks import validate_draft
+
+        d = _draft(answer_kind="numeric", canonical_answer="about three")
+        reasons = validate_draft(d)
+        assert any(r.startswith("canonical_answer") for r in reasons)
+        assert not any("final_answer" in r for r in reasons), reasons
+
+    def test_mc_reason_final_answer_is_or_contains_the_correct_options_text(self):
+        from learning.checks import validate_draft
+
+        assert validate_draft(_mc_draft()) == []  # equal
+        assert validate_draft(_mc_draft(final_answer="A: The update step size")) == []  # contains
+        wrong = _mc_draft(
+            reference_answer="A: The update step size, not the loss value.",
+            final_answer="the loss value",
+        )
+        reasons = [r for r in validate_draft(wrong) if "final_answer" in r]
+        assert any("option" in r for r in reasons), reasons
+        # an item whose options are already broken reports the option rule only
+        broken = _mc_draft(correct_option="E")
+        assert not any("final_answer" in r for r in validate_draft(broken))
+
+    def test_free_and_teachback_answers_need_no_number(self):
+        from learning.checks import validate_draft
+
+        claim = _draft(
+            format="teachback",
+            prompt="Explain to a classmate what the learning rate does.",
+            final_answer="it scales every update step",
+            reference_answer="In short, it scales every update step along the negative gradient.",
+        )
+        assert validate_draft(claim) == []
+
+    def test_the_draft_requires_a_final_answer(self):
+        from pydantic import ValidationError
+
+        from agents.check_items import CheckItemsOutput
+        from learning.checks import CheckItemDraft
+
+        schema = CheckItemsOutput.model_json_schema()["$defs"]["CheckItemDraft"]
+        assert "final_answer" in schema["required"]
+        assert schema["properties"]["final_answer"]["type"] == "string"
+        fields = _draft().model_dump()
+        del fields["final_answer"]
+        with pytest.raises(ValidationError):
+            CheckItemDraft(**fields)
+
+    def test_the_prompt_asks_for_the_final_answer_verbatim(self):
+        from agents.check_items import _PROMPT
+        from learning.params import CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS
+
+        assert "`final_answer`" in _PROMPT and "verbatim" in _PROMPT
+        assert f"at most {CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens" in _PROMPT
+        for shape in ("unit", "expression", "option's text", "claim"):
+            assert shape in _PROMPT, shape
+        # an mc_reason reference quotes the correct option's text, so the
+        # final answer can be copied from it
+        assert "quotes the correct option's text" in _PROMPT
 
 
 class TestRankChunks:
@@ -572,6 +894,8 @@ class TestCreateItems:
             and decrypt_if_present(row["prompt"]) == _draft().prompt
         )
         assert decrypt_if_present(row["reference_answer"]) == _draft().reference_answer
+        assert row["final_answer"] != _draft().final_answer  # A34: encrypted at write
+        assert decrypt_if_present(row["final_answer"]) == _draft().final_answer
         assert json.loads(decrypt_if_present(row["rubric_json"])) == [
             {"id": "r1", "text": "Names the step size."},
             {"id": "r2", "text": "Ties it to the gradient direction."},
@@ -600,6 +924,7 @@ class TestCreateItems:
         numeric = _draft(
             prompt="What learning rate does the worked example use?",
             reference_answer="It uses 0.01.",
+            final_answer="0.01",
             answer_kind="numeric",
             canonical_answer="0.01",
             tolerance="0.001",
@@ -667,6 +992,7 @@ class TestReadItems:
             "difficulty": 1,
             "prompt": enc("What is a base case?"),
             "reference_answer": enc("The stopping condition."),
+            "final_answer": enc("The stopping condition"),
             "rubric_json": enc(
                 json.dumps([{"id": "r1", "text": "stops"}, {"id": "r2", "text": "condition"}])
             ),
@@ -693,6 +1019,8 @@ class TestReadItems:
             items = svc.list_items("course-1", "recursion", format="free", difficulty=1)
         assert items[0].prompt == "What is a base case?" and items[0].concept_key == "recursion"
         assert items[0].rubric[1].text == "condition" and items[0].common_wrong[0].key == "no_stop"
+        assert items[0].final_answer == "The stopping condition"  # A34: decrypted at read
+        assert "final_answer" in mocks["check_items"].select.call_args[0][0].split(",")
         filters = mocks["check_items"].select.call_args[1]["filters"]
         assert filters == {
             "course_id": "eq.course-1",
@@ -738,6 +1066,17 @@ class TestReadItems:
         filters = mocks["check_items"].select.call_args[1]["filters"]
         assert filters["course_id"] == "eq.course-1" and filters["concept_key"].startswith("in.(")
         assert filters["concept_key"] == 'in.("recursion","base case")'
+
+    def test_a_legacy_row_without_a_final_answer_reads_as_none_and_is_never_served(self):
+        from learning.checks import is_servable, select_item
+        from services import check_item_service as svc
+
+        row = dict(self._stored_row(), final_answer=None)
+        factory, _ = _cached_tables({"check_items": [row]})
+        with patch("services.check_item_service.table", side_effect=factory):
+            (item,) = svc.list_items("course-1", "recursion")
+        assert item.final_answer is None and not is_servable(item)
+        assert select_item([item], format="free", difficulty=1) is None
 
     def test_items_for_no_concepts_reads_nothing(self):
         from services import check_item_service as svc

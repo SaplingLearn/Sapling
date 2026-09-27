@@ -9,6 +9,14 @@ services/graph_service._normalize_concept and is applied by the service.
 
 References are model-generated and unverified (A17): nothing here calls them
 verified, and `canonical_verified` is never set true by this package (A22).
+
+Every item states its final answer as a structured field (§13 A34): the
+generator knows the answer, so it says it, and nothing parses a reference for
+one. `answer_tokens` is the one reading of such an answer — validate_draft
+checks a draft's final_answer with it, and PKG-06's learning/leak.py matches
+the stored final_answer in tutor text with it. It lives here, not in leak.py,
+because the upload path (which validates drafts) must not load the dark
+PKG-06 layer.
 """
 
 from __future__ import annotations
@@ -16,8 +24,10 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from collections.abc import Iterable
-from typing import Literal
+import unicodedata
+from collections.abc import Iterable, Sequence
+from decimal import Decimal, InvalidOperation
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +35,7 @@ from learning.params import (
     CHECK_HASH_VERSION,
     CHECK_ITEM_ANSWER_KINDS,
     CHECK_ITEM_DIFFICULTIES,
+    CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS,
     CHECK_ITEM_FORMATS,
     CHECK_ITEM_MIN_RUBRIC,
     CHECK_ITEM_MIN_WRONG,
@@ -119,6 +130,9 @@ class CheckItem(BaseModel):
     question_hash: str
     graded: bool = False
     created_at: str | None = None
+    # A34: None on a row drafted before the column existed — never served
+    # (is_servable); scripts/backfill_check_items.py regenerates its concept.
+    final_answer: str | None = None
 
 
 class CheckItemDraft(BaseModel):
@@ -132,6 +146,9 @@ class CheckItemDraft(BaseModel):
     difficulty: int = Field(description="1 recall, 2 application, 3 transfer")
     prompt: str
     reference_answer: str
+    final_answer: str = Field(
+        description="the final answer reference_answer concludes with, copied verbatim from it"
+    )
     rubric: list[str] = Field(default_factory=list)
     wrong_keys: list[str] = Field(
         default_factory=list,
@@ -154,6 +171,127 @@ class CheckItemDraft(BaseModel):
         default=False, description="true only if reference_answer has numbered step lines"
     )
     chunk_ids: list[str] = Field(default_factory=list)
+
+
+# ── answer normalisation (A34) ─────────────────────────────────────────────
+#
+# A final answer is compared as a run of tokens: a number (ASCII digits, a
+# thousands-separated "1,250" whole, a decimal part, a bare ".5") by its value,
+# a word (any letters) casefolded, or one math symbol. Before tokenizing,
+# "**" is "^", a superscript run is "^" and its characters ("x²" = "x^2",
+# "10⁻³" = "10^-3"), a multiplication sign (* × · ⋅ ∙ ∗) is juxtaposition,
+# a minus sign or en dash is "-", and any other non-ASCII character is NFKC-
+# folded. Whitespace, brackets and sentence punctuation are no token, so
+# "6 x ^ 2", "6*x**2", "6x²" and "(6x^2)." are all 6 x ^ 2.
+
+_SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ"
+_FROM_SUPERSCRIPT = str.maketrans(_SUPERSCRIPTS, "0123456789+-=()ni")
+_POWER = "**"
+_EXPONENT = "^"
+_TIMES = frozenset("*×·⋅∙∗")
+_MINUS = frozenset("\u2212\u2012\u2013")  # minus sign, figure dash, en dash
+_JUXTAPOSE = " "
+_ANSWER_TOKEN = re.compile(
+    r"([0-9]{1,3}(?:,[0-9]{3})+(?![0-9])(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?|\.[0-9]+)"
+    r"|([^\W\d_]+)"
+    r"|([-+=<>/^%±≤≥≠≈√∑∏∫∂∞→←⇒⇔÷])"
+)
+
+
+class AnswerToken(NamedTuple):
+    value: str  # a number's canonical spelling, a casefolded word, or one symbol
+    start: int  # span in the ORIGINAL text (a rewrite keeps its source span)
+    end: int
+    number: bool
+
+
+def number_value(text: str) -> str:
+    """A number's canonical spelling: no separators, leading or trailing zeros
+    ("01,250.0" -> "1250", ".50" -> "0.5")."""
+    whole, _, frac = text.replace(",", "").partition(".")
+    whole, frac = whole.lstrip("0") or "0", frac.rstrip("0")
+    return f"{whole}.{frac}" if frac else whole
+
+
+def _fold(ch: str) -> str:
+    piece = ch if ch.isascii() else unicodedata.normalize("NFKC", ch)
+    return "".join(_JUXTAPOSE if c in _TIMES else "-" if c in _MINUS else c for c in piece)
+
+
+def _normalised(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """`text` rewritten as above, with the original span of each character."""
+    out: list[str] = []
+    spans: list[tuple[int, int]] = []
+    i, in_superscript = 0, False
+    while i < len(text):
+        ch = text[i]
+        step = 1
+        if ch in _SUPERSCRIPTS:
+            piece = ch.translate(_FROM_SUPERSCRIPT)
+            piece = piece if in_superscript else _EXPONENT + piece
+            in_superscript = True
+        else:
+            in_superscript = False
+            if text.startswith(_POWER, i):
+                piece, step = _EXPONENT, len(_POWER)
+            else:
+                piece = _fold(ch)
+        out.append(piece)
+        spans.extend([(i, i + step)] * len(piece))
+        i += step
+    return "".join(out), spans
+
+
+def answer_tokens(text: str | None) -> list[AnswerToken]:
+    """The A34 tokens of `text`, each with its span in `text`."""
+    norm, spans = _normalised(text or "")
+    tokens = []
+    for m in _ANSWER_TOKEN.finditer(norm):
+        number, word, symbol = m.groups()
+        if number is not None:
+            value = number_value(number)
+        elif word is not None:
+            value = word.casefold()
+        else:
+            value = symbol
+        tokens.append(
+            AnswerToken(value, spans[m.start()][0], spans[m.end() - 1][1], number is not None)
+        )
+    return tokens
+
+
+def answer_run(text: str | None) -> tuple[str, ...]:
+    return tuple(t.value for t in answer_tokens(text))
+
+
+def find_runs(values: Sequence[str], run: Sequence[str]) -> list[int]:
+    """Every index at which `run` occurs in `values` as consecutive tokens; []
+    for an empty run."""
+    run = tuple(run)
+    if not run:
+        return []
+    k = len(run)
+    return [
+        i
+        for i in range(len(values) - k + 1)
+        if values[i] == run[0] and tuple(values[i : i + k]) == run
+    ]
+
+
+def contains_run(values: Sequence[str], run: Sequence[str]) -> bool:
+    return bool(find_runs(values, run))
+
+
+def answer_in(text: str | None, answer: str | None) -> bool:
+    """Whether `answer` occurs in `text` as a whole run of answer tokens (an
+    answer with no token occurs nowhere)."""
+    return contains_run(answer_run(text), answer_run(answer))
+
+
+def is_servable(item) -> bool:
+    """A34: only an item that states a final answer can be leak-checked, so
+    only such an item is ever selected (fail closed; a legacy row is None)."""
+    return bool(answer_run(getattr(item, "final_answer", None)))
 
 
 # ── identity ───────────────────────────────────────────────────────────────
@@ -248,10 +386,89 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
     return reasons
 
 
+def _decimal(text: str) -> Decimal | None:
+    try:
+        return Decimal(text.strip())
+    except (InvalidOperation, ValueError):
+        return None
+
+
+_E_NOTATION = ("e",)
+_TIMES_TEN = ("10", _EXPONENT)
+_X_TIMES_TEN = ("x", *_TIMES_TEN)
+_SIGNS = ("-", "+")
+
+
+def _exponent(after: Sequence[str]) -> str:
+    """The integer exponent written right after a number ("e23", "× 10^23",
+    "x 10^-3"), as text; "0" when there is none."""
+    for lead in (_E_NOTATION, _TIMES_TEN, _X_TIMES_TEN):
+        if tuple(after[: len(lead)]) != lead:
+            continue
+        rest = list(after[len(lead) :])
+        sign = rest.pop(0) if rest and rest[0] in _SIGNS else ""
+        if rest and rest[0].isdigit():
+            return sign + rest[0]
+    return "0"
+
+
+def _stated_value(tokens: list[AnswerToken]) -> Decimal | None:
+    """The value a numeric final answer states: its first number, negative
+    after a '-', scaled by an exponent written right after it; None when it
+    states no number."""
+    values = [t.value for t in tokens]
+    for i, token in enumerate(tokens):
+        if token.number:
+            sign = "-" if i and values[i - 1] == "-" else ""
+            return _decimal(f"{sign}{token.value}e{_exponent(values[i + 1 :])}")
+    return None
+
+
+def _correct_option_text(draft: CheckItemDraft) -> str | None:
+    letters, texts = draft.option_letters, draft.option_texts
+    hits = [i for i, letter in enumerate(letters) if letter == draft.correct_option]
+    if len(letters) != len(texts) or len(hits) != 1:
+        return None  # the option rule reports it
+    return texts[hits[0]]
+
+
+def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
+    """A34: the final answer the reference concludes with, stated verbatim."""
+    run = answer_run(draft.final_answer)
+    if not run:
+        return ["final_answer is empty"]
+    reasons = []
+    if len(run) > CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS:
+        reasons.append(
+            f"final_answer has {len(run)} tokens; at most {CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS}"
+        )
+    if not contains_run(answer_run(draft.reference_answer), run):
+        reasons.append("final_answer does not occur in reference_answer")
+    if contains_run(answer_run(draft.prompt), run):
+        reasons.append(
+            "final_answer occurs in the prompt: an answer the question prints is no secret"
+        )
+    if contains_run(answer_run(draft.concept), run):
+        reasons.append("final_answer is (part of) the concept name: it would block every hint")
+    if draft.answer_kind == _NUMERIC and _finite_float(draft.canonical_answer) is not None:
+        stated = _stated_value(answer_tokens(draft.final_answer))
+        if stated is None or stated != _decimal(draft.canonical_answer):
+            reasons.append(
+                f"final_answer states {stated if stated is not None else 'no number'}, "
+                f"not canonical_answer {draft.canonical_answer!r}"
+            )
+    if draft.format == _MC_REASON:
+        option = _correct_option_text(draft)
+        if option is not None and not contains_run(run, answer_run(option)):
+            reasons.append("final_answer does not contain the correct option's text")
+    return reasons
+
+
 def validate_draft(draft: CheckItemDraft) -> list[str]:
     """Every reason `draft` is unusable; [] when it may be stored. Each reason
     names the rule it is about (format, difficulty, prompt, reference, rubric,
-    wrong, leak, answer_kind, option, canonical, tolerance, stepwise)."""
+    wrong, leak, answer_kind, option, canonical, tolerance, stepwise,
+    final_answer)."""
     reasons: list[str] = []
     if draft.format not in CHECK_ITEM_FORMATS:
         reasons.append(f"format {draft.format!r} is not one of {CHECK_ITEM_FORMATS}")
@@ -295,6 +512,7 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
                 f"stepwise reference has {steps} numbered step(s); "
                 f"needs >= {CHECK_ITEM_STEPWISE_MIN_STEPS}"
             )
+    reasons.extend(_final_answer_reasons(draft))
     return reasons
 
 
@@ -361,12 +579,17 @@ def select_item(
     difficulty: int,
     exclude_hashes: Iterable[str] = (),
 ) -> CheckItem | None:
-    """An item of exactly `format` whose hash is not excluded: the first at
-    exactly `difficulty` (ties by (created_at, id)), else the nearest
-    difficulty (lower first on ties), else None. Format is never substituted —
-    each format is a different evidence channel (spec §3.1)."""
+    """A servable item (A34: it states a final answer) of exactly `format`
+    whose hash is not excluded: the first at exactly `difficulty` (ties by
+    (created_at, id)), else the nearest difficulty (lower first on ties), else
+    None. Format is never substituted — each format is a different evidence
+    channel (spec §3.1)."""
     excluded = set(exclude_hashes)
-    candidates = [i for i in items if i.format == format and i.question_hash not in excluded]
+    candidates = [
+        i
+        for i in items
+        if i.format == format and i.question_hash not in excluded and is_servable(i)
+    ]
     if not candidates:
         return None
     return min(
@@ -377,9 +600,10 @@ def select_item(
 
 def posttest_reserve_hash(items: Iterable[CheckItem]) -> str | None:
     """The concept's post-test reserve (A23): the lowest question_hash among
-    `free` items at CHECK_ITEM_DIFFICULTIES[1], else the lowest overall, else
-    None. Probe, in-session checks and review never serve it."""
-    items = list(items)
+    servable (A34) `free` items at CHECK_ITEM_DIFFICULTIES[1], else the lowest
+    servable overall, else None. Probe, in-session checks and review never
+    serve it; the post-test does, so an item with no final answer is never it."""
+    items = [i for i in items if is_servable(i)]
     mid = CHECK_ITEM_DIFFICULTIES[1]
     preferred = [i.question_hash for i in items if i.format == "free" and i.difficulty == mid]
     if preferred:

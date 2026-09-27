@@ -52,6 +52,7 @@ ENCRYPTED_LEARNING_COLUMNS = (
     "options_json",
     "correct_option",
     "canonical_answer",
+    "final_answer",  # A34 (PKG-06's reopen of PKG-04)
     "evidence_text",
     "close_json",
     "loop_brief",

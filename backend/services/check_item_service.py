@@ -6,9 +6,9 @@ services/graph_service._normalize_concept(concept_name) — never a student's
 graph_nodes row (A2). Nothing here writes graph_nodes (spec §8.1).
 
 Encryption: prompt, reference_answer, rubric_json, common_wrong_json,
-options_json, correct_option and canonical_answer are encrypted at write
-(services/encryption.py) and decrypted at read in `_row_to_item`, the single
-decrypt boundary. question_hash is the plaintext lookup key, hashed from the
+options_json, correct_option, canonical_answer and final_answer (A34) are
+encrypted at write (services/encryption.py) and decrypted at read in
+`_row_to_item`, the single decrypt boundary. question_hash is the plaintext lookup key, hashed from the
 PLAINTEXT prompt before encryption. No filter, order or join here ever names
 an encrypted column (invariant 9).
 
@@ -69,7 +69,7 @@ _COLUMNS = (
     "id,course_id,concept_key,document_id,format,difficulty,prompt,reference_answer,"
     "rubric_json,common_wrong_json,options_json,correct_option,answer_kind,"
     "canonical_answer,tolerance,canonical_verified,stepwise,source_chunk_ids,"
-    "source_document_ids,question_hash,graded,created_at"
+    "source_document_ids,question_hash,graded,created_at,final_answer"
 )
 
 #: A24 stub for services/decisions.py::item_answerable (PKG-05b): "is this item
@@ -127,6 +127,8 @@ def _build_row(
         "difficulty": draft.difficulty,
         "prompt": encrypt_if_present(draft.prompt),
         "reference_answer": encrypt_if_present(draft.reference_answer),
+        # A34: stated by the generator, verbatim from the reference; validated.
+        "final_answer": encrypt_if_present(draft.final_answer),
         "rubric_json": encrypt_if_present(json.dumps(rubric)),
         "common_wrong_json": encrypt_if_present(json.dumps(wrong)),
         "options_json": options,
@@ -248,6 +250,8 @@ def _row_to_item(row: dict) -> CheckItem:
         question_hash=row.get("question_hash"),
         graded=bool(row.get("graded")),
         created_at=row.get("created_at"),
+        # A34: None on a legacy row — checks.is_servable keeps it from being served.
+        final_answer=decrypt_if_present(row.get("final_answer")),
     )
 
 

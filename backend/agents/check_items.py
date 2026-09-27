@@ -30,6 +30,7 @@ from learning.checks import CheckItemDraft
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
     CHECK_ITEM_DIFFICULTIES,
+    CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS,
     CHECK_ITEM_FLEX_RETRIES,
     CHECK_ITEM_FORMATS,
     CHECK_ITEM_MIN_RUBRIC,
@@ -79,8 +80,9 @@ _PROMPT = (
     "has EXACTLY ONE ENTRY PER OPTION, in the same order (four entries): the "
     "correct option's entry is the empty string \"\", and each distractor's "
     "entry is one of THIS item's `wrong_keys` — the misconception that makes "
-    "that option tempting. The reference answer names the correct letter AND "
-    "the reason it is correct. For free and teachback items leave "
+    "that option tempting. The reference answer names the correct letter, "
+    "quotes the correct option's text, AND gives the reason it is correct. For "
+    "free and teachback items leave "
     "`option_letters`, `option_texts`, `option_wrong_keys` empty and "
     '`correct_option` "".\n\n'
     f"Difficulty: {_EASY} = recall or definition; {_MID} = application to a "
@@ -88,6 +90,12 @@ _PROMPT = (
     "Every item, in EVERY format (free and teachback included), carries:\n"
     "- `reference_answer`: a complete model answer grounded ONLY in the "
     "passages.\n"
+    "- `final_answer`: the exact final answer the reference_answer concludes "
+    "with, copied verbatim from reference_answer: the number with its unit, "
+    "the final expression, the correct option's text, or — for a "
+    "conceptual/teachback item — the short decisive claim (at most "
+    f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens). It never appears in the "
+    "prompt and is never the concept's name or a part of it.\n"
     f"- `rubric`: at least {CHECK_ITEM_MIN_RUBRIC} entries, each ONE binary "
     "criterion a grader can mark present or absent in a student's answer.\n"
     f"- at least {CHECK_ITEM_MIN_WRONG} common wrong reason(s) as two parallel "
@@ -97,7 +105,8 @@ _PROMPT = (
     "`wrong_keys[i]` names. A free or teachback item lists the mistakes a "
     "student is likely to make when answering it.\n\n"
     'Answer kind: `answer_kind` is "numeric" only when the whole answer is '
-    "one number — then `canonical_answer` is that number as plain decimal text "
+    "one number — then `canonical_answer` is that number (the value "
+    "`final_answer` states) as plain decimal text "
     'and `tolerance` the accepted absolute error as text ("" for exact). '
     'Otherwise `answer_kind` is "free" and both are "".\n\n'
     "`stepwise` is true only when the reference answer is written as at least "
@@ -107,8 +116,9 @@ _PROMPT = (
     "Shape of the list fields, for an mc_reason item whose correct option is "
     'B: option_letters ["A", "B", "C", "D"], option_wrong_keys '
     '["confuses_x_with_y", "", "ignores_z", "reverses_order"], correct_option '
-    '"B", wrong_keys ["confuses_x_with_y", "ignores_z", "reverses_order"], '
-    "wrong_texts [three matching descriptions]. For a free or teachback item: "
+    '"B", final_answer the text of option B, wrong_keys ["confuses_x_with_y", '
+    '"ignores_z", "reverses_order"], wrong_texts [three matching '
+    "descriptions]. For a free or teachback item: "
     'wrong_keys ["confuses_x_with_y"], wrong_texts ["Treats x as if it were '
     'y."], option_letters [], option_texts [], option_wrong_keys [], '
     'correct_option "". A stepwise reference is written as numbered lines: '

@@ -201,6 +201,11 @@ CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec la
 CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
 CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
 CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
+# † A34 (PKG-06's reopen): the most tokens (checks.answer_tokens) a check item's
+# structured final_answer may hold — the decisive core the leak check matches,
+# never the whole reference, yet room for a number with its unit, an
+# expression, an mc_reason option's text or a teachback claim.
+CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS = 20
 
 # ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
 # FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating
