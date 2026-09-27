@@ -4,10 +4,11 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 import { API_URL, fetchSettings, getMe } from '@/lib/api';
 import {
-  applyAccountAnalyticsPreference,
-  identifyUser,
+  holdAnalytics,
   isAnalyticsConfigured,
+  releaseAnonymousAnalytics,
   resetAnalytics,
+  resolveAccountAnalytics,
 } from '@/lib/analytics';
 
 interface UserOption {
@@ -197,26 +198,31 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     resetAnalytics();
   }, []);
 
-  // Product analytics identity: the user's UUID only — never name, email or
-  // any other trait (src/lib/analytics.ts). The account's opt-out
-  // (user_settings.analytics_opt_out) is applied FIRST, so a student who
-  // opted out on another browser is never identified on this one. Skipped
-  // entirely — no settings request — when this build runs no analytics.
+  // Product analytics (src/lib/analytics.ts) captures nothing until this
+  // settles who is here. No session → capture opens at once. A signed-in
+  // student → capture stays shut until their account preference
+  // (user_settings.analytics_opt_out) has been read: an opt-out is stored and
+  // they are never identified; otherwise they are identified by UUID only —
+  // never name, email or any other trait. If the read fails, capture stays
+  // shut for the rest of this page load (fail closed). This is the ONE place
+  // the account preference is applied. Skipped entirely — no settings
+  // request — when this build runs no analytics.
   useEffect(() => {
-    if (!(userReady && isAuthenticated && userId)) return;
-    if (!isAnalyticsConfigured()) return;
+    if (!userReady || !isAnalyticsConfigured()) return;
+    if (!isAuthenticated || !userId) {
+      releaseAnonymousAnalytics();
+      return;
+    }
+    holdAnalytics();
     let cancelled = false;
-    fetchSettings(userId)
-      .then(
-        (s) => s.analytics_opt_out,
-        // Unknown preference: this browser's own choice stands.
-        () => undefined,
-      )
-      .then((optOut) => {
-        if (cancelled) return;
-        applyAccountAnalyticsPreference(optOut);
-        identifyUser(userId);
-      });
+    fetchSettings(userId).then(
+      (s) => {
+        if (!cancelled) resolveAccountAnalytics(userId, s.analytics_opt_out);
+      },
+      () => {
+        // Fail closed: the gate stays shut until the next page load.
+      },
+    );
     return () => {
       cancelled = true;
     };
