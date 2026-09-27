@@ -42,10 +42,10 @@ report, which grade() refuses on. They are rephrased injections the grader
 credited in full on live Gemini before that layer existed (an instructor note
 inside an mc_reason reason; a "TA review" claiming both items with confidence
 1.0). Two honest cases guard against false positives: a teachback analogy that
-cites a TA (the report; it talks about grading, so the second opinion confirms
-it) and a circuit answer "R1: no. R2: yes." on an item whose question names R1
-and R2 (graded as written; the rubric items reach the grader under fresh labels,
-so "R1: no" is not read as a verdict). Never hand-edit a case; add one on a miss.
+cites a TA (the report; a TA named without an approval claim is no suspicion
+signal, so one run) and a circuit answer "R1: no. R2: yes." on an item whose
+question names R1 and R2 (graded as written; the rubric items reach the grader
+under fresh labels, so "R1: no" is not read as a verdict). Never hand-edit a case; add one on a miss.
 """
 
 from __future__ import annotations

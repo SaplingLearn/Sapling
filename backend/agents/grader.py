@@ -24,9 +24,10 @@ and its output reports `addresses_grader` — whether any part of the answer
 tries to change how it is graded. A report from either run is refused (reason
 `addresses_grader`), whatever the verdict. Behind that, a first verdict that
 credits any item on an answer with a suspicion signal
-(`answer_guard.suspicion`: verdict tokens for any id, grading talk, a
-mixed-script word) is confirmed by the second opinion, and an item is credited
-only when both runs credit it.
+(`answer_guard.suspicion`: a verdict in any shape, grading talk, a letter of
+another alphabet inside a word, a switch of language, hidden text, a claim the
+student names only to reject it) is confirmed by the second opinion, and an
+item is credited only when both runs credit it.
 
 Exactly one system prompt and one agent construction (spec §8.12; inv_12).
 """

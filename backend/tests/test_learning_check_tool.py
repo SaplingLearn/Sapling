@@ -1386,12 +1386,13 @@ LOOP_CODE_FILES = (
 IDENTITY_LITERALS = frozenset({0, 1})
 # Ints that are not a weight, threshold or rung: pydantic-ai's output-validation
 # budget (#153, retries=2), the prompt-hash prefix length (hexdigest()[:12]), and
-# the answer guard's text-shape bounds in characters: its scan window
-# (_CLAIM_WINDOW) and the letters a letter-spaced run needs (_SPACED_MIN_LETTERS,
-# A33).
+# the answer guard's text-shape bounds: its scan window in characters
+# (_CLAIM_WINDOW), the letters a letter-spaced run needs (_SPACED_MIN_LETTERS),
+# the words an English clause needs and base64's 4-character quantum (4), and
+# the words a clause in another language needs (_FOREIGN_CLAUSE_WORDS, A33).
 NON_POLICY_INTS = {
     "agents/grader.py": frozenset({2, 12}),
-    "learning/answer_guard.py": frozenset({200, 4}),
+    "learning/answer_guard.py": frozenset({200, 4, 6}),
 }
 
 
