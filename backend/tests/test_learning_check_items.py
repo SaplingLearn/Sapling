@@ -4204,17 +4204,19 @@ class TestMcReasonEval:
     def test_the_baselines_pin_the_option_contract_and_the_recorded_yield(self):
         """McOptionsValid — every recorded mc_reason draft passes every A37
         option rule — is required at 1.0. McReasonValid is the recorded share
-        of mc_reason drafts stored (17/18 in the recording of the A37 review
-        round: the one drop is an A34 final_answer rule — the answer printed
-        in the stem — that every format meets). McCorrectNotLongest is the
-        recorded mean per case of stored mc_reason drafts whose correct
-        option is not strictly the longest (12 of 17 drafts). A re-record
-        changes them here consciously."""
+        of mc_reason drafts stored (17/18 in the recordings of the A37 second
+        and third reviews: the one drop is an A34 final_answer rule — the
+        answer printed in the stem — that every format meets).
+        McCorrectNotLongest is the recorded mean per case of stored mc_reason
+        drafts whose correct option is not strictly the longest (11 of 17
+        drafts in the third review's recording; 12 of 17 in the second's —
+        one draft, within the direct runs' noise). A re-record changes them
+        here consciously."""
         baselines = pathlib.Path(__file__).parent / "evals" / "baselines.json"
         scores = json.loads(baselines.read_text())["check_items"]
         assert scores["McOptionsValidEvaluator"] == 1.0
         assert scores["McReasonValidEvaluator"] == round(17 / 18, 6)
-        assert scores["McCorrectNotLongestEvaluator"] == round(25 / 36, 6)
+        assert scores["McCorrectNotLongestEvaluator"] == round(11 / 18, 6)
 
     def test_options_valid_reads_only_the_a37_option_rules(self):
         from learning.checks import MC_OPTION_RULES

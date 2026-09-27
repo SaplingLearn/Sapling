@@ -11,23 +11,19 @@
       "final_answer": "d/dx f(g(x)) = f'(g(x)) * g'(x).",
       "format": "free",
       "options": [],
-      "prompt": "State the formula for the Chain Rule, which is used for differentiating composite functions.",
-      "reference_answer": "The formula for the Chain Rule is d/dx f(g(x)) = f'(g(x)) * g'(x). Final answer: d/dx f(g(x)) = f'(g(x)) * g'(x).",
+      "prompt": "What is the formula for the Chain Rule in calculus?",
+      "reference_answer": "The formula for the Chain Rule is d/dx f(g(x)) = f'(g(x)) * g'(x).\nFinal answer: d/dx f(g(x)) = f'(g(x)) * g'(x).",
       "rubric": [
-        "States the correct formula for the Chain Rule.",
-        "Includes all necessary components of the formula."
+        "The formula includes the derivative of the outer function evaluated at the inner function.",
+        "The formula includes the derivative of the inner function."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "forgot_outer_derivative",
-        "forgot_inner_derivative",
-        "incorrect_function_notation"
+        "missing_outer_derivative"
       ],
       "wrong_texts": [
-        "Forgets to include the derivative of the outer function f.",
-        "Forgets to include the derivative of the inner function g.",
-        "Uses incorrect notation for the composite function's derivative."
+        "The formula is missing the derivative of the outer function."
       ]
     },
     {
@@ -41,24 +37,19 @@
       "final_answer": "2x * cos(x^2).",
       "format": "free",
       "options": [],
-      "prompt": "If h(x) = sin(x^2), what is the derivative of h(x) with respect to x, using the Chain Rule?",
-      "reference_answer": "Let f(g(x)) = sin(x^2). Then f(u) = sin(u) and g(x) = x^2. The derivatives are f'(u) = cos(u) and g'(x) = 2x. Applying the Chain Rule, d/dx f(g(x)) = f'(g(x)) * g'(x) = cos(x^2) * 2x. Final answer: 2x * cos(x^2).",
+      "prompt": "Given f(x) = sin(x^2), what is f'(x) using the Chain Rule?",
+      "reference_answer": "Let the outer function be f(u) = sin(u) and the inner function be g(x) = x^2. Then f'(u) = cos(u) and g'(x) = 2x. Applying the Chain Rule, d/dx f(g(x)) = f'(g(x)) * g'(x) = cos(x^2) * 2x.\nFinal answer: 2x * cos(x^2).",
       "rubric": [
         "Correctly identifies the outer and inner functions.",
-        "Applies the Chain Rule formula correctly.",
-        "Calculates the derivatives of both functions accurately."
+        "Applies the Chain Rule formula correctly."
       ],
-      "stepwise": true,
+      "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confused_order_of_multiplication",
-        "missed_inner_derivative",
-        "applied_chain_rule_incorrectly"
+        "incorrect_application"
       ],
       "wrong_texts": [
-        "Multiplies the derivative of the inner function by the outer function itself.",
-        "Calculates only the derivative of the outer function.",
-        "Incorrectly substitutes or differentiates the functions in the chain rule formula."
+        "The Chain Rule was not applied correctly."
       ]
     },
     {
@@ -69,27 +60,22 @@
       ],
       "concept": "Chain Rule",
       "difficulty": 3,
-      "final_answer": "4 * pi * (3t + 1) cm^2/s.",
+      "final_answer": "Apply the rule d/dx f(g(x)) = f'(g(x)) * g'(x).",
       "format": "free",
       "options": [],
-      "prompt": "Consider a scenario where the radius of a circle is increasing at a rate of 2 cm/s. If the radius at time t is given by r(t) = 3t + 1, how fast is the area of the circle changing with respect to time?",
-      "reference_answer": "The area of a circle is A = pi * r^2. The radius is a function of time, r(t) = 3t + 1. The rate of change of the radius is dr/dt = 3 cm/s. We want to find dA/dt. Using the Chain Rule, dA/dt = dA/dr * dr/dt. First, find dA/dr: dA/dr = d/dr (pi * r^2) = 2 * pi * r. Now substitute into the Chain Rule formula: dA/dt = (2 * pi * r) * (3) = 6 * pi * r. Since r(t) = 3t + 1, dA/dt = 6 * pi * (3t + 1). The question states the radius is increasing at 2 cm/s, which contradicts r(t)=3t+1, so we use the rate provided in the problem description. dA/dt = dA/dr * dr/dt = (2 * pi * r) * 2 = 4 * pi * r. Substitute r(t): dA/dt = 4 * pi * (3t + 1). Final answer: 4 * pi * (3t + 1) cm^2/s.",
+      "prompt": "Explain how the Chain Rule helps in differentiating a function like y = (x^3 + 2x)^4.",
+      "reference_answer": "The Chain Rule is used because y = (x^3 + 2x)^4 is a composite function. The outer function is u^4 and the inner function is u = x^3 + 2x. We find the derivative of the outer function with respect to u (4u^3) and the derivative of the inner function with respect to x (3x^2 + 2). Then, we multiply these together, substituting u back: 4(x^3 + 2x)^3 * (3x^2 + 2).\nFinal answer: Apply the rule d/dx f(g(x)) = f'(g(x)) * g'(x).",
       "rubric": [
-        "Correctly identifies the related rates using the Chain Rule.",
-        "Calculates the derivative of the area with respect to the radius.",
-        "Uses the given rate of change of the radius."
+        "Identifies the composite nature of the function.",
+        "Explains the process of applying the Chain Rule to this specific function."
       ],
-      "stepwise": true,
+      "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "used_r_t_for_dr_dt",
-        "ignored_pi_in_area",
-        "incorrect_chain_rule_application"
+        "misunderstands_composition"
       ],
       "wrong_texts": [
-        "Used the expression for r(t) as the rate of change of r.",
-        "Forgot to include pi in the area formula derivative.",
-        "Applied the chain rule incorrectly by not multiplying by dr/dt."
+        "The function's composition was misunderstood."
       ]
     },
     {
@@ -100,27 +86,22 @@
       ],
       "concept": "Chain Rule",
       "difficulty": 1,
-      "final_answer": "The Chain Rule differentiates composite functions by multiplying the derivative of the outer function by the derivative of the inner function.",
+      "final_answer": "Differentiate the outer function, keep the inner function, and multiply by the inner derivative.",
       "format": "teachback",
       "options": [],
-      "prompt": "Explain to a classmate who missed the lecture what the Chain Rule is used for and how it works, in your own words.",
-      "reference_answer": "The Chain Rule is a method for finding the derivative of a composite function, which is basically a function within a function. You use it when you have something like f(g(x)). The rule states that you take the derivative of the outer function f, evaluated at the inner function g(x), and then multiply it by the derivative of the inner function g(x). So, it's like peeling an onion: differentiate the outside layer first, then multiply by the derivative of the next layer in. Final answer: The Chain Rule differentiates composite functions by multiplying the derivative of the outer function by the derivative of the inner function.",
+      "prompt": "Explain to a classmate who missed the lecture how the Chain Rule is used to differentiate composite functions.",
+      "reference_answer": "The Chain Rule helps us differentiate functions that are combinations of other functions, like f(g(x)). The formula is d/dx f(g(x)) = f'(g(x)) * g'(x). This means you take the derivative of the outer function (f) while keeping the inner function (g(x)) the same, and then multiply that by the derivative of the inner function (g'(x)).\nFinal answer: Differentiate the outer function, keep the inner function, and multiply by the inner derivative.",
       "rubric": [
-        "Explains that the Chain Rule is for composite functions.",
-        "Describes the process of differentiating the outer and inner functions.",
-        "Mentions the multiplication of the derivatives."
+        "Correctly states the Chain Rule formula or its meaning.",
+        "Explains the roles of the outer and inner functions in the differentiation process."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_composite_with_product",
-        "only_derives_outer_function",
-        "only_derives_inner_function"
+        "confuses_order_of_operations"
       ],
       "wrong_texts": [
-        "Mistakes the Chain Rule for the product rule or sum rule.",
-        "Explains only how to differentiate the outer function.",
-        "Explains only how to differentiate the inner function."
+        "Confuses the order of operations or components in the chain rule."
       ]
     },
     {
@@ -134,24 +115,20 @@
       "final_answer": "Multiply the derivative of the outer function by the derivative of the inner function.",
       "format": "teachback",
       "options": [],
-      "prompt": "Explain to a classmate how you would find the derivative of y = (x^2 + 1)^3 using the Chain Rule.",
-      "reference_answer": "Okay, so y = (x^2 + 1)^3 is a composite function. The outer function is 'something cubed,' and the inner function is 'x^2 + 1.' To use the Chain Rule, first find the derivative of the outer function, which is 3 times 'something squared.' Then, keep the inner function the same, so we have 3(x^2 + 1)^2. Next, you need to multiply this by the derivative of the inner function. The derivative of x^2 + 1 is just 2x. So, you multiply 3(x^2 + 1)^2 by 2x, which gives you 6x(x^2 + 1)^2. Final answer: Multiply the derivative of the outer function by the derivative of the inner function.",
+      "prompt": "Explain to a classmate who missed the lecture how you would find the derivative of y = cos(3x) using the Chain Rule.",
+      "reference_answer": "Imagine y = cos(u) where u = 3x. The Chain Rule says dy/dx = dy/du * du/dx. The derivative of cos(u) is -sin(u), so dy/du = -sin(u). The derivative of 3x is 3, so du/dx = 3. Plugging these in and substituting u back, we get dy/dx = -sin(3x) * 3, or -3sin(3x).\nFinal answer: Multiply the derivative of the outer function by the derivative of the inner function.",
       "rubric": [
-        "Correctly identifies the outer and inner functions.",
-        "Correctly differentiates the outer function.",
-        "Correctly differentiates the inner function and multiplies it by the derivative of the outer function."
+        "Correctly identifies the outer and inner functions for y = cos(3x).",
+        "Correctly calculates the derivatives of both the outer and inner functions.",
+        "Correctly applies the Chain Rule by multiplying the derivatives."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_outer_and_inner_parts",
-        "forgets_inner_derivative",
-        "incorrectly_differentiates_inner_function"
+        "incorrect_derivative_of_cos"
       ],
       "wrong_texts": [
-        "Mixes up which part is the outer and which is the inner function.",
-        "Calculates the derivative of the outer function but forgets to multiply by the derivative of the inner function.",
-        "Makes a mistake when differentiating the inner function (e.g., derivative of x^2+1 is 2x+1)."
+        "Incorrectly calculates the derivative of the cosine function."
       ]
     },
     {
@@ -162,27 +139,22 @@
       ],
       "concept": "Chain Rule",
       "difficulty": 3,
-      "final_answer": "It accounts for the derivative of the inner function when differentiating a function within a function.",
+      "final_answer": "Multiply the power rule result by the inner function's derivative.",
       "format": "teachback",
       "options": [],
-      "prompt": "Explain to a classmate why the Chain Rule is necessary when differentiating functions like y = sin(3x).",
-      "reference_answer": "The Chain Rule is necessary for functions like y = sin(3x) because it's a composite function \u2013 you have the sine function applied to another function, 3x. You can't just take the derivative of sin(x) which is cos(x), because the argument isn't just x, it's 3x. So, you have to use the Chain Rule to account for both the outer function (sine) and the inner function (3x). You find the derivative of the outer function (which is cos), keeping the inner function the same (cos(3x)), and then multiply it by the derivative of the inner function (which is 3). So, the derivative is 3cos(3x). Without the Chain Rule, you'd incorrectly get just cos(3x). Final answer: It accounts for the derivative of the inner function when differentiating a function within a function.",
+      "prompt": "Explain to a classmate who missed the lecture how the Chain Rule can be seen as a generalization of the power rule when applied to composite functions like y = (x^2 + 1)^3.",
+      "reference_answer": "The power rule alone is for differentiating something like x^n. But here we have (something)^3. The Chain Rule lets us handle this. The outer function is like u^3, its derivative is 3u^2. The inner function is x^2 + 1, its derivative is 2x. So, using the Chain Rule d/dx (x^2 + 1)^3 = 3(x^2 + 1)^2 * (2x). It's like applying the power rule to the outside and then multiplying by the derivative of what's inside.\nFinal answer: Multiply the power rule result by the inner function's derivative.",
       "rubric": [
-        "Explains that sin(3x) is a composite function.",
-        "Highlights the need to differentiate both the outer (sine) and inner (3x) functions.",
-        "States that the Chain Rule combines these derivatives."
+        "Correctly identifies the outer and inner functions and their respective derivatives.",
+        "Explains how the Chain Rule extends the power rule to composite functions."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "treats_sin_3x_as_product",
-        "ignores_inner_function_derivative",
-        "only_differentiates_outer_function"
+        "applies_power_rule_only"
       ],
       "wrong_texts": [
-        "Treats sin(3x) as if it were sin(x) * 3x.",
-        "Forgets to include the derivative of the inner function (3x).",
-        "Differentiates only the outer function (sine) and ignores the inner function (3x)."
+        "Applies only the power rule without considering the inner function."
       ]
     },
     {
@@ -193,47 +165,47 @@
       ],
       "concept": "Chain Rule",
       "difficulty": 1,
-      "final_answer": "Differentiating composite functions.",
+      "final_answer": "The derivative of the outer function is multiplied by the derivative of the inner function.",
       "format": "mc_reason",
       "options": [
         {
           "is_correct": true,
-          "text": "Differentiating composite functions.",
+          "text": "The derivative of the outer function is multiplied by the derivative of the inner function.",
           "wrong_key": null
         },
         {
           "is_correct": false,
-          "text": "Finding the derivative of a product of functions.",
-          "wrong_key": "confuses_with_product_rule"
+          "text": "The derivative of the inner function is multiplied by the derivative of the outer function evaluated at the outer function.",
+          "wrong_key": "confuses_outer_and_inner_evaluation"
         },
         {
           "is_correct": false,
-          "text": "Calculating the derivative of a sum of functions.",
-          "wrong_key": "confuses_with_sum_rule"
+          "text": "The derivatives of the outer and inner functions are added together.",
+          "wrong_key": "confuses_addition_with_multiplication"
         },
         {
           "is_correct": false,
-          "text": "Determining the limit of a function.",
-          "wrong_key": "confuses_with_limit_definition"
+          "text": "Only the derivative of the outer function is taken.",
+          "wrong_key": "ignores_inner_derivative"
         }
       ],
-      "prompt": "What is the primary purpose of the Chain Rule in calculus?",
-      "reference_answer": "The Chain Rule is used to differentiate composite functions. A composite function is one function evaluated at another function, such as f(g(x)). The rule provides a method for finding the derivative of such functions. Final answer: Differentiating composite functions.",
+      "prompt": "When applying the Chain Rule to find the derivative of a composite function f(g(x)), what is the relationship between the derivatives of the outer and inner functions?",
+      "reference_answer": "The Chain Rule states that d/dx f(g(x)) = f'(g(x)) * g'(x). This means the derivative of the composite function is the derivative of the outer function (f) evaluated at the inner function (g(x)), multiplied by the derivative of the inner function (g'(x)).\nFinal answer: The derivative of the outer function is multiplied by the derivative of the inner function.",
       "rubric": [
-        "Selects the correct purpose of the Chain Rule.",
-        "Provides a valid reason why this is the purpose."
+        "Correctly identifies that the derivatives are multiplied.",
+        "Correctly states that the derivative of the outer function is evaluated at the inner function."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_with_product_rule",
-        "confuses_with_sum_rule",
-        "confuses_with_limit_definition"
+        "confuses_outer_and_inner_evaluation",
+        "confuses_addition_with_multiplication",
+        "ignores_inner_derivative"
       ],
       "wrong_texts": [
-        "Confuses the Chain Rule with the product rule for derivatives.",
-        "Confuses the Chain Rule with the sum rule for derivatives.",
-        "Confuses the Chain Rule with the definition of a limit."
+        "Confuses which function's derivative is evaluated at which.",
+        "Incorrectly assumes addition instead of multiplication.",
+        "Forgets to include the derivative of the inner function."
       ]
     },
     {
@@ -244,47 +216,48 @@
       ],
       "concept": "Chain Rule",
       "difficulty": 2,
-      "final_answer": "3(2x + 5)^2 multiplied by 2.",
+      "final_answer": "3(x^2 + 5x)^2 * (2x + 5).",
       "format": "mc_reason",
       "options": [
         {
           "is_correct": true,
-          "text": "3(2x + 5)^2 multiplied by 2.",
+          "text": "3(x^2 + 5x)^2 * (2x + 5)",
           "wrong_key": null
         },
         {
           "is_correct": false,
-          "text": "3(2x + 5)^2.",
-          "wrong_key": "forgot_inner_derivative"
+          "text": "3(x^2 + 5x)^2 * (2x)",
+          "wrong_key": "ignores_inner_term_in_derivative"
         },
         {
           "is_correct": false,
-          "text": "3(2)^2 multiplied by (2x + 5).",
-          "wrong_key": "swapped_inner_and_outer_derivatives"
+          "text": "(x^2 + 5x)^3 * (2x + 5)",
+          "wrong_key": "misses_outer_derivative_power"
         },
         {
           "is_correct": false,
-          "text": "Derivative of (2x + 5) is 2.",
-          "wrong_key": "only_inner_derivative"
+          "text": "3(x^2 + 5x)^2 + (2x + 5)",
+          "wrong_key": "confuses_addition_with_multiplication"
         }
       ],
-      "prompt": "To find the derivative of h(x) = (2x + 5)^3, which of the following is the correct application of the Chain Rule?",
-      "reference_answer": "Let f(u) = u^3 and g(x) = 2x + 5. Then f'(u) = 3u^2 and g'(x) = 2. According to the Chain Rule, h'(x) = f'(g(x)) * g'(x). Substituting, we get h'(x) = 3(2x + 5)^2 * 2. Simplifying gives h'(x) = 6(2x + 5)^2. Final answer: 3(2x + 5)^2 multiplied by 2.",
+      "prompt": "To find the derivative of h(x) = (x^2 + 5x)^3, which of the following is the correct application of the Chain Rule?",
+      "reference_answer": "Let f(u) = u^3 and g(x) = x^2 + 5x. Then f'(u) = 3u^2 and g'(x) = 2x + 5. Applying the Chain Rule, h'(x) = f'(g(x)) * g'(x) = 3(x^2 + 5x)^2 * (2x + 5).\nFinal answer: 3(x^2 + 5x)^2 * (2x + 5).",
       "rubric": [
-        "Selects the option that correctly applies the Chain Rule formula.",
-        "Provides a valid reason for selecting this option based on the Chain Rule's components."
+        "Correctly identifies the derivative of the outer function evaluated at the inner function.",
+        "Correctly identifies the derivative of the inner function.",
+        "Correctly multiplies the two parts."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "forgot_inner_derivative",
-        "swapped_inner_and_outer_derivatives",
-        "only_inner_derivative"
+        "ignores_inner_term_in_derivative",
+        "misses_outer_derivative_power",
+        "confuses_addition_with_multiplication"
       ],
       "wrong_texts": [
-        "Forgets to multiply by the derivative of the inner function.",
-        "Incorrectly applies the derivative of the inner and outer functions.",
-        "Only provides the derivative of the inner function without considering the outer function."
+        "The derivative of the inner function is incorrect.",
+        "The exponent of the outer function derivative is wrong.",
+        "The operation between the two parts is incorrect."
       ]
     },
     {
@@ -295,47 +268,47 @@
       ],
       "concept": "Chain Rule",
       "difficulty": 3,
-      "final_answer": "cos(g(x)) multiplied by 1/x.",
+      "final_answer": "f'(g(h(x))) * g'(h(x)) * h'(x).",
       "format": "mc_reason",
       "options": [
         {
           "is_correct": true,
-          "text": "cos(g(x)) multiplied by 1/x.",
+          "text": "f'(g(h(x))) * g'(h(x)) * h'(x)",
           "wrong_key": null
         },
         {
           "is_correct": false,
-          "text": "cos(x) multiplied by 1/x.",
-          "wrong_key": "confuses_g_x_with_x"
+          "text": "f'(x) * g'(x) * h'(x)",
+          "wrong_key": "evaluates_all_derivatives_at_x"
         },
         {
           "is_correct": false,
-          "text": "cos(1/x) multiplied by 1/x.",
-          "wrong_key": "incorrectly_evaluates_f_prime"
+          "text": "f'(g(h(x))) + g'(h(x)) + h'(x)",
+          "wrong_key": "confuses_addition_with_multiplication"
         },
         {
           "is_correct": false,
-          "text": "cos(g(x)).",
-          "wrong_key": "forgot_inner_derivative"
+          "text": "f'(g(x)) * g'(h(x)) * h'(x)",
+          "wrong_key": "incorrectly_evaluates_outer_derivative"
         }
       ],
-      "prompt": "If y = f(g(x)), and we know f'(u) = cos(u) and g'(x) = 1/x, what is y'?",
-      "reference_answer": "The Chain Rule states that the derivative of a composite function y = f(g(x)) is y' = f'(g(x)) * g'(x). We are given f'(u) = cos(u) and g'(x) = 1/x. To find f'(g(x)), we substitute g(x) into f'(u). If f'(u) = cos(u), then f'(g(x)) = cos(g(x)). We are not given the explicit form of g(x), only its derivative. However, the question implies we should express the answer in terms of f' and g'. The derivative y' is therefore cos(g(x)) multiplied by 1/x. Final answer: cos(g(x)) multiplied by 1/x.",
+      "prompt": "If y = f(g(h(x))), what is the derivative dy/dx according to the extended Chain Rule?",
+      "reference_answer": "The Chain Rule can be extended to nested composite functions. For y = f(g(h(x))), the derivative is found by differentiating the outermost function with respect to its argument (which is g(h(x))), then multiplying by the derivative of that argument (g(h(x))) with respect to its argument (h(x)), and finally multiplying by the derivative of the innermost argument (h(x)) with respect to x. So, dy/dx = f'(g(h(x))) * g'(h(x)) * h'(x).\nFinal answer: f'(g(h(x))) * g'(h(x)) * h'(x).",
       "rubric": [
-        "Selects the correct application of the Chain Rule given the derivatives of the outer and inner functions.",
-        "Provides a valid reason based on the structure of the Chain Rule."
+        "Correctly applies the Chain Rule iteratively for three nested functions.",
+        "All derivatives are correctly specified in terms of the nested functions."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_g_x_with_x",
-        "incorrectly_evaluates_f_prime",
-        "forgot_inner_derivative"
+        "evaluates_all_derivatives_at_x",
+        "confuses_addition_with_multiplication",
+        "incorrectly_evaluates_outer_derivative"
       ],
       "wrong_texts": [
-        "Replaces g(x) with x when evaluating f'(g(x)).",
-        "Incorrectly substitutes the derivative of g(x) into f'(u).",
-        "Forgets to multiply by the derivative of the inner function g'(x)."
+        "Evaluates all derivatives at 'x' instead of the inner function.",
+        "Incorrectly uses addition instead of multiplication.",
+        "The outermost derivative is not evaluated correctly within the nested structure."
       ]
     }
   ]
