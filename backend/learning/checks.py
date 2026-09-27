@@ -34,6 +34,11 @@ from learning.params import (
 _SEP = "\x1f"  # unit separator: never appears in normalized text
 _STEP_LINE = re.compile(r"^\s*\d+[.)]", re.MULTILINE)  # a numbered step, A17/A22
 _WORD = re.compile(r"\w+")
+# Leak-comparison tokens: a decimal number whole, a word, or one math symbol.
+# Sentence punctuation (. , ; : ! ? quotes brackets dashes) is not a token, so
+# a reference ending in "." still matches mid-sentence; operators are, so
+# "x = 2" is not found inside "x + 2 = 4".
+_LEAK_TOKEN = re.compile(r"\d+(?:\.\d+)*|\w+|[+\-*/=<>^%×÷±≤≥≠≈√∑∏∫∂∞→←⇒⇔]")
 # Concept-name tokens shorter than this ("of", "to", "a") say nothing about
 # which passage discusses the concept, so rank_chunks_for_concept ignores them.
 # The one small literal the PKG-04 prompt allows here: a tokenizer floor, not a
@@ -173,15 +178,21 @@ def _words(value) -> str:
     return " ".join(_WORD.findall(normalize(value)))
 
 
+def _leak_tokens(value) -> str:
+    """normalize(), then the _LEAK_TOKEN sequence, space-joined."""
+    return " ".join(_LEAK_TOKEN.findall(normalize(value)))
+
+
 def leak_in_prompt(prompt, reference_answer) -> bool:
     """True when the (normalized, non-empty) reference answer appears verbatim
-    inside the (normalized) prompt. Punctuation is ignored and the match is on
-    whole words, so a reference ending in "." still leaks into a prompt that
-    continues the sentence."""
-    ref = _words(reference_answer)
+    inside the (normalized) prompt, compared as whole tokens: sentence
+    punctuation is ignored, so a reference ending in "." still leaks into a
+    prompt that continues the sentence, while math operators and decimals are
+    kept, so "x = 2" does not leak into "Solve x + 2 = 4"."""
+    ref = _leak_tokens(reference_answer)
     if not ref:
         return False
-    return f" {ref} " in f" {_words(prompt)} "
+    return f" {ref} " in f" {_leak_tokens(prompt)} "
 
 
 def _finite_float(text: str) -> float | None:

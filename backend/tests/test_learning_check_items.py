@@ -340,6 +340,25 @@ class TestValidateDraft:
         assert validate_draft(_draft(canonical_answer="junk", tolerance="-1")) == []
         assert validate_draft(_draft(option_letters=["A"], correct_option="Z")) == []
 
+    @pytest.mark.parametrize(
+        "prompt,reference,leaks",
+        [
+            # operators are kept: "x = 2" is not inside "x + 2 = 4"
+            ("Solve x + 2 = 4 for x.", "x = 2", False),
+            ("Solve 3x - 6 = 0.", "x = 2", False),
+            # a decimal is one token: "2" is not inside "2.5"
+            ("What is 2.5 + 1?", "2", False),
+            # true leaks still leak, symbols and sentence punctuation alike
+            ("Given F = m a, find the force.", "F = m a", True),
+            ("If x = 2, what is x + 1?", "x = 2.", True),
+            ("The area is 3.14 r^2; why?", "3.14 r^2", True),
+        ],
+    )
+    def test_leak_keeps_math_operators_and_decimals(self, prompt, reference, leaks):
+        from learning.checks import leak_in_prompt
+
+        assert leak_in_prompt(prompt, reference) is leaks
+
     def test_leak_is_rejected_and_unknown_chunk_ids_are_dropped(self):
         from learning.checks import clean_chunk_ids, leak_in_prompt, validate_draft
 
