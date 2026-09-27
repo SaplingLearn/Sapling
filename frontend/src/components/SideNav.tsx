@@ -53,8 +53,18 @@ const COLLAPSE_KEY = "sapling_sidenav_collapsed";
    but a desktop-only sidebar carrying 12 destinations reads as a wall at that
    pitch. 38px is the dense-desktop value: still above the 36px floor we hold
    ourselves to on a pointer-first surface, and ~15% tighter per row once the
-   1px gap is counted. Never take NAV_ITEM_MIN_HEIGHT below 36. */
-const NAV_ITEM_MIN_HEIGHT = 38;
+   1px gap is counted. Never take this below 36.
+
+   Expressed as `clamp(floor, vh, ceiling)` rather than a fixed 38px: with 12
+   destinations + 4 group headers + the logo/collapse/footer chrome, the rail's
+   content comes to roughly 880px, which is taller than the usable viewport on
+   plenty of real laptops (bookmarks bar, browser chrome) even on 1080p panels,
+   and every 13"/1366×768-class screen. Below that, every one of these clamps
+   shrinks together on the SAME curve, so the rail fits without scrolling
+   instead of clipping Settings/the account block off the bottom — and above
+   it, every ceiling equals the old fixed value, so nothing changes for a
+   normal-height screen. */
+const NAV_ITEM_H = "clamp(36px, 4.3vh, 38px)";
 const NAV_GAP = 1;
 
 /* Horizontal inset shared by every horizontal rule in the rail — the collapsed
@@ -81,18 +91,37 @@ const ROW = {
 };
 /* Wide-rail group header slot: space above the label, the label's line, and
    space below it before the first row. Kept tight so the groups read as one
-   list with light dividers, not as separate blocks. */
-const HEADER = { above: 12, line: 14, below: 6 };
+   list with light dividers, not as separate blocks. `above`/`below` shrink on
+   a short viewport for the same reason NAV_ITEM_H does — see that comment —
+   `line` stays fixed since it's the label text's own line-height, not
+   whitespace. */
+const HEADER = {
+  above: "clamp(6px, 2.4vh, 12px)",
+  line: 14,
+  below: "clamp(3px, 1.2vh, 6px)",
+};
+/* Rail top/bottom padding and the vertical padding inside every row —
+   likewise shrink together with NAV_ITEM_H/HEADER on a short viewport. */
+const RAIL_PAD_Y = "clamp(8px, 1.6vh, 16px)";
+const ROW_PAD_Y = "clamp(3px, 0.7vh, 6px)";
+const LOGO_PAD_BOTTOM = "clamp(6px, 2.3vh, 14px)";
 
 const GEOMETRY_TRANSITION =
   "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";
 
-function rowGeometry(collapsed: boolean): React.CSSProperties {
+// Exported for SideNav.test.tsx: jsdom's CSSOM drops an entire shorthand
+// declaration outright when any component is an unparsable `clamp()` — not
+// just the longhand decomposition, the whole assignment silently no-ops
+// (verified against jsdom directly; real browsers have supported clamp() in
+// shorthands for years). Reading the padding back off a rendered node in a
+// test is therefore unreliable once ROW_PAD_Y went responsive; testing this
+// pure function's return value directly sidesteps jsdom's CSSOM entirely.
+export function rowGeometry(collapsed: boolean): React.CSSProperties {
   const r = collapsed ? ROW.narrow : ROW.wide;
   return {
     marginLeft: r.inset,
     marginRight: r.inset,
-    padding: `6px ${r.padX}px`,
+    padding: `${ROW_PAD_Y} ${r.padX}px`,
     overflow: "hidden",
   };
 }
@@ -161,7 +190,7 @@ export function SideNav() {
         height: "100vh",
         borderRight: "1px solid var(--border)",
         background: "var(--bg-subtle)",
-        padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
+        padding: `${RAIL_PAD_Y} ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
@@ -185,7 +214,7 @@ export function SideNav() {
           alignItems: "center",
           gap: 2,
           // Wide: the mark sits 6px in. Narrow: centred (computed, so it tweens).
-          padding: `2px 0 14px ${collapsed ? (RAIL_INNER_NARROW - 32) / 2 : 6}px`,
+          padding: `2px 0 ${LOGO_PAD_BOTTOM} ${collapsed ? (RAIL_INNER_NARROW - 32) / 2 : 6}px`,
           overflow: "hidden",
           transition: GEOMETRY_TRANSITION,
           borderBottom: "1px solid var(--border)",
@@ -261,7 +290,9 @@ export function SideNav() {
               position: "relative",
               flexShrink: 0,
               overflow: "hidden",
-              height: collapsed ? (i === 0 ? 0 : 29) : HEADER.above + HEADER.line + HEADER.below,
+              height: collapsed
+                ? (i === 0 ? 0 : "clamp(20px, 3vh, 29px)")
+                : `calc(${HEADER.above} + ${HEADER.line}px + ${HEADER.below})`,
               transition: GEOMETRY_TRANSITION,
             }}
           >
@@ -325,7 +356,7 @@ export function SideNav() {
           alignItems: "center",
           gap: 10,
           flexShrink: 0,
-          minHeight: NAV_ITEM_MIN_HEIGHT,
+          minHeight: NAV_ITEM_H,
           marginTop: 6,
           ...rowGeometry(collapsed),
           borderRadius: "var(--r-xs)",
@@ -452,7 +483,7 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         // No explicit width: the rail is a flex column, so a row stretches to
         // the content box on its own and the margins below actually inset it.
         // `width: 100%` would have added to them and overflowed instead.
-        minHeight: NAV_ITEM_MIN_HEIGHT,
+        minHeight: NAV_ITEM_H,
         // Wide: the pill runs the rail's full width and the icon sits 12px
         // inside it, on the same line as the avatar below. Narrow: the icon
         // is centred. See ROW.

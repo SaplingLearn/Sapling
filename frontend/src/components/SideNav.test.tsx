@@ -52,7 +52,7 @@ vi.mock("./Icon", () => ({
   Icon: ({ name }: { name: string }) => <span data-testid={`icon-${name}`} />,
 }));
 
-import { SideNav, SIDE_NAV_EXPANDED, SIDE_NAV_COLLAPSED } from "./SideNav";
+import { SideNav, SIDE_NAV_EXPANDED, SIDE_NAV_COLLAPSED, rowGeometry } from "./SideNav";
 import { usePathname } from "next/navigation";
 
 const mockedUsePathname = vi.mocked(usePathname);
@@ -121,21 +121,30 @@ describe("SideNav — interactive row height floor", () => {
   // rail is allowed to sit at. A future tightening pass must not cross it.
   const MIN_HIT_TARGET = 36;
 
-  it("keeps every expanded nav row at or above the 36px floor", () => {
+  // Row height is `clamp(floor, Nvh, ceiling)` (#font-lab's scroll fix), so a
+  // short jsdom viewport can't compute the resolved px the way a real browser
+  // would — parseFloat on the raw string is NaN. What CAN be asserted without
+  // a layout engine is the clamp's own floor, which is the actual invariant
+  // this describe block exists to protect.
+  function clampFloor(value: string): number {
+    const match = /^clamp\(\s*([\d.]+)px/.exec(value);
+    expect(match).toBeTruthy();
+    return parseFloat(match![1]);
+  }
+
+  it("keeps every expanded nav row's height floor at or above 36px", () => {
     const rail = renderRail(false);
     const rows = navRows(rail);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      const min = parseFloat(row.style.minHeight || "0");
-      expect(min).toBeGreaterThanOrEqual(MIN_HIT_TARGET);
+      expect(clampFloor(row.style.minHeight)).toBeGreaterThanOrEqual(MIN_HIT_TARGET);
     }
   });
 
-  it("keeps every collapsed nav row at or above the 36px floor", () => {
+  it("keeps every collapsed nav row's height floor at or above 36px", () => {
     const rail = renderRail(true);
     for (const row of navRows(rail)) {
-      const min = parseFloat(row.style.minHeight || "0");
-      expect(min).toBeGreaterThanOrEqual(MIN_HIT_TARGET);
+      expect(clampFloor(row.style.minHeight)).toBeGreaterThanOrEqual(MIN_HIT_TARGET);
     }
   });
 });
@@ -225,20 +234,28 @@ describe("SideNav — collapsed state", () => {
     const rows = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-app-sidenav] a[href^='/']"))
         .filter((a) => a.getAttribute("aria-label") !== "Sapling — home");
+    // The horizontal padding (the thing this test cares about) is asserted
+    // directly off `rowGeometry`'s return value, not read back through
+    // jsdom's DOM style API: its vertical component is `clamp(...)` since
+    // ROW_PAD_Y went responsive, and jsdom's CSSOM drops an entire shorthand
+    // outright when any component is a clamp() it can't parse — verified
+    // directly against jsdom, and unrelated to real browsers, which have
+    // supported clamp() in shorthands for years.
+    expect(rowGeometry(false).padding).toMatch(/12px$/);
+    // 64px rail − 2×6px padding = 52px; a 15px icon centred → 18.5px.
+    expect(rowGeometry(true).padding).toMatch(/18\.5px$/);
+
     renderRail(false);
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
       expect(r.style.marginLeft).toBe("0px");
-      expect(r.style.paddingLeft).toBe("12px");
       expect(r.style.transition).toMatch(/padding/);
     }
     cleanup();
     renderRail(true);
-    // 64px rail − 2×6px padding = 52px; a 15px icon centred → 18.5px.
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
       expect(r.style.marginLeft).toBe("0px");
-      expect(r.style.paddingLeft).toBe("18.5px");
     }
   });
 
