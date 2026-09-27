@@ -13,7 +13,7 @@ import {
   downstreamResponseHeaders,
   isImmutableAsset,
   upstreamRequestHeaders,
-  upstreamUrl,
+  upstreamTarget,
 } from "@/lib/ingestProxy";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ type StreamingRequestInit = RequestInit & { duplex?: "half" };
 
 async function proxy(request: Request): Promise<Response> {
   const { pathname, search } = new URL(request.url);
-  const target = upstreamUrl(pathname, search);
+  const target = upstreamTarget(pathname, search);
   if (!target) return new Response("Not found", { status: 404 });
 
   const init: StreamingRequestInit = {
@@ -38,14 +38,16 @@ async function proxy(request: Request): Promise<Response> {
 
   let upstream: Response;
   try {
-    upstream = await fetch(target, init);
+    upstream = await fetch(target.url, init);
   } catch {
     // Analytics is best-effort: a PostHog outage must look like a dropped
     // batch to the SDK, not an app error.
     return new Response(null, { status: 502 });
   }
 
-  const immutable = upstream.ok && isImmutableAsset(pathname, search);
+  // A 304 revalidation of a versioned bundle is just as immutable as the 200.
+  const immutable =
+    (upstream.ok || upstream.status === 304) && isImmutableAsset(target.path, search);
   return new Response(request.method === "HEAD" ? null : upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

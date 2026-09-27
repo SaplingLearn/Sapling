@@ -64,19 +64,33 @@ function isAssetPath(rest: string): boolean {
   return rest.startsWith("/static/") || rest.startsWith("/array/");
 }
 
+/** Where one `/ingest` request goes: the PostHog URL + the checked path. */
+export interface IngestTarget {
+  /** The full upstream URL, query included. */
+  url: string;
+  /** The normalised path below `/ingest` (normalisedIngestPath). */
+  path: string;
+}
+
 /**
  * Map `/ingest/<rest>?<query>` to the PostHog URL. `static/*` and `array/*`
  * go to the assets host; everything else (`/e/`, `/flags/`, `/i/v0/e/`, …) to
  * the ingestion host. The trailing slash PostHog's endpoints use is kept.
+ * The path is validated here, once; callers reuse `path` from the result.
  */
-export function upstreamUrl(pathname: string, search: string): string | null {
+export function upstreamTarget(pathname: string, search: string): IngestTarget | null {
   const rest = normalisedIngestPath(pathname);
   if (rest === null) return null;
   const origin = isAssetPath(rest) ? POSTHOG_ASSETS_ORIGIN : POSTHOG_INGEST_ORIGIN;
   const target = new URL(origin + rest + (search ?? ""));
   // Belt and braces: the URL parser must agree the path stayed put on that host.
   if (target.origin !== origin || target.pathname !== rest) return null;
-  return target.toString();
+  return { url: target.toString(), path: rest };
+}
+
+/** Convenience: just the upstream URL, or null to refuse. */
+export function upstreamUrl(pathname: string, search: string): string | null {
+  return upstreamTarget(pathname, search)?.url ?? null;
 }
 
 /**
@@ -88,17 +102,22 @@ export function upstreamUrl(pathname: string, search: string): string | null {
  */
 export const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
-export function isImmutableAsset(pathname: string, search: string): boolean {
-  const rest = normalisedIngestPath(pathname);
-  if (rest === null || !rest.startsWith("/static/")) return false;
-  return new URLSearchParams(search).has("v");
+/** `path` is an already-normalised path from upstreamTarget. */
+export function isImmutableAsset(path: string, search: string): boolean {
+  return path.startsWith("/static/") && new URLSearchParams(search).has("v");
 }
 
-/** Request headers worth forwarding. Everything else is dropped. */
+/**
+ * Request headers worth forwarding. Everything else is dropped. The two
+ * conditional headers let a browser revalidating a cached SDK bundle get a
+ * 304 from PostHog instead of the whole file again.
+ */
 const FORWARD_REQUEST_HEADERS = [
   "accept",
   "content-encoding",
   "content-type",
+  "if-modified-since",
+  "if-none-match",
   "user-agent",
 ] as const;
 
