@@ -10,6 +10,15 @@ through agents/grader.py's message builder on the State-rebuilt item, the rest
 through services/decisions.py's `decision_request` — and `promotion_checks()`
 computes every §3.6 gate for a candidate backend (PKG-15 is the first caller).
 Never hand-edit a case; add one on a miss.
+
+The grading baseline is ONE raw grader_agent run per case (the tests/evals/grader.py
+shape), not what the served backend `agents.grader.grade()` returns: grade() also
+re-runs on the grader_second slot below GRADER_SECOND_OPINION_CONFIDENCE and reports
+`unavailable` (so nothing is recorded) when both runs stay below it. A low-confidence
+first run is therefore scored here as served. None of the 8 recorded cassettes is
+below the floor, so today the two agree; a candidate compared through
+`promotion_checks` must be measured the same first-run way, or the baseline
+re-recorded through grade(), so the gates compare like with like.
 """
 
 # No `from __future__ import annotations`: the suite loads this file by path, outside
@@ -341,7 +350,8 @@ def promotion_checks(
     shadow: ShadowStats | None = None,
 ) -> dict[str, bool | None]:
     """Every §3.6 gate for `candidate` vs the Gemini `baseline` (same gold/order); None = not
-    applicable here (SHARE_FALSE_POSITIVE_MAX is #641's; the live gates need PKG-15's shadow)."""
+    applicable here (SHARE_FALSE_POSITIVE_MAX is #641's; the live gates need PKG-15's shadow).
+    The grading baseline is first-run-only (module docstring): measure `candidate` alike."""
     grading, s = bool(candidate) and all(r.decision in GRADING_CHANNEL for r in candidate), shadow
     return {
         "DECISION_PROMOTE_MIN_GOLD": gold_per_decision(candidate) >= seam.DECISION_PROMOTE_MIN_GOLD,
