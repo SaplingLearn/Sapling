@@ -799,10 +799,12 @@ async def _chat_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
-) -> dict:
+) -> tuple[dict, tuple[str, str | None]]:
     """Run chat_tutor_agent and return the wire response shape.
 
-    Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
+    Returns ``({"reply": str, "graph_update": dict, "mastery_changes": list},
+    (model_tier, tutor_model))`` — the wire dict, and what the run actually
+    ran on (see `_ran_on`), kept out of the dict so it can never leak.
     Graph changes are persisted in-band during the agent run by
     `apply_graph_update_tool` / `update_mastery_tool` (registered on
     chat_tutor); the tools also accumulate their payloads on `deps` so the
@@ -894,16 +896,16 @@ async def _chat_via_agent(
     # end_session can derive concepts_covered correctly.
     merged_graph_update = merge_graph_updates(deps.graph_updates)
 
-    return {
+    response = {
         "reply": reply,
         "graph_update": merged_graph_update,
         # Real before/after deltas accumulated by update_mastery_tool.
         # Empty when no mastery moved this turn.
         "mastery_changes": deps.mastery_changes,
-        # Internal, popped by `_chat_turn_json` before anything is returned:
-        # what this run actually ran on, for the #640 router's event.
-        "_ran_on": _ran_on(result, agent, run_kwargs, model_pref),
     }
+    # Out of band, never in the wire dict: what this run actually ran on, for
+    # the #640 router's event.
+    return response, _ran_on(result, agent, run_kwargs, model_pref)
 
 
 async def _chat_turn_json(
@@ -947,7 +949,7 @@ async def _chat_turn_json(
     # state up to (but not including) the current turn.
     message_history = _load_message_history(body.session_id)
 
-    response = await _chat_via_agent(
+    response, ran_on = await _chat_via_agent(
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,
@@ -958,7 +960,6 @@ async def _chat_turn_json(
         request_id=request_id,
         model_pref=model_pref if model_pref is not None else body.model_pref,
     )
-    ran_on = response.pop("_ran_on", None) or ("default", None)
 
     # Encryption happens inside save_message (`encrypt_if_present`).
     save_message(body.session_id, "user", body.message)

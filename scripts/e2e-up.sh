@@ -202,11 +202,14 @@ fi
 # is `off`, the operator kill switch a developer .env copied from prod-safe
 # defaults may well carry. CI's .env leaves it unset, so a local `off` would
 # silently skip the seam and fail the router journey only on this machine.
-# In function mode any non-off value maps to the scripted `function` backend
-# (Gemini/Jev are never dialled), and an exported value beats backend/.env —
-# so pin it on for the lane, respecting a value the caller exported.
-if [ "${SAPLING_MODEL_MODE:-}" = "function" ]; then
-  export SAPLING_DECISIONS_BACKEND="${SAPLING_DECISIONS_BACKEND:-flash_lite}"
+# In function mode only an explicit `off` disables it (any other value, typos
+# included, runs the scripted `function` backend; Gemini/Jev are never
+# dialled), and an exported value beats backend/.env — so pin it on for the
+# lane, respecting a value the caller exported. Function mode is detected the
+# same way as the check above: the shell first, then backend/.env.
+MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
+if [ "$MODEL_MODE" = "function" ]; then
+  export SAPLING_DECISIONS_BACKEND="${SAPLING_DECISIONS_BACKEND:-function}"
 fi
 
 mkdir -p "$E2E_DIR"

@@ -291,8 +291,6 @@ register_function_handler("note_chat", _note_chat_handler)
 # through the side-effect-free agents/_decision_fixtures.py (importing the E2E
 # module itself would run its registrations).
 
-SHOWCASE_DECISION_ANSWERS = DECISION_ANSWERS
-
 register_function_handler(
-    "decision", _structured_output({"answers": SHOWCASE_DECISION_ANSWERS})
+    "decision", _structured_output({"answers": DECISION_ANSWERS})
 )
