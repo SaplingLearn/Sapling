@@ -718,6 +718,55 @@ def test_matches_non_attempt(text, expected):
     assert matches_non_attempt(text) is expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "x = 7. idk if the units are right",
+        "I got 12 N, i dont know if thats right",
+        "Can you just tell me if step 2 is right? I did F = ma = 6",
+        "my answer: 42 (what's the answer supposed to look like?)",
+        "The mitochondria? idk",
+        "I think it's 7 but idk",
+        "idk. I tried dividing both sides by two",
+        "Energy is conserved; I don't know why friction matters though",
+        "v = 9.8 m/s just tell me if that's right",
+    ],
+)
+def test_a_hedged_answer_is_not_a_non_attempt(text):
+    """Spec §3.3: a genuine attempt is "a submitted answer or shown work, not
+    idk/just tell me". A16 routes a matched message away from grading (idk
+    evidence or a hint request), so a submitted answer that also carries a
+    hedge must not match: another clause that says something, or a relation
+    symbol anywhere, is an answer."""
+    from learning.gates import matches_non_attempt, non_attempt_phrases
+
+    assert matches_non_attempt(text) is False
+    assert non_attempt_phrases(text) == ()
+
+
+@pytest.mark.parametrize(
+    "text,phrases",
+    [
+        ("Sorry, idk", ("idk",)),
+        ("hmm... I don't know", ("i don't know",)),
+        ("I'm stuck, just tell me", ("just tell me",)),
+        ("ok. What's the answer?", ("what's the answer",)),
+        ("idk, just tell me", ("just tell me", "idk")),
+        ("Please just tell me how photosynthesis works", ("just tell me",)),
+        ("Honestly? I don’t know", ("i don't know",)),
+    ],
+)
+def test_a_non_attempt_may_carry_filler_and_names_its_phrases(text, phrases):
+    """The phrase's own clause may say anything ("just tell me the steps");
+    other clauses may only be filler. non_attempt_phrases names every pattern
+    found (NON_ATTEMPT_PATTERNS order), so the route can tell idk from a hint
+    request (A16) with the same rule."""
+    from learning.gates import matches_non_attempt, non_attempt_phrases
+
+    assert matches_non_attempt(text) is True
+    assert non_attempt_phrases(text) == phrases
+
+
 def test_non_attempt_patterns_are_exactly_the_spec_list():
     from learning.gates import NON_ATTEMPT_PATTERNS
 
