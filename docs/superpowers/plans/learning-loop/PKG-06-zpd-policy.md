@@ -1,27 +1,30 @@
-# PKG-06 zpd-policy — Learning Loop series (7 of 15)
+# PKG-06 zpd-policy — Learning Loop series (8 of 17)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> You are a fresh session. Nothing outside this file, `docs/superpowers/plans/learning-loop/LEDGER.md`, `HANDOFF-00.md`/`HANDOFF-01.md`/`HANDOFF-02.md`/`HANDOFF-03.md`, and the files this prompt lists is known to you. Do not infer intent from chat history you do not have. Do not read the whole research corpus; read the sections named below.
+> You are a fresh session. Nothing outside this file, `docs/superpowers/plans/learning-loop/LEDGER.md`, `HANDOFF-00.md`/`HANDOFF-01.md`/`HANDOFF-02.md`/`HANDOFF-03.md`/`HANDOFF-04.md`, and the files this prompt lists is known to you. Do not infer intent from chat history you do not have. Do not read the whole research corpus; read the sections named below.
 
 ## Package id + goal
 
-**PKG-06 `zpd-policy`.** After this package: the ZPD policy layer exists in pure code — the hint ladder (`learning/ladder.py`), the ceiling/evidence/band/wheel-spin policy (`learning/policy.py`), the attempt and rung gates (`learning/gates.py`), the deterministic answer-leak detector and stripper (`learning/leak.py`); `sessions.loop_state` exists and round-trips through `learning/loop_state_store.py`; the six `zpd.*` event types are in `EVENT_TAXONOMY` with typed emit helpers in `learning/zpd_events.py`; invariants 4 and 5 are asserted. Nothing calls any of it yet: PKG-07 wires the loop tutor through it. `tests/test_learning_zpd_policy.py` proves it.
+**PKG-06 `zpd-policy`.** After this package: the ZPD policy layer exists in pure code — the hint ladder with the deterministic check pose and H2/H4/H6 template content (`learning/ladder.py`: `check_pose`, `deterministic_content`, spec §13 A17), the ceiling/evidence/band/wheel-spin policy plus the tutor tier router and the per-phase context policy (`learning/policy.py`: `model_tier` per A15 and the §3.5 `LOOP_MODEL_TIER` table, `context_policy` per A18), the attempt and rung gates (`learning/gates.py`), the deterministic answer-leak detector and stripper (`learning/leak.py`); `sessions.loop_state` exists and round-trips through `learning/loop_state_store.py`; the six `zpd.*` event types are in `EVENT_TAXONOMY` with typed emit helpers in `learning/zpd_events.py` (`zpd.step` carries `tier` and `grader_backend`, A15/A24); invariants 4 and 5 are asserted and invariant 2 is extended (A17). Nothing calls any of it yet: PKG-07 wires the loop tutor through it. `tests/test_learning_zpd_policy.py` proves it.
 
 Branch: `feat/learning-loop-06-zpd-policy`. PR title: `feat(learning): PKG-06 zpd-policy`.
+
+Depends on (spec §14): **03, 04** (code). The series runs strictly one package at a time in the §14 order (… 04, 05, 05b, **06**, 06b, 07 …), so 05 and 05b are merged before you start and 06b comes after you.
 
 ## Read before you start (in this order)
 
 0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 1.
-1. `docs/superpowers/plans/learning-loop/LEDGER.md` — refuse to start if any row is `blocked` or `in-progress`. Rows 00, 01, 02, 03 must be `done` or `verified`.
-2. `docs/superpowers/plans/learning-loop/HANDOFF-03.md`, then `HANDOFF-01.md` (the constant names `params.py` actually exports) and `HANDOFF-02.md` (whether `fsrs.py` exports rating names).
-3. `CLAUDE.md` §Conventions and §Gotchas — the standing rules the "Do not" list below repeats.
-4. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` §3.3 (ladder, ceiling, gates, bands — the table you implement exactly), §3.4 (`LEAK_NGRAM`, `ZPD_RATING_EVERY_N_CHECKS`), §4 (the PKG-06 DDL), §6 (events), §8 invariants 4 and 5, §9 (lazy sessions). Skim §3.1 for the band and weight names and §3.2 for the rating integers.
-5. `docs/research/learning-loop/ZPD lever tradeoffs and upgrades.md` § "Sapling ZPD policy spec" (lines ~143–233: the STATE / LADDER / CEILING / GATES / BAND CONTROL / EVIDENCE MAPPING / LOG blocks — the spec's §3.3 is a transcription of this). Skip the rest.
-6. `docs/research/learning-loop/AI tutor learning loop research.md` § "Guardrails: withhold answers, ground in verified solutions, gate the grader" (lines ~131–137, the paragraph on the deterministic solution stripper and the H7 reconciliation). Skip the rest.
-7. `docs/superpowers/plans/learning-loop/README.md` — series conventions. `HANDOFF-template.md` — what you write at the end.
-8. Code you will modify: `backend/services/events_service.py:97–170` (`EVENT_TAXONOMY` and the docstring table above it; `log_event` at :199), `backend/tests/test_event_capture_seams.py:84–120` (`test_event_taxonomy_is_pinned`), `backend/tests/test_learning_loop_invariants.py` (`test_inv_04`, `test_inv_05` placeholders), `backend/learning/{ladder,policy,gates,leak}.py` (PKG-00 docstring stubs), `backend/learning/params.py` (PKG-01; you may add names, never change values).
-9. Code you will mirror: `backend/tests/test_graph_service.py:25–38` (`_mock_table` factory), `backend/tests/test_events_service.py:118–150` (patching `events_service.table` / `log_event` shape), `backend/db/connection.py:31–112` (`select(columns, filters=, limit=)`, `update(data, filters)` returns updated rows, `upsert(data, on_conflict=)`), `backend/routes/learn.py:36` and `:420–434` (lazy session row; `sessions` NOT NULL columns `user_id`, `mode`, `topic`), `backend/db/migrations/0025_study_integrity.sql:70–81` (the `sessions` table).
+1. Same spec: §3.5–§3.6 (cost/routing/decision constants — `LOOP_MODEL_TIER`, `LOOP_RAG_K_TEACH*`, `LOOP_SOURCE_CHUNKS_MAX`), §7 (two-phase gate), §8 (invariants 13–29 — which numbers exist and who owns them), §14 (order and dependencies).
+2. `docs/superpowers/plans/learning-loop/LEDGER.md` — refuse to start if any row is `blocked` or `in-progress`. Rows 00, 01, 02, 03, 04, 05, 05b must be `done` or `verified` (§14 order; your code depends on 03 and 04).
+3. `docs/superpowers/plans/learning-loop/HANDOFF-03.md`, then `HANDOFF-04.md` (the `CheckItem` field names — `question_hash`, `concept_key`, `format`, `difficulty`, `prompt`, `reference_answer`, `stepwise` — that `ladder.ItemLike` mirrors), `HANDOFF-01.md` (the constant names `params.py` actually exports) and `HANDOFF-02.md` (whether `fsrs.py` exports rating names).
+4. `CLAUDE.md` §Conventions and §Gotchas — the standing rules the "Do not" list below repeats.
+5. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` §3.3 (ladder, ceiling, gates, bands — the table you implement exactly), §3.4 (`LEAK_NGRAM`, `ZPD_RATING_EVERY_N_CHECKS`), §3.5 (the `LOOP_MODEL_TIER` table you implement exactly, and the loop-tutor constants table), §4 (the PKG-06 DDL), §6 (events — `zpd.step` gains `tier` and `grader_backend`), §8 invariants 2 (A17 extension), 4 and 5, §9 (lazy sessions), §13 rows **A15** (`model_tier`), **A17** (`check_pose`, `deterministic_content`), **A18** (`context_policy`), A24 (`zpd.step` keys). Skim §3.1 for the band and weight names and §3.2 for the rating integers.
+6. `docs/research/learning-loop/ZPD lever tradeoffs and upgrades.md` § "Sapling ZPD policy spec" (lines ~143–233: the STATE / LADDER / CEILING / GATES / BAND CONTROL / EVIDENCE MAPPING / LOG blocks — the spec's §3.3 is a transcription of this). Skip the rest.
+7. `docs/research/learning-loop/AI tutor learning loop research.md` § "Guardrails: withhold answers, ground in verified solutions, gate the grader" (lines ~131–137, the paragraph on the deterministic solution stripper and the H7 reconciliation). Skip the rest.
+8. `docs/superpowers/plans/learning-loop/README.md` — series conventions. `HANDOFF-template.md` — what you write at the end.
+9. Code you will modify: `backend/services/events_service.py:97–170` (`EVENT_TAXONOMY` and the docstring table above it; `log_event` at :199 — line numbers drift: PKG-04 and PKG-05b appended entries), `backend/tests/test_event_capture_seams.py:84–120` (`test_event_taxonomy_is_pinned`), `backend/tests/test_learning_loop_invariants.py` (`test_inv_04`, `test_inv_05` placeholders; `test_inv_02`, which you extend), `backend/learning/{ladder,policy,gates,leak}.py` (PKG-00 docstring stubs), `backend/learning/params.py` (PKG-01; you may add names, never change values).
+10. Code you will mirror: `backend/learning/checks.py` (PKG-04 `CheckItem` — the attribute names `ItemLike` declares; never import it from `ladder.py`), `backend/tests/test_graph_service.py:25–38` (`_mock_table` factory), `backend/tests/test_events_service.py:118–150` (patching `events_service.table` / `log_event` shape), `backend/db/connection.py:31–112` (`select(columns, filters=, limit=)`, `update(data, filters)` returns updated rows, `upsert(data, on_conflict=)`), `backend/routes/learn.py:36` and `:420–434` (lazy session row; `sessions` NOT NULL columns `user_id`, `mode`, `topic`), `backend/db/migrations/0025_study_integrity.sql:70–81` (the `sessions` table).
 
 ## State of the world
 
@@ -31,8 +34,8 @@ Verify the base before Task 1. Every row must be green.
 |---|---|---|
 | hermetic suite green | `cd backend && venv/bin/python -m pytest tests/ -q -x` | `… passed` (note the count N₀) |
 | lint green | `cd backend && venv/bin/ruff check .` | `All checks passed!` |
-| PKG-00 | `cd backend && venv/bin/python -m pytest tests/test_learning_gate.py -q` | `11 passed` |
-| PKG-00 | `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q` | `4 passed, 8 skipped (later packages raise the passed count)` — with 01/02/03 merged expect `≥ 6 passed` and `test_inv_04`/`test_inv_05` still skipped |
+| PKG-00 | `cd backend && venv/bin/python -m pytest tests/test_learning_gate.py -q` | `13 passed` |
+| PKG-00 | `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q` | `4 passed, 8 skipped (later packages raise the passed count)` — with 01–05b merged the passed count is higher, zero failures, and `test_inv_04`/`test_inv_05` are still skipped |
 | PKG-00 | `cd backend && venv/bin/python -m pytest tests/test_learning_deps.py tests/test_learning_settings_flag.py tests/test_learning_loop_beta_migration.py -q` | `all passed` |
 | PKG-00 | `grep -n "^LEARNING_LOOP_ENABLED" backend/config.py` | `1 hit` |
 | PKG-00 | `ls backend/db/migrations/*_learning_loop_beta.sql` | `1 file` |
@@ -47,27 +50,43 @@ Verify the base before Task 1. Every row must be green.
 | PKG-03 | `ls backend/db/migrations/*_learning_learner_state.sql` | `1 file` |
 | PKG-03 | `grep -c '"evidence"' backend/services/graph_service.py` | `≥ 1` |
 | PKG-03 | `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k inv_01` | `1 passed` |
+| PKG-04 | `cd backend && venv/bin/python -m pytest tests/test_learning_check_items.py -q` | `N passed (N ≥ 14)` |
+| PKG-04 | `ls backend/db/migrations/*_learning_check_items.sql` | `1 file` |
+| PKG-04 | `grep -c '"check_items"' backend/agents/_providers.py backend/agents/function_handlers_e2e.py` | `≥ 1 each` |
+| PKG-04 | `grep -ohE "options_json\|correct_option\|answer_kind\|canonical_answer\|canonical_verified\|stepwise" backend/db/migrations/*_learning_check_items.sql \| sort -u \| wc -l` | `6` |
+| PKG-04 | `grep -c -- "--all-courses" backend/scripts/backfill_check_items.py` | `≥ 1` |
+| PKG-04 | `cd backend && SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/check_items.py` | `every evaluator ≥ baseline` |
+| PKG-04 | `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_06 or inv_09 or inv_12"` | `3 passed` |
 | stubs are stubs | `wc -l backend/learning/ladder.py backend/learning/policy.py backend/learning/gates.py backend/learning/leak.py` | each ≤ 5 lines (docstring only) |
 | taxonomy untouched | `grep -c '"zpd\.' backend/services/events_service.py` | `0` |
 | latest migration prefix | `ls backend/db/migrations \| tail -1` | a `2026…` timestamped file; your migration's prefix must sort after it |
 
-Rule: any red row → STOP. Diagnose, repair on this branch as commit `fix(learning-loop): PKG-NN — <what>` (NN = the package whose row is red), record the deviation in `LEDGER.md` (row `NN | reopened`), append "Post-hoc changes" to that `HANDOFF-NN.md`, re-run all rows. Never build on a broken base. After the rows pass, mark row 03 `verified` in the ledger with today's date and the command → output.
+Rule: any red row → STOP. Diagnose, repair on this branch as commit `fix(learning-loop): PKG-NN — <what>` (NN = the package whose row is red), record the deviation in `LEDGER.md` (row `NN | reopened`), append "Post-hoc changes" to that `HANDOFF-NN.md`, re-run all rows. Never build on a broken base. After the rows pass, mark rows 03 and 04 (your code dependencies) `verified` in the ledger with today's date and the command → output — new rows; the ledger is append-only, so an earlier `verified` row from PKG-05 stays.
 
 ## Spec
 
 ### Behaviour
 
-1. `learning/ladder.py`: `class Rung(IntEnum)` with members `H0..H6` valued 0..6, `RUNG_INTENT: dict[Rung, str]` (what the tutor may emit at that rung — an instruction to the tutor, never prose for the student), `intent(rung) -> str`, `next_rung(rung) -> Rung` (clamped at `H6`).
-2. `learning/policy.py` is pure and typed: dataclasses `StepState`, `LearnerView`, `LoopState`; enums `BandAction`, `CeilingReason`; functions `ceiling`, `ceiling_with_reason`, `attempt_first`, `evidence_for_rung`, `band_control`, `unassisted_rate`, `wheelspin`. No public function takes a `str` parameter; the module never imports `re` or `learning.gates` (invariant 4). Timestamps are `float` Unix seconds so tests pass fake clocks.
+1. `learning/ladder.py`: `class Rung(IntEnum)` with members `H0..H6` valued 0..6, `RUNG_INTENT: dict[Rung, str]` (what the tutor may emit at that rung — an instruction to the tutor, never prose for the student), `intent(rung) -> str`, `next_rung(rung) -> Rung` (clamped at `H6`); plus the deterministic-turn helpers of Behaviour 14 (`check_pose`, `deterministic_content`, `ItemLike`, `DeterministicPayload`).
+2. `learning/policy.py` is pure and typed: dataclasses `StepState`, `LearnerView`, `LoopState`; enums `BandAction`, `CeilingReason`; `Literal` aliases `Band`, `Tier`, `TurnPhase`, `ContextPhase`, `BudgetLevel`, `ToolChoice`; `ContextPolicy`; functions `ceiling`, `ceiling_with_reason`, `attempt_first`, `evidence_for_rung`, `band_control`, `unassisted_rate`, `wheelspin`, `model_tier` (Behaviour 12), `context_policy` (Behaviour 13). No public function takes a `str` parameter; `model_tier` and `context_policy` take only `Literal`/enum/`bool`/`int` parameters; the module never imports `re` or `learning.gates` (invariant 4). Timestamps are `float` Unix seconds so tests pass fake clocks.
 3. `ceiling(learner, step)` implements the spec §3.3 table as first-match over: `exam_mode` → `H1`; `profic` → `H1`, `H3` once `step.genuine_attempts ≥ CEILING_PROFIC_ESCALATE_FAILS`; `develop` → `H3 + genuine_attempts`, `H6` once `≥ CEILING_DEVELOP_H6_FAILS`; `novice` with `prereq_proficient` → `H5`; `novice` without → `H4` at zero attempts, `H5` after. Then the shown-work floor: `showed_work` raises the result to at least `H3`, except in exam mode (exam mode is the strictest row and wins). While a step is open, every recorded genuine attempt is a failed one (a correct attempt closes the step), so `genuine_attempts` is the failed-attempt count the table speaks of. `ceiling_with_reason` returns `(Rung, CeilingReason)`; `attempt_first(learner)` is `False` only for the novice-without-prerequisite row (worked example before any attempt).
 4. `evidence_for_rung(correct, max_rung, same_session=False) -> RungEvidence(weight, counts_toward_streak, fsrs_rating)` per spec §3.3 "Evidence mapping": unassisted correct (`max_rung == H0`) → `(1.0, True, FSRS_RATING_GOOD)`; correct after `H1..H3` → `(WEIGHT_ASSISTED, False, FSRS_RATING_HARD)`; correct after `H4..H6` → `(0.0, False, FSRS_RATING_AGAIN)` — zero weight is the "no upward BKT evidence" signal PKG-07 turns into the isomorph re-ask; wrong at any rung → `(1.0, False, FSRS_RATING_AGAIN)`. `same_session=True` multiplies the weight by `WEIGHT_SAME_SESSION_RECHECK`.
 5. `band_control(window, p_known, stable, *, wheelspin=False) -> BandAction`: `window` is the newest-last list of unassisted first-attempt outcomes (`bool`), at most `BAND_WINDOW × BAND_CONTROL_STOP_WINDOWS` long; the rate is the mean of the last `BAND_WINDOW`. `wheelspin` → `WHEELSPIN`; empty window → `HOLD`; rate `> BAND_CONTROL_HI` for both the last and the preceding full window AND `p_known ≥ BKT_PROFICIENT` AND `stable` → `STOP_PRACTICE`; rate `> BAND_CONTROL_HI` otherwise → `HARDER`; rate `< PRACTICE_TARGET_LO` → `EASIER_CHECK_PREREQS`; else `HOLD`.
 6. `wheelspin(opps, ever_streak3, unassisted_next) -> bool` = `opps ≥ WHEELSPIN_OPPS and not ever_streak3`, or `opps ≥ WHEELSPIN_OPPS_EARLY and unassisted_next < WHEELSPIN_UNASSISTED_MAX` (`unassisted_next is None` never satisfies the second clause). The caller computes `ever_streak3 = max streak ever ≥ BKT_MASTERED_MIN_STRONG`.
 7. `learning/gates.py`: `NON_ATTEMPT_PATTERNS` (exactly: `"just tell me"`, `"give me the answer"`, `"idk"`, `"i don't know"`, `"what's the answer"`), `matches_non_attempt(text) -> bool` (lowercase, apostrophes deleted, non-alphanumerics → space, whole-phrase match), `is_genuine_attempt(text_len_chars, has_shown_work, matched_non_attempt, independent_seconds, band) -> bool` (`False` when matched, when there is neither text nor shown work, or when `independent_seconds` is below `GATE_INDEPENDENT_MIN_S_NOVICE` for `novice` / `GATE_INDEPENDENT_MIN_S` otherwise), `rung_unlock(step, now) -> bool` (dwell since `last_rung_at`, or since `first_shown_at` when no rung was shown, `≥ GATE_RUNG_DWELL_MIN_S`, AND some `attempted_at` after that anchor), `h6_allowed(step, item_taught, item_graded) -> bool` (`genuine_attempts ≥ H6_MIN_GENUINE_ATTEMPTS and item_taught and not item_graded and not step.exam_mode`), `offer_allowed(band, last_attempt_wrong) -> bool` (`band in OFFER_BANDS and last_attempt_wrong`). Only `matches_non_attempt` sees text; callers append to `step.attempted_at` only when `is_genuine_attempt` is `True`.
 8. `learning/leak.py`: `detect_leak(reference_answer, emitted, rung) -> LeakVerdict(leaked, detector)` with `detector ∈ {"none", "ngram", "final_answer"}`. `rung ≥ H6` → never leaked. `ngram`: any `LEAK_NGRAM` consecutive normalized tokens (`[a-z0-9]+` over lowercase) of the reference appear consecutively in the emitted text. `final_answer`: the reference's final answer — the text after its last `=`, else its last standalone number — tokenized the same way, appears as a consecutive token run in the emitted text. `final_answer(reference) -> tuple[str, ...]` is public (empty tuple when the reference has neither). `strip_leak(emitted, reference) -> str` replaces every leaked run with `[withheld]` until `detect_leak` at `H0` reports `none`; deterministic and idempotent.
-9. Session loop state: migration adds `sessions.loop_state jsonb NOT NULL DEFAULT '{}'`. `LoopState.to_json()` / `LoopState.from_json()` (in `policy.py`, pure) serialise `{"v", "current", "checks_since_rating", "first_attempts", "steps": {question_hash: {rung, attempts, first_shown_at, last_rung_at, attempted_at, showed_work, exam_mode}}}` — ids, numbers, bools only; `from_json` raises `ValueError` on a malformed document. `learning/loop_state_store.py::load_loop_state(session_id) -> LoopState` (missing row or malformed JSON → fresh `LoopState()`, malformed logs WARNING) and `save_loop_state(session_id, state, *, session_row=None) -> bool` (`update` by id, `False` + WARNING when no row matched because the lazy session is not materialised yet; with `session_row={user_id, mode, topic[, offering_id]}` it `upsert`s on `id` instead, which is how PKG-07 materialises the row on the first loop turn).
-10. Events: `zpd.step`, `zpd.offer`, `zpd.band_adjust`, `zpd.rating` (category `usage`) and `zpd.wheelspin`, `zpd.leak` (category `error`) join `EVENT_TAXONOMY`; `learning/zpd_events.py` exposes `emit_zpd_step`, `emit_zpd_offer`, `emit_zpd_band_adjust`, `emit_zpd_wheelspin`, `emit_zpd_leak`, `emit_zpd_rating`, keyword-only, payload keys exactly spec §6, values ids/counts/enums/bools only (no payload string longer than 64 chars — a sha256 `question_hash` is exactly 64).
+9. Session loop state: migration adds `sessions.loop_state jsonb NOT NULL DEFAULT '{}'`. `LoopState.to_json()` / `LoopState.from_json()` (in `policy.py`, pure) serialise `{"v", "current", "checks_since_rating", "first_attempts", "steps": {question_hash: {rung, attempts, first_shown_at, last_rung_at, attempted_at, showed_work, exam_mode}}}` — ids, numbers, bools only; `from_json` raises `ValueError` on a malformed document. `learning/loop_state_store.py::load_loop_state(session_id) -> LoopState` (missing row or malformed JSON → fresh `LoopState()`, malformed logs WARNING) and `save_loop_state(session_id, state) -> bool` (`update` by id, `False` + WARNING when no row matched because the lazy session is not materialised yet). It NEVER inserts or upserts a `sessions` row (spec §9, §13 A11: never `upsert` on `sessions`): PKG-07's loop turns materialise the lazy row through the legacy `routes.learn._consume_pending` insert before they save, and later loop writes that may precede materialisation use PKG-09's A11 insert-if-missing helper (`learning/session_close.py::ensure_session_row`).
+10. Events: `zpd.step`, `zpd.offer`, `zpd.band_adjust`, `zpd.rating` (category `usage`) and `zpd.wheelspin`, `zpd.leak` (category `error`) join `EVENT_TAXONOMY` — PKG-06 adds only these six; `decision.*` came from PKG-05b and `ai.budget_capped` comes from PKG-06b. `learning/zpd_events.py` exposes `emit_zpd_step`, `emit_zpd_offer`, `emit_zpd_band_adjust`, `emit_zpd_wheelspin`, `emit_zpd_leak`, `emit_zpd_rating`, keyword-only, payload keys exactly spec §6, values ids/counts/enums/bools only (no payload string longer than 64 chars — a sha256 `question_hash` is exactly 64). `emit_zpd_step` also takes `tier: Tier | None = None` (A15: the tier served) and `grader_backend: GraderBackend | None = None` (A22/A24: `deterministic`/`gemini`/`gemini_second`/`jev`, spec §5); each key is in the payload only when its value is not `None` — omitted, never zeroed or blanked. (`variant`, A8, is PKG-14's.)
 11. Flag: nothing imports these modules outside `learning/` and `tests/` (a test proves it), so the flag-off product is byte-identical; the only runtime-visible changes are six extra `EVENT_TAXONOMY` strings (`log_event` does not enforce membership) and one jsonb column with a default.
+12. Tutor tier routing (A15): `model_tier(phase: TurnPhase, band: Band, rung: Rung, failed_genuine_attempts: int, misconception_active: bool, *, deterministic_payload: bool = False, budget_level: BudgetLevel = "normal", deep_cap_reached: bool = False, novice_deep_cap_reached: bool = False, arm_session: bool = False) -> Tier` implements the spec §3.5 `LOOP_MODEL_TIER` table exactly. `Tier = Literal["lite", "standard", "deep", "none"]` (`none` = no model call: a template or a pause). `TurnPhase = Literal["opener", "teach", "check_pose", "hint", "feedback_correct", "feedback_wrong"]` names the turn being produced: `hint` is any ladder-rung turn (H0 step verification through H6, from `/hint`, `/step/attempt` or `[ACTION: hint]`); `feedback_correct`/`feedback_wrong` is the ONE feedback turn after a graded explicit submission (A16). `deterministic_payload` is `True` only when the caller already holds a leak-clean payload for this rung (Behaviour 14 + `leak.detect_leak`). `deep_cap_reached` = the session's deep requests ≥ `LOOP_SESSION_MAX_DEEP_REQUESTS`; `novice_deep_cap_reached` = ≥ `LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE` (both PKG-06b constants; the caller compares, this function takes the booleans). First match wins:
+    1. `budget_level == "hard"` → `none` (deterministic only; `loop_arm` sessions pause here too).
+    2. `check_pose`; `hint` at H2 or H4 with `deterministic_payload`; `hint` at H6 → `none` (template).
+    3. `feedback_correct`; proficient-band verification = `hint` at H0 with `band == "profic"` † → `lite`.
+    4. `teach` in the novice band; `hint` at H4 (reaching here means no usable sibling); `hint` at H5; `misconception_active` (PKG-10's confrontation); `failed_genuine_attempts ≥ LOOP_TIER_DEEP_MIN_FAILS` → `deep`.
+    5. Everything else → `standard`: the opener; `teach` in the develop or proficient band; `hint` at H1/H3; `feedback_wrong`; and † the model turns the table does not name (`hint` at H2 with no clean payload, `hint` at H0 outside the proficient band).
+    Then, only when the base tier is `deep` and `arm_session` is `False`: develop/profic turns → `standard` when `budget_level == "soft"` or `deep_cap_reached`; novice turns → `standard` only when `novice_deep_cap_reached` (the $-based soft level never downgrades novice deep turns, and `deep_cap_reached` is not the novice cap). No adjustment ever raises a tier.
+13. Context and tool policy (A18): `context_policy(phase: ContextPhase, *, opener: bool, budget_level: BudgetLevel) -> ContextPolicy(rag_k, graph_block, source_chunks, catalog, tool_choice)` with `ContextPhase = Literal["teach", "check", "hint", "feedback"]` and `ToolChoice = Literal["auto", "none"]`. `teach` → `rag_k = LOOP_RAG_K_TEACH`, `graph_block = True`, `source_chunks = 0`, `tool_choice = "auto"`; at `soft` (and at `hard`, where no model runs anyway) `rag_k = LOOP_RAG_K_TEACH_SOFT` and `tool_choice = "none"`. `hint` and `feedback` → `rag_k = 0`, no graph block, `source_chunks = LOOP_SOURCE_CHUNKS_MAX` (the item's own source chunks, which PKG-07 resolves through the visibility-aware reader), `tool_choice = "none"`. `check` → nothing (`0`, `False`, `0`, `"none"`). `catalog = opener` in every phase (catalog on the opener only). `tool_choice = "none"` is the whole tool policy: PKG-07 keeps both tool declarations in every phase and passes `ModelSettings(tool_choice='none')`.
+14. Deterministic turns (A17), in `ladder.py`, pure: `check_pose(prompt: str) -> str` returns the item prompt verbatim (no model call; the prompt was leak-checked at generation) and raises `ValueError` on a blank prompt. `ItemLike` is a `typing.Protocol` with the attributes `question_hash`, `concept_key`, `format`, `difficulty`, `prompt`, `reference_answer`, `stepwise` (PKG-04's `CheckItem` satisfies it structurally; `ladder.py` never imports `learning.checks`). `DeterministicPayload(rung, text, source, revealed_hash=None)` is a `NamedTuple` with `source ∈ {"passages", "sibling", "reference"}`. `deterministic_content(rung, item: ItemLike, siblings: Sequence[ItemLike], passages: Sequence[str]) -> DeterministicPayload | None`: H2 → the first `LOOP_SOURCE_CHUNKS_MAX` non-blank `passages` (stripped) joined by a blank line, `None` when none is left; H4 → the FIRST sibling with the same `concept_key`, `format` and `difficulty`, a different `question_hash`, `stepwise` true † and a non-blank reference, as its prompt and reference joined by a blank line, `revealed_hash` = the sibling's `question_hash` (PKG-07 appends it to `loop_state["revealed"]`, A23), `None` when no sibling qualifies; H6 → the item's own `reference_answer` (`None` when blank); every other rung → `None`. `passages` is resolved, visibility-filtered, decrypted text the caller passes in (invariant 2). This function never leak-checks and never checks `gates.h6_allowed`: the caller runs `leak.detect_leak(item.reference_answer, payload.text, payload.rung)` on every payload before emitting it (invariant 27, PKG-07) and asks for H6 only under `h6_allowed`.
 
 ### Schema (exact)
 
@@ -75,12 +94,13 @@ Rule: any red row → STOP. Diagnose, repair on this branch as commit `fix(learn
 -- <ts>_learning_session_loop_state.sql
 -- Learning loop series PKG-06: per-session ZPD loop state (spec §4, §9).
 -- keyed by question_hash: {rung, attempts, first_shown_at, last_rung_at, attempted_at[]}; no free text.
+-- top-level id lists added later: "revealed" (A23, H4 siblings shown), "probe", "plan", "sr", "review" (PKG-08/12).
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS loop_state jsonb NOT NULL DEFAULT '{}'::jsonb;
 ```
 
 ### Named constants
 
-All live in `backend/learning/params.py`. Rows marked *exists* were written by PKG-01 — verify each with `grep -n "^NAME = " backend/learning/params.py`; if a name is missing, add it with the spec value and record "added by PKG-06" in the hand-off. Rows marked *new name* carry a value the spec states but does not name; add them (no `†`, the value is spec-given) and list them under "Constants chosen". `†` = engineering choice with no validated cut-point (spec §3.3), repeated in the hand-off.
+All live in `backend/learning/params.py`. Rows marked *exists* were written by PKG-01 — verify each with `grep -n "^NAME = " backend/learning/params.py`; if a name is missing, add it with the spec value and record "added by PKG-06" in the hand-off. Rows marked *spec-new* are named and valued by spec §3.5 (§13 A15–A18, written after PKG-01 was built): grep first, add each missing one with the spec value and the spec's `†`, and list them under "Constants chosen". Rows marked *new name* carry a value the spec states but does not name; add them (no `†`, the value is spec-given) and list them under "Constants chosen". `†` = engineering choice with no validated cut-point (spec §3.3, §3.5), repeated in the hand-off. The budget constants (`STUDENT_*`, `LOOP_SESSION_MAX_*`) are PKG-06b's and the thinking/visible-token constants PKG-07's — `model_tier` and `context_policy` take the budget level and the cap booleans as arguments and never read them.
 
 | Name | Value | Spec | Status | Used by |
 |---|---|---|---|---|
@@ -107,35 +127,41 @@ All live in `backend/learning/params.py`. Rows marked *exists* were written by P
 | `WHEELSPIN_UNASSISTED_MAX` | 0.50 | §3.3 wheelspin clause 2 | new name | `wheelspin` |
 | `LEAK_NGRAM` | 6 | §3.4 | exists | `detect_leak` |
 | `ZPD_RATING_EVERY_N_CHECKS` | 30 | §3.4 | exists | `LoopState.rating_due` |
+| `LOOP_RAG_K_TEACH` | 5 | §3.5 (A18; unchanged from legacy) | spec-new | `context_policy` teach |
+| `LOOP_RAG_K_TEACH_SOFT` | 3 † | §3.5 (A18; soft budget level) | spec-new | `context_policy` teach at soft/hard |
+| `LOOP_SOURCE_CHUNKS_MAX` | 2 † | §3.5 (A17/A18) | spec-new | `context_policy` hint/feedback, `deterministic_content` H2 |
+| `LOOP_TIER_DEEP_MIN_FAILS` | 2 | §3.5 `LOOP_MODEL_TIER` ("≥ 2 failed genuine attempts" → deep) | new name | `model_tier` |
 
 The only bare numerals permitted in the new modules are `0`, `1`, `0.0`, `1.0` (identity / empty) and the `Rung` member values.
 
 ### Invariants asserted by this package (spec §8 numbering)
 
-- (4) `policy.py`: no module-level public function has a parameter annotated `str`; the source contains neither `import re` nor `gates` nor `matches_non_attempt`. Asserted by AST scan in `test_inv_04_policy_takes_no_message_text`.
-- (5) every `"zpd.…"`, `"learn.…"`, `"review.…"` string literal under `backend/` (excluding `tests/`, `venv/`) is a member of `EVENT_TAXONOMY`. Asserted by source grep in `test_inv_05_series_event_names_in_taxonomy`.
-- (2) and (7) keep passing: the four pure modules import only `learning.*`, stdlib; `loop_state_store.py` has `from db.connection import table`.
+- (4) `policy.py`: no module-level public function has a parameter whose annotation mentions `str`; `ceiling`, `band_control`, `model_tier` and `context_policy` exist; every parameter of `model_tier` and `context_policy` is annotated with one of `bool`, `int`, `Rung`, `Band`, `TurnPhase`, `ContextPhase`, `BudgetLevel`, and `Band`/`Tier`/`TurnPhase`/`ContextPhase`/`BudgetLevel` are `Literal[...]` aliases; the source contains neither `import re` nor `gates` nor `matches_non_attempt`. Asserted by AST scan in `test_inv_04_policy_takes_no_message_text` (Task 1 writes it; Task 3b extends it for the two routing functions).
+- (5) every `"zpd.…"`, `"learn.…"`, `"review.…"`, `"ai.…"`, `"decision.…"` string literal under `backend/` (excluding `tests/`, `venv/`) is a member of `EVENT_TAXONOMY`, and at least one `zpd.*` literal exists. Asserted by source grep in `test_inv_05_series_event_names_in_taxonomy`.
+- (2) extended (A17): `ladder.py` imports nothing from `services`/`routes` either, and `deterministic_content`'s parameters are exactly `(rung, item, siblings, passages)` — passage text arrives as an argument, never resolved inside `learning/`. Asserted by extending PKG-00's `test_inv_02_pure_modules_import_nothing_impure` in place (Task 5b).
+- (7) keeps passing: the four pure modules import only `learning.*`, stdlib; `loop_state_store.py` has `from db.connection import table`.
 
 ### Error semantics
 
-Pure modules never touch I/O and raise only on programmer error (`ValueError` from `LoopState.from_json`). `loop_state_store` fails soft: a malformed stored document or a missing row yields a fresh `LoopState()`; a save that matches no row returns `False` and logs WARNING — it never raises into a request. Event helpers delegate to `log_event`, which never raises. No agent runs here, so no ADR 0024 degrade path is touched.
+Pure modules never touch I/O and raise only on programmer error (`ValueError` from `LoopState.from_json`; `ValueError` from `check_pose` on a blank prompt — PKG-04's validator never stores one). `model_tier` and `context_policy` are total over their `Literal` domains and never raise. `deterministic_content` never raises for missing content: no passages, no qualifying sibling or a blank reference returns `None`, and the caller lets the LLM write the rung. `loop_state_store` fails soft: a malformed stored document or a missing row yields a fresh `LoopState()`; a save that matches no row returns `False` and logs WARNING — it never raises into a request. Event helpers delegate to `log_event`, which never raises. No agent runs here, so no ADR 0024 degrade path is touched.
 
 ### Events added
 
-`zpd.step`, `zpd.offer`, `zpd.band_adjust`, `zpd.rating` (`usage`); `zpd.wheelspin`, `zpd.leak` (`error`). Payload keys per spec §6, ids/counts/enums only. Emitted by nobody in this package; PKG-07/08/10 call the helpers.
+`zpd.step`, `zpd.offer`, `zpd.band_adjust`, `zpd.rating` (`usage`); `zpd.wheelspin`, `zpd.leak` (`error`). Payload keys per spec §6, ids/counts/enums only; `zpd.step` carries `tier` and `grader_backend` when the caller passes them (omitted when `None`). Only these six are added here: `decision.made`/`decision.shadow`/`decision.fallback` are PKG-05b's, `ai.budget_capped` is PKG-06b's. Emitted by nobody in this package; PKG-07/08/10 call the helpers.
 
 ## Non-goals
 
 - No route, agent, tool, prompt, or `chat_stream.py` change. No call to `learning.gate`. No frontend change.
-- No LLM judge for leaks (the detector is deterministic; the judge is PKG-14's eval rung). No misconception logic (PKG-10), no probe/plan (PKG-08), no derived nightly metrics (`htc_k`, `assist_gap`, `in_zone` — PKG-14's `derive_zpd_metrics.py`).
+- No LLM judge for leaks (the detector is deterministic; the judge is PKG-14's eval rung). `services/decisions.judge_leak` exists since PKG-05b but stays unwired — nothing in this package calls it. No misconception logic (PKG-10), no probe/plan (PKG-08), no derived nightly metrics (`htc_k`, `assist_gap`, `in_zone` — PKG-14's `derive_zpd_metrics.py`).
 - No change to `learner_state` or `apply_graph_update` (PKG-03 owns them). No `lru_cache`.
+- No budget logic: no `ai_budget` call, no `llm_usage` read, no budget or session-cap constants (PKG-06b). `model_tier`/`context_policy` receive the level and the cap booleans. No tier slots, thinking budgets or `model_for` calls (PKG-07). No `rag_service.chunks_for_ids`, no `seen_hashes`/`revealed_hashes` (PKG-07). No `ai.*` or `decision.*` taxonomy entries.
 
 ## Tasks
 
 ### Task 1: Invariants 4 and 5
 
 **Files:**
-- Modify: `backend/tests/test_learning_loop_invariants.py` (replace the two `pytest.skip` placeholders; add nothing else)
+- Modify: `backend/tests/test_learning_loop_invariants.py` (replace the two `pytest.skip` placeholders; add nothing else — Task 3b extends `test_inv_04` and Task 5b extends `test_inv_02` in place)
 
 **Interfaces:**
 - Consumes: `backend/learning/policy.py` source, every `*.py` under `backend/`, `services.events_service.EVENT_TAXONOMY`.
@@ -161,13 +187,15 @@ def test_inv_04_policy_takes_no_message_text():
             continue
         for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
             ann = ast.unparse(arg.annotation) if arg.annotation is not None else ""
-            if ann == "str" or _TEXTLIKE_PARAM.search(arg.name):
+            if re.search(r"\bstr\b", ann) or _TEXTLIKE_PARAM.search(arg.name):
                 offenders.append(f"{node.name}({arg.name}: {ann or 'unannotated'})")
     assert not offenders, f"policy.py public functions take text-shaped params: {offenders}"
-    assert any(isinstance(n, ast.FunctionDef) and n.name == "ceiling" for n in tree.body), "ceiling() missing"
+    for name in ("ceiling", "band_control"):
+        assert any(isinstance(n, ast.FunctionDef) and n.name == name for n in tree.body), f"{name}() missing"
 
 
-_SERIES_EVENT_LITERAL = re.compile(r'"((?:zpd|learn|review)\.[a-z_]+)"')
+# Spec §8.5 as amended: zpd/learn/review plus ai (PKG-06b) and decision (PKG-05b).
+_SERIES_EVENT_LITERAL = re.compile(r'"((?:zpd|learn|review|ai|decision)\.[a-z_]+)"')
 
 
 def test_inv_05_series_event_names_in_taxonomy():
@@ -180,7 +208,7 @@ def test_inv_05_series_event_names_in_taxonomy():
             continue
         for m in _SERIES_EVENT_LITERAL.finditer(path.read_text(errors="ignore")):
             found.add(m.group(1))
-    assert found, "no series event literal found under backend/ — PKG-06 adds zpd.*"
+    assert any(f.startswith("zpd.") for f in found), "no zpd.* literal found under backend/ — PKG-06 adds them"
     missing = sorted(found - EVENT_TAXONOMY)
     assert not missing, f"series event literals not in EVENT_TAXONOMY: {missing}"
 ```
@@ -188,7 +216,7 @@ def test_inv_05_series_event_names_in_taxonomy():
 - [ ] **Step 2: Run to see the current state**
 
 Run: `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -v -k "inv_04 or inv_05"`
-Expected: `test_inv_04` FAIL — `ceiling() missing` (the stub has no functions); `test_inv_05` FAIL — `no series event literal found under backend/`.
+Expected: `test_inv_04` FAIL — `ceiling() missing` (the stub has no functions); `test_inv_05` FAIL — `no zpd.* literal found under backend/` (PKG-04's `learn.check_items_failed` and PKG-05b's `decision.*` literals are found and are already members; a `missing` failure here instead means an earlier package broke the taxonomy — STOP and repair it as a reopen).
 
 - [ ] **Step 3: Commit**
 
@@ -196,7 +224,7 @@ Expected: `test_inv_04` FAIL — `ceiling() missing` (the stub has no functions)
 git add backend/tests/test_learning_loop_invariants.py
 git commit -m "test(learning-loop): PKG-06 — invariants 4 and 5
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 2: Params check + ladder
@@ -235,6 +263,7 @@ PARAM_NAMES = (
     "BAND_CONTROL_HI", "BAND_CONTROL_STOP_WINDOWS", "CEILING_PROFIC_ESCALATE_FAILS",
     "CEILING_DEVELOP_H6_FAILS", "WHEELSPIN_OPPS", "WHEELSPIN_OPPS_EARLY",
     "WHEELSPIN_UNASSISTED_MAX", "LEAK_NGRAM", "ZPD_RATING_EVERY_N_CHECKS",
+    "LOOP_RAG_K_TEACH", "LOOP_RAG_K_TEACH_SOFT", "LOOP_SOURCE_CHUNKS_MAX", "LOOP_TIER_DEEP_MIN_FAILS",
 )
 
 
@@ -252,6 +281,8 @@ def test_params_relations_hold():
     assert params.WHEELSPIN_OPPS_EARLY < params.WHEELSPIN_OPPS
     assert params.FSRS_RATING_AGAIN < params.FSRS_RATING_HARD < params.FSRS_RATING_GOOD < params.FSRS_RATING_EASY
     assert "novice" in params.OFFER_BANDS
+    assert 0 < params.LOOP_RAG_K_TEACH_SOFT < params.LOOP_RAG_K_TEACH
+    assert params.LOOP_SOURCE_CHUNKS_MAX >= 1 and params.LOOP_TIER_DEEP_MIN_FAILS >= 1
 
 
 def test_ladder_rungs_are_h0_to_h6_with_intent():
@@ -270,16 +301,17 @@ def test_ladder_rungs_are_h0_to_h6_with_intent():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py -v`
-Expected: the `FSRS_RATING_*`, `BAND_CONTROL_*`, `CEILING_*`, `WHEELSPIN_OPPS_EARLY`, `WHEELSPIN_UNASSISTED_MAX` param cases FAIL (`learning.params lacks …`) unless PKG-01/02 already named them; `test_ladder…` FAIL — `ImportError: cannot import name 'Rung'`.
+Expected: the `FSRS_RATING_*`, `BAND_CONTROL_*`, `CEILING_*`, `WHEELSPIN_OPPS_EARLY`, `WHEELSPIN_UNASSISTED_MAX`, `LOOP_*` param cases FAIL (`learning.params lacks …`) unless an earlier package already named them; `test_params_relations_hold` FAIL (`AttributeError`); `test_ladder…` FAIL — `ImportError: cannot import name 'Rung'`.
 
 - [ ] **Step 3: Implement**
 
-`backend/learning/params.py` — append a `# PKG-06 (spec §3.3 / §3.2)` block containing only the names the grep in §Named constants showed missing, each with a one-line comment naming its spec row. If `HANDOFF-02.md` says `fsrs.py` exports rating constants under other names, do NOT add `FSRS_RATING_*`; instead alias them in `params.py` (`FSRS_RATING_AGAIN = <theirs>`) so this package's tests and PKG-07 have one spelling.
+`backend/learning/params.py` — append a `# PKG-06 (spec §3.2 / §3.3 / §3.5)` block containing only the names the grep in §Named constants showed missing, each with a one-line comment naming its spec row (and `†` in the comment where the table has one). If `HANDOFF-02.md` says `fsrs.py` exports rating constants under other names, do NOT add `FSRS_RATING_*`; instead alias them in `params.py` (`FSRS_RATING_AGAIN = <theirs>`) so this package's tests and PKG-07 have one spelling.
 
 `backend/learning/ladder.py`:
 
 ```python
-"""Hint ladder (spec §3.3). Pure: no imports beyond stdlib.
+"""Hint ladder (spec §3.3) and deterministic turns (spec §13 A17). Pure:
+stdlib and learning.* only (invariant 2).
 
 Each rung names what the tutor may emit. The text is an instruction to the
 tutor prompt (PKG-07), never prose shown to the student.
@@ -329,7 +361,7 @@ Expected: all passed (PKG-01/02 suites prove no value changed); `All checks pass
 git add backend/learning/params.py backend/learning/ladder.py backend/tests/test_learning_zpd_policy.py
 git commit -m "feat(learning-loop): PKG-06 — hint ladder and policy constants
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 3: `policy.py` — state, ceiling, evidence, band control, wheel-spin
@@ -613,7 +645,221 @@ Expected: all passed including `test_inv_04`; `All checks passed!`
 git add backend/learning/policy.py backend/tests/test_learning_zpd_policy.py
 git commit -m "feat(learning-loop): PKG-06 — ZPD policy: ceiling, evidence mapping, band control, wheel-spin
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+### Task 3b: `policy.py` — tutor tier routing and context policy (A15, A18)
+
+**Files:**
+- Modify: `backend/learning/policy.py`, `backend/tests/test_learning_zpd_policy.py`, `backend/tests/test_learning_loop_invariants.py` (extend `test_inv_04` in place; never a new test function, never delete an assertion)
+
+**Interfaces:**
+- Consumes: `learning.ladder.Rung`, `learning.params` (`LOOP_RAG_K_TEACH`, `LOOP_RAG_K_TEACH_SOFT`, `LOOP_SOURCE_CHUNKS_MAX`, `LOOP_TIER_DEEP_MIN_FAILS`).
+- Produces: `Tier`, `TurnPhase`, `ContextPhase`, `BudgetLevel`, `ToolChoice`, `ContextPolicy`, `model_tier`, `context_policy`. PKG-07 calls both per turn; PKG-06b's `BudgetDecision.tier_ceiling` reuses `Tier`; PKG-10 passes `misconception_active=True`.
+
+- [ ] **Step 1: Write the failing tests** (append to `test_learning_zpd_policy.py`; extend `test_inv_04`)
+
+```python
+# ── policy: tutor tier routing (spec §3.5 LOOP_MODEL_TIER, A15) ────────────────
+
+TIER_ORDER = {"none": 0, "lite": 1, "standard": 2, "deep": 3}
+FAILS = params.LOOP_TIER_DEEP_MIN_FAILS
+
+TIER_CASES = [
+    # (phase, band, rung, fails, misconception, kwargs) -> tier
+    ("teach", "develop", 0, 0, False, {"budget_level": "hard"}, "none"),
+    ("feedback_wrong", "novice", 0, FAILS, True, {"budget_level": "hard", "arm_session": True}, "none"),
+    ("check_pose", "novice", 0, 0, False, {}, "none"),
+    ("check_pose", "develop", 0, FAILS, True, {}, "none"),                    # the pose is a template, always
+    ("hint", "develop", 2, 0, False, {"deterministic_payload": True}, "none"),
+    ("hint", "novice", 4, 0, False, {"deterministic_payload": True}, "none"),
+    ("hint", "develop", 6, 0, False, {}, "none"),
+    ("feedback_correct", "novice", 0, 0, False, {}, "lite"),
+    ("feedback_correct", "develop", 0, FAILS, False, {}, "lite"),             # a correct answer closed the step
+    ("hint", "profic", 0, 0, False, {}, "lite"),                              # proficient-band verification †
+    ("teach", "novice", 0, 0, False, {}, "deep"),
+    ("hint", "novice", 4, 0, False, {}, "deep"),                              # H4 with no usable sibling
+    ("hint", "develop", 5, 0, False, {}, "deep"),
+    ("teach", "develop", 0, 0, True, {}, "deep"),                             # misconception confrontation
+    ("hint", "develop", 1, FAILS, False, {}, "deep"),
+    ("feedback_wrong", "profic", 0, FAILS, False, {}, "deep"),
+    ("opener", "novice", 0, 0, False, {}, "standard"),
+    ("teach", "develop", 0, 0, False, {}, "standard"),
+    ("teach", "profic", 0, 0, False, {}, "standard"),
+    ("hint", "develop", 1, FAILS - 1, False, {}, "standard"),
+    ("hint", "novice", 3, 0, False, {}, "standard"),
+    ("feedback_wrong", "develop", 0, FAILS - 1, False, {}, "standard"),
+    ("hint", "develop", 2, 0, False, {}, "standard"),                         # H2, no clean payload †
+    ("hint", "develop", 0, 0, False, {}, "standard"),                         # H0 outside profic †
+    # then-rows: downgrades (deep -> standard only)
+    ("teach", "develop", 0, 0, True, {"budget_level": "soft"}, "standard"),
+    ("hint", "profic", 5, 0, False, {"deep_cap_reached": True}, "standard"),
+    ("teach", "develop", 0, 0, True, {"budget_level": "soft", "arm_session": True}, "deep"),
+    ("teach", "novice", 0, 0, False, {"budget_level": "soft"}, "deep"),     # $-soft never downgrades novice deep
+    ("teach", "novice", 0, 0, False, {"deep_cap_reached": True}, "deep"),   # the develop/profic cap is not the novice cap
+    ("teach", "novice", 0, 0, False, {"novice_deep_cap_reached": True}, "standard"),
+    ("teach", "novice", 0, 0, False, {"novice_deep_cap_reached": True, "arm_session": True}, "deep"),
+    ("hint", "develop", 5, 0, False, {"novice_deep_cap_reached": True}, "deep"),
+    ("feedback_correct", "develop", 0, 0, False, {"budget_level": "soft"}, "lite"),
+]
+
+
+@pytest.mark.parametrize("phase,band,rung,fails,misc,kw,tier", TIER_CASES)
+def test_model_tier_table(phase, band, rung, fails, misc, kw, tier):
+    from learning.ladder import Rung
+    from learning.policy import model_tier
+
+    assert model_tier(phase, band, Rung(rung), fails, misc, **kw) == tier
+
+
+def test_model_tier_adjustments_never_raise_a_tier():
+    import itertools
+    from typing import get_args
+
+    from learning.ladder import Rung
+    from learning.policy import Tier, TurnPhase, model_tier
+
+    flags = [{"budget_level": "soft"}, {"deep_cap_reached": True}, {"novice_deep_cap_reached": True},
+             {"budget_level": "soft", "arm_session": True}]
+    for phase, band, rung, fails, misc, det in itertools.product(
+        get_args(TurnPhase), ("novice", "develop", "profic"), list(Rung), range(FAILS + 1), (False, True), (False, True)
+    ):
+        base = model_tier(phase, band, rung, fails, misc, deterministic_payload=det)
+        assert base in get_args(Tier)
+        assert model_tier(phase, band, rung, fails, misc, deterministic_payload=det, budget_level="hard") == "none"
+        assert model_tier(phase, band, rung, fails, misc, deterministic_payload=det, arm_session=True) == base
+        for kw in flags:
+            adjusted = model_tier(phase, band, rung, fails, misc, deterministic_payload=det, **kw)
+            assert TIER_ORDER[adjusted] <= TIER_ORDER[base], (phase, band, rung, fails, misc, det, kw)
+            assert adjusted == base or (base, adjusted) == ("deep", "standard")
+
+
+# ── policy: context and tool policy by phase (A18) ────────────────────────────
+
+
+def test_context_policy_by_phase():
+    from learning.policy import ContextPolicy, context_policy
+
+    k, k_soft, chunks = params.LOOP_RAG_K_TEACH, params.LOOP_RAG_K_TEACH_SOFT, params.LOOP_SOURCE_CHUNKS_MAX
+    assert context_policy("teach", opener=False, budget_level="normal") == ContextPolicy(k, True, 0, False, "auto")
+    assert context_policy("teach", opener=True, budget_level="normal") == ContextPolicy(k, True, 0, True, "auto")
+    for level in ("soft", "hard"):
+        assert context_policy("teach", opener=False, budget_level=level) == ContextPolicy(k_soft, True, 0, False, "none")
+    for phase in ("hint", "feedback"):
+        for level in ("normal", "soft", "hard"):
+            assert context_policy(phase, opener=False, budget_level=level) == ContextPolicy(0, False, chunks, False, "none")
+    assert context_policy("check", opener=False, budget_level="normal") == ContextPolicy(0, False, 0, False, "none")
+
+
+def test_context_policy_catalog_only_on_the_opener_and_tools_only_in_normal_teach():
+    from typing import get_args
+
+    from learning.policy import BudgetLevel, ContextPhase, context_policy
+
+    for phase in get_args(ContextPhase):
+        for level in get_args(BudgetLevel):
+            assert context_policy(phase, opener=False, budget_level=level).catalog is False
+            assert context_policy(phase, opener=True, budget_level=level).catalog is True
+            expected = "auto" if (phase == "teach" and level == "normal") else "none"
+            assert context_policy(phase, opener=False, budget_level=level).tool_choice == expected
+```
+
+Extend `test_inv_04_policy_takes_no_message_text` in `backend/tests/test_learning_loop_invariants.py`. Module level, next to `_TEXTLIKE_PARAM`:
+
+```python
+_ROUTING_FUNCS = ("model_tier", "context_policy")
+_ROUTING_ANN = re.compile(r"bool|int|Rung|Band|TurnPhase|ContextPhase|BudgetLevel")
+```
+
+Appended at the end of the `test_inv_04` body:
+
+```python
+    # A15/A18 (PKG-06 Task 3b): the routing functions take typed state only.
+    aliases = {t.id: ast.unparse(n.value) for n in tree.body if isinstance(n, ast.Assign)
+               for t in n.targets if isinstance(t, ast.Name)}
+    for alias in ("Band", "Tier", "TurnPhase", "ContextPhase", "BudgetLevel"):
+        assert aliases.get(alias, "").startswith("Literal["), f"{alias} must be a Literal alias"
+    for name in _ROUTING_FUNCS:
+        node = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), None)
+        assert node is not None, f"{name}() missing"
+        for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
+            ann = ast.unparse(arg.annotation) if arg.annotation is not None else ""
+            assert _ROUTING_ANN.fullmatch(ann), f"{name}({arg.name}: {ann or 'unannotated'}): Literal/enum/bool/int only"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py tests/test_learning_loop_invariants.py -v -k "model_tier or context_policy or inv_04"`
+Expected: the tier and context cases FAIL — `ImportError: cannot import name 'model_tier' from 'learning.policy'`; `test_inv_04` FAIL — `Tier must be a Literal alias`.
+
+- [ ] **Step 3: Implement** — add to `backend/learning/policy.py` (the `Band` alias from Task 3 stays; put the new aliases next to it):
+
+```python
+Tier = Literal["lite", "standard", "deep", "none"]          # "none" = no model call (template or pause)
+TurnPhase = Literal["opener", "teach", "check_pose", "hint", "feedback_correct", "feedback_wrong"]
+ContextPhase = Literal["teach", "check", "hint", "feedback"]
+BudgetLevel = Literal["normal", "soft", "hard"]
+ToolChoice = Literal["auto", "none"]
+
+
+class ContextPolicy(NamedTuple):
+    rag_k: int
+    graph_block: bool
+    source_chunks: int          # how many of the item's source_chunk_ids the caller resolves
+    catalog: bool
+    tool_choice: ToolChoice     # "none" -> ModelSettings(tool_choice='none'); declarations unchanged
+
+
+def _base_tier(phase: TurnPhase, band: Band, rung: Rung, failed_genuine_attempts: int,
+               misconception_active: bool, deterministic_payload: bool) -> Tier:
+    """LOOP_MODEL_TIER rows 2-5 (spec §3.5), first match wins."""
+    hint = phase == "hint"
+    if phase == "check_pose" or (hint and rung == Rung.H6) or (
+        hint and rung in (Rung.H2, Rung.H4) and deterministic_payload
+    ):
+        return "none"
+    if phase == "feedback_correct" or (hint and rung == Rung.H0 and band == "profic"):
+        return "lite"
+    if (
+        (phase == "teach" and band == "novice")
+        or (hint and rung in (Rung.H4, Rung.H5))
+        or misconception_active
+        or failed_genuine_attempts >= params.LOOP_TIER_DEEP_MIN_FAILS
+    ):
+        return "deep"
+    return "standard"   # opener, develop/profic teach, H1/H3, feedback_wrong; † any turn the table does not name
+
+
+def model_tier(phase: TurnPhase, band: Band, rung: Rung, failed_genuine_attempts: int,
+               misconception_active: bool, *, deterministic_payload: bool = False,
+               budget_level: BudgetLevel = "normal", deep_cap_reached: bool = False,
+               novice_deep_cap_reached: bool = False, arm_session: bool = False) -> Tier:
+    """Tutor tier for one turn (spec §3.5 LOOP_MODEL_TIER, §13 A15). Typed state in,
+    tier out; never the student's text (invariant 4). Adjustments only lower deep."""
+    if budget_level == "hard":
+        return "none"
+    tier = _base_tier(phase, band, Rung(rung), failed_genuine_attempts, misconception_active, deterministic_payload)
+    if tier != "deep" or arm_session:
+        return tier
+    if band == "novice":
+        return "standard" if novice_deep_cap_reached else "deep"
+    return "standard" if (budget_level == "soft" or deep_cap_reached) else "deep"
+```
+
+`context_policy(phase: ContextPhase, *, opener: bool, budget_level: BudgetLevel) -> ContextPolicy` per §Behaviour 13: `constrained = budget_level != "normal"`; `teach` → `ContextPolicy(params.LOOP_RAG_K_TEACH_SOFT if constrained else params.LOOP_RAG_K_TEACH, True, 0, opener, "none" if constrained else "auto")`; `hint`/`feedback` → `ContextPolicy(0, False, params.LOOP_SOURCE_CHUNKS_MAX, opener, "none")`; `check` → `ContextPolicy(0, False, 0, opener, "none")`.
+
+- [ ] **Step 4: Run tests, lint, invariants**
+
+Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py tests/test_learning_loop_invariants.py -q -k "not inv_05" && venv/bin/ruff check .`
+Expected: all passed including the extended `test_inv_04`; `All checks passed!`
+
+- [ ] **Step 5: Commit**
+
+```
+git add backend/learning/policy.py backend/tests/test_learning_zpd_policy.py backend/tests/test_learning_loop_invariants.py
+git commit -m "feat(learning-loop): PKG-06 — tutor tier routing and context policy (A15, A18)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 4: `gates.py`
@@ -747,7 +993,7 @@ Expected: all passed; `All checks passed!`
 git add backend/learning/gates.py backend/tests/test_learning_zpd_policy.py
 git commit -m "feat(learning-loop): PKG-06 — attempt, rung, H6 and offer gates
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 5: `leak.py` — detector and stripper
@@ -942,7 +1188,202 @@ Expected: all passed; `All checks passed!`
 git add backend/learning/leak.py backend/tests/test_learning_zpd_policy.py
 git commit -m "feat(learning-loop): PKG-06 — deterministic answer-leak detector and stripper
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+### Task 5b: `ladder.py` — check pose and deterministic H2/H4/H6 content (A17)
+
+**Files:**
+- Modify: `backend/learning/ladder.py`, `backend/tests/test_learning_zpd_policy.py`, `backend/tests/test_learning_loop_invariants.py` (extend `test_inv_02` in place; never a new test function, never delete an assertion)
+
+**Interfaces:**
+- Consumes: `learning.params.LOOP_SOURCE_CHUNKS_MAX`; in tests only, `learning.leak.detect_leak` (the caller-side check, invariant 27).
+- Produces: `ItemLike`, `DeterministicPayload`, `PAYLOAD_JOIN`, `check_pose(prompt)`, `deterministic_content(rung, item, siblings, passages)`. PKG-07 calls both, resolves `passages` through `rag_service.chunks_for_ids(ids, user_id=…)`, leak-checks every payload, and appends `revealed_hash` to `loop_state["revealed"]`.
+
+- [ ] **Step 1: Write the failing tests** (append to `test_learning_zpd_policy.py`; extend `test_inv_02`)
+
+```python
+# ── ladder: deterministic turns (spec §13 A17) ────────────────────────────────
+
+ACTIVE_HASH = "a" * 64
+
+
+def _item(question_hash, **over):
+    """Structural stand-in for PKG-04's CheckItem (ladder.ItemLike)."""
+    from types import SimpleNamespace
+
+    base = dict(question_hash=question_hash, concept_key="power_rule", format="free", difficulty=2,
+                prompt="Differentiate x^3.", reference_answer="Bring the exponent down: 3x^2", stepwise=True)
+    return SimpleNamespace(**{**base, **over})
+
+
+def test_check_pose_is_the_item_prompt_verbatim():
+    from learning.ladder import check_pose
+
+    prompt = "Differentiate x^3. Show the first step."
+    assert check_pose(prompt) == prompt
+    with pytest.raises(ValueError):
+        check_pose("   ")
+
+
+def test_deterministic_h2_joins_at_most_the_source_chunk_cap():
+    from learning.ladder import PAYLOAD_JOIN, Rung, deterministic_content
+
+    item = _item(ACTIVE_HASH)
+    passages = [f"Passage {i} on the power rule." for i in range(params.LOOP_SOURCE_CHUNKS_MAX + 2)]
+    p = deterministic_content(Rung.H2, item, [], ["  "] + passages)
+    assert (p.rung, p.source, p.revealed_hash) == (Rung.H2, "passages", None)
+    assert p.text == PAYLOAD_JOIN.join(passages[: params.LOOP_SOURCE_CHUNKS_MAX])
+    assert deterministic_content(Rung.H2, item, [], []) is None
+    assert deterministic_content(Rung.H2, item, [], ["", "  "]) is None
+
+
+def test_deterministic_h4_takes_the_first_true_isomorph():
+    from learning.ladder import PAYLOAD_JOIN, Rung, deterministic_content
+
+    item = _item(ACTIVE_HASH)
+    good = _item("b" * 64, prompt="Differentiate x^5.", reference_answer="1. Bring 5 down. 2. Lower the exponent: 5x^4")
+    later = _item("g" * 64, prompt="Differentiate x^7.")
+    not_isomorphs = [
+        _item(ACTIVE_HASH),                          # the active item itself
+        _item("c" * 64, concept_key="chain_rule"),   # other concept
+        _item("d" * 64, format="teachback"),         # other format
+        _item("e" * 64, difficulty=3),               # other difficulty
+        _item("f" * 64, stepwise=False),             # not a worked solution
+        _item("h" * 64, reference_answer="  "),      # nothing to show
+    ]
+    p = deterministic_content(Rung.H4, item, [*not_isomorphs, good, later], [])
+    assert p == (Rung.H4, PAYLOAD_JOIN.join((good.prompt, good.reference_answer)), "sibling", "b" * 64)
+    assert deterministic_content(Rung.H4, item, not_isomorphs, ["a passage"]) is None
+
+
+def test_deterministic_h6_is_the_reference_and_other_rungs_have_none():
+    from learning.ladder import Rung, deterministic_content
+
+    item = _item(ACTIVE_HASH)
+    assert deterministic_content(Rung.H6, item, [], []) == (Rung.H6, item.reference_answer, "reference", None)
+    assert deterministic_content(Rung.H6, _item(ACTIVE_HASH, reference_answer=""), [], []) is None
+    for rung in (Rung.H0, Rung.H1, Rung.H3, Rung.H5):
+        assert deterministic_content(rung, item, [_item("b" * 64)], ["a passage"]) is None
+
+
+def test_deterministic_payloads_are_leak_checked_by_the_caller():
+    """Invariant 27's contract: deterministic_content never filters; the caller's
+    detect_leak does. A passage quoting the reference leaks at H2; a pointer does not."""
+    from learning.ladder import Rung, deterministic_content
+    from learning.leak import detect_leak
+
+    item = _item(ACTIVE_HASH, reference_answer=REF_POWER)
+    leaking = deterministic_content(Rung.H2, item, [], ["From the notes: " + REF_POWER])
+    pointer = deterministic_content(Rung.H2, item, [], ["The power rule is in section 2.3 of your notes; read the first line."])
+    assert detect_leak(item.reference_answer, leaking.text, leaking.rung).leaked is True
+    assert detect_leak(item.reference_answer, pointer.text, pointer.rung).leaked is False
+```
+
+Extend `test_inv_02_pure_modules_import_nothing_impure` in `backend/tests/test_learning_loop_invariants.py` — append at the end of the function body (`ast` was imported in Task 1):
+
+```python
+    # A17 extension (PKG-06): passage text reaches ladder.deterministic_content as an
+    # argument — ladder.py never resolves, reads or decrypts passages itself.
+    ladder = LEARNING / "ladder.py"
+    bad = [r for r in _imports_of(ladder) if r in ("services", "routes", "httpx", "supabase")]
+    assert not bad, f"ladder.py imports {bad}: passages must be passed in"
+    fn = next((n for n in ast.parse(ladder.read_text()).body
+               if isinstance(n, ast.FunctionDef) and n.name == "deterministic_content"), None)
+    assert fn is not None, "ladder.deterministic_content() missing"
+    assert [a.arg for a in fn.args.args] == ["rung", "item", "siblings", "passages"]
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py tests/test_learning_loop_invariants.py -v -k "check_pose or deterministic or inv_02"`
+Expected: the ladder cases FAIL — `ImportError: cannot import name 'check_pose' from 'learning.ladder'` (or `'PAYLOAD_JOIN'`); `test_inv_02` FAIL — `ladder.deterministic_content() missing`.
+
+- [ ] **Step 3: Implement** — extend `backend/learning/ladder.py` (keep `Rung`, `RUNG_INTENT`, `intent`, `next_rung` unchanged):
+
+```python
+from typing import Literal, NamedTuple, Protocol, Sequence
+
+from learning import params
+
+PAYLOAD_JOIN = "\n\n"
+PayloadSource = Literal["passages", "sibling", "reference"]
+
+
+class ItemLike(Protocol):
+    """The check-item fields the ladder reads (PKG-04 CheckItem; spec A2/A22).
+    Structural, so ladder.py never imports learning.checks or storage."""
+
+    question_hash: str
+    concept_key: str
+    format: str
+    difficulty: int
+    prompt: str
+    reference_answer: str
+    stepwise: bool
+
+
+class DeterministicPayload(NamedTuple):
+    rung: Rung
+    text: str
+    source: PayloadSource
+    revealed_hash: str | None = None   # H4: the sibling shown (loop_state["revealed"], A23)
+
+
+def check_pose(prompt: str) -> str:
+    """The check-phase turn: the item prompt verbatim, no model call (A17)."""
+    if not prompt.strip():
+        raise ValueError("check_pose: blank item prompt")
+    return prompt
+
+
+def _is_isomorph(sibling: ItemLike, item: ItemLike) -> bool:
+    return (
+        sibling.concept_key == item.concept_key
+        and sibling.format == item.format
+        and sibling.difficulty == item.difficulty
+        and sibling.question_hash != item.question_hash
+        and bool(sibling.stepwise)
+        and bool(sibling.reference_answer.strip())
+    )
+
+
+def deterministic_content(rung: Rung, item: ItemLike, siblings: Sequence[ItemLike],
+                          passages: Sequence[str]) -> DeterministicPayload | None:
+    """Template content for H2/H4/H6 (spec A17). `passages` is resolved,
+    visibility-filtered, decrypted text passed in (invariant 2). The caller runs
+    leak.detect_leak(item.reference_answer, payload.text, payload.rung) before
+    emitting any payload (invariant 27) and asks for H6 only under
+    gates.h6_allowed. None -> the LLM writes the rung."""
+    rung = Rung(rung)
+    if rung == Rung.H2:
+        kept = [p.strip() for p in passages if p.strip()][: params.LOOP_SOURCE_CHUNKS_MAX]
+        return DeterministicPayload(rung, PAYLOAD_JOIN.join(kept), "passages") if kept else None
+    if rung == Rung.H4:
+        for sibling in siblings:
+            if _is_isomorph(sibling, item):
+                text = PAYLOAD_JOIN.join((sibling.prompt, sibling.reference_answer))
+                return DeterministicPayload(rung, text, "sibling", sibling.question_hash)
+        return None
+    if rung == Rung.H6 and item.reference_answer.strip():
+        return DeterministicPayload(rung, item.reference_answer, "reference")
+    return None
+```
+
+If `HANDOFF-04.md` spells a field differently (e.g. `answer_format`), use PKG-04's spelling in `ItemLike` and `_is_isomorph` and record it under "Deviations"; never add an adapter that imports `learning.checks`.
+
+- [ ] **Step 4: Run tests, lint, invariants**
+
+Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py tests/test_learning_loop_invariants.py -q -k "not inv_05" && venv/bin/ruff check .`
+Expected: all passed including the extended `test_inv_02`; `All checks passed!`
+
+- [ ] **Step 5: Commit**
+
+```
+git add backend/learning/ladder.py backend/tests/test_learning_zpd_policy.py backend/tests/test_learning_loop_invariants.py
+git commit -m "feat(learning-loop): PKG-06 — check pose and deterministic H2/H4/H6 content (A17)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 6: Migration `learning_session_loop_state` + `loop_state_store.py`
@@ -953,7 +1394,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `db.connection.table("sessions")`, `learning.policy.LoopState`.
-- Produces: column `sessions.loop_state jsonb NOT NULL DEFAULT '{}'`; `load_loop_state(session_id) -> LoopState`; `save_loop_state(session_id, state, *, session_row=None) -> bool`.
+- Produces: column `sessions.loop_state jsonb NOT NULL DEFAULT '{}'`; `load_loop_state(session_id) -> LoopState`; `save_loop_state(session_id, state) -> bool` (update only — never inserts or upserts a `sessions` row, A11).
 
 - [ ] **Step 1: Write the failing tests** (append)
 
@@ -1021,16 +1462,23 @@ def test_save_loop_state_updates_by_id_and_reports_missing_row(monkeypatch, capl
     assert any("not materialised" in r.getMessage() for r in caplog.records)
 
 
-def test_save_loop_state_with_session_row_upserts_on_id(monkeypatch):
+def test_save_loop_state_never_inserts_or_upserts_sessions(monkeypatch):
+    """Spec §9 / §13 A11: never `upsert` on `sessions`. A missing row is reported,
+    never created here (PKG-07 materialises through _consume_pending; PKG-09 owns
+    the insert-if-missing helper)."""
+    import inspect
+
     from learning import loop_state_store
     from learning.policy import LoopState
 
-    t = _sessions_table()
+    assert list(inspect.signature(loop_state_store.save_loop_state).parameters) == ["session_id", "state"]
+    t = _sessions_table(update_rows=[])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
-    row = {"user_id": "user_andres", "mode": "socratic", "topic": "limits", "offering_id": "off1"}
-    assert loop_state_store.save_loop_state("s1", LoopState(), session_row=row) is True
-    t.upsert.assert_called_once_with({**row, "id": "s1", "loop_state": LoopState().to_json()}, on_conflict="id")
-    t.update.assert_not_called()
+    assert loop_state_store.save_loop_state("s1", LoopState()) is False
+    t.upsert.assert_not_called()
+    t.insert.assert_not_called()
+    src = inspect.getsource(loop_state_store)
+    assert ".upsert(" not in src and ".insert(" not in src
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1040,7 +1488,7 @@ Expected: `test_migration…` FAIL — `expected exactly one loop_state migratio
 
 - [ ] **Step 3: Write the migration and the store**
 
-Prefix from `date -u +%Y%m%d%H%M%S`; content is §Spec/Schema verbatim including both comment lines.
+Prefix from `date -u +%Y%m%d%H%M%S`; content is §Spec/Schema verbatim including all three comment lines.
 
 `backend/learning/loop_state_store.py`:
 
@@ -1049,8 +1497,10 @@ Prefix from `date -u +%Y%m%d%H%M%S`; content is §Spec/Schema verbatim including
 in the ZPD layer; policy.py stays free of db imports.
 
 Sessions are lazy (routes/learn.py:36): the row may not exist until the first
-chat turn. `save_loop_state` therefore updates by id and reports a miss; a
-caller that owns the first loop turn passes `session_row` to materialise."""
+chat turn. `save_loop_state` therefore updates by id and reports a miss; it
+never inserts or upserts a sessions row (spec §9, §13 A11). The row is
+materialised by the legacy `_consume_pending` insert (PKG-07) or by the A11
+insert-if-missing helper (PKG-09)."""
 from __future__ import annotations
 
 import logging
@@ -1072,11 +1522,8 @@ def load_loop_state(session_id: str) -> LoopState:
         return LoopState()
 
 
-def save_loop_state(session_id: str, state: LoopState, *, session_row: dict | None = None) -> bool:
+def save_loop_state(session_id: str, state: LoopState) -> bool:
     doc = state.to_json()
-    if session_row is not None:
-        table("sessions").upsert({**session_row, "id": session_id, "loop_state": doc}, on_conflict="id")
-        return True
     rows = table("sessions").update({"loop_state": doc}, filters={"id": f"eq.{session_id}"})
     if not rows:
         logger.warning("save_loop_state: sessions row %s not materialised; loop_state not saved", session_id)
@@ -1095,7 +1542,7 @@ Expected: all passed (`test_inv_07` sees `from db.connection import` in the stor
 git add backend/db/migrations/*_learning_session_loop_state.sql backend/learning/loop_state_store.py backend/tests/test_learning_zpd_policy.py
 git commit -m "feat(learning-loop): PKG-06 — sessions.loop_state migration and store
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 7: `zpd.*` events — taxonomy, pin test, typed emit helpers, inertness proof
@@ -1157,7 +1604,7 @@ def test_emit_helpers_send_spec_payloads(monkeypatch):
         n_attempts=2, max_rung_used=Rung.H2, rungs=[{"rung": 1, "dwell_ms": 9000}, {"rung": 2, "dwell_ms": 12000}],
         time_to_first_attempt_ms=61000, time_to_correct_ms=140000, independent_time_ms=61000, assisted=True,
         confidence=0.8, fsrs_rating=params.FSRS_RATING_HARD, p_known_before=0.41, p_known_after=0.52,
-        r_before=0.93, item_difficulty=2,
+        r_before=0.93, item_difficulty=2, tier="standard", grader_backend="gemini",
     )
     zpd_events.emit_zpd_offer(**common, accepted=True, band="novice")
     zpd_events.emit_zpd_band_adjust(**common, direction=BandAction.HARDER, trigger="high",
@@ -1177,10 +1624,11 @@ def test_emit_helpers_send_spec_payloads(monkeypatch):
         "concept_id", "question_hash", "phase", "channel", "band", "ceiling", "ceiling_reason",
         "first_attempt_correct", "n_attempts", "max_rung_used", "rungs", "time_to_first_attempt_ms",
         "time_to_correct_ms", "independent_time_ms", "assisted", "confidence", "fsrs_rating",
-        "p_known_before", "p_known_after", "r_before", "item_difficulty",
+        "p_known_before", "p_known_after", "r_before", "item_difficulty", "tier", "grader_backend",
     }
     assert got["zpd.step"]["payload"]["ceiling"] == int(Rung.H3)
     assert got["zpd.step"]["payload"]["ceiling_reason"] == "develop"
+    assert (got["zpd.step"]["payload"]["tier"], got["zpd.step"]["payload"]["grader_backend"]) == ("standard", "gemini")
     assert set(got["zpd.offer"]["payload"]) == {"accepted", "band"}
     assert set(got["zpd.band_adjust"]["payload"]) == {"direction", "trigger", "window_stats"}
     assert got["zpd.band_adjust"]["payload"]["direction"] == "harder"
@@ -1190,6 +1638,25 @@ def test_emit_helpers_send_spec_payloads(monkeypatch):
     for et, kw in calls:
         assert kw["user_id"] == "user_andres" and kw["request_id"] == "req-1"
         _assert_ids_only(kw["payload"])
+
+
+def test_zpd_step_omits_tier_and_grader_backend_when_unset(monkeypatch):
+    """A15/A24 keys are omitted when None — never zeroed or blanked."""
+    from learning import zpd_events
+    from learning.ladder import Rung
+    from learning.policy import CeilingReason
+
+    calls = _recorder(monkeypatch)
+    zpd_events.emit_zpd_step(
+        user_id="u", request_id=None, concept_id="node-1", question_hash="q" * 64, phase="probe",
+        channel="free_response", band="novice", ceiling=Rung.H4, ceiling_reason=CeilingReason.NOVICE_WORKED_FIRST,
+        first_attempt_correct=True, n_attempts=1, max_rung_used=Rung.H0, rungs=[], time_to_first_attempt_ms=None,
+        time_to_correct_ms=None, independent_time_ms=None, assisted=False, confidence=None,
+        fsrs_rating=params.FSRS_RATING_GOOD, p_known_before=0.2, p_known_after=0.3, r_before=None, item_difficulty=1,
+    )
+    [(event_type, kw)] = calls
+    assert event_type == "zpd.step"
+    assert "tier" not in kw["payload"] and "grader_backend" not in kw["payload"]
 
 
 def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
@@ -1220,12 +1687,12 @@ def test_zpd_layer_is_inert_nothing_imports_it():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py -v -k "zpd_events or emit_helpers or inert"`
-Expected: `test_zpd_events_in_taxonomy…` FAIL — `assert 'zpd.step' in frozenset(...)`; `test_emit_helpers…` FAIL — `ImportError: cannot import name 'zpd_events'`; `test_zpd_layer_is_inert…` PASS.
+Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py -v -k "zpd_events or zpd_step or emit_helpers or inert"`
+Expected: `test_zpd_events_in_taxonomy…` FAIL — `assert 'zpd.step' in frozenset(...)`; `test_emit_helpers…` and `test_zpd_step_omits…` FAIL — `ImportError: cannot import name 'zpd_events'`; `test_zpd_layer_is_inert…` PASS.
 
 - [ ] **Step 3: Implement**
 
-`backend/services/events_service.py` — append to `EVENT_TAXONOMY`, after `"rag.visibility_resync_failed",`:
+`backend/services/events_service.py` — append to `EVENT_TAXONOMY`, after its last existing entry (PKG-05b's `decision.*` block; `"rag.visibility_resync_failed",` if that block sits elsewhere). Add only these six — never `ai.budget_capped` (PKG-06b) and never another `decision.*`:
 
 ```python
     # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
@@ -1241,7 +1708,7 @@ Expected: `test_zpd_events_in_taxonomy…` FAIL — `assert 'zpd.step' in frozen
     "zpd.rating",
 ```
 
-Add six rows to the docstring table above it (event, category, payload keys from spec §6) — without quotes, so `grep -c '"zpd\.'` on the file stays exactly 6.
+Add six rows to the docstring table above it (event, category, payload keys from spec §6; the `zpd.step` row lists `tier` and `grader_backend` as optional) — without quotes, so `grep -c '"zpd\.'` on the file stays exactly 6.
 
 `backend/tests/test_event_capture_seams.py::test_event_taxonomy_is_pinned` — add the same six strings with a one-line `# PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py` comment.
 
@@ -1255,13 +1722,14 @@ from __future__ import annotations
 from typing import Literal
 
 from learning.ladder import Rung
-from learning.policy import Band, BandAction, CeilingReason
+from learning.policy import Band, BandAction, CeilingReason, Tier
 from services.events_service import log_event
 
 Phase = Literal["probe", "plan", "teach", "check", "feedback", "close"]
 Rating = Literal["too_easy", "appropriate", "too_hard"]
 Detector = Literal["none", "ngram", "final_answer"]
 BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
+GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]   # spec §5 (A22/A24)
 
 
 def emit_zpd_step(*, user_id: str, request_id: str | None, concept_id: str, question_hash: str,
@@ -1270,8 +1738,9 @@ def emit_zpd_step(*, user_id: str, request_id: str | None, concept_id: str, ques
                   time_to_first_attempt_ms: int | None, time_to_correct_ms: int | None,
                   independent_time_ms: int | None, assisted: bool, confidence: float | None,
                   fsrs_rating: int, p_known_before: float, p_known_after: float,
-                  r_before: float | None, item_difficulty: int) -> None:
-    log_event("zpd.step", category="usage", user_id=user_id, request_id=request_id, payload={
+                  r_before: float | None, item_difficulty: int,
+                  tier: Tier | None = None, grader_backend: GraderBackend | None = None) -> None:
+    payload = {
         "concept_id": concept_id, "question_hash": question_hash, "phase": phase, "channel": channel,
         "band": band, "ceiling": int(ceiling), "ceiling_reason": ceiling_reason.value,
         "first_attempt_correct": first_attempt_correct, "n_attempts": n_attempts,
@@ -1280,15 +1749,21 @@ def emit_zpd_step(*, user_id: str, request_id: str | None, concept_id: str, ques
         "independent_time_ms": independent_time_ms, "assisted": assisted, "confidence": confidence,
         "fsrs_rating": fsrs_rating, "p_known_before": p_known_before, "p_known_after": p_known_after,
         "r_before": r_before, "item_difficulty": item_difficulty,
-    })
+    }
+    # A15/A24: present only when known — omitted, never zeroed or blanked.
+    if tier is not None:
+        payload["tier"] = tier
+    if grader_backend is not None:
+        payload["grader_backend"] = grader_backend
+    log_event("zpd.step", category="usage", user_id=user_id, request_id=request_id, payload=payload)
 ```
 
-Then `emit_zpd_offer(*, user_id, request_id, accepted: bool, band: Band)`, `emit_zpd_band_adjust(*, user_id, request_id, direction: BandAction, trigger: BandTrigger, window_stats: dict)` (payload `direction=direction.value`), `emit_zpd_wheelspin(*, user_id, request_id, concept_id, opps: int, unassisted_next: float | None, htc_k: float | None, prerequisite_ids: list[str])` (category `error`), `emit_zpd_leak(*, user_id, request_id, rung_emitted: Rung, ceiling: Rung, detector: Detector)` (category `error`; payload includes `request_id` per spec §6, ints for the rungs), `emit_zpd_rating(*, user_id, request_id, rating: Rating, checks_since_last: int)`. Every payload key set is exactly the spec §6 row.
+Then `emit_zpd_offer(*, user_id, request_id, accepted: bool, band: Band)`, `emit_zpd_band_adjust(*, user_id, request_id, direction: BandAction, trigger: BandTrigger, window_stats: dict)` (payload `direction=direction.value`), `emit_zpd_wheelspin(*, user_id, request_id, concept_id, opps: int, unassisted_next: float | None, htc_k: float | None, prerequisite_ids: list[str])` (category `error`), `emit_zpd_leak(*, user_id, request_id, rung_emitted: Rung, ceiling: Rung, detector: Detector)` (category `error`; payload includes `request_id` per spec §6, ints for the rungs), `emit_zpd_rating(*, user_id, request_id, rating: Rating, checks_since_last: int)`. Every payload key set is exactly the spec §6 row (`zpd.step`: `tier`/`grader_backend` only when passed; `variant` is PKG-14's, A8).
 
 - [ ] **Step 4: Run tests, lint, invariants, the pinned seams**
 
 Run: `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py tests/test_learning_loop_invariants.py tests/test_event_capture_seams.py tests/test_events_service.py -q && venv/bin/ruff check .`
-Expected: all passed — `test_inv_05` now finds the six literals in `events_service.py` and `zpd_events.py` and every one is in the taxonomy; `All checks passed!`
+Expected: all passed — `test_inv_05` now finds the six `zpd.*` literals in `events_service.py` and `zpd_events.py` (plus PKG-04's `learn.*` and PKG-05b's `decision.*`) and every one is in the taxonomy; `All checks passed!`
 
 - [ ] **Step 5: Commit**
 
@@ -1296,24 +1771,25 @@ Expected: all passed — `test_inv_05` now finds the six literals in `events_ser
 git add backend/services/events_service.py backend/tests/test_event_capture_seams.py backend/learning/zpd_events.py backend/tests/test_learning_zpd_policy.py
 git commit -m "feat(learning-loop): PKG-06 — zpd.* events in the taxonomy with typed emit helpers
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 8: Hand-off + ledger
 
-- [ ] **Step 1:** Write `docs/superpowers/plans/learning-loop/HANDOFF-06.md` from `HANDOFF-template.md`. "Verify commands" must be exactly these five lines (they become PKG-07/PKG-10's State-of-the-world rows):
+- [ ] **Step 1:** Write `docs/superpowers/plans/learning-loop/HANDOFF-06.md` from `HANDOFF-template.md`. "Verify commands" must be exactly these six lines (they become PKG-07/PKG-10/PKG-14's State-of-the-world rows):
 
 ```
-cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py -q                    → N passed (N ≥ 25)
-grep -cE "^def (ceiling|band_control|evidence_for_rung|wheelspin)\(" backend/learning/policy.py → 4
+cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py -q                    → N passed (N ≥ 35)
+grep -cE "^def (ceiling|band_control|evidence_for_rung|wheelspin|model_tier|context_policy)\(" backend/learning/policy.py → 6
+grep -cE "^def (check_pose|deterministic_content)\(" backend/learning/ladder.py                  → 2
 grep -c '"zpd\.' backend/services/events_service.py                                              → 6
 ls backend/db/migrations/*_learning_session_loop_state.sql                                       → 1 file
-cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_04 or inv_05" → 2 passed
+cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_02 or inv_04 or inv_05" → 3 passed
 ```
 
-Fill "Constants chosen" with every row of §Named constants, keeping `†` on `GATE_INDEPENDENT_MIN_S`, `GATE_INDEPENDENT_MIN_S_NOVICE`, `GATE_RUNG_DWELL_MIN_S`, and listing each *new name* and each *added by PKG-06* separately. Fill "Open questions for the series owner" with at least: (a) exam mode wins over the shown-work floor (spec lists both without precedence); (b) a non-attempt phrase vetoes an attempt even when work is shown; (c) a same-session re-check still counts toward `streak_unassisted`; (d) `STOP_PRACTICE` needs two *full* windows, so it cannot fire before `BAND_WINDOW × BAND_CONTROL_STOP_WINDOWS` first attempts; (e) `save_loop_state` cannot create the lazy `sessions` row without `session_row` (NOT NULL `user_id`/`mode`/`topic`); (f) `ever_streak3` needs a max-streak the `learner_state` table does not store — PKG-07 derives it from `node_mastery_events` or PKG-14 adds a column; (g) `final_answer` takes the clause after the LAST `=`, so a multi-part reference (`x = 7 and y = 3`) is covered only by the n-gram rule. Record under "Known gaps": no caller yet; the leak detector's eval fixtures (`tests/evals/loop_tutor.py`) are PKG-07's.
+Fill "Constants chosen" with every row of §Named constants, keeping `†` on `GATE_INDEPENDENT_MIN_S`, `GATE_INDEPENDENT_MIN_S_NOVICE`, `GATE_RUNG_DWELL_MIN_S`, `LOOP_RAG_K_TEACH_SOFT`, `LOOP_SOURCE_CHUNKS_MAX`, and listing each *new name*, each *spec-new* and each *added by PKG-06* separately. Fill "Open questions for the series owner" with at least: (a) exam mode wins over the shown-work floor (spec lists both without precedence); (b) a non-attempt phrase vetoes an attempt even when work is shown; (c) a same-session re-check still counts toward `streak_unassisted`; (d) `STOP_PRACTICE` needs two *full* windows, so it cannot fire before `BAND_WINDOW × BAND_CONTROL_STOP_WINDOWS` first attempts; (e) `save_loop_state` cannot create the lazy `sessions` row without `session_row` (NOT NULL `user_id`/`mode`/`topic`); (f) `ever_streak3` needs a max-streak the `learner_state` table does not store — PKG-07 derives it from `node_mastery_events` or PKG-14 adds a column; (g) `final_answer` takes the clause after the LAST `=`, so a multi-part reference (`x = 7 and y = 3`) is covered only by the n-gram rule; (h) "proficient-band verification" (`LOOP_MODEL_TIER` lite row) is read as a `hint` turn at H0 in the proficient band †; (i) model turns the table does not name — `hint` at H2 with no leak-clean payload, `hint` at H0 outside the proficient band — default to `standard` †; (j) `context_policy` at the `hard` level returns the soft policy (no model runs at hard, so this only matters if a caller ignores `model_tier`); (k) the H4 payload is the sibling's prompt and reference joined by a blank line, with no framing text †; (l) `LoopState.from_json` ignores unknown top-level keys and `to_json` does not re-emit them, so a later package that stores a top-level key in `loop_state` (`revealed` A23, `tutor_requests`/`deep_requests` §3.5, `probe`/`plan`/`sr`/`review`) must add it as a `LoopState` field or the next save drops it. Record under "Known gaps": no caller yet; the leak detector's eval fixtures (`tests/evals/loop_tutor.py`) are PKG-07's; `services/decisions.judge_leak` stays unwired; `zpd.step.variant` (A8) is PKG-14's; `seen_hashes`/`revealed_hashes` (A23) and `rag_service.chunks_for_ids` are PKG-07's; no tier is routable until it passes PKG-07's per-tier evals (A15).
 
-- [ ] **Step 2:** Ledger: add row `| 06 | zpd-policy | done | feat/learning-loop-06-zpd-policy | <sha> | N tests (test_learning_zpd_policy.py) + inv_04/05 | — | HANDOFF-06.md |`; add the `03 | … | verified | …` row you earned in State of the world if not already added. Deviations: one line per *new name* constant (`PKG-06: spec states 0.90/2/2/2/6/0.50 unnamed → named BAND_CONTROL_HI/BAND_CONTROL_STOP_WINDOWS/CEILING_PROFIC_ESCALATE_FAILS/CEILING_DEVELOP_H6_FAILS/WHEELSPIN_OPPS_EARLY/WHEELSPIN_UNASSISTED_MAX → no numeral in loop code`) and one per param added on PKG-01's behalf, if any.
+- [ ] **Step 2:** Ledger: add row `| 06 | zpd-policy | done | feat/learning-loop-06-zpd-policy | <sha> | N tests (test_learning_zpd_policy.py) + inv_04/05, inv_02 extended | — | HANDOFF-06.md |`; add the `03 | … | verified | …` and `04 | … | verified | …` rows you earned in State of the world if not already added. Deviations: one line per *new name* constant (`PKG-06: spec states 0.90/2/2/2/6/0.50/2 unnamed → named BAND_CONTROL_HI/BAND_CONTROL_STOP_WINDOWS/CEILING_PROFIC_ESCALATE_FAILS/CEILING_DEVELOP_H6_FAILS/WHEELSPIN_OPPS_EARLY/WHEELSPIN_UNASSISTED_MAX/LOOP_TIER_DEEP_MIN_FAILS → no numeral in loop code`), one per param added on PKG-01's behalf, if any, and one per `ItemLike` field spelled differently from this prompt, if any.
 
 - [ ] **Step 3: Commit**
 
@@ -1321,7 +1797,7 @@ Fill "Constants chosen" with every row of §Named constants, keeping `†` on `G
 git add docs/superpowers/plans/learning-loop/HANDOFF-06.md docs/superpowers/plans/learning-loop/LEDGER.md
 git commit -m "docs(learning-loop): PKG-06 — hand-off and ledger
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 9: PR
@@ -1330,17 +1806,17 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ```
 gh pr create --title "feat(learning): PKG-06 zpd-policy" --body-file - <<'EOF'
-Learning loop series, package 6 of 15. Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §3.3, §3.4, §4, §6, §8 (4, 5).
+Learning loop series, package 8 of 17. Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §3.3, §3.4, §3.5 (LOOP_MODEL_TIER), §4, §6, §8 (2, 4, 5), §13 A15/A17/A18/A24.
 
-- learning/ladder.py: Rung H0..H6 with per-rung tutor intent
-- learning/policy.py (pure, typed): StepState / LearnerView / LoopState, ceiling table, evidence-by-rung mapping, band control, wheel-spin
+- learning/ladder.py: Rung H0..H6 with per-rung tutor intent; check_pose (template check pose) and deterministic_content (H2 passages / H4 isomorph sibling / H6 reference; passages passed in, caller leak-checks)
+- learning/policy.py (pure, typed): StepState / LearnerView / LoopState, ceiling table, evidence-by-rung mapping, band control, wheel-spin; model_tier (LOOP_MODEL_TIER, lite/standard/deep/none) and context_policy (RAG k, graph block, source chunks, catalog, tool_choice by phase)
 - learning/gates.py: NON_ATTEMPT_PATTERNS, genuine-attempt / rung-dwell / H6 / offer gates
 - learning/leak.py: deterministic n-gram + final-answer leak detector and stripper
 - sessions.loop_state jsonb migration + learning/loop_state_store.py (lazy-session aware)
-- zpd.step / offer / band_adjust / wheelspin / leak / rating in EVENT_TAXONOMY + typed emit helpers
-- invariants 4 and 5 asserted
+- zpd.step / offer / band_adjust / wheelspin / leak / rating in EVENT_TAXONOMY + typed emit helpers; zpd.step carries tier and grader_backend when known
+- invariants 4 and 5 asserted (4 covers model_tier/context_policy; 5 scans zpd/learn/review/ai/decision); invariant 2 extended (passages as an argument)
 
-Nothing calls the layer yet (a test proves it); flag-off behaviour is byte-identical. † engineering constants: GATE_INDEPENDENT_MIN_S, GATE_INDEPENDENT_MIN_S_NOVICE, GATE_RUNG_DWELL_MIN_S.
+Nothing calls the layer yet (a test proves it); flag-off behaviour is byte-identical. † engineering constants: GATE_INDEPENDENT_MIN_S, GATE_INDEPENDENT_MIN_S_NOVICE, GATE_RUNG_DWELL_MIN_S, LOOP_RAG_K_TEACH_SOFT, LOOP_SOURCE_CHUNKS_MAX.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
@@ -1361,36 +1837,37 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 ## Regression guard
 
 - Pre-series suite count N₀ (from State of the world) must be unchanged except for the tests this package adds. Zero failures, zero new skips outside `test_learning_loop_invariants.py`.
-- Dependency suites unchanged and green: `tests/test_learning_bkt.py`, `tests/test_learning_fsrs.py` (PKG-01/02 — proves no `params.py` value moved), `tests/test_learning_evidence_apply.py`, `tests/test_graph_service.py` (PKG-03), `tests/test_learning_gate.py`, `tests/test_learning_deps.py` (PKG-00).
+- Dependency suites unchanged and green: `tests/test_learning_bkt.py`, `tests/test_learning_fsrs.py` (PKG-01/02 — proves no `params.py` value moved), `tests/test_learning_evidence_apply.py`, `tests/test_graph_service.py` (PKG-03), `tests/test_learning_check_items.py` (PKG-04), `tests/test_learning_check_tool.py` (PKG-05), `tests/test_learning_decisions.py` (PKG-05b), `tests/test_learning_gate.py`, `tests/test_learning_deps.py` (PKG-00).
 - Pre-series suites this package touches, unchanged except the six pinned strings: `tests/test_event_capture_seams.py`, `tests/test_events_service.py`; untouched and green: `tests/test_learn_routes.py`, `tests/test_learn_stream_routes.py` (sessions), `tests/test_model_mode_seam.py`.
 - With `LEARNING_LOOP_ENABLED` unset or set: no route behaviour changes (nothing imports the new modules — `test_zpd_layer_is_inert_nothing_imports_it`).
 
 ## Acceptance criteria (the next session pastes these)
 
-1. `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py -q` → `N passed (N ≥ 25)`
-2. `grep -cE "^def (ceiling|band_control|evidence_for_rung|wheelspin)\(" backend/learning/policy.py` → `4`
-3. `grep -c '"zpd\.' backend/services/events_service.py` → `6`
-4. `ls backend/db/migrations/*_learning_session_loop_state.sql` → `1 file`
-5. `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_04 or inv_05"` → `2 passed`
-6. `cd backend && venv/bin/python -m pytest tests/ -q` → zero failures; `venv/bin/ruff check .` → `All checks passed!`
-7. `grep -rnE "^\s*(from|import)\s+learning\.(policy|gates|leak|ladder|loop_state_store|zpd_events)\b" backend --include='*.py' | grep -v "^backend/tests/\|^backend/learning/"` → no output
-8. `git diff --stat main...HEAD` lists only: `backend/learning/{params,ladder,policy,gates,leak,loop_state_store,zpd_events}.py`, `backend/services/events_service.py`, `backend/db/migrations/*_learning_session_loop_state.sql`, `backend/tests/{test_learning_zpd_policy,test_learning_loop_invariants,test_event_capture_seams}.py`, `docs/superpowers/plans/learning-loop/{HANDOFF-06.md,LEDGER.md}`.
-9. `LEDGER.md` has row `06 | zpd-policy | done | …` and a `03 | … | verified` row.
+1. `cd backend && venv/bin/python -m pytest tests/test_learning_zpd_policy.py -q` → `N passed (N ≥ 35)`
+2. `grep -cE "^def (ceiling|band_control|evidence_for_rung|wheelspin|model_tier|context_policy)\(" backend/learning/policy.py` → `6`
+3. `grep -cE "^def (check_pose|deterministic_content)\(" backend/learning/ladder.py` → `2`
+4. `grep -c '"zpd\.' backend/services/events_service.py` → `6`
+5. `ls backend/db/migrations/*_learning_session_loop_state.sql` → `1 file`
+6. `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_02 or inv_04 or inv_05"` → `3 passed`
+7. `cd backend && venv/bin/python -m pytest tests/ -q` → zero failures; `venv/bin/ruff check .` → `All checks passed!`
+8. `grep -rnE "^\s*(from|import)\s+learning\.(policy|gates|leak|ladder|loop_state_store|zpd_events)\b" backend --include='*.py' | grep -v "^backend/tests/\|^backend/learning/"` → no output
+9. `git diff --stat main...HEAD` lists only: `backend/learning/{params,ladder,policy,gates,leak,loop_state_store,zpd_events}.py`, `backend/services/events_service.py`, `backend/db/migrations/*_learning_session_loop_state.sql`, `backend/tests/{test_learning_zpd_policy,test_learning_loop_invariants,test_event_capture_seams}.py`, `docs/superpowers/plans/learning-loop/{HANDOFF-06.md,LEDGER.md}`.
+10. `LEDGER.md` has row `06 | zpd-policy | done | …` and `03 | … | verified` and `04 | … | verified` rows.
 
 ## Hand-off
 
-`docs/superpowers/plans/learning-loop/HANDOFF-06.md` per the template; the Verify commands block is fixed above (Task 8). Symbols to list: every public name in `ladder.py`, `policy.py`, `gates.py`, `leak.py`, `loop_state_store.py`, `zpd_events.py`; the column `sessions.loop_state`; the six event types. Constants: the full §Named constants table with `†` and the new-name rows. Deviations, Known gaps, Open questions: as Task 8 lists them.
+`docs/superpowers/plans/learning-loop/HANDOFF-06.md` per the template; the Verify commands block is fixed above (Task 8). Symbols to list: every public name in `ladder.py` (incl. `check_pose`, `deterministic_content`, `ItemLike`, `DeterministicPayload`), `policy.py` (incl. `model_tier`, `context_policy`, `ContextPolicy`, `Tier`, `TurnPhase`, `ContextPhase`, `BudgetLevel`), `gates.py`, `leak.py`, `loop_state_store.py`, `zpd_events.py` (incl. the `tier`/`grader_backend` keywords on `emit_zpd_step`); the column `sessions.loop_state`; the six event types. Constants: the full §Named constants table with `†`, the spec-new and the new-name rows. Deviations, Known gaps, Open questions: as Task 8 lists them.
 
 ## Do not
 
 - Do not call any of this from a route, agent, tool, or `services/chat_stream.py`. Do not mount `routes/learn_loop.py`. Do not touch `agents/`, `routes/`, `services/graph_service.py`, `learning/learner_state.py`, `learning/evidence.py`, `learning/bkt.py`, `learning/fsrs.py`.
-- `policy.py`: no `str` parameter on any public function, no `import re`, no import of `gates` (invariant 4). The pure modules (`ladder`, `policy`, `gates`, `leak`) import only stdlib and `learning.*` (invariant 2). Only `loop_state_store.py` touches `db.connection.table` (invariant 7); no `httpx`, no `supabase` import.
+- `policy.py`: no `str` parameter on any public function, no `import re`, no import of `gates` (invariant 4); `model_tier`/`context_policy` take `Literal`/enum/`bool`/`int` only and never read budgets, `llm_usage`, `model_pref` or config. The pure modules (`ladder`, `policy`, `gates`, `leak`) import only stdlib and `learning.*` (invariant 2): `ladder.py` never imports `learning.checks`, `services/*` or `rag_service` — items are an `ItemLike` Protocol and passages are strings passed in. Only `loop_state_store.py` touches `db.connection.table` (invariant 7); no `httpx`, no `supabase` import.
 - No numeral in loop code other than `0`/`1`/`0.0`/`1.0` and `Rung` member values; every threshold is a `params.NAME`. Never change a PKG-01 value; add names only.
 - Migration: UTC-timestamp prefix, `_learning_` infix, spec §4 DDL verbatim, append-only, never edited after creation. `loop_state` is jsonb and unencrypted because it holds ids/numbers/bools only — never put text in it.
-- Do not add a seventh event, do not put `"zpd.` in quotes anywhere in `events_service.py` other than the six taxonomy entries, do not make `log_event` enforce membership. No `lru_cache`. No LLM anywhere under `backend/learning/` (spec §12).
+- Do not add a seventh event, do not put `"zpd.` in quotes anywhere in `events_service.py` other than the six taxonomy entries, do not make `log_event` enforce membership. Do not add `ai.budget_capped` (PKG-06b) or any `decision.*` (PKG-05b) to the taxonomy. Do not zero or blank `tier`/`grader_backend` when unknown — omit them. Do not wire `services/decisions.judge_leak` or call `ai_budget`. No `lru_cache`. No LLM anywhere under `backend/learning/` (spec §12).
 - Do not skip, xfail, or delete any pre-existing test. Do not hand-edit eval cassettes or baselines.
 - Logscan `ALLOWLIST` in `backend/e2e_oracles/logscan.py` stays `()`.
-- End every commit with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`; end the PR body with the Claude Code attribution line.
+- End every commit with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; end the PR body with the Claude Code attribution line.
 
 ## If you get stuck
 
