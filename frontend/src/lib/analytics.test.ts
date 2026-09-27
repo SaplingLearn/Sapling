@@ -19,6 +19,8 @@ import {
   chooseAnalytics,
   gatedBeforeSend,
   getAnalyticsState,
+  needsAccountRead,
+  resumeAnalytics,
   isAnalyticsConfigured,
   readAnalyticsEnv,
   scrubEvent,
@@ -86,7 +88,10 @@ const event = (name: string) => ({ event: name, uuid: "x", properties: {} }) as 
 const ok = () => Promise.resolve();
 const fail = () => Promise.reject(new Error("500"));
 
-beforeEach(() => setup());
+beforeEach(() => {
+  window.history.replaceState({}, "", "/dashboard"); // an app-shell route
+  setup();
+});
 afterEach(() => {
   setGpc(false);
   vi.unstubAllEnvs();
@@ -137,7 +142,12 @@ describe("build gating", () => {
       capture_exceptions: false,
       mask_all_text: true,
       mask_all_element_attributes: true,
-      autocapture: { capture_copied_text: false },
+      autocapture: false,
+      rageclick: false,
+      capture_dead_clicks: false,
+      enable_heatmaps: false,
+      capture_heatmaps: false,
+      capture_performance: false,
       mask_personal_data_properties: true,
       disable_capture_url_hashes: true,
       advanced_disable_flags: true,
@@ -230,6 +240,82 @@ describe("only signed-in students whose account says false", () => {
   });
 });
 
+describe("app-shell routes only", () => {
+  it("signed in on a public page: posthog-js does not load; entering the shell starts it", async () => {
+    window.history.replaceState({}, "", "/privacy");
+    await signIn("u-1", false);
+    expect(load).not.toHaveBeenCalled();
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+    window.history.replaceState({}, "", "/settings");
+    resumeAnalytics();
+    await __analyticsLoadedForTests();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+  });
+
+  it("the gate reads the LIVE route: leaving the shell drops events, returning resumes", async () => {
+    await signIn("u-1", false);
+    expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
+    for (const path of ["/privacy", "/", "/auth/callback", "/news/x", "/onboarding"]) {
+      window.history.pushState({}, "", path);
+      expect(gatedBeforeSend(event("$pageview")), path).toBeNull();
+    }
+    window.history.pushState({}, "", "/learn");
+    expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
+  });
+
+  it("a pageview after a public page doesn't say where the student had been", async () => {
+    await signIn("u-1", false);
+    const out = gatedBeforeSend({
+      event: "$pageview",
+      uuid: "p",
+      properties: { $prev_pageview_pathname: "/privacy", $prev_pageview_duration: 3, $pathname: "/dashboard" },
+    } as unknown as CaptureResult)!;
+    expect(out.properties).not.toHaveProperty("$prev_pageview_pathname");
+    expect(out.properties).not.toHaveProperty("$prev_pageview_duration");
+    const inShell = gatedBeforeSend({
+      event: "$pageview",
+      uuid: "q",
+      properties: { $prev_pageview_pathname: "/settings" },
+    } as unknown as CaptureResult)!;
+    expect(inShell.properties.$prev_pageview_pathname).toBe("/settings");
+  });
+
+  it("needsAccountRead: once per user per page load", async () => {
+    expect(needsAccountRead("u-1")).toBe(true);
+    await signIn("u-1", false);
+    expect(needsAccountRead("u-1")).toBe(false);
+    expect(needsAccountRead("u-2")).toBe(true);
+    stopAnalytics();
+    expect(needsAccountRead("u-1")).toBe(true);
+  });
+});
+
+describe("a failed posthog-js load", () => {
+  it("shows as not running, and the next entry into the shell retries — once, no loop", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let attempts = 0;
+    ph = fakePosthog();
+    __resetAnalyticsForTests({
+      env: ENV,
+      load: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("chunk blocked");
+        return ph as unknown as PostHog;
+      },
+    });
+    await signIn("u-1", false);
+    expect(getAnalyticsState()).toBe("on_not_running");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(attempts).toBe(1); // no automatic retry loop
+    resumeAnalytics();
+    await __analyticsLoadedForTests();
+    expect(attempts).toBe(2);
+    expect(getAnalyticsState()).toBe("on");
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+  });
+});
+
 describe("stale account reads", () => {
   it("a read that started before a toggle is ignored", async () => {
     await signIn("u-1", false);
@@ -238,6 +324,17 @@ describe("stale account reads", () => {
     applyAccountAnalytics(staleGen, "u-1", false); // …and the old answer lands
     expect(getAnalyticsState()).toBe("off");
     expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+  });
+
+  it("a read that started DURING a toggle's save is ignored too", async () => {
+    await signIn("u-1", false);
+    let finish!: () => void;
+    const done = chooseAnalytics("u-1", false, () => new Promise<void>((r) => (finish = r)));
+    const midGen = beginAccountRead("u-1"); // e.g. a re-render read, mid-save
+    finish();
+    await done;
+    applyAccountAnalytics(midGen, "u-1", false); // lands after the toggle
+    expect(getAnalyticsState()).toBe("off");
   });
 
   it("a read for a user who has since signed out is ignored", async () => {
@@ -262,9 +359,12 @@ describe("Settings choices (chooseAnalytics)", () => {
     expect(save).toHaveBeenCalledWith(true);
   });
 
-  it("a failed opt-OUT save stays off for the page load", async () => {
+  it("a failed opt-OUT save: off for this visit only (off_unsaved), and a retry can save it", async () => {
     await signIn("u-1", false);
     expect(await chooseAnalytics("u-1", false, fail)).toBe("failed");
+    expect(getAnalyticsState()).toBe("off_unsaved");
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+    expect(await chooseAnalytics("u-1", false, ok)).toBe("saved");
     expect(getAnalyticsState()).toBe("off");
   });
 
@@ -281,6 +381,18 @@ describe("Settings choices (chooseAnalytics)", () => {
     await __analyticsLoadedForTests();
     expect(getAnalyticsState()).toBe("on");
     expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+  });
+
+  it("opt-IN whose save succeeds after the user changed: reported saved, NOT applied to the new user", async () => {
+    await signIn("u-1", true);
+    let finish!: () => void;
+    const done = chooseAnalytics("u-1", true, () => new Promise<void>((r) => (finish = r)));
+    stopAnalytics(); // u-1 signs out…
+    await signIn("u-2", true); // …u-2 signs in, opted out
+    finish();
+    expect(await done).toBe("saved");
+    expect(getAnalyticsState()).toBe("off"); // u-2's own answer stands
+    expect(load).not.toHaveBeenCalled();
   });
 
   it("a failed opt-IN save changes nothing", async () => {
@@ -317,12 +429,19 @@ describe("Settings choices (chooseAnalytics)", () => {
 });
 
 describe("before_send URL scrubbing", () => {
-  it("strips query strings and fragments from absolute URLs only", () => {
+  it("strips query strings from relative URLs too (defence in depth)", () => {
+    expect(stripUrlQuery("/auth/callback?auth_token=secret")).toBe("/auth/callback");
+    expect(stripUrlQuery("//cdn.example/x?y=1")).toBe("//cdn.example/x");
+    expect(stripUrlQuery("/learn#topic")).toBe("/learn");
+    expect(stripUrlQuery("plain text?")).toBe("plain text?");
+  });
+
+  it("strips query strings and fragments from absolute and relative URLs", () => {
     expect(stripUrlQuery("https://saplinglearn.com/auth/callback?user_id=u&auth_token=secret")).toBe(
       "https://saplinglearn.com/auth/callback",
     );
     expect(stripUrlQuery("https://saplinglearn.com/learn#topic")).toBe("https://saplinglearn.com/learn");
-    expect(stripUrlQuery("/relative?x=1")).toBe("/relative?x=1");
+    expect(stripUrlQuery("/relative?x=1")).toBe("/relative");
     expect(stripUrlQuery(42)).toBe(42);
   });
 

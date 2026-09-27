@@ -170,7 +170,7 @@ export function Settings() {
         toast.error(
           enabled
             ? "Couldn't turn product analytics back on. Please try again."
-            : "Couldn't save that to your account. Analytics stays off for the rest of this visit.",
+            : "Couldn't save that to your account. Analytics is off for this visit only — retry from Settings → Data.",
         );
       }
     } finally {
@@ -636,6 +636,7 @@ export function Settings() {
 
               <AnalyticsPreference
                 onChange={(enabled) => void setAnalyticsPreference(enabled)}
+                onRetry={() => void setAnalyticsPreference(false)}
                 saving={analyticsSaving}
               />
 
@@ -722,17 +723,20 @@ export function Settings() {
 
 /**
  * Product-analytics opt-out (PostHog). The state comes from the signed-in
- * student's account (`analytics_opt_out`, read by the UserProvider on every
- * page load; src/lib/analytics.ts). The switch is disabled until that answer
- * has arrived, while a save is in flight, under Do Not Track / GPC, and in a
- * build that runs no analytics — so it never implies a choice it cannot
- * honour.
+ * student's account (`analytics_opt_out`, read by the UserProvider on the
+ * first app page of each page load; src/lib/analytics.ts). The switch is
+ * disabled until that answer has arrived, while a save is in flight, under
+ * Do Not Track / GPC, and in a build that runs no analytics — so it never
+ * implies a choice it cannot honour. After a failed opt-out save it shows
+ * "off for this visit only" with a retry, never "saved".
  */
 function AnalyticsPreference({
   onChange,
+  onRetry,
   saving,
 }: {
   onChange: (enabled: boolean) => void;
+  onRetry: () => void;
   saving: boolean;
 }) {
   const state = React.useSyncExternalStore(
@@ -740,8 +744,8 @@ function AnalyticsPreference({
     getAnalyticsState,
     getServerAnalyticsState,
   );
-  const on = state === "on";
-  const disabled = state !== "on" && state !== "off";
+  const on = state === "on" || state === "on_not_running";
+  const resolved = on || state === "off" || state === "off_unsaved";
   const note =
     state === "unavailable"
       ? "Analytics isn't running in this version of Sapling, so nothing is being collected."
@@ -749,7 +753,11 @@ function AnalyticsPreference({
         ? "Your browser's Do Not Track or Global Privacy Control setting is on, so nothing is collected."
         : state === "unknown"
           ? "Nothing is collected until your saved setting has loaded."
-          : "Saved to your account, so it applies wherever you're signed in. Nothing about it is stored in your browser.";
+          : state === "off_unsaved"
+            ? "Off for this visit only — we couldn't save it to your account, so it will be back on next time."
+            : state === "on_not_running"
+              ? "On in your account, but analytics couldn't start in this browser (a blocker may have stopped it), so nothing is being collected."
+              : "Saved to your account, so it applies wherever you're signed in. Nothing about it is stored in your browser.";
 
   return (
     <div className="card" data-testid="settings-analytics" style={{ padding: "var(--pad-lg)", marginTop: 16 }}>
@@ -759,18 +767,33 @@ function AnalyticsPreference({
             Product analytics
           </div>
           <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
-            Share which pages you visit and which buttons you click, tied to a pseudonymous ID, so we
-            can see what to improve. Never your name, email, or the content of your notes, documents
-            or messages. <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
+            Share which pages of the app you visit, tied to a pseudonymous ID, so we can see what to
+            improve. Never your name, email, what you click or type, or the content of your notes,
+            documents or messages. <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">
             {note}
+            {state === "off_unsaved" && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  data-testid="settings-analytics-retry"
+                  disabled={saving}
+                  onClick={onRetry}
+                  style={{ marginLeft: 4 }}
+                >
+                  Retry saving
+                </button>
+              </>
+            )}
           </div>
         </div>
         <Toggle
           on={on}
           onChange={onChange}
-          disabled={disabled || saving}
+          disabled={!resolved || saving}
           ariaLabelledBy="settings-analytics-label"
           testId="settings-analytics-toggle"
         />

@@ -522,7 +522,8 @@ opt-out renders inactive, and asserts the E2E build sends no analytics).
 | `settings-tab-${tab}` | the tab rail buttons — `tab` is the fixed tab key: `profile` / `cosmetics` / `preferences` / `notifications` / `data` |
 | `settings-analytics` | the Data tab's "Product analytics" card root |
 | `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — PATCHes `analytics_opt_out` to the account (opt-out stops capture first, opt-in saves first); **disabled** when analytics is not running in this build (no key, local mode, the E2E/test build), under Do Not Track / GPC, until the account answer has loaded, and while a save is in flight |
-| `settings-analytics-note` | the status line under it ("isn't running in this version…" / DNT / "…until your saved setting has loaded" / "Saved to your account…") |
+| `settings-analytics-note` | the status line under it ("isn't running in this version…" / DNT / "…until your saved setting has loaded" / "Off for this visit only…" / "…couldn't start in this browser…" / "Saved to your account…") |
+| `settings-analytics-retry` | "Retry saving" inside the note, shown only after an opt-out whose account save failed (off for this visit only) — re-sends `analytics_opt_out: true` |
 | `settings-toggle-${key}` | a Notifications-tab switch (the same `Toggle`) — `key` is the `user_settings` field it PATCHes: `notification_email` / `notification_push` / `notification_in_app` / `activity_status_visible` |
 
 ### `adminfb`

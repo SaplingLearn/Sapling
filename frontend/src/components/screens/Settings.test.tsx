@@ -279,13 +279,39 @@ describe("Settings → Data: product analytics opt-out", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
-  it("a failed opt-OUT save stays off for this visit and says so", async () => {
-    vi.mocked(updateSettings).mockRejectedValue(new Error("500"));
+  it("a failed opt-OUT save: off for this visit only, never 'Saved', with a retry that saves it", async () => {
+    vi.mocked(updateSettings).mockRejectedValueOnce(new Error("500"));
     startAnalytics(false);
     const toggle = await openDataTab();
     fireEvent.click(toggle);
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/stays off for the rest of this visit/)));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/off for this visit only/)));
     expect(toggle).toHaveAttribute("aria-checked", "false");
+    const note = screen.getByTestId("settings-analytics-note");
+    expect(note).toHaveTextContent(/Off for this visit only/);
+    expect(note).not.toHaveTextContent(/Saved to your account/);
+    fireEvent.click(screen.getByTestId("settings-analytics-retry"));
+    await waitFor(() => expect(note).toHaveTextContent(/Saved to your account/));
+    expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: true });
+    expect(screen.queryByTestId("settings-analytics-retry")).toBeNull();
+  });
+
+  it("says so when posthog-js could not start in this browser", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    window.history.replaceState({}, "", "/settings");
+    __resetAnalyticsForTests({
+      env: { NEXT_PUBLIC_POSTHOG_KEY: "phc_test" },
+      load: async () => {
+        throw new Error("chunk blocked");
+      },
+    });
+    await act(async () => {
+      applyAccountAnalytics(beginAccountRead("u1"), "u1", false);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const toggle = await openDataTab();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/couldn't start in this browser/);
+    window.history.replaceState({}, "", "/");
   });
 
   it("a failed opt-IN save changes nothing and says it failed", async () => {

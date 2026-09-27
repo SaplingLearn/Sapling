@@ -17,7 +17,12 @@ vi.mock('@/lib/api', () => ({
   fetchSettings: (...a: unknown[]) => fetchSettings(...a),
 }));
 
+let pathname = '/dashboard';
+vi.mock('next/navigation', () => ({ usePathname: () => pathname }));
+
 const beginAccountRead = vi.fn<(userId: string) => number>(() => 7);
+const needsAccountRead = vi.fn<(userId: string) => boolean>(() => true);
+const resumeAnalytics = vi.fn();
 const applyAccountAnalytics = vi.fn();
 const stopAnalytics = vi.fn();
 const isAnalyticsConfigured = vi.fn(() => true);
@@ -25,6 +30,8 @@ vi.mock('@/lib/analytics', () => ({
   beginAccountRead: (userId: string) => beginAccountRead(userId),
   applyAccountAnalytics: (...a: unknown[]) => applyAccountAnalytics(...a),
   stopAnalytics: () => stopAnalytics(),
+  needsAccountRead: (userId: string) => needsAccountRead(userId),
+  resumeAnalytics: () => resumeAnalytics(),
   isAnalyticsConfigured: () => isAnalyticsConfigured(),
 }));
 
@@ -43,7 +50,9 @@ function Probe() {
 describe('UserProvider analytics', () => {
   beforeEach(() => {
     localStorage.clear();
-    for (const m of [beginAccountRead, applyAccountAnalytics, stopAnalytics]) m.mockClear();
+    for (const m of [beginAccountRead, applyAccountAnalytics, stopAnalytics, resumeAnalytics]) m.mockClear();
+    needsAccountRead.mockReset().mockReturnValue(true);
+    pathname = '/dashboard';
     isAnalyticsConfigured.mockReset().mockReturnValue(true);
     fetchSettings.mockReset().mockResolvedValue({ analytics_opt_out: false });
     window.history.replaceState({}, '', '/dashboard');
@@ -132,5 +141,39 @@ describe('UserProvider analytics', () => {
     fireEvent.click(screen.getByText('sign out'));
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('out'));
     expect(stopAnalytics).toHaveBeenCalled();
+  });
+
+  for (const path of ['/', '/privacy', '/auth/callback', '/onboarding']) {
+    it(`signed in on ${path} (outside the app shell): no settings read at all`, async () => {
+      pathname = path;
+      signedIn();
+      mount();
+      await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('uuid-123'));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetchSettings).not.toHaveBeenCalled();
+      expect(beginAccountRead).not.toHaveBeenCalled();
+      expect(stopAnalytics).not.toHaveBeenCalled();
+    });
+  }
+
+  it('shell → public → shell: one read; re-entering resumes instead of re-reading', async () => {
+    signedIn();
+    const view = mount();
+    await waitFor(() => expect(applyAccountAnalytics).toHaveBeenCalledTimes(1));
+    needsAccountRead.mockReturnValue(false); // the answer is known now
+    pathname = '/privacy';
+    view.rerender(
+      <UserProvider>
+        <Probe />
+      </UserProvider>,
+    );
+    pathname = '/settings';
+    view.rerender(
+      <UserProvider>
+        <Probe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(resumeAnalytics).toHaveBeenCalled());
+    expect(fetchSettings).toHaveBeenCalledTimes(1);
   });
 });
