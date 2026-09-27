@@ -497,6 +497,8 @@ def test_loop_state_from_json_rejects_malformed_documents(bad):
 
     with pytest.raises(ValueError):
         LoopState.from_json(bad)
+    recovered = LoopState.recover(bad)  # the store's fallback never raises
+    assert recovered.steps == {} and LoopState.from_json(recovered.to_json()) == recovered
 
 
 # ── policy: tutor tier routing (spec §3.5 LOOP_MODEL_TIER, A15) ────────────────
@@ -1306,6 +1308,42 @@ def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
             lambda name, g=garbage: _sessions_table(select_rows=[{"loop_state": g}]),
         )
         assert loop_state_store.load_loop_state("s1") == LoopState()
+
+
+def test_a_malformed_pkg06_field_never_erases_other_packages_keys(monkeypatch, caplog):
+    """A malformed PKG-06 field starts fresh on its own (a bad step is dropped;
+    a bad current / checks_since_rating takes its default), but every key PKG-06
+    does not own survives the load, so the next save cannot erase the session
+    request counters (§3.5) or this session's A23 "revealed" siblings."""
+    from learning import loop_state_store
+
+    stored = {
+        "v": 1,
+        "current": 7,
+        "checks_since_rating": 4,
+        "steps": {
+            "q": {"first_shown_at": 1.0, "attempts": 1.5, "check_item_id": "ci-1"},
+            "r" * 64: {"first_shown_at": 2.0, "rung": 3, "node_id": "node-1"},
+        },
+        "revealed": ["b" * 64],
+        "tutor_requests": 39,
+        "deep_requests": 6,
+        "plan": {"approved": ["node-1"], "cursor": 0},
+    }
+    t = _sessions_table(select_rows=[{"loop_state": stored}], update_rows=[{"id": "s1"}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: t)
+    with caplog.at_level(logging.WARNING):
+        state = loop_state_store.load_loop_state("s1")
+    assert any("malformed" in r.getMessage() for r in caplog.records)
+    assert state.current is None and state.checks_since_rating == 4
+    assert list(state.steps) == ["r" * 64] and int(state.steps["r" * 64].rung) == 3
+    assert state.steps["r" * 64].extra == {"node_id": "node-1"}
+    assert loop_state_store.save_loop_state("s1", state) is True
+    written = t.update.call_args.args[0]["loop_state"]
+    assert written["revealed"] == ["b" * 64]
+    assert (written["tutor_requests"], written["deep_requests"]) == (39, 6)
+    assert written["plan"] == {"approved": ["node-1"], "cursor": 0}
+    assert set(written["steps"]) == {"r" * 64} and written["checks_since_rating"] == 4
 
 
 def test_load_loop_state_propagates_a_read_failure(monkeypatch):

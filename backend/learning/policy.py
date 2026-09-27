@@ -427,5 +427,38 @@ class LoopState:
             steps={str(qh): _step_from_json(str(qh), raw) for qh, raw in steps_raw.items()},
             current=current,
             checks_since_rating=_count(data.get("checks_since_rating", 0), "checks_since_rating"),
-            extra={k: copy.deepcopy(v) for k, v in data.items() if k not in _TOP_KEYS},
+            extra=_foreign_keys(data),
         )
+
+    @classmethod
+    def recover(cls, data: object) -> LoopState:
+        """The store's fallback when from_json rejects a stored document. Each
+        malformed PKG-06 unit starts fresh on its own (a step that fails
+        validation is dropped; a bad `current` / `checks_since_rating` takes
+        its default) and every key PKG-06 does not own survives in `extra`, so
+        the next save never erases a later package's state ("revealed", "plan",
+        the session request counters). A non-object document keeps nothing."""
+        if not isinstance(data, dict):
+            return cls()
+        steps: dict[str, StepState] = {}
+        raw_steps = data.get("steps")
+        for qh, raw in raw_steps.items() if isinstance(raw_steps, dict) else ():
+            try:
+                steps[str(qh)] = _step_from_json(str(qh), raw)
+            except (ValueError, TypeError):
+                continue
+        current = data.get("current")
+        try:
+            checks = _count(data.get("checks_since_rating", 0), "checks_since_rating")
+        except ValueError:
+            checks = 0
+        return cls(
+            steps=steps,
+            current=current if isinstance(current, str) else None,
+            checks_since_rating=checks,
+            extra=_foreign_keys(data),
+        )
+
+
+def _foreign_keys(data: dict[str, Any]) -> dict[str, Any]:
+    return {k: copy.deepcopy(v) for k, v in data.items() if k not in _TOP_KEYS}

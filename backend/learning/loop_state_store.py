@@ -7,12 +7,19 @@ never inserts or upserts a sessions row (spec §9, §13 A11). The row is
 materialised by the legacy `_consume_pending` insert (PKG-07) or by the A11
 insert-if-missing helper (PKG-09).
 
-Fails soft on the document, never on the database: a missing row or a
-malformed stored document is a fresh `LoopState()` (malformed logs WARNING),
-but a failed read or write propagates — answering a read error with a fresh
-state would let the next save overwrite the real one. Reads and writes key on
-the session id alone; the caller has already checked that the session is the
-requesting user's.
+Fails soft on the document, never on the database: a missing row is a fresh
+`LoopState()`, and a malformed stored document logs WARNING and loads through
+`LoopState.recover` (each malformed PKG-06 field starts fresh, every other
+package's key survives, so the next save cannot erase them). A failed read or
+write propagates — answering a read error with a fresh state would let the
+next save overwrite the real one; the caller (PKG-07) handles it. Reads and
+writes key on the session id alone; the caller has already checked that the
+session is the requesting user's.
+
+A save replaces the whole document (last writer wins): two overlapping
+requests on one session that each load, change and save lose one writer's
+changes. Callers load, change and save within one request, as late as they
+can, and never save a state loaded before a long stream without re-loading.
 """
 
 from __future__ import annotations
@@ -29,13 +36,17 @@ def load_loop_state(session_id: str) -> LoopState:
     rows = table("sessions").select("loop_state", filters={"id": f"eq.{session_id}"}, limit=1)
     if not rows:
         return LoopState()
+    doc = rows[0].get("loop_state") or {}
     try:
-        return LoopState.from_json(rows[0].get("loop_state") or {})
+        return LoopState.from_json(doc)
     except (ValueError, TypeError, KeyError) as exc:
         logger.warning(
-            "load_loop_state: malformed loop_state for %s (%s); starting fresh", session_id, exc
+            "load_loop_state: malformed loop_state for %s (%s); its malformed PKG-06 "
+            "fields start fresh, every other key is kept",
+            session_id,
+            exc,
         )
-        return LoopState()
+        return LoopState.recover(doc)
 
 
 def save_loop_state(session_id: str, state: LoopState) -> bool:
