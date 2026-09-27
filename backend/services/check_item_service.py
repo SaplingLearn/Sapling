@@ -521,7 +521,6 @@ def generate_for_concepts(
             continue
         todo.append((key, names_by_key[key], ranked))
 
-    allowed = {c["id"] for c in chunks if c.get("id")}
     deps = SaplingDeps(
         user_id=user_id or "",
         course_id=course_id,
@@ -535,6 +534,13 @@ def generate_for_concepts(
         names = [name for _, name, _ in batch]
         passages: list[dict] = []
         seen: set = set()
+        # A23 provenance is the CALL's, not one concept's: the model sees the
+        # union of the batch's passages, so any item may be drafted from (and
+        # cite) any of them. Every concept of the call records every document
+        # it showed, and citations are kept only for passages it showed — so
+        # withdrawing any of those documents reaches every item of the call.
+        shown_docs: set[str] = set()
+        allowed: set[str] = set()
         for _, _, ranked in batch:
             for chunk in ranked:
                 pkey = _passage_key(chunk)
@@ -542,6 +548,11 @@ def generate_for_concepts(
                     continue
                 seen.add(pkey)
                 passages.append({"id": chunk.get("id"), "text": chunk.get("chunk_text") or ""})
+                if chunk.get("doc_id"):
+                    shown_docs.add(chunk["doc_id"])
+                if chunk.get("id"):
+                    allowed.add(chunk["id"])
+        source_docs = sorted(shown_docs)
 
         out = run_agent_sync(draft_items(names, passages, deps=deps, flex=flex))
         attempted += len(batch)
@@ -561,8 +572,7 @@ def generate_for_concepts(
                     draft.concept,
                     names,
                 )
-        for key, _, ranked in batch:
-            source_docs = sorted({c["doc_id"] for c in ranked if c.get("doc_id")})
+        for key, _, _ in batch:
             try:
                 created += len(
                     create_items(

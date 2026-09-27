@@ -1231,15 +1231,22 @@ class TestGenerate:
         assert batches == [(["Learning Rate", "Momentum"], ["c1", "c9"])]
         assert out == (4, 2, 0, 0, 1)
 
-    def test_each_concept_records_only_the_documents_of_its_own_passages(self, monkeypatch):
+    def test_every_concept_records_every_document_its_call_showed(self, monkeypatch):
+        """A23: source_document_ids records EVERY document whose passages
+        drafted an item. One call shows the model the union of its batch's
+        passages, so an item may use (and cite) another concept's passage —
+        here the Momentum drafts cite doc-1's c1. Withdrawing either document
+        must reach every item of that call."""
         import config
         from services import check_item_service as svc
 
         monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
         factory, mocks = _cached_tables({"check_items": []})
+        shown = []
 
         async def fake_draft(concepts, passages, *, deps, flex):
-            return _drafts_for(*concepts)
+            shown.append([p["id"] for p in passages])
+            return _drafts_for(*concepts)  # every draft cites c1
 
         other = {
             "id": "c9",
@@ -1247,6 +1254,7 @@ class TestGenerate:
             "chunk_text": "momentum and friction",
             "doc_id": "doc-2",
         }
+        doc_of = {"c1": "doc-1", "c9": "doc-2"}
         t, d, _ = _gen_patches(factory, fake_draft)
         with t, d:
             svc.generate_for_concepts(
@@ -1257,9 +1265,49 @@ class TestGenerate:
                 flex=True,
                 min_chunk_score=1,
             )
+        assert shown == [["c1", "c9"]]
         stored = [r for call in mocks["check_items"].upsert.call_args_list for r in call[0][0]]
-        by_key = {r["concept_key"]: r["source_document_ids"] for r in stored}
-        assert by_key == {"learning rate": ["doc-1"], "momentum": ["doc-2"]}
+        assert {r["concept_key"] for r in stored} == {"learning rate", "momentum"}
+        for row in stored:
+            assert row["source_document_ids"] == ["doc-1", "doc-2"]
+            assert {doc_of[c] for c in row["source_chunk_ids"]} <= set(row["source_document_ids"])
+        for withdrawn in ("doc-1", "doc-2"):
+            survivors = [r for r in stored if withdrawn not in r["source_document_ids"]]
+            assert survivors == [], f"withdrawing {withdrawn} must retire every item of the call"
+
+    def test_a_citation_of_a_passage_the_call_never_showed_is_dropped(self, monkeypatch):
+        """source_chunk_ids name only passages the call showed, so every cited
+        chunk's document is in source_document_ids (A23 withdrawal)."""
+        import config
+        from agents.check_items import CheckItemsOutput
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"check_items": []})
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            assert [p["id"] for p in passages] == ["c1"]
+            return CheckItemsOutput(items=[_draft(chunk_ids=["c5", "c1"])])
+
+        unshown = {
+            "id": "c5",
+            "chunk_index": 2,
+            "chunk_text": "photosynthesis in leaves",
+            "doc_id": "doc-3",
+        }
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d:
+            svc.generate_for_concepts(
+                user_id=None,
+                course_id="course-1",
+                concept_names=["Learning Rate"],
+                chunks=[_CHUNK, unshown],
+                flex=True,
+                min_chunk_score=1,
+            )
+        row = mocks["check_items"].upsert.call_args[0][0][0]
+        assert row["source_chunk_ids"] == ["c1"]
+        assert row["source_document_ids"] == ["doc-1"]
 
     def test_generate_for_document_falls_back_to_extracted_text(self, monkeypatch):
         import config
