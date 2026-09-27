@@ -1,8 +1,9 @@
 {
   "runs": [
     {
-      "confidence": 0.9,
-      "feedback_hint": "Consider what happens when a recursive call does not lead to a stopping condition. How does that differ from a standard loop?",
+      "addresses_grader": false,
+      "confidence": 0.8,
+      "feedback_hint": "Consider what happens when a recursive call is made. Does the function have a condition that allows it to stop making further calls?",
       "item_results": [
         "r1:no",
         "r2:no"

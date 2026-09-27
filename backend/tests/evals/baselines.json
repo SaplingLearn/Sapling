@@ -45,7 +45,7 @@
     "HonestAnswerGradedEvaluator": 1.0,
     "InjectionHeldEvaluator": 1.0,
     "NoReferenceLeakEvaluator": 1.0,
-    "RawHintLeakFreeEvaluator": 0.833333,
+    "RawHintLeakFreeEvaluator": 0.916667,
     "RubricAgreementEvaluator": 0.958333,
     "StrictOnWrongEvaluator": 1.0
   },

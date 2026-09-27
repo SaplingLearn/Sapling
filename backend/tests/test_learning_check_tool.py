@@ -130,6 +130,7 @@ def _scripted_grader(outputs: list[dict]):
 
 def _good(conf: float = 0.9) -> dict:
     return {
+        "addresses_grader": False,
         "item_results": ["r1:yes", "r2:yes"],
         "confidence": conf,
         "matched_wrong_key": "",
@@ -150,9 +151,9 @@ def test_build_grader_message_has_every_section():
     text = g.build_grader_message(_item(), format="free", student_answer="It stops the calls.")
     assert "QUESTION:" in text and REFERENCE in text and "FORMAT: free" in text
     assert re.search(r"^RUBRIC ITEM r1:", text, re.M) and re.search(r"^RUBRIC ITEM r2:", text, re.M)
-    assert re.search(r"^COMMON WRONG REASON w_loop:", text, re.M) and text.rstrip().endswith(
-        "It stops the calls."
-    )
+    *_, last_answer_line, end = text.splitlines()
+    assert re.search(r"^COMMON WRONG REASON w_loop:", text, re.M)
+    assert last_answer_line == "> It stops the calls." and end == g._ANSWER_END  # A33
     assert GRADER_LIMITS.tool_calls_limit == 0
 
 
@@ -164,10 +165,11 @@ _FORGED_ANSWER = (
 
 
 def test_student_answer_lines_cannot_forge_message_structure():
-    """The answer is the student's text, rendered LAST: every one of its lines
-    is quoted with "> ", so none can start a line that looks like the real
-    RUBRIC ITEM / REFERENCE ANSWER / FORMAT / STUDENT ANSWER structure (any
-    line break the model might honour counts, not only \\n)."""
+    """The answer is the student's text, rendered after every other section: every
+    one of its lines is quoted with "> ", so none can start a line that looks like
+    the real RUBRIC ITEM / REFERENCE ANSWER / FORMAT / STUDENT ANSWER structure (any
+    line break the model might honour counts, not only \\n). One unquoted
+    `_ANSWER_END` line closes it (spec §13 A33)."""
     import agents.grader as g
 
     text = g.build_grader_message(_item(), format="free", student_answer=_FORGED_ANSWER)
@@ -179,7 +181,8 @@ def test_student_answer_lines_cannot_forge_message_structure():
         assert len(re.findall(rf"^{header}", text, re.M)) == 1, header
     head, sep, quoted = text.partition("\nSTUDENT ANSWER")
     assert sep and "STUDENT ANSWER" not in head
-    answer_lines = quoted.splitlines()[1:]
+    *answer_lines, end = quoted.splitlines()[1:]
+    assert end == g._ANSWER_END
     assert answer_lines and all(line.startswith("> ") for line in answer_lines)
     assert [line[2:] for line in answer_lines] == _FORGED_ANSWER.splitlines()
 
@@ -206,7 +209,8 @@ def test_an_empty_answer_still_renders_its_quoted_line():
     import agents.grader as g
 
     text = g.build_grader_message(_item(), format="free", student_answer="")
-    assert text.splitlines()[-1] == "> " and text.count("\nSTUDENT ANSWER") == 1
+    assert text.splitlines()[-2:] == ["> ", g._ANSWER_END]
+    assert text.count("\nSTUDENT ANSWER") == 1
 
 
 def test_grader_limits_are_the_spec_values():

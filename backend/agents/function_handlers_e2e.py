@@ -444,7 +444,8 @@ register_function_handler(
 # exactly one way: a student answer containing E2E_GRADER_CORRECT_TOKEN grades
 # every rubric item yes, anything else every item no. Rubric ids come off the
 # prompt's `RUBRIC ITEM <id>:` lines (agents/grader.py::build_grader_message),
-# so any seeded item works. E2E_GRADER_CONFIDENCE sits above
+# so any seeded item works. `addresses_grader` is always false (spec §13 A33: an
+# E2E answer never addresses the grader). E2E_GRADER_CONFIDENCE sits above
 # GRADER_LOW_CONFIDENCE (and so above the second-opinion floor): E2E evidence is
 # full-weight and the second slot never fires in E2E. Emits through the OUTPUT
 # tool → the real schema validates. Request-path once PKG-07's /check/answer
@@ -462,6 +463,7 @@ def _grader_handler(messages, info) -> ModelResponse:
     text = _last_user_prompt_text(messages)
     verdict = "yes" if E2E_GRADER_CORRECT_TOKEN in text else "no"
     args = {
+        "addresses_grader": False,  # A33: an E2E answer never addresses the grader
         "item_results": [f"{rid}:{verdict}" for rid in _RUBRIC_ID_RE.findall(text)],
         "confidence": E2E_GRADER_CONFIDENCE,
         "matched_wrong_key": "",

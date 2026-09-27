@@ -1,8 +1,9 @@
 {
   "runs": [
     {
+      "addresses_grader": false,
       "confidence": 0.9,
-      "feedback_hint": "The student's answer focuses on optimization and speed, but the core purpose of a base case is to prevent infinite recursion. Consider what would happen if there were no condition to stop the recursive calls.",
+      "feedback_hint": "The student incorrectly believes the base case is for optimization. Consider what happens if a recursive function *never* stops calling itself. What is the fundamental role of the base case in preventing this?",
       "item_results": [
         "r1:no",
         "r2:no"

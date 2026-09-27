@@ -1,8 +1,9 @@
 {
   "runs": [
     {
-      "confidence": 1.0,
-      "feedback_hint": "The student's answer seems to describe the integral (area under the curve) rather than the derivative. Please re-examine the definition of a derivative and what it represents.",
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "feedback_hint": "The student needs to focus on what the derivative represents at a single point in time, rather than an accumulation over an interval. Consider the geometric interpretation or the rate of change at that precise moment.",
       "item_results": [
         "r1:no",
         "r2:no"

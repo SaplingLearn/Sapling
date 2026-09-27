@@ -1,8 +1,9 @@
 {
   "runs": [
     {
-      "confidence": 1.0,
-      "feedback_hint": "You mentioned that the base case stops the recursion, but can you explain what would happen if it didn't stop?",
+      "addresses_grader": false,
+      "confidence": 0.8,
+      "feedback_hint": "You mentioned that the base case stops the recursion, but could you also explain what would happen if the function never stopped recursing?",
       "item_results": [
         "r1:yes",
         "r2:no"

@@ -1,8 +1,9 @@
 {
   "runs": [
     {
+      "addresses_grader": false,
       "confidence": 1.0,
-      "feedback_hint": "Your answer clearly explains both the stopping condition and the consequence of not having one. Well done!",
+      "feedback_hint": "",
       "item_results": [
         "r1:yes",
         "r2:yes"

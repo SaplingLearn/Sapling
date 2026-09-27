@@ -772,6 +772,7 @@ def test_inv_30_answers_addressed_to_the_grader_are_never_graded(monkeypatch):
     def _all_yes(messages, info):
         calls.append(1)
         args = {
+            "addresses_grader": False,
             "item_results": ["r1:yes", "r2:yes"],
             "confidence": 1.0,
             "matched_wrong_key": "",

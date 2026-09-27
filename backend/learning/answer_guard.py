@@ -69,7 +69,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-Refusal = Literal["grader_directive", "role_marker", "verdict_tokens", "verdict_echo"]
+# The screen's three, the verdict-echo belt, and the grader's own report (A33).
+Refusal = Literal[
+    "grader_directive", "role_marker", "verdict_tokens", "verdict_echo", "addresses_grader"
+]
 REFUSALS: tuple[str, ...] = get_args(Refusal)
 
 #: What neutralise() puts where a verdict token was.
