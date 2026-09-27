@@ -280,6 +280,19 @@ class TestAnswerTokens:
             True,
         ]
 
+    def test_every_token_of_a_superscript_run_spans_the_whole_run(self):
+        """A superscript run reads as "^" plus its characters, and the "^"
+        belongs to the run, not to one character of it: a stripper that masks
+        part of a run must mask all of it, or the rest would start a new run
+        and read as a new "^" (PKG-06's leak stripper widens to these spans)."""
+        from learning.checks import answer_tokens
+
+        text = "x\u207b\u00b9 + 10\u00b2\u00b3"
+        toks = answer_tokens(text)
+        assert [t.value for t in toks] == ["x", "^", "-", "1", "+", "10", "^", "23"]
+        assert {text[t.start : t.end] for t in toks[1:4]} == {"\u207b\u00b9"}
+        assert {text[t.start : t.end] for t in toks[6:]} == {"\u00b2\u00b3"}
+
     def test_answer_in_is_whole_token_run_containment(self):
         from learning.checks import answer_in
 

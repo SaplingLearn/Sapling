@@ -225,26 +225,26 @@ def _fold(ch: str) -> str:
 
 
 def _normalised(text: str) -> tuple[str, list[tuple[int, int]]]:
-    """`text` rewritten as above, with the original span of each character."""
+    """`text` rewritten as above, with the original span of each character. A
+    superscript run is one unit: every character it becomes (its "^" too)
+    spans the whole run, so a stripper never masks part of it (the rest would
+    start a new run and read as a new "^")."""
     out: list[str] = []
     spans: list[tuple[int, int]] = []
-    i, in_superscript = 0, False
+    i = 0
     while i < len(text):
-        ch = text[i]
-        step = 1
-        if ch in _SUPERSCRIPTS:
-            piece = ch.translate(_FROM_SUPERSCRIPT)
-            piece = piece if in_superscript else _EXPONENT + piece
-            in_superscript = True
+        end = i
+        while end < len(text) and text[end] in _SUPERSCRIPTS:
+            end += 1
+        if end > i:
+            piece = _EXPONENT + text[i:end].translate(_FROM_SUPERSCRIPT)
+        elif text.startswith(_POWER, i):
+            piece, end = _EXPONENT, i + len(_POWER)
         else:
-            in_superscript = False
-            if text.startswith(_POWER, i):
-                piece, step = _EXPONENT, len(_POWER)
-            else:
-                piece = _fold(ch)
+            piece, end = _fold(text[i]), i + 1
         out.append(piece)
-        spans.extend([(i, i + step)] * len(piece))
-        i += step
+        spans.extend([(i, end)] * len(piece))
+        i = end
     return "".join(out), spans
 
 
