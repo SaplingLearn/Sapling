@@ -1,0 +1,4 @@
+{
+  "text": "To check your understanding of limits, try this problem:\n\nWhat is the limit of the function $f(x) = (x^2 - 1) / (x - 1)$ as $x$ approaches 1?\n\nKey idea: Evaluating limits often involves simplifying the function first.\n\nCan you simplify the function to make the limit easier to evaluate?",
+  "tool_calls": []
+}

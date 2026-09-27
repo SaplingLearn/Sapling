@@ -1,0 +1,4 @@
+{
+  "text": "Key idea: Limits\n\nWhat is the limit of the function $f(x) = \\\\frac{x^2 - 4}{x - 2}$ as $x$ approaches 2?",
+  "tool_calls": []
+}

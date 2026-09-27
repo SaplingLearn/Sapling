@@ -1,0 +1,4 @@
+{
+  "text": "Of course. Let's find the derivative of $f(x) = 4x^3 - x^2 + 5$.\n\nKey idea: The derivative of a polynomial is found by applying the power rule to each term individually.\n\nWhat's the first step to differentiate this function?\n\nYour move.",
+  "tool_calls": []
+}

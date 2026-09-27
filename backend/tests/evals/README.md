@@ -76,3 +76,5 @@ both lower than the first recording; HANDOFF-04/HANDOFF-06).
 Supabase. Its cassettes also freeze the model's *tool calls*, which the
 graph-grounding evaluators (GraphToolUsed / MasteryUpdateEmitted /
 GroundedConcept) score in replay.
+
+`loop_tutor` (PKG-07) runs the same 8 cases once per tier slot (`loop_tutor_lite`, `loop_tutor`, `loop_tutor_deep`), each with its own cassettes and baselines block; `agents/loop_tutor.LOOP_ROUTABLE_TIERS` lists the slots that pass every evaluator, and only those are routed to. The first recording (PKG-07, 24 cassettes) passes no slot on every evaluator — see HANDOFF-07 (Known gaps, Open questions) for the per-case failures and the owner decision it waits on.

@@ -1,0 +1,4 @@
+{
+  "text": "Key idea: Recursion relies on a \"base case\" to stop.\n\nRecursion is a method where the solution to a problem depends on solutions to smaller instances of the same problem. Think of it like a set of Russian nesting dolls; each doll is the same, but smaller, until you reach the tiniest doll, which is the \"base case\" that stops the nesting. If there's no smallest doll, you'd be nesting forever!\n\nWhat do you think would happen if a recursive process didn't have a base case?",
+  "tool_calls": []
+}

@@ -1,0 +1,4 @@
+{
+  "text": "Here is a problem to test your understanding of limits.\n\n$$ \\lim_{x \\to 2} \\frac{x^2 - 4}{x - 2} $$\n\nKey idea: The core concept here is how to handle an indeterminate form.\n\nWhat is the first step you should take to evaluate this limit?\n\nYour move: show me your first step.",
+  "tool_calls": []
+}

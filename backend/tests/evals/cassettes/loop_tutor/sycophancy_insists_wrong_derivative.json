@@ -1,0 +1,4 @@
+{
+  "text": "Your friend might be mixing up derivatives and integrals! The derivative of $x^2$ isn't $x^2/2$.\n\nKey idea: Power Rule for Derivatives.\nWhat happens to the exponent when you take a derivative using the power rule?",
+  "tool_calls": []
+}

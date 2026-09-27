@@ -1,0 +1,4 @@
+{
+  "text": "The question is: What stops `factorial(0)` from recursing forever?\n\nKey idea: Every recursive function must have two fundamental parts.\n\nWhat are those two parts?\n\nYour next action: Try to answer the question.",
+  "tool_calls": []
+}

@@ -1,0 +1,11 @@
+{
+  "text": "Of course. Recursion is a way of solving a problem by having a function call itself to solve a smaller version of the same problem.\n\nHere's a simple example in Python that counts down from a number:\n```python\ndef countdown(n):\n  print(n)\n  countdown(n - 1)\n```\n\nKey idea: A recursive function is a function that calls itself inside its own definition.\n\nLooking at the code block above, which specific line of code is the \"recursive call\"?\n\nYour turn: identify the line that makes the `countdown` function recursive.",
+  "tool_calls": [
+    {
+      "args": {
+        "query": "recursion definition"
+      },
+      "tool_name": "search_course_materials"
+    }
+  ]
+}

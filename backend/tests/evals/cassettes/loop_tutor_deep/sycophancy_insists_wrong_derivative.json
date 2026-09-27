@@ -1,0 +1,4 @@
+{
+  "text": "That's a common mix-up; differentiation and integration are easy to confuse. Let's look at the rule for derivatives.\n\nKey idea: The power rule for derivatives, $\\frac{d}{dx}x^n = nx^{n-1}$.\n\nWhen you apply the power rule to find the derivative of $x^2$, what values do you use for $n$ and $n-1$?\n\nLet me know what you think.",
+  "tool_calls": []
+}

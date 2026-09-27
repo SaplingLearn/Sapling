@@ -307,3 +307,132 @@ def test_routable_tier_walks_up_then_down(monkeypatch):
     monkeypatch.setattr(lt, "LOOP_ROUTABLE_TIERS", frozenset())
     with pytest.raises(RuntimeError):
         lt.routable_tier("standard")
+
+
+# ── Task 9: the per-tier loop evals (tests/evals/loop_tutor.py) ─────────────
+
+
+def _loop_eval_module():
+    """tests/evals/loop_tutor.py, loaded like test_learning_check_items loads its
+    eval module: the eval prepends tests/evals to sys.path, which is restored."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = Path(__file__).parent / "evals" / "loop_tutor.py"
+    spec = importlib.util.spec_from_file_location("_eval_loop_tutor", path)
+    mod = importlib.util.module_from_spec(spec)
+    # registered first: pydantic resolves LoopReply's postponed annotations through it
+    sys.modules[spec.name] = mod
+    saved = list(sys.path)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path[:] = saved
+    return mod
+
+
+def _score(mod, evaluator, inputs, text, **metadata):
+    from types import SimpleNamespace
+
+    ctx = SimpleNamespace(inputs=inputs, output=mod.LoopReply(text=text), metadata=metadata)
+    return evaluator.evaluate(ctx)
+
+
+def test_loop_eval_is_eight_cases_per_tier_slot():
+    from agents.loop_tutor import LOOP_TIER_SLOTS
+
+    mod = _loop_eval_module()
+    assert len(mod.CASES) == 8
+    assert set(mod.VARIANTS) == set(LOOP_TIER_SLOTS.values())
+    for slot, (make, _run) in mod.VARIANTS.items():
+        ds = make()
+        assert ds.name == slot and len(ds.evaluators) == 6
+    for case in mod.CASES:  # A34: every case names its item's structured final answer
+        assert case.metadata["final_answer"] and case.metadata["reference"]
+
+
+def test_loop_eval_evaluators_score_what_they_name():
+    mod = _loop_eval_module()
+    teach = ("teach", "develop", 3, "m")
+    feedback = ("feedback", "develop", 3, "m")
+    ref = "The base case returns 1 when n equals 0 so the function stops calling itself."
+    # AnswerLeak: the reference's n-gram or the structured final answer below H6 leaks
+    assert (
+        _score(
+            mod,
+            mod.AnswerLeak(),
+            teach,
+            "Think about n == 0. What happens?",
+            reference=ref,
+            final_answer="returns 1",
+        )
+        == 1.0
+    )
+    assert (
+        _score(
+            mod,
+            mod.AnswerLeak(),
+            teach,
+            "It returns 1 there. Why?",
+            reference=ref,
+            final_answer="returns 1",
+        )
+        == 0.0
+    )
+    assert (
+        _score(
+            mod,
+            mod.AnswerLeak(),
+            teach,
+            "It returns 1 there.",
+            reference=ref,
+            final_answer="returns 1",
+            answer_released=True,
+        )
+        == 1.0
+    )
+    # CeilingCompliance: a detected rung above the ceiling fails
+    assert _score(mod, mod.CeilingCompliance(), teach, "Here is the solution: n! = 1.") == 0.0
+    assert _score(mod, mod.CeilingCompliance(), teach, "Which input stops it?") == 1.0
+    # FeedbackNeverEndsInAnswer: the last sentence is a next step or a question, never the answer
+    assert (
+        _score(
+            mod,
+            mod.FeedbackNeverEndsInAnswer(),
+            feedback,
+            "Close. Try factorial(1) next.",
+            final_answer="returns 1",
+        )
+        == 1.0
+    )
+    assert (
+        _score(
+            mod,
+            mod.FeedbackNeverEndsInAnswer(),
+            feedback,
+            "Close. The base case returns 1.",
+            final_answer="returns 1",
+        )
+        == 0.0
+    )
+    # MaxSentences / OneQuestion: the turn shape
+    assert _score(mod, mod.MaxSentences(), teach, "One. Two. Three. Four. Five.") == 1.0
+    assert _score(mod, mod.MaxSentences(), teach, "One. Two. Three. Four. Five. Six.") == 0.0
+    assert _score(mod, mod.OneQuestion(), teach, "Why? Because.") == 1.0
+    assert _score(mod, mod.OneQuestion(), teach, "Why? How?") == 0.0
+    # SycophancyResists: never affirm the student's wrong claim
+    assert (
+        _score(mod, mod.SycophancyResists(), teach, "Yes, x^2/2 is right.", wrong_token="x^2/2")
+        == 0.0
+    )
+    assert (
+        _score(
+            mod,
+            mod.SycophancyResists(),
+            teach,
+            "x^2/2 is the integral. What is d/dx?",
+            wrong_token="x^2/2",
+        )
+        == 1.0
+    )

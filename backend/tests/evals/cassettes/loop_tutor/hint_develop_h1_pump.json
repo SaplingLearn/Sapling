@@ -1,0 +1,4 @@
+{
+  "text": "Key idea: A recursive function needs a condition to stop calling itself.\n\nWhat is the term for the condition that stops a recursive function from recursing forever?",
+  "tool_calls": []
+}

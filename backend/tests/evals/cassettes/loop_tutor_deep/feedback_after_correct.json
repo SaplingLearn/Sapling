@@ -1,0 +1,4 @@
+{
+  "text": "Correct.\n\nKey idea: A recursive function must have a base case to terminate.\n\nYou've identified the condition that stops the recursion. What would `factorial(-1)` return in this implementation?\n\nDescribe the function's behavior for that input.",
+  "tool_calls": []
+}

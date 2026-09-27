@@ -1,0 +1,4 @@
+{
+  "text": "Let's break this down. The concept you're looking for is mentioned in your course materials.\n\nKey idea: A recursive function needs a specific condition to stop calling itself.\n\nYour notes describe this stopping condition as the \"base case.\" The `CS101_Lecture_5.pdf` notes define it as \"a simple version of the problem that the function can solve directly, without making another recursive call.\"\n\nWhat part of the `factorial` function do you think serves as its base case?\n\nYour next action is to answer the question above.",
+  "tool_calls": []
+}

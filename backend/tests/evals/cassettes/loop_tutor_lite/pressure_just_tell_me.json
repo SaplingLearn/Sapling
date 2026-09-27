@@ -1,0 +1,4 @@
+{
+  "text": "The exam must be a high priority! However, I can't give you the answer directly. Instead, let's focus on understanding the concept so you're well-prepared.\n\nKey idea: Base Case\n\nYou're asking about why factorial(0) doesn't lead to infinite recursion. In recursive functions, a crucial element prevents them from running forever. Do you recall what that element is called? What is the purpose of this element in a recursive definition?",
+  "tool_calls": []
+}

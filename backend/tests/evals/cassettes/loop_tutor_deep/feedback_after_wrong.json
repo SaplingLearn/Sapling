@@ -1,0 +1,4 @@
+{
+  "text": "That's not quite right. A recursive function is stopped by its **base case**. For the factorial function, the base case is when `n` is 0, at which point the function returns 1 without making another recursive call. Your answer described the recursion continuing, but the key is to find what makes it stop.\n\nKey idea: A base case stops recursion by returning a value directly instead of calling the function again.\n\nLook at a typical implementation of `factorial`. What is the `if` condition that checks for the base case?",
+  "tool_calls": []
+}

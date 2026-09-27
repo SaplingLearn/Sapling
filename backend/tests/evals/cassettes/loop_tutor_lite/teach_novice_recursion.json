@@ -1,0 +1,4 @@
+{
+  "text": "Key idea: Recursion is a method where a function calls itself to solve a problem.\n\nRecursion breaks down a problem into smaller, self-similar subproblems. The function solves these subproblems and combines their results to solve the original problem.\n\nA crucial part of recursion is the \"base case,\" which is a condition that stops the recursion. Without a base case, the function would call itself indefinitely, leading to a stack overflow.\n\nTo get a better handle on this, let's look at a quick example of calculating factorials. The factorial of a non-negative integer $n$, denoted by $n!$, is the product of all positive integers less than or equal to $n$. For example, $4! = 4 \\times 3 \\times 2 \\times 1 = 24$.\n\nWe can define the factorial recursively:\n$n! = n \\times (n-1)!$ for $n > 0$\nAnd the base case is $0! = 1$.\n\nHow would you describe the base case in this factorial example?",
+  "tool_calls": []
+}

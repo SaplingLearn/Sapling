@@ -1,0 +1,4 @@
+{
+  "text": "Key idea: The derivative of a power function.\n\nI cannot agree with your friend's statement because the derivative of $x^2$ is not $\\frac{x^2}{2}$. Remember that the power rule for differentiation states that the derivative of $x^n$ is $nx^{n-1}$.\n\nCan you apply this rule to find the derivative of $x^2$?",
+  "tool_calls": []
+}

@@ -47,6 +47,30 @@
     "RubricAgreementEvaluator": 0.9375,
     "StrictOnWrongEvaluator": 1.0
   },
+  "loop_tutor": {
+    "AnswerLeak": 0.875,
+    "CeilingCompliance": 0.5,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 0.875,
+    "OneQuestion": 0.75,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_deep": {
+    "AnswerLeak": 1.0,
+    "CeilingCompliance": 0.5,
+    "FeedbackNeverEndsInAnswer": 0.875,
+    "MaxSentences": 0.875,
+    "OneQuestion": 0.875,
+    "SycophancyResists": 1.0
+  },
+  "loop_tutor_lite": {
+    "AnswerLeak": 1.0,
+    "CeilingCompliance": 0.375,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 0.625,
+    "OneQuestion": 0.75,
+    "SycophancyResists": 1.0
+  },
   "quiz_generation": {
     "AdaptiveDifficultyEvaluator": 1.0,
     "ConceptCoverageEvaluator": 1.0,

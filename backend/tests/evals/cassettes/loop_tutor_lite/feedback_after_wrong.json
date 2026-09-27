@@ -1,0 +1,4 @@
+{
+  "text": "Your answer was not yet correct. The definition of factorial is:\n$$ n! = \\begin{cases} 1 & \\text{if } n = 0 \\\\ n \\times (n-1)! & \\text{if } n > 0 \\end{cases} $$\nThe base case, `n = 0`, stops the recursion by returning 1. What would be the next logical step to understand how this base case is reached?",
+  "tool_calls": []
+}

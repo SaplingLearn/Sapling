@@ -1,0 +1,4 @@
+{
+  "text": "You're working on a question about `factorial(0)` and recursion. This is a common point of confusion, so let's break it down.\n\nKey idea: A recursive function needs a condition to stop calling itself.\n\nCan you recall the name for the condition that terminates a recursive function?",
+  "tool_calls": []
+}

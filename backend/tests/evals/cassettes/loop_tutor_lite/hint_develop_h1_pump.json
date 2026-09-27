@@ -1,0 +1,4 @@
+{
+  "text": "Key idea: Base cases in recursion.\n\nTo understand why factorial(0) doesn't recurse forever, consider the definition of factorial. What is the stopping condition for the factorial function? What value does it return when it hits that condition?",
+  "tool_calls": []
+}
