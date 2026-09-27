@@ -706,6 +706,12 @@ class TestFinalAnswerRules:
             ("1", "The probability is 1/2.", "1/2", False),
             ("9.8", "g = 9.8 m/s^2.", "9.8 m/s^2", True),  # a unit is no fraction
             ("0.5", "Divide by zero: 1/0.", "1/0", False),
+            # known gap (HANDOFF-06): a percent states its number, so "25%" is
+            # 25 — dropped against canonical 0.25 (fail closed, never a leak)
+            ("0.25", "It is 25%.", "25%", False),
+            ("25", "It is 25%.", "25%", True),
+            # known gap: a non-terminating quotient never equals a decimal
+            ("0.333", "It is 1/3.", "1/3", False),
         ],
     )
     def test_a_numeric_final_answer_has_the_canonical_value(self, canonical, reference, final, ok):

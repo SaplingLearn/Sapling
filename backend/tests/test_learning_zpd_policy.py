@@ -1910,6 +1910,66 @@ def test_canonical_value_in_notation_is_not_a_partial_match(canonical, hint):
     assert detect_leak(REF_CURRENT, hint, Rung.H3, **kw) == (False, "none"), hint
 
 
+REF_BIG_O = (
+    "An O(n) loop grows linearly while an O(2^n) recursion doubles with every n. "
+    "Final answer: Linear (O(n)) is much better than exponential (O(2^n))."
+)
+FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
+
+
+@pytest.mark.parametrize(
+    "reference,final,canonical,hint",
+    [
+        # (a) an mc_reason item's correct option LETTER: the final answer is the
+        # option's text (A34), and the n-gram rule never matches one letter
+        (MC_REF, MC_FINAL, None, "The answer is C."),
+        (MC_REF, MC_FINAL, None, "Is it option C?"),
+        (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
+        # (b) LaTeX macros (the loop tutor may write math in LaTeX): \cdot,
+        # \text{}, \frac{}{} each read as word tokens that split the run
+        (DIFF_REF, "6x^2", None, "So you get $6 \\cdot x^{2}$."),
+        (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\text{m/s}^2$"),
+        ("x = 1/2", "1/2", None, "x = $\\frac{1}{2}$"),
+        # (c) a hyphenated answer in its spaced spelling ('-' is a token)
+        (
+            "It is a first-order reaction.",
+            "first-order reaction",
+            None,
+            "So is it a first order reaction?",
+        ),
+        # (d) a bare power of ten has no mantissa to scale
+        ("It is 1000 m.", "1000 m", "1e3", "Is it 10^3?"),
+        # (e) the decisive part of a long final answer (most free and
+        # teachback final answers are 6+ tokens; the rule matches the whole run)
+        (REF_BIG_O, FA_BIG_O, None, "Compare O(n) with O(2^n): which grows slower?"),
+        # (f) a paraphrase of a teachback claim
+        (TB_REF, TB_FINAL, None, "So it calls itself on a smaller problem?"),
+    ],
+)
+def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canonical, hint):
+    """Residuals the owner accepted as documented known gaps (review round 7:
+    "accept the remaining leak-detector edge cases as documented known gaps"):
+    HANDOFF-06 Known gaps and spec §13 A34's known limits list each. A change
+    that closes one updates both and moves its case to LEAKS."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    kw = {"final_answer": final, "canonical_answer": canonical}
+    assert detect_leak(reference, hint, Rung.H3, **kw) == (False, "none"), hint
+
+
+def test_strip_leak_may_leave_unbalanced_latex():
+    """Known cosmetic gap (HANDOFF-06): the stripper masks answer tokens, not
+    LaTeX groups, so a brace inside $...$ can survive. Detect-clean still
+    holds."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    once = strip_leak("So you get $6x^{2}$.", DIFF_REF, final_answer="6x^2")
+    assert once == "So you get $[withheld]}$."
+    assert detect_leak(DIFF_REF, once, Rung.H0, final_answer="6x^2") == (False, "none")
+
+
 def test_a_short_reference_leaks_when_it_appears_whole():
     """A reference shorter than LEAK_NGRAM tokens has no LEAK_NGRAM-gram, so the
     n-gram rule compares its whole token run instead (PKG-04's leak_in_prompt
