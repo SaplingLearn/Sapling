@@ -479,3 +479,183 @@ def test_emit_shadow_payload_refuses_text_and_has_no_caller(seam, events, caplog
         p.relative_to(BACKEND).as_posix() for p in _app_files() if "emit_shadow(" in p.read_text()
     ] == ["services/decisions.py"]
     assert (BACKEND / "services" / "decisions.py").read_text().count("emit_shadow(") == 1
+
+
+# ── Task 5: grade_answer through the seam (PKG-05 reopened) ───────────────
+NODE = "node-recursion"  # grade_answer's node_id (the caller resolves it from item.concept_key, A2)
+
+
+def _pkg05(name: str, **over):
+    """PKG-05's own helpers (_item/_answer/_deps; names per Read-before (f)) — the exact
+    shapes grade_answer was built against."""
+    import tests.test_learning_check_tool as t
+
+    return getattr(t, name)(**over)
+
+
+def _rubric_verdict(seam, ok=True, second=False):
+    result = _grade_result(
+        ok, backend="gemini_second" if second else "gemini"
+    )  # GradeResult.backend (b)
+    items = {
+        rid: seam.YesNo(
+            backend="gemini", confidence=0.9, latency_ms=1, value=v, p_yes=0.9 if v else 0.1
+        )
+        for rid, v in result.item_results.items()
+    }
+    return seam.RubricVerdict(
+        backend="gemini", confidence=0.9, latency_ms=1, items=items, result=result
+    )
+
+
+@pytest.mark.parametrize("second,expected", [(False, "gemini"), (True, "gemini_second")])
+def test_grade_answer_free_goes_through_grade_rubric_items(seam, monkeypatch, second, expected):
+    import agents.tools.check as c
+
+    calls = []
+
+    async def _spy(state, *, deps, item_id="-"):
+        calls.append((state, item_id))
+        return _rubric_verdict(seam, True, second)
+
+    monkeypatch.setattr(seam, "grade_rubric_items", _spy)
+    monkeypatch.setattr(seam, "reason_is_correct", _must_not_run)
+    item, deps = _pkg05("_item", format="free"), _pkg05("_deps")
+    out = asyncio.run(c.grade_answer(item, _pkg05("_answer"), deps=deps, node_id=NODE))
+    [(state, item_id)] = calls
+    assert (state.question, state.format, item_id) == (item.prompt, "free", item.id)
+    assert (out.unavailable, out.correct, out.grader_backend) == (False, True, expected)
+    assert deps.pending_evidence[-1]["grader_backend"] == expected
+
+
+def test_grade_answer_mc_reason_goes_through_reason_is_correct(seam, monkeypatch):
+    import agents.tools.check as c
+
+    calls = []
+
+    async def _spy(state, *, deps, item_id="-"):
+        calls.append(state)
+        return seam.ReasonVerdict(
+            backend="gemini",
+            confidence=0.9,
+            latency_ms=1,
+            value=True,
+            p_yes=0.9,
+            result=_grade_result(True, backend="gemini"),
+        )
+
+    monkeypatch.setattr(seam, "reason_is_correct", _spy)
+    monkeypatch.setattr(seam, "grade_rubric_items", _must_not_run)
+    out = asyncio.run(
+        c.grade_answer(
+            _pkg05("_item", format="mc_reason", correct_option="B"),
+            _pkg05("_answer", selected_option="B", reason="because it stops"),
+            deps=_pkg05("_deps"),
+            node_id=NODE,
+        )
+    )
+    assert (calls[0].selected_option, calls[0].correct_option, calls[0].reason) == (
+        "B",
+        "B",
+        "because it stops",
+    )
+    assert (out.correct, out.grader_backend) == (True, "gemini")
+
+
+def test_grade_answer_unavailable_or_loop_off_writes_nothing(seam, monkeypatch, events):
+    import agents.tools.check as c
+
+    async def _none(*a, **k):
+        return None
+
+    monkeypatch.setattr(seam, "grade_rubric_items", _none)
+    deps = _pkg05("_deps")
+    out = asyncio.run(
+        c.grade_answer(_pkg05("_item", format="free"), _pkg05("_answer"), deps=deps, node_id=NODE)
+    )
+    assert out.unavailable is True and out.evidence is None and deps.pending_evidence == []
+    monkeypatch.setattr(seam, "grade_rubric_items", _must_not_run)
+    off = asyncio.run(
+        c.grade_answer(
+            _pkg05("_item", format="free"),
+            _pkg05("_answer"),
+            deps=_pkg05("_deps", learning_loop=False),
+            node_id=NODE,
+        )
+    )
+    assert off.unavailable is True and events == []
+
+
+def test_grade_answer_sends_the_grader_the_same_messages(seam, monkeypatch):
+    """Byte-identity (A24): through the seam the grader receives exactly the message
+    PKG-05 built directly — same item fields, format and answer."""
+    import agents.grader as g
+    import agents.tools.check as c
+
+    seen = []
+
+    async def _grade(item, *, format, student_answer, deps):
+        seen.append(g.build_grader_message(item, format=format, student_answer=student_answer))
+        return _grade_result(True, backend="gemini")
+
+    monkeypatch.setattr(g, "grade", _grade)
+    free_item, free_answer = _pkg05("_item", format="free"), _pkg05("_answer")
+    mc_item = _pkg05("_item", format="mc_reason", correct_option="B")
+    asyncio.run(c.grade_answer(free_item, free_answer, deps=_pkg05("_deps"), node_id=NODE))
+    asyncio.run(
+        c.grade_answer(
+            mc_item,
+            _pkg05("_answer", selected_option="B", reason="because it stops"),
+            deps=_pkg05("_deps"),
+            node_id=NODE,
+        )
+    )
+    assert seen == [
+        g.build_grader_message(free_item, format="free", student_answer=free_answer.answer_text),
+        g.build_grader_message(
+            mc_item,
+            format="mc_reason",
+            student_answer="Selected option: B\nReason: because it stops",
+        ),
+    ]
+
+
+def test_grade_answer_numeric_mismatch_is_stamped_deterministic(seam, monkeypatch, events):
+    """A22 as amended: the rubric grade runs FIRST for both numeric outcomes (invariant 28);
+    a clear mismatch against the verified key then overrides the verdict."""
+    import agents.tools.check as c
+
+    calls = []
+
+    async def _spy(state, *, deps, item_id="-"):
+        calls.append(state)
+        return _rubric_verdict(seam, True, False)  # the rubric grade said yes
+
+    monkeypatch.setattr(seam, "grade_rubric_items", _spy)
+    item = _pkg05(
+        "_item",
+        format="free",
+        answer_kind="numeric",
+        canonical_answer="42",
+        tolerance=None,
+        canonical_verified=True,
+    )
+    out = asyncio.run(
+        c.grade_answer(
+            item, _pkg05("_answer", answer_text="17"), deps=_pkg05("_deps"), node_id=NODE
+        )
+    )
+    assert len(calls) == 1
+    assert (out.correct, out.grader_backend) == (False, "deterministic")
+    assert [(et, kw["payload"]["backend"]) for et, kw in events] == [
+        ("decision.made", "deterministic")
+    ]
+
+
+def test_seam_callers_are_only_grade_answer():
+    importers = sorted(
+        p.relative_to(BACKEND).as_posix()
+        for p in _app_files()
+        if re.search(r"services(\.| import )decisions\b", p.read_text())
+    )
+    assert importers == ["agents/tools/check.py"]

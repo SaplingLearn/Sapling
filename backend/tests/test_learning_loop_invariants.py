@@ -601,6 +601,7 @@ def test_inv_28_symmetric_missingness(monkeypatch):
     import asyncio
     from types import SimpleNamespace
 
+    import agents.grader
     import agents.tools.check as check
     from agents.deps import SaplingDeps
     from agents.grader import GradeResult
@@ -611,7 +612,11 @@ def test_inv_28_symmetric_missingness(monkeypatch):
         reason_checks.append(student_answer)
         return GradeResult(unavailable=True)
 
-    monkeypatch.setattr(check, "grade", _unavailable)
+    # PKG-05b: grade_answer grades through services/decisions.py, which resolves
+    # agents.grader.grade at call time, so the stub sits there; the items carry
+    # the question/reference/rubric/wrong fields the seam's grading State reads.
+    monkeypatch.setattr(agents.grader, "grade", _unavailable)
+    graded = dict(prompt="q", reference_answer="ref", rubric=[], common_wrong=[])
     options = [
         SimpleNamespace(letter="A", text="right", wrong_key=None),
         SimpleNamespace(letter="B", text="wrong", wrong_key="w_1"),
@@ -624,6 +629,7 @@ def test_inv_28_symmetric_missingness(monkeypatch):
         answer_kind="free",
         canonical_verified=False,
         question_hash="qh-28",
+        **graded,
     )
     for option in ("A", "B"):  # the correct option, then a wrong one
         deps = SaplingDeps(
@@ -652,6 +658,7 @@ def test_inv_28_symmetric_missingness(monkeypatch):
         tolerance=0.01,
         canonical_verified=True,
         question_hash="qh-28n",
+        **graded,
     )
     for text in ("12.5", "9.81"):
         deps = SaplingDeps(

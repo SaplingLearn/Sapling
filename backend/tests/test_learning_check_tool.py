@@ -636,6 +636,7 @@ def _answer(**over):
 @pytest.fixture
 def check(monkeypatch):
     """grade_answer with its one seam stubbed: the grader."""
+    import agents.grader
     import agents.tools.check as c
 
     state = {"item": _item(), "result": _result(), "grade_calls": []}
@@ -644,7 +645,7 @@ def check(monkeypatch):
         state["grade_calls"].append((format, student_answer))
         return state["result"]
 
-    monkeypatch.setattr(c, "grade", _grade)
+    monkeypatch.setattr(agents.grader, "grade", _grade)
     return c, state
 
 
