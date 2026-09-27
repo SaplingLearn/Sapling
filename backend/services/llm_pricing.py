@@ -27,7 +27,7 @@ logger = logging.getLogger("sapling.llm_pricing")
 
 
 # Per-1,000-token USD prices as ``(input_rate, output_rate)``. Sourced from
-# Google Gemini API list pricing; kept deliberately small and editable. A model
+# Google Gemini API list pricing (and TypeSafe's, for Jev); kept deliberately small and editable. A model
 # missing here is not an error — its usage is still recorded, just with
 # ``cost_usd = NULL``. Update this map (not the call sites) when prices change
 # or a new model ships.
@@ -38,6 +38,14 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gemini-3.1-flash-lite": (0.00025, 0.0015),
     "gemini-2.0-flash": (0.0001, 0.0004),
     "gemini-2.0-flash-lite": (0.000075, 0.0003),
+    # TypeSafe Jev (#642, ADR 0027; provider="typesafe" on the llm_usage row).
+    # docs.typesafe.ai/models: $0.042 per 1M input tokens, output tokens free.
+    # The response reports the versioned id; the aliases are priced too so a
+    # row is never NULL-costed because an operator set SAPLING_JEV_MODEL to
+    # one. Pricing may be launch-subsidised — see the ADR's vendor-risk note.
+    "jev-1.13.0": (0.000042, 0.0),
+    "jev-latest": (0.000042, 0.0),
+    "jev-preview": (0.000042, 0.0),
 }
 
 # Models we've already warned about — so an un-priced model logs once, not
