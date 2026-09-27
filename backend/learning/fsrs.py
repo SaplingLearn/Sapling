@@ -376,8 +376,9 @@ class SuccessiveRelearning:
     def __post_init__(self) -> None:
         if self.phase not in _SR_PHASES:
             raise ValueError(f"phase must be one of {_SR_PHASES}, got {self.phase!r}")
-        _check_count("correct_in_acquisition", self.correct_in_acquisition)
-        _check_count("relearn_sessions_done", self.relearn_sessions_done)
+        # Validate, then store the int (a stored 2.0 comes back as 2).
+        for name in ("correct_in_acquisition", "relearn_sessions_done"):
+            object.__setattr__(self, name, _check_count(name, getattr(self, name)))
 
     def advance(self, correct: bool, *, session_id: str) -> SuccessiveRelearning:
         if self.phase == SR_DONE:
@@ -420,12 +421,14 @@ class SuccessiveRelearning:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any] | None) -> SuccessiveRelearning:
         """Inverse of ``as_dict``; None or {} is a fresh state. A stored state
-        with an unknown phase or a negative counter raises ValueError."""
+        with an unknown phase or a counter that is not a whole number >= 0
+        raises ValueError. Values pass through uncoerced: ``__post_init__``
+        validates them (``int()`` here would truncate 2.7 and parse "2")."""
         if not data:
             return cls()
         return cls(
-            phase=str(data.get("phase", SR_ACQUISITION)),
-            correct_in_acquisition=int(data.get("correct_in_acquisition", 0)),
-            relearn_sessions_done=int(data.get("relearn_sessions_done", 0)),
+            phase=data.get("phase", SR_ACQUISITION),
+            correct_in_acquisition=data.get("correct_in_acquisition", 0),
+            relearn_sessions_done=data.get("relearn_sessions_done", 0),
             credited_session=data.get("credited_session"),
         )

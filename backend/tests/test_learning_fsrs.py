@@ -691,11 +691,31 @@ def test_relearning_is_immutable_and_round_trips():
         {"phase": "review"},
         {"correct_in_acquisition": -1},
         {"relearn_sessions_done": -1},
+        # from_dict must not coerce before validating: int() truncated 2.7 to 2,
+        # parsed "2", and raised TypeError/OverflowError on None/inf.
+        {"correct_in_acquisition": 2.7},
+        {"correct_in_acquisition": "2"},
+        {"correct_in_acquisition": None},
+        {"relearn_sessions_done": INF},
+        {"relearn_sessions_done": NAN},
     ],
 )
 def test_relearning_rejects_a_corrupt_stored_state(data):
     with pytest.raises(ValueError):
         SuccessiveRelearning.from_dict(data)
+
+
+def test_relearning_stores_whole_counters_as_int():
+    # A JSON 2.0 is a whole number: accepted, and stored as the int it names.
+    for st in (
+        SuccessiveRelearning(correct_in_acquisition=2.0, relearn_sessions_done=1.0),
+        SuccessiveRelearning.from_dict(
+            {"correct_in_acquisition": 2.0, "relearn_sessions_done": 1.0}
+        ),
+    ):
+        assert (st.correct_in_acquisition, st.relearn_sessions_done) == (2, 1)
+        assert type(st.correct_in_acquisition) is int
+        assert type(st.relearn_sessions_done) is int
 
 
 @pytest.mark.parametrize(
