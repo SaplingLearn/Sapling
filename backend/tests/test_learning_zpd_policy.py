@@ -371,18 +371,15 @@ def test_wheelspin_rule():
 # ── policy: LoopState round trip ──────────────────────────────────────────────
 
 
-def test_loop_state_json_round_trip_and_trim():
+def test_loop_state_json_round_trip():
     from learning.policy import LoopState
 
     s = LoopState()
     step = _step(fails=2, last=1010.0, attempts=(1005.0, 1020.0))
     s.steps[step.question_hash] = step
     s.current = step.question_hash
-    for i in range(W * params.BAND_CONTROL_STOP_WINDOWS + 3):
-        s.record_first_attempt(i % 2 == 0)
-    assert len(s.first_attempts) == W * params.BAND_CONTROL_STOP_WINDOWS
     doc = s.to_json()
-    assert set(doc) == {"v", "current", "checks_since_rating", "first_attempts", "steps"}
+    assert set(doc) == {"v", "current", "checks_since_rating", "steps"}
     assert set(doc["steps"][step.question_hash]) == {
         "rung",
         "attempts",
@@ -409,10 +406,24 @@ def test_loop_state_document_is_ids_numbers_and_bools_only():
 
     s = LoopState(current="q" * 64, checks_since_rating=3)
     s.steps["q" * 64] = _step(fails=1, rung=2, last=1004.5, attempts=(1003.0,), showed_work=True)
-    s.record_first_attempt(True)
     doc = s.to_json()
     assert json.loads(json.dumps(doc)) == doc  # plain JSON, no enums or tuples
     assert doc["steps"]["q" * 64]["rung"] == 2 and type(doc["steps"]["q" * 64]["rung"]) is int
+
+
+def test_loop_state_holds_no_session_scoped_band_window():
+    """Band control is per user x concept across sessions (spec §3.3 over the ZPD
+    report's STATE block: unassisted_next is the concept's last BAND_WINDOW
+    opportunities, compared with that concept's p_known). A concept-less list in
+    the per-session loop_state mixes concepts and resets every session, and with
+    LOOP_CHECKS_PER_CONCEPT checks per concept per session it can never hold two
+    windows of one concept. The band_control caller builds the concept's window
+    from its evidence rows, so LoopState keeps none."""
+    from learning.policy import LoopState
+
+    s = LoopState()
+    assert not hasattr(s, "first_attempts") and not hasattr(s, "record_first_attempt")
+    assert "first_attempts" not in s.to_json()
 
 
 def test_loop_state_keeps_the_keys_later_packages_add():
@@ -467,8 +478,6 @@ def test_loop_state_steps_keep_the_step_keys_later_packages_add():
     "bad",
     [
         [],
-        {"first_attempts": "yes"},
-        {"first_attempts": [1, 0]},
         {"checks_since_rating": "3"},
         {"checks_since_rating": -1},
         {"current": 7},

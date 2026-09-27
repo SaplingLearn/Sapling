@@ -178,8 +178,12 @@ def unassisted_rate(window: Sequence[bool]) -> float | None:
 def band_control(
     window: Sequence[bool], p_known: float, stable: bool, *, wheelspin: bool = False
 ) -> BandAction:
-    """`window` is newest-last. STOP_PRACTICE needs BAND_CONTROL_STOP_WINDOWS
-    FULL windows each above BAND_CONTROL_HI; a partial window never counts."""
+    """`window` is ONE concept's unassisted first-attempt outcomes (user x
+    node, across sessions; newest last), built by the caller from that
+    concept's evidence rows, and `p_known` is that concept's (spec §3.3; the ZPD
+    report's STATE block). Never a per-session or cross-concept list: loop_state
+    keeps no window. STOP_PRACTICE needs BAND_CONTROL_STOP_WINDOWS FULL windows
+    each above BAND_CONTROL_HI; a partial window never counts."""
     if wheelspin:
         return BandAction.WHEELSPIN
     outcomes = list(window)[-WINDOW_KEEP:]
@@ -321,7 +325,7 @@ _STEP_KEYS = (
     "showed_work",
     "exam_mode",
 )
-_TOP_KEYS = ("v", "current", "checks_since_rating", "first_attempts", "steps")
+_TOP_KEYS = ("v", "current", "checks_since_rating", "steps")
 
 
 def _is_number(value: object) -> bool:
@@ -378,12 +382,7 @@ class LoopState:
     steps: dict[str, StepState] = field(default_factory=dict)
     current: str | None = None
     checks_since_rating: int = 0
-    first_attempts: list[bool] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
-
-    def record_first_attempt(self, correct: bool) -> None:
-        self.first_attempts.append(bool(correct))
-        del self.first_attempts[:-WINDOW_KEEP]
 
     def rating_due(self) -> bool:
         return self.checks_since_rating >= params.ZPD_RATING_EVERY_N_CHECKS
@@ -395,7 +394,6 @@ class LoopState:
                 "v": LOOP_STATE_VERSION,
                 "current": self.current,
                 "checks_since_rating": self.checks_since_rating,
-                "first_attempts": list(self.first_attempts),
                 "steps": {
                     qh: {
                         **copy.deepcopy(s.extra),
@@ -422,9 +420,6 @@ class LoopState:
         steps_raw = data.get("steps", {})
         if not isinstance(steps_raw, dict):
             raise ValueError("loop_state: steps must be an object")
-        firsts = data.get("first_attempts", [])
-        if not isinstance(firsts, list) or not all(isinstance(x, bool) for x in firsts):
-            raise ValueError("loop_state: first_attempts must be a list of bools")
         current = data.get("current")
         if current is not None and not isinstance(current, str):
             raise ValueError("loop_state: current must be a question_hash or null")
@@ -432,6 +427,5 @@ class LoopState:
             steps={str(qh): _step_from_json(str(qh), raw) for qh, raw in steps_raw.items()},
             current=current,
             checks_since_rating=_count(data.get("checks_since_rating", 0), "checks_since_rating"),
-            first_attempts=firsts[-WINDOW_KEEP:],
             extra={k: copy.deepcopy(v) for k, v in data.items() if k not in _TOP_KEYS},
         )
