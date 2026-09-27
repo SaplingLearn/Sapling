@@ -324,3 +324,181 @@ class TestLearnerState:
         body = body.split("PRIMARY KEY", 1)[0]
         created = set(re.findall(r"^\s*([a-z_]+)\s+[a-z]", body, re.M))
         assert set(LEARNER_STATE_COLUMNS.split(",")) == created
+
+
+# ── legacy byte-identity ──────────────────────────────────────────────────────
+
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_ISO = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00")
+
+
+def _norm(value):
+    if isinstance(value, dict):
+        return {k: _norm(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_norm(v) for v in value]
+    if isinstance(value, str):
+        if _UUID.fullmatch(value):
+            return "<UUID>"
+        if _ISO.fullmatch(value):
+            return "<TS>"
+    return value
+
+
+def _tracing_factory(rows_by_table: dict, trace: list):
+    """Every table call lands in `trace` as (table, method, args, kwargs);
+    graph_nodes.upsert echoes its payload like live PostgREST does."""
+    mocks: dict = {}
+
+    def factory(name):
+        if name in mocks:
+            return mocks[name]
+        m = MagicMock()
+
+        def _rec(method):
+            def _call(*args, **kwargs):
+                trace.append((name, method, _norm(args), _norm(kwargs)))
+                if method == "select":
+                    return list(rows_by_table.get(name, []))
+                if method == "upsert" and name == "graph_nodes":
+                    return [args[0]] if isinstance(args[0], dict) else list(args[0])
+                return []
+
+            return _call
+
+        for method in ("select", "insert", "update", "upsert", "delete"):
+            setattr(m, method, MagicMock(side_effect=_rec(method)))
+        mocks[name] = m
+        return m
+
+    return factory
+
+
+LEGACY_NODES = [
+    {
+        "id": "n1",
+        "concept_name": "Recursion",
+        "mastery_score": 0.5,
+        "times_studied": 1,
+        "course_id": "c1",
+    },
+]
+LEGACY_PAYLOAD = {
+    "new_nodes": [{"concept_name": "Loops", "initial_mastery": 0.0}],
+    "updated_nodes": [
+        {
+            "concept_name": "recursion",
+            "mastery_delta": 0.1,
+            "reason": "Quiz: 3/3 correct",
+            "event_type": "quiz_correct",
+        },
+    ],
+    "new_edges": [
+        {
+            "source": "Loops",
+            "target": "Recursion",
+            "relationship_type": "prerequisite",
+            "strength": 0.8,
+        },
+    ],
+}
+LEGACY_TRACE = [
+    (
+        "graph_nodes",
+        "select",
+        ["id,concept_name,mastery_score,times_studied,course_id"],
+        {"filters": {"user_id": "eq.u1", "course_id": "eq.c1"}},
+    ),
+    (
+        "graph_nodes",
+        "upsert",
+        [
+            {
+                "id": "<UUID>",
+                "user_id": "u1",
+                "concept_name": "Loops",
+                "mastery_score": 0.0,
+                "mastery_tier": "unexplored",
+                "course_id": "c1",
+            }
+        ],
+        {"on_conflict": "user_id,course_id,concept_name"},
+    ),
+    (
+        "graph_nodes",
+        "update",
+        [
+            {
+                "mastery_score": 0.6,
+                "mastery_tier": "learning",
+                "times_studied": 2,
+                "last_studied_at": "<TS>",
+            }
+        ],
+        {"filters": {"id": "eq.n1"}},
+    ),
+    (
+        "node_mastery_events",
+        "insert",
+        [
+            {
+                "id": "<UUID>",
+                "node_id": "n1",
+                "delta": 0.1,
+                "reason": "Quiz: 3/3 correct",
+                "created_at": "<TS>",
+                "event_type": "quiz_correct",
+            }
+        ],
+        {},
+    ),
+    (
+        "graph_edges",
+        "upsert",
+        [
+            {
+                "id": "<UUID>",
+                "user_id": "u1",
+                "source_node_id": "<UUID>",
+                "target_node_id": "n1",
+                "strength": 0.8,
+                "relationship_type": "prerequisite",
+            }
+        ],
+        {"on_conflict": "user_id,source_node_id,target_node_id,relationship_type"},
+    ),
+]
+
+
+def _run_legacy(payload):
+    from services.graph_service import apply_graph_update
+
+    trace: list = []
+    factory = _tracing_factory({"graph_nodes": LEGACY_NODES}, trace)
+    # learner_state's own `table` is traced too, so a legacy payload that
+    # reached read_states/write_state would show up in the trace.
+    with (
+        patch("services.graph_service.table", side_effect=factory),
+        patch("learning.learner_state.table", side_effect=factory),
+        patch("services.graph_service.touch_streak_safe"),
+        patch("services.course_context_service.update_course_context"),
+        patch("services.academics.user_offering_ids_for_course", return_value=[]),
+        patch("services.achievement_service.check_achievements"),
+    ):
+        result = apply_graph_update("u1", payload, course_id="c1")
+    return result, trace
+
+
+def test_legacy_payload_table_trace_unchanged():
+    """Green on main BEFORE Task 6, green after: a payload without `evidence`
+    makes exactly these table calls, in this order, with these arguments."""
+    result, trace = _run_legacy(LEGACY_PAYLOAD)
+    assert result == [{"concept": "Recursion", "before": 0.5, "after": 0.6}]
+    assert trace == LEGACY_TRACE
+
+
+@pytest.mark.parametrize("evidence_value", [None, []])
+def test_empty_evidence_key_is_the_legacy_path(evidence_value):
+    result, trace = _run_legacy({**LEGACY_PAYLOAD, "evidence": evidence_value})
+    assert result == [{"concept": "Recursion", "before": 0.5, "after": 0.6}]
+    assert trace == LEGACY_TRACE
