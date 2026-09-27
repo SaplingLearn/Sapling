@@ -7,11 +7,37 @@ No DB, no LLM, no fixtures beyond monkeypatch.
 
 from __future__ import annotations
 
+import ast
 import math
+import pathlib
+import sys
 
 import pytest
 
 from learning import bkt, params
+
+
+def _disallowed_imports(src: str, package: str, allowed: set[str]) -> set[str]:
+    """Every module `src` imports (parsed with ast: comma lists, relative and
+    function-local imports all count) that is neither standard library nor in
+    `allowed`. `from <package> import x` and `from . import x` name the
+    submodule `<package>.x`, so `from learning import fsrs` is caught."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                parts = package.split(".")
+                parent = ".".join(parts[: len(parts) - node.level + 1])
+                base = f"{parent}.{base}" if base else parent
+            if base == package:
+                found.update(f"{base}.{alias.name}" for alias in node.names)
+            else:
+                found.add(base)
+    return {m for m in found if m.split(".")[0] not in sys.stdlib_module_names and m not in allowed}
+
 
 # ---------------------------------------------------------------- params
 
@@ -164,11 +190,8 @@ def test_validate_channels_rejects_bad_t():
 
 
 def test_params_imports_only_stdlib():
-    import pathlib
-
     src = pathlib.Path(params.__file__).read_text()
-    for root in ("agents", "pydantic_ai", "google", "db", "config", "learning.fsrs"):
-        assert f"import {root}" not in src and f"from {root}" not in src, root
+    assert _disallowed_imports(src, "learning", set()) == set()
 
 
 # ------------------------------------------------------------------ update
@@ -462,8 +485,35 @@ def test_every_p_consumer_rejects_out_of_range_p(fn, p):
 
 
 def test_bkt_imports_only_stdlib_and_params():
-    import pathlib
-
     src = pathlib.Path(bkt.__file__).read_text()
-    for root in ("agents", "pydantic_ai", "google", "db", "config", "learning.fsrs", "services"):
-        assert f"import {root}" not in src and f"from {root}" not in src, root
+    assert _disallowed_imports(src, "learning", {"learning.params"}) == set()
+
+
+# The substring scan the two import tests above used to run passed every one
+# of these (`from learning import fsrs` has no "import learning.fsrs" or
+# "from learning.fsrs" in it; comma lists hid the second module).
+IMPORT_MUTANTS = [
+    ("from learning import fsrs", "learning.fsrs"),
+    ("from . import fsrs", "learning.fsrs"),
+    ("import os, config", "config"),
+    ("import httpx", "httpx"),
+    ("import services.encryption", "services.encryption"),
+    ("from learning.gate import learning_loop_active", "learning.gate"),
+    ("def f():\n    import db.connection", "db.connection"),
+]
+
+
+@pytest.mark.parametrize("line, culprit", IMPORT_MUTANTS, ids=[m[1] for m in IMPORT_MUTANTS])
+def test_import_guard_catches_what_a_substring_scan_missed(line, culprit):
+    src = "from __future__ import annotations\n\nfrom learning.params import BKT_L0\n" + line
+    assert culprit in _disallowed_imports(src, "learning", {"learning.params"})
+
+
+def test_import_guard_accepts_the_shipped_shapes():
+    src = (
+        "from __future__ import annotations\nimport math\nfrom typing import Literal\n"
+        "from collections.abc import Mapping\nfrom learning.params import BKT_L0\n"
+        "from learning import params\nfrom .params import BKT_T\n"
+    )
+    assert _disallowed_imports(src, "learning", {"learning.params"}) == set()
+    assert _disallowed_imports(src, "learning", set()) == {"learning.params"}
