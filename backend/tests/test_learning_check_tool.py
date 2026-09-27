@@ -1283,8 +1283,12 @@ LOOP_CODE_FILES = (
 # 0.0 default tolerance, a 0 lower bound, GraderOutput's ge=0.0 / le=1.0.
 IDENTITY_LITERALS = frozenset({0, 1})
 # Ints that are not a weight, threshold or rung: pydantic-ai's output-validation
-# budget (#153, retries=2) and the prompt-hash prefix length (hexdigest()[:12]).
-NON_POLICY_INTS = {"agents/grader.py": frozenset({2, 12})}
+# budget (#153, retries=2), the prompt-hash prefix length (hexdigest()[:12]) and
+# the answer guard's text-scan window in characters (_CLAIM_WINDOW, A33).
+NON_POLICY_INTS = {
+    "agents/grader.py": frozenset({2, 12}),
+    "learning/answer_guard.py": frozenset({200}),
+}
 
 
 def _policy_literals(source: str, rel: str = "") -> list[tuple[int, int | float]]:
