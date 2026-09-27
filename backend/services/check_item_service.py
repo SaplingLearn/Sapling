@@ -22,7 +22,12 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Iterable
+from typing import NamedTuple
 
+import config
+from agents._run import run_agent_sync
+from agents.check_items import CheckItemsUnavailable, draft_items
+from agents.deps import SaplingDeps
 from db.connection import page_all, pg_quote_value, table
 from learning.checks import (
     CheckItem,
@@ -34,11 +39,20 @@ from learning.checks import (
     item_id,
     parse_tolerance,
     question_hash,
+    rank_chunks_for_concept,
     validate_draft,
+)
+from learning.params import (
+    CHECK_ITEM_CONCEPTS_PER_CALL,
+    CHECK_ITEM_INITIAL_PER_CONCEPT,
+    CHECK_ITEM_MAX_CHUNKS,
+    CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, decide_visibility
 from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json
+from services.events_service import log_event
 from services.graph_service import _normalize_concept
+from services.request_context import current_request_id
 
 logger = logging.getLogger("sapling.services.check_items")
 
@@ -378,3 +392,191 @@ def source_chunks(doc_row: dict) -> list[dict]:
         logger.warning("check items: document %s has no chunks and no extracted text", doc_id)
         return []
     return [{"id": None, "chunk_index": 0, "chunk_text": text, "doc_id": doc_id}]
+
+
+# ── generation (flag-gated; spec §7: course level, never one student's gate) ─
+
+
+class GenerationOutcome(NamedTuple):
+    items_created: int
+    concepts_attempted: int
+    unavailable: int
+    concepts_skipped: int
+    concepts_unmatched: int = 0
+
+
+_NOTHING = GenerationOutcome(0, 0, 0, 0)
+_FAILED_EVENT = "learn.check_items_failed"
+_STORAGE_ERROR = "StorageError"
+
+
+def _report_failure(
+    user_id: str | None, document_id: str | None, course_id: str, reason: str
+) -> None:
+    log_event(
+        _FAILED_EVENT,
+        category="error",
+        user_id=user_id,
+        payload={"document_id": document_id, "course_id": course_id, "reason": reason},
+    )
+
+
+def _passage_key(chunk: dict):
+    """De-duplication key of a passage: its chunk id, or — for an unindexed
+    document's one id-less fallback passage — its document."""
+    return chunk.get("id") or ("fallback", chunk.get("doc_id"), chunk.get("chunk_index"))
+
+
+def generate_for_concepts(
+    *,
+    user_id: str | None,
+    course_id: str,
+    concept_names: Iterable[str],
+    chunks: list[dict],
+    flex: bool,
+    document_id: str | None = None,
+    max_concepts: int | None = None,
+    min_chunk_score: int = 0,
+) -> GenerationOutcome:
+    """Draft items for the course concepts that still lack them, from `chunks`.
+
+    Inert (zeros, no read, no agent) when LEARNING_LOOP_ENABLED is off or
+    there is nothing to write from. Otherwise: names de-duplicated by
+    concept_key (first name wins), the first `max_concepts` kept, every key
+    already at CHECK_ITEM_INITIAL_PER_CONCEPT items skipped BEFORE any agent
+    call, every key no passage scores >= `min_chunk_score` for dropped
+    (A23 relevance floor), the rest drafted CHECK_ITEM_CONCEPTS_PER_CALL per
+    agent call. Synchronous: it runs in a worker thread with no event loop.
+    `user_id=None` (the backfill) records usage against the system actor."""
+    if not config.LEARNING_LOOP_ENABLED:
+        return _NOTHING
+    if not chunks:
+        logger.info("check items: no source passages for course %s; nothing to draft", course_id)
+        return _NOTHING
+
+    names_by_key: dict[str, str] = {}
+    for name in concept_names:
+        key = concept_key(name)
+        if key and key not in names_by_key:
+            names_by_key[key] = name
+    keys = list(names_by_key)
+    if max_concepts is not None:
+        keys = keys[:max_concepts]
+
+    skipped = unmatched = 0
+    todo: list[tuple[str, str, list[dict]]] = []
+    for key in keys:
+        if count_items(course_id, key) >= CHECK_ITEM_INITIAL_PER_CONCEPT:
+            skipped += 1
+            continue
+        ranked = rank_chunks_for_concept(
+            names_by_key[key], chunks, limit=CHECK_ITEM_MAX_CHUNKS, min_score=min_chunk_score
+        )
+        if not ranked:
+            unmatched += 1
+            continue
+        todo.append((key, names_by_key[key], ranked))
+
+    allowed = {c["id"] for c in chunks if c.get("id")}
+    deps = SaplingDeps(
+        user_id=user_id or "",
+        course_id=course_id,
+        supabase=None,
+        request_id=current_request_id() or f"check_items:{document_id or course_id}",
+        feature="check_items",
+    )
+    created = attempted = unavailable = 0
+    for start in range(0, len(todo), CHECK_ITEM_CONCEPTS_PER_CALL):
+        batch = todo[start : start + CHECK_ITEM_CONCEPTS_PER_CALL]
+        names = [name for _, name, _ in batch]
+        passages: list[dict] = []
+        seen: set = set()
+        for _, _, ranked in batch:
+            for chunk in ranked:
+                pkey = _passage_key(chunk)
+                if pkey in seen:
+                    continue
+                seen.add(pkey)
+                passages.append({"id": chunk.get("id"), "text": chunk.get("chunk_text") or ""})
+
+        out = run_agent_sync(draft_items(names, passages, deps=deps, flex=flex))
+        attempted += len(batch)
+        if isinstance(out, CheckItemsUnavailable):
+            _report_failure(user_id, document_id, course_id, out.reason)
+            unavailable += len(batch)
+            continue
+
+        drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
+        for draft in out.items:
+            dkey = concept_key(draft.concept)
+            if dkey in drafts_by_key:
+                drafts_by_key[dkey].append(draft)
+            else:
+                logger.warning(
+                    "check item draft for %r is outside the call's concepts %s; dropped",
+                    draft.concept,
+                    names,
+                )
+        for key, _, ranked in batch:
+            source_docs = sorted({c["doc_id"] for c in ranked if c.get("doc_id")})
+            try:
+                created += len(
+                    create_items(
+                        course_id,
+                        key,
+                        document_id,
+                        drafts_by_key[key],
+                        allowed_chunk_ids=allowed,
+                        source_document_ids=source_docs,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "check items write failed (course=%s concept=%s)", course_id, key, exc_info=True
+                )
+                _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
+
+    outcome = GenerationOutcome(created, attempted, unavailable, skipped, unmatched)
+    logger.info(
+        "check items: course=%s document=%s items=%d attempted=%d unavailable=%d "
+        "skipped=%d unmatched=%d",
+        course_id,
+        document_id,
+        *outcome,
+    )
+    return outcome
+
+
+def generate_for_document(
+    document_id: str,
+    *,
+    user_id: str,
+    course_id: str,
+    concept_names: Iterable[str],
+    flex: bool,
+) -> GenerationOutcome:
+    """The upload hook's generation: the document's source passages (A23 —
+    shared course material only), then at most CHECK_ITEM_MAX_CONCEPTS_PER_DOC
+    of its concepts. Usage is attributed to the uploader."""
+    if not config.LEARNING_LOOP_ENABLED:
+        return _NOTHING
+    rows = table("documents").select(
+        "id,user_id,shareability,shareability_confidence,extracted_text",
+        filters={"id": f"eq.{document_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
+    if not rows:
+        logger.warning("check items: document %s not found; nothing drafted", document_id)
+        return _NOTHING
+    chunks = source_chunks(rows[0])
+    if not chunks:
+        return _NOTHING
+    return generate_for_concepts(
+        user_id=user_id,
+        course_id=course_id,
+        concept_names=concept_names,
+        chunks=chunks,
+        flex=flex,
+        document_id=document_id,
+        max_concepts=CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
+    )

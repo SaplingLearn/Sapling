@@ -164,6 +164,11 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # while their uploads stay in classmates' retrieval, with nothing saying
     # so. Rare and per-user, so category="error" is affordable on the feed.
     "rag.visibility_resync_failed",
+    # Learning loop PKG-04 (spec §6, §13 A8): one check_items agent call (a
+    # batch of concepts) or one concept's item write failed — an honest
+    # degrade (ADR 0024), category="error"; payload document_id, course_id,
+    # reason (exception class name or StorageError). Never any item text.
+    "learn.check_items_failed",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

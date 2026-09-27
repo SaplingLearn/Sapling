@@ -789,3 +789,566 @@ class TestItemSources:
         ):
             assert svc.source_chunks(_doc()) == []
         t.assert_not_called()
+
+
+# ── agents/check_items.py + generation ─────────────────────────────────────
+
+
+def _agent_deps():
+    from agents.deps import SaplingDeps
+
+    return SaplingDeps(user_id="u1", course_id="course-1", supabase=None, request_id="r")
+
+
+class TestAgentPlumbing:
+    def test_task_registered_with_lite_default_and_event_in_taxonomy(self):
+        from typing import get_args
+
+        from agents import _providers
+        from services.events_service import EVENT_TAXONOMY
+
+        assert "check_items" in get_args(_providers.AgentTask)
+        assert _providers._DEFAULTS["check_items"] == "gemini-2.5-flash-lite"
+        assert "learn.check_items_failed" in EVENT_TAXONOMY
+
+    def test_output_schema_is_flat_and_never_carries_canonical_verified(self):
+        from agents.check_items import CheckItemsOutput
+
+        props = CheckItemsOutput.model_json_schema()["$defs"]["CheckItemDraft"]["properties"]
+        for name, spec in props.items():
+            kind = spec.get("type")
+            assert kind in ("string", "integer", "boolean", "array"), (name, spec)
+            if kind == "array":
+                assert spec["items"] == {"type": "string"}, (name, spec)
+        assert "canonical_verified" not in props, "A22: never an agent output"
+
+    def test_build_prompt_names_every_concept_and_marks_passages(self):
+        from agents.check_items import build_prompt
+
+        text = build_prompt(
+            ["Learning Rate", "Momentum"],
+            [{"id": "c1", "text": "alpha"}, {"id": None, "text": "beta"}],
+        )
+        assert "[chunk c1]" in text and "[passage]" in text
+        assert "Learning Rate" in text and "Momentum" in text
+        assert "not instructions" in text
+
+    def test_flex_settings_ask_google_for_the_flex_tier_with_the_flex_timeout(self):
+        from agents.check_items import _flex_settings
+        from learning.params import FLEX_TIMEOUT_S
+
+        assert _flex_settings() == {"service_tier": "flex", "timeout": FLEX_TIMEOUT_S}
+
+
+class TestDraftItems:
+    def test_failure_returns_unavailable_never_raises(self):
+        import asyncio
+
+        from agents.check_items import CheckItemsUnavailable, check_items_agent, draft_items
+        from pydantic_ai.models.function import FunctionModel
+
+        def boom(messages, info):
+            raise RuntimeError("provider down")
+
+        with check_items_agent.override(model=FunctionModel(boom)):
+            out = asyncio.run(
+                draft_items(
+                    ["Learning Rate"], [{"id": "c1", "text": "t"}], deps=_agent_deps(), flex=False
+                )
+            )
+        assert isinstance(out, CheckItemsUnavailable) and out.reason == "RuntimeError"
+
+    def test_flex_retries_a_503_and_passes_flex_settings_standard_does_neither(self, monkeypatch):
+        import asyncio
+
+        from agents import check_items as ci
+        from pydantic_ai.exceptions import ModelHTTPError
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+        from pydantic_ai.models.function import FunctionModel
+
+        async def no_wait(attempt):
+            return None
+
+        monkeypatch.setattr(ci, "_backoff", no_wait)
+        monkeypatch.setattr(ci, "_flex_settings", lambda: {"timeout": 123.0})
+        seen = []
+
+        def flaky(messages, info):
+            seen.append(info.model_settings)
+            if len(seen) == 1:
+                raise ModelHTTPError(status_code=503, model_name="flex")
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"items": []})]
+            )
+
+        with ci.check_items_agent.override(model=FunctionModel(flaky)):
+            ok = asyncio.run(
+                ci.draft_items(["A"], [{"id": "c1", "text": "t"}], deps=_agent_deps(), flex=True)
+            )
+        assert not isinstance(ok, ci.CheckItemsUnavailable) and len(seen) == 2
+        assert all((s or {}).get("timeout") == 123.0 for s in seen)
+        seen.clear()
+        with ci.check_items_agent.override(model=FunctionModel(flaky)):
+            out = asyncio.run(
+                ci.draft_items(["A"], [{"id": "c1", "text": "t"}], deps=_agent_deps(), flex=False)
+            )
+        assert isinstance(out, ci.CheckItemsUnavailable) and out.reason == "ModelHTTPError"
+        assert len(seen) == 1 and (seen[0] or {}).get("timeout") != 123.0
+
+    def test_flex_gives_up_after_its_retry_budget_and_never_retries_other_errors(self, monkeypatch):
+        import asyncio
+
+        from agents import check_items as ci
+        from learning.params import CHECK_ITEM_FLEX_RETRIES
+        from pydantic_ai.exceptions import ModelHTTPError
+        from pydantic_ai.models.function import FunctionModel
+
+        async def no_wait(attempt):
+            return None
+
+        monkeypatch.setattr(ci, "_backoff", no_wait)
+        calls = []
+
+        def busy(messages, info):
+            calls.append(1)
+            raise ModelHTTPError(status_code=429, model_name="flex")
+
+        with ci.check_items_agent.override(model=FunctionModel(busy)):
+            out = asyncio.run(
+                ci.draft_items(["A"], [{"id": "c1", "text": "t"}], deps=_agent_deps(), flex=True)
+            )
+        assert isinstance(out, ci.CheckItemsUnavailable) and out.reason == "ModelHTTPError"
+        assert len(calls) == CHECK_ITEM_FLEX_RETRIES + 1
+        calls.clear()
+
+        def bad_request(messages, info):
+            calls.append(1)
+            raise ModelHTTPError(status_code=400, model_name="flex")
+
+        with ci.check_items_agent.override(model=FunctionModel(bad_request)):
+            out = asyncio.run(
+                ci.draft_items(["A"], [{"id": "c1", "text": "t"}], deps=_agent_deps(), flex=True)
+            )
+        assert isinstance(out, ci.CheckItemsUnavailable) and len(calls) == 1
+
+    def test_usage_is_recorded_against_the_deps_user_or_the_system_actor(self):
+        import asyncio
+
+        from agents import check_items as ci
+        from agents.deps import SaplingDeps
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+        from pydantic_ai.models.function import FunctionModel
+
+        def ok(messages, info):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"items": []})]
+            )
+
+        system = SaplingDeps(user_id="", course_id="course-1", supabase=None, request_id="r")
+        with (
+            ci.check_items_agent.override(model=FunctionModel(ok)),
+            patch("agents.check_items.record_agent_usage") as rec,
+        ):
+            asyncio.run(ci.draft_items(["A"], [], deps=_agent_deps(), flex=False))
+            asyncio.run(ci.draft_items(["A"], [], deps=system, flex=False))
+        kwargs = [c.kwargs for c in rec.call_args_list]
+        assert kwargs == [
+            {"feature": "check_items", "task": "check_items", "user_id": "u1"},
+            {"feature": "check_items", "task": "check_items", "user_id": None},
+        ]
+
+
+def _drafts_for(*concepts):
+    from agents.check_items import CheckItemsOutput
+
+    items = []
+    for c in concepts:
+        items += [
+            _draft(concept=c, prompt=f"What does {c} control?"),
+            _draft(concept=c, format="teachback", prompt=f"Teach a peer what {c} does."),
+        ]
+    return CheckItemsOutput(items=items)
+
+
+_CHUNK = {"id": "c1", "chunk_index": 0, "chunk_text": "learning rate text", "doc_id": "doc-1"}
+
+
+def _gen_patches(factory, fake_draft):
+    """table + draft_items patched on the service, log_event spied."""
+    return (
+        patch("services.check_item_service.table", side_effect=factory),
+        patch("services.check_item_service.draft_items", side_effect=fake_draft),
+        patch("services.check_item_service.log_event"),
+    )
+
+
+class TestGenerate:
+    def test_flag_off_is_inert(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+        with (
+            patch("services.check_item_service.table") as t,
+            patch("services.check_item_service.draft_items") as d,
+        ):
+            out = svc.generate_for_concepts(
+                user_id="u1",
+                course_id="course-1",
+                concept_names=["Learning Rate"],
+                chunks=[_CHUNK],
+                flex=True,
+            )
+            doc_out = svc.generate_for_document(
+                "doc-1",
+                user_id="u1",
+                course_id="course-1",
+                concept_names=["Learning Rate"],
+                flex=True,
+            )
+        assert out == doc_out == (0, 0, 0, 0, 0)
+        t.assert_not_called()
+        d.assert_not_called()
+
+    def test_no_chunks_is_inert(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        with (
+            patch("services.check_item_service.table") as t,
+            patch("services.check_item_service.draft_items") as d,
+        ):
+            out = svc.generate_for_concepts(
+                user_id="u1", course_id="course-1", concept_names=["A"], chunks=[], flex=True
+            )
+        assert out == (0, 0, 0, 0, 0)
+        t.assert_not_called()
+        d.assert_not_called()
+
+    def test_batches_concepts_and_stores_per_concept(self, monkeypatch):
+        import config
+        from learning.params import CHECK_ITEM_CONCEPTS_PER_CALL
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"check_items": []})
+        names = ["Learning Rate", "Momentum", "Batch Size", "Epoch"]
+        batches = []
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            batches.append(list(concepts))
+            assert passages[0]["id"] == "c1" and flex is True and deps.feature == "check_items"
+            assert deps.user_id == "u1" and deps.course_id == "course-1"
+            return _drafts_for(*concepts)
+
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d:
+            out = svc.generate_for_concepts(
+                user_id="u1",
+                course_id="course-1",
+                concept_names=names + ["learning  rate"],
+                chunks=[_CHUNK],
+                document_id="doc-1",
+                flex=True,
+            )
+        assert batches == [
+            names[:CHECK_ITEM_CONCEPTS_PER_CALL],
+            names[CHECK_ITEM_CONCEPTS_PER_CALL:],
+        ]
+        assert out == (8, 4, 0, 0, 0)
+        stored = [r for call in mocks["check_items"].upsert.call_args_list for r in call[0][0]]
+        assert {r["concept_key"] for r in stored} == {
+            "learning rate",
+            "momentum",
+            "batch size",
+            "epoch",
+        }
+        assert all(r["document_id"] == "doc-1" and r["course_id"] == "course-1" for r in stored)
+        assert all(r["source_document_ids"] == ["doc-1"] for r in stored)
+
+    def test_max_concepts_keeps_the_first_unique_names(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, _ = _cached_tables({"check_items": []})
+        batches = []
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            batches.append(list(concepts))
+            return _drafts_for(*concepts)
+
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d:
+            out = svc.generate_for_concepts(
+                user_id="u1",
+                course_id="course-1",
+                concept_names=["A", "a", "B", "C"],
+                chunks=[_CHUNK],
+                flex=True,
+                max_concepts=2,
+            )
+        assert batches == [["A", "B"]] and out.concepts_attempted == 2
+
+    def test_covered_concept_makes_zero_agent_calls(self, monkeypatch):
+        import config
+        from learning.params import CHECK_ITEM_INITIAL_PER_CONCEPT
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        full = [{"id": f"i{n}"} for n in range(CHECK_ITEM_INITIAL_PER_CONCEPT)]
+        factory, mocks = _cached_tables({"check_items": full})
+        t, d, e = _gen_patches(factory, None)
+        with t, d as draft, e:
+            out = svc.generate_for_concepts(
+                user_id="u1",
+                course_id="course-1",
+                concept_names=["Learning Rate"],
+                chunks=[_CHUNK],
+                flex=True,
+            )
+        draft.assert_not_called()
+        mocks["check_items"].upsert.assert_not_called()
+        assert out == (0, 0, 0, 1, 0)
+
+    def test_unavailable_batch_emits_one_event_and_continues(self, monkeypatch):
+        import config
+        from agents.check_items import CheckItemsUnavailable
+        from learning.params import CHECK_ITEM_CONCEPTS_PER_CALL
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, _ = _cached_tables({"check_items": []})
+        names = [f"Concept {n}" for n in range(CHECK_ITEM_CONCEPTS_PER_CALL + 1)]
+        answers = iter([CheckItemsUnavailable(reason="UsageLimitExceeded"), _drafts_for(names[-1])])
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            return next(answers)
+
+        t, d, e = _gen_patches(factory, fake_draft)
+        with t, d, e as ev:
+            out = svc.generate_for_concepts(
+                user_id="u1",
+                course_id="course-1",
+                concept_names=names,
+                chunks=[_CHUNK],
+                document_id="doc-1",
+                flex=True,
+            )
+        assert out == (2, len(names), CHECK_ITEM_CONCEPTS_PER_CALL, 0, 0)
+        ev.assert_called_once()
+        assert (
+            ev.call_args[0][0] == "learn.check_items_failed"
+            and ev.call_args[1]["category"] == "error"
+        )
+        assert ev.call_args[1]["payload"] == {
+            "document_id": "doc-1",
+            "course_id": "course-1",
+            "reason": "UsageLimitExceeded",
+        }
+
+    def test_storage_failure_is_one_event_per_concept_and_the_rest_continue(
+        self, monkeypatch, caplog
+    ):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"check_items": []})
+        mocks_t = factory("check_items")
+        mocks_t.upsert.side_effect = [RuntimeError("pg down"), []]
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            return _drafts_for(*concepts)
+
+        t, d, e = _gen_patches(factory, fake_draft)
+        with t, d, e as ev, caplog.at_level("WARNING"):
+            out = svc.generate_for_concepts(
+                user_id="u1",
+                course_id="course-1",
+                concept_names=["A", "B"],
+                chunks=[_CHUNK],
+                flex=True,
+            )
+        assert out.items_created == 2 and out.concepts_attempted == 2
+        ev.assert_called_once()
+        assert ev.call_args[1]["payload"]["reason"] == "StorageError"
+
+    def test_draft_for_a_concept_outside_the_batch_is_dropped(self, monkeypatch, caplog):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"check_items": []})
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            return _drafts_for("Learning Rate", "Not Asked For")
+
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d, caplog.at_level("WARNING"):
+            out = svc.generate_for_concepts(
+                user_id="u1",
+                course_id="course-1",
+                concept_names=["Learning Rate"],
+                chunks=[_CHUNK],
+                flex=True,
+            )
+        assert out.items_created == 2
+        assert {r["concept_key"] for r in mocks["check_items"].upsert.call_args[0][0]} == {
+            "learning rate"
+        }
+        assert any("Not Asked For" in r.getMessage() for r in caplog.records)
+
+    def test_relevance_floor_drops_a_concept_no_passage_mentions(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, _ = _cached_tables({"check_items": []})
+        batches = []
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            batches.append((list(concepts), [p["id"] for p in passages]))
+            return _drafts_for(*concepts)
+
+        other = {
+            "id": "c9",
+            "chunk_index": 1,
+            "chunk_text": "momentum and friction",
+            "doc_id": "doc-2",
+        }
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d:
+            out = svc.generate_for_concepts(
+                user_id=None,
+                course_id="course-1",
+                concept_names=["Learning Rate", "Photosynthesis", "Momentum"],
+                chunks=[_CHUNK, other],
+                flex=True,
+                min_chunk_score=1,
+            )
+        assert batches == [(["Learning Rate", "Momentum"], ["c1", "c9"])]
+        assert out == (4, 2, 0, 0, 1)
+
+    def test_each_concept_records_only_the_documents_of_its_own_passages(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"check_items": []})
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            return _drafts_for(*concepts)
+
+        other = {
+            "id": "c9",
+            "chunk_index": 1,
+            "chunk_text": "momentum and friction",
+            "doc_id": "doc-2",
+        }
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d:
+            svc.generate_for_concepts(
+                user_id=None,
+                course_id="course-1",
+                concept_names=["Learning Rate", "Momentum"],
+                chunks=[_CHUNK, other],
+                flex=True,
+                min_chunk_score=1,
+            )
+        stored = [r for call in mocks["check_items"].upsert.call_args_list for r in call[0][0]]
+        by_key = {r["concept_key"]: r["source_document_ids"] for r in stored}
+        assert by_key == {"learning rate": ["doc-1"], "momentum": ["doc-2"]}
+
+    def test_generate_for_document_falls_back_to_extracted_text(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables(
+            {"documents": [_doc()], "course_chunks": [], "check_items": []}
+        )
+        seen = {}
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            seen["passages"] = passages
+            return _drafts_for(*concepts)
+
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d, patch("services.check_item_service.decide_visibility", return_value="shared"):
+            out = svc.generate_for_document(
+                "doc-1", user_id="u1", course_id="course-1", concept_names=["A"], flex=True
+            )
+        assert seen["passages"] == [{"id": None, "text": "plain body"}]
+        assert out.items_created == 2
+        row = mocks["check_items"].upsert.call_args[0][0][0]
+        assert row["source_chunk_ids"] == [] and row["source_document_ids"] == ["doc-1"]
+        doc_read = mocks["documents"].select.call_args[1]
+        assert doc_read["filters"] == {"id": "eq.doc-1", "deleted_at": "is.null"}
+
+    def test_generate_for_document_caps_concepts_per_upload(self, monkeypatch):
+        import config
+        from learning.params import CHECK_ITEM_MAX_CONCEPTS_PER_DOC
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, _ = _cached_tables({"documents": [_doc()], "course_chunks": [], "check_items": []})
+        drafted = []
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            drafted.extend(concepts)
+            return _drafts_for(*concepts)
+
+        names = [f"Concept {n}" for n in range(CHECK_ITEM_MAX_CONCEPTS_PER_DOC + 2)]
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d, patch("services.check_item_service.decide_visibility", return_value="shared"):
+            svc.generate_for_document(
+                "doc-1", user_id="u1", course_id="course-1", concept_names=names, flex=True
+            )
+        assert drafted == names[:CHECK_ITEM_MAX_CONCEPTS_PER_DOC]
+
+    def test_missing_document_yields_zero(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"documents": []})
+        t, d, _ = _gen_patches(factory, None)
+        with t, d as draft:
+            out = svc.generate_for_document(
+                "doc-x", user_id="u1", course_id="course-1", concept_names=["A"], flex=True
+            )
+        assert out == (0, 0, 0, 0, 0)
+        draft.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "over,visibility",
+        [
+            ({"shareability": "completed_work"}, "shared"),  # the student's own answers (#630)
+            ({"shareability": "personal_notes"}, "shared"),
+            ({}, "private"),  # opted-out uploader or low confidence (#629)
+        ],
+    )
+    def test_completed_work_or_opted_out_document_yields_zero_items(
+        self, monkeypatch, over, visibility
+    ):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"documents": [_doc(**over)], "course_chunks": [_CHUNK]})
+        t, d, e = _gen_patches(factory, None)
+        with (
+            t,
+            d as draft,
+            e as ev,
+            patch("services.check_item_service.decide_visibility", return_value=visibility),
+        ):
+            out = svc.generate_for_document(
+                "doc-1", user_id="u1", course_id="course-1", concept_names=["A"], flex=True
+            )
+        assert out == (0, 0, 0, 0, 0)
+        draft.assert_not_called()
+        ev.assert_not_called()
+        assert "check_items" not in mocks, "a non-source document must not reach the item table"

@@ -36,6 +36,7 @@ from agents._providers import (
     register_function_handler,
     set_function_stream_delay_ms,
 )
+from learning.params import CHECK_ITEM_DIFFICULTIES, CHECK_ITEM_FORMATS
 
 # Streamed-replay pacing (#356): re-chunk streamed text into small deltas with
 # 150ms between them, giving the mid-stream journeys (Stop a turn, switch
@@ -344,3 +345,90 @@ register_function_handler(
     "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
 )
 register_function_handler("note_chat", _note_chat_handler)
+
+
+# ── Check items (learning loop PKG-04) ─────────────────────────────────────
+#
+# Request-path in function mode: routes/documents.py runs the generator
+# synchronously inside the upload when SAPLING_MODEL_MODE=function, since
+# post-response handlers stay unregistered by design. Inert unless
+# LEARNING_LOOP_ENABLED=true (unset in the E2E stack until PKG-13, spec §7).
+# One item per format for each E2E_DOC_CONCEPTS name — the function-mode
+# upload's concepts — so each draft's `concept` matches the call's batch.
+# Prompts differ per (concept, format) so every question_hash differs.
+# Backend contract test: tests/test_e2e_function_handlers.py. Keep in sync.
+
+E2E_CHECK_ITEM_PROMPT_TEMPLATE = (
+    "[e2e-function-model][{concept}][{format}] In one sentence, what does the "
+    "learning rate control in gradient descent?"
+)
+E2E_CHECK_ITEM_REFERENCE = (
+    "The learning rate controls the size of each parameter update step "
+    "taken along the negative gradient."
+)
+E2E_CHECK_ITEM_RUBRIC = [
+    "Names the step size or update magnitude.",
+    "Ties the step to the gradient direction.",
+]
+E2E_CHECK_ITEM_WRONG_KEY = "rate_is_iteration_count"
+E2E_CHECK_ITEM_WRONG_TEXT = "Confuses the learning rate with the number of iterations."
+# mc_reason (A22): four options A–D, exactly one correct, every distractor keyed
+# to one of the item's own wrong_keys.
+E2E_CHECK_ITEM_OPTION_LETTERS = ["A", "B", "C", "D"]
+E2E_CHECK_ITEM_OPTION_TEXTS = [
+    "The size of each parameter update step",
+    "The number of iterations to run",
+    "The value of the loss",
+    "The sign of the gradient",
+]
+E2E_CHECK_ITEM_CORRECT_OPTION = "A"
+E2E_CHECK_ITEM_MC_WRONG_KEYS = [
+    E2E_CHECK_ITEM_WRONG_KEY,
+    "rate_is_loss_value",
+    "rate_sets_step_direction",
+]
+E2E_CHECK_ITEM_MC_WRONG_TEXTS = [
+    E2E_CHECK_ITEM_WRONG_TEXT,
+    "Treats the learning rate as the loss being minimised.",
+    "Thinks the learning rate sets the direction of the step.",
+]
+E2E_CHECK_ITEM_MC_REFERENCE = f"{E2E_CHECK_ITEM_CORRECT_OPTION}: {E2E_CHECK_ITEM_REFERENCE}"
+
+
+def _e2e_check_item(concept: str, fmt: str) -> dict:
+    item = {
+        "concept": concept,
+        "format": fmt,
+        "difficulty": CHECK_ITEM_DIFFICULTIES[0],
+        "prompt": E2E_CHECK_ITEM_PROMPT_TEMPLATE.format(concept=concept, format=fmt),
+        "reference_answer": E2E_CHECK_ITEM_REFERENCE,
+        "rubric": E2E_CHECK_ITEM_RUBRIC,
+        "wrong_keys": [E2E_CHECK_ITEM_WRONG_KEY],
+        "wrong_texts": [E2E_CHECK_ITEM_WRONG_TEXT],
+        "answer_kind": "free",
+        "stepwise": False,
+        "chunk_ids": [],
+    }
+    if fmt == "mc_reason":
+        item.update({
+            "reference_answer": E2E_CHECK_ITEM_MC_REFERENCE,
+            "wrong_keys": E2E_CHECK_ITEM_MC_WRONG_KEYS,
+            "wrong_texts": E2E_CHECK_ITEM_MC_WRONG_TEXTS,
+            "option_letters": E2E_CHECK_ITEM_OPTION_LETTERS,
+            "option_texts": E2E_CHECK_ITEM_OPTION_TEXTS,
+            "option_wrong_keys": [""] + E2E_CHECK_ITEM_MC_WRONG_KEYS,
+            "correct_option": E2E_CHECK_ITEM_CORRECT_OPTION,
+        })
+    return item
+
+
+register_function_handler(
+    "check_items",
+    _structured_output({
+        "items": [
+            _e2e_check_item(name, fmt)
+            for name, _, _ in E2E_DOC_CONCEPTS
+            for fmt in CHECK_ITEM_FORMATS
+        ],
+    }),
+)
