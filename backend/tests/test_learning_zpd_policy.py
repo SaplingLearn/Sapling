@@ -1926,10 +1926,28 @@ FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
         (MC_REF, MC_FINAL, None, "Is it option C?"),
         (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
         # (b) LaTeX macros (the loop tutor may write math in LaTeX): \cdot,
-        # \text{}, \frac{}{} each read as word tokens that split the run
+        # \times, \text{}, \mathrm{}, \frac{}{}, \pi, \sqrt{}, \left/\right
+        # each read as word tokens that split the run
         (DIFF_REF, "6x^2", None, "So you get $6 \\cdot x^{2}$."),
+        (DIFF_REF, "6x^2", None, "So you get $6 \\times x^2$."),
+        (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\mathrm{m/s^2}$"),
+        ("It factors as (x-3)^2.", "(x-3)^2", None, "So it is $\\left(x-3\\right)^2$."),
         (G_REF, "9.8 m/s^2", None, "$g = 9.8\\,\\text{m/s}^2$"),
         ("x = 1/2", "1/2", None, "x = $\\frac{1}{2}$"),
+        ("The circumference is 2πr.", "2πr", None, "So it is $2\\pi r$."),
+        ("The side is √2.", "√2", None, "So the side is $\\sqrt{2}$."),
+        # ... and the other direction: a final answer the generator copied in
+        # LaTeX against a plain hint
+        ("x = $\\frac{1}{2}x^2$", "$\\frac{1}{2}x^2$", None, "So it is 1/2 x^2"),
+        ("The area is $6 \\cdot x^{2}$.", "$6 \\cdot x^{2}$", None, "So it is 6x^2."),
+        ("The circumference is 2\\pi r.", "2\\pi r", None, "So it is 2πr."),
+        ("The side is $\\sqrt{2}$.", "$\\sqrt{2}$", None, "So the side is √2."),
+        # U+2044 FRACTION SLASH (what NFKC makes of U+00BD) and U+2215 DIVISION
+        # SLASH are not "/", so a vulgar fraction misses "1/2" (and 0.5)
+        ("x = 1/2", "1/2", None, "It is \u00bd"),
+        ("x = 1/2", "1/2", "0.5", "It is \u00bd"),
+        ("x = 1/2", "1/2", None, "It is 1\u20442"),
+        ("x = 1/2", "1/2", None, "It is 1\u22152"),
         # (c) a hyphenated answer in its spaced spelling ('-' is a token)
         (
             "It is a first-order reaction.",
@@ -1937,6 +1955,7 @@ FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
             None,
             "So is it a first order reaction?",
         ),
+        ("The eigenvalues are non-negative.", "non-negative", None, "Are they non negative?"),
         # (d) a bare power of ten has no mantissa to scale
         ("It is 1000 m.", "1000 m", "1e3", "Is it 10^3?"),
         # (e) the decisive part of a long final answer (most free and
@@ -1944,6 +1963,17 @@ FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
         (REF_BIG_O, FA_BIG_O, None, "Compare O(n) with O(2^n): which grows slower?"),
         # (f) a paraphrase of a teachback claim
         (TB_REF, TB_FINAL, None, "So it calls itself on a smaller problem?"),
+        # (g) an answer spelled in words, another unit spelling, or (on a free
+        # item, with no canonical value) scientific notation written otherwise
+        (DIFF_REF, "6x^2", None, "So it is six x squared."),
+        (G_REF, "9.8 m/s^2", None, "So g is 9.8 m s^-2."),
+        (G_REF, "9.8 m/s^2", None, "So g is 9.8 metres per second squared."),
+        ("Avogadro: 6.022e23 per mole.", "6.022e23", None, "About 6.022 x 10^23 of them."),
+        # (h) unicode: a superscript letter outside the exponent set folds
+        # without its "^"; a decomposed accent (letter + combining mark) splits
+        # the word
+        ("It is x^a.", "x^a", None, "So it is x\u1d43."),
+        ("Send your r\u00e9sum\u00e9.", "r\u00e9sum\u00e9", None, "Send the re\u0301sume\u0301."),
     ],
 )
 def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canonical, hint):
@@ -1956,6 +1986,28 @@ def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canoni
 
     kw = {"final_answer": final, "canonical_answer": canonical}
     assert detect_leak(reference, hint, Rung.H3, **kw) == (False, "none"), hint
+
+
+@pytest.mark.parametrize(
+    "reference,final,canonical,hint",
+    [
+        # brackets are no token: "x - 3^2" is read as "(x-3)^2"
+        ("It factors as (x-3)^2.", "(x-3)^2", None, "Is it x - 3^2?"),
+        # '*' is juxtaposition: "6 x" is read as "6*x"
+        ("d/dx 3x^2 = 6*x", "6*x", None, "It is 6 x."),
+        # a numeric item's canonical value flags that number anywhere
+        ("It is 2.", "2", "2", "In step 2, square it."),
+    ],
+)
+def test_known_over_matches_of_the_final_answer_rule_are_pinned(reference, final, canonical, hint):
+    """Over-matching is the safe direction and stays (HANDOFF-06 Known gaps;
+    Open question (n)): a false withhold costs a word, a false pass reveals
+    the answer."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    kw = {"final_answer": final, "canonical_answer": canonical}
+    assert detect_leak(reference, hint, Rung.H3, **kw) == (True, "final_answer"), hint
 
 
 REF_FACTOR = "Expand x^2 - 6x + 9: it factors as (x-3)^2."
