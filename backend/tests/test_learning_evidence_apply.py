@@ -1767,20 +1767,27 @@ class TestGraderBackend:
 # ── the journal on an environment a migration has not reached (CodeRabbit PR #673) ──
 
 
-def _apply_with_unknown_columns(unknown: set[str], payload=None, caplog=None):
+def _apply_with_unknown_columns(unknown: set[str], payload=None, caplog=None, errors=()):
     """One evidence row whose node_mastery_events insert 400s (PGRST204) while it
     names any column in `unknown`, as PostgREST does before the migration that
-    adds it is applied. Returns (attempted rows, learner_state writes)."""
+    adds it is applied — naming the first one, as PostgREST does. `errors` are
+    raised first, one per attempt. Returns (attempted rows, learner_state writes)."""
     from services.graph_service import apply_graph_update
 
     factory, mocks = _evidence_factory(NODES, [], ())
     attempts: list[dict] = []
+    queued = list(errors)
 
     def _insert(row):
         attempts.append(dict(row))
+        if queued:
+            raise queued.pop(0)
         missing = sorted(unknown & set(row))
         if missing:
-            raise RuntimeError(f"PGRST204 Could not find the '{missing[0]}' column")
+            raise RuntimeError(
+                f"PGRST204 Could not find the '{missing[0]}' column of "
+                "'node_mastery_events' in the schema cache"
+            )
         return []
 
     factory("node_mastery_events").insert.side_effect = _insert
@@ -1863,15 +1870,13 @@ class TestJournalBeforeAMigration:
             for column in columns:
                 assert re.search(rf"ADD COLUMN IF NOT EXISTS {column}\b", ddl), (migration, column)
 
-    def test_every_rung_is_tried_until_the_row_lands(self):
-        """A column only an older migration adds is dropped on the rung after the
-        newer one (a legacy row never names grader_backend, so it skips straight
-        to the event_type rung: tests/test_graph_service.py pins that shape)."""
+    def test_only_the_column_the_error_names_is_dropped(self):
+        """PostgREST names the unknown column; only that one is dropped, so a
+        column the environment has is never lost to a rung it did not need."""
         attempts, _ = _apply_with_unknown_columns({"event_type"})
         assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
             (True, True),
-            (False, True),
-            (False, False),
+            (True, False),
         ]
 
     def test_a_dead_journal_still_never_raises(self, caplog):
@@ -1879,5 +1884,73 @@ class TestJournalBeforeAMigration:
             attempts, writes = _apply_with_unknown_columns(
                 {"grader_backend", "event_type", "node_id"}
             )
-        assert len(attempts) == 3 and len(writes) == 1
-        assert any("journal row is lost" in r.getMessage() for r in caplog.records)
+        # event_type, then grader_backend, are named and dropped; node_id is no
+        # optional column, so that error gets one unchanged retry and is logged
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (True, False),
+            (False, False),
+            (False, False),
+        ]
+        assert len(writes) == 1
+        [lost] = [r for r in caplog.records if "journal row is lost" in r.getMessage()]
+        assert lost.levelname == "ERROR" and lost.exc_info and "node_id" in str(lost.exc_info[1])
+
+    def test_every_retry_logs_the_error_it_follows(self, caplog):
+        """A retry never hides the failure before it: each warning carries the
+        exception, whatever the next attempt does."""
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            _apply_with_unknown_columns({"grader_backend"})
+        [warning] = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warning.exc_info and "PGRST204" in str(warning.exc_info[1])
+
+    def test_a_check_violation_keeps_the_column_and_is_logged(self, caplog):
+        """A non-schema error (a CHECK violation, a transient 5xx) never drops a
+        column: the row is retried once unchanged and the error is logged — the
+        constraint name mentions grader_backend, but it is not an unknown column."""
+        violation = RuntimeError(
+            '23514 new row for relation "node_mastery_events" violates check '
+            'constraint "node_mastery_events_grader_backend_check"'
+        )
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, _ = _apply_with_unknown_columns(set(), errors=[violation])
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (True, True),
+        ]
+        [warning] = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert (
+            warning.exc_info[1] is violation and "retrying once unchanged" in warning.getMessage()
+        )
+
+    def test_a_repeated_check_violation_loses_the_row_loudly(self, caplog):
+        violation = RuntimeError(
+            '23514 violates check constraint "node_mastery_events_grader_backend_check"'
+        )
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, writes = _apply_with_unknown_columns(set(), errors=[violation, violation])
+        assert len(attempts) == 2 and all("grader_backend" in a for a in attempts)
+        assert len(writes) == 1  # learner_state was written before the journal
+        [lost] = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert lost.exc_info[1] is violation and "journal row is lost" in lost.getMessage()
+
+    def test_the_http_error_body_names_the_column(self):
+        """db.connection raises httpx.HTTPStatusError, whose message omits the
+        PostgREST body: the column name is read off the response body too."""
+        import httpx
+
+        request = httpx.Request("POST", "http://db/rest/v1/node_mastery_events")
+        body = (
+            '{"code":"PGRST204","message":"Could not find the \'grader_backend\' column of '
+            "'node_mastery_events' in the schema cache\"}"
+        )
+        error = httpx.HTTPStatusError(
+            "Client error '400 Bad Request'",
+            request=request,
+            response=httpx.Response(400, request=request, text=body),
+        )
+        attempts, _ = _apply_with_unknown_columns(set(), errors=[error])
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (False, True),
+        ]

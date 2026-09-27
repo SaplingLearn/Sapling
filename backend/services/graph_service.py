@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -652,8 +653,8 @@ def add_node(
 
 # Columns a later migration added to node_mastery_events, newest migration
 # first. A deploy that takes the code before the migration gets a PostgREST
-# 400 (PGRST204) for the unknown column, so each retry drops one more
-# migration's columns and the row still lands with every column the
+# 400 (PGRST204) naming the unknown column, and the retry drops exactly the
+# column the error names, so the row still lands with every column the
 # environment has. The PKG-03 evidence columns (channel … confidence,
 # 20260927024349_learning_learner_state.sql) are not listed: the evidence
 # path reads learner_state, which that same migration creates, before it ever
@@ -662,6 +663,37 @@ _JOURNAL_OPTIONAL_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("20260927093149_learning_grader_backend.sql", ("grader_backend",)),
     ("20260814051517_node_mastery_events_event_type.sql", ("event_type",)),
 )
+_JOURNAL_COLUMN_MIGRATION = {
+    column: migration for migration, columns in _JOURNAL_OPTIONAL_COLUMNS for column in columns
+}
+
+
+def _error_text(exc: Exception) -> str:
+    """The exception's message plus, for db.connection's httpx.HTTPStatusError
+    (whose message omits the body), the PostgREST error body that names the column."""
+    text = str(exc)
+    try:
+        body = exc.response.text  # type: ignore[attr-defined]
+    except Exception:
+        return text
+    return f"{text} {body}" if isinstance(body, str) else text
+
+
+def _unknown_columns(exc: Exception, row: dict) -> list[str]:
+    """The optional columns in `row` that the error reports as unknown —
+    PostgREST's "Could not find the 'x' column" (PGRST204) or Postgres's
+    `column "x" … does not exist` (42703). A CHECK violation whose constraint
+    name contains a column (node_mastery_events_grader_backend_check) names no
+    unknown column."""
+    text = _error_text(exc)
+    return [
+        column
+        for column in _JOURNAL_COLUMN_MIGRATION
+        if column in row
+        and re.search(
+            rf"['\"]{column}['\"]\s+column\b|\bcolumn\s+['\"]?{column}['\"]?(?!\w)", text
+        )
+    ]
 
 
 def _insert_mastery_event(event_row: dict) -> None:
@@ -675,42 +707,49 @@ def _insert_mastery_event(event_row: dict) -> None:
     exception here permanently loses the student's graded attempt, and the
     retry 409s because the claim already landed.
 
-    The retries target one ordering hazard: a deploy that takes this code
-    before a migration in `_JOURNAL_OPTIONAL_COLUMNS` is applied gets a 400 for
-    the unknown column. Each retry drops the next migration's columns (only
-    those the row names), newest first, so the row degrades to what the
-    environment can store rather than being lost (E7's event_type; PKG-05's
-    grader_backend, CodeRabbit PR #673). A transient failure costs the same
-    columns on the row that lands. Every failure is logged loudly — a
-    silently-dropped write is the bug class this whole batch exists to end, so
-    this must never be quiet.
+    Two retries, each logged with the error it follows. An error that reports
+    an optional column (`_JOURNAL_OPTIONAL_COLUMNS`) as unknown — a deploy ahead
+    of that migration — drops exactly that column and tries again, so the row
+    degrades to what the environment can store (E7's event_type; PKG-05's
+    grader_backend, CodeRabbit PR #673). Any other error (a CHECK violation, a
+    transient 5xx) keeps every column and is retried once unchanged; if it
+    fails again the row is lost and the error is logged. Every failure is
+    logged loudly — a silently-dropped write is the bug class this whole batch
+    exists to end, so this must never be quiet.
     """
-    row = event_row
-    try:
-        table("node_mastery_events").insert(row)
-        return
-    except Exception as exc:
-        last = exc
-    for migration, columns in _JOURNAL_OPTIONAL_COLUMNS:
-        present = [c for c in columns if c in row]
-        if not present:
-            continue
-        logger.warning(
-            "graph: mastery-event insert failed node=%s; retrying without %s "
-            "(is migration %s applied?)",
-            event_row.get("node_id"), ", ".join(present), migration,
-        )
-        row = {k: v for k, v in row.items() if k not in columns}
+    row = dict(event_row)
+    retried_unchanged = False
+    while True:
         try:
             table("node_mastery_events").insert(row)
             return
         except Exception as exc:
-            last = exc
-    logger.error(
-        "graph: mastery-event insert failed node=%s; the scalar mastery is "
-        "written but the journal row is lost", event_row.get("node_id"),
-        exc_info=last,
-    )
+            unknown = _unknown_columns(exc, row)
+            if unknown:
+                logger.warning(
+                    "graph: mastery-event insert failed node=%s; retrying without %s "
+                    "(is migration %s applied?)",
+                    event_row.get("node_id"),
+                    ", ".join(unknown),
+                    ", ".join(sorted({_JOURNAL_COLUMN_MIGRATION[c] for c in unknown})),
+                    exc_info=exc,
+                )
+                row = {k: v for k, v in row.items() if k not in unknown}
+                continue
+            if not retried_unchanged:
+                logger.warning(
+                    "graph: mastery-event insert failed node=%s; retrying once unchanged",
+                    event_row.get("node_id"),
+                    exc_info=exc,
+                )
+                retried_unchanged = True
+                continue
+            logger.error(
+                "graph: mastery-event insert failed node=%s; the scalar mastery is "
+                "written but the journal row is lost", event_row.get("node_id"),
+                exc_info=exc,
+            )
+            return
 
 
 # ── PKG-03: the evidence path (spec §5) ──────────────────────────────────────
