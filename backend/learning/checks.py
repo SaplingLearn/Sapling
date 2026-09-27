@@ -729,7 +729,7 @@ def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
     reasons = []
     if len(run) > CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS:
         reasons.append(
-            f"final_answer has {len(run)} tokens; at most {CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS}"
+            f"final_answer has {len(run)} tokens, at most {CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS}"
         )
     if not contains_run(answer_run(draft.reference_answer), run):
         reasons.append("final_answer does not occur in reference_answer")
@@ -773,14 +773,14 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
         reasons.append("reference answer is empty")
     rubric = [r for r in draft.rubric if r.strip()]
     if len(rubric) < CHECK_ITEM_MIN_RUBRIC:
-        reasons.append(f"rubric has {len(rubric)} item(s); needs >= {CHECK_ITEM_MIN_RUBRIC}")
+        reasons.append(f"rubric has {len(rubric)} item(s), needs >= {CHECK_ITEM_MIN_RUBRIC}")
     if len(draft.wrong_keys) != len(draft.wrong_texts):
         reasons.append(
             f"wrong_keys ({len(draft.wrong_keys)}) and wrong_texts "
             f"({len(draft.wrong_texts)}) differ in length"
         )
     if len(draft.wrong_keys) < CHECK_ITEM_MIN_WRONG:
-        reasons.append(f"{len(draft.wrong_keys)} wrong reason(s); needs >= {CHECK_ITEM_MIN_WRONG}")
+        reasons.append(f"{len(draft.wrong_keys)} wrong reason(s), needs >= {CHECK_ITEM_MIN_WRONG}")
     if len(set(draft.wrong_keys)) != len(draft.wrong_keys):
         reasons.append("duplicate wrong keys")
     if any(not k.strip() for k in draft.wrong_keys):
@@ -802,7 +802,7 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
         steps = len(_STEP_LINE.findall(draft.reference_answer))
         if steps < CHECK_ITEM_STEPWISE_MIN_STEPS:
             reasons.append(
-                f"stepwise reference has {steps} numbered step(s); "
+                f"stepwise reference has {steps} numbered step(s), "
                 f"needs >= {CHECK_ITEM_STEPWISE_MIN_STEPS}"
             )
     reasons.extend(_final_answer_reasons(draft))

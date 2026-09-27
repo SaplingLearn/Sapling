@@ -821,6 +821,40 @@ class TestRepairAndOptions:
         assert len(repairs) == 2
         assert not [r for r in reasons + repairs if "; " in r]
 
+    def test_no_reason_of_any_rule_holds_a_semicolon(self):
+        """The same "; " join covers every rule, not only the option rules:
+        the final_answer cap, rubric, wrong-reason and stepwise reasons read
+        "…; at most …" / "…; needs >= …" and split one drop into two in the
+        log (review of A37, 2026-09-27)."""
+        from learning.checks import validate_draft
+        from learning.params import CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS
+
+        long = " ".join(f"w{i}" for i in range(CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS + 1))
+        drafts = [
+            _draft(
+                format="mc",
+                difficulty=4,
+                prompt=" ",
+                reference_answer=" ",
+                rubric=["one"],
+                wrong_keys=["k", "k", " "],
+                wrong_texts=["a"],
+                answer_kind="symbolic",
+                stepwise=True,
+            ),
+            _draft(wrong_keys=[], wrong_texts=[]),
+            _draft(answer_kind="numeric", canonical_answer="nan", tolerance="wide"),
+            _draft(answer_kind="numeric", canonical_answer="3", final_answer="7"),
+            _draft(final_answer=long, reference_answer=f"It is {long}."),
+            _draft(final_answer="Learning Rate", reference_answer="Learning rate."),
+            _draft(prompt="What is the size of each update step?"),
+            _mc_draft(final_answer="The loss value", reference_answer="The loss value."),
+        ]
+        reasons = [r for d in drafts for r in validate_draft(d)]
+        words = {r.split(" ")[0].split(":")[0] for r in reasons}
+        assert {"final_answer", "rubric", "stepwise", "format", "difficulty"} <= words, words
+        assert not [r for r in reasons if "; " in r], [r for r in reasons if "; " in r]
+
     def test_code_letters_the_options_and_places_the_correct_one(self):
         from learning.checks import lettered_options
 
