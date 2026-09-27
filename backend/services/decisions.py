@@ -181,7 +181,9 @@ class GradeState(_State):
 
 
 class ReasonState(_State):
-    """reason_is_correct (mc_reason). The option is compared by grade_answer, never here."""
+    """reason_is_correct (mc_reason). The option is compared by grade_answer, never here.
+    `options` (letter → text, item order) never reaches the grader's message: the
+    answer screen reads the option texts as the item's own course vocabulary (A33)."""
 
     question: str
     reference: str
@@ -190,6 +192,7 @@ class ReasonState(_State):
     selected_option: str
     correct_option: str
     reason: str
+    options: dict[str, str] = {}
 
 
 class WrongReasonState(_State):
@@ -251,13 +254,16 @@ STATE_FOR_DECISION: dict[str, type[_State]] = {
 class GraderItem:
     """What agents.grader.build_grader_message (and grade()) read, rebuilt from a
     State. `id` is a log label only. rubric / common_wrong are learning.checks
-    models (the grader reads r.id / r.text / w.key / w.text, HANDOFF-05)."""
+    models (the grader reads r.id / r.text / w.key / w.text, HANDOFF-05).
+    `options` holds an mc_reason item's option texts for grade()'s answer screen
+    (answer_guard.item_terms; never in the message)."""
 
     id: str
     prompt: str
     reference_answer: str
     rubric: list[RubricItem]
     common_wrong: list[WrongReason]
+    options: tuple[str, ...] = ()
 
 
 def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> GraderItem:
@@ -267,6 +273,7 @@ def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> 
         reference_answer=state.reference,
         rubric=[RubricItem(id=k, text=v) for k, v in state.rubric.items()],
         common_wrong=[WrongReason(key=k, text=v) for k, v in state.wrong.items()],
+        options=tuple(getattr(state, "options", {}).values()),
     )
 
 

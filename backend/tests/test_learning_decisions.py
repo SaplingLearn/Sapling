@@ -290,6 +290,34 @@ def test_reason_is_correct_runs_the_grader_as_mc_reason(seam, grader_spy):
     assert v.value is True and v.result.all_yes is True
 
 
+def test_reason_is_correct_hands_grade_the_option_texts_never_the_message(seam, grader_spy):
+    """Spec §13 A33 (red team round 3): an mc_reason item's option texts are course
+    vocabulary for grade()'s answer screen, so the rebuilt item carries them — in
+    item order — while the grader's message stays byte-identical (no options)."""
+    from agents.grader import build_grader_message
+
+    options = {"A": "It stops the recursion", "B": "It makes recursion faster"}
+    st = seam.ReasonState(
+        question=QUESTION,
+        reference=REFERENCE,
+        rubric=RUBRIC,
+        wrong=WRONG,
+        selected_option="A",
+        correct_option="A",
+        reason="because it stops",
+        options=options,
+    )
+    asyncio.run(seam.reason_is_correct(st, deps=_deps(), item_id="ci-1"))
+    [(item, _, answer)] = grader_spy["calls"]
+    assert item.options == tuple(options.values())
+    labels = {"r1": "48213", "r2": "73920"}
+    without = seam.grader_item_from(st.model_copy(update={"options": {}}))
+    assert without.options == ()
+    assert build_grader_message(
+        item, format="mc_reason", student_answer=answer, labels=labels
+    ) == build_grader_message(without, format="mc_reason", student_answer=answer, labels=labels)
+
+
 def test_match_wrong_reason_with_prior_makes_no_call(seam, monkeypatch, events):
     from agents.decision import decision_agent
     from agents.grader import GradeResult
