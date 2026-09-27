@@ -15,21 +15,23 @@ router is a measurement: it logs each decision (``decision.made``, feature
 ``tutor_router``) so accuracy and the would-be model-tier mix can be reviewed
 before anything trusts it. Which way the model-selection question in #640 goes
 ((a) an ``auto`` pref vs (b) escalate/de-escalate the toggle) is deliberately
-NOT decided here; ``model_pref`` rides on the event so either can be costed.
+NOT decided here; the served model tier rides on the event so either can be
+costed.
 
 **Zero added latency.** :func:`observe_tutor_turn` schedules the decision as a
 fire-and-forget task on the running loop and returns immediately; the task has
 its own timeout backstop and can never raise into the turn. With the seam off
 (the default), it returns before building any state.
 
-Only student-authored chat turns are routed (``/chat`` and ``/chat/stream`` —
-one call per turn, even when the stream falls back to the JSON pipeline).
+Only student-authored chat turns are routed (``/chat`` and ``/chat/stream``),
+and only once they are PERSISTED — exactly one decision per saved student
+message, whichever pipeline served it and however many attempts it took.
 Session openers and hint/confused/skip actions carry synthetic prompts, so a
 judgment about them would measure our own template, not the student.
 
 Safe defaults (the answer when the seam is off, errors, or is under the
 confidence floor) are the behaviour the tutor has today: retrieve, don't
-rewrite, no complexity opinion (i.e. keep the user's ``model_pref``), not
+rewrite, no complexity opinion (i.e. keep the user's model tier), not
 graded work, not an injection.
 """
 
@@ -184,10 +186,25 @@ def observe_tutor_turn(
     message: str,
     history: list | None,
     mode: str,
-    model_pref: str | None,
+    model_pref_requested: str | None,
+    model_tier: str,
+    tutor_model: str | None,
     request_id: str | None,
 ) -> asyncio.Task | None:
-    """Schedule the router for one chat turn and return immediately.
+    """Schedule the router for one PERSISTED chat turn and return immediately.
+
+    Called from the per-turn persist point (routes/learn.py), not request
+    entry: a turn is routed once it exists, so a stream that fails before
+    persisting and is retried through /chat — by the client's own JSON rung or
+    by the student — is one decision, not two.
+
+    The model fields say what the turn ACTUALLY ran on, so the log can price
+    option (a) vs (b) of #640's open question against the router's
+    complexity: ``model_pref_requested`` is the raw request field (the
+    toggle; None when the client sent none), ``model_tier`` the tier that
+    served (``fast`` | ``smart`` | ``default`` — the stream's Rung-1 fallback
+    is ``fast`` whatever was requested), and ``tutor_model`` the served model
+    name.
 
     Returns the scheduled task (tests await it) or None when the seam is off
     or scheduling failed. Never raises, never blocks: the caller's turn runs
@@ -200,9 +217,9 @@ def observe_tutor_turn(
         extra = {
             "session_id": session_id,
             "mode": mode,
-            # What the student's toggle chose, so the log can price option (a)
-            # vs (b) of #640's open question against the router's complexity.
-            "model_pref": model_pref,
+            "model_pref_requested": model_pref_requested,
+            "model_tier": model_tier,
+            "tutor_model": tutor_model,
             "history_messages": len(state["recent_conversation"]),
         }
         task = asyncio.get_running_loop().create_task(

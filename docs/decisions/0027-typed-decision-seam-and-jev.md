@@ -88,18 +88,26 @@ toggle is an open product question.
 
 5. **Shadow mode for the #642 acceptance.** `SAPLING_DECISIONS_SHADOW` runs a
    second backend concurrently and records its answers plus per-key agreement
-   on the same event. The shadow never falls back and never feeds the answer.
+   on the same event. The shadow never falls back and never feeds the answer —
+   except that when a Jev primary degrades to flash_lite and the shadow IS
+   flash_lite, the shadow's in-flight answer serves as the fallback (one
+   Gemini call, not two) and the shadow is logged `shadow_same_as_served`
+   with `agree: null`, never a self-comparison.
    Switching Jev on after the agreement review is one env var.
 
 6. **Tutor router, observe-only.** `services/tutor_router.py` asks five
    questions per student chat turn (`needs_retrieval`, `needs_rewrite`,
    `complexity` easy/medium/hard, `is_graded_work_request`,
-   `injection_attempt`). It is scheduled fire-and-forget from `/chat` and
-   `/chat/stream` (once per turn; the stream's JSON fallback does not re-route
-   it), with its own timeout backstop. **Nothing acts on the answers**:
-   retrieval, model choice and prompt are exactly as before. `model_pref` rides
-   on the event so both answers to the #640 model-selection question can be
-   costed from the same data. That question is **deliberately left open** here.
+   `injection_attempt`). It is scheduled fire-and-forget from the per-turn
+   PERSIST point of `/chat` and `/chat/stream` (where the student message is
+   saved and `chat.message_sent` emits), so there is exactly one decision per
+   persisted student turn — a stream that fails before persisting and is
+   retried through `/chat` is routed once. It has its own timeout backstop.
+   **Nothing acts on the answers**: retrieval, model choice and prompt are
+   exactly as before. The model the turn actually ran on rides on the event
+   (`model_tier` fast/smart/default, `tutor_model`, plus the raw
+   `model_pref_requested`) so both answers to the #640 model-selection
+   question can be costed from the same data. That question is **deliberately left open** here.
    Session openers and hint/confused/skip actions are not routed, because
    their prompts are synthetic.
 
