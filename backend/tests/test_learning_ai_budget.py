@@ -610,3 +610,15 @@ def test_grade_is_unavailable_at_the_grader_cap_without_a_model_call(usage):
         with pytest.raises(UsageLimitExceeded):  # the second-opinion run site is guarded too
             asyncio.run(grader._run_once("m", _deps(), second_opinion=True))
     assert result.unavailable is True and runs == []
+
+
+def test_decision_run_is_skipped_at_the_grader_cap(usage):
+    from pydantic_ai.models.function import FunctionModel
+    from agents.decision import decision_agent
+    from services import decisions
+
+    usage([_row(task="decision") for _ in range(config.STUDENT_DAILY_GRADES)])
+    runs: list = []
+    with decision_agent.override(model=FunctionModel(_must_not_run(runs))):
+        assert asyncio.run(decisions._run_decision("judge_leak", None, _deps())) is None
+    assert runs == []
