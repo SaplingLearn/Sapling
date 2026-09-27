@@ -10,6 +10,7 @@ import importlib
 import pathlib
 import re
 import subprocess
+import warnings
 
 import dotenv
 import pytest
@@ -171,6 +172,21 @@ def test_inv_08_series_migrations_named_and_never_modified():
         check=False,
     ).stdout.strip()
     assert out == "", f"series migrations were modified after creation: {out}"
+    shallow = subprocess.run(
+        ["git", "rev-parse", "--is-shallow-repository"],
+        cwd=BACKEND.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    if shallow == "true":
+        # A depth-1 clone (actions/checkout's default) lists every file as
+        # Added in its one grafted commit, so the check above cannot fail there.
+        warnings.warn(
+            "inv_08: shallow clone, so the never-modified half is vacuous here; "
+            "it only bites on a full clone (CI needs actions/checkout fetch-depth: 0)",
+            stacklevel=1,
+        )
 
 
 def test_inv_09_no_unique_or_eq_on_encrypted_learning_columns():
