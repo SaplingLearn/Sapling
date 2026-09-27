@@ -514,3 +514,54 @@ def test_the_usage_read_pages_past_max_rows(usage):
     d = ai_budget.check(UID, "tutor", "develop")
     assert (d.level, d.scope) == ("hard", "daily_tokens")
     assert fake.reads == 2
+
+
+# ── rate limit and the 429 body (spec §3.5, §9, A20) ─────────────────────────
+
+
+def _budget_app():
+    from fastapi import Depends, FastAPI
+
+    app = FastAPI()
+    app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
+
+    @app.post("/model", dependencies=[Depends(ai_budget.enforce_rate_limit)])
+    def model_route():
+        return {"ok": True}
+
+    return app
+
+
+def test_rate_limited_counts_llm_usage_rows_in_the_last_minute(usage):
+    usage(
+        [_row(ago_s=5) for _ in range(config.LEARN_RATE_LIMIT_PER_MIN - 1)]
+        + [_row(ago_s=120) for _ in range(5)]
+    )
+    assert ai_budget.rate_limited(UID) is False
+    usage([_row(ago_s=5) for _ in range(config.LEARN_RATE_LIMIT_PER_MIN)])
+    assert ai_budget.rate_limited(UID) is True
+
+
+def test_enforce_rate_limit_answers_429_with_reset_at(usage, events, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(ai_budget, "get_session_user_id", lambda request: UID)
+    usage([_row(ago_s=30) for _ in range(config.LEARN_RATE_LIMIT_PER_MIN)])
+    r = TestClient(_budget_app()).post("/model")
+    assert r.status_code == 429
+    body = r.json()
+    assert body["detail"] == "ai budget reached" == ai_budget.BUDGET_REACHED_DETAIL
+    assert body["reset_at"] == (NOW + timedelta(seconds=30)).isoformat()
+    assert body["scope"] == "rate_limit"
+    assert int(r.headers["Retry-After"]) >= 1
+    assert events[-1][1]["payload"]["scope"] == "rate_limit"
+    usage([])
+    assert TestClient(_budget_app()).post("/model").json() == {"ok": True}
+
+
+def test_main_registers_the_budget_handler():
+    from main import app
+
+    assert (
+        app.exception_handlers.get(ai_budget.AIBudgetExceeded) is ai_budget.budget_exceeded_handler
+    )

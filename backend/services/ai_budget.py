@@ -16,10 +16,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Literal, NamedTuple, get_args
 
+from fastapi import Request, status
+from fastapi.responses import JSONResponse
+
 import config
 from db.connection import page_all, table
 from learning import params
 from learning.policy import Band, BudgetLevel, Tier
+from services.auth_guard import get_session_user_id
 from services.events_service import log_event
 from services.request_context import current_request_id
 
@@ -39,6 +43,7 @@ Scope = Literal[
 EventLevel = Literal["soft", "hard", "grader_cap"]
 
 BUDGET_CAPPED_EVENT = "ai.budget_capped"  # spec §6
+BUDGET_REACHED_DETAIL = "ai budget reached"  # spec §3.5 / A20 429 body
 GRADE_TASKS = frozenset({"grader", "grader_second", "decision"})  # spec §3.5 STUDENT_DAILY_GRADES
 RATE_LIMIT_WINDOW_S = 60  # spec §3.5: LEARN_RATE_LIMIT_PER_MIN counts rows in the last 60 s
 _REQUEST_CACHE_MAX = 512  # entries; a memory bound, not a policy threshold
@@ -385,6 +390,74 @@ def check(
         tutor_requests=session_tutor_requests,
         deep_requests=session_deep_requests,
         arm_session=arm_session,
+    )
+
+
+# ── rate limit and the 429 (spec §3.5, §9, A20) ──────────────────────────────
+class AIBudgetExceeded(Exception):
+    """Over budget; main.py maps it to the §3.5 429 body. Raised by PKG-07 (tutor hard) and
+    enforce_rate_limit."""
+
+    def __init__(self, decision: BudgetDecision):
+        super().__init__(BUDGET_REACHED_DETAIL)
+        self.decision = decision
+
+
+def _rate_limit_decision(user_id: str) -> tuple[BudgetDecision | None, _Usage | None]:
+    usage = _usage(user_id)
+    if usage is None or usage.minute_rows < config.LEARN_RATE_LIMIT_PER_MIN:
+        return None, usage
+    decision = BudgetDecision(
+        level="hard",
+        tier_ceiling="none",
+        scope="rate_limit",
+        reset_at=_rate_reset(usage, _utcnow()),
+    )
+    return decision, usage
+
+
+def rate_limited(user_id: str) -> bool:
+    """llm_usage rows of the user in the last RATE_LIMIT_WINDOW_S ≥ LEARN_RATE_LIMIT_PER_MIN.
+    Cross-worker (it counts DB rows; Redis is off by default and services/request_limits.py is
+    per-process); fails open on a read error."""
+    return _rate_limit_decision(user_id)[0] is not None
+
+
+def enforce_rate_limit_for(user_id: str) -> None:
+    """The rate limit, callable inline where only SOME bodies of a route run a model
+    (PKG-12's /review/answer checks it for kind="check" only — a self-rated flashcard
+    runs none and is never rate-limited, spec §3.5)."""
+    decision, usage = _rate_limit_decision(user_id)
+    if decision is None:
+        return
+    _emit_capped(user_id, "rate_limit", "hard", **_spend_fields("rate_limit", usage, 0.0))
+    raise AIBudgetExceeded(decision)
+
+
+def enforce_rate_limit(request: Request) -> None:
+    """FastAPI dependency. PKG-07 attaches it to every model-calling /api/learn/loop/*
+    route — never to GET /status or GET /sessions (spec §9). No session → 401 as today."""
+    enforce_rate_limit_for(get_session_user_id(request))
+
+
+async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JSONResponse:
+    """HTTP 429 {"detail": "ai budget reached", "reset_at": <iso or null>} (spec §3.5, A20), plus
+    the house request_id and the scope; Retry-After (≥ 1 s) when the reset is known."""
+    rid = getattr(request.state, "request_id", None) or current_request_id()
+    reset_at = exc.decision.reset_at
+    headers: dict[str, str] = {}
+    if reset_at is not None:
+        headers["Retry-After"] = str(max(1, int((reset_at - _utcnow()).total_seconds())))
+    if rid:
+        headers["X-Request-ID"] = rid
+    content = {
+        "detail": BUDGET_REACHED_DETAIL,
+        "reset_at": reset_at.isoformat() if reset_at else None,
+        "scope": exc.decision.scope,
+        "request_id": rid,
+    }
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS, content=content, headers=headers
     )
 
 
