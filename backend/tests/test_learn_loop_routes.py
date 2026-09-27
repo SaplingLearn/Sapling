@@ -2006,3 +2006,160 @@ def test_opener_stream_at_the_hard_level_carries_the_budget_event(gate_on, seams
     assert [e["type"] for e in evs] == ["phase", "budget", "done"]
     assert evs[-1]["data"]["reply"] == _LOOP_OPENER_TEMPLATE
     PENDING_SESSIONS.pop(evs[-1]["data"]["session_id"])
+
+
+# ── Task 8: delegation ────────────────────────────────────────────────────
+
+_LEGACY = [
+    ("start_session", "/api/learn/start-session", {"user_id": "u1", "topic": "Recursion"}),
+    ("chat", "/api/learn/chat", {"session_id": "s1", "user_id": "u1", "message": "hi"}),
+    (
+        "chat_stream",
+        "/api/learn/chat/stream",
+        {"session_id": "s1", "user_id": "u1", "message": "hi"},
+    ),
+    (
+        "start_session_stream",
+        "/api/learn/start-session/stream",
+        {"user_id": "u1", "topic": "Recursion"},
+    ),
+    ("action", "/api/learn/action", {"session_id": "s1", "user_id": "u1", "action_type": "hint"}),
+]
+
+
+@pytest.mark.parametrize("handler,path,body", _LEGACY)
+def test_legacy_route_delegates_when_gate_true(handler, path, body):
+    from fastapi.responses import JSONResponse
+
+    async def _loop(b, request):
+        return JSONResponse({"delegated": handler})
+
+    with (
+        patch("routes.learn.learning_loop_active", return_value=True) as gate,
+        patch(f"routes.learn_loop.{handler}", side_effect=_loop) as loop,
+        patch("routes.learn._consume_pending") as consume,
+        patch("routes.learn._prepare_chat_run") as prep,
+    ):
+        r = client.post(path, json=body)
+    assert r.status_code == 200 and r.json() == {"delegated": handler}
+    gate.assert_called_once_with("u1")
+    assert loop.call_count == 1
+    consume.assert_not_called()
+    prep.assert_not_called()
+
+
+@pytest.mark.parametrize("handler,path,body", _LEGACY)
+def test_legacy_route_is_untouched_when_gate_false(handler, path, body):
+    """Gate false: the delegation line is a no-op and the loop handler is never
+    reached (the legacy body below runs; its own suites pin what it does)."""
+    with (
+        patch("routes.learn.learning_loop_active", return_value=False) as gate,
+        patch(f"routes.learn_loop.{handler}") as loop,
+        patch("routes.learn._prepare_chat_run", side_effect=RuntimeError("legacy body reached")),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn._get_session_offering_id", return_value=""),
+        patch("routes.learn._load_message_history", return_value=[]),
+        patch("routes.learn._get_course_id_for_topic", return_value=""),
+    ):
+        # the legacy body raises at its first step (the sentinel above): proof it ran
+        TestClient(app, raise_server_exceptions=False).post(path, json=body)
+    gate.assert_called_once_with("u1")
+    loop.assert_not_called()
+
+
+def test_legacy_end_session_pass_through_and_override():
+    with (
+        patch("routes.learn.learning_loop_active", return_value=True),
+        patch("routes.learn_loop.end_session", return_value=None),
+        patch("routes.learn.PENDING_SESSIONS", {"s1": {"user_id": "u1"}}),
+    ):
+        r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": "u1"})
+    assert r.status_code == 200 and r.json()["summary"]["time_spent_minutes"] == 0, (
+        "None → legacy body runs"
+    )
+    with (
+        patch("routes.learn.learning_loop_active", return_value=True),
+        patch("routes.learn_loop.end_session", return_value={"summary": {"loop": True}}),
+    ):
+        r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": "u1"})
+    assert r.json() == {"summary": {"loop": True}}
+
+
+def test_legacy_chat_call_sequence_unchanged_when_gate_false():
+    """Snapshot: with the gate false the legacy /chat performs exactly the
+    pre-series call sequence. Any new table read or loop call is a regression."""
+    calls: list[str] = []
+
+    def factory(name):
+        calls.append(name)
+        m = MagicMock()
+        m.select.return_value = []
+        m.insert.return_value = []
+        return m
+
+    turn = {"reply": "legacy", "graph_update": {}, "mastery_changes": []}
+    with (
+        patch("routes.learn.learning_loop_active", return_value=False) as gate,
+        patch("routes.learn.table", side_effect=factory),
+        patch("routes.learn._chat_via_agent", return_value=turn),
+        patch("routes.learn_loop.chat") as loop_chat,
+    ):
+        r = client.post(
+            "/api/learn/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+        )
+    assert r.status_code == 200 and r.json() == turn
+    gate.assert_called_once_with("u1")
+    loop_chat.assert_not_called()
+    assert calls == ["sessions", "messages", "messages", "messages"], (
+        "offering lookup, history load, user row, assistant row — nothing else"
+    )
+
+
+def test_the_real_gate_reads_nothing_on_the_legacy_path_with_the_flag_unset(monkeypatch):
+    """Flag off: learning_loop_active returns False without a user_settings read
+    (PKG-00), so the delegated legacy routes stay byte-identical."""
+    import config
+
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+    calls: list[str] = []
+
+    def factory(name):
+        calls.append(name)
+        m = MagicMock()
+        m.select.return_value = []
+        return m
+
+    turn = {"reply": "legacy", "graph_update": {}, "mastery_changes": []}
+    with (
+        patch("learning.gate.table", side_effect=factory),
+        patch(
+            "routes.learn.table", side_effect=lambda n: MagicMock(select=MagicMock(return_value=[]))
+        ),
+        patch("routes.learn._chat_via_agent", return_value=turn),
+    ):
+        r = client.post(
+            "/api/learn/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+        )
+    assert r.status_code == 200 and calls == []
+
+
+def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
+    import inspect
+
+    import routes.learn as learn
+
+    for fn in (
+        learn.start_session,
+        learn.chat,
+        learn.chat_stream,
+        learn.start_session_stream,
+        learn.action,
+    ):
+        src = inspect.getsource(fn)
+        auth = src.index("require_self(")
+        gate = src.index("learning_loop_active(")
+        assert auth < gate < src.index("_loop_delegate("), fn.__name__
+        assert src.count("_loop_delegate(") == 1
+    src = inspect.getsource(learn.end_session)
+    assert src.index("get_session_user_id(request)") < src.index("learning_loop_active(")
+    assert '_loop_delegate("end_session")' in src
