@@ -472,7 +472,9 @@ fastapi==0.138.0 \
 genai-prices==0.0.66 \
     --hash=sha256:86b83f107c1cf04bb449a120cd8d4439ceb6843660d9128cde560eb511686d7b \
     --hash=sha256:f087dfe56da28a4c3933dcf846cf2b7111ba733cef674c0cbc66de80212bcd6b
-    # via pydantic-ai-slim
+    # via
+    #   -r /tmp/req.in
+    #   pydantic-ai-slim
 google-api-core==2.31.0 \
     --hash=sha256:2be84ee0f584c48e6bde1b36766e23348b361fb7e55e56135fc76ce1c397f9c2 \
     --hash=sha256:ef79fb3784c71cbac89cbd03301ba0c8fb8ad2aa95d7f9204dd9628f7adf59ab

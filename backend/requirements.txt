@@ -63,6 +63,15 @@ ruff==0.15.18
 # lanes stayed green. Bump this ceiling only together with a chat_stream.py
 # migration and a fresh requirements.lock.
 pydantic-ai-slim[google]>=0.0.20,<2
+# <0.1 (#689): genai-prices is pydantic-ai's usage extractor. From 0.1.0 it
+# returns modality-split fields (e.g. `input_text_tokens`) that pydantic-ai
+# 1.x's RequestUsage rejects; pydantic-ai swallows the TypeError and every
+# Gemini run reports 0 tokens, so llm_usage (cost rollups, AI budget caps)
+# records zeros. The Dockerfile installs THIS file, not the lock, so the cap
+# must live here. Lift it only together with a pydantic-ai bump that accepts
+# the new fields — tests/test_agent_usage.py::test_real_gemini_response_*
+# goes red under the broken pairing.
+genai-prices>=0.0.62,<0.1
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 
