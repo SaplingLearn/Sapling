@@ -10,6 +10,7 @@ database, the graph, or an agent; PKG-03's apply_graph_update calls it.
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 from learning.params import (
@@ -102,13 +103,16 @@ def _retrievability(t: float, s: float) -> float:
 def decayed_p(p_stored: float, days_since: float, stability: float | None) -> float:
     """Decay-at-read (spec §3.1): P_now = L0 + (P_stored − L0)·R(Δt, S_c).
 
-    stability None → FSRS_S0_GOOD (no FSRS state yet). Negative days_since
-    (clock skew) reads as 0. The prior is a fixed point; every other p moves
+    stability None → FSRS_S0_GOOD (no FSRS state yet); otherwise it must be
+    finite and > 0. Negative days_since (clock skew) reads as 0, +inf gives
+    the prior, NaN raises. The prior is a fixed point; every other p moves
     toward it from its own side and never crosses.
     """
     s_c = FSRS_S0_GOOD if stability is None else stability
-    if s_c <= 0.0:
-        raise ValueError(f"stability must be > 0, got {stability}")
+    if not (s_c > 0.0 and math.isfinite(s_c)):  # `not >` also rejects NaN
+        raise ValueError(f"stability must be finite and > 0, got {stability}")
+    if math.isnan(days_since):
+        raise ValueError(f"days_since must be a number, got {days_since}")
     t = max(0.0, days_since)
     if t == 0.0:
         return p_stored

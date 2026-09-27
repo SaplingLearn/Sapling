@@ -331,6 +331,28 @@ def test_decayed_p_rejects_nonpositive_stability():
         bkt.decayed_p(P_HIGH, 1.0, -2.0)
 
 
+@pytest.mark.parametrize("stability", [math.nan, math.inf])
+def test_decayed_p_rejects_non_finite_stability(stability):
+    """NaN slipped past `<= 0` and _clamp01 turned the NaN result into 0.0 (below
+    the prior); inf read as "never forgets". Both are corrupt FSRS state."""
+    with pytest.raises(ValueError, match="stability"):
+        bkt.decayed_p(P_HIGH, 1.0, stability)
+    with pytest.raises(ValueError, match="stability"):
+        bkt.decayed_p(P_HIGH, 0.0, stability)
+
+
+def test_decayed_p_rejects_nan_days():
+    """max(0.0, nan) is 0.0, so NaN used to read as "no time passed"."""
+    with pytest.raises(ValueError, match="days_since"):
+        bkt.decayed_p(P_HIGH, math.nan, None)
+
+
+def test_decayed_p_infinite_days_is_the_prior():
+    """+inf is the documented limit, not an error: belief lands on BKT_L0."""
+    assert bkt.decayed_p(P_HIGH, math.inf, None) == pytest.approx(params.BKT_L0)
+    assert bkt.decayed_p(0.05, math.inf, None) == pytest.approx(params.BKT_L0)
+
+
 # ------------------------------------------- propagate / band / tier / mastery
 
 
