@@ -376,12 +376,53 @@ def test_inv_03_channel_guess_slip_bounds():
         assert g + params.S_IDK < 1.0, f"{name}: idk observation would invert"
 
 
+_TEXTLIKE_PARAM = re.compile(r"(message|text|answer|reply|prompt|content|utterance)", re.I)
+
+
 def test_inv_04_policy_takes_no_message_text():
-    pytest.skip("asserted by PKG-06")
+    src = (LEARNING / "policy.py").read_text()
+    assert "matches_non_attempt" not in src, "policy.py must not reach the text gate"
+    assert not re.search(r"^\s*(from|import)\s+(learning\.)?gates\b", src, re.M), (
+        "policy.py imports gates"
+    )
+    assert not re.search(r"^\s*import\s+re\b", src, re.M), "policy.py must not process text"
+    tree = ast.parse(src)
+    offenders = []
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name.startswith(
+            "_"
+        ):
+            continue
+        for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
+            ann = ast.unparse(arg.annotation) if arg.annotation is not None else ""
+            if re.search(r"\bstr\b", ann) or _TEXTLIKE_PARAM.search(arg.name):
+                offenders.append(f"{node.name}({arg.name}: {ann or 'unannotated'})")
+    assert not offenders, f"policy.py public functions take text-shaped params: {offenders}"
+    for name in ("ceiling", "band_control"):
+        assert any(isinstance(n, ast.FunctionDef) and n.name == name for n in tree.body), (
+            f"{name}() missing"
+        )
+
+
+# Spec §8.5 as amended: zpd/learn/review plus ai (PKG-06b) and decision (PKG-05b).
+_SERIES_EVENT_LITERAL = re.compile(r'"((?:zpd|learn|review|ai|decision)\.[a-z_]+)"')
 
 
 def test_inv_05_series_event_names_in_taxonomy():
-    pytest.skip("asserted by PKG-06")
+    from services.events_service import EVENT_TAXONOMY
+
+    found: set[str] = set()
+    for path in BACKEND.rglob("*.py"):
+        rel = path.relative_to(BACKEND).parts
+        if rel[0] in ("tests", "venv", ".venv"):
+            continue
+        for m in _SERIES_EVENT_LITERAL.finditer(path.read_text(errors="ignore")):
+            found.add(m.group(1))
+    assert any(f.startswith("zpd.") for f in found), (
+        "no zpd.* literal found under backend/ — PKG-06 adds them"
+    )
+    missing = sorted(found - EVENT_TAXONOMY)
+    assert not missing, f"series event literals not in EVENT_TAXONOMY: {missing}"
 
 
 def _backend_py_files():
