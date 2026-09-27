@@ -90,7 +90,7 @@ class _Usage:
     day_tokens: int
     day_grades: int
     minute_rows: int
-    minute_oldest: datetime | None
+    minute_stamps: tuple[datetime, ...]  # the window's rows, oldest first (the rate-limit reset)
 
 
 class _EmitKey(NamedTuple):
@@ -214,7 +214,16 @@ def _daily_cap(band: Band | None) -> Decimal:
 
 
 def _rate_reset(usage: _Usage, now: datetime) -> datetime:
-    return (usage.minute_oldest or now) + timedelta(seconds=RATE_LIMIT_WINDOW_S)
+    """When the rate limit lifts (Behaviour 4: never an early resume): once all but
+    LEARN_RATE_LIMIT_PER_MIN − 1 of the window's rows have aged out, i.e. the
+    (minute_rows − LEARN_RATE_LIMIT_PER_MIN + 1)-th oldest + RATE_LIMIT_WINDOW_S. With exactly the
+    limit in the window that is the oldest row; concurrent calls and the events-queue lag can
+    land more."""
+    stamps = usage.minute_stamps
+    if not stamps:
+        return now + timedelta(seconds=RATE_LIMIT_WINDOW_S)
+    lifts_after = min(max(len(stamps) - config.LEARN_RATE_LIMIT_PER_MIN, 0), len(stamps) - 1)
+    return stamps[lifts_after] + timedelta(seconds=RATE_LIMIT_WINDOW_S)
 
 
 def _spend_fields(scope: Scope, usage: _Usage | None, cap: Decimal | None = None) -> dict:
@@ -255,8 +264,8 @@ def _load_rows(user_id: str, since: datetime) -> list[dict]:
 def _summarise(rows: list[dict], now: datetime) -> _Usage:
     day0, minute0 = _day_start(now), now - timedelta(seconds=RATE_LIMIT_WINDOW_S)
     month_usd = day_usd = Decimal(0)
-    day_tokens = day_grades = minute_rows = 0
-    oldest: datetime | None = None
+    day_tokens = day_grades = 0
+    minute: list[datetime] = []
     for row in rows:
         ts = _parse_ts(row.get("created_at"))
         if ts is None:
@@ -268,9 +277,8 @@ def _summarise(rows: list[dict], now: datetime) -> _Usage:
             day_tokens += int(row.get("total_tokens") or 0)
             day_grades += row.get("task") in GRADE_TASKS
         if ts >= minute0:
-            minute_rows += 1
-            oldest = ts if oldest is None or ts < oldest else oldest
-    return _Usage(month_usd, day_usd, day_tokens, day_grades, minute_rows, oldest)
+            minute.append(ts)
+    return _Usage(month_usd, day_usd, day_tokens, day_grades, len(minute), tuple(sorted(minute)))
 
 
 def _usage(user_id: str) -> _Usage | None:

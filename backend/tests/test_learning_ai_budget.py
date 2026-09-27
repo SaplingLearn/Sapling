@@ -624,6 +624,25 @@ def test_enforce_rate_limit_answers_429_with_reset_at(usage, events, monkeypatch
     assert TestClient(_budget_app()).post("/model").json() == {"ok": True}
 
 
+def test_rate_limit_reset_waits_until_enough_rows_age_out(usage, monkeypatch):
+    """Concurrent calls and the events-queue lag can land MORE than the limit in the window;
+    the limit then lifts only once all but LEARN_RATE_LIMIT_PER_MIN − 1 have aged out, not
+    when the oldest does (Behaviour 4: a pause banner never promises an early resume)."""
+    limit, window = config.LEARN_RATE_LIMIT_PER_MIN, ai_budget.RATE_LIMIT_WINDOW_S
+    extra, early_age, late_age = 5, window - 10, 10  # row count and ages, not thresholds
+    usage(
+        [_row(ago_s=early_age) for _ in range(extra)] + [_row(ago_s=late_age) for _ in range(limit)]
+    )
+    d = ai_budget.check(UID, "tutor", "develop")
+    assert (d.level, d.scope) == ("hard", "rate_limit")
+    assert d.reset_at == NOW - timedelta(seconds=late_age) + timedelta(seconds=window)
+    tick = timedelta(microseconds=1)
+    monkeypatch.setattr(ai_budget, "_utcnow", lambda: d.reset_at - tick)
+    assert ai_budget.rate_limited(UID) is True  # the early rows are gone; the limit is not
+    monkeypatch.setattr(ai_budget, "_utcnow", lambda: d.reset_at + tick)
+    assert ai_budget.rate_limited(UID) is False
+
+
 def test_retry_after_never_invites_an_early_retry(usage, monkeypatch):
     """Retry-After is whole seconds; rounding the wait DOWN sends an obedient client back
     before reset_at, into a second 429 (Behaviour 4: never promise an early resume)."""
