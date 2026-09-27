@@ -52,6 +52,7 @@ ENCRYPTED_LEARNING_COLUMNS = (
     "options_json",
     "correct_option",
     "canonical_answer",
+    "final_answer",  # A34 (PKG-06's reopen of PKG-04)
     "evidence_text",
     "close_json",
     "loop_brief",
@@ -350,6 +351,21 @@ def test_inv_02_pure_modules_import_nothing_impure():
         assert path.exists(), f"{name} missing — PKG-00 stubs it"
         bad = [r for r in _imports_of(path) if r in FORBIDDEN_IMPORT_ROOTS]
         assert not bad, f"{name} imports {bad}"
+    # A17 extension (PKG-06): passage text reaches ladder.deterministic_content as an
+    # argument — ladder.py never resolves, reads or decrypts passages itself.
+    ladder = LEARNING / "ladder.py"
+    bad = [r for r in _imports_of(ladder) if r in ("services", "routes", "httpx", "supabase")]
+    assert not bad, f"ladder.py imports {bad}: passages must be passed in"
+    fn = next(
+        (
+            n
+            for n in ast.parse(ladder.read_text()).body
+            if isinstance(n, ast.FunctionDef) and n.name == "deterministic_content"
+        ),
+        None,
+    )
+    assert fn is not None, "ladder.deterministic_content() missing"
+    assert [a.arg for a in fn.args.args] == ["rung", "item", "siblings", "passages"]
 
 
 def test_inv_03_channel_guess_slip_bounds():
@@ -376,12 +392,83 @@ def test_inv_03_channel_guess_slip_bounds():
         assert g + params.S_IDK < 1.0, f"{name}: idk observation would invert"
 
 
+_TEXTLIKE_PARAM = re.compile(r"(message|text|answer|reply|prompt|content|utterance)", re.I)
+_ROUTING_FUNCS = ("model_tier", "context_policy")
+_ROUTING_ANN = re.compile(r"bool|int|Rung|Band|TurnPhase|ContextPhase|BudgetLevel")
+
+
 def test_inv_04_policy_takes_no_message_text():
-    pytest.skip("asserted by PKG-06")
+    src = (LEARNING / "policy.py").read_text()
+    assert "matches_non_attempt" not in src, "policy.py must not reach the text gate"
+    assert not re.search(r"^\s*(from|import)\s+(learning\.)?gates\b", src, re.M), (
+        "policy.py imports gates"
+    )
+    assert not re.search(r"^\s*import\s+re\b", src, re.M), "policy.py must not process text"
+    tree = ast.parse(src)
+    offenders = []
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name.startswith(
+            "_"
+        ):
+            continue
+        for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
+            ann = ast.unparse(arg.annotation) if arg.annotation is not None else ""
+            if re.search(r"\bstr\b", ann) or _TEXTLIKE_PARAM.search(arg.arg):
+                offenders.append(f"{node.name}({arg.arg}: {ann or 'unannotated'})")
+    assert not offenders, f"policy.py public functions take text-shaped params: {offenders}"
+    for name in ("ceiling", "band_control"):
+        assert any(isinstance(n, ast.FunctionDef) and n.name == name for n in tree.body), (
+            f"{name}() missing"
+        )
+    # A15/A18 (PKG-06 Task 3b): the routing functions take typed state only.
+    aliases = {
+        t.id: ast.unparse(n.value)
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        for t in n.targets
+        if isinstance(t, ast.Name)
+    }
+    for alias in ("Band", "Tier", "TurnPhase", "ContextPhase", "BudgetLevel"):
+        assert aliases.get(alias, "").startswith("Literal["), f"{alias} must be a Literal alias"
+    for name in _ROUTING_FUNCS:
+        node = next(
+            (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), None
+        )
+        assert node is not None, f"{name}() missing"
+        for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
+            ann = ast.unparse(arg.annotation) if arg.annotation is not None else ""
+            assert _ROUTING_ANN.fullmatch(ann), (
+                f"{name}({arg.arg}: {ann or 'unannotated'}): Literal/enum/bool/int only"
+            )
+    # Every import form, not only `import learning.gates` at line start:
+    # `from learning import gates`, `from . import gates`, function-level imports.
+    imported = [
+        m.split(".")[-1]
+        for m in _modules_imported_by(LEARNING / "policy.py", BACKEND)
+        if m.split(".")[0] in ("learning", "re")
+    ]
+    assert "re" not in imported and "gates" not in imported, f"policy.py imports {imported}"
+
+
+# Spec §8.5 as amended: zpd/learn/review plus ai (PKG-06b) and decision (PKG-05b).
+_SERIES_EVENT_LITERAL = re.compile(r'"((?:zpd|learn|review|ai|decision)\.[a-z_]+)"')
 
 
 def test_inv_05_series_event_names_in_taxonomy():
-    pytest.skip("asserted by PKG-06")
+    from services.events_service import EVENT_TAXONOMY
+
+    found: set[str] = set()
+    for path in BACKEND.rglob("*.py"):
+        rel = path.relative_to(BACKEND).parts
+        if rel[0] in ("tests", "venv", ".venv"):
+            continue
+        for m in _SERIES_EVENT_LITERAL.finditer(path.read_text(errors="ignore")):
+            found.add(m.group(1))
+    assert any(f.startswith("zpd.") for f in found), (
+        "no zpd.* literal found under backend/ — PKG-06 adds them"
+    )
+    missing = sorted(found - EVENT_TAXONOMY)
+    assert not missing, f"series event literals not in EVENT_TAXONOMY: {missing}"
 
 
 def _backend_py_files():

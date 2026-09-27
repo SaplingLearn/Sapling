@@ -9,25 +9,24 @@
       "concept": "Recursion",
       "correct_option": "",
       "difficulty": 1,
+      "final_answer": "Recursion is a process where a function calls itself with a smaller version of the original problem until it reaches a stopping condition. ",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
       "prompt": "In your own words, what is recursion?",
-      "reference_answer": "Recursion is when a function calls itself to solve a smaller version of the same problem until it reaches a base case.",
+      "reference_answer": "Recursion is a process where a function calls itself with a smaller version of the original problem until it reaches a stopping condition. This stopping condition is known as the base case. Final answer: Recursion is a process where a function calls itself with a smaller version of the original problem until it reaches a stopping condition. ",
       "rubric": [
-        "Mentions function calling itself",
-        "Mentions solving a smaller subproblem or reaching a base case"
+        "Defines recursion as a function calling itself.",
+        "Mentions the function calls itself with a smaller subproblem or base case."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "function_calls_self_only",
-        "subproblem_not_mentioned"
+        "function_calls_self"
       ],
       "wrong_texts": [
-        "Defines recursion solely as a function calling itself without mentioning the subproblem or base case.",
-        "Defines recursion without mentioning the need to solve a smaller subproblem or reach a base case."
+        "Fails to mention that the function calls itself."
       ]
     },
     {
@@ -39,25 +38,26 @@
       "concept": "Recursion",
       "correct_option": "",
       "difficulty": 2,
+      "final_answer": "Calculating the factorial of the number minus one (n-1).",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "If a recursive function for calculating the sum of a list of numbers was designed to call itself with a smaller portion of the list each time, what would be the purpose of the 'smaller subproblem' in this context?",
-      "reference_answer": "The 'smaller subproblem' would be summing the remaining elements of the list after one element has been processed, getting closer to the base case.",
+      "prompt": "If a recursive function is designed to calculate the factorial of a number, what would be the 'smaller subproblem' in its recursive step?",
+      "reference_answer": "The smaller subproblem would be calculating the factorial of the number minus one (n-1). The function would then multiply the current number (n) by the result of this smaller subproblem. Final answer: Calculating the factorial of the number minus one (n-1).",
       "rubric": [
-        "Identifies the smaller subproblem as summing a reduced list",
-        "Connects the smaller subproblem to reaching the base case"
+        "Identifies the smaller subproblem as related to n-1.",
+        "Explains the recursive step in factorial calculation."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "smaller_subproblem_misunderstood",
-        "base_case_connection_missing"
+        "ignores_base_case",
+        "incorrect_subproblem"
       ],
       "wrong_texts": [
-        "Describes the smaller subproblem incorrectly, e.g., focusing only on the single element processed.",
-        "Fails to explain how the smaller subproblem helps in reaching the base case."
+        "Focuses on the base case instead of the recursive step.",
+        "Describes the subproblem incorrectly, e.g., n/2."
       ]
     },
     {
@@ -70,25 +70,26 @@
       "concept": "Recursion",
       "correct_option": "",
       "difficulty": 3,
+      "final_answer": "To handle the smallest possible subproblems that are inherently sorted and stop the recursion.",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Imagine a recursive function designed to search for an item in a sorted array by recursively searching half of the array. How does the concept of a 'smaller subproblem' apply here, and why is it crucial for the function's termination?",
-      "reference_answer": "The 'smaller subproblem' is searching within a reduced portion of the sorted array. It's crucial because each recursive call operates on a smaller dataset, progressively narrowing down the search space until the element is found or the subproblem becomes trivial (base case), thus ensuring termination.",
+      "prompt": "Imagine a recursive function that sorts a list. If the function calls itself to sort two halves of the list, what is the purpose of the base case in this scenario?",
+      "reference_answer": "The base case would handle the smallest possible subproblems, such as an empty list or a list with one element, which are inherently sorted. This prevents infinite recursion and provides a condition for the results to be combined. Final answer: To handle the smallest possible subproblems that are inherently sorted and stop the recursion.",
       "rubric": [
-        "Explains the smaller subproblem as searching a reduced array segment",
-        "Explains that smaller subproblems lead to termination by reaching a base case"
+        "States the base case handles trivial/small lists.",
+        "Explains that the base case stops the recursion."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "smaller_subproblem_vague",
-        "termination_logic_flawed"
+        "recursive_step_error",
+        "confuses_base_case_purpose"
       ],
       "wrong_texts": [
-        "Provides a vague description of the smaller subproblem without specifying the reduction in the search space.",
-        "Does not clearly articulate how tackling smaller subproblems guarantees the function will eventually stop."
+        "Describes the recursive step instead of the base case's role.",
+        "Suggests the base case performs the main work of sorting."
       ]
     },
     {
@@ -101,28 +102,27 @@
       "concept": "Recursion",
       "correct_option": "",
       "difficulty": 1,
+      "final_answer": "A function that calls itself to solve smaller instances of the same problem until a base case is met.",
       "format": "teachback",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Explain to a classmate who missed the lecture what recursion is, using your own words.",
-      "reference_answer": "Recursion is basically when a function solves a problem by calling itself with smaller pieces of the problem. It keeps doing this until it hits a simple case that it can solve directly, which stops the process.",
+      "prompt": "Explain to a classmate who missed the lecture what recursion is, in your own words.",
+      "reference_answer": "Recursion is like a set of Russian nesting dolls; each doll contains a smaller version of itself. In programming, a recursive function is one that calls itself to solve a problem by breaking it down into smaller, identical subproblems until it reaches a simple case that can be solved directly, known as the base case. Final answer: A function that calls itself to solve smaller instances of the same problem until a base case is met.",
       "rubric": [
-        "Uses analogy or simple terms",
-        "Mentions function calling itself for smaller parts of the problem",
-        "Mentions a stopping condition or base case"
+        "Explains recursion as a function calling itself.",
+        "Mentions breaking down the problem into smaller, similar subproblems.",
+        "Includes the concept of a base case."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "function_calls_self_only",
-        "base_case_omitted",
-        "too_technical"
+        "iteration_instead_of_recursion",
+        "missing_base_case"
       ],
       "wrong_texts": [
-        "Explains recursion only as a function calling itself, without mentioning the recursive nature of the problem-solving.",
-        "Fails to mention the necessity of a base case or stopping condition.",
-        "Uses jargon or overly complex explanations instead of simple terms."
+        "Describes iteration (loops) instead of recursion.",
+        "Omits the importance or existence of a base case."
       ]
     },
     {
@@ -134,156 +134,27 @@
       "concept": "Recursion",
       "correct_option": "",
       "difficulty": 2,
+      "final_answer": "The base case provides a condition to stop calling the function, preventing infinite recursion.",
       "format": "teachback",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Explain to a classmate who missed the lecture how the base case in recursion works, using an example like calculating factorial.",
-      "reference_answer": "The base case is the condition that stops the recursion. For factorial, if you're asked to find the factorial of 0, the answer is just 1. The function doesn't call itself anymore; it just returns 1. This prevents infinite calls.",
+      "prompt": "Explain to a classmate who missed the lecture how the base case in a recursive function prevents infinite loops, using the example of calculating factorial.",
+      "reference_answer": "Imagine calculating factorial(5). The function calls itself with factorial(4), then factorial(3), and so on. The base case is when the input reaches 0 or 1, where the function returns 1 directly without calling itself again. Without this base case, the function would keep calling itself with smaller numbers indefinitely, leading to a stack overflow. Final answer: The base case provides a condition to stop calling the function, preventing infinite recursion.",
       "rubric": [
-        "Defines base case as the stopping condition",
-        "Provides a correct example (e.g., factorial of 0 is 1)",
-        "Explains that the base case does not make further recursive calls"
+        "Identifies the base case as the stopping condition.",
+        "Explains that the base case prevents infinite calls.",
+        "Uses factorial as an example."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "base_case_definition_flawed",
-        "example_incorrect",
-        "recursive_call_at_base_case"
+        "confuses_recursive_step",
+        "base_case_performs_work"
       ],
       "wrong_texts": [
-        "Defines the base case incorrectly, e.g., as the problem's initial state.",
-        "Provides an incorrect base case or example for factorial.",
-        "Suggests that the function still calls itself when it hits the base case."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-2:c2"
-      ],
-      "concept": "Recursion",
-      "correct_option": "",
-      "difficulty": 3,
-      "format": "teachback",
-      "option_letters": [],
-      "option_texts": [],
-      "option_wrong_keys": [],
-      "prompt": "Explain to a classmate who missed the lecture why a recursive function might lead to a stack overflow, relating it to the base case.",
-      "reference_answer": "A stack overflow happens when a recursive function doesn't have a proper base case, or the base case is never reached. This means the function keeps calling itself indefinitely, and each call adds a frame to the call stack. Eventually, the stack runs out of memory.",
-      "rubric": [
-        "Correctly identifies stack overflow cause as infinite recursion",
-        "Links infinite recursion to the absence or unreachable base case",
-        "Explains the role of the call stack filling up"
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "stack_overflow_cause_misattributed",
-        "base_case_role_misunderstood",
-        "call_stack_ignored"
-      ],
-      "wrong_texts": [
-        "Attributes stack overflow to reasons other than infinite recursion, like function complexity.",
-        "Misunderstands the base case's role in preventing infinite recursion.",
-        "Fails to mention the call stack or how it gets filled."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-2:c2"
-      ],
-      "concept": "Recursion",
-      "correct_option": "B",
-      "difficulty": 1,
-      "format": "mc_reason",
-      "option_letters": [
-        "A",
-        "B",
-        "C",
-        "D"
-      ],
-      "option_texts": [
-        "To initiate the first recursive call.",
-        "To provide a condition that stops the recursion.",
-        "To break the problem into the largest possible subproblems.",
-        "To define the recursive relationship between calls."
-      ],
-      "option_wrong_keys": [
-        "base_case_starts_recursion",
-        "",
-        "base_case_simplifies_problem",
-        "base_case_is_recursive_step"
-      ],
-      "prompt": "What is the primary purpose of the base case in a recursive function?",
-      "reference_answer": "The base case provides a condition under which the function stops calling itself, preventing infinite recursion.",
-      "rubric": [
-        "Correctly identifies base case as the termination condition",
-        "Mentions prevention of infinite recursion"
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "base_case_starts_recursion",
-        "base_case_simplifies_problem",
-        "base_case_is_recursive_step"
-      ],
-      "wrong_texts": [
-        "Incorrectly states that the base case initiates the recursive calls.",
-        "Focuses on the base case simplifying the problem rather than terminating the recursion.",
-        "Confuses the base case with the recursive step."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-2:c2"
-      ],
-      "concept": "Recursion",
-      "correct_option": "B",
-      "difficulty": 2,
-      "format": "mc_reason",
-      "option_letters": [
-        "A",
-        "B",
-        "C",
-        "D"
-      ],
-      "option_texts": [
-        "The function will terminate immediately.",
-        "The function will call itself indefinitely, causing a stack overflow.",
-        "The function will return an incorrect value but stop.",
-        "The program will enter an infinite loop without memory issues."
-      ],
-      "option_wrong_keys": [
-        "function_terminates_early",
-        "",
-        "stack_overflow_unrelated",
-        "infinite_loop_no_stack_issue"
-      ],
-      "prompt": "Consider a recursive function designed to count down from n to 1. If the function is missing its base case, what is the most likely immediate consequence?",
-      "reference_answer": "Without a base case, the function will continue to call itself indefinitely, leading to a stack overflow error as the call stack fills up.",
-      "rubric": [
-        "Identifies indefinite recursion as the consequence",
-        "Links indefinite recursion to stack overflow",
-        "Mentions the call stack filling up"
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "function_terminates_early",
-        "stack_overflow_unrelated",
-        "infinite_loop_no_stack_issue"
-      ],
-      "wrong_texts": [
-        "Incorrectly assumes the function would stop prematurely without a base case.",
-        "Suggests stack overflow occurs for reasons unrelated to function calls.",
-        "Believes an infinite loop would occur but without memory issues."
+        "Confuses the role of the recursive step with the base case.",
+        "Suggests the base case does the main computation."
       ]
     },
     {
@@ -293,8 +164,41 @@
         "eval-doc-2:c3"
       ],
       "concept": "Recursion",
-      "correct_option": "C",
+      "correct_option": "",
       "difficulty": 3,
+      "final_answer": "It recalculates subproblems exponentially, leading to inefficiency.",
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate who missed the lecture why a naive recursive Fibonacci function has a time complexity of O(2^n) and how this relates to the concept of recursion.",
+      "reference_answer": "A naive recursive Fibonacci function recalculates the same Fibonacci numbers multiple times. For example, to calculate fib(5), it calculates fib(4) and fib(3). Then, fib(4) calculates fib(3) and fib(2). Notice fib(3) is calculated twice. This redundant calculation grows exponentially, leading to O(2^n) complexity, illustrating how inefficient direct recursion can be for problems with overlapping subproblems. Final answer: It recalculates subproblems exponentially, leading to inefficiency.",
+      "rubric": [
+        "Mentions redundant recalculation of subproblems.",
+        "States the exponential growth in calculations.",
+        "Connects this to the O(2^n) complexity."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_complexity_with_base_case",
+        "incorrect_complexity_reason"
+      ],
+      "wrong_texts": [
+        "Attributes complexity to the base case instead of repeated calls.",
+        "Gives an incorrect reason for the complexity, e.g., linear."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1"
+      ],
+      "concept": "Recursion",
+      "correct_option": "A",
+      "difficulty": 1,
+      "final_answer": "A function that calls itself.",
       "format": "mc_reason",
       "option_letters": [
         "A",
@@ -303,35 +207,129 @@
         "D"
       ],
       "option_texts": [
-        "Linear time complexity, O(n).",
-        "Constant time complexity, O(1).",
-        "Exponential time complexity, O(2^n).",
-        "Logarithmic time complexity, O(log n)."
+        "A function that calls itself.",
+        "A function that uses loops to repeat a process.",
+        "A function that requires a large amount of memory.",
+        "A function that can only solve simple problems."
       ],
       "option_wrong_keys": [
-        "linear_complexity",
-        "constant_complexity",
         "",
-        "logarithmic_complexity"
+        "uses_loops",
+        "memory_intensive",
+        "simple_problems_only"
       ],
-      "prompt": "A programmer implements a recursive function to find the nth Fibonacci number. They notice that for larger values of n, the computation time increases dramatically, roughly doubling with each increment of n. What concept best explains this performance issue?",
-      "reference_answer": "The naive recursive implementation of Fibonacci has a time complexity of O(2^n), meaning the computation time grows exponentially with n due to redundant calculations of the same subproblems.",
+      "prompt": "What is the primary characteristic of a recursive function?",
+      "reference_answer": "A recursive function is characterized by its ability to call itself, breaking down a problem into smaller, similar subproblems until a base case is reached, which halts the process. The base case is essential to prevent infinite recursion. Final answer: A function that calls itself.",
       "rubric": [
-        "Identifies exponential time complexity (O(2^n))",
-        "Explains exponential growth relates to redundant calculations",
-        "Relates the issue to the recursive implementation"
+        "Correctly identifies that a recursive function calls itself.",
+        "Selects the option that defines the core concept of recursion."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "linear_complexity",
-        "constant_complexity",
-        "logarithmic_complexity"
+        "uses_loops",
+        "memory_intensive",
+        "simple_problems_only"
       ],
       "wrong_texts": [
-        "Incorrectly assumes the complexity is linear.",
-        "Suggests the complexity is constant, unaffected by input size.",
-        "Believes the complexity is logarithmic, implying very efficient growth."
+        "Confuses recursion with iteration (loops).",
+        "Mistakes a potential side effect (memory usage) for the defining characteristic.",
+        "Incorrectly assumes recursion is limited to simple problems."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1"
+      ],
+      "concept": "Recursion",
+      "correct_option": "C",
+      "difficulty": 2,
+      "final_answer": "Add the current number (n) to the result of calling the function with (n-1).",
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "Return 1 if n is 1, otherwise return n.",
+        "Call the function with n+1.",
+        "Add the current number (n) to the result of calling the function with (n-1).",
+        "Return the sum of all numbers until n is reached."
+      ],
+      "option_wrong_keys": [
+        "base_case_description",
+        "infinite_recursion_step",
+        ""
+      ],
+      "prompt": "Consider a recursive function designed to find the sum of numbers from 1 to n. If the function is called with n=3, which of the following best describes the recursive step?",
+      "reference_answer": "The recursive step for summing numbers from 1 to n involves adding n to the sum of numbers from 1 to n-1. So, for n=3, the function would calculate 3 + sum(1 to 2). Final answer: Add the current number (n) to the result of calling the function with (n-1).",
+      "rubric": [
+        "Correctly identifies the recursive step as involving n and n-1.",
+        "Selects the option that accurately describes the recursive call for summation."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "base_case_description",
+        "infinite_recursion_step",
+        "incomplete_recursive_step"
+      ],
+      "wrong_texts": [
+        "Describes the base case, not the recursive step.",
+        "Suggests a step that would lead to infinite recursion.",
+        "Describes a recursive step that doesn't correctly build the sum."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Recursion",
+      "correct_option": "B",
+      "difficulty": 3,
+      "final_answer": "The recursion does not reach a base case.",
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "The function is too efficient.",
+        "The recursion does not reach a base case.",
+        "The function performs too few operations.",
+        "The base case is too simple."
+      ],
+      "option_wrong_keys": [
+        "function_too_efficient",
+        "",
+        "function_performs_too_few_ops",
+        "base_case_too_simple"
+      ],
+      "prompt": "A recursive function's call stack grows too large, causing a stack overflow error. What is the most likely cause of this error?",
+      "reference_answer": "A stack overflow error in a recursive function typically occurs when the function does not have a proper base case, or the base case is never reached. This leads to an infinite series of function calls, each adding a new frame to the call stack until it exceeds its memory limit. Final answer: The recursion does not reach a base case.",
+      "rubric": [
+        "Correctly identifies the lack of a base case as the cause of stack overflow.",
+        "Selects the option that explains the infinite recursion leading to stack overflow."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "function_too_efficient",
+        "function_performs_too_few_ops",
+        "base_case_too_simple"
+      ],
+      "wrong_texts": [
+        "Confuses efficiency with resource exhaustion.",
+        "Mistakes insufficient work for a cause of stack overflow.",
+        "Suggests the simplicity of the base case is the problem, rather than its execution."
       ]
     }
   ]

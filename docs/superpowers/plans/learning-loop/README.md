@@ -35,7 +35,7 @@ PKG-03  evidence-state        needs 01, 02
 PKG-04  check-items           needs 00            (Task 0 verifies PKG-00's settings state; no reopen)
 PKG-05  grader-check-tool     needs 03, 04        (reopens PKG-03; renames PKG-01's GRADER_RETRY_BELOW)
 PKG-05b decision-seam         needs 05            (reopens PKG-05)
-PKG-06  zpd-policy            needs 03, 04
+PKG-06  zpd-policy            needs 03, 04        (reopens PKG-04: check_items.final_answer, A34)
 PKG-06b ai-budget-and-usage   needs 03, 06        (reopens PKG-05 and PKG-05b run sites)
 PKG-07  loop-tutor            needs 05, 05b, 06, 06b
 PKG-08  probe-planner         needs 07 (and 04, 05, 06b through it)

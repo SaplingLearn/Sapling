@@ -4,29 +4,31 @@
       "answer_kind": "free",
       "canonical_answer": "",
       "chunk_ids": [
-        "eval-doc-1:c1",
         "eval-doc-1:c2"
       ],
       "concept": "Derivatives",
       "correct_option": "",
       "difficulty": 1,
+      "final_answer": "The derivative is the limit of the difference quotients.",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "In your own words, what is a derivative?",
-      "reference_answer": "A derivative represents the instantaneous rate of change of a function or the slope of the tangent line to the function at a specific point. It is formally defined as the limit of the difference quotients.",
+      "prompt": "What is the definition of a derivative in terms of a limit of difference quotients?",
+      "reference_answer": "The derivative of a function is defined as the limit of its difference quotients, representing the instantaneous rate of change or the slope of the tangent line. Final answer: The derivative is the limit of the difference quotients. <chunk eval-doc-1:c2>",
       "rubric": [
-        "Mentions instantaneous rate of change or slope of tangent line.",
-        "Mentions definition as a limit of difference quotients."
+        "Mentions 'limit'",
+        "Mentions 'difference quotients'"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_derivative_with_limit"
+        "mentions_limits_but_not_difference_quotients",
+        "mentions_difference_quotients_but_not_limits"
       ],
       "wrong_texts": [
-        "Confuses the derivative with the limit definition itself, rather than what the derivative represents."
+        "Only mentions limits without referencing difference quotients.",
+        "Only mentions difference quotients without referencing limits."
       ]
     },
     {
@@ -38,51 +40,26 @@
       "concept": "Derivatives",
       "correct_option": "",
       "difficulty": 2,
+      "final_answer": "The function is increasing at that point.",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Imagine a function representing the position of a car over time. What does the derivative of this function at a specific time tell us about the car's motion?",
-      "reference_answer": "The derivative of the position function at a specific time would tell us the instantaneous velocity of the car at that moment, which is its instantaneous rate of change of position.",
+      "prompt": "If a function's derivative at a point is positive, what does this imply about the function's behavior at that point?",
+      "reference_answer": "A positive derivative at a point indicates that the function is increasing at that specific point, meaning its instantaneous rate of change is positive. Final answer: The function is increasing at that point. <chunk eval-doc-1:c2>",
       "rubric": [
-        "Correctly identifies the derivative as instantaneous velocity.",
-        "Relates velocity to the rate of change of position."
+        "Correctly identifies the function's behavior (increasing).",
+        "Links behavior to the point in question."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_rate_of_change_with_position"
+        "confuses_increasing_with_decreasing",
+        "states_general_behavior_instead_of_point_specific"
       ],
       "wrong_texts": [
-        "Confuses the derivative (rate of change) with the original function's value (position)."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-1:c2"
-      ],
-      "concept": "Derivatives",
-      "correct_option": "",
-      "difficulty": 3,
-      "format": "free",
-      "option_letters": [],
-      "option_texts": [],
-      "option_wrong_keys": [],
-      "prompt": "If the derivative of a function is decreasing, what does this imply about the original function's behavior?",
-      "reference_answer": "If the derivative of a function is decreasing, it implies that the original function is concave down. This means that the rate of change of the original function is becoming less positive or more negative.",
-      "rubric": [
-        "States that the original function is concave down.",
-        "Explains that the rate of change is decreasing (becoming less positive or more negative)."
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "confuses_derivative_behavior_with_function_behavior"
-      ],
-      "wrong_texts": [
-        "Confuses the behavior of the derivative (decreasing) with the behavior of the original function (e.g., thinking the original function is decreasing)."
+        "Incorrectly states the function is decreasing.",
+        "Describes overall function behavior rather than behavior at the specific point."
       ]
     },
     {
@@ -94,26 +71,27 @@
       ],
       "concept": "Derivatives",
       "correct_option": "",
-      "difficulty": 1,
-      "format": "teachback",
+      "difficulty": 3,
+      "final_answer": "The derivative is defined as the limit of the difference quotients.",
+      "format": "free",
       "option_letters": [],
       "option_texts": [],
-      "option_wrong_keys": [
-        "confuses_derivative_with_limit_definition"
-      ],
-      "prompt": "Explain to a classmate who missed the lecture what the derivative of a function signifies.",
-      "reference_answer": "Hey! So, the derivative is basically a way to figure out how fast something is changing at a specific tiny moment in time. Think of it like the speedometer in a car \u2013 it tells you your exact speed right now. Mathematically, it's defined as the limit of how much the function's output changes divided by how much its input changes, as that input change gets super close to zero.",
+      "option_wrong_keys": [],
+      "prompt": "How does the concept of a limit underpin the definition of a derivative?",
+      "reference_answer": "The derivative is defined as the limit of the difference quotients. This means we examine the slope of secant lines and find the value that the slope approaches as the two points defining the secant line get infinitely close to each other, which is the limit. Final answer: The derivative is defined as the limit of the difference quotients. <chunk eval-doc-1:c1>",
       "rubric": [
-        "Explains derivative as instantaneous rate of change or slope of tangent line.",
-        "Mentions or alludes to the limit of difference quotients definition."
+        "Explains that the derivative is a limit.",
+        "Mentions difference quotients in relation to the limit."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_derivative_with_limit_definition"
+        "confuses_limit_with_derivative",
+        "does_not_mention_difference_quotients"
       ],
       "wrong_texts": [
-        "Focuses too much on the limit definition without explaining what the derivative *represents*."
+        "Confuses the definition of a limit with the definition of a derivative.",
+        "Fails to mention the difference quotients as the basis for the limit."
       ]
     },
     {
@@ -124,54 +102,27 @@
       ],
       "concept": "Derivatives",
       "correct_option": "",
-      "difficulty": 2,
+      "difficulty": 1,
+      "final_answer": "The derivative is the slope of the tangent line.",
       "format": "teachback",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Explain to a classmate who missed the lecture how the derivative relates to the graph of a function.",
-      "reference_answer": "Imagine you have a curve. The derivative at any point on that curve tells you the slope of a straight line that just touches the curve at that exact point \u2013 that's called the tangent line. So, if the derivative is a big positive number, the tangent line is steep and going up. If it's negative, it's steep and going down. If it's zero, the tangent line is flat.",
+      "prompt": "Explain to a classmate who missed the lecture what a derivative represents in terms of the graph of a function.",
+      "reference_answer": "A derivative tells you the slope of the line that is tangent to the function's graph at a specific point. It's the instantaneous rate of change. Final answer: The derivative is the slope of the tangent line. <chunk eval-doc-1:c2>",
       "rubric": [
-        "Correctly states the derivative represents the slope of the tangent line.",
-        "Explains how the sign and magnitude of the derivative relate to the steepness and direction of the tangent line."
+        "Mentions 'slope'",
+        "Mentions 'tangent line'"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_tangent_line_with_secant_line"
+        "mentions_secant_line_instead_of_tangent",
+        "confuses_average_rate_of_change_with_instantaneous"
       ],
       "wrong_texts": [
-        "Confuses the tangent line (which the derivative represents) with a secant line (which is used in the difference quotient definition)."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-1:c2"
-      ],
-      "concept": "Derivatives",
-      "correct_option": "",
-      "difficulty": 3,
-      "format": "teachback",
-      "option_letters": [],
-      "option_texts": [],
-      "option_wrong_keys": [
-        "confuses_first_and_second_derivative_roles"
-      ],
-      "prompt": "Explain to a classmate who missed the lecture how understanding derivatives helps us analyze the behavior of complex functions.",
-      "reference_answer": "Okay, so derivatives are awesome for seeing how functions change. The first derivative tells us if the function is increasing or decreasing and where it might have peaks or valleys (local max/min). The second derivative tells us about the function's curvature \u2013 is it bending upwards like a smile (concave up) or downwards like a frown (concave down)? This helps us sketch accurate graphs and understand the overall shape and trends of even really complicated functions.",
-      "rubric": [
-        "Mentions how the first derivative indicates increasing/decreasing behavior and extrema.",
-        "Mentions how the second derivative indicates concavity/curvature."
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "confuses_first_and_second_derivative_roles"
-      ],
-      "wrong_texts": [
-        "Confuses the roles of the first and second derivatives in analyzing function behavior."
+        "Describes the slope of a secant line instead of a tangent line.",
+        "Confuses the instantaneous rate of change (derivative) with the average rate of change."
       ]
     },
     {
@@ -182,89 +133,60 @@
         "eval-doc-1:c2"
       ],
       "concept": "Derivatives",
-      "correct_option": "C",
-      "difficulty": 1,
-      "format": "mc_reason",
-      "option_letters": [
-        "A",
-        "B",
-        "C",
-        "D"
-      ],
-      "option_texts": [
-        "The value a function approaches as the input approaches a point.",
-        "The average rate of change of a function over an interval.",
-        "The instantaneous rate of change of a function at a point, equivalent to the slope of the tangent line.",
-        "The total change in a function's output over a given input interval."
-      ],
-      "option_wrong_keys": [
-        "confuses_derivative_with_limit",
-        "uses_average_rate_of_change",
-        "calculates_total_change"
-      ],
-      "prompt": "Which statement best defines a derivative?",
-      "reference_answer": "The derivative of a function at a point is the instantaneous rate of change of the function at that point, which is equivalent to the slope of the tangent line at that point and is defined as the limit of the difference quotients.",
-      "rubric": [
-        "Selects the correct definition of a derivative.",
-        "Provides a valid reason based on the definition of instantaneous rate of change or tangent slope."
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "confuses_derivative_with_limit",
-        "uses_average_rate_of_change",
-        "calculates_total_change"
-      ],
-      "wrong_texts": [
-        "Confuses the derivative with the definition of a limit.",
-        "Confuses instantaneous rate of change with average rate of change.",
-        "Confuses instantaneous rate of change with the total change in the function's value."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-1:c2"
-      ],
-      "concept": "Derivatives",
-      "correct_option": "B",
+      "correct_option": "",
       "difficulty": 2,
-      "format": "mc_reason",
-      "option_letters": [
-        "A",
-        "B",
-        "C",
-        "D"
-      ],
-      "option_texts": [
-        "The average rate of change of f(x) between x=0 and x=3.",
-        "The instantaneous rate of change of f(x) at x=3.",
-        "The total change in f(x) from x=0 to x=3.",
-        "The limit of f(x) as x approaches 3."
-      ],
-      "option_wrong_keys": [
-        "uses_average_rate_of_change",
-        "calculates_total_change",
-        "confuses_derivative_with_limit"
-      ],
-      "prompt": "A student is given the function f(x) = x^2. They calculate the derivative at x=3 to be 6. What does this value of 6 represent?",
-      "reference_answer": "The value of the derivative at a specific point represents the instantaneous rate of change of the function at that point. For f(x) = x^2, the derivative is f'(x) = 2x. At x=3, f'(3) = 2*3 = 6. This means the instantaneous rate of change of f(x) at x=3 is 6, or equivalently, the slope of the tangent line to the graph of f(x) at x=3 is 6.",
+      "final_answer": "It's the limit of the slopes between two points as they approach each other.",
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate who missed the lecture how the concept of a limit is used to find the derivative of a function.",
+      "reference_answer": "Imagine you have two points on a curve. The slope of the line between them is the average rate of change. The derivative is what that slope approaches as the two points get infinitely close together \u2013 that's the limit of the difference quotients. Final answer: It's the limit of the slopes between two points as they approach each other. <chunk eval-doc-1:c1>",
       "rubric": [
-        "Selects the correct interpretation of the derivative's value.",
-        "Provides a valid reason connecting the derivative to instantaneous rate of change or tangent slope."
+        "Explains using two points on a curve.",
+        "Connects the limit to the points getting closer."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "uses_average_rate_of_change",
-        "calculates_total_change",
-        "confuses_derivative_with_limit"
+        "focuses_only_on_limit_definition",
+        "does_not_mention_slopes_or_rates_of_change"
       ],
       "wrong_texts": [
-        "Interprets the derivative as an average rate of change over an interval.",
-        "Interprets the derivative as the total accumulated change of the function.",
-        "Confuses the derivative at a point with the limit of the function at that point."
+        "Explains limits in general without connecting them to slopes or rates of change.",
+        "Fails to mention that the limit is applied to slopes or rates of change."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1",
+        "eval-doc-1:c2"
+      ],
+      "concept": "Derivatives",
+      "correct_option": "",
+      "difficulty": 3,
+      "final_answer": "Derivatives are defined as limits of difference quotients.",
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate who missed the lecture why understanding limits is crucial for understanding derivatives.",
+      "reference_answer": "Derivatives are defined using limits. Specifically, a derivative is the limit of the difference quotients of a function. Without understanding limits, you can't grasp how we find the instantaneous rate of change or the slope of a tangent line. Final answer: Derivatives are defined as limits of difference quotients. <chunk eval-doc-1:c1>",
+      "rubric": [
+        "States that derivatives are defined using limits.",
+        "Mentions difference quotients in the explanation."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "defines_derivative_without_mentioning_limits",
+        "uses_limit_definition_in_isolation"
+      ],
+      "wrong_texts": [
+        "Defines derivatives using terms like 'rate of change' or 'slope' without connecting it to limits.",
+        "Explains limits separately without showing how they are applied to difference quotients for derivatives."
       ]
     },
     {
@@ -274,8 +196,9 @@
         "eval-doc-1:c2"
       ],
       "concept": "Derivatives",
-      "correct_option": "D",
-      "difficulty": 3,
+      "correct_option": "",
+      "difficulty": 1,
+      "final_answer": "The instantaneous rate of change and the slope of the tangent line.",
       "format": "mc_reason",
       "option_letters": [
         "A",
@@ -284,33 +207,117 @@
         "D"
       ],
       "option_texts": [
-        "The function is decreasing and concave down.",
-        "The function is increasing and concave down.",
-        "The function is decreasing and concave up.",
-        "The function is increasing and concave up."
+        "The average rate of change over an interval.",
+        "The instantaneous rate of change and the slope of the tangent line.",
+        "The limit of the function at that point.",
+        "The area under the curve."
       ],
       "option_wrong_keys": [
-        "derivative_increasing_means_function_decreasing",
-        "positive_derivative_means_concave_down",
-        "positive_derivative_means_decreasing"
+        "confuses_derivative_with_average_rate_of_change",
+        "",
+        "confuses_derivative_with_limit_value",
+        "confuses_derivative_with_integral"
       ],
-      "prompt": "Consider a function where the derivative is positive and increasing. What can be inferred about the function's behavior?",
-      "reference_answer": "If the derivative is positive, the function itself is increasing. If the derivative is also increasing, it means the rate at which the function is increasing is itself increasing. This describes a function that is concave up, meaning its slope is becoming steeper and steeper in the positive direction.",
+      "prompt": "Which of the following best describes the derivative of a function at a point?",
+      "reference_answer": "The derivative of a function at a point represents its instantaneous rate of change at that point, which is also equivalent to the slope of the tangent line to the function's graph at that point. Options A, C, and D are incorrect because they do not accurately capture the definition or interpretation of a derivative as the instantaneous rate of change or tangent line slope. Option B correctly states that it is the instantaneous rate of change and the slope of the tangent line. Final answer: The instantaneous rate of change and the slope of the tangent line. <chunk eval-doc-1:c2>",
       "rubric": [
-        "Correctly identifies that the function is increasing.",
-        "Correctly identifies that the function is concave up."
+        "Correctly identifies the derivative as instantaneous rate of change.",
+        "Correctly identifies the derivative as the slope of the tangent line."
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "derivative_increasing_means_function_decreasing",
-        "positive_derivative_means_concave_down",
-        "positive_derivative_means_decreasing"
+        "confuses_derivative_with_average_rate_of_change",
+        "confuses_derivative_with_limit_value",
+        "confuses_derivative_with_integral"
       ],
       "wrong_texts": [
-        "Incorrectly assumes an increasing derivative implies a decreasing function.",
-        "Incorrectly associates an increasing derivative with concave down behavior.",
-        "Confuses the implication of a positive derivative (increasing function) with a decreasing function."
+        "Confuses the derivative (instantaneous rate of change) with the average rate of change.",
+        "Mistakes the derivative for the limit of the function at a point, rather than the limit of the difference quotient.",
+        "Confuses the derivative with the concept of integration (area under the curve)."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1",
+        "eval-doc-1:c2"
+      ],
+      "concept": "Derivatives",
+      "correct_option": "",
+      "difficulty": 2,
+      "final_answer": "The limit of the difference quotient.",
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "The limit of the function at a point.",
+        "The limit of the difference quotient.",
+        "The chain rule for composite functions.",
+        "The definition of an integral."
+      ],
+      "option_wrong_keys": [
+        "confuses_derivative_definition_with_limit_definition",
+        "",
+        "applies_chain_rule_prematurely",
+        "confuses_derivative_with_integral"
+      ],
+      "prompt": "A student is trying to find the derivative of a function. They correctly calculated the limit of the difference quotient. What fundamental concept are they applying?",
+      "reference_answer": "The student is applying the fundamental definition of the derivative, which is the limit of the difference quotients. This process yields the instantaneous rate of change or the slope of the tangent line. Option A is incorrect because it describes the limit of the function itself, not its rate of change. Option C is incorrect because it refers to the chain rule, which is used for composite functions, not the basic definition. Option D is incorrect as it describes an integral. Option B correctly identifies the application of the limit of the difference quotient to find the derivative. Final answer: The limit of the difference quotient. <chunk eval-doc-1:c1>",
+      "rubric": [],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": [
+        "Confuses the limit of the function value with the limit of the difference quotient used for derivatives.",
+        "Incorrectly identifies the chain rule, which is for differentiating composite functions, not for the basic definition of a derivative.",
+        "Confuses the process of finding a derivative with the concept of integration."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c2"
+      ],
+      "concept": "Derivatives",
+      "correct_option": "",
+      "difficulty": 3,
+      "final_answer": "The tangent line is horizontal.",
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "The tangent line has a positive slope.",
+        "The tangent line is horizontal.",
+        "The tangent line has a negative slope.",
+        "The tangent line is vertical."
+      ],
+      "option_wrong_keys": [
+        "confuses_zero_derivative_with_positive_slope",
+        "",
+        "confuses_zero_derivative_with_negative_slope",
+        "confuses_zero_derivative_with_vertical_tangent"
+      ],
+      "prompt": "Consider a function whose derivative at x=c is 0. What can be inferred about the tangent line to the function at x=c?",
+      "reference_answer": "A derivative of 0 at a point signifies that the instantaneous rate of change is zero at that point. Geometrically, this means the slope of the tangent line to the function's graph at that point is zero. A line with a slope of zero is a horizontal line. Option A is incorrect because a positive derivative implies an increasing function and a non-horizontal tangent. Option C is incorrect because a negative derivative implies a decreasing function and a non-horizontal tangent. Option D is incorrect because the derivative value of 0 specifically indicates a horizontal tangent, not just any tangent. Option B correctly states that the tangent line is horizontal. Final answer: The tangent line is horizontal. <chunk eval-doc-1:c2>",
+      "rubric": [],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [],
+      "wrong_texts": [
+        "Incorrectly associates a derivative of 0 with a positive slope.",
+        "Incorrectly associates a derivative of 0 with a negative slope.",
+        "Incorrectly associates a derivative of 0 with a vertical tangent line (which typically corresponds to an undefined derivative)."
       ]
     }
   ]

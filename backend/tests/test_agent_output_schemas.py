@@ -49,10 +49,11 @@ MAX_TOTAL_PROPERTIES = 20
 # CheckItemDraft (learning loop PKG-04, spec §13 A22): FLAT by design —
 # str/int/bool/list[str] only, no nesting, no optional models — because the A22
 # answer structure (options with a wrong_key each, correct_option, answer_kind,
-# canonical_answer, tolerance, stepwise) has to come out of one call. Recorded
-# live against gemini-2.5-flash-lite with no schema rejection
-# (tests/evals/cassettes/check_items). Every other budget rule still applies.
-PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 17}
+# canonical_answer, tolerance, stepwise) has to come out of one call, and so
+# does A34's final_answer (18). Recorded live against gemini-2.5-flash-lite
+# with no schema rejection (tests/evals/cassettes/check_items). Every other
+# budget rule still applies.
+PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 18}
 
 # Modules that never define agents. The `function_handlers_*` modules
 # self-register per-task handlers on the #391 seam as an IMPORT SIDE EFFECT,
@@ -71,7 +72,7 @@ _SKIP_PREFIX = "function_handlers"
 # output validation to retry; the streaming tutor's failure handling belongs
 # to chat_stream's rung ladder, never a hidden re-roll.
 EXPECTED_STRUCTURED_AGENTS = {
-    "check_items_agent",  # learning loop PKG-04 (flat 17-field draft; see PER_OBJECT_EXCEPTIONS)
+    "check_items_agent",  # learning loop PKG-04 (flat 18-field draft; see PER_OBJECT_EXCEPTIONS)
     "classifier_agent",
     "concept_describe_agent",
     "concept_extraction_agent",
