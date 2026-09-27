@@ -79,6 +79,10 @@ REVIEW_ORDER_THRESHOLD = 0.33
 REVIEW_DAILY_BUDGET_MIN = 12
 REVIEW_SECONDS_PER_CHECK = 45
 MC_STABILITY_GAIN_CAP = 2.0
+# FSRS-6 reference floor on every new stability, in days (py-fsrs 6.3.2
+# STABILITY_MIN, same weights as FSRS_W). Spec §3.2's transcription omits it;
+# added by PKG-02 (fsrs.next_state), HANDOFF-02 Deviations / Open question (4).
+FSRS_STABILITY_MIN = 0.001
 SR_INITIAL_CRITERION = 3
 SR_RELEARN_SESSIONS = 3
 
