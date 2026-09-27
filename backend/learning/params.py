@@ -178,6 +178,7 @@ CHECK_ITEM_ANSWER_KINDS = ("free", "numeric")  # §3.5, A22; symbolic/exact defe
 CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec lacks the name
 CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
 CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
+CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
 
 
 # ------------------------------------------------------ §3.1 validity check

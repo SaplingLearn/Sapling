@@ -44,7 +44,11 @@ from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event
 from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.document_indexing import index_document
-from services.check_item_service import generate_for_document, retire_items_for_documents
+from services.check_item_service import (
+    generate_for_document,
+    queue_generation_for_document,
+    retire_items_for_documents,
+)
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
@@ -1205,6 +1209,13 @@ def _index_then_check_items(
     task. Only scheduled when LEARNING_LOOP_ENABLED; the flag-off path still
     schedules index_document alone (byte-identical).
 
+    Indexing runs here. The drafting — minutes of Flex calls — is QUEUED on
+    check_item_service's own bounded pool in real mode, so it never holds the
+    shared worker thread this runs on (the loop's default executor for the
+    SSE route, Starlette's request threadpool for /upload/sync). In function
+    mode the route runs this inline and the drafting runs here too, so the
+    upload returns with its items (the E2E lane).
+
     Each step is logged, never raised: an indexing failure leaves the document
     unindexed (the sweeper re-drives it) and drafting then falls back to its
     extracted text; a drafting failure must not fail the upload that runs this
@@ -1214,10 +1225,15 @@ def _index_then_check_items(
     except Exception:
         logger.exception("Indexing doc %s before check items failed", doc_id)
     try:
-        generate_for_document(
-            doc_id, user_id=user_id, course_id=course_id,
-            concept_names=concept_names, flex=True,
-        )
+        if model_mode() == "function":
+            generate_for_document(
+                doc_id, user_id=user_id, course_id=course_id,
+                concept_names=concept_names, flex=True,
+            )
+        else:
+            queue_generation_for_document(
+                doc_id, user_id=user_id, course_id=course_id, concept_names=concept_names,
+            )
     except Exception:
         logger.exception("Check items for doc %s failed", doc_id)
 

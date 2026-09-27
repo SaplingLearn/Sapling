@@ -37,6 +37,7 @@ class TestParams:
         assert params.CHECK_ITEM_STEPWISE_MIN_STEPS >= 2
         assert params.CHECK_ITEM_FLEX_RETRIES >= 0
         assert params.CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE == 1
+        assert params.CHECK_ITEM_DRAFT_WORKERS >= 1
 
     def test_initial_set_is_every_pair_and_covers_its_consumers(self):
         from learning import params
@@ -1533,7 +1534,7 @@ def _documents_route_helpers():
 
 def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
     """Drive /upload/sync with the orchestrator mocked, returning
-    (index_document mock, generate_for_document mock)."""
+    (index_document mock, generate_for_document mock, queue mock)."""
     import config
 
     tdr = _documents_route_helpers()
@@ -1548,6 +1549,7 @@ def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
         patch("routes.documents.model_mode", return_value=mode),
         patch("routes.documents.index_document") as idx,
         patch("routes.documents.generate_for_document") as gen,
+        patch("routes.documents.queue_generation_for_document") as queue,
         patch("routes.documents.update_course_context"),
         patch("routes.documents._check_upload_achievements"),
     ):
@@ -1555,7 +1557,7 @@ def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
         t.return_value.insert.return_value = [{"id": "doc-1"}]
         r = tdr._make_upload()
         assert r.status_code == 200, r.text
-    return idx, gen
+    return idx, gen, queue
 
 
 def _fn_name(fn) -> str:
@@ -1565,9 +1567,10 @@ def _fn_name(fn) -> str:
 
 class TestUploadHook:
     def test_flag_off_schedules_index_document_only(self, monkeypatch):
-        idx, gen = _upload_sync_with(monkeypatch, flag=False, mode="real")
+        idx, gen, queue = _upload_sync_with(monkeypatch, flag=False, mode="real")
         idx.assert_called_once_with("doc-1")
         gen.assert_not_called()
+        queue.assert_not_called()
 
     def test_flag_off_background_tasks_are_unchanged(self, monkeypatch):
         """Byte-identical flag-off post-roll: the same four tasks as before."""
@@ -1586,16 +1589,18 @@ class TestUploadHook:
         ]
         assert added[-1][1] == ("doc-1",)
 
-    def test_flag_on_real_mode_chains_index_then_generate_in_background(self, monkeypatch):
-        idx, gen = _upload_sync_with(monkeypatch, flag=True, mode="real")
-        # TestClient runs BackgroundTasks before returning, so both ran, in order.
+    def test_flag_on_real_mode_indexes_in_background_then_queues_the_drafting(self, monkeypatch):
+        idx, gen, queue = _upload_sync_with(monkeypatch, flag=True, mode="real")
+        # TestClient runs BackgroundTasks before returning: indexing ran, then
+        # the drafting was QUEUED on check_item_service's own pool — never run
+        # on the shared request threadpool.
         idx.assert_called_once_with("doc-1")
-        gen.assert_called_once()
-        assert gen.call_args[0] == ("doc-1",)
-        kwargs = gen.call_args[1]
+        gen.assert_not_called()
+        queue.assert_called_once()
+        assert queue.call_args[0] == ("doc-1",)
+        kwargs = queue.call_args[1]
         assert kwargs["user_id"] == "u1" and kwargs["course_id"] == "course-1"
         assert kwargs["concept_names"] == ["Concept A"]
-        assert kwargs["flex"] is True, "ingest-time generation is background prefill (A23)"
 
     def test_flag_on_function_mode_runs_synchronously(self, monkeypatch):
         from fastapi import BackgroundTasks
@@ -1604,16 +1609,20 @@ class TestUploadHook:
         monkeypatch.setattr(
             BackgroundTasks, "add_task", lambda self, fn, *a, **k: added.append(_fn_name(fn))
         )
-        idx, gen = _upload_sync_with(monkeypatch, flag=True, mode="function")
+        idx, gen, queue = _upload_sync_with(monkeypatch, flag=True, mode="function")
         idx.assert_called_once_with("doc-1")
         gen.assert_called_once()
+        assert gen.call_args[1]["flex"] is True, "ingest-time generation is background prefill"
+        queue.assert_not_called()
         assert "_index_then_check_items" not in added and "index_document" not in added
 
-    def test_index_then_check_items_orders_the_two(self):
+    @pytest.mark.parametrize("mode", ["function", "real"])
+    def test_index_then_check_items_orders_the_two(self, mode):
         from routes import documents as rd
 
         calls = []
         with (
+            patch("routes.documents.model_mode", return_value=mode),
             patch(
                 "routes.documents.index_document", side_effect=lambda d: calls.append(("index", d))
             ),
@@ -1621,23 +1630,78 @@ class TestUploadHook:
                 "routes.documents.generate_for_document",
                 side_effect=lambda d, **k: calls.append(("gen", d)),
             ),
+            patch(
+                "routes.documents.queue_generation_for_document",
+                side_effect=lambda d, **k: calls.append(("queue", d)),
+            ),
         ):
             rd._index_then_check_items("doc-1", "u1", "course-1", ["A"])
-        assert calls == [("index", "doc-1"), ("gen", "doc-1")]
+        second = "gen" if mode == "function" else "queue"
+        assert calls == [("index", "doc-1"), (second, "doc-1")]
 
-    def test_an_indexing_failure_still_drafts_and_a_drafting_failure_never_raises(self, caplog):
+    @pytest.mark.parametrize("mode", ["function", "real"])
+    def test_an_indexing_failure_still_drafts_and_a_drafting_failure_never_raises(
+        self, caplog, mode
+    ):
         from routes import documents as rd
 
         with (
+            patch("routes.documents.model_mode", return_value=mode),
             patch("routes.documents.index_document", side_effect=RuntimeError("pg down")),
             patch(
                 "routes.documents.generate_for_document", side_effect=RuntimeError("boom")
             ) as gen,
+            patch(
+                "routes.documents.queue_generation_for_document", side_effect=RuntimeError("boom")
+            ) as queue,
             caplog.at_level("ERROR"),
         ):
             rd._index_then_check_items("doc-1", "u1", "course-1", ["A"])
-        gen.assert_called_once()
+        (gen if mode == "function" else queue).assert_called_once()
         assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 2
+
+
+class TestDraftPool:
+    """Upload-time drafting holds a thread for minutes (Flex: up to
+    FLEX_TIMEOUT_S x (CHECK_ITEM_FLEX_RETRIES + 1) per call), so real mode runs
+    it on check_item_service's OWN bounded pool, never the event loop's
+    default executor or the request threadpool every other route shares."""
+
+    def test_queued_drafting_runs_on_its_own_bounded_pool(self):
+        import threading
+
+        from learning.params import CHECK_ITEM_DRAFT_WORKERS
+        from services import check_item_service as svc
+
+        seen = {}
+
+        def fake_generate(document_id, **kwargs):
+            seen["thread"] = threading.current_thread().name
+            seen["call"] = (document_id, kwargs)
+
+        with patch.object(svc, "generate_for_document", side_effect=fake_generate):
+            svc.queue_generation_for_document(
+                "doc-1", user_id="u1", course_id="course-1", concept_names=["A"]
+            ).result(timeout=10)
+        assert seen["thread"].startswith("check-items")
+        assert seen["call"] == (
+            "doc-1",
+            {"user_id": "u1", "course_id": "course-1", "concept_names": ["A"], "flex": True},
+        )
+        assert svc._draft_pool()._max_workers == CHECK_ITEM_DRAFT_WORKERS
+
+    def test_a_queued_drafting_failure_is_logged_never_raised(self, caplog):
+        from services import check_item_service as svc
+
+        with (
+            patch.object(svc, "generate_for_document", side_effect=RuntimeError("boom")),
+            caplog.at_level("ERROR", logger="sapling.services.check_items"),
+        ):
+            future = svc.queue_generation_for_document(
+                "doc-1", user_id="u1", course_id="course-1", concept_names=["A"]
+            )
+            assert future.result(timeout=10) is None
+        assert any("doc-1" in r.getMessage() for r in caplog.records)
 
 
 def _sse_upload_with(monkeypatch, *, flag: bool, mode: str):
@@ -1670,6 +1734,7 @@ def _sse_upload_with(monkeypatch, *, flag: bool, mode: str):
         patch("routes.documents.model_mode", return_value=mode),
         patch("routes.documents.index_document") as idx,
         patch("routes.documents.generate_for_document") as gen,
+        patch("routes.documents.queue_generation_for_document"),
         patch("routes.documents._spawn_post_roll", side_effect=lambda *ts: spawned.extend(ts)),
     ):
         t.return_value.select.return_value = []

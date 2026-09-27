@@ -19,9 +19,12 @@ here — and only from its SHARED chunks.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
+import threading
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import NamedTuple
 
 import config
@@ -44,6 +47,7 @@ from learning.checks import (
 )
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
+    CHECK_ITEM_DRAFT_WORKERS,
     CHECK_ITEM_INITIAL_PER_CONCEPT,
     CHECK_ITEM_MAX_CHUNKS,
     CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
@@ -703,4 +707,54 @@ def generate_for_document(
         flex=flex,
         document_id=document_id,
         max_concepts=CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
+    )
+
+
+# ── upload-time drafting pool ──────────────────────────────────────────────
+#
+# One upload's drafting is up to ceil(CHECK_ITEM_MAX_CONCEPTS_PER_DOC /
+# CHECK_ITEM_CONCEPTS_PER_CALL) sequential Flex runs, each up to FLEX_TIMEOUT_S
+# x (CHECK_ITEM_FLEX_RETRIES + 1): a thread held for minutes, hours at worst.
+# On the event loop's default executor or Starlette's request threadpool a few
+# concurrent uploads would starve every other threaded call in the process
+# (the next upload's extraction and persist among them), so real-mode drafting
+# runs HERE, CHECK_ITEM_DRAFT_WORKERS at a time; the rest wait in the queue.
+# A restart drops what is queued or in flight — the nightly `--all-courses`
+# backfill (spec §11.7) drafts it then.
+
+_draft_pool_instance: ThreadPoolExecutor | None = None
+_draft_pool_lock = threading.Lock()
+
+
+def _draft_pool() -> ThreadPoolExecutor:
+    global _draft_pool_instance
+    with _draft_pool_lock:
+        if _draft_pool_instance is None:
+            _draft_pool_instance = ThreadPoolExecutor(
+                max_workers=CHECK_ITEM_DRAFT_WORKERS, thread_name_prefix="check-items"
+            )
+        return _draft_pool_instance
+
+
+def _generate_for_document_logged(document_id: str, **kwargs) -> None:
+    try:
+        generate_for_document(document_id, **kwargs)
+    except Exception:
+        logger.exception("check items for document %s failed", document_id)
+
+
+def queue_generation_for_document(
+    document_id: str, *, user_id: str, course_id: str, concept_names: Iterable[str]
+) -> Future:
+    """Queue the upload hook's drafting (background prefill, Flex) on this
+    module's own bounded pool and return at once. The caller's context
+    (request id) rides along; a failure is logged, never raised."""
+    return _draft_pool().submit(
+        contextvars.copy_context().run,
+        _generate_for_document_logged,
+        document_id,
+        user_id=user_id,
+        course_id=course_id,
+        concept_names=list(concept_names),
+        flex=True,
     )
