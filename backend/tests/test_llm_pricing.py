@@ -113,10 +113,26 @@ def test_cost_for_known_model():
     assert cost == pytest.approx(0.0028)
 
 
-def test_cost_for_known_model_rounds_to_six_dp():
+def test_cost_keeps_sub_micro_dollar_precision():
+    # (0.0001 + 0.0004)/1000 = 0.0000005 — below the old 6dp column's step,
+    # which rounded it to 0.000001 (double the real cost). 10dp keeps it.
     cost = llm_pricing.cost_usd("gemini-2.5-flash-lite", 1, 1)
-    # (0.0001 + 0.0004)/1000 = 0.0000005 -> quantized to 6dp = 0.000001 (half-up)
-    assert cost == pytest.approx(0.000001)
+    assert cost == 0.0000005
+
+
+def test_cost_rounds_half_up_at_ten_dp():
+    # 1 Jev token = 0.000000042 exactly; 3 flash-lite input tokens =
+    # 0.0000003 — both exact at 10dp. A value past the 10th digit rounds.
+    assert llm_pricing.cost_usd("jev-1.13.0", 1, 0) == 0.000000042
+    assert llm_pricing.COST_SCALE == 10
+
+
+def test_a_653_token_jev_call_is_priced_exactly_not_rounded_away():
+    """#672 review: at the old 6dp scale this stored 0.000027 (1.6% low) and
+    any call under 12 tokens stored $0 — a billed call recorded as free."""
+    assert llm_pricing.cost_usd("jev-1.13.0", 653, 20) == 0.000027426
+    assert llm_pricing.cost_usd("jev-1.13.0", 11, 0) == 0.000000462
+    assert llm_pricing.cost_usd("jev-1.13.0", 11, 0) > 0
 
 
 def test_cost_for_unknown_model_returns_none_and_warns_once(caplog):
