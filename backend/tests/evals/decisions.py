@@ -60,8 +60,9 @@ DATASET, FIXTURES = "decisions", Path(__file__).parent / "fixtures" / "decisions
 ALLOWED_PROVENANCE = ("synthetic", "consented_deidentified")
 DECISION_EVAL_MAX_CASES = 8
 ECE_BINS = 10
-# Float rounding only: 0.75 - 0.73 is 0.020000000000000018, so an exact 2-point drop would
-# fail DECISION_PROMOTE_MAX_ACC_DROP at some gold counts and pass at others.
+# Float rounding only, on every computed-metric threshold gate: 0.75 - 0.73 is
+# 0.020000000000000018 and 95%-right-at-1.0 sums to ECE 0.050000000000000044, so an exact
+# 2-point drop / ECE 0.05 / κ 0.70 would fail its gate at some gold counts and pass at others.
 GATE_TOLERANCE = 1e-9
 GRADING_CHANNEL = {"grade_rubric_items": "free_response", "reason_is_correct": "mc_reasoned"}
 _RECORD_RETRIES = 4  # transient provider errors while recording (the _replay posture)
@@ -357,10 +358,12 @@ def promotion_checks(
         "DECISION_PROMOTE_MIN_GOLD": gold_per_decision(candidate) >= seam.DECISION_PROMOTE_MIN_GOLD,
         "DECISION_PROMOTE_MAX_ACC_DROP": accuracy(baseline) - accuracy(candidate)
         <= seam.DECISION_PROMOTE_MAX_ACC_DROP + GATE_TOLERANCE,
-        "GRADER_PROMOTE_MIN_KAPPA": cohen_kappa(candidate) >= seam.GRADER_PROMOTE_MIN_KAPPA
+        "GRADER_PROMOTE_MIN_KAPPA": cohen_kappa(candidate)
+        >= seam.GRADER_PROMOTE_MIN_KAPPA - GATE_TOLERANCE
         if grading
         else None,
-        "DECISION_PROMOTE_MAX_ECE": ece(candidate) <= seam.DECISION_PROMOTE_MAX_ECE,
+        "DECISION_PROMOTE_MAX_ECE": ece(candidate)
+        <= seam.DECISION_PROMOTE_MAX_ECE + GATE_TOLERANCE,
         "false_positive_not_worse": false_positive_rate(candidate) <= false_positive_rate(baseline),
         "injection_flip_not_worse": injection_flip_rate(candidate) <= injection_flip_rate(baseline),
         "GRADER_BKT_REPLAY_MAX_DELTA": (

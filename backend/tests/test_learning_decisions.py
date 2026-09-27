@@ -942,6 +942,44 @@ def test_acc_drop_gate_passes_an_exact_two_point_drop_at_every_count(ev, base_ri
     ]
 
 
+@pytest.mark.parametrize("n", [100, 200, 300, 400])
+def test_ece_gate_passes_an_exact_ece_of_0_05_at_every_count(ev, n):
+    """§3.6 "ECE ≤ 0.05": 95% right at confidence 1.0 is ECE exactly 0.05 and passes at
+    every count (the float sum is 0.050000000000000044); 94% right still fails."""
+    exact = _scored(ev, n * 95 // 100, n)
+    assert ev.promotion_checks(exact, exact)["DECISION_PROMOTE_MAX_ECE"]
+    worse = _scored(ev, n * 94 // 100, n)
+    assert not ev.promotion_checks(worse, worse)["DECISION_PROMOTE_MAX_ECE"]
+
+
+def _kappa_table(ev, both_yes: int, gold_yes_only: int, got_yes_only: int, both_no: int):
+    """A grading list whose (gold, got) yes/no pairs form the given 2x2 table."""
+    yes, no = {"r1": "yes"}, {"r1": "no"}
+    cells = ((yes, yes, both_yes), (yes, no, gold_yes_only), (no, yes, got_yes_only))
+    return [
+        ev.CaseResult(decision="grade_rubric_items", gold=gold, got=got, confidence=1.0)
+        for gold, got, count in (*cells, (no, no, both_no))
+        for _ in range(count)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("exact", "below"),
+    [
+        ((43, 7, 17, 133), (43, 7, 18, 132)),  # n=200
+        ((20, 5, 10, 265), (20, 5, 11, 264)),  # n=300: the float kappa is 0.6999999999999998
+        ((33, 7, 17, 343), (33, 7, 18, 342)),  # n=400: likewise
+    ],
+)
+def test_kappa_gate_passes_an_exact_kappa_of_0_70_at_every_count(ev, exact, below):
+    """§3.6 "κ ≥ 0.70": each `exact` table is κ = 7/10 exactly and passes; one more
+    disagreement (`below`) drops κ under 0.70 and fails."""
+    table = _kappa_table(ev, *exact)
+    assert ev.promotion_checks(table, table)["GRADER_PROMOTE_MIN_KAPPA"]
+    table = _kappa_table(ev, *below)
+    assert not ev.promotion_checks(table, table)["GRADER_PROMOTE_MIN_KAPPA"]
+
+
 def test_gold_volume_gate_counts_each_decision_separately(ev):
     """§3.6: DECISION_PROMOTE_MIN_GOLD is gold labels PER decision, so a mixed
     grading list passes only when every decision in it has enough on its own."""
