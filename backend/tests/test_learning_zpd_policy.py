@@ -1301,6 +1301,46 @@ def test_a_question_label_in_a_request_is_no_answer(text, phrases):
     assert has_non_attempt_phrase(text) is True
 
 
+def _fastest_of_three(fn, text):
+    import time
+
+    best = float("inf")
+    for _ in range(3):
+        start = time.perf_counter()
+        fn(text)
+        best = min(best, time.perf_counter() - start)
+    return best
+
+
+@pytest.mark.parametrize("size", [500, 5000])
+def test_the_text_rules_run_in_linear_time_on_long_whitespace(size):
+    """PKG-07 runs non_attempt_phrases on every raw submission, so no
+    whitespace run may make a regex backtrack super-linearly: "part" followed
+    by thousands of spaces and no digit took seconds (cubic) through
+    _QUESTION_REF's three adjacent whitespace runs. A linear scan of these
+    inputs takes well under a millisecond; 50 ms catches cubic at 500 and
+    quadratic at 5000."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    ws = (" ", "\t", "\n")
+    shapes = [
+        f"just tell me {label}{w * size}{tail}"
+        for label in ("part", "question", "q", "no .", "#", "the answer to", "step")
+        for w in ws
+        for tail in ("a", "x 1", "?", ".")
+    ]
+    shapes += [
+        "just tell me" + (" part" + " " * (size // 20)) * 20,
+        "idk a" + " " * size + "=" + " " * size + "(",
+        "what's the answer to step" + "\t" * size + "?",
+        "just tell me " + "part. " * (size // 6),
+    ]
+    for text in shapes:
+        for fn in (non_attempt_phrases, has_non_attempt_phrase):
+            took = _fastest_of_three(fn, text)
+            assert took < 0.05, (fn.__name__, text[:30], size, took)
+
+
 def test_has_non_attempt_phrase_matches_whole_words_only():
     from learning.gates import has_non_attempt_phrase
 

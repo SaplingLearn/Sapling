@@ -53,10 +53,14 @@ _DIGIT = re.compile(r"\d")
 # "no. 3", "problems 3-5", "the answer for 4b"): what a request phrase asks
 # about, never a submitted answer (A16). Set aside only in a message holding a
 # request phrase; beside an idk phrase alone a digit is still an answer.
+# Every whitespace run is followed by a REQUIRED token or ends the optional
+# group it opens, so no two runs can share the same spaces: a long run with
+# no digit after it costs one linear scan, never a cubic backtrack (the text
+# is a raw student submission).
 _QUESTION_REF = re.compile(
     r"(?:\b(?:questions?|qs?|parts?|problems?|probs?|numbers?|num|exercises?|ex|items?"
     r"|tasks?|steps?|sections?|sec|pages?|pg|chapters?|ch|hw|homework|labs?|quiz(?:zes)?)"
-    r"\s*[.#]?|\bno\s*\.|#|\banswers?\s+(?:to|for|of|on))\s*#?\s*"
+    r"(?:\s*[.#])?|\bno\s*\.|#|\banswers?\s+(?:to|for|of|on))\s*(?:#\s*)?"
     r"\d+[a-z]?(?:\.\d+[a-z]?)*(?:\s*[-–]\s*\d+[a-z]?)?(?:\s*\(\s*[a-z0-9]{1,4}\s*\))?",
     re.I,
 )
