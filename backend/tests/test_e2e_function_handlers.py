@@ -598,8 +598,10 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
 
     from agents.function_handlers_e2e import (
         E2E_CHECK_ITEM_CORRECT_OPTION,
+        E2E_CHECK_ITEM_FINAL_ANSWER,
         E2E_CHECK_ITEM_MC_REFERENCE,
         E2E_CHECK_ITEM_OPTION_LETTERS,
+        E2E_CHECK_ITEM_OPTION_TEXTS,
         E2E_CHECK_ITEM_REFERENCE,
         E2E_DOC_CONCEPTS,
     )
@@ -611,10 +613,15 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
     for i in items:
         want = E2E_CHECK_ITEM_MC_REFERENCE if i.format == "mc_reason" else E2E_CHECK_ITEM_REFERENCE
         assert i.reference_answer == want and i.answer_kind == "free" and i.stepwise is False
+        # A34: every item states its final answer (validate_draft checks it occurs
+        # in the reference, not in the prompt, and is the correct option's text)
+        assert i.final_answer == E2E_CHECK_ITEM_FINAL_ANSWER
         assert validate_draft(i) == [], validate_draft(i)
     for i in (i for i in items if i.format == "mc_reason"):
         assert i.option_letters == E2E_CHECK_ITEM_OPTION_LETTERS
         assert i.correct_option == E2E_CHECK_ITEM_CORRECT_OPTION
+        correct = E2E_CHECK_ITEM_OPTION_TEXTS[i.option_letters.index(i.correct_option)]
+        assert correct == E2E_CHECK_ITEM_FINAL_ANSWER
     assert "check_items" in providers._FUNCTION_HANDLERS
 
 
