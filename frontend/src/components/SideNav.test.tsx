@@ -297,11 +297,30 @@ describe("SideNav — /font-lab override", () => {
     const rail = renderRail();
     const logo = screen.getByText("Sapling");
     expect(logo.style.fontFamily).toBe('"Besley", serif');
+    expect(logo.style.fontWeight).toBe("700"); // Besley's own previewWeight, not a hardcoded 700.
     const group = rail.querySelector<HTMLElement>(".label-micro")!;
     expect(group.style.fontFamily).toBe('"Fragment Mono", monospace');
     // body and subtitle both matched the shipped default, so neither role
     // is treated as "overridden" and the rail keeps inheriting its normal stack.
     expect(rail.style.fontFamily).toBe("");
+  });
+
+  // A candidate is picked for its whole look, not just its family name — a
+  // bold label face rendered exactly as thin as the shipped default until
+  // `fontWeight` was threaded through the override too (same bug hid
+  // subtitle's italic candidates behind `fontStyle`).
+  it("carries a candidate's own weight and italic, not just its family", () => {
+    window.localStorage.setItem(
+      FONT_LAB_KEY,
+      JSON.stringify({ heading: "Spectral", body: "DM Sans", label: "Anonymous Pro", subtitle: "Piazzolla" }),
+    );
+    const rail = renderRail();
+    const group = rail.querySelector<HTMLElement>(".label-micro")!;
+    expect(group.style.fontFamily).toBe('"Anonymous Pro", monospace');
+    expect(group.style.fontWeight).toBe("700"); // Anonymous Pro's previewWeight — was silently dropped to normal.
+    const subtitle = screen.getByText("Account");
+    expect(subtitle.style.fontFamily).toBe('"Piazzolla", serif');
+    expect(subtitle.style.fontStyle).toBe("italic"); // Piazzolla's italic flag — was silently dropped to upright.
   });
 
   it("ignores an unparsable value instead of throwing", () => {

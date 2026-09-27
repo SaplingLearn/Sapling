@@ -41,7 +41,18 @@ export function readFontLabSelection(): FontLabSelection | null {
   }
 }
 
-export type NavFontOverride = Record<FontRole, string | null>;
+/**
+ * Everything a role needs to actually LOOK like the candidate that was
+ * picked — not just its family name. A section-label candidate picked for
+ * its weight (Big Shoulders Display at 900, say) rendered exactly as thin
+ * as the shipped default until this carried `fontWeight` too: the rail's
+ * CSS never set a weight on that row, so every override silently inherited
+ * the browser's normal/400 regardless of which face was chosen. Subtitle's
+ * italic candidates had the same bug with `fontStyle`.
+ */
+export type RoleStyle = { fontFamily: string; fontWeight: number; fontStyle: "normal" | "italic" };
+
+export type NavFontOverride = Record<FontRole, RoleStyle | null>;
 
 export function useNavFontOverride(): NavFontOverride | null {
   const [selection, setSelection] = useState<FontLabSelection | null>(() => readFontLabSelection());
@@ -79,17 +90,21 @@ export function useNavFontOverride(): NavFontOverride | null {
 
   if (!selection) return null;
 
-  const stackOrNull = (role: FontRole): string | null => {
+  const styleOrNull = (role: FontRole): RoleStyle | null => {
     if (selection[role] === DEFAULT_SELECTION[role]) return null;
     const candidate = CANDIDATES[role].find((c) => c.family === selection[role]);
     if (!candidate) return null;
-    return stackFor(candidate);
+    return {
+      fontFamily: stackFor(candidate),
+      fontWeight: candidate.previewWeight,
+      fontStyle: candidate.italic ? "italic" : "normal",
+    };
   };
 
   return {
-    heading: stackOrNull("heading"),
-    body: stackOrNull("body"),
-    label: stackOrNull("label"),
-    subtitle: stackOrNull("subtitle"),
+    heading: styleOrNull("heading"),
+    body: styleOrNull("body"),
+    label: styleOrNull("label"),
+    subtitle: styleOrNull("subtitle"),
   };
 }

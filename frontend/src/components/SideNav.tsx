@@ -165,7 +165,11 @@ export function SideNav() {
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
-        fontFamily: navFonts?.body ?? undefined,
+        fontFamily: navFonts?.body?.fontFamily,
+        // Elements below with their own explicit fontWeight (active/inactive
+        // nav rows, the account name) win over this — it only reaches rows
+        // that never set one, like "Collapse".
+        fontWeight: navFonts?.body?.fontWeight,
         // The rail itself never scrolls: only the destinations region below
         // does, so the account footer stays pinned at the bottom.
         overflow: "hidden",
@@ -210,8 +214,9 @@ export function SideNav() {
           >
             <span
               style={{
-                fontFamily: navFonts?.heading ?? "'Spectral', Georgia, serif",
-                fontWeight: 700,
+                fontFamily: navFonts?.heading?.fontFamily ?? "'Spectral', Georgia, serif",
+                fontWeight: navFonts?.heading?.fontWeight ?? 700,
+                fontStyle: navFonts?.heading?.fontStyle ?? "normal",
                 fontSize: 20,
                 color: "var(--brand-forest)",
                 letterSpacing: "-0.02em",
@@ -267,7 +272,9 @@ export function SideNav() {
                 left: 10,
                 bottom: HEADER.below,
                 lineHeight: `${HEADER.line}px`,
-                fontFamily: navFonts?.label ?? undefined,
+                fontFamily: navFonts?.label?.fontFamily,
+                fontWeight: navFonts?.label?.fontWeight,
+                fontStyle: navFonts?.label?.fontStyle,
                 ...fade(collapsed),
               }}
             >
@@ -411,7 +418,17 @@ export function SideNav() {
                   >
                     {userName || "You"}
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: navFonts?.subtitle ?? undefined }}>Account</div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-muted)",
+                      fontFamily: navFonts?.subtitle?.fontFamily,
+                      fontWeight: navFonts?.subtitle?.fontWeight,
+                      fontStyle: navFonts?.subtitle?.fontStyle,
+                    }}
+                  >
+                    Account
+                  </div>
                 </div>
             </div>
           </div>
