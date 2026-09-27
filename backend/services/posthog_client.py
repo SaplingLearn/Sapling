@@ -69,7 +69,6 @@ _client_lock = threading.Lock()
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
-#: The one reason that does NOT block a person delete (see delete_person).
 _NO_TOKEN = "POSTHOG_PROJECT_TOKEN is unset"
 
 
@@ -77,7 +76,7 @@ _NO_TOKEN = "POSTHOG_PROJECT_TOKEN is unset"
 
 
 def _disabled_reason_for(
-    env: Mapping[str, str], *, under_pytest: bool, model_mode: str,
+    env: Mapping[str, str], *, under_pytest: bool, model_mode: str, for_erasure: bool = False,
 ) -> str | None:
     """Pure form of the gate, so tests can exercise every branch without
     un-importing pytest. Returns why PostHog is off, or None when it may run.
@@ -86,9 +85,14 @@ def _disabled_reason_for(
     (``agents._providers.model_mode()``) — never re-parsed here, so the
     PostHog gate and the LLM seam cannot disagree about which lane this is.
 
+    ``for_erasure``: the gate for an account-deletion ``bulk_delete``. The
+    kill switch and an unset token stop CAPTURE, not erasure — a person sent
+    before either was set still exists — so only the test/deterministic-lane
+    reasons apply.
+
     Order matters only for the log line; any one reason is sufficient.
     """
-    if (env.get("POSTHOG_DISABLED") or "").strip().lower() in _TRUTHY:
+    if not for_erasure and (env.get("POSTHOG_DISABLED") or "").strip().lower() in _TRUTHY:
         return "POSTHOG_DISABLED is set"
     if under_pytest:
         return "running under pytest"
@@ -96,19 +100,22 @@ def _disabled_reason_for(
         return "APP_ENV=test"
     if model_mode != "real":
         return f"SAPLING_MODEL_MODE={model_mode} (deterministic lane)"
-    if not (env.get("POSTHOG_PROJECT_TOKEN") or "").strip():
+    if not for_erasure and not (env.get("POSTHOG_PROJECT_TOKEN") or "").strip():
         return _NO_TOKEN
     return None
 
 
-def disabled_reason() -> str | None:
+def disabled_reason(*, for_erasure: bool = False) -> str | None:
     """Why PostHog is off in this process right now, or None if it is on."""
     # Lazy: this module is imported by events_service (imported nearly
     # everywhere), and _providers pulls in pydantic-ai.
     from agents._providers import model_mode
 
     return _disabled_reason_for(
-        os.environ, under_pytest="pytest" in sys.modules, model_mode=model_mode(),
+        os.environ,
+        under_pytest="pytest" in sys.modules,
+        model_mode=model_mode(),
+        for_erasure=for_erasure,
     )
 
 
@@ -221,16 +228,39 @@ def set_client_for_tests(client: Any) -> None:
 
 
 class _Item(NamedTuple):
-    kind: str                 # "event" | "exception"
     name: str                 # event name ("$exception" for exceptions)
-    properties: dict
+    properties: dict          # plain data only — never an exception or frame
     actor: str | None         # the user to check consent for; None = no actor
     captured_at: float        # epoch seconds, so a delayed send keeps its time
-    exc: BaseException | None = None
 
 
-_QUEUE_MAX = int(os.getenv("POSTHOG_QUEUE_MAX", "10000"))
-_queue: "queue.Queue[_Item]" = queue.Queue(maxsize=_QUEUE_MAX)
+_QUEUE_MAX_DEFAULT = 10_000
+
+
+def _queue_max_from_env(env: Mapping[str, str] | None = None) -> int:
+    """``POSTHOG_QUEUE_MAX``, defensively: a bad, empty or non-positive value
+    falls back to the default with a warning. Never raises (it runs at
+    import), and never returns <= 0 (``queue.Queue(0)`` is UNBOUNDED)."""
+    raw = ((os.environ if env is None else env).get("POSTHOG_QUEUE_MAX") or "").strip()
+    if not raw:
+        return _QUEUE_MAX_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "POSTHOG_QUEUE_MAX=%r is not an integer; using %d", raw, _QUEUE_MAX_DEFAULT,
+        )
+        return _QUEUE_MAX_DEFAULT
+    if value <= 0:
+        logger.warning(
+            "POSTHOG_QUEUE_MAX=%d would make the queue unbounded; using %d",
+            value, _QUEUE_MAX_DEFAULT,
+        )
+        return _QUEUE_MAX_DEFAULT
+    return value
+
+
+_queue: "queue.Queue[_Item]" = queue.Queue(maxsize=_queue_max_from_env())
 _queue_lock = threading.Lock()
 _dropped = 0
 _worker: threading.Thread | None = None
@@ -304,17 +334,15 @@ def _deliver(item: _Item) -> None:
         distinct_id = _distinct_id_for(item.actor)
         if distinct_id is _SKIP:
             return
-        if item.kind == "exception":
-            client.capture_exception(
-                item.exc, distinct_id=distinct_id, properties=item.properties,
-            )
-        else:
-            client.capture(
-                item.name,
-                distinct_id=distinct_id,
-                properties=item.properties,
-                timestamp=datetime.fromtimestamp(item.captured_at, tz=timezone.utc),
-            )
+        # One call for every kind: an exception arrives here as a ready,
+        # redacted `$exception_list` (built at enqueue), and the client's
+        # before_send (_scrub_event) still runs on it.
+        client.capture(
+            item.name,
+            distinct_id=distinct_id,
+            properties=item.properties,
+            timestamp=datetime.fromtimestamp(item.captured_at, tz=timezone.utc),
+        )
     except Exception:
         logger.debug("PostHog send failed for %s; dropped", item.name, exc_info=True)
 
@@ -426,7 +454,6 @@ def mirror_event(
         if _request_opted_out():
             return
         _enqueue(_Item(
-            kind="event",
             name=event_type,
             properties=_mirrored_properties(payload, category=category, request_id=request_id),
             actor=_actor(user_id),
@@ -440,21 +467,23 @@ def capture_ai_generation(
     *,
     user_id: str | None,
     model: str,
+    provider: str | None,
     input_tokens: int,
     output_tokens: int,
     cost_usd: float | None,
     request_id: str | None,
     feature: str,
     task: str | None,
-    latency_s: float | None = None,
 ) -> None:
     """Queue a privacy-mode ``$ai_generation`` for PostHog LLM analytics.
 
-    Called only from ``agents/usage.py::record_agent_usage``. Carries ONLY
-    model, provider, token counts, cost, latency (when known), the request id
-    as trace id, and the feature/task name — never ``$ai_input`` /
-    ``$ai_output`` or any other content. Same queue and consent path as
-    events. Never raises.
+    Called only from ``events_service.log_llm_usage`` (which every agent run
+    reaches through ``agents/usage.py::record_agent_usage``), with the same
+    values as the ``llm_usage`` row. Carries ONLY model, provider (as
+    recorded; derived from the model name only when missing), token counts,
+    cost, the request id as trace id, and the feature/task name — never
+    ``$ai_input`` / ``$ai_output`` or any other content. Same queue and
+    consent path as events. Never raises.
     """
     if _client is None:
         return
@@ -463,7 +492,7 @@ def capture_ai_generation(
             return
         properties: dict[str, Any] = {
             "$ai_model": model,
-            "$ai_provider": _provider_of(model),
+            "$ai_provider": (provider or "").strip() or _provider_of(model),
             "$ai_input_tokens": int(input_tokens),
             "$ai_output_tokens": int(output_tokens),
             "$ai_span_name": task or feature,
@@ -473,12 +502,9 @@ def capture_ai_generation(
             properties["task"] = task
         if cost_usd is not None:
             properties["$ai_total_cost_usd"] = float(cost_usd)
-        if latency_s is not None:
-            properties["$ai_latency"] = float(latency_s)
         if request_id:
             properties["$ai_trace_id"] = request_id
         _enqueue(_Item(
-            kind="event",
             name="$ai_generation",
             properties=properties,
             actor=_actor(user_id),
@@ -510,22 +536,47 @@ def capture_exception(
     Same consent path as events. ``privacy_signal`` (the request sent
     DNT/GPC) is passed explicitly because the 500 handler runs outside
     RequestIDMiddleware, after the per-request contextvar has been reset.
+
+    The ``$exception_list`` is built HERE, as plain data: type, module and
+    code-location frames, the message already redacted, no frame locals. The
+    queue never holds the exception, its traceback or its frames — those keep
+    every local of every frame alive (decrypted notes, messages, documents)
+    for as long as the item waits.
     """
     if _client is None or privacy_signal:
         return
     try:
         if _request_opted_out():
             return
+        properties: dict[str, Any] = {"$exception_list": _exception_list(exc)}
+        if request_id:
+            properties["request_id"] = request_id
         _enqueue(_Item(
-            kind="exception",
             name="$exception",
-            properties={"request_id": request_id} if request_id else {},
+            properties=properties,
             actor=_actor(user_id),
             captured_at=time.time(),
-            exc=exc,
         ))
     except Exception:
         logger.debug("PostHog capture_exception failed", exc_info=True)
+
+
+def _exception_list(exc: BaseException) -> list[dict]:
+    """The SDK's own ``$exception_list`` shape (what issue grouping keys on),
+    built without locals and scrubbed with the same rules as before_send.
+    Frame source context comes from linecache (local files, cached)."""
+    from posthog.exception_utils import (
+        exc_info_from_error,
+        exceptions_from_error_tuple,
+        handle_in_app,
+    )
+
+    values = exceptions_from_error_tuple(exc_info_from_error(exc))
+    values = handle_in_app({"exception": {"values": values}})["exception"]["values"]
+    scrubbed = _scrub_event({"properties": {"$exception_list": values}})
+    if scrubbed is None:
+        raise ValueError("exception scrub failed")  # caller drops the item
+    return scrubbed["properties"]["$exception_list"]
 
 
 def flush(timeout_seconds: float = 10.0) -> None:
@@ -574,9 +625,11 @@ def delete_person(user_id: str) -> None:
     would re-create the person. The second pass runs after TTL + margin (a
     daemon timer: lost if this process exits first — logged, and in the ADR).
 
-    Gated like everything else: under pytest / APP_ENV=test / function mode /
-    the kill switch it makes no request. A deletion skipped that way is logged
-    at WARNING with the reason, because in production it is a privacy to-do.
+    Runs whenever the personal key, project id and API host are configured —
+    even with ``POSTHOG_DISABLED`` or no project token, because those stop
+    capture, not erasure. Only pytest / ``APP_ENV=test`` / a non-real seam
+    mode block it (logged at WARNING). Unconfigured: WARN where PostHog was
+    ever configured (it is a privacy to-do there), silent where it never was.
     """
     if _delete_pass(user_id, label="first"):
         _schedule_second_pass(user_id)
@@ -599,37 +652,45 @@ def _schedule_second_pass(user_id: str) -> None:
         )
 
 
+def _log_unconfigured_delete(user_id: str, *, key: str, project_id: str) -> None:
+    """WARN only where PostHog was ever configured (a project token or a
+    personal key is set): there, a skipped delete is a privacy to-do. A
+    deployment that never configured PostHog has no person to delete, and
+    says nothing."""
+    if not (config.posthog_project_token() or key):
+        logger.debug("PostHog person delete for %s: PostHog not configured", user_id)
+        return
+    if not key or not project_id:
+        why = "POSTHOG_PERSONAL_API_KEY and POSTHOG_PROJECT_ID must both be set"
+    else:
+        # Never guess where the personal key goes (config.posthog_api_host).
+        why = (
+            "POSTHOG_HOST is not a PostHog-cloud ingestion host, so "
+            "POSTHOG_API_HOST must be set explicitly"
+        )
+    logger.warning(
+        "PostHog person delete skipped for %s: %s — delete the person manually in PostHog",
+        user_id, why,
+    )
+
+
 def _delete_pass(user_id: str, *, label: str) -> bool:
     """One drain + ``bulk_delete``. Returns whether the request was ISSUED
     (False = skipped as unconfigured/gated, so no second pass is scheduled).
     Never raises."""
     try:
-        reason = disabled_reason()
-        # An unset project token only means nothing is being captured NOW;
-        # a person captured before it was unset still exists, so it does not
-        # block the delete. Every other reason (tests, E2E, kill switch) does.
-        if reason is not None and reason != _NO_TOKEN:
+        # Erasure is not capture: POSTHOG_DISABLED and an unset token stop
+        # sending, not deleting (a person sent before either was set still
+        # exists). Only the test / deterministic-lane reasons block it.
+        reason = disabled_reason(for_erasure=True)
+        if reason is not None:
             logger.warning("PostHog person delete skipped for %s: %s", user_id, reason)
             return False
         key = config.posthog_personal_api_key()
         project_id = config.posthog_project_id()
-        if not key or not project_id:
-            logger.warning(
-                "PostHog person delete skipped for %s: POSTHOG_PERSONAL_API_KEY "
-                "and POSTHOG_PROJECT_ID must both be set — delete the person "
-                "manually in PostHog",
-                user_id,
-            )
-            return False
-        api_host = config.posthog_api_host()
-        if not api_host:
-            # Never guess where the personal key goes (config.posthog_api_host).
-            logger.warning(
-                "PostHog person delete skipped for %s: POSTHOG_HOST is not a "
-                "PostHog-cloud ingestion host, so POSTHOG_API_HOST must be set "
-                "explicitly — delete the person manually in PostHog",
-                user_id,
-            )
+        api_host = config.posthog_api_host() if key and project_id else None
+        if not (key and project_id and api_host):
+            _log_unconfigured_delete(user_id, key=key, project_id=project_id)
             return False
 
         # Our queue, then the SDK's — both bounded.

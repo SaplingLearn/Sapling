@@ -25,7 +25,7 @@ from models import (
     DeleteAccountBody,
 )
 from services.academics import school_peer_user_ids
-from services.analytics_consent import clear_analytics_consent_cache
+from services.analytics_consent import clear_analytics_consent_cache, missing_opt_out_column
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
@@ -88,11 +88,30 @@ _SETTINGS_COLS = (
 )
 
 
+#: The same list minus the ADR 0028 opt-out, for the deploy-order window in
+#: which this code is live but migration 20260927033814 has not run yet.
+_SETTINGS_COLS_WITHOUT_OPT_OUT = _SETTINGS_COLS.replace("analytics_opt_out,", "")
+
+
+def _select_settings(user_id: str) -> list:
+    """Read the settings row, tolerating a not-yet-migrated
+    ``analytics_opt_out`` (PostgREST 400 naming it): retry without the column,
+    so every settings/profile read keeps working and the field is simply
+    absent. The PostHog consent check treats that same state as "no"."""
+    filters = {"user_id": f"eq.{user_id}"}
+    try:
+        return table("user_settings").select(_SETTINGS_COLS, filters=filters)
+    except Exception as exc:
+        if not missing_opt_out_column(exc):
+            raise
+        return table("user_settings").select(_SETTINGS_COLS_WITHOUT_OPT_OUT, filters=filters)
+
+
 def _get_or_create_settings(user_id: str) -> dict:
-    rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
+    rows = _select_settings(user_id)
     if not rows:
         table("user_settings").insert({"user_id": user_id})
-        rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
+        rows = _select_settings(user_id)
     if not rows:
         return {"user_id": user_id}
     return rows[0]
@@ -458,7 +477,20 @@ def update_settings(
 
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
+        try:
+            table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
+        except Exception as exc:
+            # Deploy-order window (ADR 0028): the column is not migrated yet.
+            # A clear, retryable 503 — never a 500 — and nothing was written
+            # (the PATCH is one statement). Consent treats the missing column
+            # as "no" meanwhile, so the student is not tracked either way.
+            if "analytics_opt_out" in updates and missing_opt_out_column(exc):
+                raise HTTPException(
+                    status_code=503,
+                    detail="The analytics opt-out setting is not available yet. "
+                    "Please try again shortly.",
+                ) from exc
+            raise
 
     # The consent cache's invalidation hook: an opt-out stops this process's
     # mirroring from the very next event (other processes: within the TTL).

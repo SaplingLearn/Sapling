@@ -304,6 +304,7 @@ def log_llm_usage(
         posthog_client.capture_ai_generation(
             user_id=user_id,
             model=model,
+            provider=provider,
             input_tokens=row["prompt_tokens"],
             output_tokens=row["completion_tokens"],
             cost_usd=row["cost_usd"],
