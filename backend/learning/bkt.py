@@ -10,7 +10,28 @@ database, the graph, or an agent; PKG-03's apply_graph_update calls it.
 
 from __future__ import annotations
 
-from learning.params import BKT_L0, BKT_T, CHANNELS, FSRS_S0_GOOD, FSRS_W, S_IDK
+from typing import Literal
+
+from learning.params import (
+    BAND_DEVELOP_MAX,
+    BAND_NOVICE_MAX,
+    BKT_L0,
+    BKT_MASTERED,
+    BKT_MASTERED_MIN_STRONG,
+    BKT_PROFICIENT,
+    BKT_T,
+    CHANNELS,
+    FSRS_S0_GOOD,
+    FSRS_W,
+    PROPAGATION_CHANNEL,
+    S_IDK,
+    TIER_UNEXPLORED_MAX,
+    WEIGHT_PROPAGATION,
+)
+
+Band = Literal["novice", "develop", "profic"]
+Tier = Literal["unexplored", "struggling", "learning", "mastered"]
+Propagation = tuple[str, str, bool, float]  # (node_id, channel, correct, weight)
 
 _FULL_WEIGHT = 1.0
 _P_MIN = 0.0
@@ -92,3 +113,53 @@ def decayed_p(p_stored: float, days_since: float, stability: float | None) -> fl
     if t == 0.0:
         return p_stored
     return _clamp01(BKT_L0 + (p_stored - BKT_L0) * _retrievability(t, s_c))
+
+
+def propagate_prereq(
+    evidence_correct: bool, parents: list[str], children: list[str]
+) -> list[Propagation]:
+    """One-hop asymmetric propagation (spec §3.1).
+
+    correct at c   → each prerequisite parent gets a PROPAGATION_CHANNEL-strength
+                     correct observation at WEIGHT_PROPAGATION; children untouched.
+    incorrect at c → each dependent child gets the incorrect observation; parents
+                     untouched (an error can be local).
+    The caller resolves parents/children from graph_edges using
+    EDGE_PREREQ_SOURCE_IS_PREREQ; this function never sees an edge.
+    """
+    targets = parents if evidence_correct else children
+    return [
+        (node_id, PROPAGATION_CHANNEL, bool(evidence_correct), WEIGHT_PROPAGATION)
+        for node_id in targets
+    ]
+
+
+def band(p: float) -> Band:
+    """Spec §3.1 / ZPD STATE block: novice < BAND_NOVICE_MAX ≤ develop < BAND_DEVELOP_MAX ≤ profic."""
+    if p < BAND_NOVICE_MAX:
+        return "novice"
+    if p < BAND_DEVELOP_MAX:
+        return "develop"
+    return "profic"
+
+
+def tier_for(p: float) -> Tier:
+    """Loop-path mirror into graph_nodes.mastery_tier (spec §3.1). Not the legacy
+    config.get_mastery_tier, which keeps its own cuts until PKG-14."""
+    if p < TIER_UNEXPLORED_MAX:
+        return "unexplored"
+    if p < BAND_NOVICE_MAX:
+        return "struggling"
+    if p < BKT_PROFICIENT:
+        return "learning"
+    return "mastered"
+
+
+def is_proficient(p: float) -> bool:
+    return p >= BKT_PROFICIENT
+
+
+def is_mastered(p: float, n_strong_unassisted: int) -> bool:
+    """Mastered needs the belief AND BKT_MASTERED_MIN_STRONG strong-channel
+    unassisted observations (spec §3.1); belief alone is never enough."""
+    return p >= BKT_MASTERED and n_strong_unassisted >= BKT_MASTERED_MIN_STRONG

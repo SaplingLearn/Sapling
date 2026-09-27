@@ -7,6 +7,8 @@ No DB, no LLM, no fixtures beyond monkeypatch.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from learning import bkt, params
@@ -327,3 +329,98 @@ def test_decayed_p_rejects_nonpositive_stability():
         bkt.decayed_p(P_HIGH, 1.0, 0.0)
     with pytest.raises(ValueError, match="stability"):
         bkt.decayed_p(P_HIGH, 1.0, -2.0)
+
+
+# ------------------------------------------- propagate / band / tier / mastery
+
+
+def test_propagation_correct_goes_to_parents_only():
+    out = bkt.propagate_prereq(True, ["pre_a", "pre_b"], ["dep_c"])
+    assert out == [
+        ("pre_a", params.PROPAGATION_CHANNEL, True, params.WEIGHT_PROPAGATION),
+        ("pre_b", params.PROPAGATION_CHANNEL, True, params.WEIGHT_PROPAGATION),
+    ]
+
+
+def test_propagation_incorrect_goes_to_children_only():
+    out = bkt.propagate_prereq(False, ["pre_a", "pre_b"], ["dep_c", "dep_d"])
+    assert out == [
+        ("dep_c", params.PROPAGATION_CHANNEL, False, params.WEIGHT_PROPAGATION),
+        ("dep_d", params.PROPAGATION_CHANNEL, False, params.WEIGHT_PROPAGATION),
+    ]
+
+
+def test_propagation_empty_and_shape():
+    assert bkt.propagate_prereq(True, [], ["dep_c"]) == []
+    assert bkt.propagate_prereq(False, ["pre_a"], []) == []
+    for node_id, channel, correct, weight in bkt.propagate_prereq(True, ["x"], []):
+        assert isinstance(node_id, str) and channel in params.CHANNELS
+        assert isinstance(correct, bool) and 0.0 < weight < 1.0
+
+
+def test_propagated_observation_is_weak():
+    """A propagated hop is a half-weight chat-strength observation: it never
+    triggers the learn step and moves belief less than the direct check."""
+    ((node_id, channel, correct, weight),) = bkt.propagate_prereq(True, ["pre_a"], [])
+    hop = bkt.update(P_LOW, channel, correct, weight=weight)
+    direct = bkt.update(P_LOW, "free_response", True)
+    assert P_LOW < hop < direct
+    assert hop - P_LOW < 0.15
+
+
+def _just_below(x: float) -> float:
+    return math.nextafter(x, 0.0)
+
+
+def test_band_boundaries():
+    assert bkt.band(0.0) == "novice"
+    assert bkt.band(_just_below(params.BAND_NOVICE_MAX)) == "novice"
+    assert bkt.band(params.BAND_NOVICE_MAX) == "develop"
+    assert bkt.band(_just_below(params.BAND_DEVELOP_MAX)) == "develop"
+    assert bkt.band(params.BAND_DEVELOP_MAX) == "profic"
+    assert bkt.band(1.0) == "profic"
+
+
+def test_tier_boundaries_and_check_values():
+    assert bkt.tier_for(0.0) == "unexplored"
+    assert bkt.tier_for(_just_below(params.TIER_UNEXPLORED_MAX)) == "unexplored"
+    assert bkt.tier_for(params.TIER_UNEXPLORED_MAX) == "struggling"
+    assert bkt.tier_for(_just_below(params.BAND_NOVICE_MAX)) == "struggling"
+    assert bkt.tier_for(params.BAND_NOVICE_MAX) == "learning"
+    assert bkt.tier_for(_just_below(params.BKT_PROFICIENT)) == "learning"
+    assert bkt.tier_for(params.BKT_PROFICIENT) == "mastered"
+    assert bkt.tier_for(1.0) == "mastered"
+    allowed = {"unexplored", "struggling", "learning", "mastered"}  # graph_nodes.mastery_tier CHECK
+    assert {bkt.tier_for(p / 100) for p in range(0, 101)} <= allowed
+
+
+def test_tier_for_is_not_the_legacy_tier():
+    """Loop-path cuts differ from config.get_mastery_tier (legacy stays until PKG-14)."""
+    import config
+
+    assert bkt.tier_for(0.80) == "learning"
+    assert config.get_mastery_tier(0.80) == "mastered"
+    assert config.MASTERY_MASTERED_MIN == 0.75  # pinned by test_mastery_tier_unification; untouched
+
+
+def test_proficient_and_mastered():
+    assert bkt.is_proficient(params.BKT_PROFICIENT) is True
+    assert bkt.is_proficient(_just_below(params.BKT_PROFICIENT)) is False
+    assert bkt.is_mastered(params.BKT_MASTERED, params.BKT_MASTERED_MIN_STRONG) is True
+    assert bkt.is_mastered(params.BKT_MASTERED, params.BKT_MASTERED_MIN_STRONG - 1) is False
+    assert bkt.is_mastered(_just_below(params.BKT_MASTERED), 10) is False
+    assert bkt.is_mastered(1.0, 0) is False
+
+
+def test_mastered_implies_proficient():
+    for p in (0.98, 0.99, 1.0):
+        if bkt.is_mastered(p, params.BKT_MASTERED_MIN_STRONG):
+            assert bkt.is_proficient(p)
+
+
+def test_bkt_imports_only_stdlib_and_params():
+    import pathlib
+
+    src = pathlib.Path(bkt.__file__).read_text()
+    for root in ("agents", "pydantic_ai", "google", "db", "config", "learning.fsrs", "services"):
+        assert f"import {root}" not in src and f"from {root}" not in src, root
