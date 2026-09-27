@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 import time
 from types import SimpleNamespace
@@ -48,6 +49,17 @@ def fake_client():
 
 
 _REAL_LOOKUP = analytics_consent._lookup
+_REAL_SCHEDULE = posthog_client._schedule_second_pass
+
+
+@pytest.fixture(autouse=True)
+def no_second_delete_timer(monkeypatch):
+    """delete_person schedules a real 90 s daemon timer for its second pass;
+    record the request instead (TestNoRecreateAfterDelete drives the real one
+    with a fake Timer)."""
+    scheduled: list[str] = []
+    monkeypatch.setattr(posthog_client, "_schedule_second_pass", scheduled.append)
+    return scheduled
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +89,8 @@ def consent_db(monkeypatch):
     try:
         yield SimpleNamespace(answers=answers, calls=calls)
     finally:
+        # Let background warm-ups finish against THIS test's fake lookup.
+        analytics_consent.drain_for_tests()
         _PRIVACY_SIGNAL_CTX.reset(signal_token)
         _SESSION_USER_CTX.reset(user_token)
         analytics_consent.clear_analytics_consent_cache()
@@ -106,13 +120,23 @@ _ON_ENV = {
 # ── 1. Gating ───────────────────────────────────────────────────────────────
 
 
+def _gate(env, *, under_pytest=False):
+    """The pure gate, with the mode resolved by the LLM seam itself
+    (agents._providers.model_mode) from the env under test."""
+    from agents import _providers
+
+    with patch.dict("os.environ", {"SAPLING_MODEL_MODE": env.get("SAPLING_MODEL_MODE", "")}):
+        mode = _providers.model_mode()
+    return posthog_client._disabled_reason_for(env, under_pytest=under_pytest, model_mode=mode)
+
+
 class TestGate:
     def test_token_set_real_mode_local_is_on(self):
-        assert posthog_client._disabled_reason_for(_ON_ENV, under_pytest=False) is None
+        assert _gate(_ON_ENV) is None
 
     def test_production_with_token_is_on(self):
         env = {**_ON_ENV, "APP_ENV": "production"}
-        assert posthog_client._disabled_reason_for(env, under_pytest=False) is None
+        assert _gate(env) is None
 
     @pytest.mark.parametrize(
         "override, expect",
@@ -128,11 +152,11 @@ class TestGate:
     )
     def test_each_forced_off_rule(self, override, expect):
         env = {**_ON_ENV, **override}
-        reason = posthog_client._disabled_reason_for(env, under_pytest=False)
+        reason = _gate(env)
         assert reason is not None and expect in reason
 
     def test_pytest_forces_off_even_when_everything_else_says_on(self):
-        reason = posthog_client._disabled_reason_for(_ON_ENV, under_pytest=True)
+        reason = _gate(_ON_ENV, under_pytest=True)
         assert reason == "running under pytest"
 
     def test_real_gate_is_off_in_this_process(self, monkeypatch):
@@ -143,7 +167,7 @@ class TestGate:
 
     def test_kill_switch_zero_is_not_truthy(self):
         env = {**_ON_ENV, "POSTHOG_DISABLED": "0"}
-        assert posthog_client._disabled_reason_for(env, under_pytest=False) is None
+        assert _gate(env) is None
 
 
 @pytest.mark.parametrize(
@@ -161,7 +185,7 @@ def test_disabled_means_no_client_no_processor_no_network(override, monkeypatch,
     env = {**_ON_ENV, **override}
     monkeypatch.setattr(
         posthog_client, "disabled_reason",
-        lambda: posthog_client._disabled_reason_for(env, under_pytest=False),
+        lambda: _gate(env),
     )
     with patch("posthog.Posthog") as ctor:
         assert posthog_client.initialize_posthog() is None
@@ -478,6 +502,7 @@ class TestAiSpanAllowlist:
             return f"notes for {SECRET}"
 
         deps = SimpleNamespace(user_id=USER_ID, session_id=None, request_id="req-9")
+        analytics_consent.consent_for(USER_ID)  # warm, off-loop
         result = asyncio.run(agent.run(f"hello {SECRET}", deps=deps))
         assert SECRET in result.output  # the run really carried the content
         # Bound for the run only: nothing is left behind in this context.
@@ -559,6 +584,8 @@ class TestExceptionCapture:
 
     def test_500_handler_captures_with_the_session_user(self, fake_client):
         from main import unhandled_exception_handler
+
+        analytics_consent.consent_for(USER_ID)  # warm (the handler is async)
 
         request = SimpleNamespace(
             state=SimpleNamespace(user_id=USER_ID, request_id="rid-1"),
@@ -823,6 +850,7 @@ class TestOptOut:
 
         from services.request_context import RequestIDMiddleware
 
+        analytics_consent.consent_for(USER_ID)  # warm: the route below is async
         app = FastAPI()
         app.add_middleware(RequestIDMiddleware)
 
@@ -1065,18 +1093,36 @@ class TestErrorEvents:
         events_service.flush_now()
         assert [r["event_type"] for r in sink] == ["error.4xx"]
 
-    @pytest.mark.parametrize("payload, expect", [
-        ({"path": f"/api/profile/{USER_ID}", "route": "/api/profile/{user_id}"},
-         "/api/profile/{user_id}"),
-        ({"path": "/wp-login.php"}, "<unmatched>"),
-    ])
-    def test_5xx_path_is_the_template(self, payload, expect, fake_client, sink):
-        events_service.log_event("error.5xx", category="error", user_id=USER_ID, payload=payload)
+    def test_5xx_path_is_the_matched_template(self, fake_client, sink):
+        """Through the middleware: the mirrored path/route are the matched
+        route template, never the raw path (which embeds an id)."""
+        from fastapi import FastAPI
+
+        from services.request_context import RequestIDMiddleware
+
+        app = FastAPI()
+        app.add_middleware(RequestIDMiddleware)
+
+        @app.get("/api/profile/{user_id}/thing")
+        def thing(user_id: str):
+            raise RuntimeError("boom")
+
+        r = TestClient(app, raise_server_exceptions=False).get(f"/api/profile/{USER_ID}/thing")
+        assert r.status_code == 500
         props = fake_client.capture.call_args.kwargs["properties"]
-        assert props["path"] == expect
-        assert f"/api/profile/{USER_ID}" not in json.dumps(props)
+        assert fake_client.capture.call_args.args[0] == "error.5xx"
+        assert props["path"] == props["route"] == "/api/profile/{user_id}/thing"
+        assert USER_ID not in json.dumps(props)
         events_service.flush_now()
-        assert sink[0]["payload"]["path"] == payload["path"]  # our row keeps it
+        assert sink[0]["payload"]["path"] == f"/api/profile/{USER_ID}/thing"  # our row keeps it
+
+    def test_path_outside_a_request_is_unmatched(self, fake_client, sink):
+        events_service.log_event(
+            "error.5xx", category="error", user_id=USER_ID,
+            payload={"path": f"/api/profile/{USER_ID}", "route": "/api/profile/{user_id}"},
+        )
+        props = fake_client.capture.call_args.kwargs["properties"]
+        assert props["path"] == props["route"] == "<unmatched>"
 
 
 class TestRunBoundary:
@@ -1097,6 +1143,7 @@ class TestRunBoundary:
             spans_b = await _run_tiny_agent_async(None)
             return spans_a, spans_b
 
+        analytics_consent.consent_for(USER_ID)
         spans_a, spans_b = asyncio.run(two_runs())
         assert spans_a and all(
             s.attributes.get("posthog.distinct_id") == USER_ID for s in spans_a
@@ -1105,7 +1152,7 @@ class TestRunBoundary:
 
     def test_bind_resets_on_exit_and_on_error(self):
         with bind_ai_context(session_id="s", distinct_id=USER_ID, request_id="r"):
-            assert ai_observability._AI_ATTRIBUTION.get().distinct_id == USER_ID
+            assert ai_observability._AI_ATTRIBUTION.get().candidate == USER_ID
         assert ai_observability._AI_ATTRIBUTION.get() is None
         with pytest.raises(ValueError):
             with bind_ai_context(session_id="s", distinct_id=USER_ID, request_id="r"):
@@ -1144,6 +1191,7 @@ class TestRunBoundary:
     def test_session_user_attributes_a_deps_less_run(self, run_boundary):
         from services.request_context import _SESSION_USER_CTX
 
+        analytics_consent.consent_for(USER_ID)
         token = _SESSION_USER_CTX.set(USER_ID)
         try:
             spans = _run_tiny_agent(None)
@@ -1252,6 +1300,14 @@ class TestSpanLevelDistinctId:
 # ── helpers for section 6 ───────────────────────────────────────────────────
 
 
+def _prewarm(deps):
+    """Warm the consent cache off-loop, as a real request's earlier events or
+    the run boundary's warm-up would have. (A COLD answer at span end is a
+    fail-closed "no" — covered by TestNonBlockingConsent.)"""
+    for uid in (getattr(deps, "user_id", None),):
+        analytics_consent.consent_for(uid)
+
+
 async def _run_tiny_agent_async(deps):
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelResponse, TextPart
@@ -1269,4 +1325,314 @@ async def _run_tiny_agent_async(deps):
 
 
 def _run_tiny_agent(deps):
+    _prewarm(deps)
     return asyncio.run(_run_tiny_agent_async(deps))
+
+
+# ── 7. Second-round review fixes (PR #677) ──────────────────────────────────
+
+
+OTHER_USER = "user_555555555555555555555"
+
+
+class TestPathTemplating:
+    """R1: no raw path — and so no other user's id — reaches PostHog from ANY
+    event, not just error.5xx."""
+
+    def test_403_on_another_users_path_mirrors_no_foreign_id(
+        self, monkeypatch, fake_client, sink,
+    ):
+        from main import app
+        from services import auth_guard
+        from services.session_tokens import SESSION_COOKIE_NAME, mint_session
+
+        # The REAL guard (conftest stubs it for route tests) — this test is
+        # about the real 403 path and what it emits.
+        monkeypatch.setattr(auth_guard, "_decode_session", auth_guard._real_decode_session)
+        monkeypatch.setattr(auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id)
+        monkeypatch.setattr("routes.profile.require_self", auth_guard._real_require_self)
+        monkeypatch.setattr(auth_guard, "SESSION_SECRET", "test-secret")
+        token = mint_session(USER_ID, ttl=300, secret="test-secret")
+        client = TestClient(app)
+        client.cookies.set(SESSION_COOKIE_NAME, token)
+        r = client.get(f"/api/profile/{OTHER_USER}/settings")
+        assert r.status_code == 403
+        sent = [(c.args[0], c.kwargs) for c in fake_client.capture.call_args_list]
+        denied = [kw for name, kw in sent if name == "auth.permission_denied"]
+        assert len(denied) == 1
+        assert denied[0]["distinct_id"] == USER_ID
+        assert denied[0]["properties"]["route"] == "/api/profile/{user_id}/settings"
+        assert OTHER_USER not in json.dumps([kw for _, kw in sent], default=str)
+        # Our own audit row keeps the raw path (first-party).
+        events_service.flush_now()
+        rows = [x for x in sink if x["event_type"] == "auth.permission_denied"]
+        assert rows[0]["payload"]["route"] == f"/api/profile/{OTHER_USER}/settings"
+
+    def test_user_id_keys_never_ride_in_properties(self, fake_client, sink):
+        events_service.log_event(
+            "note.created", category="usage", user_id=USER_ID,
+            payload={"note_id": "n1", "user_id": OTHER_USER, "target_user_id": OTHER_USER},
+        )
+        props = fake_client.capture.call_args.kwargs["properties"]
+        assert OTHER_USER not in json.dumps(props)
+        assert props["note_id"] == "n1"
+
+
+class TestNonBlockingConsent:
+    """R2: no thread running an event loop ever blocks on the consent read."""
+
+    def _recording_lookup(self, monkeypatch, answer=Consent.ALLOWED):
+        calls: list[bool] = []  # True = called with a running loop on this thread
+
+        def lookup(uid):
+            try:
+                asyncio.get_running_loop()
+                calls.append(True)
+            except RuntimeError:
+                calls.append(False)
+            return answer
+
+        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
+        return calls
+
+    def test_no_sync_read_on_a_running_loop(self, monkeypatch, fake_client, sink):
+        calls = self._recording_lookup(monkeypatch)
+
+        async def async_route_work():
+            events_service.log_event("note.created", category="usage", user_id=USER_ID)
+            posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id="r")
+            with bind_ai_context(session_id=None, distinct_id=USER_ID, request_id="r"):
+                pass
+
+        asyncio.run(async_route_work())
+        # Cold cache on the loop: fail closed (nothing sent), no inline read...
+        fake_client.capture.assert_not_called()
+        fake_client.capture_exception.assert_not_called()
+        analytics_consent.drain_for_tests()
+        # ...the read happened, but only on a worker thread,
+        assert calls and not any(calls)
+        # ...and the next event on the loop is answered from cache.
+        asyncio.run(async_route_work())
+        assert fake_client.capture.call_count == 1
+        assert not any(calls)
+
+    def test_off_loop_threads_still_read_inline(self, monkeypatch, fake_client, sink):
+        calls = self._recording_lookup(monkeypatch)
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        assert calls == [False]
+        fake_client.capture.assert_called_once()
+
+    def test_cold_span_end_on_the_loop_is_dropped_not_read(self, monkeypatch, run_boundary):
+        calls = self._recording_lookup(monkeypatch)
+        slow = __import__("threading").Event()
+
+        def lookup(uid):  # the warm-up cannot finish before the spans end
+            slow.wait(2)
+            calls.append(False)
+            return Consent.ALLOWED
+
+        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
+        spans = asyncio.run(
+            _run_tiny_agent_async(SimpleNamespace(user_id=USER_ID, session_id=None, request_id="r"))
+        )
+        slow.set()
+        analytics_consent.drain_for_tests()
+        assert spans == ()
+        assert calls == [False]  # read once, off-loop (the run boundary's warm-up)
+
+    def test_active_entries_refresh_in_the_background(self, consent_db, monkeypatch):
+        now = [1000.0]
+        monkeypatch.setattr(analytics_consent.time, "monotonic", lambda: now[0])
+        analytics_consent.consent_for(USER_ID)
+        now[0] += analytics_consent._TTL_S * 0.75
+        assert analytics_consent.consent_for(USER_ID) is Consent.ALLOWED  # still served
+        analytics_consent.drain_for_tests()
+        assert consent_db.calls == [USER_ID, USER_ID]  # refreshed ahead of expiry
+
+
+class TestInvalidationRace:
+    """R3: a clear that lands while a read is in flight wins."""
+
+    def test_clear_during_lookup_is_not_overwritten(self, monkeypatch):
+        calls: list[str] = []
+
+        def lookup(uid):
+            calls.append(uid)
+            if len(calls) == 1:
+                # The settings PATCH / account delete lands mid-read.
+                analytics_consent.clear_analytics_consent_cache(uid)
+                return Consent.ALLOWED  # the stale answer this read saw
+            return Consent.DENIED  # what the DB says now
+
+        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
+        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED  # fail closed
+        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED  # re-read, not cached ALLOWED
+        assert calls == [USER_ID, USER_ID]
+
+    def test_clear_all_during_lookup_is_not_overwritten(self, monkeypatch):
+        calls: list[str] = []
+
+        def lookup(uid):
+            calls.append(uid)
+            if len(calls) == 1:
+                analytics_consent.clear_analytics_consent_cache()
+            return Consent.ALLOWED
+
+        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
+        analytics_consent.consent_for(USER_ID)
+        analytics_consent.consent_for(USER_ID)
+        assert len(calls) == 2
+
+
+class TestNoRecreateAfterDelete:
+    """R4: consent is re-checked at span END; a second bulk_delete follows."""
+
+    def test_deletion_mid_run_stops_the_runs_later_spans(self, consent_db, run_boundary):
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.models.instrumented import InstrumentationSettings
+
+        def handler(messages, info):
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart("delete_me", {})])
+            return ModelResponse(parts=[TextPart("done")])
+
+        provider, exporter = _pipeline()
+        agent = Agent(FunctionModel(handler), instrument=InstrumentationSettings(tracer_provider=provider))
+
+        @agent.tool_plain
+        def delete_me() -> str:
+            # The account is deleted while this run is in flight.
+            consent_db.answers[USER_ID] = Consent.DENIED
+            analytics_consent.clear_analytics_consent_cache(USER_ID)
+            return "ok"
+
+        analytics_consent.consent_for(USER_ID)  # warm ALLOWED
+        asyncio.run(agent.run("hi", deps=SimpleNamespace(
+            user_id=USER_ID, session_id=None, request_id="r",
+        )))
+        analytics_consent.drain_for_tests()
+        spans = exporter.get_finished_spans()
+        # The first model request ended before the deletion: exported.
+        assert any(s.attributes.get("gen_ai.operation.name") == "chat" for s in spans)
+        # Nothing that ended after it (the tool span, the second chat, the run
+        # span) was exported — attributed or otherwise.
+        assert len([s for s in spans if s.attributes.get("gen_ai.operation.name") == "chat"]) == 1
+        assert not any(s.attributes.get("gen_ai.tool.name") == "delete_me" for s in spans)
+        assert all(s.attributes.get("posthog.distinct_id") == USER_ID for s in spans)
+
+    def _on(self, monkeypatch):
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
+        monkeypatch.setenv("POSTHOG_PERSONAL_API_KEY", "phx_key")
+        monkeypatch.setenv("POSTHOG_PROJECT_ID", "4242")
+        monkeypatch.setenv("POSTHOG_HOST", "https://us.i.posthog.com")
+        monkeypatch.delenv("POSTHOG_API_HOST", raising=False)
+
+    def test_second_delete_is_scheduled_after_the_ttl(self, monkeypatch):
+        self._on(monkeypatch)
+        monkeypatch.setattr(posthog_client, "_schedule_second_pass", _REAL_SCHEDULE)
+        timers: list = []
+
+        class FakeTimer:
+            def __init__(self, delay, fn, args=(), kwargs=None):
+                self.delay, self.fn, self.args, self.kwargs = delay, fn, args, kwargs or {}
+                self.daemon = False
+                timers.append(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr(posthog_client.threading, "Timer", FakeTimer)
+        with patch("httpx.post", return_value=MagicMock(status_code=202)) as post:
+            posthog_client.delete_person(USER_ID)
+            assert post.call_count == 1
+            assert len(timers) == 1 and timers[0].daemon is True
+            assert timers[0].delay >= analytics_consent.TTL_S + 1
+            # When it fires: a full second pass (flush + bulk_delete).
+            timers[0].fn(*timers[0].args, **timers[0].kwargs)
+            assert post.call_count == 2
+            assert post.call_args.kwargs["json"] == {
+                "distinct_ids": [USER_ID], "delete_events": True,
+            }
+
+    def test_no_second_delete_when_the_first_was_skipped(self, monkeypatch):
+        self._on(monkeypatch)
+        monkeypatch.delenv("POSTHOG_PERSONAL_API_KEY")
+        scheduled = MagicMock()
+        monkeypatch.setattr(posthog_client, "_schedule_second_pass", scheduled)
+        with patch("httpx.post") as post:
+            posthog_client.delete_person(USER_ID)
+        post.assert_not_called()
+        scheduled.assert_not_called()
+
+
+class TestSuppressionAtTheCap:
+    """R5: eviction at _MAX_PENDING can never turn a suppressed (or any) span
+    into an exported one."""
+
+    def _open_and_close(self, proc, n, *, bind_suppressed):
+        from services.request_context import _PRIVACY_SIGNAL_CTX
+
+        provider = TracerProvider()
+        provider.add_span_processor(proc)
+        tracer = provider.get_tracer("pydantic-ai")
+        token = _PRIVACY_SIGNAL_CTX.set(bind_suppressed)
+        try:
+            spans = [tracer.start_span(f"chat m{i}") for i in range(n)]
+        finally:
+            _PRIVACY_SIGNAL_CTX.reset(token)
+        for sp in spans:
+            sp.set_attribute("gen_ai.request.model", "m")
+            sp.end()
+
+    def test_evicted_suppressed_spans_are_not_exported(self):
+        exporter = InMemorySpanExporter()
+        proc = AllowlistSpanProcessor(SimpleSpanProcessor(exporter))
+        proc._MAX_PENDING = 3
+        self._open_and_close(proc, 6, bind_suppressed=True)
+        assert exporter.get_finished_spans() == ()
+        assert proc._pending == {}
+
+    def test_evicted_unsuppressed_spans_fail_closed(self):
+        exporter = InMemorySpanExporter()
+        proc = AllowlistSpanProcessor(SimpleSpanProcessor(exporter))
+        proc._MAX_PENDING = 3
+        self._open_and_close(proc, 6, bind_suppressed=False)
+        # The three evicted entries are dropped; the three still tracked export.
+        assert len(exporter.get_finished_spans()) == 3
+
+
+class TestLaneSilence:
+    """R6: the local E2E / explore stacks turn PostHog off explicitly, not
+    only by inference from function mode."""
+
+    @pytest.mark.parametrize("script", ["scripts/e2e-up.sh", "scripts/explore.sh"])
+    def test_scripts_export_posthog_disabled(self, script):
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parents[2] / script).read_text()
+        assert re.search(r"^\s*export POSTHOG_DISABLED=1\s*$", text, re.M), script
+
+
+class TestGateUsesTheSeam:
+    """R7: the gate reads the mode from agents._providers.model_mode()."""
+
+    def test_disabled_reason_passes_the_seams_mode(self, monkeypatch):
+        from agents import _providers
+
+        monkeypatch.setattr(_providers, "model_mode", lambda: "sentinel-mode")
+        seen = {}
+
+        def spy(env, *, under_pytest, model_mode):
+            seen["mode"] = model_mode
+            return None
+
+        monkeypatch.setattr(posthog_client, "_disabled_reason_for", spy)
+        posthog_client.disabled_reason()
+        assert seen["mode"] == "sentinel-mode"
+
+    def test_no_second_mode_parser(self):
+        import inspect
+
+        assert "SAPLING_MODEL_MODE\") or" not in inspect.getsource(posthog_client)

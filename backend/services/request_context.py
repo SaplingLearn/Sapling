@@ -90,6 +90,28 @@ def current_session_user() -> str | None:
     return _SESSION_USER_CTX.get()
 
 
+#: The current request's ASGI scope (the dict routing later stamps "route"
+#: onto — the same object the downstream app sees). Lets the PostHog mirror
+#: send the matched route TEMPLATE instead of a raw path whose segments are
+#: user/document/session ids. None outside a request.
+_REQUEST_SCOPE_CTX: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "sapling_request_scope", default=None,
+)
+
+
+def route_template_of(scope: dict | None) -> str | None:
+    """The matched route template (`/api/profile/{user_id}`) for a scope."""
+    route = (scope or {}).get("route")
+    template = getattr(route, "path_format", None) or getattr(route, "path", None)
+    return template if isinstance(template, str) and template else None
+
+
+def current_route_template() -> str | None:
+    """The current request's matched route template, or None (no request, or
+    nothing matched yet)."""
+    return route_template_of(_REQUEST_SCOPE_CTX.get())
+
+
 def new_request_id() -> str:
     """Mint a fresh request ID. Module-level so tests can monkeypatch."""
     return str(uuid.uuid4())
@@ -107,9 +129,11 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # the error.5xx mirror honours the same DNT/GPC signal as everything
         # the handler emitted. The downstream task copies it at call_next.
         privacy_token = _PRIVACY_SIGNAL_CTX.set(privacy_signal_in(request.headers))
+        scope_token = _REQUEST_SCOPE_CTX.set(request.scope)
         try:
             return await self._dispatch(request, call_next)
         finally:
+            _REQUEST_SCOPE_CTX.reset(scope_token)
             _PRIVACY_SIGNAL_CTX.reset(privacy_token)
 
     async def _dispatch(

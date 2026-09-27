@@ -269,6 +269,13 @@ echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (p
 export FEATURE_FLAGS_SNAPSHOT_TTL_S=0
 export FEATURE_FLAGS_ROLES_TTL_S=0
 echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this stack (ADR 0029)"
+# ADR 0028: this stack must never send to PostHog, whatever backend/.env
+# holds. The seam is also off under any non-real SAPLING_MODEL_MODE, but this
+# script does NOT force function mode (it only prints a notice when it is
+# unset) and runs APP_ENV=local — so say it explicitly rather than rely on
+# that inference. Unconditional: there is no reason to send from a local lane.
+export POSTHOG_DISABLED=1
+echo "  ℹ POSTHOG_DISABLED=1 for this stack (ADR 0028)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a
