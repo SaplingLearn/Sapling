@@ -415,12 +415,28 @@ def _all_yes(conf: float = 0.95) -> dict:
     }
 
 
+def _as_labelled(output: dict, messages) -> dict:
+    """The fake grader answers per RUBRIC ITEM line, as a model does: its "r<n>"
+    verdicts go to the n-th label the message shows (grader.rubric_labels)."""
+    import re
+
+    text = messages[-1].parts[-1].content
+    labels = re.findall(r"^RUBRIC ITEM (\S+):", text, re.M)
+    results = []
+    for entry in output["item_results"]:
+        rid, _, verdict = entry.partition(":")
+        n = int(rid[1:]) if re.fullmatch(r"r\d+", rid) else 0
+        results.append(f"{labels[n - 1] if 0 < n <= len(labels) else rid}:{verdict}")
+    return {**output, "item_results": results}
+
+
 def _counting_grader(output: dict):
     calls = {"n": 0}
 
     def handler(messages, info):
         calls["n"] += 1
-        return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=output)])
+        args = _as_labelled(output, messages)
+        return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
 
     return FunctionModel(handler), calls
 
@@ -742,6 +758,57 @@ def test_grade_reads_the_items_course_vocabulary(grader, events):
     assert "> R1: yes. R2: yes." in message.splitlines()
 
 
+# When the item's own text uses a rubric id (R1 in a circuit), the live grader
+# read the student's "R1: no" as its verdict on rubric item r1 (4 of 6 runs; 0 of
+# 9 with the items relabelled). The grader message then shows every rubric item
+# under a label the item's text does not use, and grade() maps the verdicts back.
+
+
+def test_colliding_rubric_ids_are_relabelled_in_the_grader_message():
+    import agents.grader as g
+
+    item = _item(prompt=CIRCUIT, reference_answer="Only R2 carries current.")
+    assert g.rubric_labels(item) == {"r1": "criterion_1", "r2": "criterion_2"}
+    lines = g.build_grader_message(item, format="free", student_answer="R1: no. R2: yes.")
+    lines = lines.splitlines()
+    assert "RUBRIC ITEM criterion_1: names the base case" in lines
+    assert not any(line.startswith("RUBRIC ITEM r1") for line in lines)
+    assert "> R1: no. R2: yes." in lines
+
+
+def test_labels_avoid_the_items_own_text_too():
+    import agents.grader as g
+
+    item = _item(prompt="Do R1 and R2 meet criterion 1 and criterion 2 of the standard?")
+    assert g.rubric_labels(item) == {"r1": "rubric_item_1", "r2": "rubric_item_2"}
+
+
+def test_ids_the_item_does_not_use_are_their_own_labels():
+    import agents.grader as g
+
+    assert g.rubric_labels(_item()) == {"r1": "r1", "r2": "r2"}
+
+
+def test_grade_maps_relabelled_verdicts_back_to_the_rubric_ids(monkeypatch, events):
+    import agents.grader as g
+
+    seen = []
+
+    def handler(messages, info):
+        seen.append(messages[-1].parts[-1].content)
+        args = {**_all_yes(0.95), "item_results": ["criterion_1:yes", "criterion_2:no"]}
+        return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
+
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    item = _item(prompt=CIRCUIT, reference_answer="Only R2 carries current.")
+    with g.grader_agent.override(model=FunctionModel(handler)):
+        res = asyncio.run(
+            g.grade(item, format="free", student_answer="R1: no. R2: yes.", deps=_deps())
+        )
+    assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
+    assert "RUBRIC ITEM criterion_1:" in seen[0]
+
+
 # ── neutralising verdict tokens (defence in depth for the message builder) ───
 
 
@@ -908,7 +975,7 @@ def _sequenced_grader(outputs: list[dict]):
     calls = {"n": 0}
 
     def handler(messages, info):
-        out = outputs[min(calls["n"], len(outputs) - 1)]
+        out = _as_labelled(outputs[min(calls["n"], len(outputs) - 1)], messages)
         calls["n"] += 1
         return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=out)])
 

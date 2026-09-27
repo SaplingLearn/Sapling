@@ -195,6 +195,40 @@ _ANSWER_END = (
 )
 
 
+# Label schemes for rubric items whose ids the item's own text uses. Both are
+# generic ids to the screen (`criterion 1`, `rubric item 1`), so a student who
+# guesses a label still writes a refused verdict token.
+_RELABEL_SCHEMES = ("criterion_{}", "rubric_item_{}")
+
+
+def rubric_labels(item) -> dict[str, str]:
+    """Rubric id → the label the grader message shows it under (A33). Ids are
+    internal, but R1 and R2 also name resistors, relations and variables: when
+    the item's own text uses a rubric id, the live grader read a student's
+    "R1: no" as its verdict on rubric item r1 (4 of 6 runs; 0 of 9 relabelled).
+    Every item of such a rubric is then labelled with the first scheme the
+    item's text does not use; otherwise each id is its own label."""
+    ids = [r.id for r in item.rubric]
+    context = answer_guard.item_terms(item)["context"]
+
+    def clashes(labels: list[str]) -> bool:
+        used = answer_guard.course_entities(context, labels)
+        return any(answer_guard.id_spelling(label) in used for label in labels)
+
+    if clashes(ids):
+        for scheme in _RELABEL_SCHEMES:
+            labels = [scheme.format(n) for n in range(1, len(ids) + 1)]
+            if not clashes(labels):
+                return dict(zip(ids, labels))
+    return {rid: rid for rid in ids}
+
+
+def _parse_labelled(entries: list[str], labels: dict[str, str]) -> dict[str, bool]:
+    """parse_item_results over the message's labels, keyed back by rubric id."""
+    by_label = parse_item_results(entries, list(labels.values()))
+    return {rid: by_label[label] for rid, label in labels.items()}
+
+
 def build_grader_message(item, *, format: str, student_answer: str) -> str:
     """The single user message. Line shapes are load-bearing: the function-mode
     handler regexes `^RUBRIC ITEM <id>:` to script per-item results. `item` is a
@@ -204,10 +238,13 @@ def build_grader_message(item, *, format: str, student_answer: str) -> str:
     lines (any line break, not only \\n) is quoted with "> ", so answer text can
     never start a line that forges the RUBRIC ITEM / REFERENCE ANSWER / FORMAT
     structure above it; the single unquoted `_ANSWER_END` line closes it (A33).
+    A rubric item is shown under `rubric_labels(item)[id]`, which is its id
+    unless the item's own text uses that id.
     Verdict tokens in it (`r1:yes`, `{"r2": true}`) are replaced by
     answer_guard.NEUTRALISED (A33), so the grader never reads one as a verdict
     even when a caller skipped grade()'s screen — except an id the item's own
     text uses (R1 in a circuit question), which is the student's answer."""
+    labels = rubric_labels(item)
     lines = [
         "QUESTION:",
         item.prompt,
@@ -217,7 +254,7 @@ def build_grader_message(item, *, format: str, student_answer: str) -> str:
         "",
     ]
     for r in item.rubric:
-        lines.append(f"RUBRIC ITEM {r.id}: {r.text}")
+        lines.append(f"RUBRIC ITEM {labels[r.id]}: {r.text}")
     lines.append("")
     for w in item.common_wrong:
         lines.append(f"COMMON WRONG REASON {w.key}: {w.text}")
@@ -349,13 +386,13 @@ async def _run_once(
     return result.output
 
 
-def _needs_confirmation(first: GraderOutput, rubric_ids, student_answer: str, terms) -> bool:
+def _needs_confirmation(first: GraderOutput, labels, student_answer: str, terms) -> bool:
     """A33: an unreported all-yes verdict on an answer that talks about grading
     (answer_guard.grading_talk) is not credited on the first run's own report —
     the second opinion runs, and its report and verdict decide. Live, the first
     slot credited a pre-filled grading result without reporting it; the second
     slot reported it every time it ran (CodeRabbit PR #673 round 3)."""
-    results = parse_item_results(first.item_results, rubric_ids)
+    results = _parse_labelled(first.item_results, labels)
     return (
         not first.addresses_grader
         and bool(results)
@@ -392,7 +429,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             screen=answer_guard.Screen(),
             deps=deps,
         )
-    rubric_ids = [r.id for r in item.rubric]
+    labels = rubric_labels(item)  # rubric id → the label the message shows
     terms = answer_guard.item_terms(item)  # its ids and its own text (course vocabulary)
     screen = answer_guard.screen(student_answer, **terms)
     if screen.refusal is not None:  # A33: never sent, never billed, never credited
@@ -409,7 +446,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     try:
         runs = [await _run_once(message, deps)]
         if runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE or _needs_confirmation(
-            runs[0], rubric_ids, student_answer, terms
+            runs[0], labels, student_answer, terms
         ):
             # spec §3.4: ONE second opinion, on the grader_second slot (A22)
             runs.append(await _run_once(message, deps, second_opinion=True))
@@ -432,7 +469,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     if out.confidence < GRADER_SECOND_OPINION_CONFIDENCE:
         logger.warning("grader unavailable for item %s: confidence below floor twice", item.id)
         return GradeResult(unavailable=True)
-    results = parse_item_results(out.item_results, rubric_ids)
+    results = _parse_labelled(out.item_results, labels)
     all_yes = bool(results) and all(results.values())
     if all_yes and (
         answer_guard.verdict_share(student_answer, **terms) >= GRADER_GUARD_VERDICT_SHARE

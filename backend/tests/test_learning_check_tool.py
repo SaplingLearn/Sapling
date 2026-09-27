@@ -614,6 +614,24 @@ def test_e2e_grader_handler_all_yes_on_token(_clean_registry, monkeypatch):
     assert no.unavailable is False and no.item_results == {"r1": False, "r2": False}
 
 
+def test_e2e_grader_handler_reads_relabelled_rubric_items(_clean_registry, monkeypatch):
+    """A33: an item whose own text uses its rubric ids (R1 in a circuit) is shown
+    to the grader under relabelled items; the handler reads the labels off the
+    RUBRIC ITEM lines and grade() maps them back to the rubric ids."""
+    import agents.grader as g
+    from agents._providers import model_for
+    from agents.function_handlers_e2e import E2E_GRADER_CORRECT_TOKEN
+
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    item = _item(prompt="Switch S is in series with R1; R2 has its own loop. Which carry current?")
+    assert g.rubric_labels(item) == {"r1": "criterion_1", "r2": "criterion_2"}
+    with g.grader_agent.override(model=model_for("grader")):
+        res = asyncio.run(
+            g.grade(item, format="free", student_answer=E2E_GRADER_CORRECT_TOKEN, deps=_deps())
+        )
+    assert res.item_results == {"r1": True, "r2": True} and res.all_yes is True
+
+
 def test_e2e_grader_handler_serves_both_slots(_clean_registry, monkeypatch):
     """Invariant 6: the grader_second slot has the same fixed handler."""
     import agents.grader as g

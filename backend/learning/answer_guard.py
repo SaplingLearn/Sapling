@@ -765,6 +765,18 @@ def _vocabulary(context: str, rubric_ids: tuple[str, ...]) -> _Vocabulary:
     )
 
 
+def id_spelling(raw_id: str) -> str:
+    """One spelling per id for comparing it with the item's text: `R 1`, `r_1`
+    and `r1` are all `r1`."""
+    return _spelling(normalise(raw_id).strip())
+
+
+def course_entities(context: str, rubric_ids: Iterable[str] = ()) -> frozenset[str]:
+    """The id spellings (`id_spelling`) the item's own text uses: its rubric ids,
+    or generic ones such as `criterion 1`."""
+    return _vocabulary(context, tuple(rubric_ids)).entities
+
+
 def item_terms(item) -> dict:
     """What the screen reads off an item: its rubric ids and its student-facing
     text (question, reference answer, option texts) as `context`. `item` is a
