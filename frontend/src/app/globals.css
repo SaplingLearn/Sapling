@@ -2350,6 +2350,65 @@ input[type="reset"]:disabled {
   .landing-dc .ld-handnote { display: none !important; }
 }
 
+/* ── App sidebar, on short windows ─────────────────────────────────
+   The rail carries twelve destinations plus Settings, Admin, the brand and
+   the account block, and it is `height: 100vh` with `overflowY: auto` — so
+   whatever does not fit is simply not seen, and what sits at the bottom is
+   Settings and your own account.
+
+   The `clamp()`s in SideNav.tsx take the first pass, but clamp is linear in
+   vh and the curve wanted here is not: the rail should look untouched on a
+   tall window and give up its whitespace quickly once the window is short.
+   These two steps are that curve. Heights are the post-chrome viewport, not
+   the screen: a 1080p monitor with a tab strip, an address bar, a bookmarks
+   bar and a taskbar leaves about 910px, and a 1366x768 laptop about 598.
+
+   Group headers are what gives, because they are the only repeated non-row
+   cost — four of them, and at full padding they were 183px, a third of what
+   the twelve destinations themselves take. The rows never move off the 36px
+   floor SideNav.tsx documents. */
+@media (max-height: 880px) {
+  [data-app-sidenav] .label-micro {
+    padding-top: 9px !important;
+    padding-bottom: 4px !important;
+  }
+}
+@media (max-height: 780px) {
+  [data-app-sidenav] .label-micro {
+    padding-top: 5px !important;
+    padding-bottom: 2px !important;
+  }
+}
+/* Last step. A group label now sits directly on its first item, and the 1px
+   row gap goes: at this height the rail has no whitespace left to trade, and
+   the alternative is hiding destinations. Below roughly 670px even this is
+   not enough — see the note at the foot of this block. */
+@media (max-height: 700px) {
+  [data-app-sidenav] {
+    gap: 0 !important;
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+  }
+  [data-app-sidenav] .label-micro {
+    padding-top: 2px !important;
+    padding-bottom: 1px !important;
+  }
+  /* The brand block and the two hairlines, down to the same near-nothing.
+     Structural selectors because neither carries a class: the brand is the
+     rail's first link, and the rules are its only aria-hidden children. */
+  [data-app-sidenav] > a:first-of-type { padding-bottom: 4px !important; }
+  [data-app-sidenav] > div[aria-hidden] {
+    margin-top: 3px !important;
+    margin-bottom: 3px !important;
+  }
+}
+/* The floor, stated so the next person does not re-derive it: twelve
+   destinations plus Settings at the 36px row floor is 481px of rows, and the
+   brand block and the account block are ~90px more. A window shorter than
+   about 670px of viewport cannot show the rail whole no matter how the
+   whitespace is tuned — it needs one of: a shorter row floor, the account
+   block dropped, or fewer destinations. */
+
 /* ── Wiki contents rail ────────────────────────────────────────────
    The rail is a fixed 190px column beside the article. That holds until the
    window is narrow enough for 190px to be most of it: at 390px wide the

@@ -54,7 +54,35 @@ const COLLAPSE_KEY = "sapling_sidenav_collapsed";
    ourselves to on a pointer-first surface, and ~15% tighter per row once the
    1px gap is counted. Never take NAV_ITEM_MIN_HEIGHT below 36. */
 const NAV_ITEM_MIN_HEIGHT = 38;
+/** The floor the comment above forbids going under. Named so the clamp that
+ *  enforces it cannot drift from the rule that states it. */
+const NAV_ITEM_FLOOR = 36;
 const NAV_GAP = 1;
+
+/* Every vertical measurement in the rail, expressed as `clamp(floor, vh, the
+   value it had)`.
+
+   The rail is `height: 100vh` with `overflowY: auto`, and its content came to
+   912px. That fits a 1080p screen with the bookmarks bar turned off and
+   essentially nothing else: measured against real post-chrome viewports, it
+   scrolled by 100px on a MacBook 14, 234px on a MacBook 13, and 314px on a
+   1366x768 laptop with a bookmarks bar. A rail that scrolls is a rail whose
+   last destinations are invisible, and this one hides Settings and the
+   account block down there.
+
+   So the rows hold their pitch until the window gets short and then give it
+   up down to — never past — the 36px floor above. Everything that is not a
+   row (the brand block, the group headers, the separators, the account
+   padding) gives up proportionally more, because whitespace degrades more
+   gracefully than a touch target does. */
+const NAV_ITEM_H = `clamp(${NAV_ITEM_FLOOR}px, 4.3vh, ${NAV_ITEM_MIN_HEIGHT}px)`;
+/** The account row, which is chrome rather than a destination. */
+const ACCOUNT_H = "clamp(34px, 4.9vh, 44px)";
+/** Gap above a group header. The single largest non-row cost: four of them. */
+const HEAD_TOP = "clamp(3px, 2.2vh, 20px)";
+const HEAD_TOP_N = "clamp(3px, 2.4vh, 22px)";
+const HEAD_BOT = "clamp(2px, 1.1vh, 10px)";
+const RAIL_PAD_Y = "clamp(6px, 1.4vh, 16px)";
 
 /* Horizontal inset shared by every horizontal rule in the rail — the collapsed
    group separators and the Settings/Admin rule — so they read as one line
@@ -114,7 +142,7 @@ export function SideNav() {
         height: "100vh",
         borderRight: "1px solid var(--border)",
         background: "var(--bg-subtle)",
-        padding: collapsed ? "16px 6px" : "16px 10px",
+        padding: collapsed ? `${RAIL_PAD_Y} 6px` : `${RAIL_PAD_Y} 10px`,
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
@@ -132,7 +160,7 @@ export function SideNav() {
           alignItems: "center",
           justifyContent: collapsed ? "center" : "flex-start",
           gap: 2,
-          padding: collapsed ? "2px 0 14px" : "2px 8px 14px",
+          padding: collapsed ? "2px 0 clamp(4px, 1.6vh, 14px)" : "2px 8px clamp(4px, 1.6vh, 14px)",
           borderBottom: "1px solid var(--border)",
           marginBottom: 8,
           textDecoration: "none",
@@ -183,14 +211,14 @@ export function SideNav() {
                  before it, and inherits nothing from a preceding item.
                  Below: every header stands clear of the items it labels, so
                  the header reads as a heading and not as the first row. */
-              style={{ padding: i === 0 ? "20px 10px 10px" : "22px 10px 10px" }}
+              style={{ padding: i === 0 ? `${HEAD_TOP} 10px ${HEAD_BOT}` : `${HEAD_TOP_N} 10px ${HEAD_BOT}` }}
             >
               {section.label}
             </div>
           )}
           {collapsed && i > 0 && (
             <div
-              style={{ height: 1, background: "var(--border)", margin: `18px ${RULE_INSET}px 10px` }}
+              style={{ height: 1, background: "var(--border)", margin: `clamp(4px, 2.1vh, 18px) ${RULE_INSET}px ${HEAD_BOT}` }}
               aria-hidden
             />
           )}
@@ -213,7 +241,7 @@ export function SideNav() {
           cluster split off from the main nav. Same inset as the collapsed
           group rules above, so the two line up in the narrow state. */}
       <div
-        style={{ height: 1, background: "var(--border)", margin: `10px ${RULE_INSET}px` }}
+        style={{ height: 1, background: "var(--border)", margin: `${HEAD_BOT} ${RULE_INSET}px` }}
         aria-hidden
       />
 
@@ -234,7 +262,7 @@ export function SideNav() {
           already opened this cluster, and a second hairline here would box the
           avatar in. */}
       {isAuthenticated && (
-        <div style={{ padding: collapsed ? "10px 0 4px" : "10px 6px 4px" }}>
+        <div style={{ padding: collapsed ? `${HEAD_BOT} 0 4px` : `${HEAD_BOT} 6px 4px` }}>
           <div
             style={{
               display: "flex",
@@ -287,7 +315,7 @@ export function SideNav() {
                   alignItems: "center",
                   justifyContent: "center",
                   width: 44,
-                  height: 44,
+                  height: ACCOUNT_H,
                   flexShrink: 0,
                   borderRadius: "var(--r-sm)",
                   color: "var(--text-muted)",
@@ -317,7 +345,7 @@ export function SideNav() {
                 alignItems: "center",
                 justifyContent: "center",
                 width: "100%",
-                height: 44,
+                height: ACCOUNT_H,
                 marginTop: 6,
                 borderRadius: "var(--r-sm)",
                 color: "var(--text-muted)",
@@ -357,7 +385,7 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         // No explicit width: the rail is a flex column, so a row stretches to
         // the content box on its own and the margins below actually inset it.
         // `width: 100%` would have added to them and overflowed instead.
-        minHeight: NAV_ITEM_MIN_HEIGHT,
+        minHeight: NAV_ITEM_H,
         // The pill is inset to the group header's own 10px, so its leading
         // edge lines up with "LEARN" rather than running to the rail's walls,
         // and it stops the same distance short on the right. The icon then
