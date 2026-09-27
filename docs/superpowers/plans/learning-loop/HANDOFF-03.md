@@ -124,3 +124,6 @@ cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+
+- PKG-11 2026-09-27: test_inv_01 now also scans routes/quiz.py and routes/flashcards.py for direct graph-table writes (`ROUTE_GRAPH_CALLERS`, `_GRAPH_WRITE`: insert/update/upsert/delete, multi-line tolerant) and asserts quiz.py calls apply_graph_update; test name unchanged, `-k inv_01` → 1 passed — commit 2eed297
+- PKG-11 2026-09-27: `test_no_production_caller_passes_evidence_yet` excuses exactly the calls `_gated_evidence_calls` finds — a pure `{"evidence": …}` dict literal in the body (not the else) of `if loop_on:` inside a def named in `SANCTIONED_EVIDENCE_CALLERS = {("routes/quiz.py", "submit_quiz")}` — with a 10-case `test_gated_evidence_call_detector`; every other problem still fails (mutation-checked: `if loop_on or True:` fails the scan). `test_fsrs_importers_are_sanctioned` admits `routes/flashcards.py` (Known gaps asked PKG-11 to extend it). No test renamed, skipped or deleted; `tests/test_learning_evidence_apply.py` 91 → 101 passed. PKG-05 still deletes the scan, both detectors, `SANCTIONED_EVIDENCE_CALLERS` and `LOOP_GATE_LOCAL` when it wires graded_check_tool — commit 4c51f62
