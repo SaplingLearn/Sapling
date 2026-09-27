@@ -134,6 +134,135 @@ def test_every_spec_constant_is_defined(name):
     assert hasattr(params, name), f"spec §3 constant {name} missing from learning.params"
 
 
+# Spec §3.1–§3.4 values, typed out from the spec (not read back from params),
+# so changing a constant is a deliberate two-place edit. The band, tier and
+# mastery tests read their cuts from params and would pass any number.
+SPEC_VALUES = {
+    # §3.1
+    "BKT_L0": 0.35,
+    "BKT_T": 0.15,
+    "BKT_G_MAX": 0.30,
+    "BKT_S_MAX": 0.30,
+    "BKT_PROFICIENT": 0.95,
+    "BKT_MASTERED": 0.98,
+    "BKT_MASTERED_MIN_STRONG": 3,
+    "BAND_NOVICE_MAX": 0.30,
+    "BAND_DEVELOP_MAX": 0.80,
+    "TIER_UNEXPLORED_MAX": 0.10,
+    "WEIGHT_ASSISTED": 0.5,
+    "WEIGHT_SAME_SESSION_RECHECK": 0.5,
+    "WEIGHT_PROPAGATION": 0.5,
+    "WEIGHT_LOW_CONFIDENCE": 0.5,
+    "S_IDK": 0.02,
+    "CHANNELS": {
+        "free_response": {"G": 0.08, "S": 0.10, "strong": True},
+        "mc_reasoned": {"G": 0.10, "S": 0.10, "strong": True},
+        "mc": {"G": 0.25, "S": 0.10, "strong": False},
+        "teachback_llm": {"G": 0.25, "S": 0.20, "strong": False},
+        "chat_turn": {"G": 0.30, "S": 0.30, "strong": False},
+    },
+    "STRONG_CHANNELS": frozenset({"free_response", "mc_reasoned"}),
+    "PROPAGATION_CHANNEL": "chat_turn",
+    "EDGE_PREREQ_SOURCE_IS_PREREQ": True,  # PKG-08 may flip it: edit here in the same commit
+    # §3.2
+    "FSRS_W": (
+        0.212,
+        1.2931,
+        2.3065,
+        8.2956,
+        6.4133,
+        0.8334,
+        3.0194,
+        0.001,
+        1.8722,
+        0.1666,
+        0.796,
+        1.4835,
+        0.0614,
+        0.2629,
+        1.6483,
+        0.6014,
+        1.8729,
+        0.5425,
+        0.0912,
+        0.0658,
+        0.1542,
+    ),
+    "FSRS_RETENTION_DEFAULT": 0.90,
+    "FSRS_RETENTION_LARGE_SET": 0.85,
+    "FSRS_LARGE_SET_CONCEPTS": 150,
+    "FSRS_RETENTION_EXAM": 0.95,
+    "FSRS_EXAM_WINDOW_DAYS": 14,
+    "FSRS_S0_GOOD": 2.3065,
+    "REVIEW_ORDER_THRESHOLD": 0.33,
+    "REVIEW_DAILY_BUDGET_MIN": 12,
+    "REVIEW_SECONDS_PER_CHECK": 45,
+    "MC_STABILITY_GAIN_CAP": 2.0,
+    "SR_INITIAL_CRITERION": 3,
+    "SR_RELEARN_SESSIONS": 3,
+    # §3.3
+    "GATE_INDEPENDENT_MIN_S": 45,
+    "GATE_INDEPENDENT_MIN_S_NOVICE": 90,
+    "GATE_RUNG_DWELL_MIN_S": 8,
+    "H6_MIN_GENUINE_ATTEMPTS": 2,
+    "OFFER_BANDS": frozenset({"novice"}),
+    "BAND_WINDOW": 8,
+    "PROBE_TARGET_LO": 0.50,
+    "PROBE_TARGET_HI": 0.62,
+    "ACQ_TARGET_LO": 0.75,
+    "ACQ_TARGET_HI": 0.90,
+    "PRACTICE_TARGET_LO": 0.65,
+    "PRACTICE_TARGET_HI": 0.85,
+    "EXAM_TARGET_LO": 0.70,
+    "EXAM_TARGET_HI": 0.85,
+    "PI_LO": 0.35,
+    "PI_HI": 0.70,
+    "PI_MIN_ROOM": 5,
+    "WHEELSPIN_OPPS": 10,
+    "MISCONCEPTION_CONFIDENCE": 0.7,
+    "NOVICE_FLOOR_MISSES": 3,
+    # §3.4
+    "PROBE_ITEMS_PER_SKILL_MIN": 4,
+    "PROBE_ITEMS_PER_SKILL_MAX": 6,
+    "PROBE_SESSION_CAP": 12,
+    "PROBE_STOP_DELTA": 0.05,
+    "PLAN_MAX_CONCEPTS": 5,
+    "PLAN_MAX_COUPLED": 2,
+    "PLAN_ORDER": ("due_reviews", "new_material", "interleaved_siblings"),
+    "STEP_MAX_SENTENCES": 5,
+    "STEP_QUESTIONS_PER_TURN": 1,
+    "LOOP_HISTORY_MAX_MESSAGES": 20,
+    "LEARNER_BRIEF_MAX_CHARS": 1800,
+    "LEARNER_BRIEF_LAST_CLOSES": 3,
+    "LEARNER_BRIEF_TOP_STATES": 5,
+    "LEARNER_BRIEF_MAX_MISCONCEPTIONS": 5,
+    "LOOP_LIMITS": {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000},
+    "GRADER_LIMITS": {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000},
+    "GRADER_LOW_CONFIDENCE": 0.6,
+    "GRADER_RETRY_BELOW": 0.4,
+    "LEAK_NGRAM": 6,
+    "CHECK_ITEM_FORMATS": ("free", "teachback", "mc_reason"),
+    "CHECK_ITEM_DIFFICULTIES": (1, 2, 3),
+    "CHECK_ITEM_MIN_RUBRIC": 2,
+    "CHECK_ITEM_MIN_WRONG": 1,
+    "MISCONCEPTION_ROLLUP_MIN_USERS": 5,
+    "ZPD_RATING_EVERY_N_CHECKS": 30,
+}
+
+
+def test_spec_values_cover_every_spec_name():
+    assert set(SPEC_VALUES) == set(SPEC_31_NAMES + SPEC_32_NAMES + SPEC_33_NAMES + SPEC_34_NAMES)
+
+
+@pytest.mark.parametrize("name", sorted(SPEC_VALUES))
+def test_every_spec_constant_has_the_spec_value(name):
+    got, want = getattr(params, name), SPEC_VALUES[name]
+    assert got == want, f"{name} = {got!r}; spec §3 says {want!r}"
+    assert type(got) is type(want), (
+        f"{name} is {type(got).__name__}, spec shape is {type(want).__name__}"
+    )
+
+
 def test_channel_table_shape():
     for name, row in params.CHANNELS.items():
         assert set(row) == {"G", "S", "strong"}, name
