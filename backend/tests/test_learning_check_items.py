@@ -687,6 +687,25 @@ class TestFinalAnswerRules:
             ("3", "The root is -3.", "-3", False),
             ("6.022e23", "N is about 6.022.", "6.022", False),
             ("0.01", "The rate is small.", "small", False),  # no number at all
+            # the value after the last '=' (or '≈') is the stated one, so a
+            # subscripted or numbered variable before it is not
+            ("5", "So v_0 = 5 m/s.", "v_0 = 5 m/s", True),
+            ("3", "So t\u2081 = 3 s.", "t\u2081 = 3 s", True),
+            ("4", "So x2 = 4.", "x2 = 4", True),
+            ("1024", "So 2^10 = 1024.", "2^10 = 1024", True),
+            ("9e16", "So E = 9 \u00d7 10^16 J.", "E = 9 \u00d7 10^16 J", True),
+            ("3.14", "Then \u03c0 \u2248 3.14.", "\u03c0 \u2248 3.14", True),
+            ("5", "So v = 5 m/s.", "v = 5 m/s", True),
+            ("4", "So x = 4, not 5.", "x = 4, not 5", True),
+            ("5", "So x = 4, not 5.", "x = 4, not 5", False),
+            ("2", "So 2^10 = 1024.", "2^10 = 1024", False),
+            # a fraction of two numbers states its quotient
+            ("0.5", "The probability is 1/2.", "1/2", True),
+            ("0.75", "It covers 3 / 4 of the track.", "3 / 4", True),
+            ("-0.5", "The slope is -1/2.", "-1/2", True),
+            ("1", "The probability is 1/2.", "1/2", False),
+            ("9.8", "g = 9.8 m/s^2.", "9.8 m/s^2", True),  # a unit is no fraction
+            ("0.5", "Divide by zero: 1/0.", "1/0", False),
         ],
     )
     def test_a_numeric_final_answer_has_the_canonical_value(self, canonical, reference, final, ok):

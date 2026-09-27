@@ -406,6 +406,8 @@ _E_NOTATION = ("e",)
 _TIMES_TEN = ("10", _EXPONENT)
 _X_TIMES_TEN = ("x", *_TIMES_TEN)
 _SIGNS = ("-", "+")
+_RELATIONS = frozenset({"=", "≈"})
+_FRACTION = "/"
 
 
 def _exponent(after: Sequence[str]) -> str:
@@ -422,14 +424,22 @@ def _exponent(after: Sequence[str]) -> str:
 
 
 def _stated_value(tokens: list[AnswerToken]) -> Decimal | None:
-    """The value a numeric final answer states: its first number, negative
-    after a '-', scaled by an exponent written right after it; None when it
-    states no number."""
+    """The value a numeric final answer states: the first number after its
+    last '=' or '≈' (from the start when it has none, so "v_0 = 5 m/s" states
+    5, not the subscript), negative after a '-', the quotient when '/' and a
+    second number follow it ("1/2" states 0.5; "m/s" is no fraction), else
+    scaled by an exponent written right after it; None when it states no
+    number (or divides by zero)."""
     values = [t.value for t in tokens]
-    for i, token in enumerate(tokens):
-        if token.number:
-            sign = "-" if i and values[i - 1] == "-" else ""
-            return _decimal(f"{sign}{token.value}e{_exponent(values[i + 1 :])}")
+    start = max((i + 1 for i, v in enumerate(values) if v in _RELATIONS), default=0)
+    for i in range(start, len(tokens)):
+        if not tokens[i].number:
+            continue
+        sign = "-" if i and values[i - 1] == "-" else ""
+        if values[i + 1 : i + 2] == [_FRACTION] and i + 2 < len(tokens) and tokens[i + 2].number:
+            numerator, denominator = _decimal(f"{sign}{values[i]}"), _decimal(values[i + 2])
+            return numerator / denominator if numerator is not None and denominator else None
+        return _decimal(f"{sign}{values[i]}e{_exponent(values[i + 1 :])}")
     return None
 
 
