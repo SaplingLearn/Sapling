@@ -2954,6 +2954,15 @@ class TestBackfillRegenerateMissingFinalAnswer:
         assert "would draft 1 concept(s): learning rate" in out
 
 
+class TestFinalAnswerEval:
+    def test_the_check_items_eval_requires_every_accepted_final_answer_valid(self):
+        """A34: the recorded check_items dataset holds FinalAnswerValid at 1.0 —
+        a baseline below it would let a regression through the gate."""
+        baselines = pathlib.Path(__file__).parent / "evals" / "baselines.json"
+        scores = json.loads(baselines.read_text())["check_items"]
+        assert scores["FinalAnswerValidEvaluator"] == 1.0
+
+
 class TestProjectRef:
     @pytest.mark.parametrize(
         "url,ref",

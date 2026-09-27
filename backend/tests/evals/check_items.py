@@ -15,7 +15,11 @@ Evaluators score the contracts the service enforces in code
 reference answer, >= CHECK_ITEM_MIN_RUBRIC rubric items and >=
 CHECK_ITEM_MIN_WRONG paired, unique wrong reasons, cites only input chunk ids,
 never leaks its reference into the prompt, and passes validate_draft (the A22
-option / numeric / stepwise rules included).
+option / numeric / stepwise rules and the A34 final_answer rules included).
+FinalAnswerValid (spec §13 A34) is required at 1.0: every accepted draft states
+a final_answer that occurs verbatim in its reference_answer (after
+checks.answer_tokens' normalisation) and not in its prompt — the answer the
+tutor's leak check matches.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from pydantic_evals import Case, Dataset  # noqa: E402
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext  # noqa: E402
 
 from agents.check_items import CheckItemsOutput, build_prompt, check_items_agent  # noqa: E402
-from learning.checks import leak_in_prompt, validate_draft  # noqa: E402
+from learning.checks import answer_in, leak_in_prompt, validate_draft  # noqa: E402
 from learning.params import CHECK_ITEM_MIN_RUBRIC, CHECK_ITEM_MIN_WRONG  # noqa: E402
 from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     MODE,
@@ -140,6 +144,22 @@ class DraftValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return sum(validate_draft(i) == [] for i in items) / len(items) if items else 0.0
 
 
+@dataclass
+class FinalAnswerValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A34, required 1.0: every accepted draft (validate_draft == []) states a
+    final_answer that occurs in its reference_answer and not in its prompt;
+    0.0 when no draft is accepted."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        accepted = [i for i in ctx.output.items if validate_draft(i) == []]
+        ok = all(
+            answer_in(i.reference_answer, i.final_answer)
+            and not answer_in(i.prompt, i.final_answer)
+            for i in accepted
+        )
+        return 1.0 if accepted and ok else 0.0
+
+
 async def _run(case_input: CheckItemsInput) -> CheckItemsOutput:
     concept, chunks = case_input
     case_name = _INPUT_TO_NAME.get(case_input, "unknown")
@@ -170,6 +190,7 @@ def make_dataset() -> Dataset[CheckItemsInput, CheckItemsOutput]:
             CitesChunkEvaluator(),
             NoLeakInPromptEvaluator(),
             DraftValidEvaluator(),
+            FinalAnswerValidEvaluator(),
         ],
     )
 

@@ -9,15 +9,16 @@
       "concept": "Big-O Notation",
       "correct_option": "",
       "difficulty": 1,
+      "final_answer": "Big-O Notation provides an asymptotic upper bound on the running time or space of an algorithm.",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "In your own words, what does Big-O Notation represent in terms of algorithm performance?",
-      "reference_answer": "Big-O Notation provides an asymptotic upper bound on the running time or space complexity of an algorithm.",
+      "prompt": "In your own words, what does Big-O Notation represent?",
+      "reference_answer": "Big-O Notation provides an asymptotic upper bound on the running time or space of an algorithm. It describes how the performance of an algorithm scales as the input size grows very large. Final answer: Big-O Notation provides an asymptotic upper bound on the running time or space of an algorithm.",
       "rubric": [
         "Mentions 'upper bound'",
-        "Mentions 'running time' or 'space complexity' or 'performance'"
+        "Mentions 'running time' or 'space'"
       ],
       "stepwise": false,
       "tolerance": "",
@@ -25,35 +26,36 @@
         "confuses_upper_bound_with_lower"
       ],
       "wrong_texts": [
-        "Confuses the upper bound with a lower bound (e.g., Big-Omega)."
+        "Defines Big-O as a lower bound instead of an upper bound."
       ]
     },
     {
       "answer_kind": "free",
-      "canonical_answer": "",
+      "canonical_answer": "O(n^2)",
       "chunk_ids": [
         "eval-doc-2:c3"
       ],
       "concept": "Big-O Notation",
       "correct_option": "",
       "difficulty": 2,
+      "final_answer": "O(n^2).",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "A new sorting algorithm is found to have a running time that grows proportionally to the square of the input size. What is its Big-O Notation?",
-      "reference_answer": "The Big-O Notation for this algorithm is O(n^2).",
+      "prompt": "A program's runtime is measured and found to be roughly proportional to the square of the input size. What is its Big-O Notation?",
+      "reference_answer": "If a program's runtime is roughly proportional to the square of the input size, its Big-O Notation is O(n^2). This notation describes the upper bound of the growth rate. Final answer: O(n^2).",
       "rubric": [
-        "Correctly identifies O(n^2)",
-        "Relates the running time to the input size"
+        "Correctly identifies the relationship to input size squared",
+        "States the correct Big-O notation"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_notation_with_formula"
+        "confuses_order_of_growth"
       ],
       "wrong_texts": [
-        "Confuses Big-O notation with the specific mathematical formula for running time."
+        "Incorrectly describes the order of growth."
       ]
     },
     {
@@ -65,25 +67,25 @@
       "concept": "Big-O Notation",
       "correct_option": "",
       "difficulty": 3,
+      "final_answer": "Linear (O(n)) is much better than exponential (O(2^n)).",
       "format": "free",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Why is it important to use Big-O Notation instead of exact running times when discussing algorithm efficiency?",
-      "reference_answer": "Big-O Notation describes the algorithm's performance as the input size grows, abstracting away machine-specific details and constant factors, which allows for general comparison of algorithms.",
+      "prompt": "An algorithm has a running time that grows linearly with the input size. How does its Big-O Notation compare to an algorithm that grows exponentially?",
+      "reference_answer": "An algorithm with a running time that grows linearly has a Big-O Notation of O(n), while an algorithm that grows exponentially has a Big-O Notation of O(2^n). O(n) is significantly better (faster) than O(2^n) for large input sizes. Final answer: Linear (O(n)) is much better than exponential (O(2^n)).",
       "rubric": [
-        "Mentions 'input size growth' or 'scalability'",
-        "Mentions 'abstracting away constants/machine details'"
+        "Correctly identifies Big-O for linear growth",
+        "Correctly identifies Big-O for exponential growth",
+        "Compares the two notations appropriately"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "ignores_scalability",
-        "focuses_on_constants"
+        "incorrect_comparison_of_growth"
       ],
       "wrong_texts": [
-        "Ignores the concept of scalability with input size.",
-        "Focuses too much on constant factors instead of the growth rate."
+        "Incorrectly compares the growth rates of linear and exponential functions."
       ]
     },
     {
@@ -95,25 +97,26 @@
       "concept": "Big-O Notation",
       "correct_option": "",
       "difficulty": 1,
+      "final_answer": "It describes an algorithm's performance growth rate with increasing input size.",
       "format": "teachback",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Explain to a classmate who missed the lecture what Big-O Notation is and why we use it.",
-      "reference_answer": "Big-O Notation is a way to describe the 'worst-case' performance of an algorithm, specifically how its running time or memory usage grows as the input size gets larger. It's like a general roadmap for efficiency, ignoring minor details so we can compare algorithms at a high level.",
+      "prompt": "Explain to a classmate who missed the lecture what Big-O Notation is used for.",
+      "reference_answer": "Big-O Notation is a way to describe the upper limit of an algorithm's performance, specifically how its running time or memory usage grows as the input size gets bigger. It helps us understand efficiency. Final answer: It describes an algorithm's performance growth rate with increasing input size.",
       "rubric": [
-        "Explains it as an 'upper bound' or 'worst-case'",
-        "Mentions 'growth rate' or 'input size'"
+        "Explains it as an upper bound",
+        "Mentions growth relative to input size"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_with_exact_time",
-        "ignores_growth_rate"
+        "focuses_on_exact_time",
+        "confuses_with_average_case"
       ],
       "wrong_texts": [
-        "Explains it as the exact time taken, not a bound.",
-        "Fails to mention how performance changes with input size."
+        "Focuses on exact execution time rather than growth rate.",
+        "Confuses Big-O with average-case or best-case analysis."
       ]
     },
     {
@@ -125,25 +128,26 @@
       "concept": "Big-O Notation",
       "correct_option": "",
       "difficulty": 2,
+      "final_answer": "Each call makes two more, causing exponential growth.",
       "format": "teachback",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "Imagine you have two algorithms, one that takes 'n' steps and another that takes 'n*log(n)' steps for an input size 'n'. Explain to a classmate which one is generally better and why, using the concept of Big-O Notation.",
-      "reference_answer": "The algorithm taking 'n' steps is generally better because it has a Big-O Notation of O(n), which grows slower than the algorithm taking 'n*log(n)' steps, which is O(n*log(n)). As the input size 'n' gets very large, O(n) will significantly outperform O(n*log(n)).",
+      "prompt": "Explain to a classmate why naive recursive Fibonacci is O(2^n) using Big-O Notation.",
+      "reference_answer": "Naive recursive Fibonacci is O(2^n) because for each call, it makes two more calls, essentially doubling the work for each increase in 'n'. This creates a branching structure that grows exponentially, similar to 2 raised to the power of 'n'. Final answer: Each call makes two more, causing exponential growth.",
       "rubric": [
-        "Identifies O(n) as better than O(n*log(n))",
-        "Explains 'better' in terms of growth rate or scalability"
+        "Mentions the doubling or branching nature of the calls",
+        "Links this to exponential growth"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_growth_rates",
-        "ignores_scalability"
+        "confuses_with_linear_growth",
+        "focuses_on_call_stack_depth"
       ],
       "wrong_texts": [
-        "Incorrectly compares the growth rates of O(n) and O(n*log(n)).",
-        "Does not explain why one is better in terms of how it scales with input size."
+        "Describes the growth as linear instead of exponential.",
+        "Confuses the exponential growth of calls with the depth of the call stack."
       ]
     },
     {
@@ -155,67 +159,26 @@
       "concept": "Big-O Notation",
       "correct_option": "",
       "difficulty": 3,
+      "final_answer": "Algorithm A (O(n log n)) is better because it grows slower than O(n^2).",
       "format": "teachback",
       "option_letters": [],
       "option_texts": [],
       "option_wrong_keys": [],
-      "prompt": "A student claims that an algorithm with a running time of O(n^2) is always worse than an algorithm with a running time of O(2^n). Explain to them why this statement is not always true, using the concept of Big-O Notation.",
-      "reference_answer": "While O(n^2) grows slower than O(2^n) for large values of 'n', Big-O describes the *asymptotic* behavior. For small input sizes, O(2^n) might actually be faster due to smaller constant factors or overhead. Big-O tells us about the trend as 'n' approaches infinity, not necessarily performance for all 'n'.",
+      "prompt": "Imagine you have two algorithms. Algorithm A is O(n log n) and Algorithm B is O(n^2). Explain to a classmate which one is generally better for very large inputs and why.",
+      "reference_answer": "Algorithm A, with O(n log n), is generally better for very large inputs than Algorithm B, which is O(n^2). This is because 'n log n' grows much slower than 'n squared' as 'n' becomes very large. Final answer: Algorithm A (O(n log n)) is better because it grows slower than O(n^2).",
       "rubric": [
-        "Mentions 'asymptotic' or 'large n'",
-        "Explains that O(2^n) can be faster for small inputs"
+        "Correctly identifies O(n log n) as better",
+        "Explains 'n log n' grows slower than 'n^2'"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "assumes_always_true",
-        "ignores_small_inputs"
+        "misunderstands_growth_rates",
+        "incorrectly_compares_log_n"
       ],
       "wrong_texts": [
-        "Assumes the Big-O comparison holds true for all input sizes.",
-        "Ignores the behavior of algorithms for small input sizes."
-      ]
-    },
-    {
-      "answer_kind": "free",
-      "canonical_answer": "",
-      "chunk_ids": [
-        "eval-doc-2:c3"
-      ],
-      "concept": "Big-O Notation",
-      "correct_option": "B",
-      "difficulty": 1,
-      "format": "mc_reason",
-      "option_letters": [
-        "A",
-        "B",
-        "C",
-        "D"
-      ],
-      "option_texts": [
-        "A. Exact running time on a specific machine.",
-        "B. Asymptotic upper bound on running time or space complexity.",
-        "C. Average number of operations for a typical input.",
-        "D. Lower bound on the number of memory accesses."
-      ],
-      "option_wrong_keys": [],
-      "prompt": "Big-O Notation is used to describe an algorithm's:",
-      "reference_answer": "B. Asymptotic upper bound on running time or space complexity.",
-      "rubric": [
-        "Selects 'Asymptotic upper bound'",
-        "Selects 'running time or space complexity'"
-      ],
-      "stepwise": false,
-      "tolerance": "",
-      "wrong_keys": [
-        "confuses_exact_time",
-        "confuses_with_average",
-        "confuses_lower_bound"
-      ],
-      "wrong_texts": [
-        "Confuses Big-O notation with the exact, machine-dependent running time.",
-        "Confuses the upper bound with an average-case analysis.",
-        "Confuses an upper bound with a lower bound (e.g., Big-Omega)."
+        "Incorrectly assumes O(n^2) grows slower or at the same rate as O(n log n).",
+        "Misunderstands the growth rate contribution of the 'log n' factor."
       ]
     },
     {
@@ -226,7 +189,8 @@
       ],
       "concept": "Big-O Notation",
       "correct_option": "C",
-      "difficulty": 2,
+      "difficulty": 1,
+      "final_answer": "An algorithm's asymptotic upper bound on running time or space.",
       "format": "mc_reason",
       "option_letters": [
         "A",
@@ -235,41 +199,93 @@
         "D"
       ],
       "option_texts": [
-        "A. The running time increases linearly with 'n'.",
-        "B. The running time increases quadratically with 'n'.",
-        "C. The running time grows exponentially with the input size 'n', making it very inefficient for larger values of 'n'.",
-        "D. The running time remains constant regardless of 'n'."
+        "The exact time and memory it will use for a specific input.",
+        "The average-case performance across all possible inputs.",
+        "An algorithm's asymptotic upper bound on running time or space.",
+        "The number of lines of code in the algorithm."
       ],
-      "option_wrong_keys": [],
-      "prompt": "A naive recursive implementation of the Fibonacci sequence has a running time complexity of O(2^n). What does this complexity imply about the algorithm's performance as 'n' increases?",
-      "reference_answer": "C. The running time grows exponentially with the input size 'n', making it very inefficient for larger values of 'n'.",
+      "option_wrong_keys": [
+        "focuses_on_exact_values",
+        "confuses_with_average_case",
+        "",
+        "irrelevant_metric"
+      ],
+      "prompt": "What does Big-O Notation primarily describe about an algorithm?",
+      "reference_answer": "Big-O Notation describes the asymptotic upper bound on the running time or space complexity of an algorithm. This means it gives an idea of how the performance scales as the input size increases. Final answer: An algorithm's asymptotic upper bound on running time or space.",
       "rubric": [
-        "Correctly identifies exponential growth",
-        "Connects exponential growth to inefficiency for large inputs"
+        "Correctly identifies Big-O as an upper bound",
+        "Mentions running time or space complexity"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "confuses_exponential_with_linear",
-        "confuses_exponential_with_quadratic",
-        "ignores_inefficiency"
+        "focuses_on_exact_values",
+        "confuses_with_average_case",
+        "irrelevant_metric"
       ],
       "wrong_texts": [
-        "Confuses exponential growth with linear growth.",
-        "Confuses exponential growth with quadratic growth.",
-        "Fails to recognize that exponential growth leads to inefficiency."
+        "Treats Big-O as a measure of exact resource usage rather than a growth rate.",
+        "Mistakes Big-O notation for average-case analysis.",
+        "Considers the number of lines of code as relevant to Big-O."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "O(n)",
+      "chunk_ids": [
+        "eval-doc-2:c3"
+      ],
+      "concept": "Big-O Notation",
+      "correct_option": "B",
+      "difficulty": 2,
+      "final_answer": "O(n).",
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "O(1)",
+        "O(n)",
+        "O(n^2)",
+        "O(2^n)"
+      ],
+      "option_wrong_keys": [
+        "assumes_constant_time",
+        "confuses_linear_with_quadratic",
+        "assumes_exponential_growth"
+      ],
+      "prompt": "A recursive function makes a constant number of calls to itself for each input, and the work done at each step is constant. If the base case is reached after 'n' steps, what is the Big-O Notation for this function?",
+      "reference_answer": "If a recursive function performs a constant amount of work at each step and makes a constant number of recursive calls, and it takes 'n' steps to reach the base case, the total work is proportional to 'n'. Therefore, the Big-O Notation is O(n). Final answer: O(n).",
+      "rubric": [
+        "Identifies that the number of steps is proportional to 'n'",
+        "Correctly concludes linear growth"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "assumes_constant_time",
+        "confuses_linear_with_quadratic",
+        "assumes_exponential_growth"
+      ],
+      "wrong_texts": [
+        "Assumes the function completes in a constant number of steps regardless of input size.",
+        "Incorrectly assumes the work multiplies quadratically instead of linearly with the number of steps.",
+        "Incorrectly assumes the number of operations grows exponentially."
       ]
     },
     {
       "answer_kind": "free",
       "canonical_answer": "",
       "chunk_ids": [
-        "eval-doc-2:c1",
         "eval-doc-2:c3"
       ],
       "concept": "Big-O Notation",
       "correct_option": "D",
       "difficulty": 3,
+      "final_answer": "Algorithm Y (O(n log n)) is significantly more efficient than Algorithm X (O(2^n)) for large inputs.",
       "format": "mc_reason",
       "option_letters": [
         "A",
@@ -278,29 +294,36 @@
         "D"
       ],
       "option_texts": [
-        "A. The clarity of the code and variable names.",
-        "B. The number of lines of code in the function.",
-        "C. Whether the function uses a loop or recursion.",
-        "D. The relationship between the problem size in the recursive step and the number of recursive calls."
+        "Algorithm X is more efficient because exponential growth eventually overtakes logarithmic growth.",
+        "Algorithm Y is more efficient, but only for very small inputs.",
+        "Both algorithms have similar performance for large inputs.",
+        "Algorithm Y (O(n log n)) is significantly more efficient than Algorithm X (O(2^n)) for large inputs."
       ],
-      "option_wrong_keys": [],
-      "prompt": "When analyzing the efficiency of a recursive function, which aspect of its definition is most directly related to its Big-O complexity?",
-      "reference_answer": "D. The relationship between the problem size in the recursive step and the number of recursive calls.",
+      "option_wrong_keys": [
+        "misunderstands_exponential_growth",
+        "incorrect_small_input_performance",
+        "underestimates_growth_difference",
+        ""
+      ],
+      "prompt": "Consider two algorithms for sorting: Algorithm X has a naive recursive Fibonacci implementation's time complexity, and Algorithm Y has a time complexity of O(n log n). Which statement best describes their relative performance for large inputs?",
+      "reference_answer": "Naive recursive Fibonacci has a time complexity of O(2^n). Algorithm Y has a time complexity of O(n log n). For large inputs, O(n log n) grows significantly slower than O(2^n). Therefore, Algorithm Y is much more efficient. Final answer: Algorithm Y (O(n log n)) is significantly more efficient than Algorithm X (O(2^n)) for large inputs.",
       "rubric": [
-        "Identifies the recursive step's relation to problem size and call count",
-        "Focuses on how the problem is broken down recursively"
+        "Correctly identifies O(2^n) for naive Fibonacci",
+        "Correctly identifies O(n log n) for Algorithm Y",
+        "Compares the two growth rates accurately for large inputs"
       ],
       "stepwise": false,
       "tolerance": "",
       "wrong_keys": [
-        "focuses_on_code_style",
-        "counts_lines_of_code",
-        "ignores_recursion_structure"
+        "misunderstands_exponential_growth",
+        "incorrect_small_input_performance",
+        "underestimates_growth_difference"
       ],
       "wrong_texts": [
-        "Focuses on subjective code style rather than algorithmic complexity.",
-        "Incorrectly assumes line count determines complexity.",
-        "Confuses the overall choice of loop vs. recursion with the specific recursive structure."
+        "Incorrectly believes exponential growth (O(2^n)) is better than or equal to polynomial/logarithmic growth for large inputs.",
+        "Incorrectly states O(n log n) is only better for small inputs, when it's better for large inputs.",
+        "Underestimates the vast difference in growth rates between O(n log n) and O(2^n).",
+        "Correctly identifies the relative efficiency based on growth rates."
       ]
     }
   ]
