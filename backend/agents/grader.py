@@ -120,8 +120,12 @@ class GraderOutput(BaseModel):
         default="",
         description="The COMMON WRONG REASON key the student's reasoning matches, or an empty string.",
     )
+    # The bound is in the schema the model sees, not in validation: an over-long
+    # hint would fail validation, spend GRADER_LIMITS' one retry and turn a
+    # graded answer into an outage. grade() drops it instead (the hint is
+    # optional downstream).
     feedback_hint: str = Field(
-        max_length=GRADER_HINT_MAX_CHARS,
+        json_schema_extra={"maxLength": GRADER_HINT_MAX_CHARS},
         description="A short hint for the tutor to adapt. Never the answer, never the reference.",
     )
 
@@ -418,13 +422,20 @@ async def _run_once(
 
 
 def _needs_confirmation(first: GraderOutput, credited: dict[str, bool], suspicious: bool) -> bool:
-    """A33: an unreported first verdict that credits any item on an answer with a
-    suspicion signal (answer_guard.suspicion) is not credited on the first run
-    alone — the second opinion runs, its report refuses, and an item counts only
-    when both runs credit it. Live, the first slot credited a pre-filled grading
-    result without reporting it; the second slot reported it every time it ran
-    (CodeRabbit PR #673 round 3)."""
-    return suspicious and not first.addresses_grader and any(credited.values())
+    """A33: an unreported first verdict, sure enough to use, that credits any item
+    on an answer with a suspicion signal (answer_guard.suspicion) is not credited
+    on the first run alone — the second opinion runs, its report refuses, and an
+    item counts only when both runs credit it. Live, the first slot credited a
+    pre-filled grading result without reporting it; the second slot reported it
+    every time it ran (CodeRabbit PR #673 round 3). A first run below
+    GRADER_SECOND_OPINION_CONFIDENCE is no verdict to confirm: the second opinion
+    decides alone (§3.4 / A6)."""
+    return (
+        suspicious
+        and first.confidence >= GRADER_SECOND_OPINION_CONFIDENCE
+        and not first.addresses_grader
+        and any(credited.values())
+    )
 
 
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
@@ -436,9 +447,12 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     `addresses_grader` — as GradeResult(unavailable=True, refused=<reason>) with
     one refusal event; so is an answer longer than GRADER_ANSWER_MAX_CHARS
     (`too_long`, before any call). The rubric items go out under fresh labels
-    (`rubric_labels`). On an answer with a suspicion signal, a first verdict that
-    credits any item is confirmed by the second opinion, and an item is credited
-    only when both runs credit it (disagreement → the lower verdict)."""
+    (`rubric_labels`). On an answer with a suspicion signal, a first verdict sure
+    enough to use that credits any item is confirmed by the second opinion, and
+    an item is credited only when both runs credit it (disagreement → the lower
+    verdict at the lower confidence). A first run below the floor is replaced by
+    the second opinion, signal or not (§3.4 / A6). A hint past
+    GRADER_HINT_MAX_CHARS is dropped, never an outage."""
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
         # come back a full-weight "incorrect" (check_item_service falls back to
@@ -475,12 +489,12 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     )
     suspicious = bool(answer_guard.suspicion(student_answer, **terms))
     backend: Literal["gemini", "gemini_second"] = "gemini"
+    confirming = False
     try:
         runs = [await _run_once(message, deps)]
         first = parse_labelled(runs[0].item_results, labels)
-        if runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE or _needs_confirmation(
-            runs[0], first, suspicious
-        ):
+        confirming = _needs_confirmation(runs[0], first, suspicious)
+        if confirming or runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE:
             # spec §3.4: ONE second opinion, on the grader_second slot (A22)
             runs.append(await _run_once(message, deps, second_opinion=True))
             backend = "gemini_second"
@@ -499,14 +513,21 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             deps=deps,
         )
     out = runs[-1]
-    if out.confidence < GRADER_SECOND_OPINION_CONFIDENCE:
-        logger.warning("grader unavailable for item %s: confidence below floor twice", item.id)
+    confidence = out.confidence
+    if confidence < GRADER_SECOND_OPINION_CONFIDENCE:
+        why = (
+            "the confirmation run was below the confidence floor"
+            if confirming
+            else "confidence below floor twice"
+        )
+        logger.warning("grader unavailable for item %s: %s", item.id, why)
         return GradeResult(unavailable=True)
     results = parse_labelled(out.item_results, labels)
-    if suspicious and len(runs) > 1:
-        # A33: on a suspicious answer an item is credited only when both runs
-        # credit it; disagreement → the lower verdict
+    if confirming:
+        # A33: a confirmed item is credited only when both runs credit it;
+        # disagreement → the lower verdict, at the lower of the two confidences
         results = {rid: ok and first[rid] for rid, ok in results.items()}
+        confidence = min(confidence, runs[0].confidence)
     all_yes = bool(results) and all(results.values())
     # A key the item does not list is not a match (behaviour 1: "a listed key or
     # ''"), so an invented key never reaches PKG-10's misconception rule.
@@ -514,15 +535,18 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     if matched not in {w.key for w in item.common_wrong}:
         matched = ""
     hint = out.feedback_hint
+    if len(hint) > GRADER_HINT_MAX_CHARS:  # the schema bounds it; code enforces it
+        logger.warning("grader hint for item %s ran past its bound; dropped", item.id)
+        hint = ""
     if _echoes_reference(hint, item.reference_answer):  # the prompt forbids it; code enforces it
         logger.warning("grader hint for item %s repeated the reference; dropped", item.id)
         hint = ""
     return GradeResult(
         item_results=results,
         all_yes=all_yes,
-        confidence=out.confidence,
+        confidence=confidence,
         matched_wrong_key=matched,
         feedback_hint=hint,
-        low_confidence=out.confidence < GRADER_LOW_CONFIDENCE,
+        low_confidence=confidence < GRADER_LOW_CONFIDENCE,
         backend=backend,
     )

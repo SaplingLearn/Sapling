@@ -1374,14 +1374,64 @@ def test_no_confirmation_for_an_answer_without_a_suspicion_signal(monkeypatch, e
     assert calls["n"] == 1 and res.all_yes is True
 
 
-def test_a_low_confidence_second_opinion_decides_alone_without_a_signal(monkeypatch, events):
-    """Spec §3.4 / A6 unchanged: below GRADER_SECOND_OPINION_CONFIDENCE the second
-    opinion's verdict is used; the both-runs rule is for suspicious answers."""
+@pytest.mark.parametrize("answer", ["It stops the calls.", GRADING_TALK])
+def test_a_low_confidence_first_run_never_vetoes_the_second_opinion(monkeypatch, events, answer):
+    """Spec §3.4 / A6: below GRADER_SECOND_OPINION_CONFIDENCE the first run is too
+    unsure to use, so the second opinion decides alone — with or without a
+    suspicion signal. The both-runs rule is for a CONFIRMATION, when the first
+    run was sure enough to count (red team round 3: a first "no" at 0.3 vetoed a
+    confident second "yes" on any answer with a brace or the word "teacher", and
+    was recorded as a full-weight incorrect)."""
     first = {**_all_yes(0.2), "item_results": ["r1:no", "r2:no"]}
-    res, calls = _grade_with(monkeypatch, [first, _all_yes(0.9)], answer="It stops the calls.")
+    res, calls = _grade_with(monkeypatch, [first, _all_yes(0.9)], answer=answer)
     assert calls["n"] == 2 and res.all_yes is True and res.backend == "gemini_second"
-    res, calls = _grade_with(monkeypatch, [first, _all_yes(0.9)], answer=GRADING_TALK)
-    assert calls["n"] == 2 and res.all_yes is False  # a signal: both runs must credit
+    assert res.confidence == 0.9
+
+
+def test_disagreeing_confirmation_runs_record_the_lower_confidence(monkeypatch, events):
+    """Two sure runs that disagree: the lower verdict, at the lower confidence —
+    never the confidence of the run whose verdict was overruled."""
+    runs = [_all_yes(0.7), {**_all_yes(0.95), "item_results": ["r1:yes", "r2:no"]}]
+    res, calls = _grade_with(monkeypatch, runs, answer=GRADING_TALK)
+    assert calls["n"] == 2 and res.item_results == {"r1": True, "r2": False}
+    assert res.confidence == 0.7
+
+
+def test_the_unavailable_warning_names_which_run_was_unsure(monkeypatch, events, caplog):
+    with caplog.at_level("WARNING", logger="sapling.agents.grader"):
+        res, _ = _grade_with(monkeypatch, [_all_yes(0.95), _all_yes(0.1)], answer=GRADING_TALK)
+    assert res.unavailable is True
+    [msg] = [r.getMessage() for r in caplog.records]
+    assert "twice" not in msg and "confirmation" in msg
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="sapling.agents.grader"):
+        res, _ = _grade_with(monkeypatch, [_all_yes(0.1), _all_yes(0.1)], answer="It stops.")
+    assert res.unavailable is True
+    assert any("twice" in r.getMessage() for r in caplog.records)
+
+
+def test_an_over_long_hint_is_dropped_never_an_outage(monkeypatch, events):
+    """The hint is optional downstream. A run whose hint runs past
+    GRADER_HINT_MAX_CHARS is graded with the hint dropped, not retried into
+    GRADER_LIMITS' request cap and reported unavailable (red team round 3:
+    contradictory answers drew long hints and came back as outages, which the
+    probe treats as a skip)."""
+    from learning.params import GRADER_HINT_MAX_CHARS
+
+    long_hint = "Look again at what you said first and what you said last. " * 10
+    assert len(long_hint) > GRADER_HINT_MAX_CHARS
+    run = {**_all_yes(0.95), "item_results": ["r1:no", "r2:no"], "feedback_hint": long_hint}
+    res, calls = _grade_with(monkeypatch, [run], answer="It stops the calls.")
+    assert calls["n"] == 1 and res.unavailable is False and res.refused is None
+    assert res.feedback_hint == "" and res.item_results == {"r1": False, "r2": False}
+
+
+def test_the_hint_bound_is_still_in_the_output_schema():
+    from agents.grader import GraderOutput
+    from learning.params import GRADER_HINT_MAX_CHARS
+
+    schema = GraderOutput.model_json_schema()["properties"]["feedback_hint"]
+    assert schema["maxLength"] == GRADER_HINT_MAX_CHARS
 
 
 def test_the_report_is_a_required_output_field():
