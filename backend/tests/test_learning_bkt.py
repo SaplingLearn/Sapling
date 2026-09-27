@@ -535,6 +535,24 @@ def test_decayed_p_infinite_days_is_the_prior():
     assert bkt.decayed_p(0.05, math.inf, None) == pytest.approx(params.BKT_L0)
 
 
+def test_float_saturation_at_one_is_released_by_any_elapsed_time():
+    """HANDOFF-01 Known gap (j). Back-to-back full-weight corrects with no decay
+    between them round p to exactly 1.0 (15 on free_response), where the
+    incorrect posterior is 1·S/(1·S + 0) = 1: no wrong answer or idk moves it.
+    In exact arithmetic p stays below 1. Decay with any positive elapsed time
+    releases it, which is what PKG-03 must rely on between chained updates."""
+    p = params.BKT_L0
+    for _ in range(15):
+        p = bkt.update(p, "free_response", True)
+    assert p == 1.0
+    assert bkt.update(p, "free_response", False) == 1.0  # the gap, pinned
+    assert bkt.update(p, "free_response", False, idk=True) == 1.0
+    one_second = 1.0 / 86_400
+    released = bkt.decayed_p(p, one_second, None)
+    assert released < 1.0
+    assert bkt.update(released, "free_response", False) < released
+
+
 # ------------------------------------------- propagate / band / tier / mastery
 
 
