@@ -2775,7 +2775,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes labSpin { to { transform:rotate(360deg); } }
 @keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
 
-.landing-v5 .ld-labprimary:hover { background: #0C5638; }
+/* The rest state is now #0C5638, so hover lifts to the bright green the
+   room's Send button already uses rather than repeating the base colour. */
+.landing-v5 .ld-labprimary:hover { background: #0E9E5A; }
 .landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
 .landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
 .landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }
