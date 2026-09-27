@@ -887,7 +887,25 @@ def test_inv_25_decision_states_carry_no_identifiers():
 
 # ── invariant 23 (PKG-06b; spec §8.23, §13 A20) ──────────────────────────────
 BUDGETED_AGENT_MODULES = ("grader", "decision", "loop_tutor", "session_close")
-AGENT_RUN_METHODS = frozenset({"run", "run_stream", "iter", "run_sync"})
+# Every pydantic-ai Agent method that runs (or serves) the model; the self-test pins it against the
+# installed pydantic-ai. services/chat_stream.py streams through run_stream_events.
+AGENT_RUN_METHODS = frozenset(
+    {
+        "run",
+        "run_sync",
+        "run_stream",
+        "run_stream_events",
+        "run_stream_sync",
+        "iter",
+        "to_cli",
+        "to_cli_sync",
+        "to_web",
+        "to_a2a",
+        "to_ag_ui",
+    }
+)
+# Each is its own scope for the scan: a module, a class body, a def, a lambda.
+_SCAN_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _SCAN_SKIP_DIRS = frozenset({"venv", ".venv", "tests", "__pycache__", "node_modules"})
 
 
@@ -926,48 +944,56 @@ def _last_name(expr: ast.expr) -> str | None:
     )
 
 
-def _own_nodes(fn: ast.AST):
-    """The function's own body; nested defs, lambdas and classes are their own scope."""
-    stack = list(getattr(fn, "body", []))
+def _own_nodes(scope: ast.AST):
+    """The scope's own nodes; nested defs, lambdas and classes are their own scope — also
+    when one sits directly in the body (a lambda's body is a single expression)."""
+    body = getattr(scope, "body", [])
+    stack = [
+        n for n in (body if isinstance(body, list) else [body]) if not isinstance(n, _SCAN_SCOPES)
+    ]
     while stack:
         node = stack.pop()
         yield node
-        stack.extend(
-            c
-            for c in ast.iter_child_nodes(node)
-            if not isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
-        )
+        stack.extend(c for c in ast.iter_child_nodes(node) if not isinstance(c, _SCAN_SCOPES))
+
+
+def _scope_name(scope: ast.AST) -> str:
+    if isinstance(scope, ast.Module):
+        return "<module>"
+    return "<lambda>" if isinstance(scope, ast.Lambda) else scope.name
 
 
 def _budget_scan(source: str, agents: set[str], label: str) -> tuple[int, list[str]]:
-    """(run sites found, run sites with no earlier ``ai_budget.check(`` in the same function)."""
+    """(run sites found, run sites with no earlier ``ai_budget.check(`` in the same scope).
+    A run site is any load of ``<agent>.<run method>`` — called, or handed on uncalled (a
+    variable, functools.partial) — or ``stream_agent_turn(`` given the agent by name."""
     found, bad = 0, []
-    for fn in ast.walk(ast.parse(source)):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
+    tree = ast.parse(source)
+    for scope in (tree, *(n for n in ast.walk(tree) if isinstance(n, _SCAN_SCOPES))):
         runs, checks = [], []
-        for node in _own_nodes(fn):
-            if not isinstance(node, ast.Call):
-                continue
-            f = node.func
+        for node in _own_nodes(scope):
             if (
-                isinstance(f, ast.Attribute)
-                and f.attr in AGENT_RUN_METHODS
-                and _last_name(f.value) in agents
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Load)
+                and node.attr in AGENT_RUN_METHODS
+                and _last_name(node.value) in agents
             ):
                 runs.append(node.lineno)
-            elif _last_name(f) == "stream_agent_turn" and any(
+            elif not isinstance(node, ast.Call):
+                continue
+            elif _last_name(node.func) == "stream_agent_turn" and any(
                 _last_name(a) in agents for a in [*node.args, *(k.value for k in node.keywords)]
             ):
                 runs.append(node.lineno)
             elif (
-                isinstance(f, ast.Attribute)
-                and f.attr == "check"
-                and _last_name(f.value) == "ai_budget"
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "check"
+                and _last_name(node.func.value) == "ai_budget"
             ):
                 checks.append(node.lineno)
         found += len(runs)
-        bad += [f"{label}:{fn.name}:{line}" for line in runs if not any(c < line for c in checks)]
+        name = _scope_name(scope)
+        bad += [f"{label}:{name}:{line}" for line in runs if not any(c < line for c in checks)]
     return found, bad
 
 
@@ -990,6 +1016,45 @@ def test_inv_23_ai_budget_checked_before_every_run():
     assert _budget_scan(good, agents, "good") == (1, [])
     assert _budget_scan(late, agents, "late")[1] == ["late:f:2"]
     assert _budget_scan(nested, agents, "nested")[1] == ["nested:g:4"]
+
+    # Every way the installed pydantic-ai runs an Agent is a run site: the run*/iter family
+    # (chat_stream.py streams through run_stream_events) and the to_* entry points that serve it.
+    from pydantic_ai import Agent
+
+    runners = {
+        n
+        for n in dir(Agent)
+        if n in ("run", "iter") or n.startswith(("run_", "to_")) and n != "run_mcp_servers"
+    }
+    assert {"run", "iter", "run_stream_events", "run_stream_sync"} <= runners  # not vacuous
+    assert runners <= AGENT_RUN_METHODS, f"unscanned Agent runners: {runners - AGENT_RUN_METHODS}"
+    for method in ("run_stream_events", "run_stream_sync"):
+        src = f"async def f(deps):\n    return grader_agent.{method}('m')\n"
+        assert _budget_scan(src, agents, method) == (1, [f"{method}:f:2"])
+    # A bound run method handed on uncalled (a variable, functools.partial) is still a run site.
+    ref = "async def f(deps):\n    run = grader_agent.run\n    return await run('m')\n"
+    assert _budget_scan(ref, agents, "ref") == (1, ["ref:f:2"])
+    # A lambda is its own scope with no room for a check: a budgeted run in one is flagged, even
+    # after the enclosing function's check (put the run in a named function that checks first).
+    lam = (
+        "async def f(deps):\n    ai_budget.check(deps.user_id, 'grader')\n"
+        "    fb = lambda: grader_agent.run('m')\n    return fb\n"
+    )
+    assert _budget_scan(lam, agents, "lam") == (1, ["lam:<lambda>:3"])
+    top = "result = grader_agent.run_sync('m')\n"  # module level is a scope too
+    assert _budget_scan(top, agents, "top") == (1, ["top:<module>:1"])
+    # A nested def's body belongs to the nested def alone: a check inside an uncalled helper
+    # never covers the outer run, and a nested run counts once, against the nested def.
+    helper = (
+        "async def f(deps):\n    def _never_called():\n        ai_budget.check(deps.user_id, 'grader')\n"
+        "    return await grader_agent.run('m')\n"
+    )
+    assert _budget_scan(helper, agents, "helper") == (1, ["helper:f:4"])
+    once = (
+        "async def f(deps):\n    async def g():\n        return await grader_agent.run('m')\n"
+        "    return 1\n"
+    )
+    assert _budget_scan(once, agents, "once") == (1, ["once:g:3"])
 
     names = _budgeted_agent_names()
     assert names, (
