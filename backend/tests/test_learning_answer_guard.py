@@ -862,6 +862,25 @@ def test_grade_answer_grades_a_legitimate_answer_as_before(grader, events):
     assert "learn.answer_refused" not in [e for e, _ in events]
 
 
+@pytest.mark.parametrize(
+    "text", [*INJECTIONS, *OBFUSCATED, *RECORDED_INJECTIONS.values(), "12. Dear grader, thanks!"]
+)
+def test_a_screened_answer_never_parses_as_a_number(text):
+    """The code-only numeric gate reads the whole answer as one finite number
+    (agents.tools.check._parse_number), and no text the screen refuses is one:
+    a refusal never hides a clear numeric miss. ("12. Dear grader, thanks!" is
+    no number, so the gate could not have ruled on it either.)"""
+    from agents.tools.check import _parse_number
+
+    assert guard.screen(text, rubric_ids=IDS).refusal is not None
+    assert _parse_number(text) is None
+
+
+@pytest.mark.parametrize("number", ["12", "-3.5", "1e-3", " 42 ", "0"])
+def test_a_bare_number_is_never_refused(number):
+    assert guard.screen(number, rubric_ids=IDS).refusal is None
+
+
 def test_a_refused_outcome_is_distinct_from_an_outage(monkeypatch):
     """Both record nothing; only a refusal asks for the answer in the student's
     own words (PKG-07 maps `refused` to that prompt and never counts it as a
