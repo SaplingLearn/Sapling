@@ -285,6 +285,133 @@ def test_the_kill_switch_writes_the_prose_again_once(monkeypatch):
     assert db.one("offering_summary", offering_id="off-a")["summary_text"] == "legacy prose"
 
 
+_AGENT = "course_summary_agent"
+_SLOT = "course_summary"
+_SLOT_READERS = frozenset({"model_for", "model_name_for"})  # agents/_providers.py
+
+
+def _course_summary_agent_sites(source: str) -> set[str]:
+    """The scopes of one module (the innermost def's name, or "<module>") that
+    reach the course_summary agent: its name, bare or under an import alias;
+    the attribute on a module (`cs.course_summary_agent`); the name as a string
+    (`getattr(m, "course_summary_agent")`); or a fresh agent on its model slot
+    (`model_for("course_summary")`, `model_name_for(task="course_summary")`).
+    An import alone is not a site."""
+    tree = ast.parse(source)
+    names = {_AGENT} | {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name == _AGENT and alias.asname
+    }
+
+    def reaches(node: ast.AST) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in names
+        if isinstance(node, ast.Attribute):
+            return node.attr == _AGENT
+        if isinstance(node, ast.Constant):
+            return node.value == _AGENT
+        if isinstance(node, ast.Call):
+            func = node.func
+            callee = getattr(func, "id", None) or getattr(func, "attr", None)
+            args = [*node.args, *(kw.value for kw in node.keywords)]
+            return callee in _SLOT_READERS and any(
+                isinstance(a, ast.Constant) and a.value == _SLOT for a in args
+            )
+        return False
+
+    sites: set[str] = set()
+
+    def visit(node: ast.AST, scope: str) -> None:
+        if reaches(node):
+            sites.add(scope)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = node.name
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    visit(tree, "<module>")
+    return sites
+
+
+_IMPORT = "from agents.course_summary import course_summary_agent\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (_IMPORT + "def f():\n    return course_summary_agent.run('x')\n", {"f"}),
+        (
+            "from agents.course_summary import course_summary_agent as csa\n"
+            "def f():\n    return csa.run('x')\n",
+            {"f"},
+        ),
+        (
+            "from agents import course_summary as cs\n"
+            "def f():\n    return cs.course_summary_agent.run('x')\n",
+            {"f"},
+        ),
+        (
+            "import agents.course_summary\n"
+            "async def f():\n    return await agents.course_summary.course_summary_agent.run('x')\n",
+            {"f"},
+        ),
+        (
+            "import importlib\n"
+            "def f():\n"
+            "    m = importlib.import_module('agents.course_summary')\n"
+            "    return getattr(m, 'course_summary_agent').run('x')\n",
+            {"f"},
+        ),
+        (
+            "from pydantic_ai import Agent\nfrom agents._providers import model_for\n"
+            "def f():\n    return Agent(model=model_for('course_summary')).run('x')\n",
+            {"f"},
+        ),
+        (
+            "from agents import _providers as p\n"
+            "def f():\n    return google_model(p.model_name_for(task='course_summary'))\n",
+            {"f"},
+        ),
+        (_IMPORT + "RUN = course_summary_agent.run\n", {"<module>"}),
+        (
+            _IMPORT + "def outer():\n    def inner():\n        return course_summary_agent\n"
+            "    return inner\n",
+            {"inner"},
+        ),
+        # Not a site: the import alone, another slot, the slot's handler
+        # registration, the usage labels, and prose that names the agent.
+        (_IMPORT, set()),
+        ("def f():\n    return model_for('summary')\n", set()),
+        ("register_function_handler('course_summary', handler)\n", set()),
+        ("def f(r):\n    return record_agent_usage(r, feature='course_summary')\n", set()),
+        ('def f():\n    """Runs the course_summary_agent."""\n', set()),
+    ],
+    ids=[
+        "bare-name",
+        "import-alias",
+        "module-alias-attribute",
+        "dotted-module-attribute",
+        "getattr-string",
+        "fresh-agent-on-the-slot",
+        "model-name-for-keyword",
+        "module-level",
+        "innermost-def",
+        "import-only",
+        "other-slot",
+        "handler-registration",
+        "usage-label",
+        "docstring",
+    ],
+)
+def test_course_summary_agent_site_detector(source, expected):
+    """The guard below is only as good as this detector: every way a module can
+    reach the agent (or build a fresh one on its model slot) is a site."""
+    assert _course_summary_agent_sites(source) == expected
+
+
 def test_only_the_legacy_regime_runs_the_course_summary_agent():
     """A35: the one call site of the agent is `_generate_summary_with_gemini`,
     which `update_course_context` reaches only with the loop off. A new writer
@@ -296,13 +423,8 @@ def test_only_the_legacy_regime_runs_the_course_summary_agent():
         rel = path.relative_to(backend).as_posix()
         if rel.startswith(("tests/", "venv/")) or rel == "agents/course_summary.py":
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for node in ast.walk(fn):
-                if isinstance(node, ast.Name) and node.id == "course_summary_agent":
-                    sites.add((rel, fn.name))
+        source = path.read_text(encoding="utf-8")
+        sites |= {(rel, scope) for scope in _course_summary_agent_sites(source)}
     assert sites == {("services/course_context_service.py", "_generate_summary_with_gemini")}
 
 
