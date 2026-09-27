@@ -4,11 +4,13 @@ events captured by patching events_service.log_event. No DB, no network."""
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import re
 import sys
 
 import pytest
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -118,3 +120,303 @@ def test_e2e_decision_handler_serves_both_output_types(_function_lane):
         "no",
     )
     assert yes.confidence == picks[1].confidence == E2E_DECISION_CONFIDENCE
+
+
+# ── Task 3: services/decisions.py ─────────────────────────────────────────
+
+
+@pytest.fixture
+def seam(monkeypatch, events):
+    from services import decisions
+
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    for name in decisions.DECISION_NAMES:
+        monkeypatch.delenv(f"DECISION_BACKEND_{name.upper()}", raising=False)
+    monkeypatch.setattr(decisions, "JEV_ENABLED", False)
+    return decisions
+
+
+def _grade_result(ok: bool = True, conf: float = 0.9, **over):
+    from agents.grader import GradeResult
+
+    kw = dict(
+        item_results={"r1": ok, "r2": ok},
+        all_yes=ok,
+        confidence=conf,
+        matched_wrong_key="" if ok else "w_loop",
+        feedback_hint="Think about what stops the calls.",
+    )
+    return GradeResult(**{**kw, **over})
+
+
+@pytest.fixture
+def grader_spy(monkeypatch):
+    import agents.grader as g
+
+    spy = {"calls": [], "result": _grade_result()}
+
+    async def _grade(item, *, format, student_answer, deps):
+        spy["calls"].append((item, format, student_answer))
+        return spy["result"]
+
+    monkeypatch.setattr(g, "grade", _grade)
+    return spy
+
+
+def _gstate(seam):
+    return seam.GradeState(
+        question=QUESTION,
+        reference=REFERENCE,
+        rubric=RUBRIC,
+        wrong=WRONG,
+        answer="It stops the calls.",
+        format="free",
+    )
+
+
+async def _must_not_run(*a, **k):
+    raise AssertionError("must not run")
+
+
+@pytest.mark.parametrize("value", [None, "jev", "shadow_jev", "gemini", "JEV", "nonsense"])
+def test_jev_disabled_serves_gemini_whatever_the_env(seam, monkeypatch, value):
+    if value is not None:
+        monkeypatch.setenv("DECISION_BACKEND_MATCH_WRONG_REASON", value)
+    sel = seam.select_backend("match_wrong_reason")
+    assert (sel.served, sel.fallback_reason, sel.shadow) == ("gemini", None, False)
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    assert seam.select_backend("match_wrong_reason").served == "function"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, False),
+        ("", False),
+        ("false", False),
+        ("yes", False),
+        ("true", True),
+        (" TRUE ", True),
+    ],
+)
+def test_jev_enabled_parse_fails_closed(seam, raw, expected):
+    assert seam.parse_jev_enabled(raw) is expected
+
+
+def test_jev_is_served_by_gemini_and_shadow_is_a_noop(seam, monkeypatch, grader_spy, events):
+    monkeypatch.setattr(seam, "JEV_ENABLED", True)
+    monkeypatch.setenv("DECISION_BACKEND_GRADE_RUBRIC_ITEMS", "jev")
+    v = asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps()))
+    assert (v.backend, v.fallback) == ("gemini", True)
+    assert [kw["payload"] for et, kw in events if et == "decision.fallback"] == [
+        {
+            "decision": "grade_rubric_items",
+            "from_backend": "jev",
+            "to_backend": "gemini",
+            "reason": "jev_absent",
+            "request_id": "r1",
+        }
+    ]
+    events.clear()
+    monkeypatch.setenv("DECISION_BACKEND_GRADE_RUBRIC_ITEMS", "shadow_jev")
+    v = asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps()))
+    assert (v.backend, v.fallback) == ("gemini", False) and _kinds(events) == ["decision.made"]
+    assert len(grader_spy["calls"]) == 2
+
+
+def test_grade_rubric_items_sends_the_grader_the_identical_message(seam, grader_spy, monkeypatch):
+    """The grader sees exactly the message it would build from the item itself:
+    the State keeps rubric/wrong order, and the rebuilt item carries
+    learning.checks models (build_grader_message reads r.id / w.key, HANDOFF-05)."""
+    from types import SimpleNamespace
+
+    from agents.grader import build_grader_message
+    from learning.checks import RubricItem, WrongReason
+
+    recorded = []
+    monkeypatch.setattr(seam, "record_agent_usage", lambda r, **kw: recorded.append(kw) or r)
+    item = SimpleNamespace(
+        id="ci-1",
+        prompt=QUESTION,
+        reference_answer=REFERENCE,
+        rubric=[RubricItem(id=k, text=v) for k, v in RUBRIC.items()],
+        common_wrong=[WrongReason(key=k, text=v) for k, v in WRONG.items()],
+    )
+    v = asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps(), item_id="ci-1"))
+    [(passed, fmt, answer)] = grader_spy["calls"]
+    assert (fmt, answer, passed.id) == ("free", "It stops the calls.", "ci-1")
+    assert build_grader_message(passed, format=fmt, student_answer=answer) == build_grader_message(
+        item, format="free", student_answer="It stops the calls."
+    )
+    assert v.items["r1"].value is True and v.items["r1"].p_yes == pytest.approx(0.9)
+    assert v.result.all_yes is True and v.backend == "gemini"
+    assert recorded == [], "grade() writes the llm_usage rows; the seam adds none"
+
+
+def test_unavailable_grade_is_none_with_both_failed(seam, grader_spy, events):
+    from agents.grader import GradeResult
+
+    grader_spy["result"] = GradeResult(unavailable=True)
+    assert asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps())) is None
+    [(et, kw)] = events
+    assert (et, kw["category"]) == ("decision.fallback", "error")
+    assert kw["payload"] == {
+        "decision": "grade_rubric_items",
+        "from_backend": "gemini",
+        "to_backend": "none",
+        "reason": "both_failed",
+        "request_id": "r1",
+    }
+
+
+def test_reason_is_correct_runs_the_grader_as_mc_reason(seam, grader_spy):
+    st = seam.ReasonState(
+        question=QUESTION,
+        reference=REFERENCE,
+        rubric=RUBRIC,
+        wrong=WRONG,
+        selected_option="B",
+        correct_option="B",
+        reason="because it stops",
+    )
+    v = asyncio.run(seam.reason_is_correct(st, deps=_deps(), item_id="ci-1"))
+    [(_, fmt, answer)] = grader_spy["calls"]
+    assert (fmt, answer) == ("mc_reason", "Selected option: B\nReason: because it stops")
+    assert v.value is True and v.result.all_yes is True
+
+
+def test_match_wrong_reason_with_prior_makes_no_call(seam, monkeypatch, events):
+    from agents.decision import decision_agent
+    from agents.grader import GradeResult
+
+    monkeypatch.setattr(decision_agent, "run", _must_not_run)
+    st = seam.WrongReasonState(question=QUESTION, answer="it just loops", wrong=WRONG)
+    hit = asyncio.run(
+        seam.match_wrong_reason(
+            st, deps=_deps(), prior=_grade_result(False, matched_wrong_key="w_loop")
+        )
+    )
+    miss = asyncio.run(
+        seam.match_wrong_reason(
+            st, deps=_deps(), prior=_grade_result(False, matched_wrong_key="w_new")
+        )
+    )
+    assert (hit.value, miss.value, hit.latency_ms, hit.backend) == (
+        "w_loop",
+        seam.NO_MATCH,
+        0,
+        "gemini",
+    )
+    assert _kinds(events) == ["decision.made", "decision.made"]
+    events.clear()
+    assert (
+        asyncio.run(seam.match_wrong_reason(st, deps=_deps(), prior=GradeResult(unavailable=True)))
+        is None
+    )
+    assert events == []
+
+
+def test_match_wrong_reason_without_prior_runs_decision_and_never_invents(seam, monkeypatch):
+    from agents.decision import decision_agent
+
+    recorded = []
+    monkeypatch.setattr(seam, "record_agent_usage", lambda r, **kw: recorded.append(kw) or r)
+    st = seam.WrongReasonState(question=QUESTION, answer="it only makes it faster", wrong=WRONG)
+    model, calls = _scripted(
+        [{"choice": "w_speed", "confidence": 0.8}, {"choice": "w_made_up", "confidence": 0.99}]
+    )
+    with decision_agent.override(model=model):
+        v = asyncio.run(seam.match_wrong_reason(st, deps=_deps()))
+        invented = asyncio.run(seam.match_wrong_reason(st, deps=_deps()))
+    assert (v.value, v.probs, invented.value) == ("w_speed", {"w_speed": 0.8}, seam.NO_MATCH)
+    assert re.findall(r"^OPTION (\S+):", calls["prompts"][0], re.M) == ["w_loop", "w_speed"]
+    assert recorded[0] == {"feature": "tutor", "task": "decision", "user_id": "u1"}
+
+
+@pytest.mark.parametrize(
+    "answer,value,p_yes", [("yes", True, 0.8), ("no", False, 0.2), ("unclear", False, None)]
+)
+def test_yes_no_decisions_map_answers(seam, answer, value, p_yes):
+    from agents.decision import decision_agent
+
+    model, calls = _scripted([{"answer": answer, "confidence": 0.8}])
+    leak = seam.LeakState(reference=REFERENCE, emitted="Once it stops, the calls end.", rung=1)
+    ok = seam.AnswerableState(
+        passages=["A base case ends recursion."], question=QUESTION, reference=REFERENCE
+    )
+    with decision_agent.override(model=model):
+        verdicts = [
+            asyncio.run(seam.judge_leak(leak, deps=_deps())),
+            asyncio.run(seam.item_answerable(ok, deps=_deps())),
+        ]
+    for v in verdicts:
+        assert v.value is value and v.backend == "gemini"
+        assert v.p_yes == pytest.approx(seam.P_YES_UNCLEAR if p_yes is None else p_yes)
+    assert "HINT RUNG:\nH1" in calls["prompts"][0] and "PASSAGE 1:" in calls["prompts"][1]
+
+
+@pytest.mark.parametrize("exc", [UsageLimitExceeded("budget"), UnexpectedModelBehavior("garbage")])
+def test_decision_agent_failure_degrades_to_none(seam, monkeypatch, caplog, events, exc):
+    from agents.decision import decision_agent
+
+    async def _boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr(decision_agent, "run", _boom)
+    with caplog.at_level("WARNING"):
+        state = seam.LeakState(reference=REFERENCE, emitted="x", rung=1)
+        assert asyncio.run(seam.judge_leak(state, deps=_deps())) is None
+    assert any("decision unavailable" in r.getMessage() for r in caplog.records)
+    assert [kw["payload"]["reason"] for _, kw in events] == ["both_failed"]
+
+
+def test_deterministic_and_evidence_backend(seam, events):
+    v = seam.deterministic_yes_no("numeric_gate", False, deps=_deps())
+    assert (v.backend, v.value, v.confidence, v.latency_ms) == ("deterministic", False, 1.0, 0)
+    assert seam.evidence_backend(v) == "deterministic"
+    with pytest.raises(ValueError):
+        seam.deterministic_yes_no("numeric_gate", True, deps=_deps())
+    g = seam.YesNo(backend="gemini", confidence=0.9, latency_ms=5, value=True, p_yes=0.9)
+    assert (
+        seam.evidence_backend(g)
+        == seam.evidence_backend(g.model_copy(update={"backend": "function"}))
+        == "gemini"
+    )
+    assert seam.evidence_backend(g, second_opinion=True) == "gemini_second"
+    assert _kinds(events) == ["decision.made"]
+
+
+def test_spec_3_6_settings_and_ownership(seam):
+    names = (
+        "JEV_MODEL JEV_SDK_VERSION JEV_TIMEOUT_MS JEV_MAX_RETRIES JEV_CIRCUIT_FAILS "
+        "JEV_CIRCUIT_COOLDOWN_S JEV_STATE_MAX_TOKENS DECISION_PROMOTE_MIN_GOLD "
+        "DECISION_PROMOTE_MAX_ACC_DROP GRADER_PROMOTE_MIN_KAPPA DECISION_PROMOTE_MAX_ECE "
+        "SHARE_FALSE_POSITIVE_MAX GRADER_BKT_REPLAY_MAX_DELTA DECISION_SHADOW_MIN_DAYS "
+        "DECISION_SHADOW_MIN_N DECISION_SHADOW_MIN_AGREEMENT DECISION_P95_MS "
+        "DECISION_MAX_ERROR_RATE"
+    ).split()
+    assert [getattr(seam, n) for n in names] == [
+        "jev-1.13.0",
+        "typesafe-sdk==0.7.2",
+        800,
+        1,
+        5,
+        300,
+        28_000,
+        200,
+        0.02,
+        0.70,
+        0.05,
+        0.01,
+        0.02,
+        7,
+        1000,
+        0.90,
+        300,
+        0.005,
+    ]
+    assert not any(
+        hasattr(seam, n) for n in ("classify_upload", "rerank", "route_turn")
+    )  # #641/#640
+    for path in (BACKEND / "learning").glob("*.py"):
+        assert not re.search(r"services(\.| import )decisions", path.read_text()), path.name
