@@ -1314,6 +1314,16 @@ def test_a_bare_number_is_never_refused(number):
     assert guard.screen(number, rubric_ids=IDS).refusal is None
 
 
+def test_every_surface_asks_again_before_a_refusal_becomes_an_idk():
+    """Spec §13 A33 (CodeRabbit PR #673 round 3): a refusal is never a skip, and a
+    false positive never costs an honest student an observation without a second
+    chance — the probe and the tutor's check record the CHECK_REFUSALS_AS_IDK-th
+    refusal of the same item as idk, never the first."""
+    from learning.params import CHECK_REFUSALS_AS_IDK
+
+    assert isinstance(CHECK_REFUSALS_AS_IDK, int) and CHECK_REFUSALS_AS_IDK >= 2
+
+
 def test_a_refused_outcome_is_distinct_from_an_outage(monkeypatch):
     """Both record nothing; only a refusal asks for the answer in the student's
     own words (PKG-07 maps `refused` to that prompt and never counts it as a

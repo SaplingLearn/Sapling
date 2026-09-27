@@ -183,6 +183,10 @@ NUMERIC_GATE_EDGE_SLACK = 1e-12
 # credited (learning/answer_guard.verdict_share). "Mostly" = at least half; not
 # a spec value, and the screen before the grader catches the usual shapes first.
 GRADER_GUARD_VERDICT_SHARE = 0.5
+# † PKG-05 reopen (spec §3.4, §13 A33): a refusal is never a skip, and never the
+# first answer an honest student loses. The route asks again; the Nth refusal of
+# the same item (the tutor's check, PKG-07; the probe, PKG-08) records it as idk.
+CHECK_REFUSALS_AS_IDK = 2
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
