@@ -1,4 +1,163 @@
-"""Learning loop stub — filled by PKG-01 (docs/superpowers/plans/learning-loop/PKG-01-*.md).
+"""Learning loop named constants — the single source (spec §3).
 
-Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md. Inert until that package lands; nothing imports this module.
+Every number the loop uses lives here under the spec's name; code cites the
+name. A numeric literal in loop code is a review failure (series README).
+Stdlib only: the pure modules (bkt, fsrs, policy, gates, ladder, leak) depend
+on this one and are forbidden any dependency on agents/, pydantic_ai, google,
+db/ (spec §8 invariant 2), so nothing impure may enter here either.
+
+Legend in comments: † = engineering choice without a validated cut-point
+(first A/B candidates); ‡ = value from the spec, name assigned by PKG-01.
+Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §3.1–§3.4.
 """
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+# --------------------------------------------------------------- §3.1 BKT
+BKT_L0 = 0.35
+BKT_T = 0.15
+BKT_G_MAX = 0.30
+BKT_S_MAX = 0.30
+BKT_PROFICIENT = 0.95
+BKT_MASTERED = 0.98
+BKT_MASTERED_MIN_STRONG = 3
+BAND_NOVICE_MAX = 0.30
+BAND_DEVELOP_MAX = 0.80
+TIER_UNEXPLORED_MAX = 0.10
+WEIGHT_ASSISTED = 0.5
+WEIGHT_SAME_SESSION_RECHECK = 0.5
+WEIGHT_PROPAGATION = 0.5
+WEIGHT_LOW_CONFIDENCE = 0.5
+S_IDK = 0.02
+
+# Per-channel guess/slip (KT-IDEM). `idk` is NOT a row: it is the idk=True
+# flag on bkt.update, which uses the item channel's G with S_IDK.
+CHANNELS: dict[str, dict[str, float | bool]] = {
+    "free_response": {"G": 0.08, "S": 0.10, "strong": True},
+    "mc_reasoned": {"G": 0.10, "S": 0.10, "strong": True},
+    "mc": {"G": 0.25, "S": 0.10, "strong": False},
+    "teachback_llm": {"G": 0.25, "S": 0.20, "strong": False},
+    "chat_turn": {"G": 0.30, "S": 0.30, "strong": False},
+}
+STRONG_CHANNELS = frozenset(k for k, v in CHANNELS.items() if v["strong"])  # ‡
+PROPAGATION_CHANNEL = "chat_turn"  # ‡ spec §3.1: "chat_turn-strength observation"
+EDGE_PREREQ_SOURCE_IS_PREREQ = True  # PKG-08 verifies against live data
+
+# ------------------------------------------------------------ §3.2 FSRS-6
+FSRS_W = (
+    0.212,
+    1.2931,
+    2.3065,
+    8.2956,
+    6.4133,
+    0.8334,
+    3.0194,
+    0.001,
+    1.8722,
+    0.1666,
+    0.796,
+    1.4835,
+    0.0614,
+    0.2629,
+    1.6483,
+    0.6014,
+    1.8729,
+    0.5425,
+    0.0912,
+    0.0658,
+    0.1542,
+)
+FSRS_RETENTION_DEFAULT = 0.90
+FSRS_RETENTION_LARGE_SET = 0.85
+FSRS_LARGE_SET_CONCEPTS = 150
+FSRS_RETENTION_EXAM = 0.95
+FSRS_EXAM_WINDOW_DAYS = 14
+FSRS_S0_GOOD = FSRS_W[2]
+REVIEW_ORDER_THRESHOLD = 0.33
+REVIEW_DAILY_BUDGET_MIN = 12
+REVIEW_SECONDS_PER_CHECK = 45
+MC_STABILITY_GAIN_CAP = 2.0
+SR_INITIAL_CRITERION = 3
+SR_RELEARN_SESSIONS = 3
+
+# ------------------------------------- §3.3 ladder, ceiling, gates, bands
+GATE_INDEPENDENT_MIN_S = 45  # †
+GATE_INDEPENDENT_MIN_S_NOVICE = 90  # †
+GATE_RUNG_DWELL_MIN_S = 8  # †
+H6_MIN_GENUINE_ATTEMPTS = 2
+OFFER_BANDS = frozenset({"novice"})
+BAND_WINDOW = 8
+PROBE_TARGET_LO = 0.50
+PROBE_TARGET_HI = 0.62
+ACQ_TARGET_LO = 0.75
+ACQ_TARGET_HI = 0.90
+PRACTICE_TARGET_LO = 0.65
+PRACTICE_TARGET_HI = 0.85
+EXAM_TARGET_LO = 0.70
+EXAM_TARGET_HI = 0.85
+PI_LO = 0.35
+PI_HI = 0.70
+PI_MIN_ROOM = 5
+WHEELSPIN_OPPS = 10
+MISCONCEPTION_CONFIDENCE = 0.7
+NOVICE_FLOOR_MISSES = 3
+# Band-control cut-points (unassisted_next 0.90 / 0.65, "2 windows", the
+# wheelspin opps>=6 arm) are unnamed in spec §3.3; PKG-06 names them here.
+
+# ------------------------------------- §3.4 probe, plan, step, brief, limits
+PROBE_ITEMS_PER_SKILL_MIN = 4
+PROBE_ITEMS_PER_SKILL_MAX = 6
+PROBE_SESSION_CAP = 12
+PROBE_STOP_DELTA = 0.05
+PLAN_MAX_CONCEPTS = 5
+PLAN_MAX_COUPLED = 2
+PLAN_ORDER = ("due_reviews", "new_material", "interleaved_siblings")
+STEP_MAX_SENTENCES = 5
+STEP_QUESTIONS_PER_TURN = 1
+LOOP_HISTORY_MAX_MESSAGES = 20
+LEARNER_BRIEF_MAX_CHARS = 1800
+LEARNER_BRIEF_LAST_CLOSES = 3
+LEARNER_BRIEF_TOP_STATES = 5
+LEARNER_BRIEF_MAX_MISCONCEPTIONS = 5
+# ‡ plain dicts: PKG-07/05 build pydantic_ai UsageLimits(**X) in agents/__init__.py
+LOOP_LIMITS = {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000}
+GRADER_LIMITS = {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000}
+GRADER_LOW_CONFIDENCE = 0.6
+GRADER_RETRY_BELOW = 0.4  # ‡ spec §3.4 "below 0.4 → second grader call"
+LEAK_NGRAM = 6
+CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
+CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
+CHECK_ITEM_MIN_RUBRIC = 2
+CHECK_ITEM_MIN_WRONG = 1
+MISCONCEPTION_ROLLUP_MIN_USERS = 5
+ZPD_RATING_EVERY_N_CHECKS = 30
+
+
+# ------------------------------------------------------ §3.1 validity check
+def validate_channels(channels: Mapping[str, Mapping[str, float | bool]], t: float) -> None:
+    """Raise ValueError unless every channel satisfies spec §3.1 validity.
+
+    G + S < 1 (else the update inverts and correct answers lower belief),
+    G <= BKT_G_MAX, S <= BKT_S_MAX, and 0 < t < 1 - S/(1-G) (van de Sande 2013).
+    """
+    if not 0.0 < t:
+        raise ValueError(f"BKT_T must be > 0, got {t}")
+    for name, row in channels.items():
+        g = float(row["G"])
+        s = float(row["S"])
+        if not (0.0 < g and 0.0 < s):
+            raise ValueError(f"channel {name}: G and S must be > 0, got G={g} S={s}")
+        if g + s >= 1.0:
+            raise ValueError(f"channel {name}: G + S = {g + s} must be < 1")
+        if g > BKT_G_MAX:
+            raise ValueError(f"channel {name}: G {g} exceeds BKT_G_MAX {BKT_G_MAX}")
+        if s > BKT_S_MAX:
+            raise ValueError(f"channel {name}: S {s} exceeds BKT_S_MAX {BKT_S_MAX}")
+        t_max = 1.0 - s / (1.0 - g)
+        if not t < t_max:
+            raise ValueError(f"channel {name}: BKT_T {t} must be < 1 - S/(1-G) = {t_max:.4f}")
+
+
+validate_channels(CHANNELS, BKT_T)
