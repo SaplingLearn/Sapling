@@ -107,7 +107,7 @@ const sections = [
         label: "Information collected automatically:",
         list: [
           "Basic usage data and session metadata to maintain and improve the Service",
-          "Product analytics: the pages you visit and the buttons and links you click, tied to a pseudonymous ID rather than your name or email. The text on screen is masked before anything is sent, so the content of your notes, documents and messages is never included",
+          "Product analytics, only while you are signed in and have not turned it off: the pages you visit and the buttons and links you click, tied to a pseudonymous ID rather than your name or email. The text on screen is masked before anything is sent, so the content of your notes, documents and messages is never included. Analytics stores nothing in your browser (no cookies or local storage)",
         ],
       },
     ],
@@ -131,7 +131,7 @@ const sections = [
     body: "We do not sell your personal data. We share information only in the following limited circumstances:",
     highlights: [
       { label: "Service providers:", text: "We use Supabase (database), Google Gemini (AI processing), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
-      { label: "Product analytics:", text: "We use PostHog, hosted in the United States, to understand how the Service is used so we can improve it. PostHog receives a pseudonymous user ID, page views and interaction events (for example, that a button was clicked). It does not receive your name, email address, or the content of your notes, documents or messages, and we do not record your screen. You can turn product analytics off at any time under Settings → Data, and we honour your browser's Do Not Track and Global Privacy Control signals." },
+      { label: "Product analytics:", text: "We use PostHog, hosted in the United States, to understand how the Service is used so we can improve it. Analytics runs only for signed-in users who have not turned it off; nothing is collected on our public pages or while you are signed out. PostHog receives a pseudonymous user ID, page views and interaction events (for example, that a button was clicked). It does not receive your name, email address, IP address, or the content of your notes, documents or messages, we do not record your screen, and analytics stores nothing in your browser (no cookies or local storage). You can turn product analytics off at any time under Settings → Data; the choice is saved to your account and applies wherever you sign in. We also honour your browser's Do Not Track and Global Privacy Control signals." },
       { label: "Study rooms:", text: "Your display name, avatar, and knowledge graph data are visible to other members of study rooms you join. Class-wide data shared with other users is anonymized." },
       { label: "Legal requirements:", text: "We may disclose information if required by law or to protect the rights and safety of our users." },
     ],

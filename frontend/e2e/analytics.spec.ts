@@ -3,7 +3,9 @@
  *
  * The test-profile build bakes NEXT_PUBLIC_TEST_MODE=1 and an explicitly
  * empty NEXT_PUBLIC_POSTHOG_KEY (package.json "build:test"), and
- * src/lib/analytics.ts refuses to load posthog-js under either. This journey
+ * src/lib/analytics.ts refuses to load posthog-js under either (in an
+ * analytics build it would still load only for a signed-in student whose
+ * account says `analytics_opt_out: false`). This journey
  * is the browser-level proof: walk the public landing page, the authed shell
  * and a REAL client-side navigation (a click on the shell's own nav link —
  * the `history_change` path posthog-js would capture a pageview on), and

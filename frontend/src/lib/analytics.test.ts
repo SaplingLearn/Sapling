@@ -1,34 +1,29 @@
 // @vitest-environment jsdom
 /**
- * PostHog gating + privacy posture (src/lib/analytics.ts).
- *
- * The contract: no key, local mode and the E2E/test build each mean posthog-js
- * is never even LOADED (the loader is the lazy import), and a configured build
- * initialises with the privacy config — masked autocapture, no replay,
- * identified-only person profiles, UUID-only identify.
+ * Product analytics (src/lib/analytics.ts), unit level with a posthog-js
+ * stand-in. The model: posthog-js is loaded only for a signed-in student
+ * whose account says `analytics_opt_out: false`; everything else is off.
+ * The account flag is the single source of truth; nothing is stored in the
+ * browser. The real-SDK behaviour is pinned in analytics.posthog.test.ts.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CaptureResult, PostHog } from "posthog-js";
 
 import {
+  __analyticsLoadedForTests,
   __resetAnalyticsForTests,
   analyticsDisabledReason,
+  applyAccountAnalytics,
+  beginAccountRead,
   buildPosthogConfig,
+  chooseAnalytics,
   gatedBeforeSend,
   getAnalyticsState,
-  holdAnalytics,
-  identifyUser,
-  initAnalytics,
-  isAnalyticsActive,
   isAnalyticsConfigured,
   readAnalyticsEnv,
-  releaseAnonymousAnalytics,
-  resetAnalytics,
-  resolveAccountAnalytics,
   scrubEvent,
   scrubValue,
-  chooseAnalytics,
-  OPT_OUT_RECORDS_KEY,
+  stopAnalytics,
   stripUrlQuery,
   subscribeAnalytics,
   type AnalyticsEnv,
@@ -36,22 +31,15 @@ import {
 import { isTruthyBuildFlag } from "./testMode";
 
 const KEY = "phc_test_public_key";
+const ENV = { NEXT_PUBLIC_POSTHOG_KEY: KEY };
 
-/**
- * A posthog-js stand-in with its consent model: an explicit stored choice
- * (pending/granted/denied), `opt_out_capturing_by_default` for pending, and
- * Do Not Track / GPC folded into every getter (respect_dnt) — including
- * get_explicit_consent_status(), exactly as the real SDK does.
- */
-function fakePosthog(initial: { distinctId?: string; identified?: boolean; consent?: Consent } = {}) {
-  let distinctId = initial.distinctId ?? "anon-1";
-  let identified = initial.identified ?? false;
-  let consent: Consent = initial.consent ?? "pending";
-  let optOutByDefault = false;
-  const gpc = () => (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
+/** A posthog-js stand-in: init runs the `loaded` hook, as the SDK does. */
+function fakePosthog() {
+  let distinctId = "anon-1";
+  let identified = false;
   const ph = {
-    init: vi.fn((_key: string, config: { opt_out_capturing_by_default?: boolean }) => {
-      optOutByDefault = config.opt_out_capturing_by_default === true;
+    init: vi.fn((_key: string, config: { loaded?: (p: unknown) => void }) => {
+      config.loaded?.(ph);
     }),
     capture: vi.fn(),
     identify: vi.fn((id: string) => {
@@ -61,46 +49,32 @@ function fakePosthog(initial: { distinctId?: string; identified?: boolean; conse
     reset: vi.fn(() => {
       distinctId = "anon-2";
       identified = false;
-      // posthog-js's reset() wipes stored consent too.
-      consent = "pending";
     }),
     get_distinct_id: vi.fn(() => distinctId),
     get_property: vi.fn((name: string) =>
       name === "$user_state" ? (identified ? "identified" : "anonymous") : undefined,
     ),
-    has_opted_out_capturing: vi.fn(
-      () => gpc() || consent === "denied" || (consent === "pending" && optOutByDefault),
-    ),
-    get_explicit_consent_status: vi.fn(() => (gpc() ? "denied" : consent)),
-    opt_out_capturing: vi.fn(() => {
-      consent = "denied";
-    }),
-    opt_in_capturing: vi.fn((...args: [{ captureEventName?: string | false | null }?]) => {
-      void args;
-      consent = "granted";
-    }),
-    storedConsent: () => consent,
+    opt_out_capturing: vi.fn(),
+    opt_in_capturing: vi.fn(),
   };
   return ph;
 }
-type Consent = "pending" | "granted" | "denied";
-
 type Fake = ReturnType<typeof fakePosthog>;
 
-async function start(env: AnalyticsEnv, ph: Fake = fakePosthog()) {
-  const load = vi.fn(async () => ph as unknown as PostHog);
-  const active = await initAnalytics(env, load);
-  return { active, load, ph };
+let ph: Fake;
+let load: ReturnType<typeof vi.fn>;
+
+function setup(env: AnalyticsEnv = ENV) {
+  ph = fakePosthog();
+  load = vi.fn(async () => ph as unknown as PostHog);
+  __resetAnalyticsForTests({ env, load: load as unknown as () => Promise<PostHog> });
 }
 
-/** A new page load in the same browser: module state goes, storage stays. */
-async function reload(ph: Fake = fakePosthog()) {
-  __resetAnalyticsForTests();
-  return start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, ph);
-}
-
-function records(): Record<string, string> {
-  return JSON.parse(localStorage.getItem(OPT_OUT_RECORDS_KEY) ?? "{}");
+/** A signed-in student whose account answers `optOut`. */
+async function signIn(userId: string, optOut: unknown) {
+  const gen = beginAccountRead(userId);
+  applyAccountAnalytics(gen, userId, optOut);
+  await __analyticsLoadedForTests();
 }
 
 function setGpc(on: boolean) {
@@ -108,60 +82,53 @@ function setGpc(on: boolean) {
   else delete (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl;
 }
 
+const event = (name: string) => ({ event: name, uuid: "x", properties: {} }) as unknown as CaptureResult;
 const ok = () => Promise.resolve();
 const fail = () => Promise.reject(new Error("500"));
 
-beforeEach(() => {
-  __resetAnalyticsForTests();
-  localStorage.clear();
-});
-
+beforeEach(() => setup());
 afterEach(() => {
   setGpc(false);
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
-describe("init gating", () => {
-  it("no key → never loads posthog-js", async () => {
-    const { active, load } = await start({});
-    expect(active).toBe(false);
-    expect(load).not.toHaveBeenCalled();
-    expect(isAnalyticsActive()).toBe(false);
-    expect(analyticsDisabledReason({ NEXT_PUBLIC_POSTHOG_KEY: "   " })).toBe("no_key");
+describe("build gating", () => {
+  it("no key, local mode or the test build → unavailable, never loaded", async () => {
+    for (const env of [
+      {},
+      { NEXT_PUBLIC_POSTHOG_KEY: "   " },
+      { ...ENV, NEXT_PUBLIC_LOCAL_MODE: "true" },
+      { ...ENV, NEXT_PUBLIC_TEST_MODE: "1" },
+    ]) {
+      setup(env);
+      expect(isAnalyticsConfigured()).toBe(false);
+      await signIn("u-1", false);
+      expect(getAnalyticsState()).toBe("unavailable");
+      expect(load).not.toHaveBeenCalled();
+    }
+    expect(analyticsDisabledReason({ ...ENV, NEXT_PUBLIC_TEST_MODE: "true" })).toBe("test_mode");
   });
 
-  it("local UI mode → never loads, even with a key", async () => {
-    const { active, load } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_LOCAL_MODE: "true" });
-    expect(active).toBe(false);
-    expect(load).not.toHaveBeenCalled();
-    expect(analyticsDisabledReason({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_LOCAL_MODE: "1" })).toBe("local_mode");
-  });
-
-  it("E2E/test build (NEXT_PUBLIC_TEST_MODE=1) → never loads, even with a key", async () => {
-    const { active, load } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_TEST_MODE: "1" });
-    expect(active).toBe(false);
-    expect(load).not.toHaveBeenCalled();
-    expect(analyticsDisabledReason({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_TEST_MODE: "true" })).toBe("test_mode");
+  it("uses the app's one definition of a build flag (lib/testMode.ts)", () => {
+    for (const v of ["1", "true", "0", "false", "", "yes", undefined]) {
+      const reason = analyticsDisabledReason({ ...ENV, NEXT_PUBLIC_TEST_MODE: v });
+      expect(reason === "test_mode", String(v)).toBe(isTruthyBuildFlag(v));
+    }
   });
 
   it("reads the build-time env vars", () => {
     vi.stubEnv("NEXT_PUBLIC_POSTHOG_KEY", KEY);
     vi.stubEnv("NEXT_PUBLIC_TEST_MODE", "1");
     expect(readAnalyticsEnv()).toMatchObject({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_TEST_MODE: "1" });
-    expect(analyticsDisabledReason(readAnalyticsEnv())).toBe("test_mode");
   });
 
-  it("a key → initialises once with the privacy config", async () => {
-    const { active, load, ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: ` ${KEY} ` });
-    expect(active).toBe(true);
-    expect(load).toHaveBeenCalledTimes(1);
-    expect(ph.init).toHaveBeenCalledTimes(1);
-    const [key, config] = ph.init.mock.calls[0] as [string, Record<string, unknown>];
-    expect(key).toBe(KEY);
+  it("the privacy config: memory persistence, no flags, no remote UI, masking", () => {
+    const config = buildPosthogConfig(ENV);
     expect(config).toMatchObject({
       api_host: "/ingest",
       ui_host: "https://us.posthog.com",
+      persistence: "memory",
       person_profiles: "identified_only",
       capture_pageview: "history_change",
       capture_pageleave: true,
@@ -173,13 +140,6 @@ describe("init gating", () => {
       autocapture: { capture_copied_text: false },
       mask_personal_data_properties: true,
       disable_capture_url_hashes: true,
-    });
-    // The /auth/callback handoff params are masked by posthog-js at the source.
-    expect(config.custom_personal_data_properties).toEqual(
-      expect.arrayContaining(["auth_token", "user_id", "avatar", "popup_id"]),
-    );
-    // No feature flags (no /flags request) and no remote-UI extensions.
-    expect(config).toMatchObject({
       advanced_disable_flags: true,
       disable_surveys: true,
       disable_surveys_automatic_display: true,
@@ -187,254 +147,151 @@ describe("init gating", () => {
       disable_conversations: true,
       disable_web_experiments: true,
       opt_in_site_apps: false,
-      opt_out_capturing_by_default: false,
     });
+    expect(config.custom_personal_data_properties).toEqual(
+      expect.arrayContaining(["auth_token", "user_id", "avatar", "popup_id"]),
+    );
     expect(config.before_send).toBe(gatedBeforeSend);
-    // Idempotent.
-    expect(await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, load)).toBe(true);
-    expect(ph.init).toHaveBeenCalledTimes(1);
-  });
-
-  it("NEXT_PUBLIC_POSTHOG_HOST overrides api_host", () => {
+    expect(config).not.toHaveProperty("opt_out_capturing_by_default");
     expect(buildPosthogConfig({ NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com" }).api_host).toBe(
       "https://us.i.posthog.com",
     );
   });
 
-  it("uses the app's one definition of the test build (lib/testMode.ts)", () => {
-    for (const v of ["1", "true", "0", "false", "", "yes", undefined]) {
-      const reason = analyticsDisabledReason({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_TEST_MODE: v });
-      expect(reason === "test_mode", String(v)).toBe(isTruthyBuildFlag(v));
-    }
-  });
-
-  it("isAnalyticsConfigured mirrors the gate", () => {
-    expect(isAnalyticsConfigured({ NEXT_PUBLIC_POSTHOG_KEY: KEY })).toBe(true);
-    expect(isAnalyticsConfigured({})).toBe(false);
-    expect(isAnalyticsConfigured({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_TEST_MODE: "1" })).toBe(false);
-  });
-
   it("a loader failure leaves the app running with analytics off", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const load = vi.fn(async () => {
-      throw new Error("blocked");
+    __resetAnalyticsForTests({
+      env: ENV,
+      load: async () => {
+        throw new Error("blocked");
+      },
     });
-    expect(await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, load)).toBe(false);
-    expect(isAnalyticsActive()).toBe(false);
+    await signIn("u-1", false);
+    expect(await __analyticsLoadedForTests()).toBeNull();
   });
 });
 
-describe("identify", () => {
-  it("is a no-op while analytics is off", async () => {
-    await start({});
-    expect(() => identifyUser("u-1")).not.toThrow();
-    expect(() => resetAnalytics()).not.toThrow();
-    expect(() => resolveAccountAnalytics("u-1", true)).not.toThrow();
+describe("only signed-in students whose account says false", () => {
+  it("anonymous / signed out: not loaded, nothing passes the gate", async () => {
+    stopAnalytics();
+    expect(getAnalyticsState()).toBe("unknown");
+    expect(load).not.toHaveBeenCalled();
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
   });
 
-  it("identifies with the UUID only — no traits — once the account says not opted out", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    holdAnalytics();
-    resolveAccountAnalytics("3f1c-uuid", false);
+  it("account false: loaded, identified by UUID alone in `loaded`, events pass", async () => {
+    await signIn("3f1c-uuid", false);
+    expect(getAnalyticsState()).toBe("on");
+    expect(load).toHaveBeenCalledTimes(1);
     expect(ph.identify.mock.calls).toEqual([["3f1c-uuid"]]);
-    resolveAccountAnalytics("3f1c-uuid", false); // same user again: skipped
-    expect(ph.identify).toHaveBeenCalledTimes(1);
+    expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
   });
 
-  it("NEVER identifies an opted-out student — account, local choice, or DNT/GPC", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-account", true);
-    identifyUser("u-account");
-    expect(ph.identify).not.toHaveBeenCalled();
+  it("account true: off, never loaded, never identified", async () => {
+    await signIn("u-1", true);
+    expect(getAnalyticsState()).toBe("off");
+    expect(load).not.toHaveBeenCalled();
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+  });
 
-    await reload(ph);
-    localStorage.setItem(OPT_OUT_RECORDS_KEY, JSON.stringify({ "u-local": "saved" }));
-    resolveAccountAnalytics("u-local", undefined);
-    expect(ph.identify).not.toHaveBeenCalled();
+  it("a missing field or a failed read (no answer): unknown, never loaded", async () => {
+    await signIn("u-1", undefined);
+    expect(getAnalyticsState()).toBe("unknown");
+    beginAccountRead("u-1"); // the read that then fails never answers
+    expect(getAnalyticsState()).toBe("unknown");
+    expect(load).not.toHaveBeenCalled();
+  });
 
-    await reload(fakePosthog());
+  it("DNT / GPC: always off — never loaded, even when the account says false", async () => {
     setGpc(true);
-    const { ph: ph3 } = await reload();
-    resolveAccountAnalytics("u-gpc", false);
-    expect(ph3.identify).not.toHaveBeenCalled();
+    await signIn("u-1", false);
+    expect(getAnalyticsState()).toBe("browser_blocked");
+    expect(load).not.toHaveBeenCalled();
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+    expect(await chooseAnalytics("u-1", true, ok)).toBe("failed");
   });
 
-  it("resets before identifying a DIFFERENT identified user, so the two are never merged", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, fakePosthog({ distinctId: "u-A", identified: true }));
-    resolveAccountAnalytics("u-B", false);
+  it("never touches posthog-js's own (persisted) opt-out / opt-in", async () => {
+    await signIn("u-1", false);
+    await chooseAnalytics("u-1", false, ok);
+    await chooseAnalytics("u-1", true, ok);
+    expect(ph.opt_out_capturing).not.toHaveBeenCalled();
+    expect(ph.opt_in_capturing).not.toHaveBeenCalled();
+  });
+
+  it("sign-out stops capture at once; a different student later on the same page is never merged", async () => {
+    await signIn("u-X", false);
+    stopAnalytics();
+    expect(gatedBeforeSend(event("$autocapture"))).toBeNull();
     expect(ph.reset).toHaveBeenCalledTimes(1);
-    expect(ph.reset.mock.invocationCallOrder[0]).toBeLessThan(ph.identify.mock.invocationCallOrder[0]);
-    expect(ph.identify.mock.calls).toEqual([["u-B"]]);
-  });
-
-  it("an answer that arrives while posthog-js loads is replayed after init", async () => {
-    const ph = fakePosthog();
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const pending = initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, async () => {
-      await gate;
-      return ph as unknown as PostHog;
-    });
-    holdAnalytics();
-    resolveAccountAnalytics("early-user", false);
-    expect(ph.identify).not.toHaveBeenCalled();
-    release();
-    await pending;
-    expect(ph.identify.mock.calls).toEqual([["early-user"]]);
+    await signIn("u-Y", false);
+    expect(ph.identify.mock.calls).toEqual([["u-X"], ["u-Y"]]);
+    expect(load).toHaveBeenCalledTimes(1); // loaded once per page
   });
 });
 
-describe("the per-user opt-out decision", () => {
-  it("an account opt-out applies but is NOT recorded as a local choice", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", true);
-    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+describe("stale account reads", () => {
+  it("a read that started before a toggle is ignored", async () => {
+    await signIn("u-1", false);
+    const staleGen = beginAccountRead("u-1"); // e.g. a re-render's read, in flight
+    await chooseAnalytics("u-1", false, ok); // the student opts out meanwhile
+    applyAccountAnalytics(staleGen, "u-1", false); // …and the old answer lands
     expect(getAnalyticsState()).toBe("off");
-    expect(records()).toEqual({});
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
   });
 
-  it("an account false clears an account-derived opt-out on the next load", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", true);
-    expect(getAnalyticsState()).toBe("off");
-    // Next load: posthog-js still remembers "denied"; the account now says false.
-    const next = fakePosthog({ consent: ph.storedConsent() });
-    await reload(next);
-    resolveAccountAnalytics("u-1", false);
-    expect(next.opt_in_capturing).toHaveBeenCalledWith({ captureEventName: false });
-    expect(getAnalyticsState()).toBe("on");
-    expect(next.identify).toHaveBeenCalledWith("u-1");
-  });
-
-  it("(a) laptop A / laptop B: opting back in on B reaches A", async () => {
-    // Laptop A: the student opts out in Settings; the account save succeeds.
-    localStorage.setItem("sapling_user", JSON.stringify({ id: "u-1" }));
-    const a1 = fakePosthog();
-    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, a1);
-    resolveAccountAnalytics("u-1", false);
-    expect(await chooseAnalytics("u-1", false, ok)).toBe("saved");
-    expect(records()).toEqual({ "u-1": "saved" });
-    const laptopA: Record<string, string> = {};
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)!;
-      laptopA[k] = localStorage.getItem(k)!;
-    }
-    const aConsent = a1.storedConsent();
-
-    // Laptop B (a different browser): the account's opt-out applies there.
-    localStorage.clear();
-    const b = fakePosthog();
-    await reload(b);
-    resolveAccountAnalytics("u-1", true);
-    expect(getAnalyticsState()).toBe("off");
-    expect(b.identify).not.toHaveBeenCalled();
-    // …and the student opts back in there. The account is saved FIRST.
-    const save = vi.fn(ok);
-    expect(await chooseAnalytics("u-1", true, save)).toBe("saved");
-    expect(save).toHaveBeenCalledWith(false);
-    expect(save.mock.invocationCallOrder[0]).toBeLessThan(b.opt_in_capturing.mock.invocationCallOrder[0]);
-    expect(getAnalyticsState()).toBe("on");
-
-    // Back on laptop A: its "saved" note is superseded by the account's false.
-    localStorage.clear();
-    for (const [k, v] of Object.entries(laptopA)) localStorage.setItem(k, v);
-    const a2 = fakePosthog({ consent: aConsent });
-    await reload(a2);
-    // Before the account answers, A's own note holds it off from init on.
-    expect(a2.init.mock.calls[0][1]).toMatchObject({ opt_out_capturing_by_default: true });
-    resolveAccountAnalytics("u-1", false);
-    expect(getAnalyticsState()).toBe("on");
-    expect(a2.identify).toHaveBeenCalledWith("u-1");
-    expect(records()).toEqual({});
-  });
-
-  it("(b) shared browser: student Y never inherits student X's opt-out", async () => {
-    localStorage.setItem("sapling_user", JSON.stringify({ id: "u-X" }));
-    const ph = fakePosthog();
-    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, ph);
-    resolveAccountAnalytics("u-X", false);
-    await chooseAnalytics("u-X", false, ok);
-    expect(getAnalyticsState()).toBe("off");
-
-    // X signs out: the signed-out browser stays off for X…
-    resetAnalytics();
-    expect(ph.storedConsent()).toBe("denied");
-    localStorage.setItem("sapling_user", JSON.stringify({ id: "u-Y" }));
-
-    // …Y signs in on the next load, with an account that predates the column
-    // or explicitly says false: Y is on, identified, and X's note is untouched.
-    for (const account of [undefined, false]) {
-      const next = fakePosthog({ consent: ph.storedConsent() });
-      await reload(next);
-      expect(next.init.mock.calls[0][1]).toMatchObject({ opt_out_capturing_by_default: false });
-      resolveAccountAnalytics("u-Y", account);
-      expect(getAnalyticsState()).toBe("on");
-      expect(next.identify).toHaveBeenCalledWith("u-Y");
-    }
-    expect(records()).toEqual({ "u-X": "saved" });
-  });
-
-  it("the same handover inside one page load (no reload between them)", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, fakePosthog());
-    resolveAccountAnalytics("u-X", true);
-    resetAnalytics(); // X signs out
-    holdAnalytics(); // Y signs in
-    resolveAccountAnalytics("u-Y", false);
-    expect(getAnalyticsState()).toBe("on");
-    expect(ph.identify.mock.calls).toEqual([["u-Y"]]);
-  });
-
-  it("an opt-out whose account save FAILED stands, even against an account false", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", false);
-    expect(await chooseAnalytics("u-1", false, fail)).toBe("local_only");
-    expect(records()).toEqual({ "u-1": "pending" });
-    const next = fakePosthog({ consent: ph.storedConsent() });
-    await reload(next);
-    resolveAccountAnalytics("u-1", false);
-    expect(getAnalyticsState()).toBe("off");
-    expect(next.identify).not.toHaveBeenCalled();
-  });
-
-  it("a backend without the column (pre-#677): this browser's note decides", async () => {
-    localStorage.setItem(OPT_OUT_RECORDS_KEY, JSON.stringify({ "u-1": "saved" }));
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", undefined);
-    expect(ph.opt_out_capturing).toHaveBeenCalled();
-    expect(getAnalyticsState()).toBe("off");
-    resolveAccountAnalytics("u-2", undefined);
-    expect(getAnalyticsState()).toBe("on");
+  it("a read for a user who has since signed out is ignored", async () => {
+    const gen = beginAccountRead("u-1");
+    stopAnalytics();
+    applyAccountAnalytics(gen, "u-1", false);
+    expect(getAnalyticsState()).toBe("unknown");
+    expect(load).not.toHaveBeenCalled();
   });
 });
 
 describe("Settings choices (chooseAnalytics)", () => {
-  it("opt-out is local-first: capture stops before the save resolves", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", false);
+  it("opt-OUT stops capture before the save resolves", async () => {
+    await signIn("u-1", false);
     let finish!: () => void;
     const save = vi.fn(() => new Promise<void>((r) => (finish = r)));
     const done = chooseAnalytics("u-1", false, save);
-    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
     expect(getAnalyticsState()).toBe("off");
-    expect(records()).toEqual({ "u-1": "pending" });
+    expect(gatedBeforeSend(event("$autocapture"))).toBeNull();
     finish();
     expect(await done).toBe("saved");
-    expect(records()).toEqual({ "u-1": "saved" });
     expect(save).toHaveBeenCalledWith(true);
   });
 
-  it("opt-in is account-first: a failed save changes nothing", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", true);
-    expect(await chooseAnalytics("u-1", true, fail)).toBe("failed");
-    expect(ph.opt_in_capturing).not.toHaveBeenCalled();
+  it("a failed opt-OUT save stays off for the page load", async () => {
+    await signIn("u-1", false);
+    expect(await chooseAnalytics("u-1", false, fail)).toBe("failed");
     expect(getAnalyticsState()).toBe("off");
-    expect(ph.identify).not.toHaveBeenCalled();
   });
 
-  it("one choice at a time: a second toggle while a save is in flight is refused", async () => {
-    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", false);
+  it("opt-IN: nothing starts until the save succeeds", async () => {
+    await signIn("u-1", true);
+    let finish!: () => void;
+    const save = vi.fn(() => new Promise<void>((r) => (finish = r)));
+    const done = chooseAnalytics("u-1", true, save);
+    expect(save).toHaveBeenCalledWith(false);
+    expect(getAnalyticsState()).toBe("off");
+    expect(load).not.toHaveBeenCalled();
+    finish();
+    expect(await done).toBe("saved");
+    await __analyticsLoadedForTests();
+    expect(getAnalyticsState()).toBe("on");
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+  });
+
+  it("a failed opt-IN save changes nothing", async () => {
+    await signIn("u-1", true);
+    expect(await chooseAnalytics("u-1", true, fail)).toBe("failed");
+    expect(getAnalyticsState()).toBe("off");
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("one toggle at a time", async () => {
+    await signIn("u-1", false);
     let finish!: () => void;
     const save = vi.fn(() => new Promise<void>((r) => (finish = r)));
     const first = chooseAnalytics("u-1", false, save);
@@ -445,140 +302,17 @@ describe("Settings choices (chooseAnalytics)", () => {
     expect(getAnalyticsState()).toBe("off");
   });
 
-  it("an opt-in after a failed settings read opens the shut gate and identifies", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, fakePosthog({ consent: "denied" }));
-    holdAnalytics(); // the read failed: never resolved
-    expect(await chooseAnalytics("u-1", true, ok)).toBe("saved");
-    expect(gatedBeforeSend({ event: "x", uuid: "1", properties: {} } as unknown as CaptureResult)).not.toBeNull();
-    expect(ph.identify).toHaveBeenCalledWith("u-1");
-  });
-});
-
-describe("DNT / GPC is never persisted as the student's own opt-out", () => {
-  it("GPC on → reset → GPC off: capture resumes and the switch follows", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    resolveAccountAnalytics("u-1", false);
-    setGpc(true);
-    expect(ph.get_explicit_consent_status()).toBe("denied"); // the getter folds GPC in
-    expect(getAnalyticsState()).toBe("browser_blocked");
-    resetAnalytics();
-    expect(ph.opt_out_capturing).not.toHaveBeenCalled();
-    setGpc(false);
-    expect(ph.has_opted_out_capturing()).toBe(false);
-    expect(getAnalyticsState()).toBe("on");
+  it("refused before the account has answered (the switch is disabled then)", async () => {
+    beginAccountRead("u-1");
+    expect(await chooseAnalytics("u-1", true, ok)).toBe("failed");
   });
 
-  it("an account opt-out under GPC is still applied, so it outlives the signal", async () => {
-    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    setGpc(true);
-    resolveAccountAnalytics("u-1", true);
-    setGpc(false);
-    expect(getAnalyticsState()).toBe("off");
-  });
-});
-
-describe("opt-out store", () => {
-  it("is unavailable when analytics is off", async () => {
-    await start({});
-    expect(getAnalyticsState()).toBe("unavailable");
-    expect(await chooseAnalytics("u-1", false, ok)).toBe("failed");
-  });
-
-  it("notifies subscribers on every change", async () => {
-    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+  it("notifies subscribers", async () => {
     const listener = vi.fn();
-    const unsubscribe = subscribeAnalytics(listener);
-    resolveAccountAnalytics("u-1", false);
+    subscribeAnalytics(listener);
+    await signIn("u-1", false);
     await chooseAnalytics("u-1", false, ok);
-    await chooseAnalytics("u-1", true, ok);
-    expect(listener).toHaveBeenCalledTimes(3);
-    unsubscribe();
-  });
-
-  it("reports browser_blocked under Do Not Track / GPC", async () => {
-    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    setGpc(true);
-    expect(getAnalyticsState()).toBe("browser_blocked");
-    setGpc(false);
-    expect(getAnalyticsState()).toBe("on");
-  });
-});
-
-describe("capture gate", () => {
-  const pageview = () => ({ event: "$pageview", uuid: "x", properties: {} }) as unknown as CaptureResult;
-  const click = () => ({ event: "$autocapture", uuid: "y", properties: {} }) as unknown as CaptureResult;
-
-  it("is CLOSED from page load: nothing passes before_send until identity settles", async () => {
-    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    expect(gatedBeforeSend(pageview())).toBeNull();
-    expect(gatedBeforeSend(click())).toBeNull();
-  });
-
-  it("an anonymous visitor opens it, and the swallowed pageview is re-sent once", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    expect(gatedBeforeSend(pageview())).toBeNull();
-    releaseAnonymousAnalytics();
-    expect(ph.capture.mock.calls).toEqual([["$pageview"]]);
-    expect(gatedBeforeSend(pageview())).not.toBeNull(); // the re-sent one passes
-    releaseAnonymousAnalytics();
-    expect(ph.capture).toHaveBeenCalledTimes(1);
-  });
-
-  it("the gate is already open when $identify is captured (it is an event too)", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    holdAnalytics();
-    let passed: CaptureResult | null = null;
-    ph.identify.mockImplementation(() => {
-      passed = gatedBeforeSend({ event: "$identify", uuid: "i", properties: {} } as unknown as CaptureResult);
-    });
-    resolveAccountAnalytics("u-1", false);
-    expect(passed).not.toBeNull();
-  });
-
-  it("a signed-in student: held until the preference arrives, then identified + pageview", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    holdAnalytics();
-    expect(gatedBeforeSend(pageview())).toBeNull();
-    expect(ph.identify).not.toHaveBeenCalled();
-    resolveAccountAnalytics("u-1", false);
-    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
-    expect(ph.capture.mock.calls).toEqual([["$pageview"]]);
-    expect(ph.identify.mock.invocationCallOrder[0]).toBeLessThan(ph.capture.mock.invocationCallOrder[0]);
-  });
-
-  it("an opted-out student's swallowed pageview is not re-sent", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    holdAnalytics();
-    gatedBeforeSend(pageview());
-    resolveAccountAnalytics("u-1", true);
-    expect(ph.capture).not.toHaveBeenCalled();
-  });
-
-  it("fails closed: no answer (the settings read failed) keeps the gate shut", async () => {
-    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    releaseAnonymousAnalytics();
-    holdAnalytics();
-    expect(gatedBeforeSend(pageview())).toBeNull();
-    expect(gatedBeforeSend(click())).toBeNull();
-    expect(ph.identify).not.toHaveBeenCalled();
-  });
-
-  it("an opt-out that arrives while posthog-js loads is applied before anything opens", async () => {
-    const ph = fakePosthog();
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const pending = initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, async () => {
-      await gate;
-      return ph as unknown as PostHog;
-    });
-    holdAnalytics();
-    resolveAccountAnalytics("u-1", true);
-    expect(gatedBeforeSend(pageview())).toBeNull();
-    release();
-    await pending;
-    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
-    expect(ph.identify).not.toHaveBeenCalled();
-    expect(ph.capture).not.toHaveBeenCalled();
+    expect(listener.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 });
 

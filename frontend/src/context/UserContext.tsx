@@ -4,11 +4,10 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 import { API_URL, fetchSettings, getMe } from '@/lib/api';
 import {
-  holdAnalytics,
+  applyAccountAnalytics,
+  beginAccountRead,
   isAnalyticsConfigured,
-  releaseAnonymousAnalytics,
-  resetAnalytics,
-  resolveAccountAnalytics,
+  stopAnalytics,
 } from '@/lib/analytics';
 
 interface UserOption {
@@ -194,38 +193,31 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setIsAdmin(false);
     localStorage.removeItem('sapling_user');
     // Sign-out, account deletion (Settings → signOut) and a dead session all
-    // land here: detach analytics from this user. No-op when analytics is off.
-    resetAnalytics();
+    // land here: analytics stops at once. No-op when analytics is off.
+    stopAnalytics();
   }, []);
 
-  // Product analytics (src/lib/analytics.ts) captures nothing until this
-  // settles who is here. No session → capture opens at once. A signed-in
-  // student → capture stays shut until their account preference
-  // (user_settings.analytics_opt_out) has been read: an opt-out is stored and
-  // they are never identified; otherwise they are identified by UUID only —
-  // never name, email or any other trait. If the read fails, capture stays
-  // shut for the rest of this page load (fail closed). This is the ONE place
-  // the account preference is applied. Skipped entirely — no settings
-  // request — when this build runs no analytics.
+  // Product analytics (src/lib/analytics.ts) runs only for a signed-in
+  // student whose account preference (user_settings.analytics_opt_out) has
+  // been read as `false` — read afresh on every page load, since nothing
+  // about it is stored in the browser. Signed out → off. A failed read →
+  // off for the rest of this page load. A read overtaken by a Settings
+  // toggle or a sign-out is ignored (analytics.ts's generation counter).
+  // Skipped entirely — no settings request — when this build runs no
+  // analytics.
   useEffect(() => {
     if (!userReady || !isAnalyticsConfigured()) return;
     if (!isAuthenticated || !userId) {
-      releaseAnonymousAnalytics();
+      stopAnalytics();
       return;
     }
-    holdAnalytics();
-    let cancelled = false;
+    const gen = beginAccountRead(userId);
     fetchSettings(userId).then(
-      (s) => {
-        if (!cancelled) resolveAccountAnalytics(userId, s.analytics_opt_out);
-      },
+      (s) => applyAccountAnalytics(gen, userId, s.analytics_opt_out),
       () => {
-        // Fail closed: the gate stays shut until the next page load.
+        // Fail closed: analytics stays off for this page load.
       },
     );
-    return () => {
-      cancelled = true;
-    };
   }, [userReady, isAuthenticated, userId]);
 
   const fetchProfileData = useCallback(async (uid: string) => {

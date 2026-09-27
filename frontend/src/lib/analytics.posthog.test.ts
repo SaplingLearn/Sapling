@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
 /**
- * The REAL posthog-js, driven through our config and helpers, wherever the
+ * The REAL posthog-js, driven through src/lib/analytics.ts, wherever the
  * SDK's own behaviour is what matters:
+ * - anonymous page / opted-out student / failed account read → zero requests
+ *   (posthog-js is never even loaded);
+ * - an allowed student → `$identify` + exactly one `$pageview`, no `/flags`;
+ * - opting out mid-page stops capture at once; opting in captures only after
+ *   the account save succeeded; a stale account read after a toggle is
+ *   ignored;
+ * - nothing is written to cookies, localStorage or sessionStorage;
  * - the `/auth/callback` handoff params are masked by the SDK itself before
- *   `before_send` ever sees an event (control case: without our list they
- *   are not), and nothing secret reaches the wire;
- * - feature flags are off: zero `/flags` requests, and while a student is
- *   opted out no request carries a distinct id or their UUID;
- * - a recorded opt-out applies from init (`opt_out_capturing_by_default`);
- * - the capture gate: zero events while a signed-in student's account
- *   preference is pending, none after an account opt-out, `$identify` +
- *   `$pageview` after a not-opted-out answer;
- * - DNT/GPC survives `reset()` without being stored as an opt-out;
- * - a shared browser hands over cleanly from an opted-out student to one
- *   who is not.
+ *   `before_send` runs (control case: without our list they are not), and
+ *   nothing secret reaches the wire.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { gunzipSync } from "node:zlib";
@@ -21,22 +19,15 @@ import { gunzipSync } from "node:zlib";
 import type { CaptureResult, PostHog as PostHogType } from "posthog-js";
 
 import {
+  __analyticsLoadedForTests,
   __resetAnalyticsForTests,
+  applyAccountAnalytics,
+  beginAccountRead,
   buildPosthogConfig,
   chooseAnalytics,
-  gatedBeforeSend,
-  getAnalyticsState,
-  holdAnalytics,
-  initAnalytics,
-  OPT_OUT_RECORDS_KEY,
-  releaseAnonymousAnalytics,
-  resetAnalytics,
-  resolveAccountAnalytics,
+  scrubEvent,
+  stopAnalytics,
 } from "./analytics";
-
-const SECRET = "SECRET-HANDOFF-TOKEN";
-const USER_ID = "3f1c0000-uuid-of-the-student";
-const AVATAR = "https://lh3.googleusercontent.com/a/AVATAR-ID";
 
 type Sent = { url: string; body: string };
 
@@ -54,23 +45,39 @@ function decode(body: unknown): string {
 }
 
 let sent: Sent[];
+let instances: PostHogType[];
+
+function storageSnapshot(): string {
+  const keys = (st: Storage) => Array.from({ length: st.length }, (_, i) => st.key(i)).sort().join(",");
+  return `local=[${keys(localStorage)}] session=[${keys(sessionStorage)}] cookie=[${document.cookie}]`;
+}
 
 beforeEach(() => {
-  __resetAnalyticsForTests();
-  localStorage.clear();
   sent = [];
+  instances = [];
+  localStorage.clear();
+  sessionStorage.clear();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL, init?: RequestInit) => {
       sent.push({ url: String(url), body: decode(init?.body) });
-      return new Response(JSON.stringify({ featureFlags: {}, flags: {} }), {
+      return new Response(JSON.stringify({ status: 1 }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }),
   );
-  const qs = new URLSearchParams({ user_id: USER_ID, avatar: AVATAR, auth_token: SECRET, is_approved: "true" });
-  window.history.replaceState({}, "", `/auth/callback?${qs}#frag`);
+  window.history.replaceState({}, "", "/dashboard");
+  __resetAnalyticsForTests({
+    env: { NEXT_PUBLIC_POSTHOG_KEY: `phc_real_${Math.random().toString(36).slice(2, 8)}` },
+    load: async () => {
+      // Imported after fetch is stubbed: posthog-js captures `fetch` at load.
+      const { PostHog } = await import("posthog-js");
+      const ph = new PostHog();
+      instances.push(ph);
+      return ph;
+    },
+  });
 });
 
 afterEach(() => {
@@ -78,27 +85,135 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-/** What the SDK handed to before_send, before our scrub ran. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Longer than posthog-js's 3 s batch flush. */
+const FLUSH = 3500;
+
+/** Our SDK's requests (api_host "/ingest"); the masking runs use ph.test. */
+function ingest(): Sent[] {
+  return sent.filter((r) => r.url.startsWith("/ingest/"));
+}
+function eventBodies(): string {
+  return ingest()
+    .filter((r) => /^\/ingest\/(e|i\/v0\/e|batch|s)\//.test(r.url))
+    .map((r) => r.body)
+    .join("\n");
+}
+function count(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+async function signIn(userId: string, optOut: unknown) {
+  const gen = beginAccountRead(userId);
+  applyAccountAnalytics(gen, userId, optOut);
+  return (await __analyticsLoadedForTests()) as PostHogType | null;
+}
+
+describe("zero requests unless allowed, real posthog-js", () => {
+  it("anonymous page: posthog-js never loads, zero requests", async () => {
+    stopAnalytics();
+    await sleep(300);
+    expect(instances).toHaveLength(0);
+    expect(ingest()).toEqual([]);
+  });
+
+  it("signed in, account opted out: zero requests", async () => {
+    expect(await signIn("u-out", true)).toBeNull();
+    await sleep(300);
+    expect(instances).toHaveLength(0);
+    expect(ingest()).toEqual([]);
+  });
+
+  it("signed in, account read fails (no answer): zero requests", async () => {
+    beginAccountRead("u-fail");
+    await sleep(300);
+    expect(instances).toHaveLength(0);
+    expect(ingest()).toEqual([]);
+  });
+});
+
+describe("an allowed student, real posthog-js", () => {
+  it(
+    "$identify + exactly ONE $pageview, no /flags, nothing stored in the browser",
+    async () => {
+      const before = storageSnapshot();
+      const ph = await signIn("u-allowed", false);
+      expect(ph).not.toBeNull();
+      await vi.waitFor(() => expect(eventBodies()).toContain("$pageview"), { timeout: FLUSH + 2000 });
+      await sleep(FLUSH);
+      const bodies = eventBodies();
+      expect(count(bodies, '"event":"$identify"')).toBe(1);
+      expect(count(bodies, '"event":"$pageview"')).toBe(1);
+      expect(bodies).toContain("u-allowed");
+      expect(ingest().some((r) => r.url.includes("/flags"))).toBe(false);
+      expect(storageSnapshot()).toBe(before);
+    },
+    15_000,
+  );
+
+  it("opting out mid-page stops capture at once (before the save resolves)", async () => {
+    const ph = (await signIn("u-mid", false))!;
+    let finish!: () => void;
+    const done = chooseAnalytics("u-mid", false, () => new Promise<void>((r) => (finish = r)));
+    ph.capture("probe_after_optout", {}, { send_instantly: true });
+    await sleep(300);
+    expect(eventBodies()).not.toContain("probe_after_optout");
+    finish();
+    await done;
+    ph.capture("probe_after_save", {}, { send_instantly: true });
+    await sleep(300);
+    expect(eventBodies()).not.toContain("probe_after_save");
+  });
+
+  it("opting in captures only after the account save succeeded", async () => {
+    await signIn("u-in", true);
+    let finish!: () => void;
+    const done = chooseAnalytics("u-in", true, () => new Promise<void>((r) => (finish = r)));
+    await sleep(300);
+    expect(instances).toHaveLength(0); // not even loaded while the save is pending
+    expect(ingest()).toEqual([]);
+    finish();
+    expect(await done).toBe("saved");
+    const ph = (await __analyticsLoadedForTests())!;
+    ph.capture("probe_after_optin", {}, { send_instantly: true });
+    await vi.waitFor(() => expect(eventBodies()).toContain("probe_after_optin"), { timeout: 3000 });
+    expect(eventBodies()).toContain("u-in");
+  });
+
+  it("an account read that started before a toggle is ignored when it lands", async () => {
+    const ph = (await signIn("u-stale", false))!;
+    const staleGen = beginAccountRead("u-stale");
+    await chooseAnalytics("u-stale", false, () => Promise.resolve());
+    applyAccountAnalytics(staleGen, "u-stale", false); // the stale "allowed" answer
+    ph.capture("probe_after_stale", {}, { send_instantly: true });
+    await sleep(300);
+    expect(eventBodies()).not.toContain("probe_after_stale");
+  });
+});
+
+// ── masking at the source ───────────────────────────────────────────────────
+
+const SECRET = "SECRET-HANDOFF-TOKEN";
+const USER_ID = "3f1c0000-uuid-of-the-student";
+const AVATAR = "https://lh3.googleusercontent.com/a/AVATAR-ID";
+
 let preScrub: CaptureResult[];
 
-async function runSdk(overrides: Record<string, unknown>, name: string): Promise<Sent[]> {
+async function runMaskingSdk(overrides: Record<string, unknown>, name: string): Promise<Sent[]> {
   preScrub = [];
-  releaseAnonymousAnalytics(); // an anonymous page: the capture gate is open
-  // Imported after fetch is stubbed: posthog-js captures `fetch` at load.
+  const qs = new URLSearchParams({ user_id: USER_ID, avatar: AVATAR, auth_token: SECRET, is_approved: "true" });
+  window.history.replaceState({}, "", `/auth/callback?${qs}#frag`);
   const { PostHog } = await import("posthog-js");
   const ph = new PostHog();
-  const config = buildPosthogConfig({ NEXT_PUBLIC_POSTHOG_KEY: "phc_test" });
-  // A token per run: posthog-js persists `$initial_current_url` per token,
-  // and the control case must not inherit the masked value.
   ph.init(
     `phc_${name}`,
     {
-      ...config,
+      ...buildPosthogConfig({ NEXT_PUBLIC_POSTHOG_KEY: "phc_test" }),
       api_host: "https://ph.test",
       request_batching: false,
       before_send: (e: CaptureResult | null) => {
         if (e) preScrub.push(JSON.parse(JSON.stringify(e)));
-        return gatedBeforeSend(e);
+        return scrubEvent(e);
       },
       ...overrides,
     },
@@ -106,7 +221,7 @@ async function runSdk(overrides: Record<string, unknown>, name: string): Promise
   );
   ph.capture("probe_event");
   await vi.waitFor(() => expect(sent.some((s) => s.url.startsWith("https://ph.test/e/"))).toBe(true));
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   return sent.filter((r) => r.url.startsWith("https://ph.test"));
 }
 
@@ -116,8 +231,7 @@ function preScrubUrls(): string {
 
 describe("posthog-js masks the sign-in handoff at the source", () => {
   it("the SDK masks it before before_send, nothing secret is sent, and there is no /flags", async () => {
-    const requests = await runSdk({}, "masked");
-    // Masked by posthog-js itself — our scrub had not run yet.
+    const requests = await runMaskingSdk({}, "masked");
     expect(preScrubUrls()).toContain("auth_token=<masked>");
     expect(preScrubUrls()).not.toContain(SECRET);
     expect(requests.some((r) => r.url.includes("/flags"))).toBe(false);
@@ -129,163 +243,9 @@ describe("posthog-js masks the sign-in handoff at the source", () => {
   });
 
   it("control: without custom_personal_data_properties the SDK itself carries the token", async () => {
-    const requests = await runSdk({ custom_personal_data_properties: [] }, "unmasked");
+    const requests = await runMaskingSdk({ custom_personal_data_properties: [] }, "unmasked");
     expect(preScrubUrls()).toContain(SECRET);
     // …and before_send's scrub is what still keeps it off the wire.
     expect(requests.map((r) => r.body).join("")).not.toContain(SECRET);
-  });
-});
-
-/** Event requests only — not `/flags` or remote config. */
-function eventRequests(): Sent[] {
-  // Only this suite's SDK (api_host "/ingest"); the masking tests above point
-  // theirs at https://ph.test and may still flush a batch.
-  return sent.filter((r) => /^\/ingest\/(e|i\/v0\/e|batch|s)\//.test(r.url));
-}
-
-/** initAnalytics() with a fresh real posthog-js instance; api_host is `/ingest`. */
-async function startRealSdk(key: string): Promise<PostHogType> {
-  const { PostHog } = await import("posthog-js");
-  const ph = new PostHog();
-  expect(await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: key }, async () => ph)).toBe(true);
-  return ph;
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-describe("capture gate, real posthog-js", () => {
-  beforeEach(() => window.history.replaceState({}, "", "/dashboard"));
-
-  it(
-    "a signed-in student: ZERO events while the preference is pending, none after an account opt-out",
-    async () => {
-      const ph = await startRealSdk("phc_gate_optout");
-      holdAnalytics(); // the UserProvider found a session user; GET /settings in flight
-      ph.capture("probe_while_pending", {}, { send_instantly: true });
-      // Longer than posthog-js's batch flush: the init $pageview/autocapture
-      // would have gone by now had the gate let them through. This is also
-      // the fail-closed case — a read that never answers sends nothing.
-      await sleep(3500);
-      expect(eventRequests()).toEqual([]);
-
-      resolveAccountAnalytics("u-opted-out", true);
-      expect(ph.get_explicit_consent_status()).toBe("denied");
-      ph.capture("probe_after_optout", {}, { send_instantly: true });
-      await sleep(300);
-      expect(eventRequests()).toEqual([]);
-      expect(JSON.stringify(sent)).not.toContain("u-opted-out");
-    },
-    10_000,
-  );
-
-  it("not opted out: nothing before the answer, then the identify and the initial pageview", async () => {
-    const ph = await startRealSdk("phc_gate_optin");
-    holdAnalytics();
-    ph.capture("probe_while_pending", {}, { send_instantly: true });
-    await sleep(200);
-    expect(eventRequests()).toEqual([]);
-
-    resolveAccountAnalytics("u-in", false);
-    await vi.waitFor(
-      () => {
-        const bodies = eventRequests().map((r) => r.body).join("\n");
-        expect(bodies).toContain("$identify");
-        expect(bodies).toContain("$pageview");
-      },
-      { timeout: 6000, interval: 100 },
-    );
-    const bodies = eventRequests().map((r) => r.body).join("\n");
-    expect(bodies).not.toContain("probe_while_pending");
-    expect(bodies).toContain("u-in");
-  }, 10_000);
-});
-
-describe("flags off + init-time opt-out, real posthog-js", () => {
-  it(
-    "a recorded opt-out applies at init: no /flags, no distinct id, no UUID — only remote config",
-    async () => {
-      window.history.replaceState({}, "", "/dashboard");
-      const UUID = "9d0f0000-opted-out-student";
-      localStorage.setItem("sapling_user", JSON.stringify({ id: UUID, name: "T" }));
-      localStorage.setItem(OPT_OUT_RECORDS_KEY, JSON.stringify({ [UUID]: "saved" }));
-      const ph = await startRealSdk("phc_init_optout");
-      // opt_out_capturing_by_default: opted out before the account answered.
-      expect(ph.has_opted_out_capturing()).toBe(true);
-      holdAnalytics();
-      resolveAccountAnalytics(UUID, true);
-      ph.capture("probe_after", {}, { send_instantly: true });
-      await sleep(1500);
-      // With flags off posthog-js skips remote config too, so this is empty
-      // (also observed in Chromium against the OpenNext worker); the regex
-      // below is the most that would ever be allowed — config, no identity.
-      const ours = sent.filter((r) => r.url.startsWith("/ingest/"));
-      const distinctId = ph.get_distinct_id();
-      for (const r of ours) {
-        expect(r.url).toMatch(/^\/ingest\/array\/phc_init_optout\/config(\.js)?(\?|$)/);
-        expect(`${r.url} ${r.body}`).not.toContain(distinctId);
-        expect(`${r.url} ${r.body}`).not.toContain(UUID);
-      }
-      expect(ours.some((r) => r.url.includes("/flags"))).toBe(false);
-      expect(ph.get_distinct_id()).not.toBe(UUID); // never identified
-    },
-  );
-});
-
-describe("DNT / GPC across reset(), real posthog-js", () => {
-  afterEach(() => {
-    delete (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl;
-  });
-
-  it("GPC on → reset → GPC off: nothing was stored, capture resumes, the switch follows", async () => {
-    const ph = await startRealSdk("phc_gpc_reset");
-    resolveAccountAnalytics("u-gpc", false);
-    Object.defineProperty(navigator, "globalPrivacyControl", { value: true, configurable: true });
-    expect(ph.has_opted_out_capturing()).toBe(true); // respect_dnt
-    expect(ph.get_explicit_consent_status()).toBe("denied"); // even this getter folds GPC in
-    expect(getAnalyticsState()).toBe("browser_blocked");
-    resetAnalytics();
-    delete (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl;
-    expect(ph.get_explicit_consent_status()).toBe("pending"); // nothing was stored
-    expect(ph.has_opted_out_capturing()).toBe(false);
-    expect(getAnalyticsState()).toBe("on");
-    ph.capture("probe_after_gpc", {}, { send_instantly: true });
-    await vi.waitFor(() => expect(eventRequests().map((r) => r.body).join("")).toContain("probe_after_gpc"), {
-      timeout: 3000,
-    });
-  });
-
-  it("control: an opt-out the student chose IS carried across reset()", async () => {
-    const ph = await startRealSdk("phc_gpc_control");
-    resolveAccountAnalytics("u-choice", false);
-    await chooseAnalytics("u-choice", false, () => Promise.resolve());
-    resetAnalytics();
-    expect(ph.get_explicit_consent_status()).toBe("denied");
-    expect(getAnalyticsState()).toBe("off");
-  });
-});
-
-describe("shared browser handover, real posthog-js", () => {
-  it("student Y is captured and identified after opted-out student X signs out", async () => {
-    window.history.replaceState({}, "", "/dashboard");
-    const ph = await startRealSdk("phc_handover");
-    resolveAccountAnalytics("u-X", true); // X's account says opted out
-    expect(ph.get_explicit_consent_status()).toBe("denied");
-    resetAnalytics(); // X signs out; the browser stays off meanwhile
-    expect(ph.get_explicit_consent_status()).toBe("denied");
-    holdAnalytics(); // Y signs in
-    resolveAccountAnalytics("u-Y", false);
-    expect(getAnalyticsState()).toBe("on");
-    ph.capture("probe_for_Y", {}, { send_instantly: true });
-    await vi.waitFor(
-      () => {
-        const bodies = eventRequests().map((r) => r.body).join("\n");
-        expect(bodies).toContain("probe_for_Y");
-        expect(bodies).toContain("u-Y");
-      },
-      { timeout: 4000 },
-    );
-    const bodies = eventRequests().map((r) => r.body).join("\n");
-    expect(bodies).not.toContain("u-X"); // X was never identified
-    expect(bodies).not.toContain("$opt_in"); // a re-derivation, not a new choice
   });
 });
