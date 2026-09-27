@@ -11,10 +11,12 @@ import pathlib
 import re
 import sys
 
+import httpx
 import pytest
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 from agents.deps import SaplingDeps
 
@@ -357,7 +359,18 @@ def test_yes_no_decisions_map_answers(seam, answer, value, p_yes):
     assert "HINT RUNG:\nH1" in calls["prompts"][0] and "PASSAGE 1:" in calls["prompts"][1]
 
 
-@pytest.mark.parametrize("exc", [UsageLimitExceeded("budget"), UnexpectedModelBehavior("garbage")])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        UsageLimitExceeded("budget"),
+        UnexpectedModelBehavior("garbage"),
+        # The provider itself: the same set agents.grader.grade() degrades on
+        # (a 503/429 outage, and the raw httpx errors google-genai re-raises).
+        ModelHTTPError(status_code=503, model_name="gemini-2.5-flash-lite", body="overloaded"),
+        httpx.ReadTimeout("read timed out"),
+        httpx.ConnectError("connection refused"),
+    ],
+)
 def test_decision_agent_failure_degrades_to_none(seam, monkeypatch, caplog, events, exc):
     from agents.decision import decision_agent
 
@@ -365,11 +378,73 @@ def test_decision_agent_failure_degrades_to_none(seam, monkeypatch, caplog, even
         raise exc
 
     monkeypatch.setattr(decision_agent, "run", _boom)
+    rows = _llm_usage_rows(monkeypatch)
     with caplog.at_level("WARNING"):
         state = seam.LeakState(reference=REFERENCE, emitted="x", rung=1)
         assert asyncio.run(seam.judge_leak(state, deps=_deps())) is None
     assert any("decision unavailable" in r.getMessage() for r in caplog.records)
     assert [kw["payload"]["reason"] for _, kw in events] == ["both_failed"]
+    assert rows == []  # no response → nothing was billed
+
+
+def _llm_usage_rows(monkeypatch) -> list[dict]:
+    """Spy one level BELOW record_agent_usage: what reaches the llm_usage writer."""
+    from services import events_service
+
+    rows: list[dict] = []
+    monkeypatch.setattr(events_service, "log_llm_usage", lambda **kw: rows.append(kw))
+    return rows
+
+
+def _billed(payload: dict, usage: RequestUsage | None = None):
+    """A FunctionModel emitting `payload` on every request, each billed `usage`
+    (None: the FunctionModel estimate)."""
+    calls = {"n": 0}
+
+    def handler(messages, info):
+        calls["n"] += 1
+        response = ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=payload)]
+        )
+        if usage is not None:
+            response.usage = usage
+        return response
+
+    return FunctionModel(handler), calls
+
+
+def test_a_decision_run_over_the_token_cap_still_records_what_it_billed(seam, monkeypatch):
+    """GRADER_LIMITS' token cap is checked AFTER the response, so the provider has
+    billed it. The §3.5 caps (STUDENT_DAILY_GRADES counts task='decision') and the
+    admin cost analytics read llm_usage only (the agents.grader._run_once posture)."""
+    from agents import GRADER_LIMITS
+    from agents.decision import decision_agent
+
+    over = RequestUsage(input_tokens=GRADER_LIMITS.total_tokens_limit + 1, output_tokens=7)
+    model, calls = _billed({"answer": "yes", "confidence": 0.9}, over)
+    rows = _llm_usage_rows(monkeypatch)
+    with decision_agent.override(model=model):
+        state = seam.LeakState(reference=REFERENCE, emitted="x", rung=1)
+        assert asyncio.run(seam.judge_leak(state, deps=_deps())) is None
+    assert calls["n"] == 1
+    [row] = rows
+    assert (row["task"], row["feature"], row["user_id"]) == ("decision", "tutor", "u1")
+    assert row["usage"].requests == 1 and row["usage"].input_tokens == over.input_tokens
+
+
+def test_exhausted_decision_retries_record_every_billed_request(seam, monkeypatch):
+    from agents import GRADER_LIMITS
+    from agents.decision import decision_agent
+
+    model, calls = _billed({"answer": "maybe", "confidence": 7})
+    rows = _llm_usage_rows(monkeypatch)
+    with decision_agent.override(model=model):
+        state = seam.LeakState(reference=REFERENCE, emitted="x", rung=1)
+        assert asyncio.run(seam.judge_leak(state, deps=_deps())) is None
+    assert calls["n"] == GRADER_LIMITS.request_limit
+    [row] = rows
+    assert row["task"] == "decision" and row["usage"].requests == calls["n"]
+    assert row["usage"].total_tokens > 0
 
 
 def test_deterministic_and_evidence_backend(seam, events):

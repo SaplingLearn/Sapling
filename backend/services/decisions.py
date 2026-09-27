@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS, grader
 from agents._providers import model_mode
@@ -105,6 +105,10 @@ EVENT_ENUM_MAX_CHARS = 64  # a sha256 hex id (PKG-06's bound on event enum value
 _ENUM_VALUE = re.compile(rf"[A-Za-z0-9_.:-]{{0,{EVENT_ENUM_MAX_CHARS}}}")
 _MS_PER_S = 1000
 _FALLBACK_TO_NONE = "none"  # decision.fallback to_backend when no backend answered
+# A decision run degrades on exactly what grade() degrades on (UsageLimitExceeded,
+# UnexpectedModelBehavior, ModelAPIError ⊃ ModelHTTPError, httpx.TransportError): one
+# tuple, so a provider outage is an honest None on every decision, never a route 500.
+_DECISION_FAILURES = grader._GRADER_FAILURES
 
 
 # ── verdicts ──────────────────────────────────────────────────────────────────
@@ -499,14 +503,30 @@ def decision_request(decision: str, state) -> tuple[str, type[BaseModel]]:
 
 async def _run_decision(decision: str, state, deps):
     """The ONLY decision_agent.run site; PKG-06b makes ai_budget.check(deps.user_id, "decision")
-    its first statement (inv 23). The two agent failures → WARNING + None; anything else
-    propagates, exactly as from agents.grader.grade."""
+    its first statement (inv 23). A failure grade() degrades on (`_DECISION_FAILURES`: the
+    budget, output that never validated, the provider or the network under it) → WARNING +
+    None; anything else propagates, exactly as from agents.grader.grade.
+
+    `usage` is passed in so a run that raises still says what the provider billed (the
+    token cap is checked AFTER a response; a validation failure can follow a billed
+    request): the §3.5 caps (STUDENT_DAILY_GRADES counts task="decision") and the admin
+    cost analytics read llm_usage only — the agents.grader._run_once posture."""
     message, output_type = decision_request(decision, state)
+    usage = RunUsage()
     try:
         result = await decision_agent.run(
-            message, deps=deps, output_type=output_type, usage_limits=GRADER_LIMITS
+            message, deps=deps, output_type=output_type, usage_limits=GRADER_LIMITS, usage=usage
         )
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as exc:
+    except Exception as exc:
+        if usage.requests or usage.total_tokens:  # no response → nothing was billed
+            record_agent_usage(
+                grader._UnfinishedRun(usage),
+                feature=deps.feature,
+                task="decision",
+                user_id=deps.user_id,
+            )
+        if not isinstance(exc, _DECISION_FAILURES):
+            raise
         logger.warning("decision unavailable (%s): %s", decision, exc)
         return None
     record_agent_usage(result, feature=deps.feature, task="decision", user_id=deps.user_id)
