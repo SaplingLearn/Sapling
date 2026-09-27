@@ -66,11 +66,12 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
 learn.answer_refused          audit     reason (grader_directive / role_marker / verdict_tokens /
-                                        verdict_echo / addresses_grader), format, check_item_id,
-                                        request_id, rubric_items, directives, role_markers,
-                                        verdict_tokens, answer_chars — a check answer that
-                                        addressed the grader was not graded (PKG-05 reopen, spec
-                                        §6, §13 A33); counts only, never the answer
+                                        verdict_echo / addresses_grader / too_long), format,
+                                        check_item_id, request_id, rubric_items, directives,
+                                        role_markers, verdict_tokens, answer_chars — a check
+                                        answer that addressed the grader, or was longer than
+                                        GRADER_ANSWER_MAX_CHARS, was not graded (PKG-05 reopen,
+                                        spec §6, §13 A33); counts only, never the answer
 decision.made                 usage     decision, backend, request_id, latency_ms, confidence,
                                         fallback — one answered decision of the learning loop's
                                         typed decision seam (PKG-05b, spec §6, §13 A24)

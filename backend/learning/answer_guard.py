@@ -104,9 +104,15 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-# The screen's three, the verdict-echo belt, and the grader's own report (A33).
+# The screen's three, the verdict-echo belt, the grader's own report, and an
+# answer longer than GRADER_ANSWER_MAX_CHARS (A33): each one the student's choice.
 Refusal = Literal[
-    "grader_directive", "role_marker", "verdict_tokens", "verdict_echo", "addresses_grader"
+    "grader_directive",
+    "role_marker",
+    "verdict_tokens",
+    "verdict_echo",
+    "addresses_grader",
+    "too_long",
 ]
 REFUSALS: tuple[str, ...] = get_args(Refusal)
 

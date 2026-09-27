@@ -459,12 +459,17 @@ def test_a_run_that_never_got_a_response_records_nothing(monkeypatch):
     assert res.unavailable is True and rows == []
 
 
-def test_an_oversized_answer_is_unavailable_before_any_model_call(monkeypatch, caplog):
+def test_an_oversized_answer_is_refused_before_any_model_call(monkeypatch, caplog):
     """The answer is the one unbounded part of the message: one past
-    GRADER_ANSWER_MAX_CHARS degrades before anything is sent or billed. Length
-    never depends on the outcome, so both outcomes go missing alike (inv 28)."""
+    GRADER_ANSWER_MAX_CHARS is never sent or billed. Its length is the student's
+    choice, so it is a refusal (`too_long`, spec §13 A33), never an outage: a
+    caller asks again and never treats it as a skip. Nothing is recorded for
+    either outcome."""
     import agents.grader as g
+    from services import events_service
 
+    events = []
+    monkeypatch.setattr(events_service, "log_event", lambda e, **kw: events.append((e, kw)))
     model, calls = _billed_grader([_good()])
     rows = _llm_usage_rows(monkeypatch)
     with g.grader_agent.override(model=model), caplog.at_level("WARNING"):
@@ -481,9 +486,46 @@ def test_an_oversized_answer_is_unavailable_before_any_model_call(monkeypatch, c
                 deps=_deps(),
             )
         )
-    assert at_limit.unavailable is False and over.unavailable is True
+    assert at_limit.unavailable is False and at_limit.refused is None
+    assert over.refused == "too_long" and over.unavailable is True and over.all_yes is False
     assert calls["n"] == 1 and [row["task"] for row in rows] == ["grader"]
-    assert any("grader unavailable" in r.getMessage() for r in caplog.records)
+    [(event_type, kw)] = events
+    assert event_type == "learn.answer_refused" and kw["payload"]["reason"] == "too_long"
+    assert kw["payload"]["answer_chars"] == GRADER_ANSWER_MAX_CHARS + 1
+    assert any("too_long" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize(
+    "text,key",
+    [
+        ("Recursion is a loop that ends on its own.", None),  # a wrong answer
+        ("12", "10"),  # a clear numeric miss the gate would rule on
+    ],
+)
+def test_padding_a_wrong_answer_past_the_bound_is_never_a_skip(monkeypatch, text, key):
+    """CodeRabbit PR #673 round 3: padding a wrong answer past the bound once came
+    back `unavailable`, which the probe counts as not asked and the post-test as
+    an outage. It is a refusal now, with nothing recorded, so each caller's A33
+    rule applies (ask again; the CHECK_REFUSALS_AS_IDK-th refusal is an idk)."""
+    import agents.grader as g
+    import agents.tools.check as c
+
+    model, calls = _billed_grader([{**_good(0.95), "item_results": ["r1:no", "r2:no"]}])
+    item = _item(
+        **(
+            {"answer_kind": "numeric", "canonical_answer": key, "canonical_verified": True}
+            if key
+            else {}
+        )
+    )
+    padded = text + " " * GRADER_ANSWER_MAX_CHARS
+    deps = _deps()
+    with g.grader_agent.override(model=model):
+        out = asyncio.run(
+            c.grade_answer(item, _answer(answer_text=padded), deps=deps, node_id=NODE)
+        )
+    assert out.refused == "too_long" and out.unavailable is True and out.correct is None
+    assert deps.pending_evidence == [] and calls["n"] == 0
 
 
 def test_an_item_without_a_rubric_is_ungradeable(monkeypatch, caplog):

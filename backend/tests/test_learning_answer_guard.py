@@ -589,6 +589,7 @@ def test_refusal_reasons_are_one_closed_vocabulary():
             "verdict_tokens",
             "verdict_echo",
             "addresses_grader",
+            "too_long",
         }
     )
 

@@ -162,8 +162,9 @@ GRADER_SECOND_OPINION_SLOT = "grader_second"
 FEEDBACK_HINT_MAX_SENTENCES = 2  # † PKG-05 grader brief: the hint is short; not a spec value
 GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guard; not a spec value
 # † PKG-05: the student answer is the one unbounded part of a grader message;
-# past this many characters grade() degrades to unavailable before any call, so
-# an oversized answer is never sent or billed. A size guard on the RAW answer,
+# past this many characters grade() refuses it (`too_long`, spec §13 A33 — the
+# length is the student's choice, so never an outage) before any call, so an
+# oversized answer is never sent or billed. A size guard on the RAW answer,
 # not a token guarantee: at roughly one token per character the answer alone,
 # on both requests a run may make, stays under GRADER_LIMITS' token cap, but
 # the "> " quote on every answer line (up to 3x for a newline-heavy answer), the

@@ -270,7 +270,8 @@ def _refuse(
     deps: SaplingDeps,
 ) -> GradeResult:
     """A33: no credit, nothing recorded for either outcome. The warning and the
-    event carry ids, enums and counts only — never the student's text."""
+    event carry ids, enums and counts only — never the student's text. `too_long`
+    reaches here before the screen runs, so its counts are zero."""
     logger.warning(
         "grader refused item %s: %s (directives=%d role_markers=%d verdict_tokens=%d)",
         item.id,
@@ -370,7 +371,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     An answer that addresses the grader is refused (A33) — before any model call
     when the screen catches it, after the run when either run reports
     `addresses_grader` — as GradeResult(unavailable=True, refused=<reason>) with
-    one refusal event. An unreported all-yes verdict on an answer that talks
+    one refusal event; so is an answer longer than GRADER_ANSWER_MAX_CHARS
+    (`too_long`, before any call). An unreported all-yes verdict on an answer that talks
     about grading is confirmed by the second opinion before it is credited."""
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
@@ -380,12 +382,16 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         logger.warning("grader unavailable for item %s: the item has no rubric", item.id)
         return GradeResult(unavailable=True)
     if len(student_answer) > GRADER_ANSWER_MAX_CHARS:  # never sent, never billed
-        logger.warning(
-            "grader unavailable for item %s: answer longer than %d characters",
-            item.id,
-            GRADER_ANSWER_MAX_CHARS,
+        # A33: the length is the student's choice, so it is a refusal (the caller
+        # asks again), never an outage a probe or post-test would count as a skip
+        return _refuse(
+            item,
+            reason="too_long",
+            format=format,
+            student_answer=student_answer,
+            screen=answer_guard.Screen(),
+            deps=deps,
         )
-        return GradeResult(unavailable=True)
     rubric_ids = [r.id for r in item.rubric]
     terms = answer_guard.item_terms(item)  # its ids and its own text (course vocabulary)
     screen = answer_guard.screen(student_answer, **terms)

@@ -16,12 +16,15 @@ byte-identical — and the numeric clear-mismatch via
 verdict's provenance (`decisions.evidence_backend`).
 
 Spec §13 A33 (CodeRabbit PR #673): an answer that addresses the grader (verdict
-tokens, grading directives, role or format markers) is refused by
-agents.grader.grade() before any model call, and the seam hands it back as a
-`Refused` verdict. grade_answer then returns GradeOutcome(unavailable=True,
-refused=<reason>) and appends nothing: the attempt counts neither for nor
-against the student, and the route asks for the answer in the student's own
-words instead of reporting an outage.
+tokens, grading directives, role or format markers — before any model call, or
+on the grader's own report after it) or is longer than GRADER_ANSWER_MAX_CHARS
+is refused by agents.grader.grade(), and the seam hands it back as a `Refused`
+verdict. grade_answer then returns GradeOutcome(unavailable=True,
+refused=<reason>) and appends nothing: this attempt counts neither for nor
+against the student, and the route asks for the answer again in the student's
+own words instead of reporting an outage. A refusal is never a skip: the
+route's own rule records the CHECK_REFUSALS_AS_IDK-th refusal of an item as
+`idk` where its plan says so (PKG-07, PKG-08).
 """
 
 from __future__ import annotations
@@ -68,7 +71,8 @@ class GradeOutcome:
     """Code-side verdict. `unavailable=True` → nothing was appended, for either
     outcome (A22, invariant 28). Never carries the reference answer.
 
-    `refused` (A33) names why the answer was not graded: it addressed the grader.
+    `refused` (A33) names why the answer was not graded: it addressed the grader,
+    or it was longer than GRADER_ANSWER_MAX_CHARS (`too_long`).
     A refused outcome is also `unavailable` (fail closed for any caller that reads
     only that flag). The route shows "please answer in your own words" instead
     of the outage message, and never counts it as a genuine attempt for hint
