@@ -10,7 +10,7 @@ database, the graph, or an agent; PKG-03's apply_graph_update calls it.
 
 from __future__ import annotations
 
-from learning.params import BKT_T, CHANNELS, S_IDK
+from learning.params import BKT_L0, BKT_T, CHANNELS, FSRS_S0_GOOD, FSRS_W, S_IDK
 
 _FULL_WEIGHT = 1.0
 _P_MIN = 0.0
@@ -64,3 +64,31 @@ def update(
     if weight == _FULL_WEIGHT:
         p_new = p_new + (1.0 - p_new) * BKT_T
     return _clamp01(p_new)
+
+
+# Spec §3.2 retrievability, reproduced privately so PKG-01 and PKG-02 can merge
+# in either order. PKG-03 may replace the body with `learning.fsrs.retrievability`
+# once both are on main; keep the name so decayed_p does not change.
+_W20 = FSRS_W[20]
+_FSRS_FACTOR = 0.9 ** (-1.0 / _W20) - 1.0
+
+
+def _retrievability(t: float, s: float) -> float:
+    """R(t, S) = (1 + factor·t/S)^(−w20); R(S, S) = 0.9 by construction."""
+    return (1.0 + _FSRS_FACTOR * t / s) ** (-_W20)
+
+
+def decayed_p(p_stored: float, days_since: float, stability: float | None) -> float:
+    """Decay-at-read (spec §3.1): P_now = L0 + (P_stored − L0)·R(Δt, S_c).
+
+    stability None → FSRS_S0_GOOD (no FSRS state yet). Negative days_since
+    (clock skew) reads as 0. The prior is a fixed point; every other p moves
+    toward it from its own side and never crosses.
+    """
+    s_c = FSRS_S0_GOOD if stability is None else stability
+    if s_c <= 0.0:
+        raise ValueError(f"stability must be > 0, got {stability}")
+    t = max(0.0, days_since)
+    if t == 0.0:
+        return p_stored
+    return _clamp01(BKT_L0 + (p_stored - BKT_L0) * _retrievability(t, s_c))

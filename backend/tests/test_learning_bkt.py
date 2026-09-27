@@ -272,3 +272,58 @@ def test_update_rejects_bad_inputs():
         bkt.update(P_LOW, "mc", True, weight=1.5)
     with pytest.raises(ValueError, match="weight"):
         bkt.update(P_LOW, "mc", True, weight=-0.5)
+
+
+# --------------------------------------------------------------- decayed_p
+
+
+def test_retrievability_is_point_nine_at_t_equals_s():
+    for s in (0.5, params.FSRS_S0_GOOD, 10.0, 100.0):
+        assert bkt._retrievability(s, s) == pytest.approx(0.9, abs=1e-9)
+    assert bkt._retrievability(0.0, params.FSRS_S0_GOOD) == pytest.approx(1.0)
+
+
+def test_decay_hand_computed():
+    s0 = params.FSRS_S0_GOOD
+    assert bkt.decayed_p(P_HIGH, s0, s0) == pytest.approx(0.845, abs=TOL)
+    assert bkt.decayed_p(P_HIGH, 30.0, None) == pytest.approx(0.7171, abs=TOL)
+    assert bkt.decayed_p(0.10, 30.0, None) == pytest.approx(0.1831, abs=TOL)
+
+
+def test_no_time_no_decay():
+    for p in (0.0, 0.10, params.BKT_L0, 0.7, 1.0):
+        assert bkt.decayed_p(p, 0.0, None) == p
+        assert bkt.decayed_p(p, -3.0, None) == p  # clock skew clamps to 0
+
+
+def test_decay_moves_toward_prior_from_both_sides_and_is_monotone():
+    above = [bkt.decayed_p(P_HIGH, d, None) for d in (0, 1, 7, 30, 365, 3650)]
+    below = [bkt.decayed_p(0.05, d, None) for d in (0, 1, 7, 30, 365, 3650)]
+    assert above == sorted(above, reverse=True)
+    assert below == sorted(below)
+    assert all(params.BKT_L0 <= x <= P_HIGH for x in above)
+    assert all(0.05 <= x <= params.BKT_L0 for x in below)
+    # power-law tail: ten years still leaves belief well above the prior
+    assert above[-1] < above[0] and above[-1] > params.BKT_L0
+
+
+def test_prior_is_a_fixed_point_of_decay():
+    for d in (0.0, 1.0, 30.0, 1000.0):
+        assert bkt.decayed_p(params.BKT_L0, d, None) == pytest.approx(params.BKT_L0)
+
+
+def test_higher_stability_decays_slower():
+    slow = bkt.decayed_p(P_HIGH, 30.0, 60.0)
+    fast = bkt.decayed_p(P_HIGH, 30.0, params.FSRS_S0_GOOD)
+    assert slow > fast
+
+
+def test_missing_stability_uses_s0_good():
+    assert bkt.decayed_p(P_HIGH, 9.0, None) == bkt.decayed_p(P_HIGH, 9.0, params.FSRS_S0_GOOD)
+
+
+def test_decayed_p_rejects_nonpositive_stability():
+    with pytest.raises(ValueError, match="stability"):
+        bkt.decayed_p(P_HIGH, 1.0, 0.0)
+    with pytest.raises(ValueError, match="stability"):
+        bkt.decayed_p(P_HIGH, 1.0, -2.0)
