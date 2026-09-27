@@ -34,6 +34,12 @@
     "KeyPointsCountEvaluator": 1.0,
     "NoMarkdownLeakEvaluator": 1.0
   },
+  "grader": {
+    "ConfidenceInRangeEvaluator": 1.0,
+    "NoReferenceLeakEvaluator": 1.0,
+    "RubricAgreementEvaluator": 0.928571,
+    "StrictOnWrongEvaluator": 1.0
+  },
   "quiz_generation": {
     "AdaptiveDifficultyEvaluator": 1.0,
     "ConceptCoverageEvaluator": 1.0,
