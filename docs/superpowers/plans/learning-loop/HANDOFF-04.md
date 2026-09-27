@@ -157,3 +157,5 @@ cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+
+- PKG-05b 2026-09-27: the `answerable_hook` comment in `services/check_item_service.py` names the seam by path (`services/decisions.py::item_answerable`) instead of the dotted module name, which PKG-05b's importer scan (`services(\.| import )decisions`) read as a seam caller; comment only, the hook stays `None` and uncalled — commit 2d6f1de
