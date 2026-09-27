@@ -1252,11 +1252,107 @@ def _graph_update_payloads(source: str) -> list[tuple[int, str | None]]:
     return results
 
 
+# PKG-11 (a PKG-03 reopen): the one evidence caller sanctioned before PKG-05.
+# submit_quiz sends {"evidence": ...} only in the body of its `if loop_on:`
+# branch (spec §7); every other apply_graph_update call stays legacy-keyed.
+SANCTIONED_EVIDENCE_CALLERS = frozenset({("routes/quiz.py", "submit_quiz")})
+LOOP_GATE_LOCAL = "loop_on"
+
+
+def _gated_evidence_calls(source: str) -> list[tuple[int, str]]:
+    """(line, enclosing def) for each apply_graph_update call whose payload is
+    a dict literal with exactly one key, the constant "evidence", and which
+    sits in the BODY (not the else) of an `if loop_on:` inside that def.
+    `line` is the callee's line, as _graph_update_payloads reports it."""
+    import ast
+
+    tree = ast.parse(source)
+    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+    found = []
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and len(call.args) > 1):
+            continue
+        func = call.func
+        if not (
+            (isinstance(func, ast.Name) and func.id == "apply_graph_update")
+            or (isinstance(func, ast.Attribute) and func.attr == "apply_graph_update")
+        ):
+            continue
+        payload = call.args[1]
+        if not (
+            isinstance(payload, ast.Dict)
+            and len(payload.keys) == 1
+            and isinstance(payload.keys[0], ast.Constant)
+            and payload.keys[0].value == "evidence"
+        ):
+            continue
+        gated, child, node = False, call, parents.get(call)
+        while node is not None and not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (
+                isinstance(node, ast.If)
+                and isinstance(node.test, ast.Name)
+                and node.test.id == LOOP_GATE_LOCAL
+                and any(child is s for s in node.body)
+            ):
+                gated = True
+            child, node = node, parents.get(node)
+        if gated and node is not None:
+            found.append((func.lineno, node.name))
+    return found
+
+
+_GATED_QUIZ = """
+def submit_quiz(u, evs):
+    loop_on = learning_loop_active(u)
+    if loop_on:
+        applied = apply_graph_update(u, {"evidence": evs}, course_id=None)
+    else:
+        applied = apply_graph_update(u, {"updated_nodes": []}, course_id=None)
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (_GATED_QUIZ, ["submit_quiz"]),
+        (_GATED_QUIZ.replace("def submit_quiz", "def other_route"), ["other_route"]),
+        (_GATED_QUIZ.replace('{"evidence": evs}', '{"updated_nodes": []}'), []),
+        (_GATED_QUIZ.replace("if loop_on:", "if not loop_on:"), []),
+        (_GATED_QUIZ.replace("if loop_on:", "if True:"), []),
+        (
+            "def submit_quiz(u, evs):\n    if loop_on:\n        for e in evs:\n"
+            '            apply_graph_update(u, {"evidence": [e]})',
+            ["submit_quiz"],
+        ),
+        (
+            _GATED_QUIZ.replace('{"evidence": evs}', '{"evidence": evs, "updated_nodes": []}'),
+            [],
+        ),
+        (
+            'def submit_quiz(u, evs):\n    apply_graph_update(u, {"evidence": evs})',
+            [],
+        ),
+        (
+            "def submit_quiz(u, evs):\n    if loop_on:\n        pass\n"
+            '    else:\n        apply_graph_update(u, {"evidence": evs})',
+            [],
+        ),
+        ('if loop_on:\n    apply_graph_update(u, {"evidence": evs})', []),
+    ],
+)
+def test_gated_evidence_call_detector(source, expected):
+    """Mutation cases for the PKG-11 excuse in the caller scan below: only a
+    pure-evidence literal in the body of `if loop_on:` inside a def counts."""
+    assert [fn for _, fn in _gated_evidence_calls(source)] == expected
+
+
 def test_no_production_caller_passes_evidence_yet():
     """PKG-03 adds the path and no caller: every apply_graph_update call in
     application code passes a payload that provably carries only the legacy
-    keys. PKG-05 deletes this test (and its detector) when it wires
-    graded_check_tool → apply_graph_update(..., {"evidence": ...})."""
+    keys. PKG-11 (reopen) excuses exactly the SANCTIONED_EVIDENCE_CALLERS
+    call that _gated_evidence_calls finds behind `if loop_on:`. PKG-05
+    deletes this test (and its detectors) when it wires graded_check_tool →
+    apply_graph_update(..., {"evidence": ...})."""
     import test_learning_loop_invariants as inv
 
     problems, callers = [], set()
@@ -1264,9 +1360,14 @@ def test_no_production_caller_passes_evidence_yet():
         text = path.read_text()
         if "apply_graph_update" not in text:
             continue
+        excused = {
+            line
+            for line, fn in _gated_evidence_calls(text)
+            if (rel, fn) in SANCTIONED_EVIDENCE_CALLERS
+        }
         for line, problem in _graph_update_payloads(text):
             callers.add(rel)
-            if problem:
+            if problem and line not in excused:
                 problems.append(f"{rel}:{line} {problem}")
     assert problems == [], "\n".join(problems)
     # Non-vacuous: the scan reached the known legacy callers.
@@ -1326,13 +1427,15 @@ def test_legacy_payload_detector(source, offends):
 def test_fsrs_importers_are_sanctioned():
     """HANDOFF-02 Known gaps: the packages that add a learning.fsrs importer
     pin the set. PKG-03 adds services/graph_service.py (reached only through
-    apply_graph_update's evidence branch, which no production caller uses
-    yet). A later package that adds an importer extends this set."""
+    apply_graph_update's evidence branch). PKG-11 (reopen) adds
+    routes/flashcards.py, whose FSRS calls run only when learning_loop_active
+    is true (test_learning_flashcards_fsrs.py pins the gate-off path). A
+    later package that adds an importer extends this set."""
     import ast
     import pathlib
 
     backend = pathlib.Path(__file__).resolve().parents[1]
-    sanctioned = {"services/graph_service.py"}
+    sanctioned = {"services/graph_service.py", "routes/flashcards.py"}
     importers = set()
     for path in sorted(backend.rglob("*.py")):
         rel = path.relative_to(backend).as_posix()
