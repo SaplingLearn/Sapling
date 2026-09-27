@@ -845,6 +845,10 @@ REF_POWER = (
 REF_EQ = "x + 3 = 10, so x = 7"
 REF_VEL = "The final velocity is 9.8 m/s"
 REF_SYM = "F = m a"
+# Shorter than LEAK_NGRAM tokens, no '=' and no number: only the whole-reference
+# run can catch these (free / mc_reason references may be this short).
+REF_SHORT = "The mitochondria."
+REF_LAW = "Newton's third law"
 
 LEAKS = [
     (REF_POWER, "Remember: the power rule brings the exponent down, so try that.", "ngram"),
@@ -854,6 +858,13 @@ LEAKS = [
     (REF_VEL, "Plug in and you get 9.8 m/s.", "final_answer"),
     (REF_SYM, "Force is just m a, multiply them.", "final_answer"),
     (REF_POWER, "the derivative of x squared is two x", "ngram"),
+    (
+        REF_SHORT,
+        "Cellular respiration happens in the mitochondria, which produce most ATP.",
+        "ngram",
+    ),
+    ("The powerhouse of the cell", "It is the powerhouse of the cell.", "ngram"),
+    (REF_LAW, "This is Newton's third law at work.", "ngram"),
 ]
 
 SAFE = [
@@ -864,6 +875,8 @@ SAFE = [
     (REF_VEL, "Which kinematic equation links acceleration and time?"),
     (REF_SYM, "What is force in terms of mass? Think about Newton's second law."),
     (REF_POWER, "The power rule is in section 2.3 of your notes; read the first line."),
+    (REF_SHORT, "Which organelle makes most of the cell's ATP?"),
+    (REF_LAW, "Which of Newton's laws pairs every force with another?"),
 ]
 
 
@@ -883,7 +896,7 @@ def test_detect_leak_zero_false_positives(reference, emitted):
 
     assert detect_leak(reference, emitted, Rung.H0) == (False, "none")
     ref, em = tokens(reference), tokens(emitted)
-    n = params.LEAK_NGRAM
+    n = min(params.LEAK_NGRAM, len(ref))
     em_grams = {tuple(em[j : j + n]) for j in range(len(em) - n + 1)}
     assert not any(tuple(ref[i : i + n]) in em_grams for i in range(len(ref) - n + 1))
 
@@ -923,6 +936,23 @@ REF_STEPS = (
     "1. Identify the limiting reagent from the mole ratio.\n"
     "2. Use it to compute the theoretical yield."
 )
+
+
+def test_a_short_reference_leaks_when_it_appears_whole():
+    """A reference shorter than LEAK_NGRAM tokens has no LEAK_NGRAM-gram, so the
+    n-gram rule compares its whole token run instead (PKG-04's leak_in_prompt
+    does the same for any length); a partial mention is not a leak."""
+    from learning.ladder import Rung, deterministic_content
+    from learning.leak import detect_leak, strip_leak
+
+    item = _item(ACTIVE_HASH, reference_answer=REF_SHORT)
+    passage = "Cellular respiration happens in the mitochondria, which produce most ATP."
+    payload = deterministic_content(Rung.H2, item, [], [passage])
+    assert detect_leak(item.reference_answer, payload.text, payload.rung) == (True, "ngram")
+    assert strip_leak("It is the mitochondria.", REF_SHORT) == "It is [withheld]."
+    assert detect_leak(REF_LAW, "Think about the third law.", Rung.H1) == (False, "none")
+    assert detect_leak("Paris", "The capital is Paris.", Rung.H1) == (True, "ngram")
+    assert detect_leak("", "anything at all", Rung.H1) == (False, "none")
 
 
 def test_final_answer_skips_numbered_step_labels():
@@ -1004,7 +1034,7 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
 
     rng = random.Random(606)
     seps = [" ", ", ", "\n", " — ", "; ", " é ", "(", ") ", "/", " = "]
-    for reference in (REF_POWER, REF_EQ, REF_VEL, REF_SYM, "y = 2x + 3"):
+    for reference in (REF_POWER, REF_EQ, REF_VEL, REF_SYM, "y = 2x + 3", REF_SHORT, REF_LAW):
         words = reference.split()
         for _ in range(200):
             picked = [rng.choice(words) for _ in range(rng.randint(1, 30))]

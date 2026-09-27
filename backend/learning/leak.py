@@ -4,7 +4,8 @@ Runs BEFORE any LLM judge on every tutor turn below H6 (research "Guardrails":
 the supervisor architecture's deterministic solution stripper). Two rules:
 
 - ngram: any LEAK_NGRAM consecutive tokens of the reference appear
-  consecutively in the emitted text;
+  consecutively in the emitted text (a reference shorter than LEAK_NGRAM
+  tokens: its whole token run, as PKG-04's checks.leak_in_prompt compares);
 - final_answer: the reference's final answer (the clause after its last '=',
   else its last standalone number that is not a numbered-step label) appears
   as a consecutive token run.
@@ -70,25 +71,34 @@ def _contains_run(haystack: list[str], run: tuple[str, ...]) -> bool:
     return bool(run) and run in _ngrams(haystack, len(run))
 
 
+def _reference_grams(reference: str) -> tuple[int, set[tuple[str, ...]]]:
+    """(n, the reference's n-grams) with n = LEAK_NGRAM; a shorter reference is
+    one gram, its whole token run (else a short reference could never leak)."""
+    ref = tokens(reference)
+    n = min(params.LEAK_NGRAM, len(ref))
+    return n, _ngrams(ref, n)
+
+
 def detect_leak(reference_answer: str, emitted: str, rung: Rung) -> LeakVerdict:
     """`rung` is the rung the text is served at; at H6 the reference is the
     content (under gates.h6_allowed), so nothing is a leak."""
     if Rung(rung) >= Rung.H6:
         return LeakVerdict(False, "none")
-    ref, em = tokens(reference_answer), tokens(emitted)
-    if _ngrams(ref, params.LEAK_NGRAM) & _ngrams(em, params.LEAK_NGRAM):
+    n, grams = _reference_grams(reference_answer)
+    em = tokens(emitted)
+    if grams & _ngrams(em, n):
         return LeakVerdict(True, "ngram")
     if _contains_run(em, final_answer(reference_answer)):
         return LeakVerdict(True, "final_answer")
     return LeakVerdict(False, "none")
 
 
-def _strip_segment(text: str, grams: set[tuple[str, ...]], answer: tuple[str, ...]) -> str:
+def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: tuple[str, ...]) -> str:
     spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
     toks = [text[a:b].lower() for a, b in spans]
     hit = [False] * len(toks)
     for run_len, wanted in (
-        (params.LEAK_NGRAM, grams),
+        (n, grams),
         (len(answer), {answer} if answer else set()),
     ):
         for i in range(len(toks) - run_len + 1):
@@ -117,6 +127,6 @@ def strip_leak(emitted: str, reference: str) -> str:
     leaves nothing detect_leak(reference, ·, H0) flags (unless the reference
     itself contains the word "withheld"), and a second pass is a no-op: existing
     WITHHELD markers are never re-matched."""
-    grams = _ngrams(tokens(reference), params.LEAK_NGRAM)
+    n, grams = _reference_grams(reference)
     answer = final_answer(reference)
-    return WITHHELD.join(_strip_segment(seg, grams, answer) for seg in emitted.split(WITHHELD))
+    return WITHHELD.join(_strip_segment(seg, n, grams, answer) for seg in emitted.split(WITHHELD))
