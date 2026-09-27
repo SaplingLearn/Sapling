@@ -471,6 +471,39 @@ def test_usage_read_failure_fails_open_but_session_caps_hold(usage, caplog):
     assert (d.level, d.scope) == ("hard", "session_requests")
 
 
+def test_a_failed_usage_read_is_not_retried_within_its_request(usage, monkeypatch, caplog):
+    """One usage read per request holds in the fail-open path too: grade() checks up to three
+    times (grade, the first and the second-opinion _run_once), and each retry of a hanging
+    PostgREST would block the event loop for up to the client's timeout again."""
+    from services import request_context
+
+    usage([])
+    attempts: list[str] = []
+
+    def _down(user_id, since):
+        attempts.append(user_id)
+        raise RuntimeError("pg down")
+
+    monkeypatch.setattr(ai_budget, "_load_rows", _down)
+    token = request_context._REQUEST_ID_CTX.set("req-budget-down-0001")
+    try:
+        with caplog.at_level("WARNING", logger="sapling.ai_budget"):
+            for kind, band in (("grader", None), ("grader", None), ("tutor", "develop")):
+                assert ai_budget.check(UID, kind, band).level == "normal"
+            d = ai_budget.check(
+                UID,
+                "tutor",
+                "develop",
+                session_tutor_requests=params.LOOP_SESSION_MAX_TUTOR_REQUESTS,
+            )
+    finally:
+        request_context._REQUEST_ID_CTX.reset(token)
+    assert attempts == [UID], "a failed read is cached for its request like a summary"
+    assert (d.level, d.scope) == ("hard", "session_requests")  # the session caps still apply
+    warnings = [r for r in caplog.records if "llm_usage read failed" in r.getMessage()]
+    assert len(warnings) == 1
+
+
 def test_platform_alert_is_alert_only_and_fires_once(usage, events, monkeypatch, caplog):
     monkeypatch.setattr(config, "PLATFORM_DAILY_BUDGET_USD", 10.0)
     monkeypatch.setattr(ai_budget, "_spawn", lambda fn: fn())

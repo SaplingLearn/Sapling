@@ -101,7 +101,9 @@ class _EmitKey(NamedTuple):
 
 _lock = threading.Lock()
 _emitted: set[_EmitKey] = set()
-_request_cache: dict[tuple[str, str], tuple[float, _Usage]] = {}  # key → (stamped at, summary)
+# key → (stamped at, summary); a None summary is a failed read, cached so the request's later
+# checks fail open without another round trip
+_request_cache: dict[tuple[str, str], tuple[float, _Usage | None]] = {}
 _platform_checked_at: float | None = None
 
 
@@ -271,7 +273,9 @@ def _summarise(rows: list[dict], now: datetime) -> _Usage:
 
 
 def _usage(user_id: str) -> _Usage | None:
-    """One llm_usage read per (request, user); None on a read error (fail open)."""
+    """One llm_usage read per (request, user); None on a read error (fail open). A failed read
+    is cached like a summary: grade() checks up to three times, and each retry of a hanging
+    PostgREST would block again for up to the client's timeout (one WARNING per read)."""
     rid = current_request_id()
     key = (rid, user_id) if rid else None
     if key is not None:
@@ -280,12 +284,14 @@ def _usage(user_id: str) -> _Usage | None:
         if hit is not None and _clock() - hit[0] < _REQUEST_CACHE_TTL_S:
             return hit[1]
     now = _utcnow()
+    summary: _Usage | None
     try:
         rows = _load_rows(user_id, _month_start(now))
     except Exception as exc:  # fail open — see HANDOFF-06b Open questions (b)
         logger.warning("ai_budget: llm_usage read failed for %s: %s", user_id, exc)
-        return None
-    summary = _summarise(rows, now)
+        summary = None
+    else:
+        summary = _summarise(rows, now)
     if key is not None:
         with _lock:
             _request_cache.pop(key, None)  # a refreshed key moves to the back of the FIFO
