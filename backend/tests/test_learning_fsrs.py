@@ -6,17 +6,27 @@ are stated to four decimals; ``pytest.approx(abs=5e-5)`` throughout.
 
 from __future__ import annotations
 
+import ast
+import copy
+import pathlib
 import random
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from learning import fsrs
 from learning.fsrs import (
     Rating,
+    budget_items,
+    budget_select,
     initial_difficulty,
     initial_stability,
     interval,
+    item_retrievability,
+    mc_cap_applies,
     next_state,
+    order_due,
+    rating_for,
     retention_target,
     retrievability,
 )
@@ -27,14 +37,19 @@ from learning.params import (
     FSRS_RETENTION_EXAM,
     FSRS_RETENTION_LARGE_SET,
     FSRS_S0_GOOD,
+    CHANNELS,
     FSRS_W,
     MC_STABILITY_GAIN_CAP,
+    REVIEW_DAILY_BUDGET_MIN,
+    REVIEW_ORDER_THRESHOLD,
+    REVIEW_SECONDS_PER_CHECK,
 )
 
 A = pytest.approx
 TOL = 5e-5
 NAN = float("nan")
 INF = float("inf")
+NOW = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
 
 
 def _approx(x):
@@ -263,3 +278,220 @@ def test_next_state_rejects_out_of_domain_state(d, s, days):
         next_state(d, s, Rating.GOOD, days)
     with pytest.raises(ValueError):
         next_state(d, s, Rating.AGAIN, days, same_day=True)
+
+
+# --- rating map (spec §3.2; §13 A1: idk is a flag, not a channel) -----------
+
+
+@pytest.mark.parametrize(
+    "channel, correct, max_rung, idk, expected",
+    [
+        ("free_response", True, 0, False, Rating.GOOD),
+        ("teachback_llm", True, 0, False, Rating.GOOD),
+        ("mc_reasoned", True, 0, False, Rating.GOOD),
+        ("mc", True, 0, False, Rating.GOOD),
+        ("chat_turn", True, 0, False, Rating.HARD),  # † spec omits chat_turn (§13 A7)
+        ("free_response", True, 1, False, Rating.HARD),
+        ("free_response", True, 3, False, Rating.HARD),
+        ("mc", True, 2, False, Rating.HARD),
+        ("free_response", True, 4, False, Rating.AGAIN),
+        ("free_response", True, 6, False, Rating.AGAIN),
+        ("free_response", False, 0, False, Rating.AGAIN),
+        ("mc", False, 3, False, Rating.AGAIN),
+        ("chat_turn", False, 0, False, Rating.AGAIN),
+        ("free_response", False, 0, True, Rating.AGAIN),
+        ("mc", True, 0, True, Rating.AGAIN),  # idk overrides a stray correct=True
+    ],
+)
+def test_rating_map(channel, correct, max_rung, idk, expected):
+    assert rating_for(channel, correct, max_rung, idk=idk) == int(expected)
+
+
+def test_rating_channels_are_the_evidence_channels():
+    # §13 A1 / spec §5: Evidence.channel is the ITEM's channel; there is no
+    # "idk" channel. params.CHANNELS is the one list; PKG-03 asserts its
+    # Evidence Literal equals this set.
+    assert fsrs.RATING_CHANNELS == frozenset(CHANNELS)
+    assert fsrs.RATING_CHANNELS == {
+        "free_response",
+        "mc_reasoned",
+        "mc",
+        "teachback_llm",
+        "chat_turn",
+    }
+    assert fsrs.STRONG_GOOD_CHANNELS < fsrs.RATING_CHANNELS
+
+
+def test_rating_for_never_emits_easy():
+    for channel in sorted(fsrs.RATING_CHANNELS):
+        for correct in (True, False):
+            for idk in (True, False):
+                for max_rung in range(0, 7):
+                    rating = rating_for(channel, correct, max_rung, idk=idk)
+                    assert rating != int(Rating.EASY)
+                    assert rating in (Rating.AGAIN, Rating.HARD, Rating.GOOD)
+
+
+def test_rating_for_rejects_unknown_channel_and_negative_rung():
+    with pytest.raises(ValueError):
+        rating_for("quiz", True, 0)
+    with pytest.raises(ValueError):
+        rating_for("idk", False, 0)  # §13 A1: idk=True on the item's channel instead
+    with pytest.raises(ValueError):
+        rating_for("mc", True, -1)
+
+
+def test_mc_cap_applies_only_to_unassisted_mc_correct():
+    assert mc_cap_applies("mc", True, 0) is True
+    assert mc_cap_applies("mc", True, 1) is False
+    assert mc_cap_applies("mc", False, 0) is False
+    assert mc_cap_applies("mc", True, 0, idk=True) is False
+    assert mc_cap_applies("mc_reasoned", True, 0) is False
+
+
+def test_mc_cap_applies_exactly_when_mc_rates_good():
+    for correct in (True, False):
+        for idk in (True, False):
+            for max_rung in range(0, 7):
+                good = rating_for("mc", correct, max_rung, idk=idk) == Rating.GOOD
+                assert mc_cap_applies("mc", correct, max_rung, idk=idk) is good
+
+
+# --- due ordering + budget --------------------------------------------------
+
+
+def _row(node_id, s, days_ago):
+    return {
+        "node_id": node_id,
+        "fsrs_s": s,
+        "fsrs_last_review_at": (NOW - timedelta(days=days_ago)).isoformat(),
+    }
+
+
+def test_order_due_sorts_by_distance_from_threshold():
+    rng = random.Random(11)
+    rows = [_row(f"n{i}", rng.uniform(0.2, 60.0), rng.uniform(0.0, 120.0)) for i in range(40)]
+    before = copy.deepcopy(rows)
+    ordered = order_due(rows, NOW)
+    dist = [abs(item_retrievability(r, NOW) - REVIEW_ORDER_THRESHOLD) for r in ordered]
+    assert dist == sorted(dist)
+    assert sorted(r["node_id"] for r in ordered) == sorted(r["node_id"] for r in rows)
+    assert rows == before  # input untouched: same rows, same order
+    assert ordered is not rows
+
+
+def test_order_due_is_stable_on_ties():
+    rows = [_row(f"n{i}", 5.0, 5.0) for i in range(6)]
+    assert [r["node_id"] for r in order_due(rows, NOW)] == [f"n{i}" for i in range(6)]
+
+
+def test_order_due_never_reviewed_rows_sort_last():
+    rows = [
+        {"node_id": "fresh", "fsrs_s": None, "fsrs_last_review_at": None},
+        _row("stale", FSRS_S0_GOOD, 60.0),
+    ]
+    assert [r["node_id"] for r in order_due(rows, NOW)] == ["stale", "fresh"]
+    assert item_retrievability(rows[0], NOW) == 1.0
+    assert item_retrievability({"node_id": "bare"}, NOW) == 1.0
+
+
+def test_item_retrievability_accepts_datetime_and_z_suffix():
+    dt_row = {"fsrs_s": 10.0, "fsrs_last_review_at": NOW - timedelta(days=10)}
+    z_row = {"fsrs_s": 10.0, "fsrs_last_review_at": "2026-09-16T12:00:00Z"}
+    naive_row = {"fsrs_s": 10.0, "fsrs_last_review_at": datetime(2026, 9, 16, 12, 0)}
+    assert item_retrievability(dt_row, NOW) == A(0.9, abs=1e-9)
+    assert item_retrievability(z_row, NOW) == A(0.9, abs=1e-9)
+    assert item_retrievability(naive_row, NOW) == A(0.9, abs=1e-9)  # naive = UTC
+    assert item_retrievability(z_row, "2026-09-26T12:00:00Z") == A(0.9, abs=1e-9)
+
+
+def test_item_retrievability_rejects_a_corrupt_row():
+    with pytest.raises(ValueError):
+        item_retrievability({"fsrs_s": 0.0, "fsrs_last_review_at": NOW}, NOW)
+    with pytest.raises(ValueError):
+        item_retrievability({"fsrs_s": 1.0, "fsrs_last_review_at": "not a date"}, NOW)
+
+
+def test_order_due_custom_keys_for_flashcards():
+    rows = [
+        {"id": "a", "fsrs_s": 1.0, "last_reviewed_at": (NOW - timedelta(days=30)).isoformat()},
+        {"id": "b", "fsrs_s": 1.0, "last_reviewed_at": NOW.isoformat()},
+    ]
+    ordered = order_due(rows, NOW, last_review_key="last_reviewed_at")
+    assert [r["id"] for r in ordered] == ["a", "b"]
+
+
+def test_budget_items_from_constants():
+    assert budget_items() == (REVIEW_DAILY_BUDGET_MIN * 60) // REVIEW_SECONDS_PER_CHECK == 16
+    assert budget_items(0) == 0
+    assert budget_items(-5) == 0
+    with pytest.raises(ValueError):
+        budget_items(10, 0)
+    with pytest.raises(ValueError):
+        budget_items(10, NAN)
+    with pytest.raises(ValueError):
+        budget_items(NAN)
+
+
+def test_budget_select_never_exceeds_budget():
+    rng = random.Random(3)
+    for _ in range(30):
+        n = rng.randint(0, 60)
+        budget_min = rng.choice([0, 1, 5, REVIEW_DAILY_BUDGET_MIN, 30])
+        seconds_per = rng.choice([15, REVIEW_SECONDS_PER_CHECK, 120])
+        items = list(range(n))
+        chosen = budget_select(items, budget_min, seconds_per)
+        assert len(chosen) <= budget_min * 60 // seconds_per
+        assert len(chosen) <= n
+        assert chosen == items[: len(chosen)]
+    assert budget_select(list(range(40))) == list(range(16))
+
+
+# --- flag-off inertness -----------------------------------------------------
+
+
+def _imports_fsrs(source: str) -> bool:
+    """True when `source` imports learning.fsrs in any spelling: `import
+    learning.fsrs`, `from learning.fsrs import x`, `from learning import bkt,
+    fsrs`, parenthesised lists, or an import inside a function (ast, not regex)."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            if any(
+                a.name == "learning.fsrs" or a.name.startswith("learning.fsrs.") for a in node.names
+            ):
+                return True
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            module = node.module or ""
+            if module == "learning.fsrs" or module.startswith("learning.fsrs."):
+                return True
+            if module == "learning" and any(a.name == "fsrs" for a in node.names):
+                return True
+    return False
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("import learning.fsrs", True),
+        ("from learning.fsrs import next_state", True),
+        ("from learning import bkt, fsrs", True),
+        ("from learning import (\n    fsrs,\n)", True),
+        ("def f():\n    from learning import fsrs", True),
+        ("from learning import bkt", False),
+        ("from learning.gate import learning_loop_active", False),
+        ("# from learning import fsrs", False),
+    ],
+)
+def test_fsrs_import_detector(source, expected):
+    assert _imports_fsrs(source) is expected
+
+
+def test_routes_import_fsrs_only_behind_the_gate():
+    """Any route that imports learning.fsrs must also consult the gate; today none does."""
+    routes = pathlib.Path(__file__).resolve().parents[1] / "routes"
+    paths = sorted(routes.rglob("*.py"))
+    assert paths, "routes/ not found"
+    for path in paths:
+        text = path.read_text()
+        if _imports_fsrs(text):
+            assert "learning_loop_active" in text, f"{path.name} imports fsrs without the gate"

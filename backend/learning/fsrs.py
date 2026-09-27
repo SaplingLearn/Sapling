@@ -10,9 +10,12 @@ emits Easy (``rating_for`` returns at most Good).
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from enum import IntEnum
+from typing import Any, Iterable, Mapping, Sequence
 
 from learning.params import (
+    CHANNELS,
     FSRS_EXAM_WINDOW_DAYS,
     FSRS_LARGE_SET_CONCEPTS,
     FSRS_RETENTION_DEFAULT,
@@ -20,6 +23,10 @@ from learning.params import (
     FSRS_RETENTION_LARGE_SET,
     FSRS_W,
     MC_STABILITY_GAIN_CAP,
+    REVIEW_DAILY_BUDGET_MIN,
+    REVIEW_ORDER_THRESHOLD,
+    REVIEW_SECONDS_PER_CHECK,
+    RUNG_ASSISTED_MAX,
 )
 
 W = FSRS_W
@@ -27,6 +34,8 @@ _DECAY = W[20]
 _STABILITY_R = 0.9  # R(t = S) by the definition of stability (spec §3.2)
 FACTOR = _STABILITY_R ** (-1 / _DECAY) - 1
 _D_MIN, _D_MAX = 1.0, 10.0
+_SECONDS_PER_DAY = 86_400.0
+_SECONDS_PER_MINUTE = 60
 
 
 class Rating(IntEnum):
@@ -34,6 +43,14 @@ class Rating(IntEnum):
     HARD = 2
     GOOD = 3
     EASY = 4
+
+
+# Channels rating_for accepts: the spec §5 Evidence.channel names, which are
+# the params.CHANNELS rows. §13 A1: there is no "idk" channel; an explicit "I
+# don't know" is idk=True on the item's channel. PKG-03's Evidence Literal must
+# equal this set (its test asserts it).
+RATING_CHANNELS = frozenset(CHANNELS)
+STRONG_GOOD_CHANNELS = frozenset({"free_response", "teachback_llm", "mc_reasoned"})
 
 
 # --- curves -----------------------------------------------------------------
@@ -170,3 +187,109 @@ def next_state(
     if mc_unassisted:
         new_s = min(new_s, s * MC_STABILITY_GAIN_CAP)
     return new_d, new_s
+
+
+# --- rating map -------------------------------------------------------------
+
+
+def rating_for(channel: str, correct: bool, max_rung: int, *, idk: bool = False) -> int:
+    """Spec §3.2 rating map. Wrong, or ``idk`` (§13 A1), → Again; unassisted
+    correct → Good (chat_turn → Hard, §13 A7 †); correct after
+    H1..H{RUNG_ASSISTED_MAX} → Hard; correct after a higher rung → Again.
+    Never Easy."""
+    if channel not in RATING_CHANNELS:
+        raise ValueError(f"unknown channel {channel!r}")
+    if max_rung < 0:
+        raise ValueError(f"max_rung must be >= 0, got {max_rung}")
+    if idk or not correct:
+        return int(Rating.AGAIN)
+    if max_rung == 0:
+        if channel in STRONG_GOOD_CHANNELS or channel == "mc":
+            return int(Rating.GOOD)
+        return int(Rating.HARD)  # chat_turn †
+    if max_rung <= RUNG_ASSISTED_MAX:
+        return int(Rating.HARD)
+    return int(Rating.AGAIN)
+
+
+def mc_cap_applies(channel: str, correct: bool, max_rung: int, *, idk: bool = False) -> bool:
+    """True exactly when the rating came from an unassisted correct ``mc`` check."""
+    return channel == "mc" and bool(correct) and not idk and max_rung == 0
+
+
+# --- due ordering + budget --------------------------------------------------
+
+
+def _as_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def item_retrievability(
+    item: Mapping[str, Any],
+    now: datetime | str,
+    *,
+    stability_key: str = "fsrs_s",
+    last_review_key: str = "fsrs_last_review_at",
+) -> float:
+    """R now for one row; a row with no FSRS state has R = 1.0 (never reviewed).
+
+    A last review later than ``now`` (clock skew) counts as zero elapsed days.
+    """
+    s = item.get(stability_key)
+    last = item.get(last_review_key)
+    if s is None or last is None:
+        return 1.0
+    elapsed = (_as_datetime(now) - _as_datetime(last)).total_seconds()
+    days = max(0.0, elapsed / _SECONDS_PER_DAY)
+    return retrievability(days, float(s))
+
+
+def order_due(
+    items: Iterable[Mapping[str, Any]],
+    now: datetime | str,
+    *,
+    stability_key: str = "fsrs_s",
+    last_review_key: str = "fsrs_last_review_at",
+) -> list:
+    """Stable sort by |R − REVIEW_ORDER_THRESHOLD| ascending (DASH threshold).
+
+    Returns a new list; the input is not reordered. Rows with no FSRS state
+    (R = 1.0) sort last.
+    """
+    rows = list(items)
+    return sorted(
+        rows,
+        key=lambda it: abs(
+            item_retrievability(
+                it, now, stability_key=stability_key, last_review_key=last_review_key
+            )
+            - REVIEW_ORDER_THRESHOLD
+        ),
+    )
+
+
+def budget_items(
+    budget_min: float = REVIEW_DAILY_BUDGET_MIN,
+    seconds_per: float = REVIEW_SECONDS_PER_CHECK,
+) -> int:
+    """How many checks fit in ``budget_min`` minutes at ``seconds_per`` each."""
+    if not (math.isfinite(seconds_per) and seconds_per > 0):
+        raise ValueError(f"seconds_per must be finite and > 0, got {seconds_per}")
+    if not math.isfinite(budget_min):
+        raise ValueError(f"budget_min must be finite, got {budget_min}")
+    if budget_min <= 0:
+        return 0
+    return int(budget_min * _SECONDS_PER_MINUTE // seconds_per)
+
+
+def budget_select(
+    items: Sequence[Any],
+    budget_min: float = REVIEW_DAILY_BUDGET_MIN,
+    seconds_per: float = REVIEW_SECONDS_PER_CHECK,
+) -> list:
+    """First ``budget_items()`` of an already-ordered list; never more."""
+    return list(items)[: budget_items(budget_min, seconds_per)]
