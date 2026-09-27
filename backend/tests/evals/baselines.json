@@ -37,7 +37,7 @@
   "grader": {
     "ConfidenceInRangeEvaluator": 1.0,
     "NoReferenceLeakEvaluator": 1.0,
-    "RubricAgreementEvaluator": 0.928571,
+    "RubricAgreementEvaluator": 0.9375,
     "StrictOnWrongEvaluator": 1.0
   },
   "quiz_generation": {
