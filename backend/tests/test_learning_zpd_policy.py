@@ -3010,6 +3010,11 @@ _PKG06_SANCTIONED_IMPORTS = {
 }
 
 
+# What the real app may load from the PKG-06 layer at boot (PKG-06b): the one sanctioned import
+# above brings learning.policy, and policy imports learning.ladder's Rung. Nothing else.
+_PKG06_SANCTIONED_APP_LOADS = frozenset({"learning.policy", "learning.ladder"})
+
+
 def _sanctioned_import(rel: str):
     """A node predicate: True for the one import statement `rel` may make (none for most files)."""
     import ast
@@ -3182,14 +3187,17 @@ def test_importing_the_app_loads_no_pkg06_module():
     """The ast scan above sees import statements and literal dynamic imports,
     not what actually loads (a computed module name, a loader outside the
     tree). Import the real app in a clean interpreter and read sys.modules:
-    flag-off byte-identity needs no PKG-06 module loaded at all. The two are
+    flag-off byte-identity needs no PKG-06 BEHAVIOUR loaded. The two are
     complementary: this probe cannot see a lazy import inside a function
     body, which the ast scan catches.
 
     PKG-06b: services/ai_budget.py imports policy's type aliases (sanctioned
-    above) and main.py registers its 429 handler, so the real module would
-    load learning.policy. The probe stubs it with the two names main.py uses,
-    so it still sees every OTHER loader of a PKG-06 module."""
+    above) and main.py registers its 429 handler, so the real app loads
+    learning.policy and, through policy's own `from learning.ladder import
+    Rung`, learning.ladder — pure definitions, no behaviour. The loaded set
+    must be EXACTLY that sanctioned pair: any further PKG-06 module — through
+    ai_budget, through policy or ladder themselves (the ast scan exempts the
+    PKG-06 modules from each other), or through any other loader — fails."""
     import os
     import subprocess
     import sys
@@ -3210,17 +3218,11 @@ def test_importing_the_app_loads_no_pkg06_module():
     program = (
         "import dotenv; dotenv.load_dotenv = lambda *a, **k: False\n"
         "import sys\n"
-        "import types\n"
-        "stub = types.ModuleType('services.ai_budget')\n"
-        "stub.AIBudgetExceeded = type('AIBudgetExceeded', (Exception,), {})\n"
-        "async def budget_exceeded_handler(request, exc):\n"
-        "    return None\n"
-        "stub.budget_exceeded_handler = budget_exceeded_handler\n"
-        "sys.modules['services.ai_budget'] = stub\n"
         "import main\n"
         f"loaded = [m for m in {wanted!r} if m in sys.modules]\n"
         "print('LEARNING_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('learning.'))))\n"
         "print('PKG06_LOADED=' + ','.join(loaded))\n"
+        "print('APP_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('services.'))))\n"
     )
     proc = subprocess.run(
         [sys.executable, "-c", program],
@@ -3233,4 +3235,9 @@ def test_importing_the_app_loads_no_pkg06_module():
     assert proc.returncode == 0, "importing main failed:\n" + proc.stderr
     lines = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "_LOADED=" in line)
     assert "learning.gate" in lines["LEARNING_LOADED"].split(","), lines  # not vacuous
-    assert lines["PKG06_LOADED"] == "", f"the app imports PKG-06 modules: {lines['PKG06_LOADED']}"
+    assert "services.ai_budget" in lines["APP_LOADED"].split(","), lines  # the real module, no stub
+    loaded = set(filter(None, lines["PKG06_LOADED"].split(",")))
+    assert loaded == _PKG06_SANCTIONED_APP_LOADS, (
+        f"the app loads PKG-06 modules beyond the sanctioned {sorted(_PKG06_SANCTIONED_APP_LOADS)}: "
+        f"{sorted(loaded)}"
+    )
