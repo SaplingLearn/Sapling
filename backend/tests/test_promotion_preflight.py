@@ -250,7 +250,7 @@ def _evaluate(**over):
         destructive=[],
         commits_ahead=3,
         migrations_drift="",
-        production_is_ancestor=True,
+        production_diverged=False,
         allow_destructive=False,
         skip_staging_check=False,
     )
@@ -284,13 +284,13 @@ def test_evaluate_blocks_on_migrations_drift():
     assert "stray" in detail
 
 
-def test_evaluate_blocks_when_production_not_ancestor_of_main():
+def test_evaluate_blocks_when_production_carries_content_main_lacks():
     """A production hotfix/revert never back-merged to main makes the merge
     fail deterministically AFTER migrations applied, with the retry loop then
     misdirecting the operator ("may still be landing"). Preflight must catch
     it before any DDL, and say how to reconcile.
     """
-    findings = _evaluate(production_is_ancestor=False)
+    findings = _evaluate(production_diverged=True)
     assert [f.kind for f in findings] == ["production-diverged"]
     detail = findings[0].detail.lower()
     assert "back-merge" in detail

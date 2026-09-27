@@ -57,6 +57,12 @@ class FakeGit:
         ancestor of main); divergence tests override."""
         return True
 
+    def tree_matches_merge_base(self, ref, other):
+        """Is origin/production's tree its merge base's tree (production-only
+        commits change nothing)? Only consulted when is_ancestor is False;
+        False by default so a divergence test blocks unless it opts in."""
+        return False
+
 
 class FakeGh:
     def __init__(self):
@@ -255,6 +261,43 @@ def test_production_divergence_blocks_before_any_ddl():
     text = "\n".join(lines).lower()
     assert "back-merge" in text
     assert "preflight failed" in text
+
+
+def test_merge_only_production_divergence_does_not_block():
+    """#666: every promotion leaves a merge commit that exists only on
+    production, so production is never an ancestor of main afterwards. When
+    those production-only commits change no content (production's tree IS its
+    merge base's tree), the merge is clean and yields main's tree — the next
+    promotion must proceed without a zero-file back-merge PR.
+    """
+
+    class MergeOnlyGit(FakeGit):
+        def is_ancestor(self, ancestor, descendant):
+            return False
+
+        def tree_matches_merge_base(self, ref, other):
+            assert (ref, other) == ("origin/production", "origin/main")
+            return True
+
+    lines = []
+    kwargs = make_ports(git=MergeOnlyGit(), out=lines.append)
+    gh = kwargs["gh"]
+    assert run(*build(kwargs)) == 0
+    assert gh.merged is True
+    text = "\n".join(lines)
+    assert "production-diverged" not in text
+    assert "no back-merge needed" in text
+
+
+def test_content_check_is_skipped_when_production_is_an_ancestor():
+    """The tree comparison only answers "is this divergence harmless?" — with
+    no divergence it must not run (and cannot block)."""
+
+    class AncestorGit(FakeGit):
+        def tree_matches_merge_base(self, ref, other):
+            raise AssertionError("must not be consulted when production is an ancestor")
+
+    assert run(*build(make_ports(git=AncestorGit()))) == 0
 
 
 def test_declining_the_prompt_stops_without_merging():

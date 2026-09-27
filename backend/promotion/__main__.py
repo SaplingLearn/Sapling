@@ -104,6 +104,41 @@ class Git:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"`git merge-base` failed ({result.returncode}): {detail}")
 
+    def tree_matches_merge_base(self, ref: str, other: str) -> bool:
+        """Does `ref` hold exactly the tree of its merge base with `other`?
+
+        True means `ref`'s own commits (those not on `other`), taken together,
+        change nothing. That is the shape every promotion leaves behind:
+        stage 6's merge commit exists only on production, but its tree IS the
+        main commit it merged (#666). Merging `other` into `ref` is then a
+        clean 3-way merge whose result is exactly `other`'s tree. A hotfix or
+        revert that was never back-merged makes the trees differ, and that
+        stays blocked.
+
+        Compares tree object ids rather than reading `git diff` output: exact
+        (content, modes, presence) and independent of any diff config.
+
+        Fails closed. Several merge bases (criss-cross history) or none
+        (unrelated histories) return False rather than pick one base to trust;
+        any other git error raises, like `is_ancestor`. Same 120s no-hang
+        discipline as _run.
+        """
+        cmd = ["git", "merge-base", "--all", other, ref]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("`git merge-base` timed out after 120s") from exc
+        bases = result.stdout.split()
+        if result.returncode == 1 and not bases:
+            return False  # no common ancestor at all
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"`git merge-base` failed ({result.returncode}): {detail}")
+        if len(bases) != 1:
+            return False
+        trees = _run(["git", "rev-parse", f"{bases[0]}^{{tree}}", f"{ref}^{{tree}}"]).split()
+        return len(trees) == 2 and trees[0] == trees[1]
+
 
 # The created PR's number is the trailing path segment of the URL `gh pr
 # create` prints; anchored on /pull/ so compare/commit URLs mixed into the
