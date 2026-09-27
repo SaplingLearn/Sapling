@@ -55,10 +55,14 @@ Anything that forwards spans or exception state is on the student-data path.
      ASGI scope's `state` dict, which the handler, threadpool `Depends` and
      BackgroundTasks all share), else nobody; placeholders (`anonymous`,
      `backfill`) are nobody. Then enqueue onto a bounded in-process queue
-     (full → drop the oldest, warn once then every 1000th).
+     (`POSTHOG_QUEUE_MAX`, default 10000; a bad or non-positive value falls
+     back to the default — `queue.Queue(0)` would be unbounded; full → drop
+     the oldest, warn once then every 1000th).
    - *On the one daemon worker thread*: `analytics_consent.consent_for(actor)`
-     — a blocking PostgREST read is fine here — then `posthog.capture` with
-     that `distinct_id`, personless when there is no actor, or drop.
+     — a blocking PostgREST read is fine here, bounded by a 3 s timeout
+     (through `table().select(timeout=)`, the shared client) — then
+     `posthog.capture` with that `distinct_id`, personless when there is no
+     actor, or drop.
 
    Consequences of the shape: no event-loop thread ever reads the database,
    and a cold consent cache only DELAYS an event on the worker; it never drops
@@ -69,9 +73,11 @@ Anything that forwards spans or exception state is on the student-data path.
    (the single place every agent run already reports usage, including #672's
    Jev seam) mirrors each `llm_usage` row as a privacy-mode `$ai_generation`
    with ONLY `$ai_model`, `$ai_provider`, `$ai_input_tokens`,
-   `$ai_output_tokens`, `$ai_total_cost_usd`, `$ai_latency` (when known),
-   `$ai_trace_id` (the request id) and the feature/task name — never
-   `$ai_input` / `$ai_output`. Same queue, same consent.
+   `$ai_output_tokens`, `$ai_total_cost_usd`, `$ai_trace_id` (the request
+   id) and the feature/task name — never `$ai_input` / `$ai_output`.
+   `$ai_provider` is the provider the usage row records (e.g. #672's Jev
+   seam), derived from the model name only when none is given. No latency:
+   the chokepoint has no timing. Same queue, same consent.
 
    **Why the OTel span export was removed.** The first design forwarded
    Pydantic AI's spans through an allowlisting span processor, with per-run
@@ -90,10 +96,13 @@ Anything that forwards spans or exception state is on the student-data path.
    Logfire.
 7. **Exceptions without state.** One capture site (the 500 handler), with the
    session user from `request.state`, through the same queue and consent
-   rule. `capture_exception_code_variables` and autocapture are off, and a
-   `before_send` redacts the exception message and strips any frame locals —
-   messages from pydantic/PostgREST errors echo their input. The handler runs
-   outside `RequestIDMiddleware`, so it reads DNT/GPC off the request headers.
+   rule. The `$exception_list` (the SDK's own shape: type, module,
+   code-location frames) is built at ENQUEUE, with the message redacted and
+   no frame locals; the queue never holds the exception, its traceback or its
+   frames, which would keep every local (decrypted content) alive while the
+   item waits. `capture_exception_code_variables` and autocapture are off,
+   and `before_send` scrubs again. The handler runs outside
+   `RequestIDMiddleware`, so it reads DNT/GPC off the request headers.
 8. **Off in tests and E2E.** No client, no queue, no network when: the token is
    unset, `POSTHOG_DISABLED` is truthy, under pytest, `APP_ENV=test`, or the
    seam's mode (`agents._providers.model_mode()` — the one normalisation, not
@@ -101,11 +110,20 @@ Anything that forwards spans or exception state is on the student-data path.
    do not rely on that inference — `make e2e-up` does not force function mode
    and runs `APP_ENV=local` against a `backend/.env` that may hold a real
    token — so `scripts/e2e-up.sh` and `scripts/explore.sh` export
-   `POSTHOG_DISABLED=1` explicitly. Local dev with a token sends.
+   `POSTHOG_DISABLED=1` explicitly, and blank `POSTHOG_PERSONAL_API_KEY`
+   (erasure is not gated by the kill switch, §9). Local dev with a token
+   sends.
 9. **Account deletion deletes the PostHog person** (`bulk_delete` with
    `delete_events`) as a post-response BackgroundTask. Needs
    `POSTHOG_PERSONAL_API_KEY` (scope `person:write`) + `POSTHOG_PROJECT_ID`;
-   unset or failing → WARN, never a failed deletion. The personal key is only
+   failing → WARN, never a failed deletion. **Erasure is not capture:** the
+   delete runs whenever the personal key, project id and API host are
+   configured — even with `POSTHOG_DISABLED` set or no project token, since
+   those stop sending, not deleting what was sent before. Only pytest,
+   `APP_ENV=test` and a non-real seam mode block it. Unconfigured: a WARN
+   where PostHog was ever configured (a token or a personal key is set — a
+   skipped delete there is a privacy to-do), silence where it never was.
+   The personal key is only
    ever sent to a PostHog app host: `POSTHOG_API_HOST` if set, otherwise one
    derived from the two cloud ingestion hosts (`us`/`eu.i.posthog.com` →
    `us`/`eu.posthog.com`). Any other `POSTHOG_HOST` without an explicit
@@ -120,7 +138,13 @@ Anything that forwards spans or exception state is on the student-data path.
     - a student with `user_settings.analytics_opt_out = true` (the settings
       toggle, PATCH `/api/profile/{user_id}/settings`; the frontend also sets
       it when the browser sends Do Not Track / Global Privacy Control);
-    - any request carrying `Sec-GPC: 1` or `DNT: 1`, whoever the user is;
+    - any request carrying `Sec-GPC: 1` or `DNT: 1`, whoever the user is —
+      **per request only**. Work that runs outside the request (the index
+      sweeper, DBOS workflows, scripts) has no browser signal and follows the
+      stored `analytics_opt_out` alone. This is a known, deliberate
+      limitation: persisting a header would turn a browser signal into a
+      stored choice the student never made. The frontend's toggle, which
+      also defaults on under DNT/GPC, is how a student makes it stored;
     - an opted-out student's request, even for events that name no user —
       including their BackgroundTasks and threadpool dependencies, because the
       actor comes from the request scope they all share.
@@ -133,6 +157,13 @@ Anything that forwards spans or exception state is on the student-data path.
     across a clear does not store its possibly-stale answer (it is re-read;
     still racing → "no"). Our own `events` table is first-party observability
     and is unaffected by the opt-out or the headers.
+
+    **Deploy order.** The code can be live before migration
+    `20260927033814` runs. Settings reads retry without `analytics_opt_out`
+    when PostgREST says that column does not exist (the #630 pattern: read
+    the response body), a PATCH of it answers 503 (nothing written), and the
+    consent check treats the missing column as "no" — so nobody is sent until
+    the column exists.
 12. **No raw path, no second user, no `error.4xx`.** `error.4xx` (every
     expired-cookie 401, 404 probe and 422) stays in our table only. Every
     mirrored `path` / `route` payload key becomes the current request's
