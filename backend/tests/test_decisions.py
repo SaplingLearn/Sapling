@@ -253,6 +253,20 @@ class TestFlashLiteBackend:
             result = _decide()
         assert result.answers["team"].default_reason == "missing"
 
+    def test_choice_and_score_match_case_and_whitespace_insensitively(self):
+        answers = [
+            {"key": "urgent", "value": " YES ", "confidence": 0.8},
+            {"key": "team", "value": " Billing", "confidence": 0.9},
+            {"key": "mood", "value": "Angry ", "confidence": 0.9},
+        ]
+        with decision_agent.override(model=_agent_model(answers)):
+            result = _decide()
+        assert not any(a.defaulted for a in result.answers.values()), result.answers
+        # The CANONICAL declared key comes back, not the model's spelling.
+        assert (result.value("urgent"), result.value("team"), result.value("mood")) == (
+            True, "billing", "angry")
+        assert result.answers["team"].raw == "billing"
+
     def test_usage_is_billed_under_the_decision_task(self, sink):
         with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)):
             _decide()
@@ -332,7 +346,9 @@ class TestJevBackend:
                        "criteria": {"true": "Explicitly time-sensitive",
                                     "false": "No urgency expressed"}},
             "team": {"type": "choice", "instructions": "Which team handles this?",
-                     "criteria": {"billing": "Payments", "technical": "Bugs", "sales": None}},
+                     # A None description goes out as the option's own key:
+                     # never a null criterion on the wire.
+                     "criteria": {"billing": "Payments", "technical": "Bugs", "sales": "sales"}},
             "mood": {"type": "score", "instructions": "How frustrated is the customer?",
                      "criteria": ["Calm", "Frustrated", "Very angry"]},
         }
@@ -440,6 +456,67 @@ class TestJevBackend:
         assert result.answers["team"].default_reason == "missing"
         assert result.answers["mood"].default_reason == "missing"
 
+    def test_choice_null_criteria_are_never_serialized(self, monkeypatch):
+        seen: list[httpx.Request] = []
+        _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
+        _decide()
+        raw = seen[0].content.decode()
+        assert "null" not in raw, raw
+        criteria = json.loads(raw)["questions"]["team"]["criteria"]
+        assert list(criteria) == ["billing", "technical", "sales"], "option order kept"
+        assert all(isinstance(v, str) and v for v in criteria.values())
+
+    def test_jev_choice_is_matched_case_insensitively(self, monkeypatch):
+        body = json.loads(json.dumps(JEV_OK))
+        body["answers"]["team"]["choice"] = "Technical "
+        _use_jev(monkeypatch, _jev_transport(body))
+        result = _decide()
+        assert result.value("team") == "technical"
+        assert result.answers["team"].defaulted is False
+
+    def test_a_200_with_no_readable_answer_degrades_to_flash_lite(self, monkeypatch, sink):
+        """Jev answered, but in a shape we can't read for ANY key: that is a
+        backend failure, not jev saying 'the defaults'."""
+        body = {
+            "model": "jev-1.13.0",
+            "answers": {
+                "urgent": {"type": "noul", "probability": 0.9},     # renamed field
+                "team": {"type": "choice", "label": "billing"},
+                "mood": "frustrated",
+            },
+            "usage": {"input_tokens": 300, "output_tokens": 10},
+        }
+        _use_jev(monkeypatch, _jev_transport(body))
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)):
+            result = _decide()
+        assert result.requested == "jev" and result.backend == "flash_lite"
+        assert result.fallback_reason == "jev_bad_answers"
+        assert result.value("team") == "billing", "the fallback's answers, not defaults"
+        (event,) = _decision_events(sink)
+        assert event["payload"]["backend"] == "flash_lite"
+        assert event["payload"]["fallback_reason"] == "jev_bad_answers"
+
+    def test_an_unexpected_error_in_the_jev_path_degrades_to_flash_lite(
+        self, monkeypatch, caplog,
+    ):
+        _use_jev(monkeypatch, _jev_transport(JEV_OK))
+
+        def broken(q, ans):
+            raise KeyError("surprise")
+
+        monkeypatch.setattr(decisions, "_parse_jev_answer", broken)
+        with (
+            caplog.at_level("DEBUG", logger="sapling.decisions"),
+            decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)),
+        ):
+            result = _decide()
+        assert result.backend == "flash_lite"
+        assert result.fallback_reason == "jev_unexpected_KeyError"
+        assert result.value("mood") == "angry"
+        loud = [r for r in caplog.records if r.levelno >= 30]
+        assert loud and all(r.exc_info is None for r in loud), (
+            "WARN without a traceback — the e2e logscan oracle flags tracebacks")
+
     def test_uncertain_noul_falls_under_the_floor(self, monkeypatch):
         body = json.loads(json.dumps(JEV_OK))
         body["answers"]["urgent"] = {"type": "noul", "noul": 0.6}  # |2p-1| = 0.2
@@ -498,6 +575,36 @@ class TestShadowAndEvent:
         assert shadow["agree"] == {"urgent": True, "team": False, "mood": None}
         # Both backends' tokens are billed — the shadow costs real money.
         assert {r["provider"] for r in _usage_rows(sink)} == {"typesafe", "gemini"}
+
+    def test_primary_degraded_onto_the_shadow_backend_is_not_compared(
+        self, monkeypatch, sink,
+    ):
+        """Jev primary fails and would fall back to flash_lite — the shadow's
+        own backend. Comparing flash_lite with itself would inflate agreement
+        and bill Gemini twice: the shadow's answer serves instead, once."""
+        _use_jev(monkeypatch, _jev_transport({"e": 1}, status=503))
+        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        calls: list = []
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS, calls=calls)):
+            result = _decide()
+        assert len(calls) == 1, "flash_lite ran once, not as fallback AND shadow"
+        assert result.requested == "jev" and result.backend == "flash_lite"
+        assert result.fallback_reason == "jev_http_503"
+        assert result.value("team") == "billing"
+        (event,) = _decision_events(sink)
+        shadow = event["payload"]["shadow"]
+        assert shadow["fallback_reason"] == "shadow_same_as_served"
+        assert shadow["agree"] is None
+        assert [r["provider"] for r in _usage_rows(sink)] == ["gemini"]
+
+    def test_degraded_primary_with_a_failing_shadow_ends_in_defaults(self, monkeypatch):
+        _use_jev(monkeypatch, _jev_transport({"e": 1}, status=503))
+        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        with decision_agent.override(model=_agent_model(raises=RuntimeError("down"))):
+            result = _decide()
+        assert result.backend == "none"
+        assert result.fallback_reason == "jev_http_503+agent_RuntimeError"
+        assert result.value("urgent") is False
 
     def test_shadow_never_falls_back(self, monkeypatch, sink):
         """A failing Jev SHADOW must not quietly run flash_lite a second time."""

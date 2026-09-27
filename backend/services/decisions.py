@@ -232,6 +232,24 @@ def _allowed(q: Question) -> tuple[str, ...]:
     return tuple(k for k, _ in q.levels)
 
 
+def _canonical(q: Question, value: str) -> str:
+    """Map a backend's spelling of an answer onto the question's own key.
+
+    Models echo option keys with drifted case and stray whitespace
+    ('Medium', ' hard '); an exact-match check would throw those away as
+    `invalid` and the key would silently default. Matching is trimmed and
+    case-insensitive, and returns the CANONICAL allowed key ('medium'), so
+    the value a caller compares against is always one it declared. No match
+    returns the trimmed value unchanged — `_resolve` then marks it invalid.
+    """
+    trimmed = value.strip()
+    folded = trimmed.casefold()
+    for key in _allowed(q):
+        if key.strip().casefold() == folded:
+            return key
+    return trimmed
+
+
 # ── Answers ─────────────────────────────────────────────────────────────────
 
 
@@ -416,7 +434,7 @@ async def _run_agent(
         q = by_key.get(item.key)
         if q is None or item.key in raws:
             continue  # unknown key, or a duplicate: first answer wins
-        value = item.value.strip().lower() if isinstance(q, YesNo) else item.value.strip()
+        value = _canonical(q, item.value)
         conf = _clamp01(item.confidence) or 0.0
         p_yes = None
         if isinstance(q, YesNo) and value in ("yes", "no"):
@@ -437,8 +455,13 @@ def _jev_question(q: Question) -> dict:
             spec["criteria"] = {"true": q.when_yes or "Yes.", "false": q.when_no or "No."}
         return spec
     if isinstance(q, Choice):
+        # A Choice's criteria map IS its option list (Jev has no separate
+        # options field), so an option can't be omitted. The docs accept a
+        # null description, but a null is one schema-validator bug away from a
+        # 422 that takes every key down with it; the option's own key is a
+        # valid, harmless rubric. Never send null.
         return {"type": "choice", "instructions": q.instructions,
-                "criteria": {k: d for k, d in q.options}}
+                "criteria": {k: (d if d is not None else k) for k, d in q.options}}
     return {"type": "score", "instructions": q.instructions,
             "criteria": [d for _, d in q.levels]}
 
@@ -498,7 +521,7 @@ def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
         choice = ans.get("choice")
         if not isinstance(choice, str):
             return None
-        return (choice, conf, None, probs)
+        return (_canonical(q, choice), conf, None, probs)
     # Score: the level is the distribution's mode; `score` (the expected
     # level, which can land between levels) is the fallback when the
     # distribution is missing. Map level indexes back to OUR level keys.
@@ -578,6 +601,12 @@ async def _run_jev(
         parsed = _parse_jev_answer(q, answers.get(q.key))
         if parsed is not None:
             raws[q.key] = parsed
+    if questions and not raws:
+        # A 200 that answered nothing we can read (a renamed field, a new
+        # answer shape) is a backend failure, not "Jev said the defaults":
+        # all-defaults attributed to jev would poison the accuracy review.
+        # One bad key still defaults only that key (see _resolve).
+        raise _BackendFailed("jev_bad_answers")
     return raws, model
 
 
@@ -614,18 +643,30 @@ async def _answer_with(
             served = "none"
             return done(_all_defaults(questions, "no_backend"), None)
         if backend == JEV:
+            jev_raws: dict[str, _Raw] | None = None
             try:
-                raws, model = await _run_jev(
+                jev_raws, model = await _run_jev(
                     state, questions, truncatable=truncatable, feature=feature,
                     user_id=user_id, request_id=request_id,
                 )
-                return done(_resolve(questions, raws, floor), model)
             except _BackendFailed as exc:
                 fallback_reason = exc.reason
-                if not allow_fallback:
-                    served = "none"
-                    return done(_all_defaults(questions, "no_backend"), None)
-                served = FLASH_LITE
+            except Exception as exc:
+                # Anything else inside the Jev path (a parser bug, an answer
+                # shape nobody anticipated) is still just "Jev produced
+                # nothing" — degrade like any other Jev failure rather than
+                # jumping straight to all-defaults. Type name only at WARNING:
+                # the E2E logscan oracle treats tracebacks as findings.
+                logger.warning("jev backend failed unexpectedly (%s); using the fallback",
+                               type(exc).__name__)
+                logger.debug("jev failure detail", exc_info=True)
+                fallback_reason = f"jev_unexpected_{type(exc).__name__}"
+            if jev_raws is not None:
+                return done(_resolve(questions, jev_raws, floor), model)
+            if not allow_fallback:
+                served = "none"
+                return done(_all_defaults(questions, "no_backend"), None)
+            served = FLASH_LITE
         # flash_lite and function share the agent path; the mode picks the model.
         raws, model = await _run_agent(state, questions, feature=feature, user_id=user_id)
         return done(_resolve(questions, raws, floor), model)
@@ -640,9 +681,67 @@ async def _answer_with(
         return done(_all_defaults(questions, "no_backend"), None)
 
 
-def _agreement(primary: DecisionResult, shadow: DecisionResult) -> dict[str, bool | None]:
+#: The shadow's `fallback_reason` when the primary degraded onto the shadow's
+#: own backend: the shadow's answer SERVED the turn, so there is no second
+#: opinion to compare and `agree` is None — not a self-comparison at 100%.
+SHADOW_SAME_AS_SERVED = "shadow_same_as_served"
+
+
+async def _primary_with_shadow(
+    primary_backend: str,
+    shadow_name: str,
+    state: Any,
+    questions: Sequence[Question],
+    common: Mapping[str, Any],
+) -> tuple[DecisionResult, DecisionResult]:
+    """Run the primary and the shadow concurrently, without ever running the
+    same backend twice for one decision.
+
+    The only primary that can degrade is Jev, and it degrades to flash_lite.
+    When the shadow IS flash_lite, running the primary's own fallback would
+    bill Gemini twice for the same prompt and then compare the fallback with
+    itself (agreement: 100%, meaning nothing). So the Jev primary runs with
+    its fallback disabled, and if it fails, the shadow's flash_lite result —
+    already in flight, the exact call the fallback would have made — becomes
+    the primary's answer, and the shadow is recorded as
+    ``shadow_same_as_served`` with no agreement.
+    """
+    shadow_task = asyncio.ensure_future(
+        _answer_with(shadow_name, state, questions, allow_fallback=False, **common)
+    )
+    shares_fallback = primary_backend == JEV and shadow_name == FLASH_LITE
+    started = time.monotonic()
+    try:
+        primary = await _answer_with(primary_backend, state, questions,
+                                     allow_fallback=not shares_fallback, **common)
+    except BaseException:  # cancellation: don't strand the shadow's model call
+        shadow_task.cancel()
+        raise
+    shadow = await shadow_task
+    if not shares_fallback or primary.backend != "none":
+        return primary, shadow
+    # Jev failed: serve the flash_lite answer the fallback would have produced.
+    reason = primary.fallback_reason or "jev_failed"
+    if shadow.fallback_reason:
+        reason = f"{reason}+{shadow.fallback_reason}"
+    served = DecisionResult(
+        answers=shadow.answers, backend=shadow.backend, requested=JEV,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        fallback_reason=reason, model=shadow.model,
+    )
+    skipped = DecisionResult(
+        answers=_all_defaults(questions, "no_backend"), backend="none",
+        requested=shadow_name, latency_ms=0, fallback_reason=SHADOW_SAME_AS_SERVED,
+    )
+    return served, skipped
+
+
+def _agreement(primary: DecisionResult, shadow: DecisionResult) -> dict[str, bool | None] | None:
     """Per key: do the two backends' RAW answers agree? None when either said
-    nothing usable (agreement with a default is not agreement)."""
+    nothing usable (agreement with a default is not agreement), and None
+    outright when the shadow's answer is the one that served."""
+    if shadow.fallback_reason == SHADOW_SAME_AS_SERVED:
+        return None
     out: dict[str, bool | None] = {}
     for key, a in primary.answers.items():
         b = shadow.answers.get(key)
@@ -711,7 +810,7 @@ def _span(payload: dict) -> None:
             attrs[f"decision.confidence.{key}"] = ans["confidence"]
         if "shadow" in payload:
             attrs["decision.shadow.backend"] = payload["shadow"]["backend"]
-            for key, agree in payload["shadow"]["agree"].items():
+            for key, agree in (payload["shadow"]["agree"] or {}).items():
                 attrs[f"decision.shadow.agree.{key}"] = agree
         logfire.info("decision made", **attrs)
     except Exception:
@@ -735,7 +834,9 @@ async def decide(
     that may lose their OLDEST items to fit Jev's 32k budget.
 
     With a shadow configured, both backends run concurrently and this awaits
-    both — latency is the slower of the two. That is fine for today's only
+    both — latency is the slower of the two. A primary that degrades onto the
+    shadow's backend reuses the shadow's answer instead of running that
+    backend a second time (see :func:`_primary_with_shadow`). That is fine for today's only
     caller (fire-and-forget); a future blocking caller on a hot path should
     run with the shadow off.
 
@@ -757,9 +858,8 @@ async def decide(
                                         allow_fallback=True, **common)
             shadow = None
         else:
-            result, shadow = await asyncio.gather(
-                _answer_with(primary_backend, state, questions, allow_fallback=True, **common),
-                _answer_with(shadow_name, state, questions, allow_fallback=False, **common),
+            result, shadow = await _primary_with_shadow(
+                primary_backend, shadow_name, state, questions, common,
             )
     except Exception as exc:  # pragma: no cover - _answer_with never raises
         logger.exception("decision seam failed unexpectedly")
