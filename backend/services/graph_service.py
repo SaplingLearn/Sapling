@@ -2,10 +2,26 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from config import get_mastery_tier
 from db.connection import table
+from learning import bkt, fsrs
+from learning.evidence import (
+    EVIDENCE_EVENT_TYPE,
+    PREREQ_RELATIONSHIP_TYPE,
+    Evidence,
+    evidence_weight,
+    is_strong_channel,
+)
+from learning.learner_state import LearnerState, read_states, write_state
+from learning.params import (
+    BKT_L0,
+    EDGE_PREREQ_SOURCE_IS_PREREQ,
+    FSRS_RETENTION_DEFAULT,
+    FSRS_S0_GOOD,
+)
 from services.streak_service import touch_streak_safe
 
 logger = logging.getLogger(__name__)
@@ -680,6 +696,244 @@ def _insert_mastery_event(event_row: dict) -> None:
         )
 
 
+# ── PKG-03: the evidence path (spec §5) ──────────────────────────────────────
+# Everything below up to apply_graph_update runs only when a graph_update
+# carries a non-empty "evidence" list; the legacy keys never reach it.
+
+_ONE_DAY = timedelta(days=1)
+
+
+def _prerequisite_edges(user_id: str, node_id: str) -> list[tuple[str, str]]:
+    """(source_node_id, target_node_id) prerequisite pairs touching node_id.
+    Two reads: the filter dict has no OR across columns (graph_read.py)."""
+    pairs: set[tuple[str, str]] = set()
+    for col in ("source_node_id", "target_node_id"):
+        rows = table("graph_edges").select(
+            "source_node_id,target_node_id",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "relationship_type": f"eq.{PREREQ_RELATIONSHIP_TYPE}",
+                col: f"eq.{node_id}",
+            },
+        ) or []
+        for r in rows:
+            src, tgt = r.get("source_node_id"), r.get("target_node_id")
+            if src and tgt:
+                pairs.add((src, tgt))
+    return sorted(pairs)
+
+
+def _propagation_targets(user_id: str, ev: Evidence) -> list[bkt.Propagation]:
+    """ADAPTER — the one place bkt.propagate_prereq's signature is assumed
+    (HANDOFF-01: `propagate_prereq(evidence_correct, parents, children) ->
+    [(node_id, channel, correct, weight)]`). Resolves the evidence node's
+    prerequisite parents and dependent children from graph_edges, honoring
+    EDGE_PREREQ_SOURCE_IS_PREREQ; bkt picks which side moves."""
+    edges = _prerequisite_edges(user_id, ev.node_id)
+    if not edges:
+        return []
+    parents: list[str] = []
+    children: list[str] = []
+    for src, tgt in edges:
+        prereq, dependent = (src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src)
+        if dependent == ev.node_id and prereq != ev.node_id:
+            parents.append(prereq)
+        elif prereq == ev.node_id and dependent != ev.node_id:
+            children.append(dependent)
+    # idk evidence is never correct (Evidence validates it), so it walks the
+    # incorrect side like any miss.
+    return bkt.propagate_prereq(ev.correct, parents, children)
+
+
+def _fsrs_after(st: LearnerState, ev: Evidence, now: datetime) -> None:
+    """ADAPTER — the one place fsrs.next_state's signature is assumed
+    (HANDOFF-02: `next_state(d, s, rating, days_since, *, same_day,
+    mc_unassisted) -> (D', S')`; nothing is scheduled there). Mutates st's
+    fsrs_* fields in place. A review less than one day after the last one
+    takes FSRS's same-day branch (py-fsrs: `(now − last_review).days < 1`).
+    The due date is at FSRS_RETENTION_DEFAULT; retention selection by exam
+    window or set size is PKG-12's."""
+    rating = fsrs.rating_for(ev.channel, ev.correct, ev.max_rung, idk=ev.idk)
+    mc_unassisted = fsrs.mc_cap_applies(ev.channel, ev.correct, ev.max_rung, idk=ev.idk)
+    last = st.fsrs_last_review_at
+    days_since = 0.0
+    same_day = False
+    if last is not None:
+        days_since = max(0.0, (now - last) / _ONE_DAY)
+        same_day = now - last < _ONE_DAY
+    new_d, new_s = fsrs.next_state(
+        st.fsrs_d, st.fsrs_s, rating, days_since,
+        same_day=same_day, mc_unassisted=mc_unassisted,
+    )
+    st.fsrs_d, st.fsrs_s = new_d, new_s
+    st.fsrs_last_review_at = now
+    st.fsrs_due_at = now + timedelta(days=fsrs.interval(FSRS_RETENTION_DEFAULT, new_s))
+
+
+def _keep_decay_anchor(st: LearnerState, p_now: float, now: datetime) -> tuple[float, datetime]:
+    """ADAPTER over fsrs.retrievability / fsrs.interval (the R that
+    bkt.decayed_p reads with). Returns `(p_stored, anchor)` for a write
+    that is NOT a check on st's concept (one-hop propagation): read_state
+    at `now` gives `p_now` back, but the concept's forgetting curve is not
+    restarted. Spec §1/§3.1: belief decays "between checks" along
+    R(Δt, S_c); restarting a power-law curve at every propagation made a
+    correct observation lower a later read (R(a)·R(b) < R(a+b)).
+
+    Keeps `st.last_evidence_at` and stores `L0 + (p_now − L0) / R(Δt, S_c)`.
+    Where that leaves [0, 1] (p_now is outside what the old anchor can
+    represent), it stores the bound and moves the anchor forward only as
+    far as needed, so R(now − anchor') = (p_now − L0) / (bound − L0). A
+    concept with no anchor (no row yet) is anchored at `now`.
+    """
+    anchor = st.last_evidence_at
+    if anchor is None:
+        return p_now, now
+    if anchor >= now:  # read_states decays nothing before the anchor
+        return p_now, anchor
+    s_c = FSRS_S0_GOOD if st.fsrs_s is None else st.fsrs_s
+    r = fsrs.retrievability((now - anchor) / _ONE_DAY, s_c)
+    p_stored = BKT_L0 + (p_now - BKT_L0) / r
+    if 0.0 <= p_stored <= 1.0:
+        return p_stored, anchor
+    bound = 1.0 if p_stored > 1.0 else 0.0
+    needed = (p_now - BKT_L0) / (bound - BKT_L0)  # in (r, 1]
+    return bound, now - timedelta(days=fsrs.interval(min(1.0, needed), s_c))
+
+
+def _apply_evidence(
+    user_id: str,
+    evidences: list[Evidence],
+    by_id: dict[str, dict],
+    touched_courses: set,
+    now: datetime,
+) -> list[dict]:
+    """PKG-03: the BKT + FSRS write path (spec §5). ONLY caller: apply_graph_update.
+
+    Per evidence, in order: ownership → same-session recheck → weight →
+    decayed read → bkt.update → counters → FSRS → learner_state → graph_nodes
+    mirror → ONE journal row → one-hop propagation (learner_state + mirror
+    only). Propagated updates are derived from the journaled evidence, so
+    they are not journaled themselves. `by_id` is the user- and
+    course-scoped existing_rows; a node outside it is never read or written.
+    """
+    changes: list[dict] = []
+    now_iso = now.isoformat()
+    owned = [ev.node_id for ev in evidences if ev.node_id in by_id]
+    # One batched read; nodes with no row start at the prior. The cache means
+    # a later evidence on the same node sees the earlier posterior (elapsed
+    # time between the two is zero: they share `now`).
+    states = read_states(user_id, owned, now=now)
+    for node_id in owned:
+        states.setdefault(node_id, LearnerState(user_id=user_id, node_id=node_id))
+    seen_checks: set[tuple[str, str]] = set()
+
+    for ev in evidences:
+        row = by_id.get(ev.node_id)
+        if row is None:
+            logger.warning(
+                "graph: evidence skipped node=%s user=%s (not owned or outside course)",
+                ev.node_id, user_id,
+            )
+            continue
+        if ev.session_id and ev.question_hash:
+            key = (ev.session_id, ev.question_hash)
+            if key in seen_checks and not ev.same_session_recheck:
+                ev = Evidence.model_validate({**ev.model_dump(), "same_session_recheck": True})
+            seen_checks.add(key)
+        w = evidence_weight(ev)
+
+        st = states[ev.node_id]
+        p_before = st.p_known
+        # weight 0.0 (correct after H4..H6) returns p_before unchanged.
+        p_after = bkt.update(p_before, ev.channel, ev.correct, weight=w, idk=ev.idk)
+
+        unassisted = not ev.assisted and ev.max_rung == 0
+        st.opps += 1
+        if ev.correct and unassisted:
+            # A correct re-check of a question already asked this session is
+            # not a first attempt (spec §3.3): an opportunity only, it neither
+            # extends nor breaks the streak †.
+            if not ev.same_session_recheck:
+                st.streak_unassisted += 1
+                if is_strong_channel(ev.channel):
+                    st.n_strong_unassisted += 1
+        else:
+            st.streak_unassisted = 0
+        st.max_streak_unassisted = max(st.max_streak_unassisted, st.streak_unassisted)
+        st.p_known = p_after
+        st.last_evidence_at = now
+        _fsrs_after(st, ev, now)
+        write_state(st, now=now)
+        st.exists = True
+
+        times = (row.get("times_studied") or 0) + 1
+        table("graph_nodes").update(
+            {
+                "mastery_score": p_after,
+                "mastery_tier": bkt.tier_for(p_after),
+                "times_studied": times,
+                "last_studied_at": now_iso,
+            },
+            filters={"id": f"eq.{row['id']}"},
+        )
+        row["times_studied"] = times
+        row["mastery_score"] = p_after
+
+        # node_mastery_events has no idk column (spec §4); the reason keeps
+        # the flag so the journal can be replayed with S_IDK.
+        reason = f"evidence:{ev.channel}:idk" if ev.idk else f"evidence:{ev.channel}"
+        _insert_mastery_event({
+            "id": str(uuid.uuid4()),
+            "node_id": row["id"],
+            "delta": p_after - p_before,
+            "reason": reason,
+            "created_at": now_iso,
+            "event_type": EVIDENCE_EVENT_TYPE,
+            "channel": ev.channel,
+            "correct": ev.correct,
+            "weight": w,
+            "assisted": ev.assisted,
+            "max_rung": ev.max_rung,
+            "p_before": p_before,
+            "p_after": p_after,
+            "session_id": ev.session_id,
+            "check_item_id": ev.check_item_id,
+            "question_hash": ev.question_hash,
+            "confidence": ev.confidence,
+        })
+        changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
+        if row.get("course_id"):
+            touched_courses.add(row["course_id"])
+
+        # The propagated observation carries the evidence's own weight too
+        # (spec §5: weight = product of the applicable §3.1 weights) †, and
+        # w == 0.0 (correct after H4..H6, §3.3 "no upward BKT evidence")
+        # moves no neighbour, so its edges are not even read.
+        targets = _propagation_targets(user_id, ev) if w > 0.0 else []
+        for target_id, channel, target_correct, weight in targets:
+            trow = by_id.get(target_id)
+            if trow is None or target_id == ev.node_id:
+                continue
+            tst = states.get(target_id)
+            if tst is None:
+                tst = read_states(user_id, [target_id], now=now).get(target_id) or LearnerState(
+                    user_id=user_id, node_id=target_id
+                )
+                states[target_id] = tst
+            # tst.p_known stays the belief AT now (a later evidence in this
+            # call reads it); the row is stored against the kept anchor.
+            tst.p_known = bkt.update(tst.p_known, channel, target_correct, weight=weight * w)
+            p_stored, tst.last_evidence_at = _keep_decay_anchor(tst, tst.p_known, now)
+            write_state(replace(tst, p_known=p_stored), now=now)
+            tst.exists = True
+            table("graph_nodes").update(
+                {"mastery_score": tst.p_known, "mastery_tier": bkt.tier_for(tst.p_known)},
+                filters={"id": f"eq.{target_id}"},
+            )
+            trow["mastery_score"] = tst.p_known
+    return changes
+
+
 def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
@@ -690,6 +944,15 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     """
     mastery_changes: list = []
     touched_courses: set = set()
+    # PKG-03: validate every evidence BEFORE any read or write; an invalid
+    # item raises pydantic.ValidationError (the caller maps it to a 4xx).
+    # An Evidence instance is re-validated from its dump too: the model is
+    # mutable, and an attribute set after construction skips the validators.
+    raw_evidence = graph_update.get("evidence") or []
+    evidences = [
+        Evidence.model_validate(e.model_dump() if isinstance(e, Evidence) else e)
+        for e in raw_evidence
+    ]
 
     fetch_filters = {"user_id": f"eq.{user_id}"}
     if course_id:
@@ -837,6 +1100,28 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         cid = row.get("course_id")
         if cid:
             touched_courses.add(cid)
+
+    if evidences:
+        # PKG-03: graded evidence is the only thing that moves p_known on the
+        # loop path (spec §1). Legacy keys above are untouched; this block is
+        # skipped entirely when the payload carries no evidence.
+        by_id = {r["id"]: r for r in existing_rows if r.get("id")}
+        # The updated_nodes loop wrote times_studied + 1 for each node it
+        # moved (once per node: it never refreshes its row, and its bytes are
+        # pinned), so bring those rows up to date before the evidence mirror
+        # adds to the count — otherwise two studies land as one.
+        for rid in {(_lookup(c["concept"]) or {}).get("id") for c in mastery_changes}:
+            if rid in by_id:
+                by_id[rid]["times_studied"] = (by_id[rid].get("times_studied") or 0) + 1
+        mastery_changes.extend(
+            _apply_evidence(
+                user_id,
+                evidences,
+                by_id,
+                touched_courses,
+                datetime.now(timezone.utc),
+            )
+        )
 
     if mastery_changes:
         # services/streak_service.py::touch_streak is the sole writer of
