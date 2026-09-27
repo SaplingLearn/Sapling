@@ -212,6 +212,20 @@ describe("an allowed student, real posthog-js", () => {
     10_000,
   );
 
+  it("sign-out strands nothing: each event is sent as it happens (no batch queue)", async () => {
+    const ph = (await signIn("u-out-flush", false))!;
+    await vi.waitFor(() => expect(eventBodies()).toContain("$pageview"), { timeout: 2000 });
+    ph.capture("probe_before_signout");
+    stopAnalytics(); // what sign-out does, right before the cookie goes
+    await vi.waitFor(() => expect(eventBodies()).toContain("probe_before_signout"), { timeout: 500 });
+    const after = ingest().length;
+    ph.capture("probe_after_signout", {}, { send_instantly: true });
+    await sleep(FLUSH);
+    expect(ingest()).toHaveLength(after); // nothing queued, nothing after
+    // Bodies are plain JSON (disable_compression), so the proxy can check the key.
+    for (const r of ingest()) expect(() => JSON.parse(r.body)).not.toThrow();
+  }, 10_000);
+
   it("opting out mid-page stops capture at once (before the save resolves)", async () => {
     const ph = (await signIn("u-mid", false))!;
     let finish!: () => void;

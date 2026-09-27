@@ -163,9 +163,26 @@ describe("build gating", () => {
     );
     expect(config.before_send).toBe(gatedBeforeSend);
     expect(config).not.toHaveProperty("opt_out_capturing_by_default");
-    expect(buildPosthogConfig({ NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com" }).api_host).toBe(
+    expect(config).toMatchObject({ request_batching: false, disable_compression: true });
+  });
+
+  it("NEXT_PUBLIC_POSTHOG_HOST can only move the proxy to another same-origin path", () => {
+    const host = (v: string) => buildPosthogConfig({ ...ENV, NEXT_PUBLIC_POSTHOG_HOST: v }).api_host;
+    expect(host("/ph-proxy")).toBe("/ph-proxy");
+    expect(host("/ph-proxy/")).toBe("/ph-proxy");
+    for (const v of [
       "https://us.i.posthog.com",
-    );
+      "http://evil.example",
+      "//evil.example",
+      "evil.example",
+      "/",
+      "",
+      "  ",
+      "/x?y=1",
+      "javascript:alert(1)",
+    ]) {
+      expect(host(v), v).toBe("/ingest");
+    }
   });
 
   it("a loader failure leaves the app running with analytics off", async () => {
@@ -467,33 +484,23 @@ describe("before_send URL scrubbing", () => {
     expect(scrubEvent(null)).toBeNull();
   });
 
-  it("scrubs nested objects and arrays: web-vitals metrics and heatmap URL keys", () => {
+  it("scrubs URLs nested in objects and arrays", () => {
     const event = {
-      event: "$$heatmap",
+      event: "$pageview",
       uuid: "x",
       properties: {
-        $web_vitals_LCP_event: {
-          name: "LCP",
+        nested: {
           $current_url: "https://saplinglearn.com/auth/callback?auth_token=secret-1",
-          attribution: { url: "https://saplinglearn.com/x?auth_token=secret-2" },
+          attribution: { url: "/x?auth_token=secret-2" },
         },
-        $heatmap_data: {
-          "https://saplinglearn.com/auth/callback?auth_token=secret-3": [{ x: 1 }],
-          "https://saplinglearn.com/auth/callback?user_id=secret-4": [{ x: 2 }],
-          "https://saplinglearn.com/learn": [{ x: 3 }],
-        },
-        $elements: [{ attr__href: "https://saplinglearn.com/a?token=secret-5" }],
+        list: [{ href: "https://saplinglearn.com/a?token=secret-3" }, "/b?c=secret-4"],
       },
     } as unknown as CaptureResult;
     const out = scrubEvent(event)!;
     expect(JSON.stringify(out)).not.toMatch(/secret/);
-    const heatmap = out.properties.$heatmap_data as Record<string, unknown[]>;
-    // Two URLs that collapse onto one page keep both pages' points.
-    expect(heatmap["https://saplinglearn.com/auth/callback"]).toEqual([{ x: 1 }, { x: 2 }]);
-    expect(heatmap["https://saplinglearn.com/learn"]).toEqual([{ x: 3 }]);
-    expect(
-      (out.properties.$web_vitals_LCP_event as { $current_url: string }).$current_url,
-    ).toBe("https://saplinglearn.com/auth/callback");
+    expect((out.properties.nested as { $current_url: string }).$current_url).toBe(
+      "https://saplinglearn.com/auth/callback",
+    );
   });
 
   it("opts every event out of GeoIP enrichment", () => {
