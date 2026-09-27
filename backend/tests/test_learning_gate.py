@@ -2,44 +2,14 @@
 
 from __future__ import annotations
 
-import importlib
-import os
-
 import pytest
-
-
-@pytest.fixture(autouse=True)
-def _restore_flag_after_reload():
-    """`_reload` re-evaluates config.LEARNING_LOOP_ENABLED from the env var.
-    monkeypatch restores the env var afterwards but not the module attribute
-    computed from it, so without this a "true" case would leave the flag ON
-    for every later test module. Re-evaluate against the original env."""
-    original = os.environ.get("LEARNING_LOOP_ENABLED")
-    yield
-    if original is None:
-        os.environ.pop("LEARNING_LOOP_ENABLED", None)
-    else:
-        os.environ["LEARNING_LOOP_ENABLED"] = original
-    import config
-
-    importlib.reload(config)
-    from learning import gate
-
-    importlib.reload(gate)
+from test_learning_loop_invariants import reload_gate
 
 
 def _reload(monkeypatch, env_value: str | None):
-    if env_value is None:
-        monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
-    else:
-        monkeypatch.setenv("LEARNING_LOOP_ENABLED", env_value)
-    import config
-
-    importlib.reload(config)
-    from learning import gate
-
-    importlib.reload(gate)
-    return gate
+    """Hermetic: ignores backend/.env and restores config + gate afterwards
+    (see reload_gate)."""
+    return reload_gate(monkeypatch, env_value)
 
 
 class _Table:

@@ -5,10 +5,12 @@ here; never mark one xfail."""
 
 from __future__ import annotations
 
+import importlib
 import pathlib
 import re
 import subprocess
 
+import dotenv
 import pytest
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -17,6 +19,35 @@ MIGRATIONS = BACKEND / "db" / "migrations"
 
 PURE_MODULES = ("bkt.py", "fsrs.py", "policy.py", "gates.py", "ladder.py", "leak.py")
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
+
+
+def reload_gate(monkeypatch, env_value: str | None):
+    """Re-evaluate `config` and `learning.gate` with LEARNING_LOOP_ENABLED set
+    to `env_value` (None = unset), and return the gate module. Hermetic:
+
+    - config.py calls load_dotenv() at import time, so a bare reload re-reads
+      backend/.env and would put back a variable this test just deleted.
+      load_dotenv is a no-op for the reload.
+    - every attribute the reload rebinds is registered with monkeypatch first,
+      so undo puts the original objects back. monkeypatch alone restores the
+      env var but not the flag computed from it, which would leak into every
+      later test.
+    """
+    import config
+    from learning import gate
+
+    for module in (config, gate):
+        for name, value in list(vars(module).items()):
+            if not name.startswith("__"):
+                monkeypatch.setattr(module, name, value)
+    if env_value is None:
+        monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("LEARNING_LOOP_ENABLED", env_value)
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: False)
+    importlib.reload(config)
+    importlib.reload(gate)
+    return gate
 
 
 def _imports_of(path: pathlib.Path) -> list[str]:
@@ -95,15 +126,7 @@ def test_inv_10_lru_cache_has_clear_hook():
 
 
 def test_inv_11_gate_false_when_env_unset(monkeypatch):
-    monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
-    import importlib
-
-    import config
-
-    importlib.reload(config)
-    from learning import gate
-
-    importlib.reload(gate)
+    gate = reload_gate(monkeypatch, None)
     calls = []
     monkeypatch.setattr(gate, "table", lambda name: calls.append(name) or _Boom())
     for uid in ("user_andres", "e2e-student", "nobody"):
