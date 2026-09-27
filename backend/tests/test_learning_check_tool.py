@@ -260,3 +260,73 @@ def test_grade_degrades_when_the_second_opinion_fails(monkeypatch, caplog):
         res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
     assert len(calls) == 2 and res.unavailable is True
     assert any("grader unavailable" in r.getMessage() for r in caplog.records)
+
+
+# ── function-mode handler ─────────────────────────────────────────────────
+
+
+@pytest.fixture
+def _clean_registry(monkeypatch):
+    """Cold seam, env-module lane (the test_e2e_function_handlers posture)."""
+    import sys
+
+    import agents._providers as providers
+
+    providers.clear_function_handlers()
+    monkeypatch.setattr(providers, "_ENV_HANDLERS_LOADED", False)
+    sys.modules.pop("agents.function_handlers_e2e", None)
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    yield
+    providers.clear_function_handlers()
+    sys.modules.pop("agents.function_handlers_e2e", None)
+
+
+def test_e2e_grader_handler_all_yes_on_token(_clean_registry, monkeypatch):
+    import agents.grader as g
+    from agents._providers import model_for
+
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    with g.grader_agent.override(model=model_for("grader")):
+        from agents.function_handlers_e2e import E2E_GRADER_CORRECT_TOKEN, E2E_GRADER_HINT
+
+        yes = asyncio.run(g.grade(_item(), format="free",
+                                  student_answer=f"answer {E2E_GRADER_CORRECT_TOKEN}", deps=_deps()))
+        no = asyncio.run(g.grade(_item(), format="free", student_answer="a loop", deps=_deps()))
+    assert yes.all_yes is True and yes.item_results == {"r1": True, "r2": True}
+    assert yes.feedback_hint == E2E_GRADER_HINT and yes.low_confidence is False
+    assert yes.backend == "gemini" and yes.matched_wrong_key == ""
+    assert no.unavailable is False and no.item_results == {"r1": False, "r2": False}
+
+
+def test_e2e_grader_handler_serves_both_slots(_clean_registry, monkeypatch):
+    """Invariant 6: the grader_second slot has the same fixed handler."""
+    import agents.grader as g
+    from agents._providers import model_for
+
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    for slot in ("grader", GRADER_SECOND_OPINION_SLOT):
+        with g.grader_agent.override(model=model_for(slot)):
+            from agents.function_handlers_e2e import E2E_GRADER_CORRECT_TOKEN
+
+            res = asyncio.run(g.grade(_item(), format="free",
+                                      student_answer=f"x {E2E_GRADER_CORRECT_TOKEN}", deps=_deps()))
+        assert res.unavailable is False and res.all_yes is True, slot
+
+
+def test_e2e_grader_handler_reads_rubric_ids_off_the_message(_clean_registry, monkeypatch):
+    """Any seeded item works: ids come from `RUBRIC ITEM <id>:` lines, so a
+    three-item rubric gets three verdicts; the confidence never triggers the
+    second opinion in E2E."""
+    import agents.grader as g
+    from agents._providers import model_for
+
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    item = _item(rubric=[RubricItem(id=f"rubric_{i}", text=f"point {i}") for i in range(3)])
+    with g.grader_agent.override(model=model_for("grader")):
+        from agents.function_handlers_e2e import E2E_GRADER_CONFIDENCE, E2E_GRADER_CORRECT_TOKEN
+
+        res = asyncio.run(g.grade(item, format="teachback",
+                                  student_answer=E2E_GRADER_CORRECT_TOKEN, deps=_deps()))
+    assert res.item_results == {"rubric_0": True, "rubric_1": True, "rubric_2": True}
+    assert res.confidence == E2E_GRADER_CONFIDENCE >= GRADER_LOW_CONFIDENCE
