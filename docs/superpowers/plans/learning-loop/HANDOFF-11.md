@@ -135,3 +135,4 @@ Also at cutover:
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+- Series 2026-09-27: merged into `feat/learning-loop` (d6db9ab). The deferred E2E cycle ran on the local stack with a fresh DB: 70 migrations replayed from empty, including 20260927035346_learning_flashcards_fsrs.sql; Playwright 89 passed, 0 failed, 13 skipped by opt-in; oracles exit 0. Known gap "E2E cycle not run" is closed.
