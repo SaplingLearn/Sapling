@@ -629,6 +629,64 @@ class TestFinalAnswerRules:
         reasons = [r for r in validate_draft(d) if "final_answer" in r]
         assert any("concept" in r for r in reasons), reasons
 
+    @pytest.mark.parametrize(
+        "concept,final",
+        [
+            # the concept's last word in its regular plural (or singular)
+            ("Base Case", "Base cases"),
+            ("Base Case", "cases"),
+            ("Derivative", "Derivatives"),
+            ("Eigenvalue", "The eigenvalues"),
+            ("Class", "classes"),
+            ("Base Cases", "the base case"),
+            ("Base Case", "Those base cases"),
+            ("Base Case", "their base cases"),
+            # a hyphen between two words is a space
+            ("Base Case", "The base-case"),
+            ("Base Case", "base-cases"),
+            ("Divide-and-Conquer", "divide and conquer"),
+            ("Divide and Conquer", "divide-and-conquer"),
+        ],
+    )
+    def test_a_plural_or_hyphenated_spelling_does_not_hide_the_concept_name(self, concept, final):
+        """A hint that names the concept may say "base cases" or "base-case";
+        a final answer spelled so would block every such hint."""
+        from learning.checks import validate_draft
+
+        d = _draft(
+            concept=concept,
+            prompt="What stops the recursion here?",
+            reference_answer=f"When the input is empty it returns. Final answer: {final}",
+            final_answer=final,
+        )
+        reasons = [r for r in validate_draft(d) if "final_answer" in r]
+        assert any("concept" in r for r in reasons), reasons
+
+    @pytest.mark.parametrize(
+        "concept,final",
+        [
+            # only the concept's LAST word takes a number: "bases" is in no
+            # spelling of "base case", "gases" in none of "gas laws"
+            ("Base Case", "bases"),
+            ("Gas Laws", "gases"),
+            # a word shorter than the tokenizer floor is never inflected
+            ("Type I", "type is"),
+            # known gap (HANDOFF-06): an irregular plural is another word
+            ("Matrix", "matrices"),
+            ("Analysis", "the analyses"),
+        ],
+    )
+    def test_a_word_that_is_no_spelling_of_the_concept_name_is_kept(self, concept, final):
+        from learning.checks import validate_draft
+
+        d = _draft(
+            concept=concept,
+            prompt="What stops the recursion here?",
+            reference_answer=f"When the input is empty it returns. Final answer: {final}",
+            final_answer=final,
+        )
+        assert validate_draft(d) == []
+
     def test_an_answer_that_only_shares_a_determiner_with_the_concept_is_kept(self):
         from learning.checks import validate_draft
 

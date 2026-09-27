@@ -87,7 +87,11 @@ _STOPWORDS = frozenset(
 )
 # Articles and determiners the concept-name rule looks past (A34): they add
 # nothing a hint naming the concept would not also say.
-_DETERMINERS = frozenset({"the", "a", "an", "its", "this", "that"})
+_DETERMINERS = frozenset({"the", "a", "an", "its", "their", "this", "that", "these", "those"})
+# The regular English plural endings the concept-name rule reads on the
+# concept's last word ("base case" / "base cases", "class" / "classes").
+_PLURAL_ENDINGS = ("s", "es")
+_HYPHEN = "-"
 _MC_REASON = "mc_reason"
 _NUMERIC = "numeric"
 
@@ -468,14 +472,56 @@ def _correct_option_text(draft: CheckItemDraft) -> str | None:
     return texts[hits[0]]
 
 
+def _unhyphenated(run: tuple[str, ...]) -> tuple[str, ...]:
+    """`run` with every '-' between two words dropped: "base-case" is spelled
+    "base case" (between numbers or symbols a '-' is an operator and stays)."""
+    return tuple(
+        t
+        for i, t in enumerate(run)
+        if not (
+            t == _HYPHEN and 0 < i < len(run) - 1 and run[i - 1].isalpha() and run[i + 1].isalpha()
+        )
+    )
+
+
+def _number_forms(a: str, b: str) -> bool:
+    """Whether one word is the other's regular plural ("case" / "cases",
+    "class" / "classes"); a word shorter than _MIN_TOKEN_LEN has none ("i" /
+    "is", "a" / "as")."""
+    short, long = sorted((a, b), key=len)
+    return (
+        len(short) >= _MIN_TOKEN_LEN
+        and short.isalpha()
+        and long in {short + ending for ending in _PLURAL_ENDINGS}
+    )
+
+
+def _in_a_spelling(concept: tuple[str, ...], run: tuple[str, ...]) -> bool:
+    """Whether `run` occurs in the concept name as a hint may spell it: word
+    for word, except that the name's LAST word may take the other number
+    ("base cases" for "Base Case"; "bases" is in no spelling of it)."""
+    k, last = len(run), len(concept) - 1
+    return bool(run) and any(
+        all(
+            c == r or (i + j == last and _number_forms(c, r))
+            for j, (c, r) in enumerate(zip(concept[i : i + k], run))
+        )
+        for i in range(len(concept) - k + 1)
+    )
+
+
 def _names_the_concept(run: tuple[str, ...], concept: tuple[str, ...]) -> bool:
-    """Whether a final answer is (part of) the concept name, a determiner
-    aside: "The base case." names "Base Case" as surely as "base case" does,
-    and would block every hint that says "the base case"."""
-    if contains_run(concept, run):
+    """Whether a final answer is (part of) the concept name as a hint may
+    spell it — a determiner aside, a hyphen between words as a space, the
+    name's last word in either number: "The base case.", "Base cases" and
+    "the base-case" name "Base Case" as surely as "base case" does, and each
+    would block every hint that says it. An irregular plural ("matrices" for
+    "Matrix") is another word to this rule."""
+    run, concept = _unhyphenated(run), _unhyphenated(concept)
+    if _in_a_spelling(concept, run):
         return True
     core = tuple(t for t in run if t not in _DETERMINERS)
-    return bool(core) and contains_run(tuple(t for t in concept if t not in _DETERMINERS), core)
+    return _in_a_spelling(tuple(t for t in concept if t not in _DETERMINERS), core)
 
 
 def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
