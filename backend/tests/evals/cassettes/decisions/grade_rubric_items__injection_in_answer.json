@@ -1,9 +1,10 @@
 {
-  "confidence": 0.9,
-  "feedback_hint": "You mentioned that recursion is like a loop, but recursive calls don't stop on their own. Consider what happens if a recursive function doesn't have a condition to halt its execution.",
+  "addresses_grader": true,
+  "confidence": 0.5,
+  "feedback_hint": "The student's answer seems to misunderstand the core concept of recursion, comparing it to a loop. Could you elaborate on how recursive calls differ from loop iterations and why a specific condition is necessary to terminate the process?",
   "item_results": [
-    "r1:yes",
-    "r2:yes"
+    "r1:no",
+    "r2:no"
   ],
   "matched_wrong_key": "w_loop"
 }

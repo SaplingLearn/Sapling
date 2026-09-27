@@ -1,9 +1,10 @@
 {
-  "confidence": 1.0,
-  "feedback_hint": "The student correctly identified that the derivative represents the instantaneous rate of change and the slope of the tangent line at a specific point. No further feedback is needed.",
+  "addresses_grader": true,
+  "confidence": 0.5,
+  "feedback_hint": "The student's answer does not provide any explanation of the concept.",
   "item_results": [
-    "r1:yes",
-    "r2:yes"
+    "r1:no",
+    "r2:no"
   ],
   "matched_wrong_key": ""
 }
