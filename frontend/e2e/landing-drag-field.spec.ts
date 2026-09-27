@@ -33,11 +33,20 @@ import { expect, test, type Page } from "@playwright/test";
 test.use({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 900 } });
 
 /**
- * The envelope a placed node's breathing stays inside — `PLACED_SWAY` is a
- * third of the free amplitude. Wide enough for the sway, far short of the
- * distance that would mean it had wandered off the spot it was left on.
+ * The envelope a placed node's breathing stays inside.
+ *
+ * `PLACED_SWAY` is 1 — all of the free amplitude — and `sim.ts` puts the
+ * resulting excursion at ~21px, deliberately matching what the node had
+ * before it was touched. This was 12, written when a placed node kept only a
+ * third of its drift; that reading is stale, and a dropped node measured
+ * 12.7px against it.
+ *
+ * Still far short of the distance that would mean the node had wandered off
+ * the spot it was left on: what bounds that is `PLACED_ANCHOR`, not this, and
+ * the 1:1-travel and offset-against-copy journeys below are what would catch
+ * a node that actually departed.
  */
-const SWAY_PX = 12;
+const SWAY_PX = 26;
 
 /** Where a ring sits on screen, and what the page is doing underneath it. */
 interface Probe {
@@ -176,14 +185,29 @@ async function probeAgainstCopy(
   }, { section: FAQ_SECTION, copy: FAQ_COPY });
 }
 
+/** How far this journey scrolls at each sample point. */
+const SCROLL_RUN_PX = 1200;
+
 test("nodes do not move of their own accord while the page scrolls", async ({ page }) => {
-  const height = await openLanding(page);
+  await openLanding(page);
 
   // Sample every frame, in the page, so the measurement never depends on
   // round-trip timing. Each ring is measured against ITS OWN cluster, which
   // separates "the sim moved it" from "the section it belongs to is sticky".
-  for (const fraction of [0.5, 0.8, 0.9]) {
-    await page.evaluate((y) => window.scrollTo(0, y), Math.round(height * fraction));
+  //
+  // Each sample point is taken of the CURRENT scrollable range and clamped to
+  // leave a full run of headroom below it. Two things force that. `foldActs`
+  // collapses a finished act's runway, so the page gets shorter as it is read
+  // — 0.9 of the height measured at the top landed past the end of the
+  // shortened document, where the wheel moved the page 0px and there was
+  // nothing to measure. And the clusters live low on the page, so the window
+  // has to stay in their half: sampling at 0.2 and 0.4 scrolls perfectly well
+  // and sees no rings at all.
+  for (const fraction of [0.5, 0.6, 0.7]) {
+    await page.evaluate(({ f, run }) => {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      window.scrollTo(0, Math.min(Math.round(max * f), Math.max(0, max - run)));
+    }, { f: fraction, run: SCROLL_RUN_PX });
     await page.waitForTimeout(700);
 
     await page.evaluate(() => {
@@ -203,17 +227,25 @@ test("nodes do not move of their own accord while the page scrolls", async ({ pa
             }
           });
         });
-        w.__frames.push({ y: window.scrollY, rings });
+        w.__frames.push({ t: performance.now(), y: window.scrollY, rings });
         w.__raf = requestAnimationFrame(tick);
       };
       w.__raf = requestAnimationFrame(tick);
     });
 
-    for (let i = 0; i < 30; i++) await page.mouse.wheel(0, 40);
+    // Paced, not fired in a burst. `engine/scrollGovernor.ts` meters the wheel
+    // — a gesture queues at most MAX_BACKLOG_VH ahead and the page moves at
+    // most MAX_SPEED_VH — so distance travelled is a function of elapsed time,
+    // and ticks past the backlog are discarded. A tight loop of these asked for
+    // 1200px and moved the page 0.
+    for (let i = 0; i < 30; i++) {
+      await page.mouse.wheel(0, 40);
+      await page.waitForTimeout(16);
+    }
 
     const result = await page.evaluate(() => {
       const w = window as never as {
-        __frames: Array<{ y: number; rings: Array<{ k: string; dx: number; dy: number }> }>;
+        __frames: Array<{ t: number; y: number; rings: Array<{ k: string; dx: number; dy: number }> }>;
         __raf: number;
       };
       cancelAnimationFrame(w.__raf);
@@ -223,8 +255,22 @@ test("nodes do not move of their own accord while the page scrolls", async ({ pa
       // loose enough to miss the whole regression.
       const travelled = new Map<string, number>();
       let compared = 0;
+      let movedFrames = 0;
+      let pageTravel = 0;
+      let starved = 0;
+      // `sim.ts` holds the field still for SCROLL_QUIET_MS (140) after the last
+      // scroll. A frame pair further apart than that straddles a window in
+      // which the sim was entitled to resume breathing, and its motion is not
+      // the wander this journey is looking for. On an unloaded machine no pair
+      // is ever this far apart; under load they are, and counting them turned
+      // legitimate breathing into a 0.4px/frame "drift" that failed here while
+      // nine isolated runs of the same positions measured 0.005.
+      const SIM_QUIET_MS = 140;
       for (let i = 1; i < w.__frames.length; i++) {
         if (w.__frames[i].y === w.__frames[i - 1].y) continue; // page was still
+        if (w.__frames[i].t - w.__frames[i - 1].t >= SIM_QUIET_MS) { starved++; continue; }
+        movedFrames++;
+        pageTravel += Math.abs(w.__frames[i].y - w.__frames[i - 1].y);
         const now = Object.fromEntries(w.__frames[i].rings.map((r) => [r.k, r]));
         for (const before of w.__frames[i - 1].rings) {
           const after = now[before.k];
@@ -237,15 +283,34 @@ test("nodes do not move of their own accord while the page scrolls", async ({ pa
       return {
         worst: Math.max(0, ...travelled.values()),
         compared,
-        scrolled: w.__frames.at(-1)!.y - w.__frames[0].y,
+        movedFrames,
+        pageTravel,
+        starved,
       };
     });
 
-    expect(result.scrolled, "the page should actually have scrolled").toBeGreaterThan(200);
+    // Distance travelled, not net displacement. `foldActs` collapses a
+    // finished act's runway mid-scroll, which shortens the document and makes
+    // the browser clamp `scrollY` back down — so the page can move hundreds of
+    // px and end up ABOVE where it started. Two of these three sample points
+    // finish net negative while scrolling perfectly well.
+    expect(result.pageTravel, "the page should actually have moved").toBeGreaterThan(200);
+    expect(result.movedFrames, "frames where the page actually moved").toBeGreaterThan(20);
     expect(result.compared, "rings should have been on screen to compare").toBeGreaterThan(20);
     // Welded: a node's offset within its own cluster is frozen while the page
     // moves, so it travels nowhere at all. This was tens of px before the fix.
-    expect(result.worst).toBeLessThan(2);
+    //
+    // Asserted as a RATE rather than a total. Path length grows with sampling
+    // density, and since `engine/scrollGovernor.ts` began metering the wheel
+    // the same 1200px of scroll is delivered over ~56 frames instead of ~10 —
+    // so the accumulated sub-pixel noise grew with it and a fixed 2px budget
+    // started failing on a page that had not changed. A rate is what the
+    // invariant actually means and is independent of how long the scroll takes.
+    //
+    // The regression this guards ran at ~0.15px per frame and totalled tens of
+    // px; measured drift with headroom to scroll is ~0.004-0.01. 0.05 sits
+    // clear of that and still catches the regression at a third of its rate.
+    expect(result.worst / result.movedFrames).toBeLessThan(0.05);
   }
 });
 
@@ -297,8 +362,22 @@ test("a cluster holds still against its act, through the pin and the release", a
   });
 
   // Enough ticks to cross the whole act and come out the far side.
-  const ticks = Math.ceil((act.height + 600) / 60);
-  for (let i = 0; i < ticks; i++) await page.mouse.wheel(0, 60);
+  // Driven until the act is behind us on a wall-clock budget, for the same
+  // reason as above: the governor meters the wheel, so a fixed tick count
+  // cannot buy a fixed distance. This asked for the act's height and got 1500
+  // of 3060 before the budget mattered.
+  const deadline = Date.now() + 25_000;
+  for (let i = 0; Date.now() < deadline; i++) {
+    await page.mouse.wheel(0, 60);
+    await page.waitForTimeout(16);
+    if (i % 10 === 9) {
+      const past = await page.evaluate(
+        (h) => window.scrollY > h,
+        act.top + act.height + 400,
+      );
+      if (past) break;
+    }
+  }
   await page.waitForTimeout(200);
 
   const result = await page.evaluate(() => {
