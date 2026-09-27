@@ -68,11 +68,17 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
 decision.made                 usage     feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
-                                        floor, answers {key: value, raw, confidence,
-                                        defaulted?}, optional shadow {backend, answers,
-                                        agree {key: bool|null}, ...}, + caller extras (the
-                                        tutor router adds session_id, mode, model_pref,
-                                        history_messages). ADR 0027 / #640 / #642.
+                                        floor, answers {key: value, raw ("<invalid>" for
+                                        an off-list answer), confidence, defaulted?},
+                                        optional shadow {backend, answers, agree {key:
+                                        bool|null} | null (null = shadow_same_as_served),
+                                        ...}, + caller extras. The tutor router adds
+                                        session_id, mode, history_messages, and the model
+                                        the turn ACTUALLY ran on: model_tier (fast | smart
+                                        | default — default whenever the pref was not
+                                        honoured), tutor_model (resolved model name) and
+                                        model_pref_requested (the raw request field).
+                                        ADR 0027 / #640 / #642.
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but

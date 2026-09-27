@@ -29,7 +29,8 @@ Backends (``SAPLING_DECISIONS_BACKEND``):
                 is explicitly `off`): the same agent on the FunctionModel,
                 answered by the handler registered for task "decision"
                 (agents/function_handlers_e2e.py). Jev is never dialled in
-                function mode.
+                function mode. May also be set explicitly; outside function
+                mode it means `off` (warned once) — never a live model.
 
 ``SAPLING_DECISIONS_SHADOW`` (off|flash_lite|jev) runs a second backend
 alongside the primary and records both, with per-key agreement, on the one
@@ -77,7 +78,11 @@ TIMEOUT_ENV = "SAPLING_DECISIONS_TIMEOUT_MS"
 JEV_TIMEOUT_ENV = "SAPLING_DECISIONS_JEV_TIMEOUT_MS"
 
 OFF, FLASH_LITE, JEV, FUNCTION = "off", "flash_lite", "jev", "function"
-_CONFIGURABLE = (OFF, FLASH_LITE, JEV)
+#: `function` is accepted so the name the docs use works, but it only EXISTS
+#: under SAPLING_MODEL_MODE=function (the scripted FunctionModel). In any other
+#: mode it resolves to `off` with a one-time warning — never to a live model:
+#: an operator who wrote "function" did not ask for Gemini to be billed.
+_CONFIGURABLE = (OFF, FLASH_LITE, JEV, FUNCTION)
 
 #: TypeSafe's own "solid default" floor (docs.typesafe.ai/confidence).
 DEFAULT_CONFIDENCE_FLOOR = 0.5
@@ -140,7 +145,20 @@ def configured_backend() -> str:
         if explicit and backend == OFF:
             return OFF
         return FUNCTION
-    return backend
+    return _outside_function_mode(BACKEND_ENV, backend)
+
+
+def _outside_function_mode(env: str, backend: str) -> str:
+    """`function` names the scripted backend, which only exists in function
+    mode; anywhere else it is `off` (warned once), never a live model."""
+    if backend != FUNCTION:
+        return backend
+    _warn_once(
+        f"{env}=function",
+        "%s=function only applies under SAPLING_MODEL_MODE=function; treating it as 'off'",
+        env,
+    )
+    return OFF
 
 
 def shadow_backend() -> str:
@@ -149,7 +167,7 @@ def shadow_backend() -> str:
     it would duplicate the primary."""
     if _model_mode() == "function":
         return OFF
-    shadow = _read_backend(SHADOW_ENV, OFF)
+    shadow = _outside_function_mode(SHADOW_ENV, _read_backend(SHADOW_ENV, OFF))
     primary = configured_backend()
     if primary == OFF or shadow == primary:
         return OFF
@@ -295,12 +313,23 @@ class DecisionResult:
         return {
             k: {
                 "value": a.value,
-                "raw": a.raw,
+                "raw": _event_raw(a),
                 "confidence": round(a.confidence, 4),
                 **({"defaulted": a.default_reason} if a.defaulted else {}),
             }
             for k, a in self.answers.items()
         }
+
+
+#: What an out-of-set answer shows on the event. The Answer keeps the real
+#: string (callers and tests can read it); the event does not, because an
+#: off-list value is free model text — it can echo the student's message —
+#: and the payload contract is enums/bools/floats only, never state text.
+INVALID_RAW = "<invalid>"
+
+
+def _event_raw(a: "Answer") -> Any:
+    return INVALID_RAW if a.default_reason == "invalid" else a.raw
 
 
 # Backend-level raw answer: (value in the question's allowed set, confidence,
@@ -328,11 +357,19 @@ def _clamp01(x: Any) -> float | None:
 
 
 def _default_answer(q: Question, reason: str, raw: _Raw | None = None) -> Answer:
+    if raw is None:
+        raw_value = None
+    elif reason == "invalid":
+        # Outside the allowed set: keep EXACTLY what the backend said (typing
+        # it would turn a YesNo "maybe" into False — a fabricated "no").
+        raw_value = raw[0]
+    else:
+        raw_value = _typed(q, raw[0])
     return Answer(
         key=q.key,
         value=q.default,
         confidence=raw[1] if raw else 0.0,
-        raw=_typed(q, raw[0]) if raw else None,
+        raw=raw_value,
         defaulted=True,
         default_reason=reason,
         probability=raw[2] if raw else None,
@@ -353,7 +390,7 @@ def _resolve(
         if raw is None:
             out[q.key] = _default_answer(q, "missing")
         elif raw[0] not in _allowed(q):
-            out[q.key] = _default_answer(q, "invalid")
+            out[q.key] = _default_answer(q, "invalid", raw)
         elif raw[1] < floor:
             out[q.key] = _default_answer(q, "below_floor", raw)
         else:
@@ -404,6 +441,7 @@ async def _run_agent(
     *,
     feature: str,
     user_id: str | None,
+    request_id: str | None,
 ) -> tuple[dict[str, _Raw], str | None]:
     from agents import WORKER_LIMITS
     from agents.decision import decision_agent
@@ -426,7 +464,12 @@ async def _run_agent(
         logger.warning("decision agent failed (%s); using defaults", type(exc).__name__)
         logger.debug("decision agent failure detail", exc_info=True)
         raise _BackendFailed(f"agent_{type(exc).__name__}") from exc
-    record_agent_usage(result, feature=feature, task="decision", user_id=user_id)
+    # request_id is explicit: the tutor router runs as a detached task (on the
+    # streamed path, scheduled from inside the SSE generator), outside the
+    # request contextvar, so the implicit lookup would leave the row orphaned
+    # from its turn.
+    record_agent_usage(result, feature=feature, task="decision", user_id=user_id,
+                       request_id=request_id)
 
     by_key = {q.key: q for q in questions}
     raws: dict[str, _Raw] = {}
@@ -470,33 +513,58 @@ def _fit_state(state: Any, truncatable: Sequence[str], question_tokens: int) -> 
     """Return a state that fits Jev's budget, or raise _BackendFailed.
 
     Only keys named in ``truncatable`` whose values are lists are trimmed,
-    oldest (front) item first — e.g. a conversation tail. If that is not
-    enough, the state is NOT clipped further: silently cutting the text being
-    judged would change the judgment. It degrades instead (flash_lite has a
-    far larger context).
+    oldest (front) item first, each key exhausted before the next — e.g. a
+    conversation tail. If that is not enough, the state is NOT clipped
+    further: silently cutting the text being judged would change the
+    judgment. It degrades instead (flash_lite has a far larger context).
+
+    Linear: every item is serialized once. ``json.dumps`` output is
+    context-free (no indent), so a list's serialized length is exactly
+    ``2 + sum(item lengths) + 2 * (n - 1)`` (brackets and ", " separators),
+    and dropping the front item of a list with ``n`` items shortens the whole
+    document by its length plus 2 (plus 0 when it was the last one). A
+    running total therefore tracks the size of every trimmed candidate
+    without re-serializing it.
     """
     budget = typesafe_client.STATE_TOKEN_BUDGET - question_tokens - _JEV_BUDGET_MARGIN
 
-    def size(s: Any) -> int:
-        return typesafe_client.estimate_tokens(json.dumps(s, ensure_ascii=False, default=str))
+    def dumps(v: Any) -> str:
+        return json.dumps(v, ensure_ascii=False, default=str)
 
-    if size(state) <= budget:
-        return state
-    if not isinstance(state, dict):
+    def fits(chars: int) -> bool:
+        # typesafe_client.estimate_tokens(text) is a function of len(text)
+        # only; applied to a stand-in of the same length it is exact.
+        return typesafe_client.estimate_tokens("x" * chars) <= budget
+
+    lists = {
+        key: state[key] for key in truncatable
+        if isinstance(state, dict) and isinstance(state.get(key), list) and state[key]
+    }
+    if not lists:
+        if fits(len(dumps(state))):
+            return state
         raise _BackendFailed("jev_state_over_budget")
-    trimmed = dict(state)
+
+    # The document with every trimmable list emptied, plus each list's items.
+    sizes = {key: [len(dumps(item)) for item in items] for key, items in lists.items()}
+    total = len(dumps({**state, **{key: [] for key in lists}}))
+    for key, item_sizes in sizes.items():
+        total += sum(item_sizes) + 2 * (len(item_sizes) - 1)
+    if fits(total):
+        return state
+
+    drop = {key: 0 for key in lists}
     for key in truncatable:
-        if isinstance(trimmed.get(key), list):
-            trimmed[key] = list(trimmed[key])
-    while size(trimmed) > budget:
-        for key in truncatable:
-            items = trimmed.get(key)
-            if isinstance(items, list) and items:
-                items.pop(0)
-                break
-        else:
-            raise _BackendFailed("jev_state_over_budget")
-    return trimmed
+        if key not in sizes:
+            continue
+        item_sizes = sizes[key]
+        while drop[key] < len(item_sizes) and not fits(total):
+            remaining = len(item_sizes) - drop[key]
+            total -= item_sizes[drop[key]] + (2 if remaining > 1 else 0)
+            drop[key] += 1
+        if fits(total):
+            return {**state, **{k: lists[k][n:] for k, n in drop.items()}}
+    raise _BackendFailed("jev_state_over_budget")
 
 
 def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
@@ -524,27 +592,27 @@ def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
         return (_canonical(q, choice), conf, None, probs)
     # Score: the level is the distribution's mode; `score` (the expected
     # level, which can land between levels) is the fallback when the
-    # distribution is missing. Map level indexes back to OUR level keys.
+    # distribution is missing or has no usable level. Map level indexes back
+    # to OUR level keys. A key that is not a level index of THIS question
+    # ("7" on a 3-level scale, "-1", "high") is ignored — one bad key must
+    # not discard a valid distribution or a valid `score`.
     keys = [k for k, _ in q.levels]
-    index: int | None = None
-    if probs:
+    by_index: dict[int, float] = {}
+    for k, v in (probs or {}).items():
         try:
-            index = int(max(probs, key=lambda k: probs[k]))
+            i = int(k)
         except ValueError:
-            index = None
-    if index is None:
+            continue
+        if 0 <= i < len(keys) and str(i) == k.strip():
+            by_index[i] = v
+    if by_index:
+        index = max(by_index, key=lambda i: by_index[i])
+    else:
         s = _clamp01_score(ans.get("score"), len(keys))
         if s is None:
             return None
         index = int(round(s))
-    if not 0 <= index < len(keys):
-        return None
-    named = None
-    if probs:
-        named = {}
-        for k, v in probs.items():
-            if k.isdigit() and int(k) < len(keys):
-                named[keys[int(k)]] = v
+    named = {keys[i]: v for i, v in sorted(by_index.items())} or None
     return (keys[index], conf, None, named)
 
 
@@ -668,7 +736,8 @@ async def _answer_with(
                 return done(_all_defaults(questions, "no_backend"), None)
             served = FLASH_LITE
         # flash_lite and function share the agent path; the mode picks the model.
-        raws, model = await _run_agent(state, questions, feature=feature, user_id=user_id)
+        raws, model = await _run_agent(state, questions, feature=feature, user_id=user_id,
+                                       request_id=request_id)
         return done(_resolve(questions, raws, floor), model)
     except _BackendFailed as exc:
         fallback_reason = f"{fallback_reason}+{exc.reason}" if fallback_reason else exc.reason
@@ -745,8 +814,13 @@ def _agreement(primary: DecisionResult, shadow: DecisionResult) -> dict[str, boo
     out: dict[str, bool | None] = {}
     for key, a in primary.answers.items():
         b = shadow.answers.get(key)
-        if a.raw is None or b is None or b.raw is None:
+        if b is None or a.raw is None or b.raw is None:
             out[key] = None
+        elif a.default_reason == "invalid" or b.default_reason == "invalid":
+            # An off-list answer is a wrong answer, not a missing one: it
+            # disagrees — even with another off-list answer that happens to
+            # use the same words.
+            out[key] = False
         else:
             out[key] = a.raw == b.raw
     return out

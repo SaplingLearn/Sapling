@@ -64,7 +64,9 @@ toggle is an open product question.
      backend is explicitly `off`. It is the same agent on the FunctionModel,
      answered by the `decision` handler in `agents/function_handlers_e2e.py`
      (and `function_handlers_showcase.py`). ADR 0019 unchanged: Jev is never
-     dialled from the deterministic lane.
+     dialled from the deterministic lane. `function` may also be set
+     explicitly (backend or shadow); outside function mode it resolves to
+     `off` with a one-time warning, never to a live model.
 
 3. **Degradation, never failure.** Jev degrades to `flash_lite` on a missing
    key (without a network call), a timeout (`SAPLING_DECISIONS_JEV_TIMEOUT_MS`,
@@ -75,16 +77,25 @@ toggle is an open product question.
    clips the text being judged, and degrades instead. If `flash_lite` also
    fails, every key gets its safe default. Per key, an answer below
    `SAPLING_DECISIONS_CONFIDENCE_FLOOR` (default 0.5, TypeSafe's own
-   suggestion) or outside the allowed set also falls to its default. `decide()`
-   never raises.
+   suggestion) or outside the allowed set also falls to its default. Answers
+   match the allowed keys trimmed and case-insensitively; an off-list answer
+   keeps what the backend said and its confidence on the `Answer`
+   (`default_reason="invalid"`). A Jev 200 with no readable key degrades like
+   any other Jev failure (`jev_bad_answers`), as does an unexpected exception
+   in the Jev path. `decide()` never raises.
 
 4. **Observable by construction.** Each call emits one `decision.made` event
    (registered in `EVENT_TAXONOMY`, category `usage`) with backend, requested
    backend, fallback reason, model, latency, and per key the applied value,
    **raw** value and confidence. The event carries no state text. The same
-   fields go to a Logfire log. Token usage goes to `llm_usage`, with
-   `provider="typesafe"` for Jev, priced in `services/llm_pricing.py` (input
-   only).
+   fields go to a Logfire log. An off-list answer shows as `raw: "<invalid>"`
+   on the event (free model text could echo the student). Token usage goes to
+   `llm_usage` under the caller's `request_id` (explicit, since the router
+   runs outside the request contextvar), with `provider="typesafe"` for Jev,
+   priced in `services/llm_pricing.py` (input only). `llm_usage.cost_usd` is
+   NUMERIC(18,10) (migration `20260927043405`): a Jev token is $0.000000042,
+   and the old 6dp column rounded decision-sized costs (a sub-12-token call
+   to $0).
 
 5. **Shadow mode for the #642 acceptance.** `SAPLING_DECISIONS_SHADOW` runs a
    second backend concurrently and records its answers plus per-key agreement
@@ -92,7 +103,8 @@ toggle is an open product question.
    except that when a Jev primary degrades to flash_lite and the shadow IS
    flash_lite, the shadow's in-flight answer serves as the fallback (one
    Gemini call, not two) and the shadow is logged `shadow_same_as_served`
-   with `agree: null`, never a self-comparison.
+   with `agree: null`, never a self-comparison. An off-list answer on
+   either side counts as disagreement, not unknown.
    Switching Jev on after the agreement review is one env var.
 
 6. **Tutor router, observe-only.** `services/tutor_router.py` asks five
@@ -105,7 +117,8 @@ toggle is an open product question.
    retried through `/chat` is routed once. It has its own timeout backstop.
    **Nothing acts on the answers**: retrieval, model choice and prompt are
    exactly as before. The model the turn actually ran on rides on the event
-   (`model_tier` fast/smart/default, `tutor_model`, plus the raw
+   (`model_tier` fast/smart/default — `default` whenever the pref is not
+   honoured, e.g. any non-real mode — `tutor_model`, plus the raw
    `model_pref_requested`) so both answers to the #640 model-selection
    question can be costed from the same data. That question is **deliberately left open** here.
    Session openers and hint/confused/skip actions are not routed, because
