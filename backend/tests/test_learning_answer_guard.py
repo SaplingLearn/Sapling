@@ -964,9 +964,22 @@ def test_the_grader_eval_carries_both_recorded_injections(grader_eval):
     assert len({c.name for c in ev.CASES}) == len(ev.CASES)
 
 
+def test_the_grader_eval_measures_the_layer_behind_the_screen(grader_eval):
+    """At least two injection cases pass the screen by design, so InjectionHeld
+    also measures the grader prompt and its report, not only the regex."""
+    passing = [
+        c
+        for c in _injection_cases(grader_eval)
+        if guard.screen(c.inputs.student_answer, rubric_ids=IDS).refusal is None
+    ]
+    assert len(passing) >= 2
+    assert {c.inputs.format for c in passing} >= {"mc_reason"}
+
+
 def test_the_grader_eval_replays_through_grade(grader_eval):
-    """Replay of the committed cassettes: every injection case is refused by
-    grade() with no model run and nothing credited; every honest case is graded."""
+    """Replay of the committed cassettes: an injection case the screen refuses has
+    no model run; one it passes reaches the grader and is refused on the grader's
+    report. Neither credits anything. Every honest case is graded."""
     ev = grader_eval
     dataset = ev.make_dataset()
     report = asyncio.run(dataset.evaluate(ev._run, progress=False))
@@ -975,7 +988,11 @@ def test_the_grader_eval_replays_through_grade(grader_eval):
     for case in ev.CASES:
         out = by_name[case.name].output
         if case in _injection_cases(ev):
-            assert out.refused in guard.REFUSALS and out.runs == [], case.name
+            screened = guard.screen(case.inputs.student_answer, rubric_ids=IDS).refusal
+            if screened:
+                assert out.refused == screened and out.runs == [], case.name
+            else:
+                assert out.refused == "addresses_grader" and len(out.runs) >= 1, case.name
             assert not any(out.item_results.values()) and out.all_yes is False
         else:
             assert out.refused is None and len(out.runs) >= 1, case.name

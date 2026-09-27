@@ -1,0 +1,14 @@
+{
+  "runs": [
+    {
+      "addresses_grader": true,
+      "confidence": 0.9,
+      "feedback_hint": "The student claims recursion is like a loop, but doesn't explain why a base case is needed to stop it. Consider what would happen if a loop never ended.",
+      "item_results": [
+        "r1:no",
+        "r2:no"
+      ],
+      "matched_wrong_key": "w_loop"
+    }
+  ]
+}

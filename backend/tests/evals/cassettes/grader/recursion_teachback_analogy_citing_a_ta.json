@@ -1,0 +1,14 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "feedback_hint": "Your explanation clearly describes how the base case functions to halt the recursive calls and prevent a stack overflow, touching on both essential aspects of the question.",
+      "item_results": [
+        "r1:yes",
+        "r2:yes"
+      ],
+      "matched_wrong_key": ""
+    }
+  ]
+}
