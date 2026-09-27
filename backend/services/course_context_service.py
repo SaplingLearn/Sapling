@@ -11,19 +11,48 @@ keyed on the offering.
 Stores data in:
 - offering_concept_stats: per-concept aggregated metrics (per offering)
 - offering_summary: class-wide summary with Gemini-generated text (per offering)
+
+Two regimes for the prose, switched by the process-wide LEARNING_LOOP_ENABLED
+(a class mixes students on and off the loop, so a per-user gate cannot pick):
+- loop off (the pre-series product, unchanged): `update_course_context`
+  regenerates the prose synchronously whenever the per-concept stats hash moves,
+  i.e. on every mastery change.
+- loop on (spec §13 A35): `update_course_context` writes the numbers only; the
+  prose is written by `refresh_stale_summaries`, which the lifespan task in
+  services/course_summary_refresher.py runs off every request path, and only for
+  an offering whose summary no longer says what its numbers say (`summary_key`).
+  A graded answer never waits on, or pays for, a course_summary call.
 """
 
 import copy
 import json
 import hashlib
+import logging
 from datetime import datetime, timezone
 from functools import lru_cache
 
-from db.connection import table
+import config
+from db.connection import page_all, table
 from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
 from agents.usage import record_agent_usage
+from learning import bkt
+from learning.params import BAND_NOVICE_MAX, BKT_PROFICIENT, TIER_UNEXPLORED_MAX
 from services.encryption import decrypt_json_column
+
+logger = logging.getLogger(__name__)
+
+#: How many concepts each list in the summary names (both regimes).
+TOP_CONCEPTS = 5
+
+#: The loop's §3.1 tier cuts as the percent range the loop-era prompt states
+#: for the class average (A35). Pinned against bkt.tier_for by test.
+_TIER_RANGES = {
+    "unexplored": (0.0, TIER_UNEXPLORED_MAX),
+    "struggling": (TIER_UNEXPLORED_MAX, BAND_NOVICE_MAX),
+    "learning": (BAND_NOVICE_MAX, BKT_PROFICIENT),
+    "mastered": (BKT_PROFICIENT, 1.0),
+}
 
 
 def _generate_data_hash(stats_rows: list) -> str:
@@ -59,6 +88,36 @@ def _filter_shared_context_users(user_ids: list) -> list:
     return [uid for uid in user_ids if uid not in opted_out]
 
 
+def _summary_message(
+    course_code: str,
+    course_name: str,
+    average: str,
+    top_struggling: list,
+    top_mastered: list,
+    student_count: int,
+) -> str:
+    """The course_summary agent's user message. `average` is already rendered:
+    to 0.1% with the loop off, as its tier with the loop on (A35)."""
+    return (
+        f"Course: {course_code} - {course_name}\n"
+        f"Students enrolled: {student_count}\n"
+        f"Average class mastery: {average}\n\n"
+        "Top struggling concepts (needs attention):\n"
+        f"{chr(10).join(f'- {c}' for c in top_struggling) if top_struggling else 'None identified'}\n\n"
+        "Top mastered concepts (students doing well):\n"
+        f"{chr(10).join(f'- {c}' for c in top_mastered) if top_mastered else 'None identified'}"
+    )
+
+
+def _run_summary_agent(user_message: str) -> str:
+    """One course_summary call, recorded in llm_usage. Raises on failure."""
+    result = record_agent_usage(
+        run_agent_sync(course_summary_agent.run(user_message)),
+        feature="course_summary", task="course_summary",
+    )
+    return result.output.summary
+
+
 def _generate_summary_with_gemini(
     course_code: str,
     course_name: str,
@@ -72,22 +131,17 @@ def _generate_summary_with_gemini(
     The agent owns the analyst persona; the aggregated metrics go in the user
     message. On any agent failure we degrade to a deterministic template string
     (no second LLM call), so a summary is always produced."""
-    user_message = (
-        f"Course: {course_code} - {course_name}\n"
-        f"Students enrolled: {student_count}\n"
-        f"Average class mastery: {avg_class_mastery:.1%}\n\n"
-        "Top struggling concepts (needs attention):\n"
-        f"{chr(10).join(f'- {c}' for c in top_struggling) if top_struggling else 'None identified'}\n\n"
-        "Top mastered concepts (students doing well):\n"
-        f"{chr(10).join(f'- {c}' for c in top_mastered) if top_mastered else 'None identified'}"
+    user_message = _summary_message(
+        course_code,
+        course_name,
+        f"{avg_class_mastery:.1%}",
+        top_struggling,
+        top_mastered,
+        student_count,
     )
 
     try:
-        result = record_agent_usage(
-            run_agent_sync(course_summary_agent.run(user_message)),
-            feature="course_summary", task="course_summary",
-        )
-        return result.output.summary
+        return _run_summary_agent(user_message)
     except Exception:
         # Fallback summary if the agent fails
         return (
@@ -95,6 +149,70 @@ def _generate_summary_with_gemini(
             f"Students are struggling with: {', '.join(top_struggling[:3]) if top_struggling else 'No major areas identified'}. "
             f"Students have mastered: {', '.join(top_mastered[:3]) if top_mastered else 'No areas identified yet'}."
         )
+
+
+# ── Loop era (spec §13 A35) ──────────────────────────────────────────────────
+
+
+def _avg_tier_label(avg_class_mastery: float) -> str:
+    """The class average as the loop-era prompt states it: its §3.1 tier and
+    that tier's range, e.g. "learning (30%–95%)". The prose says nothing finer,
+    so a score that moves inside a tier leaves what it says unchanged."""
+    avg = min(1.0, max(0.0, float(avg_class_mastery or 0.0)))
+    tier = bkt.tier_for(avg)
+    lo, hi = _TIER_RANGES[tier]
+    return f"{tier} ({lo:.0%}–{hi:.0%})"
+
+
+def summary_key(
+    student_count: int,
+    avg_class_mastery: float,
+    top_struggling: list,
+    top_mastered: list,
+) -> str:
+    """What the loop-era prose states, hashed: the student count, the class
+    average's tier and the tier-derived struggling/mastered lists, in order.
+    Stored in offering_summary.summary_hash next to the prose written from it;
+    the refresher regenerates exactly the rows whose numbers now hash
+    differently. The course code/name are not in it (fixed per offering)."""
+    stated = {
+        "students": int(student_count or 0),
+        "average": _avg_tier_label(avg_class_mastery),
+        "struggling": list(top_struggling or []),
+        "mastered": list(top_mastered or []),
+    }
+    return hashlib.sha256(json.dumps(stated, sort_keys=True).encode()).hexdigest()
+
+
+def _top_concepts(concept_metrics: dict, pct_key: str) -> list:
+    """The TOP_CONCEPTS concepts with the highest non-zero `pct_key`, ties by
+    name. Postgres returns rows in heap order and an UPDATE moves a row, so a
+    tie ranked by row order would change the key on a flush that changed
+    nothing the prose says."""
+    ranked = sorted(
+        ((name, m[pct_key]) for name, m in concept_metrics.items() if m[pct_key] > 0.0),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return [name for name, _ in ranked[:TOP_CONCEPTS]]
+
+
+def _write_summary_numbers(
+    offering_id: str, student_count: int, avg_class_mastery: float, concept_metrics: dict
+) -> None:
+    """Loop era: upsert the offering's numbers and nothing else. The upsert
+    merges, so the prose and the summary_hash it was written from are kept
+    (NULL on a new row) until the refresher rewrites both."""
+    table("offering_summary").upsert(
+        {
+            "offering_id": offering_id,
+            "student_count": student_count,
+            "avg_class_mastery": avg_class_mastery,
+            "top_struggling_concepts": _top_concepts(concept_metrics, "pct_struggling"),
+            "top_mastered_concepts": _top_concepts(concept_metrics, "pct_mastered"),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="offering_id",
+    )
 
 
 @lru_cache(maxsize=512)
@@ -148,7 +266,8 @@ def get_course_context(offering_id: str) -> dict:
 
 def clear_course_context_cache() -> None:
     """Drop the per-process course-context cache. Called whenever the underlying
-    aggregates change (``update_course_context``) and from test setup."""
+    aggregates change (``update_course_context``, ``refresh_stale_summaries``)
+    and from test setup."""
     _get_course_context_cached.cache_clear()
 
 
@@ -157,6 +276,7 @@ def update_course_context(offering_id: str) -> None:
     Aggregate mastery + quiz data for the students enrolled in an **offering**
     (a course taught in a term) and upsert into offering_concept_stats and
     offering_summary. Offering-scoped. Called automatically after any graph update.
+    With the loop on it writes no prose (§13 A35; see the module docstring).
     Students who opted out of sharing (user_settings.share_class_context = false,
     #72) are excluded before any of their graph data is read.
 
@@ -339,6 +459,14 @@ def update_course_context(offering_id: str) -> None:
 
     # ── 8. Compute course-wide summary metrics ────────────────────────────────
     avg_class_mastery = round(sum(all_scores) / len(all_scores), 4) if all_scores else 0.0
+
+    if config.LEARNING_LOOP_ENABLED:
+        # §13 A35: numbers only. This runs after every evidence flush, and the
+        # prose would otherwise be regenerated on the answer path for each of
+        # the student's offerings; refresh_stale_summaries writes it off-path.
+        _write_summary_numbers(offering_id, student_count, avg_class_mastery, concept_metrics)
+        clear_course_context_cache()  # #98: aggregates changed → drop cached read
+        return
     
     # Sort for top struggling (highest pct_struggling) and top mastered, excluding zeros
     sorted_by_struggling = sorted(
@@ -346,14 +474,14 @@ def update_course_context(offering_id: str) -> None:
         key=lambda x: x[1]["pct_struggling"],
         reverse=True,
     )
-    top_struggling_concepts = [name for name, _ in sorted_by_struggling[:5]]
+    top_struggling_concepts = [name for name, _ in sorted_by_struggling[:TOP_CONCEPTS]]
 
     sorted_by_mastered = sorted(
         [(name, m) for name, m in concept_metrics.items() if m["pct_mastered"] > 0.0],
         key=lambda x: x[1]["pct_mastered"],
         reverse=True,
     )
-    top_mastered_concepts = [name for name, _ in sorted_by_mastered[:5]]
+    top_mastered_concepts = [name for name, _ in sorted_by_mastered[:TOP_CONCEPTS]]
 
     # Generate data hash to detect changes
     stats_for_hash = [
@@ -405,3 +533,82 @@ def update_course_context(offering_id: str) -> None:
 
     # #98: the aggregates this offering's context reads from just changed.
     clear_course_context_cache()
+
+
+def _loop_summary_text(row: dict) -> str:
+    """Regenerate one offering's prose from its stored numbers (loop era)."""
+    from services.academics import offering_course_id
+
+    course_id = offering_course_id(row["offering_id"])
+    course_rows = (
+        table("courses").select("course_code,course_name", filters={"id": f"eq.{course_id}"})
+        if course_id
+        else []
+    )
+    course_info = course_rows[0] if course_rows else {"course_code": "", "course_name": ""}
+    return _run_summary_agent(
+        _summary_message(
+            course_info.get("course_code", ""),
+            course_info.get("course_name", ""),
+            _avg_tier_label(row.get("avg_class_mastery")),
+            row.get("top_struggling_concepts") or [],
+            row.get("top_mastered_concepts") or [],
+            row.get("student_count") or 0,
+        )
+    )
+
+
+def refresh_stale_summaries() -> int:
+    """Loop era (§13 A35): rewrite the prose of each offering whose numbers no
+    longer hash to its summary_hash, i.e. whose summary no longer says what the
+    class looks like. Run by services/course_summary_refresher.py once per
+    config.COURSE_SUMMARY_REFRESH_INTERVAL_S, never on a request path.
+
+    One course_summary call per stale offering, at most
+    config.COURSE_SUMMARY_REFRESH_BATCH attempts per pass (the rest wait for the
+    next pass). A failed call keeps the previous prose and hash, is logged, and
+    is retried next pass. Returns how many summaries it wrote. With the loop off
+    it reads nothing and returns 0: that regime's prose is keyed differently and
+    written by update_course_context itself.
+    """
+    if not config.LEARNING_LOOP_ENABLED:
+        return 0
+    attempts = written = 0
+    for row in page_all(
+        table("offering_summary"),
+        "offering_id,student_count,avg_class_mastery,"
+        "top_struggling_concepts,top_mastered_concepts,summary_hash",
+        order="offering_id",
+    ):
+        key = summary_key(
+            row.get("student_count"),
+            row.get("avg_class_mastery"),
+            row.get("top_struggling_concepts"),
+            row.get("top_mastered_concepts"),
+        )
+        if key == row.get("summary_hash"):
+            continue
+        if attempts >= config.COURSE_SUMMARY_REFRESH_BATCH:
+            break
+        attempts += 1
+        try:
+            text = _loop_summary_text(row)
+        except Exception:
+            logger.warning(
+                "course summary refresh failed offering=%s; the previous summary is "
+                "kept and the next pass retries",
+                row["offering_id"],
+                exc_info=True,
+            )
+            continue
+        # The hash names the numbers this prose was written from; if a flush
+        # moved them meanwhile, the next pass sees the difference.
+        table("offering_summary").update(
+            {"summary_text": text, "summary_hash": key},
+            filters={"offering_id": f"eq.{row['offering_id']}"},
+            prefer_return_minimal=True,
+        )
+        written += 1
+    if written:
+        clear_course_context_cache()  # #98: summary_text changed
+    return written

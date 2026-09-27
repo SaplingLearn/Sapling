@@ -1175,7 +1175,13 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
                 try:
                     update_course_context(offering_id)
                 except Exception:
-                    pass
+                    # Post-commit side effect: the graph write stands, so this
+                    # never fails the caller, but it is never silent either.
+                    logger.warning(
+                        "graph: course-context refresh failed offering=%s user=%s "
+                        "(the graph write stands)",
+                        offering_id, user_id, exc_info=True,
+                    )
 
     # The knowledge graph is the ONLY thing that advances these three stats, so
     # this is the only place they can be dispatched from. Without it `rooted`,
