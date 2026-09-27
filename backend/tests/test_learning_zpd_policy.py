@@ -957,11 +957,34 @@ def test_a_hedged_yes_no_or_connective_answer_is_graded_but_no_attempt(text):
 
 @pytest.mark.parametrize(
     "text",
+    ["not really, idk", "it can't be, idk", "it's not really, idk", "it just does, idk",
+     "it actually is idk", "it doesnt really, idk", "it will be idk", "idk it has to",
+     "idk it does though", "it isnt lol, idk", "it does tho, idk", "it isnt man, idk",
+     "it is honestly, idk", "nah it isnt, idk", "it kinda is, idk", "idk it isnt im not sure",
+     "idk it is im so lost", "it isnt i am so confused, idk", "it's i, idk",
+     "I think so, idk", "i guess so idk", "idk, I think not"],
+)  # fmt: skip
+def test_a_bare_answer_with_chat_filler_or_a_later_plea_is_graded(text):
+    """A hedged yes/no answer is still an answer when an intensifier or chat
+    slang sits beside it ("not really", "it isnt lol"), and when a
+    first-person plea follows it in the same clause ("it isnt im not sure"):
+    graded (B), never idk evidence with the answer released; still no
+    genuine attempt (A)."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == ()
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
     ["idk, can I get a hint", "I don't know, can you give me a hint?", "idk what to do",
      "idk, I have no idea", "idk, can we move on?", "idk, what does that mean?",
      "I can't do this, idk", "idk, I can't do it", "idk, I really don't know", "idk it",
      "hmm... I don't know", "idk, is there a hint?", "idk, I don't remember", "i dunno, idk",
-     "idk! I give up"],
+     "idk! I give up", "idk im not sure", "idk, I'm so lost", "idk lol", "idk tho",
+     "idk, i guess im stuck", "idk, I think I'm lost", "idk, I just don't know",
+     "idk, I really can't do this", "idk, honestly I'm lost", "idk, I think"],
 )  # fmt: skip
 def test_function_words_beside_a_help_word_stay_an_idk_plea(text):
     from learning.gates import non_attempt_phrases

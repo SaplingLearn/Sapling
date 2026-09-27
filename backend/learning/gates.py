@@ -105,6 +105,9 @@ _NON_ANSWER = frozenset(
 # imaginary unit "i", an article or a lettered option ("a", "an"). All are in
 # _NON_ANSWER, so "idk, can I get a hint" stays a plea; a clause made of them
 # and _ANSWER_FRAME words only ("it isn't", "I think it is") is an answer.
+# "i" answers only as the last word of its part ("it's i"); before another
+# word it is the subject ("I think", "I guess I'm stuck"). "so" (a hedge) answers
+# after "think"/"guess": "I think so" is a yes.
 _BARE_ANSWER = frozenset(
     """
     a an and or not if i is isnt are arent was wasnt were werent do does doesnt
@@ -112,11 +115,25 @@ _BARE_ANSWER = frozenset(
     shouldnt have has had havent hasnt might
     """.split()
 )
-# A subject or a hedge around a bare answer: "it is", "I think it does".
+_SUBJECT_I = "i"
+_SO = "so"
+_SO_AFTER = frozenset({"think", "guess"})
+# A subject, a hedge, an intensifier or chat slang around a bare answer: "it
+# is", "I think it does", "not really", "it just does", "it will be", "it
+# has to", "it isnt lol", "nah it isnt". Every word is in _NON_ANSWER.
 _ANSWER_FRAME = frozenset(
-    "it its itself that thats they them there theres im think guess maybe probably"
-    " perhaps possibly so um umm uh hm hmm well ok okay".split()
+    """
+    it its itself that thats they them there theres im think guess maybe probably
+    perhaps possibly so um umm uh hm hmm well ok okay
+    really just actually too though tho be to like literally totally kinda sorta
+    also very honestly seriously basically lol man bro bruh dude ngl tbh haha lmao
+    xd nah
+    """.split()
 )
+# A first-person statement ("I'm not sure", "I am so lost", "I've no idea")
+# starts a new part of a clause for the bare-answer check, so a plea after a
+# bare answer ("it isnt im not sure") does not hide it.
+_FIRST_PERSON = re.compile(r"\b(?=(?:im|i am|ive)\b)")
 # Pleas, matched on normalized text: n-grams that hold a word able to answer
 # an item alone ("no", "up", "hard", "start", "hour", "much", "lost", "can't
 # do it"), plus the idk variants outside NON_ATTEMPT_PATTERNS ("dunno",
@@ -153,10 +170,31 @@ def _phrase_spans(words: list[str]) -> list[tuple[str, int, int]]:
     ]
 
 
+def _answers_alone(words: list[str], k: int) -> bool:
+    """Whether words[k] is a bare answer in its part ("i" only last; "so" only
+    after "think"/"guess")."""
+    word = words[k]
+    if word == _SUBJECT_I:
+        return k == len(words) - 1
+    if word == _SO:
+        return k > 0 and words[k - 1] in _SO_AFTER
+    return word in _BARE_ANSWER
+
+
 def _bare_answer(words: list[str]) -> bool:
-    """A clause residue that answers the item with function words alone."""
-    return any(w in _BARE_ANSWER for w in words) and all(
+    """A clause part that answers the item with function words alone: every
+    word a _BARE_ANSWER or _ANSWER_FRAME word, and one of them a bare answer."""
+    return any(_answers_alone(words, k) for k in range(len(words))) and all(
         w in _BARE_ANSWER or w in _ANSWER_FRAME for w in words
+    )
+
+
+def _holds_bare_answer(rest: str) -> bool:
+    """Whether a clause residue holds a bare answer in some part: parts split
+    at a first-person statement, and a part holding a plea ("I give up",
+    "can we move on") is never one."""
+    return any(
+        not _PLEA.search(part) and _bare_answer(part.split()) for part in _FIRST_PERSON.split(rest)
     )
 
 
@@ -191,11 +229,15 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
       "what's the answer to part 2" is a request).
     - An idk phrase ("idk", "i don't know") is returned only when the residue
       is empty: once the phrases, request objects, _PLEA pleas and _NON_ANSWER
-      filler are set aside, no word is left, and no clause's residue is a
-      bare function-word answer (_BARE_ANSWER, with at most a subject or a
-      hedge: "it isn't", "or", "I think it is"). "idk lmao", "idk, can I get
-      a hint" and "idk, where do I start?" are idk; "even, idk", "the
-      mitochondria idk" and "it isn't, idk" are graded.
+      filler are set aside, no word is left, and no part of a clause's
+      residue is a bare function-word answer (_BARE_ANSWER, with at most a
+      subject, a hedge, an intensifier or chat slang: "it isn't", "or", "I
+      think it is", "not really", "it isnt lol", "I think so"; a
+      first-person statement starts a new part, so "it isnt im not sure"
+      holds one, and a part holding a plea never does). "idk lmao", "idk,
+      can I get a hint", "idk, I think" and "idk, where do I start?" are
+      idk; "even, idk", "the mitochondria idk" and "it isn't, idk" are
+      graded.
 
     A message holding both routes to idk when the idk phrase is returned (the
     route checks idk first, A16)."""
@@ -216,8 +258,7 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
                 end = len(words)
             keep[start:end] = [False] * (end - start)
         rest = " ".join(w for w, k in zip(words, keep) if k)
-        # a clause holding a plea ("I give up", "I can't do it") is no bare answer
-        bare = bare or (not _PLEA.search(rest) and _bare_answer(rest.split()))
+        bare = bare or _holds_bare_answer(rest)
         residue += _PLEA.sub(" ", rest).split()
     if _DIGIT.search(_QUESTION_REF.sub(" ", text) if found & _REQUEST_PATTERNS else text):
         return ()
