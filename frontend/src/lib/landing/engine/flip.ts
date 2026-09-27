@@ -173,7 +173,10 @@ export function flipClose(
   // its card instead of on it.
   remeasureFlip(st);
   let done = false;
-  let reveal: ReturnType<typeof setTimeout> | undefined;
+  // Declared with an explicit `undefined` rather than left bare: `finish` closes
+  // over it and the no-card path below calls `finish` before the assignment is
+  // reached, so a `const` at the assignment site would be a TDZ error there.
+  let reveal: ReturnType<typeof setTimeout> | undefined = undefined;
   const finish = () => {
     if (done) return;
     done = true;
