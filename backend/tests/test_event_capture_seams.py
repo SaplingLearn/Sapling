@@ -120,6 +120,8 @@ def test_event_taxonomy_is_pinned():
         # #629: the Class Intel toggle moved but course_chunks.visibility did
         # not follow. A privacy control that fails silently is not one.
         "rag.visibility_resync_failed",
+        # Learning loop PKG-04 (spec §6, A8): a check-item batch or write failed.
+        "learn.check_items_failed",
     })
 
 

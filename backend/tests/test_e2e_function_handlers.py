@@ -578,3 +578,41 @@ def test_env_module_import_sets_stream_pacing(monkeypatch):
     from agents._providers import function_stream_delay_ms
 
     assert function_stream_delay_ms() == 150
+
+
+# ── Check items (learning loop PKG-04) ────────────────────────────────────
+
+
+def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
+    """PKG-04: the check_items generator is a REQUEST-PATH agent in function
+    mode (the upload hook runs it synchronously there), so it must have a
+    handler that passes the real flat output schema and code validation —
+    one item per format for each function-mode upload concept."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items import check_items_agent
+    from learning.checks import validate_draft
+    from learning.params import CHECK_ITEM_FORMATS
+    with check_items_agent.override(model=model_for("check_items")):
+        result = check_items_agent.run_sync("Concepts: Gradient Descent; Learning Rate", deps=_deps())
+
+    from agents.function_handlers_e2e import (
+        E2E_CHECK_ITEM_CORRECT_OPTION,
+        E2E_CHECK_ITEM_MC_REFERENCE,
+        E2E_CHECK_ITEM_OPTION_LETTERS,
+        E2E_CHECK_ITEM_REFERENCE,
+        E2E_DOC_CONCEPTS,
+    )
+    items = result.output.items
+    assert [(i.concept, i.format) for i in items] == [
+        (name, fmt) for name, _, _ in E2E_DOC_CONCEPTS for fmt in CHECK_ITEM_FORMATS
+    ]
+    assert len({i.prompt for i in items}) == len(items), "prompts must differ so hashes differ"
+    for i in items:
+        want = E2E_CHECK_ITEM_MC_REFERENCE if i.format == "mc_reason" else E2E_CHECK_ITEM_REFERENCE
+        assert i.reference_answer == want and i.answer_kind == "free" and i.stepwise is False
+        assert validate_draft(i) == [], validate_draft(i)
+    for i in (i for i in items if i.format == "mc_reason"):
+        assert i.option_letters == E2E_CHECK_ITEM_OPTION_LETTERS
+        assert i.correct_option == E2E_CHECK_ITEM_CORRECT_OPTION
+    assert "check_items" in providers._FUNCTION_HANDLERS

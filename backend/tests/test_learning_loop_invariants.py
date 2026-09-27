@@ -22,6 +22,44 @@ MIGRATIONS = BACKEND / "db" / "migrations"
 
 PURE_MODULES = ("bkt.py", "fsrs.py", "policy.py", "gates.py", "ladder.py", "leak.py")
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
+# spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
+SERIES_AGENT_TASKS = (
+    "check_items",
+    "grader",
+    "grader_second",
+    "decision",
+    "loop_tutor",
+    "loop_tutor_lite",
+    "loop_tutor_deep",
+    "session_close",
+)
+# spec §8.12: one prompt stack per series agent module
+SERIES_AGENT_MODULES = (
+    "check_items.py",
+    "grader.py",
+    "decision.py",
+    "loop_tutor.py",
+    "session_close.py",
+)
+# PKG-00 stubs; decision.py (PKG-05b) and session_close.py (PKG-09) come later
+STUBBED_AGENT_MODULES = ("check_items.py", "grader.py", "loop_tutor.py")
+# spec §8.9: encrypted learning columns — never UNIQUE, never a PostgREST filter
+ENCRYPTED_LEARNING_COLUMNS = (
+    "prompt",
+    "reference_answer",
+    "rubric_json",
+    "common_wrong_json",
+    "options_json",
+    "correct_option",
+    "canonical_answer",
+    "evidence_text",
+    "close_json",
+    "loop_brief",
+)
+_FILTER_ON_ENCRYPTED = re.compile(
+    r"[\"'](?:%s)[\"']\s*:\s*f?[\"'](?:eq|neq|in|like|ilike)\."
+    % "|".join(ENCRYPTED_LEARNING_COLUMNS)
+)
 # PKG-11: the two routes on the loop path, named explicitly in inv_01.
 ROUTE_GRAPH_CALLERS = ("routes/quiz.py", "routes/flashcards.py")
 _GRAPH_WRITE = re.compile(
@@ -346,8 +384,32 @@ def test_inv_05_series_event_names_in_taxonomy():
     pytest.skip("asserted by PKG-06")
 
 
-def test_inv_06_series_agent_tasks_have_function_handlers():
-    pytest.skip("asserted by PKG-04")
+def _backend_py_files():
+    return (
+        p
+        for p in BACKEND.rglob("*.py")
+        if p.relative_to(BACKEND).parts[0] not in ("venv", ".venv", "tests", "node_modules")
+    )
+
+
+def test_inv_06_series_agent_tasks_have_function_handlers(monkeypatch):
+    import sys
+    from typing import get_args
+
+    import agents._providers as providers
+
+    present = [t for t in SERIES_AGENT_TASKS if t in get_args(providers.AgentTask)]
+    assert present, "no series AgentTask literal exists yet — PKG-04 adds check_items"
+    providers.clear_function_handlers()
+    sys.modules.pop("agents.function_handlers_e2e", None)
+    try:
+        import agents.function_handlers_e2e  # noqa: F401  (import registers)
+
+        missing = [t for t in present if t not in providers._FUNCTION_HANDLERS]
+        assert not missing, f"series tasks without an E2E function handler: {missing}"
+    finally:
+        providers.clear_function_handlers()
+        sys.modules.pop("agents.function_handlers_e2e", None)
 
 
 def test_inv_07_learning_tables_only_via_connection():
@@ -408,7 +470,17 @@ def _in_ci() -> bool:
 
 
 def test_inv_09_no_unique_or_eq_on_encrypted_learning_columns():
-    pytest.skip("asserted by PKG-04")
+    for mig in MIGRATIONS.glob("*.sql"):
+        for line in mig.read_text().splitlines():
+            if "UNIQUE" in line.upper():
+                hit = [c for c in ENCRYPTED_LEARNING_COLUMNS if re.search(rf"\b{c}\b", line)]
+                assert not hit, f"{mig.name}: UNIQUE on encrypted column(s) {hit}: {line.strip()}"
+    offenders = []
+    for path in _backend_py_files():
+        text = path.read_text()
+        if _FILTER_ON_ENCRYPTED.search(text):
+            offenders.append(str(path.relative_to(BACKEND)))
+    assert not offenders, f"PostgREST filter on an encrypted column in: {offenders}"
 
 
 def test_inv_10_lru_cache_has_clear_hook():
@@ -441,7 +513,20 @@ class _Boom:
 
 
 def test_inv_12_one_prompt_stack_per_series_agent():
-    pytest.skip("asserted by PKG-04")
+    for name in SERIES_AGENT_MODULES:
+        path = BACKEND / "agents" / name
+        if not path.exists():
+            assert name not in STUBBED_AGENT_MODULES, f"{name} missing — PKG-00 stubs it"
+            continue  # written by a later package (PKG-05b / PKG-09)
+        text = path.read_text()
+        if "Agent" not in text:
+            continue  # still the PKG-00 stub
+        constructions = len(re.findall(r"\bAgent\s*[\[(]", text))
+        assert constructions == 1, f"{name}: {constructions} Agent constructions (want 1)"
+        assert len(re.findall(r"\bsystem_prompt\s*=", text)) == 1, (
+            f"{name}: not exactly one system_prompt="
+        )
+        assert "_fallback_prompt" not in text, f"{name}: defines a fallback prompt"
 
 
 def test_inv_13_fsrs_weights_pinned():

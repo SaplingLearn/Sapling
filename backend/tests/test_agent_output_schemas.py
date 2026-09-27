@@ -43,6 +43,17 @@ MAX_PROPERTIES_PER_OBJECT = 8
 MAX_OBJECT_DEPTH = 2
 MAX_TOTAL_PROPERTIES = 20
 
+# Per-object ceilings above MAX_PROPERTIES_PER_OBJECT, keyed by the object's
+# schema title. Each is a deliberate, evidenced exception that the exact count
+# pins (test_per_object_exceptions_are_exact), so it cannot grow silently.
+# CheckItemDraft (learning loop PKG-04, spec §13 A22): FLAT by design —
+# str/int/bool/list[str] only, no nesting, no optional models — because the A22
+# answer structure (options with a wrong_key each, correct_option, answer_kind,
+# canonical_answer, tolerance, stepwise) has to come out of one call. Recorded
+# live against gemini-2.5-flash-lite with no schema rejection
+# (tests/evals/cassettes/check_items). Every other budget rule still applies.
+PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 17}
+
 # Modules that never define agents. The `function_handlers_*` modules
 # self-register per-task handlers on the #391 seam as an IMPORT SIDE EFFECT,
 # and `AGENTS` below is built at module scope — i.e. at pytest COLLECTION,
@@ -60,6 +71,7 @@ _SKIP_PREFIX = "function_handlers"
 # output validation to retry; the streaming tutor's failure handling belongs
 # to chat_stream's rung ladder, never a hidden re-roll.
 EXPECTED_STRUCTURED_AGENTS = {
+    "check_items_agent",  # learning loop PKG-04 (flat 17-field draft; see PER_OBJECT_EXCEPTIONS)
     "classifier_agent",
     "concept_describe_agent",
     "concept_extraction_agent",
@@ -205,10 +217,11 @@ def schema_violations(model: type[BaseModel]) -> list[str]:
                 f"{MAX_OBJECT_DEPTH} (root -> list[Item] is the ceiling)"
             )
         properties = node.get("properties", {})
-        if len(properties) > MAX_PROPERTIES_PER_OBJECT:
+        ceiling = PER_OBJECT_EXCEPTIONS.get(node.get("title"), MAX_PROPERTIES_PER_OBJECT)
+        if len(properties) > ceiling:
             violations.append(
                 f"{path}: {len(properties)} properties exceeds "
-                f"{MAX_PROPERTIES_PER_OBJECT} per object"
+                f"{ceiling} per object"
             )
         total_properties += len(properties)
         for name, sub in properties.items():
@@ -251,6 +264,20 @@ def test_output_schema_within_budget(name):
         f"{name} output schema exceeds the structured-output budget "
         f"(agents/__init__.py):\n- " + "\n- ".join(violations)
     )
+
+
+def test_per_object_exceptions_are_exact():
+    """Each exception names a real structured output object with EXACTLY the
+    allowed property count: a model that grows past it fails here, and one
+    that shrinks back under the default ceiling must drop its exception."""
+    counts: dict[str, int] = {}
+    for name in EXPECTED_STRUCTURED_AGENTS:
+        schema = _output_model(AGENTS[name]).model_json_schema()
+        for node in [schema, *schema.get("$defs", {}).values()]:
+            if node.get("title") in PER_OBJECT_EXCEPTIONS:
+                counts[node["title"]] = len(node.get("properties", {}))
+    assert counts == PER_OBJECT_EXCEPTIONS
+    assert all(n > MAX_PROPERTIES_PER_OBJECT for n in counts.values())
 
 
 def test_negative_control_rich_schema_is_rejected():

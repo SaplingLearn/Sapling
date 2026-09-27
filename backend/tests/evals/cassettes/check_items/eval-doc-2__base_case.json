@@ -1,0 +1,322 @@
+{
+  "items": [
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "",
+      "difficulty": 1,
+      "format": "free",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "What is the purpose of a base case in a recursive function?",
+      "reference_answer": "The base case is the non-recursive branch of a recursive function that stops the function from calling itself further, thus preventing infinite recursion and a call stack overflow.",
+      "rubric": [
+        "Mentions that the base case stops the recursion.",
+        "Mentions that the base case prevents infinite recursion or call stack overflow."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "missing_termination"
+      ],
+      "wrong_texts": [
+        "The base case is the part that performs the recursive call."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1",
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "",
+      "difficulty": 2,
+      "format": "free",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Consider a function that counts down from n to 1. What would be the base case for this recursive function?",
+      "reference_answer": "The base case would be when n reaches 0 or 1, at which point the function stops calling itself and returns a value.",
+      "rubric": [
+        "Identifies the condition that stops the recursion (e.g., n=0 or n=1).",
+        "States that the function stops calling itself at this point."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "recursive_call_as_base",
+        "confuses_recursive_step"
+      ],
+      "wrong_texts": [
+        "The base case is when the function calls itself with n-1.",
+        "The base case is the first step of the countdown."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "",
+      "difficulty": 3,
+      "format": "free",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "A recursive function for calculating the sum of numbers from 1 to n is designed. If the function lacks a proper base case, what is the most likely outcome?",
+      "reference_answer": "If a recursive function lacks a proper base case, it will continue to call itself indefinitely, leading to a 'call stack overflow' error because the call stack will run out of memory.",
+      "rubric": [
+        "Identifies that the function will call itself indefinitely.",
+        "States that a 'call stack overflow' error will occur."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "stack_overflow_as_goal",
+        "no_effect"
+      ],
+      "wrong_texts": [
+        "The function will return an incorrect sum but will eventually terminate.",
+        "The recursion will simply stop after a few steps without error."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1",
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "",
+      "difficulty": 1,
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate who missed the lecture what a base case is in the context of recursion, and why it's important.",
+      "reference_answer": "A base case is like the stopping condition for a recursive function. It's the simplest version of the problem that the function can solve directly, without calling itself again. It's crucial because without it, the function would keep calling itself forever, eventually causing the program to crash due to a 'call stack overflow'.",
+      "rubric": [
+        "Explains the base case as a stopping condition.",
+        "Explains that the base case prevents infinite recursion or stack overflow."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_with_recursive_step",
+        "missing_importance"
+      ],
+      "wrong_texts": [
+        "The base case is where the function calls itself with a smaller problem.",
+        "The base case is just a part of the function's logic, not essential for termination."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1",
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "",
+      "difficulty": 2,
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate who missed the lecture how the base case works in a function designed to print numbers from 5 down to 1.",
+      "reference_answer": "In a function that prints numbers from 5 down to 1, the base case would be when the number to print reaches 1 (or 0, depending on implementation). At this point, the function prints the number and then stops calling itself. For example, if the function is called with 5, it prints 5 and calls itself with 4, and so on, until it prints 1 and terminates.",
+      "rubric": [
+        "Identifies the stopping condition (e.g., printing 1 or reaching 0).",
+        "Explains that the function stops making recursive calls at this point."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_with_recursive_call",
+        "base_case_is_first_step"
+      ],
+      "wrong_texts": [
+        "The base case is when the function prints 5 and then calls itself with 4.",
+        "The base case is the initial call to the function."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "",
+      "difficulty": 3,
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate who missed the lecture how the absence of a base case in a recursive function, like one calculating factorials, would lead to a problem.",
+      "reference_answer": "If a recursive factorial function didn't have a base case (e.g., when n=0 or n=1), it would keep calling itself with smaller and smaller numbers indefinitely. For instance, factorial(3) calls factorial(2), which calls factorial(1), which calls factorial(0), and if there's no base case, factorial(0) would call factorial(-1), and so on. This leads to an infinite loop of function calls, exhausting the computer's memory allocated for tracking these calls, resulting in a 'call stack overflow' error.",
+      "rubric": [
+        "Explains that the function calls itself indefinitely with decreasing inputs.",
+        "Mentions the consequence of exhausting memory and causing a 'call stack overflow'."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "stack_overflow_is_normal",
+        "base_case_is_recursive_call"
+      ],
+      "wrong_texts": [
+        "A stack overflow just means the function is working really hard.",
+        "The base case is where the function calls itself with n-1."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "B",
+      "difficulty": 1,
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "To define the input for the next recursive call.",
+        "To terminate the recursion and prevent infinite loops.",
+        "To handle the most complex part of the problem.",
+        "To increase the depth of the call stack."
+      ],
+      "option_wrong_keys": [
+        "confuses_with_recursive_step",
+        "",
+        "misunderstands_complexity",
+        "confuses_purpose"
+      ],
+      "prompt": "What is the primary role of a base case in recursive function design?",
+      "reference_answer": "The base case provides the condition under which the recursion stops, preventing infinite calls and stack overflow errors. It represents the simplest instance of the problem that can be solved directly.",
+      "rubric": [
+        "Correctly identifies the function of the base case as termination.",
+        "Correctly identifies the prevention of infinite loops/stack overflow."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_with_recursive_step",
+        "misunderstands_complexity",
+        "confuses_purpose"
+      ],
+      "wrong_texts": [
+        "The base case is where the function calls itself with a modified input.",
+        "The base case is intended to solve the most challenging subproblem.",
+        "The base case's purpose is to make the call stack as deep as possible."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1",
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "C",
+      "difficulty": 2,
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "It should return the last element of the list.",
+        "It should call itself with a modified list.",
+        "It should return 0.",
+        "It should raise an error."
+      ],
+      "option_wrong_keys": [
+        "confuses_with_last_element",
+        "confuses_with_recursive_step",
+        ""
+      ],
+      "prompt": "A recursive function is designed to sum all numbers in a list. If the list is empty, what should the base case return?",
+      "reference_answer": "When the list is empty, it represents the simplest case for summation. The sum of an empty list is 0. This condition stops the recursion.",
+      "rubric": [
+        "Correctly identifies the return value for an empty list in summation.",
+        "Correctly implies this serves as a termination condition."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_with_last_element",
+        "confuses_with_recursive_step"
+      ],
+      "wrong_texts": [
+        "The base case for summation should return the last element encountered.",
+        "The base case is when the function calls itself again on a smaller list."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-2:c1",
+        "eval-doc-2:c2"
+      ],
+      "concept": "Base Case",
+      "correct_option": "A",
+      "difficulty": 3,
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "Return the single element in the list.",
+        "Recursively call the function with an empty list.",
+        "Return a predefined minimum value.",
+        "Compare the element to a global maximum."
+      ],
+      "option_wrong_keys": [
+        "",
+        "confuses_with_empty_list_case",
+        "uses_external_state"
+      ],
+      "prompt": "Consider a recursive function that finds the maximum value in a list of numbers. If the list contains only one number, what is the appropriate base case action?",
+      "reference_answer": "When the list contains only one number, that number is inherently the maximum value. This serves as a base case, terminating the recursion by returning that single element without further recursive calls.",
+      "rubric": [
+        "Identifies that the single element is the maximum.",
+        "States that this condition stops the recursion."
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_with_empty_list_case",
+        "uses_external_state"
+      ],
+      "wrong_texts": [
+        "The base case for a single-element list should be treated like an empty list.",
+        "The function should rely on a variable outside the function to keep track of the maximum."
+      ]
+    }
+  ]
+}

@@ -38,6 +38,7 @@ DATASETS = [
     "syllabus_extraction",
     "quiz_generation",
     "chat_tutor",
+    "check_items",
 ]
 
 

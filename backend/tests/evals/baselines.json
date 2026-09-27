@@ -9,6 +9,14 @@
     "SocraticEndsWithQuestionEvaluator": 1.0,
     "TeachBackProbesEvaluator": 1.0
   },
+  "check_items": {
+    "CitesChunkEvaluator": 1.0,
+    "DraftValidEvaluator": 0.796296,
+    "HasReferenceEvaluator": 1.0,
+    "NoLeakInPromptEvaluator": 1.0,
+    "RubricCountEvaluator": 0.833333,
+    "WrongReasonCountEvaluator": 1.0
+  },
   "concept_extraction": {
     "AllNamesTitleCaseEvaluator": 1.0,
     "ConceptCountInRangeEvaluator": 1.0,

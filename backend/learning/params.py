@@ -164,6 +164,22 @@ CHECK_ITEM_MIN_WRONG = 1
 MISCONCEPTION_ROLLUP_MIN_USERS = 5
 ZPD_RATING_EVERY_N_CHECKS = 30
 
+# ── PKG-04: check items (spec §3.4, §3.5, §13 A6/A22/A23) ─────────────────
+# CHECK_ITEM_FORMATS / _DIFFICULTIES / _MIN_RUBRIC / _MIN_WRONG are the §3.4
+# rows PKG-01 defines above; this block adds the rest.
+CHECK_ITEM_MAX_CHUNKS = 8  # † A6
+CHECK_ITEM_MAX_CONCEPTS_PER_DOC = 10  # † A6; per upload — the backfill is uncapped
+CHECK_ITEM_OUTPUT_RETRIES = 2  # A6; mirrors agents/note_concepts.py
+CHECK_HASH_VERSION = "v1"
+CHECK_ITEM_INITIAL_PER_CONCEPT = 9  # † §3.5 = len(FORMATS) x len(DIFFICULTIES)
+CHECK_ITEM_CONCEPTS_PER_CALL = 3  # † §3.5
+FLEX_TIMEOUT_S = 900  # §3.5; background prefill only
+CHECK_ITEM_ANSWER_KINDS = ("free", "numeric")  # §3.5, A22; symbolic/exact deferred (§12)
+CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec lacks the name
+CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
+CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
+CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
+
 
 # ------------------------------------------------------ §3.1 validity check
 def validate_channels(channels: Mapping[str, Mapping[str, float | bool]], t: float) -> None:

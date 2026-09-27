@@ -10,6 +10,7 @@ via env vars without touching code:
     SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
     SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
     SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
+    SAPLING_MODEL_CHECK_ITEMS=gemini-2.5-flash-lite
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX, and
@@ -44,6 +45,8 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
     "ocr_vision",
+    # Learning loop series (spec §2 slots): check-item generation (PKG-04).
+    "check_items",
 ]
 
 
@@ -92,6 +95,10 @@ _DEFAULTS: dict[AgentTask, str] = {
     # vision-capable model, and transcription accuracy on handwritten
     # mathematics is exactly where the lite tier degrades → full Flash.
     "ocr_vision": "gemini-2.5-flash",
+    # Learning loop PKG-04: ingest-time check-item drafting is single-shot
+    # structured generation off the request path, so lite is enough;
+    # SAPLING_MODEL_CHECK_ITEMS overrides.
+    "check_items": "gemini-2.5-flash-lite",
 }
 
 

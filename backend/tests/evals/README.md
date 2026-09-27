@@ -57,8 +57,14 @@ production surfaces a miss (see each dataset's module docstring).
 ## Coverage
 
 Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
-`concept_extraction`, `syllabus_extraction`, `quiz_generation`, and
-`chat_tutor` — 96 cassettes.
+`concept_extraction`, `syllabus_extraction`, `quiz_generation`, `chat_tutor`,
+and `check_items` — 106 cassettes.
+
+`check_items` (learning loop PKG-04, 6 cassettes) drafts one course concept's
+nine items per case from `fixtures/tutor_course.json` passages and scores them
+with the same code rules the service stores by (`learning/checks.py::
+validate_draft`) plus grounding (cited chunk ids are input ids; no reference
+leaks into the prompt). Its baseline is a first recording.
 
 `chat_tutor` records against the committed fixture course
 (`fixtures/tutor_course.json`) through the TutorRetrieval seam
