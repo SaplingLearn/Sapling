@@ -2,7 +2,17 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
-import { API_URL, getMe } from '@/lib/api';
+import { usePathname } from 'next/navigation';
+import { API_URL, fetchSettings, getMe } from '@/lib/api';
+import { isAppShellRoute } from '@/lib/appRoutes';
+import {
+  applyAccountAnalytics,
+  beginAccountRead,
+  isAnalyticsConfigured,
+  needsAccountRead,
+  resumeAnalytics,
+  stopAnalytics,
+} from '@/lib/analytics';
 
 interface UserOption {
   id: string;
@@ -53,18 +63,11 @@ export const UserContext = createContext<UserContextValue>({
   setAvatarUrl: () => {},
 });
 
-// Mirror of middleware.ts PROTECTED (keep in sync; app/robots.ts mirrors it
-// too): the shell routes where a cleared session leaves no usable UI.
-const SHELL_PREFIXES = [
-  '/dashboard', '/learn', '/quiz', '/study', '/tree',
-  '/library', '/calendar', '/social',
-  '/settings', '/achievements', '/admin',
-  '/gradebook', '/course-planner', '/notetaker', '/profile',
-];
-
 // Pure + exported for tests (window.location is unstubbable under jsdom).
+// The shell routes (lib/appRoutes.ts) are where a cleared session leaves no
+// usable UI.
 export function shouldBounceToSignin(pathname: string): boolean {
-  return SHELL_PREFIXES.some(p => pathname.startsWith(p));
+  return isAppShellRoute(pathname);
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -186,7 +189,45 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setFeaturedRole(null);
     setIsAdmin(false);
     localStorage.removeItem('sapling_user');
+    // Sign-out, account deletion (Settings → signOut) and a dead session all
+    // land here: analytics stops at once. No-op when analytics is off.
+    stopAnalytics();
   }, []);
+
+  // Product analytics (src/lib/analytics.ts) runs only for a signed-in
+  // student, only inside the app shell (lib/appRoutes.ts — never public or
+  // marketing pages, /auth/*, onboarding), and only once their account
+  // preference (user_settings.analytics_opt_out) has been read as `false`.
+  // The read happens on the first shell page of each page load — never on
+  // public or /auth routes — since nothing about it is stored in the
+  // browser. Signed out → off. A failed read → off until the student next
+  // enters the shell, which retries it. A read overtaken by a Settings
+  // toggle or a sign-out is ignored (analytics.ts's generation counter). The
+  // capture
+  // gate itself also checks the live route, so leaving the shell (Settings
+  // → /privacy) stops capture for that page at once. Skipped entirely — no
+  // settings request — when this build runs no analytics.
+  const pathname = usePathname();
+  const onAppRoute = isAppShellRoute(pathname);
+  useEffect(() => {
+    if (!userReady || !isAnalyticsConfigured()) return;
+    if (!isAuthenticated || !userId) {
+      stopAnalytics();
+      return;
+    }
+    if (!onAppRoute) return;
+    if (!needsAccountRead(userId)) {
+      resumeAnalytics(); // back in the shell: retry a failed load, once
+      return;
+    }
+    const gen = beginAccountRead(userId);
+    fetchSettings(userId).then(
+      (s) => applyAccountAnalytics(gen, userId, s.analytics_opt_out),
+      () => {
+        // Fail closed: analytics stays off until the next shell navigation.
+      },
+    );
+  }, [userReady, isAuthenticated, userId, onAppRoute]);
 
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid) return;

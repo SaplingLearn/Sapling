@@ -107,6 +107,7 @@ const sections = [
         label: "Information collected automatically:",
         list: [
           "Basic usage data and session metadata to maintain and improve the Service",
+          "Product analytics, only inside the app while you are signed in and have not turned it off: which pages of the app you visit, tied to a pseudonymous ID rather than your name or email. We do not record what you click or type, or the content of your notes, documents and messages. Analytics stores nothing in your browser (no cookies or local storage)",
         ],
       },
     ],
@@ -130,6 +131,7 @@ const sections = [
     body: "We do not sell your personal data. We share information only in the following limited circumstances:",
     highlights: [
       { label: "Service providers:", text: "We use Supabase (database), Google Gemini (AI processing), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
+      { label: "Product analytics:", text: "We use PostHog, hosted in the United States, to understand how the Service is used so we can improve it. Analytics runs only inside the app for signed-in users who have not turned it off; nothing is collected on our public pages, during sign-in, or while you are signed out. PostHog receives a pseudonymous user ID and which pages of the app you view. It does not receive your name, email address, IP address, what you click or type, or the content of your notes, documents or messages, we do not record your screen, and analytics stores nothing in your browser (no cookies or local storage). You can turn product analytics off at any time under Settings → Data; the choice is saved to your account and applies wherever you sign in. We also honour your browser's Do Not Track and Global Privacy Control signals." },
       { label: "Study rooms:", text: "Your display name, avatar, and knowledge graph data are visible to other members of study rooms you join. Class-wide data shared with other users is anonymized." },
       { label: "Legal requirements:", text: "We may disclose information if required by law or to protect the rights and safety of our users." },
     ],
@@ -208,7 +210,7 @@ export default function PrivacyPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: May 3, 2026</span>
+              <span style={META}>Last updated: September 26, 2026</span>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>

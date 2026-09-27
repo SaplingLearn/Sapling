@@ -86,6 +86,7 @@ renders the element.
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
+| Settings | `settings` | `frontend/src/components/screens/Settings.tsx` (the `/settings` screen — tab rail + the Data tab's product-analytics opt-out) — added with the PostHog frontend integration |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
@@ -509,6 +510,22 @@ The `landing-surface-*` ids suffix the *surface* rather than a render index
 because each one mounts exactly once and the surface name is the stable
 domain id here.
 
+### `settings`
+
+Added with the PostHog frontend integration (the `analytics.spec.ts`
+journey reaches `/settings` by clicking the side nav's "Settings" link — a
+role locator, since `SideNav.tsx` is not a testid surface — checks the
+opt-out renders inactive, and asserts the E2E build sends no analytics).
+
+| testid | element |
+| --- | --- |
+| `settings-tab-${tab}` | the tab rail buttons — `tab` is the fixed tab key: `profile` / `cosmetics` / `preferences` / `notifications` / `data` |
+| `settings-analytics` | the Data tab's "Product analytics" card root |
+| `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — PATCHes `analytics_opt_out` to the account (opt-out stops capture first, opt-in saves first); **disabled** when analytics is not running in this build (no key, local mode, the E2E/test build), under Do Not Track / GPC, until the account answer has loaded, and while a save is in flight |
+| `settings-analytics-note` | the status line under it ("isn't running in this version…" / DNT / "…until your saved setting has loaded" / "Off for this visit only…" / "…couldn't start in this browser…" / "Saved to your account…") |
+| `settings-analytics-retry` | "Retry saving" inside the note, shown only after an opt-out whose account save failed (off for this visit only) — re-sends `analytics_opt_out: true` |
+| `settings-toggle-${key}` | a Notifications-tab switch (the same `Toggle`) — `key` is the `user_settings` field it PATCHes: `notification_email` / `notification_push` / `notification_in_app` / `activity_status_visible` |
+
 ### `adminfb`
 
 Added with the #520 admin feedback tab. Reads the two decrypting admin
@@ -598,6 +615,13 @@ backlog: `ProfileView.tsx`'s buttons already carried testids from Task 16,
 and `Achievements.tsx`'s one pre-existing untagged button (showcase
 "remove") was tagged (`achievements-showcase-remove-{achievementId}`)
 rather than baselined.
+
+`screens/Settings.tsx` (`settings` surface) joined the `files` list with
+the same treatment. Its pre-existing untagged buttons and inputs (profile
+form, avatar picker, accent swatches, export/delete, cosmetics manager) are
+baselined in `frontend/eslint-suppressions.json`, so only NEW interactive
+elements there must carry a testid. The tab rail and the shared `Toggle`
+switch (analytics opt-out and the Notifications toggles) entered tagged.
 
 ### Adding a surface
 
