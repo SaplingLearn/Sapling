@@ -10,10 +10,34 @@
 
 const OPEN_MS = 620;
 const OPEN_EASE = 'cubic-bezier(0.22,1,0.36,1)';
-const CLOSE_MS = 460;
-const CLOSE_EASE = 'cubic-bezier(0.4,0,0.2,1)';
+/*
+ * The close is the open played backwards, which means it borrows the open's
+ * duration and curve rather than keeping its own.
+ *
+ * It used to run 460ms on `cubic-bezier(0.4,0,0.2,1)` — quicker, and eased
+ * the other way round — so the panel left by a different route than it
+ * arrived by. Matching them is what makes the two read as one gesture
+ * reversed instead of as two animations that happen to share a rectangle.
+ */
+const CLOSE_MS = OPEN_MS;
+const CLOSE_EASE = OPEN_EASE;
+/*
+ * How long the panel's contents take to clear before the box collapses.
+ *
+ * The opening expands a blank white panel and only then fades the demo in
+ * over it (`panelFade`, 420ms on a 160ms delay), so what actually grows out
+ * of the card is a plain white rectangle. The close was shrinking a fully
+ * painted panel — a whole screenshot of the demo, scaled down into a
+ * 372px card — which is a different gesture wearing the same geometry.
+ * Emptying the panel first gives back the white rectangle, so the thing that
+ * shrinks into the card is the thing that grew out of it.
+ *
+ * Short and front-loaded on purpose: the contents are gone within the first
+ * quarter of the collapse, so almost the whole flight is the white box.
+ */
+const CONTENT_CLEAR_MS = 150;
 /** Safety net in case `onfinish` never fires (tab backgrounded mid-close). */
-const CLOSE_FALLBACK_MS = 700;
+const CLOSE_FALLBACK_MS = OPEN_MS + 240;
 /** How long to wait before finishing when there is no card to fly back to. */
 const NO_FLIP_MS = 200;
 
@@ -123,6 +147,33 @@ export function flipClose(
     setTimeout(finish, NO_FLIP_MS);
     return;
   }
+  // Empty the panel to its own white ground first. Every direct child is
+  // faded rather than the panel itself: fading the panel would take its
+  // background with it and the card would be flown back to by a transparent
+  // hole, showing the gallery sliding underneath.
+  for (const child of Array.from(panel.children)) {
+    if (!(child instanceof HTMLElement) || !child.animate) continue;
+    child.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: CONTENT_CLEAR_MS,
+      easing: 'ease-out',
+      fill: 'both',
+    });
+  }
+
+  // The scrim goes with it. The opening fades this in (`panelFade`) while the
+  // white box grows; the close used to leave it at full strength until the
+  // overlay unmounted, so the backdrop vanished in one frame the instant the
+  // box landed. Taking it down over the same flight is the other half of
+  // playing the open backwards.
+  const scrim = panel.previousElementSibling;
+  if (scrim instanceof HTMLElement && scrim.animate) {
+    scrim.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: CLOSE_MS,
+      easing: CLOSE_EASE,
+      fill: 'both',
+    });
+  }
+
   const a = panel.animate([f[1], f[0]], {
     duration: CLOSE_MS,
     easing: CLOSE_EASE,
