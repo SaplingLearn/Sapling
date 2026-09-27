@@ -67,12 +67,35 @@ def request_has_privacy_signal() -> bool:
     return _PRIVACY_SIGNAL_CTX.get()
 
 
-#: The current request's ASGI scope (the dict routing later stamps "route"
-#: onto — the same object the downstream app sees). Lets the PostHog mirror
-#: send the matched route TEMPLATE instead of a raw path whose segments are
-#: user/document/session ids. None outside a request.
-_REQUEST_SCOPE_CTX: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
-    "sapling_request_scope", default=None,
+class RequestView:
+    """The two things the PostHog seam needs from the current request, and
+    nothing else — NOT the ASGI scope (headers, cookies, query string).
+
+    * ``state`` — the request's ``scope["state"]`` dict. Starlette's
+      ``request.state`` is a view over it, so ``auth_guard``'s
+      ``request.state.user_id`` lands here, and the handler, a threadpool
+      ``Depends`` and the request's BackgroundTasks all share it.
+    * ``route_template()`` — the matched route template, read LAZILY
+      (routing stamps ``scope["route"]`` after this view is made).
+    """
+
+    __slots__ = ("state", "_route_of")
+
+    def __init__(self, scope: dict) -> None:
+        self.state: dict = scope.setdefault("state", {})
+
+        def _route_of() -> str | None:
+            return route_template_of(scope)
+
+        self._route_of = _route_of
+
+    def route_template(self) -> str | None:
+        return self._route_of()
+
+
+#: The current request's RequestView (ADR 0028). None outside a request.
+_REQUEST_CTX: contextvars.ContextVar[RequestView | None] = contextvars.ContextVar(
+    "sapling_request_view", default=None,
 )
 
 
@@ -86,21 +109,22 @@ def route_template_of(scope: dict | None) -> str | None:
 def current_route_template() -> str | None:
     """The current request's matched route template, or None (no request, or
     nothing matched yet)."""
-    return route_template_of(_REQUEST_SCOPE_CTX.get())
+    view = _REQUEST_CTX.get()
+    return view.route_template() if view is not None else None
 
 
 def current_session_user() -> str | None:
     """The current request's authenticated user, as auth_guard stamped it on
     ``request.state.user_id``.
 
-    Read from the ASGI scope's ``state`` dict (Starlette's ``request.state``
-    is a view over ``scope["state"]``), not from a contextvar a handler sets:
-    the scope is the one object every part of the request shares — the
+    Read from the request's ``scope["state"]`` dict (Starlette's
+    ``request.state`` is a view over it), not from a contextvar a handler
+    sets: that dict is the one object every part of the request shares — the
     handler, a threadpool ``Depends``, and the request's BackgroundTasks —
     so a stamp made anywhere is visible everywhere. None outside a request.
     """
-    scope = _REQUEST_SCOPE_CTX.get() or {}
-    state = scope.get("state")
+    view = _REQUEST_CTX.get()
+    state = view.state if view is not None else None
     user = state.get("user_id") if isinstance(state, dict) else None
     return user if isinstance(user, str) and user else None
 
@@ -123,11 +147,11 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # the handler emitted. The downstream task copies both at call_next,
         # so the handler, threadpool Depends and BackgroundTasks see them.
         privacy_token = _PRIVACY_SIGNAL_CTX.set(privacy_signal_in(request.headers))
-        scope_token = _REQUEST_SCOPE_CTX.set(request.scope)
+        view_token = _REQUEST_CTX.set(RequestView(request.scope))
         try:
             return await self._dispatch(request, call_next)
         finally:
-            _REQUEST_SCOPE_CTX.reset(scope_token)
+            _REQUEST_CTX.reset(view_token)
             _PRIVACY_SIGNAL_CTX.reset(privacy_token)
 
     async def _dispatch(

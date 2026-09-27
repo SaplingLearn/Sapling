@@ -88,6 +88,9 @@ _SETTINGS_COLS = (
 )
 
 
+#: Folded into the GET /settings ETag; bump when _SETTINGS_COLS changes.
+_SETTINGS_ETAG_VERSION = "2"
+
 #: The same list minus the ADR 0028 opt-out, for the deploy-order window in
 #: which this code is live but migration 20260927033814 has not run yet.
 _SETTINGS_COLS_WITHOUT_OPT_OUT = _SETTINGS_COLS.replace("analytics_opt_out,", "")
@@ -430,7 +433,14 @@ def get_settings(user_id: str, request: Request):
     settings = _get_or_create_settings(user_id)
     # user_settings.updated_at is bumped on every patch → a clean single-source
     # ETag. A matching If-None-Match returns 304 without re-serializing.
-    etag = make_etag("settings", user_id, settings.get("updated_at"))
+    # The body's SHAPE is part of the tag too: a schema version (bump it when
+    # the selected columns change) and whether analytics_opt_out came back —
+    # so a body cached before this deploy, or before its migration ran, can
+    # never be served as current once the field exists (same updated_at).
+    etag = make_etag(
+        "settings", _SETTINGS_ETAG_VERSION, user_id, settings.get("updated_at"),
+        "analytics_opt_out" in settings,
+    )
     not_modified = conditional(request, etag)
     if not_modified is not None:
         return not_modified
