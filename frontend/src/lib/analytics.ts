@@ -3,44 +3,50 @@
  *
  * The model is deliberately small:
  *
- * - **Only signed-in students who have not opted out are captured.** posthog-js
- *   is not even loaded on public/marketing pages, `/auth/*`, or for anyone
- *   signed out. For a signed-in student the UserProvider reads their account
- *   preference (`user_settings.analytics_opt_out`); only an explicit `false`
- *   loads and starts posthog-js. `true`, a missing field, or a failed read
- *   leaves it off for the page load (fail closed).
+ * - **Only signed-in students who have not opted out, only inside the app
+ *   shell.** posthog-js is not even loaded on public/marketing pages,
+ *   `/auth/*`, onboarding, or for anyone signed out. On the first shell page
+ *   of a page load the UserProvider reads the student's account preference
+ *   (`user_settings.analytics_opt_out`); only an explicit `false` loads and
+ *   starts posthog-js. `true`, a missing field, or a failed read leaves it
+ *   off (fail closed). The capture gate also checks the LIVE route
+ *   (lib/appRoutes.ts), so a navigation out of the shell sends nothing.
+ * - **Pageviews only.** `$pageview` + `$pageleave`. Click autocapture,
+ *   rageclicks, dead clicks, heatmaps, web vitals, session recording,
+ *   exception capture — all OFF. Product usage comes from backend events.
  * - **The account flag is the single source of truth.** Nothing about the
  *   choice is stored in the browser — not by us, and not by posthog-js
  *   (`persistence: 'memory'`, and posthog-js's own opt-out/opt-in, which
  *   would write localStorage, is never called). Every page load starts from
  *   nothing and asks the account again. The price is no session continuity
  *   across full page loads; that trade is accepted.
- * - **A capture gate** (`gatedBeforeSend`) drops every event unless the
- *   current state is `on`, so opting out mid-page stops capture at once.
+ * - **A capture gate** (`gatedBeforeSend`) drops every event unless capture
+ *   is allowed right now, so opting out or leaving the shell stops it at once.
  * - **Do Not Track / Global Privacy Control means off**, always.
  * - **Pseudonymous.** `identify` carries the user's UUID and nothing else — no
  *   name, email or person properties — and runs in posthog-js's `loaded` hook,
  *   before its initial `$pageview`, so that one pageview is already the
  *   student's.
- * - **No content.** Autocapture records that a click happened, never what the
- *   element said: `mask_all_text` + `mask_all_element_attributes`. Session
- *   recording, exception autocapture and copied-text capture are off.
  * - **No credentials in URLs.** The `/auth/callback` handoff params are masked
  *   by posthog-js AT THE SOURCE (`custom_personal_data_properties`), and
  *   `before_send` strips every query string and fragment from every URL
- *   value, recursively (heatmap URL keys, web-vitals metrics), as defence in
- *   depth.
- * - **Nothing but events on the wire.** Feature flags are off
- *   (`advanced_disable_flags` — the app uses none; posthog-js then skips its
- *   remote config too), and every remote-UI extension (surveys, product
- *   tours, conversations, web experiments, site apps) is disabled.
+ *   value (absolute or relative), recursively, as defence in depth.
+ * - **Nothing but events on the wire, unbatched and uncompressed.** Feature
+ *   flags are off (`advanced_disable_flags` — the app uses none; posthog-js
+ *   then skips its remote config too), every remote-UI extension (surveys,
+ *   product tours, conversations, web experiments, site apps) is disabled,
+ *   each event is sent as it happens (`request_batching: false`, so a
+ *   sign-out never strands a queued batch), and bodies are plain JSON
+ *   (`disable_compression`, so the `/ingest` proxy can check the project key
+ *   without decompressing anything).
  * - **No client IP, no geolocation.** The `/ingest` proxy never forwards the
  *   browser's IP and every event carries `$geoip_disable`; the PostHog
  *   project setting "Discard client IP data" must stay ON
  *   (docs/frontend-audit/07-integrations.md).
- * - **Same-origin transport.** `api_host` is `/ingest`, served by
- *   `src/app/ingest/[...path]/route.ts`, which forwards to PostHog US without
- *   the user's cookies.
+ * - **Same-origin transport only.** `api_host` is `/ingest`, served by
+ *   `src/app/ingest/[...path]/route.ts`. `NEXT_PUBLIC_POSTHOG_HOST` may only
+ *   move it to another same-origin path — never to an external host that
+ *   would bypass the proxy.
  * - **Inert unless configured.** No `NEXT_PUBLIC_POSTHOG_KEY`, local UI mode
  *   (`NEXT_PUBLIC_LOCAL_MODE`) or the E2E/test build (`NEXT_PUBLIC_TEST_MODE`)
  *   → none of the above ever runs.
@@ -137,10 +143,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Strip URL queries from `value` and from everything nested in it — values
- * AND object keys, because `$heatmap_data` is keyed by page URL. Mutates
- * objects/arrays in place. When two keys collapse onto the same URL their
- * array values are merged, so neither page's data is lost.
+ * Strip URL queries from every string in `value`, however deeply nested.
+ * Mutates objects/arrays in place.
  */
 export function scrubValue(value: unknown, depth = 0): unknown {
   if (typeof value === "string") return stripUrlQuery(value);
@@ -150,18 +154,7 @@ export function scrubValue(value: unknown, depth = 0): unknown {
     return value;
   }
   if (!isPlainObject(value)) return value;
-  for (const key of Object.keys(value)) {
-    const scrubbed = scrubValue(value[key], depth + 1);
-    const cleanKey = stripUrlQuery(key) as string;
-    if (cleanKey === key) {
-      value[key] = scrubbed;
-      continue;
-    }
-    delete value[key];
-    const existing = value[cleanKey];
-    value[cleanKey] =
-      Array.isArray(existing) && Array.isArray(scrubbed) ? [...existing, ...scrubbed] : scrubbed;
-  }
+  for (const key of Object.keys(value)) value[key] = scrubValue(value[key], depth + 1);
   return value;
 }
 
@@ -180,11 +173,22 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
   return event;
 }
 
+/**
+ * `NEXT_PUBLIC_POSTHOG_HOST` may move the proxy to another SAME-ORIGIN path
+ * ("/something"), nothing else: an absolute or protocol-relative URL would
+ * send events straight to a third party, around the proxy's cookie/IP
+ * stripping, relay guards and project-key check. Anything else → /ingest.
+ */
+export function sameOriginApiHost(override: string | undefined): string {
+  const v = (override ?? "").trim().replace(/\/+$/, "");
+  return /^\/[A-Za-z0-9._~\-/]*$/.test(v) && !v.startsWith("//") ? v : INGEST_PREFIX;
+}
+
 /** The full init config. Exported so tests can pin the privacy posture. */
 export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
   return {
     // The same-origin proxy (src/app/ingest/[...path]/route.ts).
-    api_host: (env.NEXT_PUBLIC_POSTHOG_HOST ?? "").trim() || INGEST_PREFIX,
+    api_host: sameOriginApiHost(env.NEXT_PUBLIC_POSTHOG_HOST),
     ui_host: UI_HOST,
     defaults: "2026-01-30",
     // Nothing in cookies or localStorage: identity, session and super
@@ -221,6 +225,13 @@ export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
     // The app uses no feature flags: no /flags request at init or after
     // identify, so no distinct id or person properties leave that way.
     advanced_disable_flags: true,
+    // Each event goes out as it happens (pageviews are rare): no queue for a
+    // sign-out to strand — the /ingest proxy 403s once the session cookie is
+    // gone, and posthog-js never retries a 4xx.
+    request_batching: false,
+    // Plain-JSON bodies, so the /ingest proxy can check the project key
+    // without decompressing attacker-supplied input.
+    disable_compression: true,
     // No remote-UI extension may render anything into the app.
     disable_surveys: true,
     disable_surveys_automatic_display: true,
