@@ -129,7 +129,27 @@ def test_inv_02_pure_modules_import_nothing_impure():
 
 
 def test_inv_03_channel_guess_slip_bounds():
-    pytest.skip("asserted by PKG-01")
+    """Spec §3.1 validity, asserted over the raw table so this does not depend
+    on params.validate_channels being correct."""
+    from learning import params
+
+    assert set(params.CHANNELS) == {
+        "free_response",
+        "mc_reasoned",
+        "mc",
+        "teachback_llm",
+        "chat_turn",
+    }
+    assert "idk" not in params.CHANNELS, "idk is a flag on update(), not a channel row"
+    for name, row in params.CHANNELS.items():
+        g, s = row["G"], row["S"]
+        assert isinstance(row["strong"], bool), name
+        assert 0.0 < g and 0.0 < s, name
+        assert g + s < 1.0, f"{name}: G + S = {g + s}"
+        assert g <= params.BKT_G_MAX, f"{name}: G {g} > BKT_G_MAX"
+        assert s <= params.BKT_S_MAX, f"{name}: S {s} > BKT_S_MAX"
+        assert 0.0 < params.BKT_T < 1.0 - s / (1.0 - g), f"{name}: BKT_T outside (0, 1 - S/(1-G))"
+        assert g + params.S_IDK < 1.0, f"{name}: idk observation would invert"
 
 
 def test_inv_04_policy_takes_no_message_text():
