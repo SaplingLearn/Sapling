@@ -629,7 +629,12 @@ def _calls_gate(source: str) -> bool:
 
 def _route_violates_gate_rule(source: str) -> bool:
     """Behaviour 10's standing rule for a route module: importing learning.fsrs
-    requires a learning_loop_active(...) call in the same module."""
+    requires a learning_loop_active(...) call in the same module.
+
+    It checks gate PRESENCE per module, not DOMINANCE: a module that calls the
+    gate in one handler and uses fsrs ungated in another, or at import time,
+    passes. It is a tripwire for a route that forgot the gate entirely, not a
+    proof that every fsrs use sits under it."""
     return _imports_fsrs(source) and not _calls_gate(source)
 
 
@@ -670,6 +675,10 @@ def test_routes_import_fsrs_only_behind_the_gate():
     PKG-03 (services/graph_service.py), PKG-11 (routes/flashcards.py) and
     PKG-12 (its review service) add sanctioned importers, and PKG-03/PKG-11 may
     not edit this module. The zero-importer state is acceptance 8's grep.
+    Limits (HANDOFF-02 Known gaps): only routes/ is scanned, so a service that
+    imports fsrs with no gate passes, and the rule is gate presence per module
+    (see ``_route_violates_gate_rule``), so flag-off inertness rests on that
+    grep and on the upstream gates, not on this test.
     """
     routes = pathlib.Path(__file__).resolve().parents[1] / "routes"
     paths = sorted(routes.rglob("*.py"))
