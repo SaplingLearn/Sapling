@@ -70,7 +70,9 @@ class SaplingDeps:
     retrieval: Any = None
 
     def __post_init__(self) -> None:
-        """Attach this run's existing session and user identity to AI spans."""
+        """Attribute the agent runs that follow to this user/session for
+        PostHog LLM analytics (UUIDs only; a no-op read when PostHog is off,
+        since no span processor consumes it). Never raises."""
         from services.ai_observability import bind_ai_context
 
         bind_ai_context(
