@@ -1546,3 +1546,156 @@ class TestSseUploadHook:
             "update_course_context",
             "check_upload_achievements",
         ]
+
+
+# ── withdrawal (A23): consent stays answerable for items ──────────────────
+
+
+def _profile_route_helpers():
+    import importlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))  # no tests/__init__.py
+    return importlib.import_module("test_profile_routes")  # its harness, not a copy
+
+
+class TestWithdrawal:
+    def test_create_items_records_source_documents(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({})
+        with patch("services.check_item_service.table", side_effect=factory):
+            svc.create_items(
+                "course-1",
+                "k",
+                "doc-1",
+                [_draft()],
+                allowed_chunk_ids={"c1"},
+                source_document_ids=["doc-2", "doc-1", "doc-2"],
+            )
+        assert mocks["check_items"].upsert.call_args[0][0][0]["source_document_ids"] == [
+            "doc-1",
+            "doc-2",
+        ]
+
+    def test_retire_for_documents_deletes_every_item_citing_them(self, caplog):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({})
+        mocks_t = factory("check_items")
+        mocks_t.delete.return_value = [{"id": "i1"}, {"id": "i2"}]
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            caplog.at_level("INFO", logger="sapling.services.check_items"),
+        ):
+            assert svc.retire_items_for_documents(["doc-1", "doc,2"]) == 2
+        filters = mocks_t.delete.call_args.kwargs["filters"]
+        assert filters["source_document_ids"] == 'ov.{"doc-1","doc,2"}'
+        assert set(filters) <= {"source_document_ids", "select"}, "never a filter on item text"
+        assert any("retired: 2" in r.getMessage() for r in caplog.records)
+
+    def test_retire_for_documents_with_nothing_makes_no_call(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({})
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert svc.retire_items_for_documents([]) == 0
+        assert mocks == {}
+
+    def test_retire_for_uploader_covers_every_document_of_the_user(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({"documents": [{"id": "doc-1"}, {"id": "doc-2"}]})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch.object(svc, "retire_items_for_documents", return_value=3) as retire,
+        ):
+            assert svc.retire_items_for_uploader("user_andres") == 3
+        retire.assert_called_once_with(["doc-1", "doc-2"])
+        call = mocks["documents"].select_with_count.call_args
+        # deleted documents included: withdrawal covers every document ever uploaded
+        assert call[1]["filters"] == {"user_id": "eq.user_andres"} and call[1]["order"] == "id"
+
+    def test_retire_is_never_gated_on_the_flag(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+        factory, mocks = _cached_tables({})
+        with patch("services.check_item_service.table", side_effect=factory):
+            svc.retire_items_for_documents(["doc-1"])
+        mocks["check_items"].delete.assert_called_once()
+
+    def test_deleting_a_document_retires_its_items_even_with_the_flag_off(self, monkeypatch):
+        import config
+        from fastapi.testclient import TestClient
+        from main import app
+        from routes import documents
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)  # withdrawal is never gated
+        factory, _ = _cached_tables({"documents": [{"id": "doc-1"}]})
+        monkeypatch.setattr(documents, "table", factory)
+        monkeypatch.setattr(documents, "require_self", lambda *a, **k: None)
+        monkeypatch.setattr(documents, "_validate_user", lambda *a, **k: None)
+        with patch("routes.documents.retire_items_for_documents", return_value=1) as retire:
+            r = TestClient(app).delete("/api/documents/doc/doc-1?user_id=user_andres")
+        assert r.status_code == 200 and r.json() == {"deleted": True}
+        retire.assert_called_once_with(["doc-1"])
+
+    def test_a_missing_document_retires_nothing(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from main import app
+        from routes import documents
+
+        factory, _ = _cached_tables({"documents": []})
+        monkeypatch.setattr(documents, "table", factory)
+        monkeypatch.setattr(documents, "require_self", lambda *a, **k: None)
+        monkeypatch.setattr(documents, "_validate_user", lambda *a, **k: None)
+        with patch("routes.documents.retire_items_for_documents") as retire:
+            r = TestClient(app).delete("/api/documents/doc/doc-1?user_id=user_andres")
+        assert r.status_code == 404
+        retire.assert_not_called()
+
+    def test_a_retire_failure_never_fails_the_delete(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from main import app
+        from routes import documents
+
+        factory, _ = _cached_tables({"documents": [{"id": "doc-1"}]})
+        monkeypatch.setattr(documents, "table", factory)
+        monkeypatch.setattr(documents, "require_self", lambda *a, **k: None)
+        monkeypatch.setattr(documents, "_validate_user", lambda *a, **k: None)
+        with patch(
+            "routes.documents.retire_items_for_documents", side_effect=RuntimeError("pg down")
+        ):
+            r = TestClient(app).delete("/api/documents/doc/doc-1?user_id=user_andres")
+        assert r.status_code == 200
+
+    def test_opting_out_retires_the_uploaders_items(self, monkeypatch):
+        import config
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)  # never gated
+        tpr = _profile_route_helpers()
+        for body, retired in (
+            ({"share_class_context": False}, True),
+            ({"share_class_context": True}, False),
+            ({"theme": "dark"}, False),
+        ):
+            with (
+                tpr._mock_self(),
+                patch(
+                    "routes.profile.table",
+                    side_effect=tpr.TestShareClassContextToggleRefresh()._tables(),
+                ),
+                patch("routes.profile.update_course_context"),
+                patch("routes.profile.resync_user_chunk_visibility") as resync,
+                patch("routes.profile.retire_items_for_uploader") as retire,
+            ):
+                r = tpr.client.patch(f"/api/profile/{tpr.USER_ID}/settings", json=body)
+            assert r.status_code == 200, body
+            if "share_class_context" in body:
+                resync.assert_called_once_with(tpr.USER_ID)
+            if retired:
+                retire.assert_called_once_with(tpr.USER_ID)
+            else:
+                retire.assert_not_called()

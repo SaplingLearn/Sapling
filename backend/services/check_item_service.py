@@ -394,6 +394,50 @@ def source_chunks(doc_row: dict) -> list[dict]:
     return [{"id": None, "chunk_index": 0, "chunk_text": text, "doc_id": doc_id}]
 
 
+# ── withdrawal (A23): consent stays answerable for items ──────────────────
+#
+# NOT gated on LEARNING_LOOP_ENABLED: withdrawal must hold under the kill
+# switch too, and with no items it is one cheap no-op delete.
+
+#: Document ids per `ov.{…}` filter. The filter rides in the query string, so
+#: an unbounded list is an unbounded URL; the same bound and rationale as
+#: chunk_visibility's `in.(…)` batches (#629).
+_DOC_ID_BATCH = 50
+
+
+def retire_items_for_documents(document_ids: Iterable[str]) -> int:
+    """DELETE every item whose source_document_ids overlaps `document_ids`;
+    returns how many went. Logs the count only (no event, no text)."""
+    ids = [d for d in dict.fromkeys(document_ids) if d]
+    if not ids:
+        return 0
+    retired = 0
+    for start in range(0, len(ids), _DOC_ID_BATCH):
+        batch = ids[start : start + _DOC_ID_BATCH]
+        rows = table(_TABLE).delete(
+            filters={
+                "source_document_ids": "ov.{" + ",".join(pg_quote_value(d) for d in batch) + "}",
+                "select": "id",  # the deleted rows come back as ids only
+            }
+        )
+        retired += len(rows or [])
+    logger.info("check items retired: %d (documents: %d)", retired, len(ids))
+    return retired
+
+
+def retire_items_for_uploader(user_id: str) -> int:
+    """Retire every item drafted from any document `user_id` uploaded (soft-
+    deleted ones included) — the share_class_context opt-out (A23)."""
+    ids = [
+        r["id"]
+        for r in page_all(
+            table("documents"), "id", filters={"user_id": f"eq.{user_id}"}, order="id"
+        )
+        if r.get("id")
+    ]
+    return retire_items_for_documents(ids)
+
+
 # ── generation (flag-gated; spec §7: course level, never one student's gate) ─
 
 

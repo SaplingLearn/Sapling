@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
 
 from services.chunk_visibility import resync_user_chunk_visibility
+from services.check_item_service import retire_items_for_uploader
 from services.course_context_service import update_course_context
 from pydantic import BaseModel, Field
 
@@ -473,6 +474,11 @@ def update_settings(
         # it, so opting out would read as applied while the documents it was
         # meant to withdraw stayed published to the whole class.
         background_tasks.add_task(resync_user_chunk_visibility, user_id)
+        # Learning loop PKG-04 (A23): items drafted from this student's shared
+        # documents leave the class pool too. Deleted, so turning the toggle
+        # back on restores nothing; never gated on LEARNING_LOOP_ENABLED.
+        if updates["share_class_context"] is False:
+            background_tasks.add_task(retire_items_for_uploader, user_id)
 
     return _get_or_create_settings(user_id)
 

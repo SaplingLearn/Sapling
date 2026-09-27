@@ -44,7 +44,7 @@ from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event
 from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.document_indexing import index_document
-from services.check_item_service import generate_for_document
+from services.check_item_service import generate_for_document, retire_items_for_documents
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
@@ -294,6 +294,13 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
+    # Learning loop PKG-04 (A23): check items drafted from this document's
+    # text leave the class pool with it. Never gated on LEARNING_LOOP_ENABLED
+    # (withdrawal holds under the kill switch too) and never fails the delete.
+    try:
+        retire_items_for_documents([document_id])
+    except Exception:
+        logger.warning("Retiring check items for doc %s failed", document_id, exc_info=True)
     return {"deleted": True}
 
 
