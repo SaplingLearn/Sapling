@@ -285,12 +285,17 @@ def log_llm_usage(
     provider: str = "gemini",
     user_id: str | None = None,
     request_id: str | None = None,
+    cached_tokens: int | None = None,
+    thinking_tokens: int | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
     ``usage`` is any Pydantic AI / Gemini usage object (or dict); it is
     normalized here and the cost computed from ``llm_pricing.MODEL_PRICING``
     (``cost_usd = NULL`` for unpriced models).
+
+    ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
+    ``None`` when unmeasured, and cached input is billed at the cached rate.
     """
     if not _logging_enabled():
         return
@@ -306,8 +311,13 @@ def log_llm_usage(
             "prompt_tokens": tokens["prompt_tokens"],
             "completion_tokens": tokens["completion_tokens"],
             "total_tokens": tokens["total_tokens"],
+            # Both keys on EVERY row: PostgREST rejects a bulk insert whose
+            # objects' keys differ (PGRST102), and the worker batches rows.
+            "cached_tokens": cached_tokens,
+            "thinking_tokens": thinking_tokens,
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                cached_tokens=cached_tokens,
             ),
         }
         _enqueue("llm_usage", row)

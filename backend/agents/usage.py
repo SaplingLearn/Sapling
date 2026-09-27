@@ -102,6 +102,22 @@ def _log_recovered_retries(result: Any, task: AgentTask | None, feature: str) ->
         )
 
 
+def _cache_and_thinking(usage: Any) -> tuple[int | None, int | None]:
+    """(cached_tokens, thinking_tokens) for the llm_usage row (spec §13 A21), as pydantic-ai
+    1.107 carries Gemini's counts (models/google.py::_metadata_as_usage). Gemini omits zero
+    counts, so a RunUsage without the key means 0; a shape with no such fields means None."""
+    details = getattr(usage, "details", None)
+    details = details if isinstance(details, dict) else None
+    thinking = int(details.get("thoughts_tokens") or 0) if details is not None else None
+    if details is None and not hasattr(usage, "cache_read_tokens"):
+        return None, thinking
+    cached = max(
+        int(getattr(usage, "cache_read_tokens", 0) or 0),
+        int((details or {}).get("cached_content_tokens") or 0),
+    )
+    return cached, thinking
+
+
 def record_agent_usage(
     result: Any,
     *,
@@ -119,12 +135,11 @@ def record_agent_usage(
     same guarded, never-raises contract.
     """
     try:
+        usage = result.usage()
+        cached_tokens, thinking_tokens = _cache_and_thinking(usage)
         events_service.log_llm_usage(
-            feature=feature,
-            task=task,
-            model=served_model_name(result, task),
-            usage=result.usage(),
-            user_id=user_id,
+            feature=feature, task=task, model=served_model_name(result, task), usage=usage,
+            user_id=user_id, cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
         )
     except Exception:
         logger.debug("record_agent_usage: could not capture usage", exc_info=True)
