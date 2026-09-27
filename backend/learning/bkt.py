@@ -56,6 +56,13 @@ def _clamp01(x: float) -> float:
     return min(_P_MAX, max(_P_MIN, x))
 
 
+def _check_p(p: float) -> None:
+    """Spec §Error semantics: a belief outside [0, 1] is a programming error.
+    The chained comparison is False for NaN, so NaN raises too."""
+    if not _P_MIN <= p <= _P_MAX:
+        raise ValueError(f"p must be in [0, 1], got {p}")
+
+
 def update(
     p: float,
     channel: str,
@@ -73,8 +80,7 @@ def update(
     """
     if channel not in CHANNELS:
         raise ValueError(f"unknown channel {channel!r}; idk is the idk=True flag, not a channel")
-    if not _P_MIN <= p <= _P_MAX:
-        raise ValueError(f"p must be in [0, 1], got {p}")
+    _check_p(p)
     if not _P_MIN <= weight <= _FULL_WEIGHT:
         raise ValueError(f"weight must be in [0, 1], got {weight}")
     row = CHANNELS[channel]
@@ -106,8 +112,10 @@ def decayed_p(p_stored: float, days_since: float, stability: float | None) -> fl
     stability None → FSRS_S0_GOOD (no FSRS state yet); otherwise it must be
     finite and > 0. Negative days_since (clock skew) reads as 0, +inf gives
     the prior, NaN raises. The prior is a fixed point; every other p moves
-    toward it from its own side and never crosses.
+    toward it from its own side and never crosses. p_stored outside [0, 1]
+    raises.
     """
+    _check_p(p_stored)
     s_c = FSRS_S0_GOOD if stability is None else stability
     if not (s_c > 0.0 and math.isfinite(s_c)):  # `not >` also rejects NaN
         raise ValueError(f"stability must be finite and > 0, got {stability}")
@@ -140,6 +148,7 @@ def propagate_prereq(
 
 def band(p: float) -> Band:
     """Spec §3.1 / ZPD STATE block: novice < BAND_NOVICE_MAX ≤ develop < BAND_DEVELOP_MAX ≤ profic."""
+    _check_p(p)
     if p < BAND_NOVICE_MAX:
         return "novice"
     if p < BAND_DEVELOP_MAX:
@@ -150,6 +159,7 @@ def band(p: float) -> Band:
 def tier_for(p: float) -> Tier:
     """Loop-path mirror into graph_nodes.mastery_tier (spec §3.1). Not the legacy
     config.get_mastery_tier, which keeps its own cuts until PKG-14."""
+    _check_p(p)
     if p < TIER_UNEXPLORED_MAX:
         return "unexplored"
     if p < BAND_NOVICE_MAX:
@@ -160,10 +170,12 @@ def tier_for(p: float) -> Tier:
 
 
 def is_proficient(p: float) -> bool:
+    _check_p(p)
     return p >= BKT_PROFICIENT
 
 
 def is_mastered(p: float, n_strong_unassisted: int) -> bool:
     """Mastered needs the belief AND BKT_MASTERED_MIN_STRONG strong-channel
     unassisted observations (spec §3.1); belief alone is never enough."""
+    _check_p(p)
     return p >= BKT_MASTERED and n_strong_unassisted >= BKT_MASTERED_MIN_STRONG

@@ -440,6 +440,27 @@ def test_mastered_implies_proficient():
             assert bkt.is_proficient(p)
 
 
+BAD_P = [math.nan, -0.1, 1.5, math.inf, -math.inf]
+P_CONSUMERS = {
+    "update": lambda p: bkt.update(p, "mc", True),
+    "decayed_p": lambda p: bkt.decayed_p(p, 1.0, None),
+    "decayed_p_at_zero_days": lambda p: bkt.decayed_p(p, 0.0, None),
+    "band": bkt.band,
+    "tier_for": bkt.tier_for,
+    "is_proficient": bkt.is_proficient,
+    "is_mastered": lambda p: bkt.is_mastered(p, params.BKT_MASTERED_MIN_STRONG),
+}
+
+
+@pytest.mark.parametrize("p", BAD_P, ids=repr)
+@pytest.mark.parametrize("fn", list(P_CONSUMERS.values()), ids=list(P_CONSUMERS))
+def test_every_p_consumer_rejects_out_of_range_p(fn, p):
+    """Spec §Error semantics: out-of-range p raises. Before, tier_for(nan) was
+    "mastered", band(nan) "profic", and decayed_p(1.5, 0, None) returned 1.5."""
+    with pytest.raises(ValueError, match="p must be in"):
+        fn(p)
+
+
 def test_bkt_imports_only_stdlib_and_params():
     import pathlib
 
