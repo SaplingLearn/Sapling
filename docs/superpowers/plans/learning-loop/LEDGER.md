@@ -23,6 +23,7 @@ Rules: read this file first; refuse to start if any earlier package is `blocked`
 | 00 | foundation | done | feat/learning-loop-00-foundation | 93b38e9 | 6 modules (40 passed + 8 skipped placeholders; review fixes 76428bb..93b38e9) | — | HANDOFF-00.md |
 | 01 | bkt-core | done | feat/learning-loop-01-bkt-core | 1b6d5ef | tests/test_learning_bkt.py (153) + inv_03 | — | HANDOFF-01.md |
 | 00 | foundation | verified | feat/learning-loop-00-foundation | 93b38e9 | 6 modules (40 passed + 8 skipped placeholders; review fixes 76428bb..93b38e9) | PKG-01 2026-09-26 (base 3d1c7db): tests/test_learning_gate.py → 13 passed; invariants → 4 passed, 8 skipped; deps/settings/migration → 13 passed; flag grep → 1 hit; migration ls → 1 file; full suite → 2748 passed, 143 skipped | HANDOFF-00.md |
+| 01 | bkt-core | done | feat/learning-loop-01-bkt-core | a607062 | tests/test_learning_bkt.py (287; review fixes 87e8b29..a607062) + inv_03 | — | HANDOFF-01.md |
 
 ## Deviations
 
@@ -49,6 +50,9 @@ Format: `PKG-NN: <spec said> → <did instead> → <why> → <† if an A/B flag
 - PKG-01: acceptance 8 / self-check 6 `git diff --stat main...HEAD` → measured as `git diff --stat feat/learning-loop-00-foundation..HEAD` → stacked run; against the PKG-00 head the diff is exactly the six listed paths.
 - PKG-01: commit trailer `Claude Fable 5.1` → `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` → session override.
 - PKG-01: Task 7 `git push` / `gh pr create` → skipped → stacked-branch run; PRs opened after review.
+- PKG-01 (review fixes): HANDOFF-01 Open question (3) "only `update` range-checks `p`" → every function that takes a belief raises `ValueError` on `p` outside [0, 1] or NaN; `decayed_p` also rejects a stability that is not finite and > 0 and a NaN `days_since` → §Error semantics ("raise on out-of-range `p`"); a NaN stability had silently reset belief to 0.0 and `tier_for(nan)` was "mastered" → †.
+- PKG-01 (review fixes): PKG-01 prompt `GRADER_RETRY_BELOW = 0.4` ‡ and §13 A6 `GRADER_SECOND_OPINION_CONFIDENCE = 0.4` name the same §3.4 threshold → PKG-01 keeps the prompt's name for now; PKG-05 renames it to the A6 name (no alias) as a PKG-01 reopen, updating `SPEC_34_NAMES`, `SPEC_VALUES` and `test_ordered_pairs_are_ordered` (HANDOFF-01 Known gap (i)) → §13 wins over the prompt, and A6 leaves adding the name to its owning package; one value, one name.
+- PKG-01 (review fixes): full suite (same ignore set) → 3036 passed, 142 skipped after 87e8b29..a607062 (`test_learning_bkt.py` 153 → 287; zero failures, no new skips).
 
 ## Blocked notes
 
