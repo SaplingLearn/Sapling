@@ -395,8 +395,8 @@ def test_inv_04_policy_takes_no_message_text():
             continue
         for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
             ann = ast.unparse(arg.annotation) if arg.annotation is not None else ""
-            if re.search(r"\bstr\b", ann) or _TEXTLIKE_PARAM.search(arg.name):
-                offenders.append(f"{node.name}({arg.name}: {ann or 'unannotated'})")
+            if re.search(r"\bstr\b", ann) or _TEXTLIKE_PARAM.search(arg.arg):
+                offenders.append(f"{node.name}({arg.arg}: {ann or 'unannotated'})")
     assert not offenders, f"policy.py public functions take text-shaped params: {offenders}"
     for name in ("ceiling", "band_control"):
         assert any(isinstance(n, ast.FunctionDef) and n.name == name for n in tree.body), (
