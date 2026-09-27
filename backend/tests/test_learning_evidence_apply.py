@@ -77,6 +77,18 @@ class TestEvidenceModel:
         assert _ev(max_rung=LADDER_MAX_RUNG).assisted is True
         assert _ev(max_rung=0).assisted is False
 
+    def test_assisted_without_a_rung_is_raised_to_the_first_assisted_rung(self):
+        """Spec §5: assisted means a rung H1..H3 was used, so `assisted=True`
+        with `max_rung=0` is read as H1. BKT (assisted weight), the counters
+        and FSRS (rating_for keys on max_rung: Hard) then agree."""
+        from learning import fsrs
+
+        ev = _ev(assisted=True)
+        assert (ev.assisted, ev.max_rung) == (True, RUNG_ASSISTED_MIN)
+        assert ev.weight == WEIGHT_ASSISTED
+        assert fsrs.rating_for(ev.channel, ev.correct, ev.max_rung) == fsrs.Rating.HARD
+        assert _ev(assisted=True, max_rung=3).max_rung == 3
+
     def test_confidence_and_weight_are_unit_interval(self):
         for bad in (-0.1, 1.1, float("nan"), float("inf")):
             with pytest.raises(ValidationError):

@@ -67,6 +67,11 @@ class Evidence(BaseModel):
         if self.max_rung >= RUNG_ASSISTED_MIN:
             # Rungs unlock in order (PKG-06 gates), so any rung means H1 was used.
             self.assisted = True
+        elif self.assisted:
+            # And assisted means a rung H1..H3 was used (spec §5), so an
+            # assisted answer with no rung is read as H1: fsrs.rating_for keys
+            # on max_rung (Hard) and must agree with the assisted BKT weight.
+            self.max_rung = RUNG_ASSISTED_MIN
         self.weight = evidence_weight(self)
         return self
 
