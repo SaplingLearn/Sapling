@@ -61,7 +61,9 @@ def _model(answers, *, delay=0.0, calls=None):
 
 def _observe(**overrides):
     kwargs = dict(user_id="u1", session_id="s1", message="Why does my proof fail?",
-                  history=[], mode="socratic", model_pref="fast", request_id="req-9")
+                  history=[], mode="socratic", model_pref_requested=None,
+                  model_tier="fast", tutor_model="gemini-2.5-flash-lite",
+                  request_id="req-9")
     kwargs.update(overrides)
     return tutor_router.observe_tutor_turn(**kwargs)
 
@@ -146,7 +148,9 @@ def test_routed_turn_is_fire_and_forget_and_emits_one_event(monkeypatch, sink):
     (event,) = _decision_events(sink)
     p = event["payload"]
     assert p["feature"] == "tutor_router"
-    assert (p["session_id"], p["mode"], p["model_pref"]) == ("s1", "socratic", "fast")
+    assert (p["session_id"], p["mode"]) == ("s1", "socratic")
+    assert (p["model_pref_requested"], p["model_tier"], p["tutor_model"]) == (
+        None, "fast", "gemini-2.5-flash-lite")
     assert p["history_messages"] == 0
     assert set(p["answers"]) == {q.key for q in tutor_router.QUESTIONS}
     assert event["user_id"] == "u1" and event["request_id"] == "req-9"
@@ -202,7 +206,7 @@ def test_function_mode_routes_with_the_e2e_handler(monkeypatch, sink):
     assert event["payload"]["backend"] == "function"
 
 
-# ── Route wiring: observe-only, once per turn ─────────────────────────────
+# ── Route wiring: observe-only, once per PERSISTED turn ──────────────────
 
 
 def _table_factory(name):
@@ -213,14 +217,200 @@ def _table_factory(name):
     return mock
 
 
-def _post_chat():
-    return client.post("/api/learn/chat", json={
+def _post_chat(**overrides):
+    body = {
         "session_id": "s1", "user_id": "user_andres", "message": "What is recursion?",
         "mode": "socratic", "model_pref": "fast",
-    })
+    }
+    body.update(overrides)
+    return client.post("/api/learn/chat", json=body)
 
 
-def test_json_chat_schedules_the_router_once_with_the_turn():
+def _post_stream(**overrides):
+    body = {
+        "session_id": "s1", "user_id": "user_andres", "message": "What is recursion?",
+        "mode": "socratic", "model_pref": "smart",
+    }
+    body.update(overrides)
+    return client.post("/api/learn/chat/stream", json=body)
+
+
+class _RouterSpy:
+    """Stands in for `observe_tutor_turn` inside the route: records each
+    scheduling call without starting a task (a task started on the
+    per-request TestClient loop is cancelled when the request's loop closes,
+    before it could emit). :meth:`replay` then runs every recorded call
+    through the REAL router, so tests count genuine ``decision.made`` events."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return None
+
+    def replay(self, answers=DISRUPTIVE):
+        async def run():
+            return [await tutor_router.observe_tutor_turn(**kw) for kw in self.calls]
+
+        with decision_agent.override(model=_model(answers)):
+            return asyncio.run(run())
+
+
+@pytest.fixture
+def router_on(monkeypatch):
+    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+
+
+def test_json_chat_routes_the_turn_once_after_persisting(router_on):
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=run_result("reply"))
+    order: list[str] = []
+    spy = _RouterSpy()
+
+    def save(session_id, role, *a, **k):
+        order.append(f"save:{role}")
+
+    def observe(**kw):
+        order.append("route")
+        return spy(**kw)
+
+    with (
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn.save_message", side_effect=save),
+        patch("routes.learn.observe_tutor_turn", side_effect=observe),
+    ):
+        r = _post_chat()
+    assert r.status_code == 200
+    assert order == ["save:user", "save:assistant", "route"], (
+        "the router is scheduled at the persist point, after the turn is saved")
+    (kw,) = spy.calls
+    assert (kw["message"], kw["session_id"], kw["mode"]) == (
+        "What is recursion?", "s1", "socratic")
+    assert kw["history"] == []
+
+
+def test_stream_failing_before_persist_then_json_retry_is_one_decision(router_on, sink):
+    """The double-routing regression: the client's own JSON rung (Learn.tsx
+    `shouldFallBackToJson` → POST /chat) retries a stream that failed before
+    its first token. The stream persisted nothing, so it must not have routed
+    anything; the /chat retry that DOES persist routes the turn — once."""
+    failing = MagicMock()
+    # Nothing streams → Rung 1 → the JSON fallback, whose own agent run fails
+    # too → a terminal error with nothing persisted.
+    failing.run = AsyncMock(side_effect=RuntimeError("model down"))
+    ok = MagicMock()
+    ok.run = AsyncMock(return_value=run_result("retry reply"))
+    spy = _RouterSpy()
+    saved: list = []
+
+    with (
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        with patch("routes.learn.agent_for_mode", return_value=failing):
+            r1 = _post_stream()
+        assert r1.status_code == 200 and '"error"' in r1.text
+        assert saved == [], "the failed stream persisted nothing"
+        assert spy.calls == [], "…so it routed nothing"
+        with patch("routes.learn.agent_for_mode", return_value=ok):
+            r2 = _post_chat(model_pref="smart")
+        assert r2.status_code == 200
+
+    assert len(spy.calls) == 1
+    spy.replay()
+    assert len(_decision_events(sink)) == 1, "one persisted turn, one decision"
+
+
+def test_successful_stream_is_one_decision_with_the_served_model(router_on, sink):
+    from services.agent_events import SaplingEvent
+
+    async def fake_stream(**kwargs):
+        extra = kwargs["on_complete"]("streamed reply", {}, [])
+        yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
+
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.stream_agent_turn", fake_stream),
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=MagicMock()),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        r = _post_stream()
+    assert r.status_code == 200
+    (kw,) = spy.calls
+    assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
+        "smart", "smart", "gemini-2.5-pro")
+    spy.replay()
+    (event,) = _decision_events(sink)
+    assert event["payload"]["model_tier"] == "smart"
+
+
+def test_stream_rung1_fallback_is_one_decision_on_the_fast_tier(router_on):
+    """The stream's server-side Rung-1 fallback runs the JSON pipeline, which
+    persists the turn — one decision, labelled with the tier that actually
+    served it (fast, D2), not the smart tier the request asked for."""
+    from services.agent_events import SaplingEvent
+
+    async def fake_stream(**kwargs):
+        result = await kwargs["nonstream_fallback"]()
+        yield SaplingEvent(type="done", step="reply", message="Complete.", data=result)
+
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=run_result("fallback reply"))
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.stream_agent_turn", fake_stream),
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        r = _post_stream()
+    assert r.status_code == 200
+    assert "fallback reply" in r.text
+    (kw,) = spy.calls
+    assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
+        "smart", "fast", "gemini-2.5-flash-lite")
+
+
+def test_json_chat_without_a_pref_logs_the_default_model(router_on):
+    from agents._providers import model_name_for
+
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=run_result("reply"))
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        r = _post_chat(model_pref=None)
+    assert r.status_code == 200
+    (kw,) = spy.calls
+    assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
+        None, "default", model_name_for("chat_tutor"))
+
+
+def test_failed_json_turn_routes_nothing(router_on):
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=RuntimeError("model down"))
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+    ):
+        r = _post_chat()
+    assert r.status_code >= 500
+    assert spy.calls == []
+
+
+def test_off_does_no_router_work_at_the_persist_point():
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("reply"))
     with (
@@ -230,38 +420,7 @@ def test_json_chat_schedules_the_router_once_with_the_turn():
     ):
         r = _post_chat()
     assert r.status_code == 200
-    observe.assert_called_once()
-    kw = observe.call_args.kwargs
-    assert (kw["message"], kw["session_id"], kw["mode"], kw["model_pref"]) == (
-        "What is recursion?", "s1", "socratic", "fast")
-    assert kw["history"] == []
-
-
-def test_stream_fallback_does_not_route_the_turn_twice():
-    """The streamed route schedules the router; its Rung-1 fallback runs the
-    JSON pipeline, which must NOT schedule a second decision for one turn."""
-    from services.agent_events import SaplingEvent
-
-    async def fake_stream(**kwargs):
-        result = await kwargs["nonstream_fallback"]()
-        yield SaplingEvent(type="done", step="reply", message="Complete.", data=result)
-
-    agent = MagicMock()
-    agent.run = AsyncMock(return_value=run_result("fallback reply"))
-    with (
-        patch("routes.learn.stream_agent_turn", fake_stream),
-        patch("routes.learn.table", side_effect=_table_factory),
-        patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn._consume_pending"),
-        patch("routes.learn.observe_tutor_turn") as observe,
-    ):
-        r = client.post("/api/learn/chat/stream", json={
-            "session_id": "s1", "user_id": "user_andres", "message": "hello",
-            "mode": "socratic",
-        })
-    assert r.status_code == 200
-    assert "fallback reply" in r.text
-    observe.assert_called_once()
+    observe.assert_not_called()
 
 
 def test_router_failure_cannot_fail_the_turn():
@@ -274,6 +433,28 @@ def test_router_failure_cannot_fail_the_turn():
     ):
         r = _post_chat()
     assert r.status_code == 200 and r.json()["reply"] == "reply"
+
+
+def test_router_failure_cannot_fail_a_persisted_stream(router_on):
+    """On the streamed path the router runs INSIDE on_complete, after the rows
+    are saved: an exception there would turn a persisted turn into an error
+    event. It must be absorbed."""
+    from services.agent_events import SaplingEvent
+
+    async def fake_stream(**kwargs):
+        extra = kwargs["on_complete"]("streamed reply", {}, [])
+        yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
+
+    with (
+        patch("routes.learn.stream_agent_turn", fake_stream),
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=MagicMock()),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn.observe_tutor_turn", side_effect=RuntimeError("boom")),
+    ):
+        r = _post_stream()
+    assert r.status_code == 200
+    assert '"done"' in r.text and '"error"' not in r.text
 
 
 def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
@@ -289,24 +470,8 @@ def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
             monkeypatch.setenv(decisions.BACKEND_ENV, backend)
         agent = MagicMock()
         retrieve = MagicMock(return_value=[])
-        routed: list = []
-        real_observe = tutor_router.observe_tutor_turn
-
-        async def tutor_run(*args, **kwargs):
-            # Let the (normally fire-and-forget) decision finish INSIDE the
-            # turn, so the per-request TestClient loop can't cancel it before
-            # it emits — the assertions below need the router to have really
-            # answered. The route itself never awaits it.
-            if routed and routed[0] is not None:
-                await routed[0]
-            return run_result("same reply")
-
-        agent.run = AsyncMock(side_effect=tutor_run)
-
-        def spy(**kw):
-            task = real_observe(**kw)
-            routed.append(task)
-            return task
+        agent.run = AsyncMock(return_value=run_result("same reply"))
+        spy = _RouterSpy()
 
         with (
             patch("routes.learn.table", side_effect=_table_factory),
@@ -317,16 +482,15 @@ def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
             patch("services.rag_service.retrieve_chunks", retrieve),
             patch("services.graph_context.build_graph_context_block", return_value=""),
             patch("routes.learn.observe_tutor_turn", side_effect=spy),
-            decision_agent.override(model=_model(DISRUPTIVE)),
         ):
             r = _post_chat()
-        return r, agent.run.call_args, retrieve.call_args_list, routed
+        return r, agent.run.call_args, retrieve.call_args_list, spy
 
-    r_off, call_off, retr_off, routed_off = run_turn(None)
-    r_on, call_on, retr_on, routed_on = run_turn("flash_lite")
+    r_off, call_off, retr_off, spy_off = run_turn(None)
+    r_on, call_on, retr_on, spy_on = run_turn("flash_lite")
 
-    assert routed_off == [None], "off: nothing scheduled"
-    assert routed_on and routed_on[0] is not None, "on: the router was scheduled"
+    assert spy_off.calls == [], "off: nothing scheduled"
+    assert len(spy_on.calls) == 1, "on: the router was scheduled"
     assert r_on.status_code == r_off.status_code == 200
     assert r_on.json() == r_off.json()
     assert retr_on == retr_off and len(retr_on) == 1, "retrieval still runs"
@@ -337,8 +501,9 @@ def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
     assert call_on.kwargs["model"].model_name == call_off.kwargs["model"].model_name
     assert call_on.kwargs["model"].model_name == "gemini-2.5-flash-lite"
     assert call_on.kwargs["message_history"] == call_off.kwargs["message_history"]
-    # And the router really did decide those disruptive answers (so "nothing
-    # changed" is not just "nothing ran").
+    # And the router really does decide those disruptive answers for this
+    # turn (so "nothing changed" is not just "nothing ran").
+    spy_on.replay(DISRUPTIVE)
     (event,) = _decision_events(sink)
     assert event["payload"]["answers"]["needs_retrieval"]["value"] is False
     assert event["payload"]["answers"]["complexity"]["value"] == "hard"

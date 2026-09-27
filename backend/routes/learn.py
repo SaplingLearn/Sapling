@@ -16,7 +16,7 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
-from services import events_service
+from services import decisions, events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
@@ -83,6 +83,61 @@ def _resolve_model_pref(model_pref: str | None):
     if not name:
         return None
     return google_model(name)
+
+
+def _served_tier(model_pref: str | None) -> str:
+    """The tier a chat turn ran on for this effective pref: `fast`/`smart`,
+    or `default` (no or unknown pref → the agent's own model_for slot)."""
+    return model_pref if model_pref in _PREF_MODEL_NAMES else "default"
+
+
+def _served_model_name(model_pref: str | None) -> str | None:
+    """The model NAME a chat turn ran on for this effective pref — the same
+    resolution `_resolve_model_pref` + the agent default perform, as data.
+
+    Real mode: the pref's Gemini model, else `model_name_for("chat_tutor")`.
+    Any other mode ignores the pref (#391 seam) and runs the agent's default,
+    whose name is read off `model_for` (a cheap FunctionModel there). Never
+    raises: this only labels an event.
+    """
+    try:
+        from agents._providers import _model_mode, model_for, model_name_for
+
+        if _model_mode() == "real":
+            return _PREF_MODEL_NAMES.get(model_pref or "") or model_name_for("chat_tutor")
+        return str(model_for("chat_tutor").model_name)
+    except Exception:
+        return None
+
+
+def _observe_persisted_turn(
+    body: ChatBody, *, history: list, effective_pref: str | None, request_id: str
+) -> None:
+    """#640: schedule the observe-only tutor router for a turn that has JUST
+    been persisted. Called from both persist points — `_chat_turn_json` and
+    the stream's `_persist` — which are mutually exclusive per turn
+    (`stream_agent_turn` runs at most one of on_complete / the Rung-1
+    fallback), so there is exactly one decision per saved student message.
+    Routing at request entry instead double-routed a stream that failed
+    before persisting and was retried through /chat (the client's JSON rung,
+    or the student's own retry). Fire-and-forget: `observe_tutor_turn`
+    schedules and returns. Guarded here too: this runs AFTER the rows are
+    saved, and on the streamed path an exception would turn a persisted turn
+    into an error event.
+    """
+    try:
+        if not decisions.enabled():
+            return  # the default: no labelling work at all
+        observe_tutor_turn(
+            user_id=body.user_id, session_id=body.session_id, message=body.message,
+            history=history, mode=body.mode,
+            model_pref_requested=body.model_pref,
+            model_tier=_served_tier(effective_pref),
+            tutor_model=_served_model_name(effective_pref),
+            request_id=request_id,
+        )
+    except Exception:
+        logger.debug("could not schedule the tutor router", exc_info=True)
 
 
 def _build_pro_model_settings():
@@ -852,7 +907,6 @@ async def _chat_turn_json(
     request: Request,
     *,
     model_pref: str | None = None,
-    observe_route: bool = False,
 ) -> dict:
     """One full non-streaming chat turn: agent run, persistence, and the
     #117 `chat.message_sent` emission — the SINGLE emission site for
@@ -869,9 +923,8 @@ async def _chat_turn_json(
     written; the user row and assistant row are written only after the agent
     run succeeds, so a failed turn persists nothing.
 
-    `observe_route`: schedule the observe-only tutor router (#640) for this
-    turn. Only the JSON /chat route sets it; the streamed route schedules its
-    own, so its Rung-1 fallback through here must not route the turn twice.
+    This is also one of the two points the observe-only tutor router (#640)
+    is scheduled from — see `_observe_persisted_turn`.
     """
     # Unify with the middleware-stamped request ID so agent traces and
     # any downstream error payloads share the same correlation key.
@@ -890,15 +943,7 @@ async def _chat_turn_json(
     # state up to (but not including) the current turn.
     message_history = _load_message_history(body.session_id)
 
-    if observe_route:
-        # #640: observe-only, fire-and-forget — logs a decision, changes
-        # nothing about this turn, adds no latency.
-        observe_tutor_turn(
-            user_id=body.user_id, session_id=body.session_id, message=body.message,
-            history=message_history, mode=body.mode, model_pref=body.model_pref,
-            request_id=request_id,
-        )
-
+    effective_pref = model_pref if model_pref is not None else body.model_pref
     response = await _chat_via_agent(
         user_id=body.user_id,
         session_id=body.session_id,
@@ -908,7 +953,7 @@ async def _chat_turn_json(
         message_history=message_history,
         use_shared_context=body.use_shared_context,
         request_id=request_id,
-        model_pref=model_pref if model_pref is not None else body.model_pref,
+        model_pref=effective_pref,
     )
 
     # Encryption happens inside save_message (`encrypt_if_present`).
@@ -928,6 +973,10 @@ async def _chat_turn_json(
         payload={"mode": body.mode, "session_id": body.session_id},
         content=body.message,
     )
+    _observe_persisted_turn(
+        body, history=message_history, effective_pref=effective_pref,
+        request_id=request_id,
+    )
 
     return response
 
@@ -937,7 +986,7 @@ async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
-        _chat_turn_json(body, request, observe_route=True), what="chat agent"
+        _chat_turn_json(body, request), what="chat agent"
     )
 
 
@@ -965,15 +1014,6 @@ async def chat_stream(body: ChatBody, request: Request):
     # Load prior turns BEFORE the new user row is written, so history is
     # conversation state up to (not including) this turn.
     message_history = _load_message_history(body.session_id)
-
-    # #640: observe-only, fire-and-forget — logs a decision, changes nothing
-    # about this turn, adds no latency. Scheduled once here; the Rung-1
-    # fallback (`_chat_turn_json`, observe_route=False) does not re-route it.
-    observe_tutor_turn(
-        user_id=body.user_id, session_id=body.session_id, message=body.message,
-        history=message_history, mode=body.mode, model_pref=body.model_pref,
-        request_id=request_id,
-    )
 
     agent, assembled, run_kwargs, deps = _prepare_chat_run(
         user_id=body.user_id,
@@ -1009,6 +1049,11 @@ async def chat_stream(body: ChatBody, request: Request):
             request_id=request_id,
             payload={"mode": body.mode, "session_id": body.session_id},
             content=body.message,
+        )
+        # #640: the streamed twin of `_chat_turn_json`'s router call.
+        _observe_persisted_turn(
+            body, history=message_history, effective_pref=body.model_pref,
+            request_id=request_id,
         )
         return {}
 
