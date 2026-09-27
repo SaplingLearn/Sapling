@@ -1148,6 +1148,40 @@ class TestApplyEvidence:
         )
         assert [r["channel"] for r in _event_rows(mocks)] == ["mc"]
 
+    def test_mutated_evidence_instances_are_revalidated_before_any_read_or_write(self):
+        """Evidence is a plain mutable model: an attribute set after
+        construction skips its validators, so an instance is re-validated
+        like a dict, before any table() call."""
+        from learning.evidence import Evidence
+        from services.graph_service import apply_graph_update
+
+        idk_made_correct = Evidence(node_id="n1", channel="mc", correct=False, idk=True)
+        idk_made_correct.correct = True
+        rung_past_the_ladder = Evidence(node_id="n1", channel="mc", correct=True, max_rung=2)
+        rung_past_the_ladder.max_rung = LADDER_MAX_RUNG + 3
+        idk_as_a_channel = Evidence(node_id="n1", channel="mc", correct=False)
+        idk_as_a_channel.channel = "idk"
+
+        factory = MagicMock()
+        with (
+            patch("services.graph_service.table", factory),
+            patch("learning.learner_state.table", factory),
+        ):
+            for bad in (idk_made_correct, rung_past_the_ladder, idk_as_a_channel):
+                with pytest.raises(ValidationError):
+                    apply_graph_update("u1", {"evidence": [bad]})
+        assert factory.call_count == 0, "validation runs before any table() call"
+
+    def test_a_valid_instance_is_rederived_not_trusted(self):
+        """A mutated flag re-derives the model's consistency rules and weight."""
+        from learning.evidence import Evidence
+
+        ev = Evidence(node_id="n1", channel="mc", correct=True)
+        ev.assisted = True  # no rung: read as H1, weighed as assisted
+        _, mocks, _ = _apply({"evidence": [ev]}, edges=[])
+        (row,) = _event_rows(mocks)
+        assert (row["max_rung"], row["weight"]) == (RUNG_ASSISTED_MIN, WEIGHT_ASSISTED)
+
 
 LEGACY_GRAPH_KEYS = frozenset({"new_nodes", "updated_nodes", "new_edges"})
 _READ_ONLY_DICT_METHODS = frozenset({"get", "items", "keys", "values"})

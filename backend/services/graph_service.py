@@ -908,8 +908,13 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     touched_courses: set = set()
     # PKG-03: validate every evidence BEFORE any read or write; an invalid
     # item raises pydantic.ValidationError (the caller maps it to a 4xx).
+    # An Evidence instance is re-validated from its dump too: the model is
+    # mutable, and an attribute set after construction skips the validators.
     raw_evidence = graph_update.get("evidence") or []
-    evidences = [e if isinstance(e, Evidence) else Evidence.model_validate(e) for e in raw_evidence]
+    evidences = [
+        Evidence.model_validate(e.model_dump() if isinstance(e, Evidence) else e)
+        for e in raw_evidence
+    ]
 
     fetch_filters = {"user_id": f"eq.{user_id}"}
     if course_id:
