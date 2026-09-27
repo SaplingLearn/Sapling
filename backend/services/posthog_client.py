@@ -303,11 +303,22 @@ def flush(timeout_seconds: float = 10.0) -> None:
 
 
 def capture_exception(
-    exc: BaseException, *, user_id: str | None, request_id: str | None,
+    exc: BaseException,
+    *,
+    user_id: str | None,
+    request_id: str | None,
+    privacy_signal: bool = False,
 ) -> None:
-    """Send an unhandled exception to PostHog error tracking. Never raises."""
+    """Send an unhandled exception to PostHog error tracking. Never raises.
+
+    ``privacy_signal``: the request sent DNT/GPC. Passed explicitly because
+    the 500 handler runs outside RequestIDMiddleware, after the per-request
+    contextvar has been reset; the contextvar is still consulted too.
+    """
     client = _client
     if client is None:
+        return
+    if privacy_signal:
         return
     try:
         # Same consent rule as the mirror: an opted-out, deleted or DNT/GPC

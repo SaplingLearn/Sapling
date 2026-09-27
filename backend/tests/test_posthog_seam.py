@@ -839,6 +839,30 @@ class TestOptOut:
         # Our own table is unaffected by the browser signal.
         assert {"note.created", "error.5xx"} <= {r["event_type"] for r in sink}
 
+    @pytest.mark.parametrize("headers, captured", [
+        ({"Sec-GPC": "1"}, False), ({"DNT": "1"}, False), ({}, True),
+    ])
+    def test_500_handler_honours_privacy_headers(self, headers, captured, fake_client, sink):
+        """The exception handler runs in ServerErrorMiddleware, OUTSIDE
+        RequestIDMiddleware (whose contextvar is reset by then) — it must
+        read the signal off the request itself."""
+        from fastapi import FastAPI
+
+        from main import unhandled_exception_handler
+        from services.request_context import RequestIDMiddleware
+
+        app = FastAPI()
+        app.add_middleware(RequestIDMiddleware)
+        app.add_exception_handler(Exception, unhandled_exception_handler)
+
+        @app.get("/boom")
+        async def boom():
+            raise RuntimeError("boom")
+
+        r = TestClient(app, raise_server_exceptions=False).get("/boom", headers=headers)
+        assert r.status_code == 500
+        assert fake_client.capture_exception.called is captured
+
     def test_opted_out_user_ai_spans_are_not_exported(self, consent_db, run_boundary):
         consent_db.answers[USER_ID] = Consent.DENIED
         spans = _run_tiny_agent(SimpleNamespace(user_id=USER_ID, session_id="s", request_id="r"))
