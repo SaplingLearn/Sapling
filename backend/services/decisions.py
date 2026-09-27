@@ -105,9 +105,13 @@ def _warn_once(key: str, msg: str, *args: Any) -> None:
         logger.warning(msg, *args)
 
 
+#: Spellings of an explicit "off" — the operator kill switch.
+_OFF_WORDS = ("off", "none", "false", "0", "disabled")
+
+
 def _read_backend(env: str, default: str) -> str:
     raw = (os.getenv(env) or default).strip().lower()
-    if raw in ("", "none", "false", "0", "disabled"):
+    if raw in ("", *_OFF_WORDS):
         return OFF
     if raw not in _CONFIGURABLE:
         _warn_once(
@@ -137,16 +141,21 @@ def configured_backend() -> str:
 
     Function mode is automatic: under SAPLING_MODEL_MODE=function every
     non-off backend becomes `function`, and an UNSET backend does too, so the
-    E2E lane exercises the seam without its own knob. An explicit `off` still
-    wins — that is the operator's kill switch in every mode.
+    E2E lane exercises the seam without its own knob. Only an explicit `off`
+    (the operator's kill switch, in every mode) disables it there: an unknown
+    value — a typo — warns and still runs `function`, rather than silently
+    switching the router off in the one lane that checks it.
     """
-    explicit = (os.getenv(BACKEND_ENV) or "").strip()
-    backend = _read_backend(BACKEND_ENV, OFF)
     if _model_mode() == "function":
-        if explicit and backend == OFF:
+        raw = (os.getenv(BACKEND_ENV) or "").strip().lower()
+        if raw in _OFF_WORDS:
             return OFF
+        if raw and raw not in _CONFIGURABLE:
+            _warn_once(f"{BACKEND_ENV}={raw}",
+                       "%s=%r is not one of %s; function mode uses 'function'",
+                       BACKEND_ENV, raw, _CONFIGURABLE)
         return FUNCTION
-    return _outside_function_mode(BACKEND_ENV, backend)
+    return _outside_function_mode(BACKEND_ENV, _read_backend(BACKEND_ENV, OFF))
 
 
 def _outside_function_mode(env: str, backend: str) -> str:
@@ -347,14 +356,16 @@ class _BackendFailed(Exception):
 # ── Resolution: raw backend answers → typed Answers ────────────────────────
 
 
-def _clamp01(x: Any) -> float | None:
+def _clamp(x: Any, lo: float, hi: float) -> float | None:
+    """``x`` as a float clamped into [lo, hi]; None if it is not a finite
+    number (None, a string, NaN, ±inf)."""
     try:
         v = float(x)
     except (TypeError, ValueError):
         return None
     if not math.isfinite(v):
         return None
-    return min(1.0, max(0.0, v))
+    return min(hi, max(lo, v))
 
 
 def _default_answer(q: Question, reason: str, raw: _Raw | None = None) -> Answer:
@@ -479,7 +490,7 @@ async def _run_agent(
         if q is None or item.key in raws:
             continue  # unknown key, or a duplicate: first answer wins
         value = _canonical(q, item.value)
-        conf = _clamp01(item.confidence) or 0.0
+        conf = _clamp(item.confidence, 0.0, 1.0) or 0.0
         p_yes = None
         if isinstance(q, YesNo) and value in ("yes", "no"):
             # Map "yes, 0.6 confident" onto P(yes) so the two backends'
@@ -599,7 +610,7 @@ def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
     if not isinstance(ans, dict):
         return None
     if isinstance(q, YesNo):
-        p = _clamp01(ans.get("noul"))
+        p = _clamp(ans.get("noul"), 0.0, 1.0)
         if p is None:
             return None
         # Jev returns no confidence for noul; derive the same statistic it
@@ -608,9 +619,9 @@ def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
     probs_raw = ans.get("probabilities")
     probs: dict[str, float] | None = None
     if isinstance(probs_raw, dict):
-        probs = {str(k): v for k, v in ((k, _clamp01(v)) for k, v in probs_raw.items())
+        probs = {str(k): v for k, v in ((k, _clamp(v, 0.0, 1.0)) for k, v in probs_raw.items())
                  if v is not None}
-    conf = _clamp01(ans.get("confidence"))
+    conf = _clamp(ans.get("confidence"), 0.0, 1.0)
     if conf is None:
         return None
     if isinstance(q, Choice):
@@ -636,22 +647,12 @@ def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
     if by_index:
         index = max(by_index, key=lambda i: by_index[i])
     else:
-        s = _clamp01_score(ans.get("score"), len(keys))
+        s = _clamp(ans.get("score"), 0.0, len(keys) - 1)
         if s is None:
             return None
         index = int(round(s))
     named = {keys[i]: v for i, v in sorted(by_index.items())} or None
     return (keys[index], conf, None, named)
-
-
-def _clamp01_score(x: Any, n: int) -> float | None:
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(v):
-        return None
-    return min(float(n - 1), max(0.0, v))
 
 
 async def _run_jev(
@@ -789,6 +790,19 @@ async def _answer_with(
 #: own backend: the shadow's answer SERVED the turn, so there is no second
 #: opinion to compare and `agree` is None — not a self-comparison at 100%.
 SHADOW_SAME_AS_SERVED = "shadow_same_as_served"
+#: The shadow's `fallback_reason` when it was a flash_lite shadow whose
+#: prompt cannot fit the decision agent's WORKER_LIMITS: running it would only
+#: bill a UsageLimitExceeded, so it is skipped and `agree` is None.
+SHADOW_OVER_BUDGET = "shadow_over_budget"
+_SHADOW_SKIPPED = (SHADOW_SAME_AS_SERVED, SHADOW_OVER_BUDGET)
+
+
+def _skipped_shadow(questions: Sequence[Question], shadow_name: str,
+                    reason: str) -> DecisionResult:
+    return DecisionResult(
+        answers=_all_defaults(questions, "no_backend"), backend="none",
+        requested=shadow_name, latency_ms=0, fallback_reason=reason,
+    )
 
 
 async def _primary_with_shadow(
@@ -810,6 +824,14 @@ async def _primary_with_shadow(
     the primary's answer, and the shadow is recorded as
     ``shadow_same_as_served`` with no agreement.
     """
+    if shadow_name == FLASH_LITE and not _agent_budget_fits(state, questions):
+        # A doomed shadow (the #672 over-budget case: a state too big for Jev
+        # is too big for the agent too). The primary runs alone and with its
+        # own fallback rules, which send it to defaults for the same reason.
+        primary = await _answer_with(primary_backend, state, questions,
+                                     allow_fallback=True, **common)
+        return primary, _skipped_shadow(questions, shadow_name, SHADOW_OVER_BUDGET)
+
     shadow_task = asyncio.ensure_future(
         _answer_with(shadow_name, state, questions, allow_fallback=False, **common)
     )
@@ -833,18 +855,14 @@ async def _primary_with_shadow(
         latency_ms=int((time.monotonic() - started) * 1000),
         fallback_reason=reason, model=shadow.model,
     )
-    skipped = DecisionResult(
-        answers=_all_defaults(questions, "no_backend"), backend="none",
-        requested=shadow_name, latency_ms=0, fallback_reason=SHADOW_SAME_AS_SERVED,
-    )
-    return served, skipped
+    return served, _skipped_shadow(questions, shadow_name, SHADOW_SAME_AS_SERVED)
 
 
 def _agreement(primary: DecisionResult, shadow: DecisionResult) -> dict[str, bool | None] | None:
     """Per key: do the two backends' RAW answers agree? None when either said
     nothing usable (agreement with a default is not agreement), and None
     outright when the shadow's answer is the one that served."""
-    if shadow.fallback_reason == SHADOW_SAME_AS_SERVED:
+    if shadow.fallback_reason in _SHADOW_SKIPPED:
         return None
     out: dict[str, bool | None] = {}
     for key, a in primary.answers.items():
