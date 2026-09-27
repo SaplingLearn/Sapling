@@ -116,7 +116,6 @@ export function useLanding(props: LandingProps) {
   const [graph, setGraph] = useState<BuiltGraph | null>(null);
   const [tutorMode, setTutorMode] = useState(0);
   const [galIdx, setGalIdx] = useState(-1);
-  const [modalAnim, setModalAnim] = useState(false);
   const [jumpOpen, setJumpOpen] = useState(false);
   const [pastHero, setPastHero] = useState(false);
   const [navMenuOpen, setNavMenuOpen] = useState(false);
@@ -569,7 +568,6 @@ export function useLanding(props: LandingProps) {
     else armFlip(engine.flip, from);
 
     setGalIdx(i);
-    setModalAnim(true);
 
     // A switch deliberately plays NO opening animation. The expansion is the
     // gesture of arriving in the lab from the rail; replaying it to change
@@ -590,7 +588,6 @@ export function useLanding(props: LandingProps) {
     const engine = engineRef.current;
     if (!engine) return;
     flipRan.current = false;
-    setModalAnim(false);
     flipClose(engine.flip, refs.panel.current, () => {
       document.body.style.overflow = '';
       engine.marquee.hold(false);
@@ -669,7 +666,7 @@ export function useLanding(props: LandingProps) {
     engineRef,
     state: {
       heroMounted, heroText0, heroText1, heroText2, loadPct, introGone, graph,
-      tutorMode, galIdx, modalAnim, jumpOpen,
+      tutorMode, galIdx, jumpOpen,
       pastHero, navMenuOpen, exploring, expNode, openFaq, email, subscribed,
       subscribing, subscribeError,
       plantVal, plantedCount, jumpDown,
