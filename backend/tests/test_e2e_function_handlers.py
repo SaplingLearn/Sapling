@@ -629,8 +629,32 @@ def test_showcase_module_decision_handler_answers_every_router_key(monkeypatch):
     sys.modules.pop("agents.function_handlers_showcase", None)
     try:
         result = _run_router_decision()
+        showcase = sys.modules["agents.function_handlers_showcase"]
     finally:
         sys.modules.pop("agents.function_handlers_showcase", None)
 
     assert result.backend == "function"
     assert not any(a.defaulted for a in result.answers.values()), result.answers
+    # ONE list shared through the side-effect-free fixtures module, not a
+    # hand-copied literal that can drift from the E2E module's.
+    from agents._decision_fixtures import DECISION_ANSWERS
+
+    assert showcase.SHOWCASE_DECISION_ANSWERS is DECISION_ANSWERS
+
+
+def test_e2e_decision_answers_are_the_shared_fixture():
+    import ast
+    from pathlib import Path
+
+    from agents._decision_fixtures import DECISION_ANSWERS
+
+    src = Path(__file__).resolve().parents[1] / "agents" / "function_handlers_e2e.py"
+    tree = ast.parse(src.read_text())
+    (assign,) = [n for n in tree.body if isinstance(n, ast.Assign)
+                 and any(getattr(t, "id", None) == "E2E_DECISION_ANSWERS" for t in n.targets)]
+    assert isinstance(assign.value, ast.Name) and assign.value.id == "DECISION_ANSWERS", (
+        "E2E_DECISION_ANSWERS must alias the shared fixture, not copy it")
+    assert {a["key"] for a in DECISION_ANSWERS} == {
+        "needs_retrieval", "needs_rewrite", "complexity",
+        "is_graded_work_request", "injection_attempt",
+    }

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
+from agents._decision_fixtures import DECISION_ANSWERS
 from agents._providers import (
     FunctionModelHandler,
     register_function_handler,
@@ -365,13 +366,9 @@ register_function_handler("note_chat", _note_chat_handler)
 # OUTPUT tool, validated by the real DecisionOutput schema. Pinned by
 # tests/test_e2e_function_handlers.py; keep in sync.
 
-E2E_DECISION_ANSWERS = [
-    {"key": "needs_retrieval", "value": "yes", "confidence": 0.9},
-    {"key": "needs_rewrite", "value": "no", "confidence": 0.8},
-    {"key": "complexity", "value": "medium", "confidence": 0.7},
-    {"key": "is_graded_work_request", "value": "no", "confidence": 0.95},
-    {"key": "injection_attempt", "value": "no", "confidence": 0.99},
-]
+# The constant lives in the side-effect-free agents/_decision_fixtures.py so
+# the showcase module can register the SAME answers without importing this one.
+E2E_DECISION_ANSWERS = DECISION_ANSWERS
 
 register_function_handler(
     "decision", _structured_output({"answers": E2E_DECISION_ANSWERS})
