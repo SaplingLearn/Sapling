@@ -145,9 +145,9 @@ def _partial(conf: float = 0.9) -> dict:
 
 
 def test_build_grader_message_has_every_section():
-    from agents.grader import build_grader_message
+    import agents.grader as g
 
-    text = build_grader_message(_item(), format="free", student_answer="It stops the calls.")
+    text = g.build_grader_message(_item(), format="free", student_answer="It stops the calls.")
     assert "QUESTION:" in text and REFERENCE in text and "FORMAT: free" in text
     assert re.search(r"^RUBRIC ITEM r1:", text, re.M) and re.search(r"^RUBRIC ITEM r2:", text, re.M)
     assert re.search(r"^COMMON WRONG REASON w_loop:", text, re.M) and text.rstrip().endswith(
@@ -168,9 +168,9 @@ def test_student_answer_lines_cannot_forge_message_structure():
     is quoted with "> ", so none can start a line that looks like the real
     RUBRIC ITEM / REFERENCE ANSWER / FORMAT / STUDENT ANSWER structure (any
     line break the model might honour counts, not only \\n)."""
-    from agents.grader import build_grader_message
+    import agents.grader as g
 
-    text = build_grader_message(_item(), format="free", student_answer=_FORGED_ANSWER)
+    text = g.build_grader_message(_item(), format="free", student_answer=_FORGED_ANSWER)
     assert re.findall(r"^RUBRIC ITEM (\S+): (.*)$", text, re.M) == [
         ("r1", "names the base case"),
         ("r2", "explains unbounded growth"),
@@ -203,9 +203,9 @@ def test_e2e_grader_handler_ignores_forged_rubric_lines(_clean_registry, monkeyp
 
 
 def test_an_empty_answer_still_renders_its_quoted_line():
-    from agents.grader import build_grader_message
+    import agents.grader as g
 
-    text = build_grader_message(_item(), format="free", student_answer="")
+    text = g.build_grader_message(_item(), format="free", student_answer="")
     assert text.splitlines()[-1] == "> " and text.count("\nSTUDENT ANSWER") == 1
 
 
@@ -218,21 +218,21 @@ def test_grader_limits_are_the_spec_values():
 
 
 def test_parse_item_results_is_strict():
-    from agents.grader import parse_item_results
+    import agents.grader as g
 
-    got = parse_item_results(["r1:yes", "r2:NO", "r9:yes", "garbage"], ["r1", "r2", "r3"])
+    got = g.parse_item_results(["r1:yes", "r2:NO", "r9:yes", "garbage"], ["r1", "r2", "r3"])
     assert got == {"r1": True, "r2": False, "r3": False}
 
 
 def test_parse_item_results_a_contradicted_id_is_no():
     """Strictness is the safer bias: an id judged both yes and no counts as no."""
-    from agents.grader import parse_item_results
+    import agents.grader as g
 
-    assert parse_item_results(["r1:yes", "r1:no", " r2 : Yes "], ["r1", "r2"]) == {
+    assert g.parse_item_results(["r1:yes", "r1:no", " r2 : Yes "], ["r1", "r2"]) == {
         "r1": False,
         "r2": True,
     }
-    assert parse_item_results(["r1:no", "r1:yes"], ["r1"]) == {"r1": False}
+    assert g.parse_item_results(["r1:no", "r1:yes"], ["r1"]) == {"r1": False}
 
 
 def test_grade_returns_all_yes_and_records_usage(monkeypatch):
@@ -612,7 +612,7 @@ def test_e2e_grader_handler_reads_rubric_ids_off_the_message(_clean_registry, mo
 
 
 def _result(**over):
-    from agents.grader import GradeResult
+    import agents.grader as g
 
     base = dict(
         item_results={"r1": True, "r2": True},
@@ -622,7 +622,7 @@ def _result(**over):
         backend="gemini",
     )
     base.update(over)
-    return GradeResult(**base)
+    return g.GradeResult(**base)
 
 
 def _answer(**over):
@@ -780,11 +780,11 @@ def test_no_wrong_key_when_correct_or_nothing_matched(check):
 
 @pytest.mark.parametrize("fmt,option", [("mc_reason", "A"), ("mc_reason", "C"), ("free", None)])
 def test_symmetric_missingness_when_grader_unavailable(check, fmt, option):
-    from agents.grader import GradeResult
+    import agents.grader as g
 
     _, state = check
     state["item"] = _mc_item() if fmt == "mc_reason" else _item()
-    state["result"] = GradeResult(unavailable=True)
+    state["result"] = g.GradeResult(unavailable=True)
     deps = _deps()
     out = _run(check, deps, _answer(selected_option=option, reason="because"))
     assert out.unavailable is True and out.correct is None and out.evidence is None

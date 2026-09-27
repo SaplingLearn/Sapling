@@ -74,15 +74,15 @@ def _kinds(events) -> list[str]:
 @pytest.fixture
 def _function_lane(monkeypatch):
     """Cold seam, env-module lane (the test_e2e_function_handlers posture)."""
-    import agents._providers as providers
+    from agents._providers import clear_function_handlers
 
-    providers.clear_function_handlers()
-    monkeypatch.setattr(providers, "_ENV_HANDLERS_LOADED", False)
+    clear_function_handlers()
+    monkeypatch.setattr("agents._providers._ENV_HANDLERS_LOADED", False)
     sys.modules.pop("agents.function_handlers_e2e", None)
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     yield
-    providers.clear_function_handlers()
+    clear_function_handlers()
     sys.modules.pop("agents.function_handlers_e2e", None)
 
 
