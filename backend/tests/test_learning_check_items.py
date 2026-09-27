@@ -1749,8 +1749,9 @@ def _sse_upload_with(monkeypatch, *, flag: bool, mode: str):
 
 
 class TestSseUploadHook:
-    def test_flag_off_spawns_index_document_exactly_as_before(self, monkeypatch):
-        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=False, mode="real")
+    @pytest.mark.parametrize("mode", ["real", "function"])  # the E2E lane is function mode
+    def test_flag_off_spawns_index_document_exactly_as_before(self, monkeypatch, mode):
+        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=False, mode=mode)
         assert [s[0] for s in spawned] == [
             "invalidate_study_guide_cache",
             "update_course_context",
@@ -1758,6 +1759,7 @@ class TestSseUploadHook:
             "index_document",
         ]
         assert spawned[-1][2:] == ("doc-1",)
+        idx.assert_not_called()  # spawned, not called inline
         gen.assert_not_called()
 
     def test_flag_on_real_mode_spawns_the_chain(self, monkeypatch):
