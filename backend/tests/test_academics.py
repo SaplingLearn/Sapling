@@ -132,6 +132,32 @@ def test_resolve_offering_create_conflict_reselects_winner():
         assert ac.resolve_offering("course-1", term_id="t1", create=True) == "off-winner"
 
 
+def test_resolve_offering_conflict_reselect_uses_the_same_order():
+    """The 409 re-select must sort like the steady-state read 20 lines above it.
+
+    It is the one path that can return a row the non-racing reader would not: the
+    sections of a course are written by one batch insert, so `created_at.asc` alone
+    ties and the winner is the planner's.
+    """
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}]},
+        select_seqs={"course_offerings": [[], [{"id": "off-winner"}]]},
+    )
+    cache: dict = {}
+
+    def make(name):
+        m = cache.get(name) or factory(name)
+        cache[name] = m
+        if name == "course_offerings":
+            m.insert.side_effect = _conflict_error()
+        return m
+
+    with patch.object(ac, "table", side_effect=make):
+        ac.resolve_offering("course-1", term_id="t1", create=True)
+    order = cache["course_offerings"].select.call_args_list[-1].kwargs["order"]
+    assert order == "section.asc,created_at.asc", f"re-select must match, got {order!r}"
+
+
 def test_resolve_offering_create_non_conflict_error_propagates():
     """Only 409 means 'someone else created it' — other HTTP errors re-raise."""
     req = httpx.Request("POST", "http://test/course_offerings")
@@ -151,6 +177,41 @@ def test_resolve_offering_create_non_conflict_error_propagates():
     with patch.object(ac, "table", side_effect=make):
         with pytest.raises(httpx.HTTPStatusError):
             ac.resolve_offering("course-1", term_id="t1", create=True)
+
+
+def test_resolve_offering_orders_by_section_for_determinism():
+    """Since #280 a course has one offering per section, all written by one batch
+    insert — so they share a created_at and `created_at.asc` alone leaves the
+    winner to the planner. Ordering by section first makes the pick stable, so a
+    user's documents/notes can't drift between sections across calls.
+    """
+    factory = _factory(
+        {
+            "terms": [{"id": "t1", "label": "Fall 2026", "sort_key": 20263}],
+            "course_offerings": [{"id": "off-a1"}],
+        }
+    )
+    with patch.object(ac, "table", side_effect=factory):
+        ac.resolve_offering("course-1", term_id="t1")
+        order = factory("course_offerings").select.call_args.kwargs["order"]
+    assert order.startswith("section.asc"), f"section must be the primary sort, got {order!r}"
+
+
+def test_resolve_offering_cross_term_fallback_is_ordered_too():
+    """The fallback query spans EVERY term, so since #280 it picks among all of a
+    course's sections in all of them (CAS CS 330 alone has 7 in fall-2026).
+    Unordered, consecutive calls could hand one user different sections and split
+    their documents/notes — masked today only because current_term() resolves to the
+    newest seeded term, and live as soon as a later term is added.
+    """
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}]},
+        select_seqs={"course_offerings": [[], [{"id": "off-legacy"}]]},  # term miss, then any
+    )
+    with patch.object(ac, "table", side_effect=factory):
+        assert ac.resolve_offering("course-1", create=False) == "off-legacy"
+        order = factory("course_offerings").select.call_args_list[-1].kwargs["order"]
+    assert order == "section.asc,created_at.asc", f"fallback must be ordered, got {order!r}"
 
 
 def test_resolve_offering_no_create_falls_back_to_any_offering():
