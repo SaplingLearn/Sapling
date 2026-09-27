@@ -8,7 +8,7 @@ tutor prompt (PKG-07), never prose shown to the student.
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal, NamedTuple, Protocol, Sequence
+from typing import Iterable, Literal, NamedTuple, Protocol, Sequence
 
 from learning import params
 
@@ -88,20 +88,31 @@ def _is_isomorph(sibling: ItemLike, item: ItemLike) -> bool:
 
 
 def deterministic_content(
-    rung: Rung, item: ItemLike, siblings: Sequence[ItemLike], passages: Sequence[str]
+    rung: Rung,
+    item: ItemLike,
+    siblings: Sequence[ItemLike],
+    passages: Sequence[str],
+    *,
+    exclude_hashes: Iterable[str] = (),
 ) -> DeterministicPayload | None:
     """Template content for H2/H4/H6 (spec A17). `passages` is resolved,
     visibility-filtered, decrypted text passed in (invariant 2). The caller runs
     leak.detect_leak(item.reference_answer, payload.text, payload.rung) before
     emitting any payload (invariant 27) and asks for H6 only under
-    gates.h6_allowed. None -> the LLM writes the rung."""
+    gates.h6_allowed. None -> the LLM writes the rung.
+
+    H4 never shows a sibling whose hash is in `exclude_hashes`. The caller
+    passes at least the concept's `checks.posttest_reserve_hash` (A23: only the
+    post-test serves it, and a develop-band item sits at its difficulty), plus
+    any other hash it must not reveal."""
     rung = Rung(rung)
+    excluded = set(exclude_hashes)
     if rung == Rung.H2:
         kept = [p.strip() for p in passages if p.strip()][: params.LOOP_SOURCE_CHUNKS_MAX]
         return DeterministicPayload(rung, PAYLOAD_JOIN.join(kept), "passages") if kept else None
     if rung == Rung.H4:
         for sibling in siblings:
-            if _is_isomorph(sibling, item):
+            if sibling.question_hash not in excluded and _is_isomorph(sibling, item):
                 text = PAYLOAD_JOIN.join((sibling.prompt, sibling.reference_answer))
                 return DeterministicPayload(rung, text, "sibling", sibling.question_hash)
         return None

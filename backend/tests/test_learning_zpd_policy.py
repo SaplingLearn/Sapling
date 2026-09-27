@@ -1179,6 +1179,27 @@ def test_deterministic_h4_takes_the_first_true_isomorph():
     assert deterministic_content(Rung.H4, item, not_isomorphs, ["a passage"]) is None
 
 
+def test_deterministic_h4_never_shows_an_excluded_sibling():
+    """The concept's post-test reserve is a free item at CHECK_ITEM_DIFFICULTIES[1]
+    (A23), the develop band's target difficulty, so it can be the first
+    isomorph; showing it would reveal the post-test. The caller passes the
+    reserve (and any other hash it must not reveal) as exclude_hashes."""
+    import inspect
+
+    from learning.ladder import Rung, deterministic_content
+
+    item = _item(ACTIVE_HASH)
+    reserve = _item("0" * 64, prompt="Differentiate x^4.")
+    other = _item("b" * 64, prompt="Differentiate x^5.")
+    assert deterministic_content(Rung.H4, item, [reserve, other], []).revealed_hash == "0" * 64
+    p = deterministic_content(Rung.H4, item, [reserve, other], [], exclude_hashes={"0" * 64})
+    assert p.revealed_hash == "b" * 64
+    both = {"0" * 64, "b" * 64}
+    assert deterministic_content(Rung.H4, item, [reserve, other], [], exclude_hashes=both) is None
+    param = inspect.signature(deterministic_content).parameters["exclude_hashes"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY and tuple(param.default) == ()
+
+
 def test_deterministic_h6_is_the_reference_and_other_rungs_have_none():
     from learning.ladder import Rung, deterministic_content
 
