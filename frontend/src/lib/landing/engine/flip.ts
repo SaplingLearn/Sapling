@@ -131,6 +131,11 @@ export function flipClose(
   onFinish: () => void,
 ): void {
   st.ran = false;
+  // Re-read the card before flying to it. The rect was captured when the
+  // visitor clicked, and anything that moved the rail since — a resize, or a
+  // frame of drift before the marquee was held — would land the panel beside
+  // its card instead of on it.
+  remeasureFlip(st);
   let done = false;
   const finish = () => {
     if (done) return;

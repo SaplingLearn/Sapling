@@ -553,6 +553,10 @@ export function useLanding(props: LandingProps) {
     const engine = engineRef.current;
     if (!engine) return;
     document.body.style.overflow = 'hidden';
+    // Freeze the rail underneath. Nothing can see it move behind a full-bleed
+    // panel, and holding it is what keeps the card still for the collapse to
+    // land on — see MarqueeController.hold.
+    engine.marquee.hold(true);
 
     // Switching demos from inside the lab arrives with no card: the rail
     // passes null, as do the graph act's "Quiz me" / "Ask the tutor". Re-arming
@@ -589,6 +593,7 @@ export function useLanding(props: LandingProps) {
     setModalAnim(false);
     flipClose(engine.flip, refs.panel.current, () => {
       document.body.style.overflow = '';
+      engine.marquee.hold(false);
       setGalIdx(-1);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
