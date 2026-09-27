@@ -2392,17 +2392,45 @@ def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
 _PKG06_MODULES = ("policy", "gates", "leak", "ladder", "loop_state_store", "zpd_events")
 
 
-def _pkg06_imports(source: str) -> list[str]:
+def _pkg06_imports(source: str, package: str = "") -> list[str]:
     """Every PKG-06 module `source` imports, in any form: `import learning.x`,
-    `from learning.x import y`, `from learning import x`, at any depth."""
+    `from learning.x import y`, `from learning import x`, a relative import
+    resolved against `package` (the importing file's dotted package), and
+    `importlib.import_module(...)` / `import_module(...)` / `__import__(...)`
+    with a string literal, at any depth."""
     import ast
+
+    def resolve(level: int, module: str | None, base: str) -> str | None:
+        parts = base.split(".") if base else []
+        if level - 1 > len(parts):
+            return None
+        return ".".join(parts[: len(parts) - (level - 1)] + ([module] if module else []))
 
     found = []
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             names = [a.name for a in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module = resolve(node.level, node.module, package) if node.level else node.module
+            if not module:
+                continue
+            names = [module] + [f"{module}.{a.name}" for a in node.names]
+        elif isinstance(node, ast.Call) and (
+            getattr(node.func, "id", None) in ("import_module", "__import__")
+            or getattr(node.func, "attr", None) == "import_module"
+        ):
+
+            def literal(arg: ast.expr | None) -> str:
+                ok = isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                return arg.value if ok else ""
+
+            name = literal(node.args[0] if node.args else None)
+            if name.startswith("."):  # import_module(".x", package="learning")
+                pkg = [k.value for k in node.keywords if k.arg == "package"]
+                base = literal(node.args[1] if len(node.args) > 1 else (pkg or [None])[0])
+                level = len(name) - len(name.lstrip("."))
+                name = resolve(level, name.lstrip(".") or None, base) or ""
+            names = [name]
         else:
             continue
         found += [n for n in names if n.split(".")[:2] in (["learning", m] for m in _PKG06_MODULES)]
@@ -2417,24 +2445,77 @@ def test_pkg06_import_detector():
         "learning.leak.detect_leak",
     ]
     assert _pkg06_imports("import learning.bkt\nfrom learning import params") == []
+    # relative imports inside learning/, and dynamic imports by string
+    assert _pkg06_imports("from . import policy, bkt", package="learning") == ["learning.policy"]
+    assert _pkg06_imports("def f():\n    from .gates import x", package="learning") == [
+        "learning.gates",
+        "learning.gates.x",
+    ]
+    assert _pkg06_imports("from ..learning import leak", package="services") == ["learning.leak"]
+    assert _pkg06_imports("from . import policy", package="services") == []
+    assert _pkg06_imports("import importlib\nimportlib.import_module('learning.policy')") == [
+        "learning.policy"
+    ]
+    assert _pkg06_imports(
+        "from importlib import import_module\nimport_module('learning.leak')"
+    ) == ["learning.leak"]
+    assert _pkg06_imports("def f():\n    __import__('learning.gates')") == ["learning.gates"]
+    assert _pkg06_imports("import_module('.ladder', 'learning')") == ["learning.ladder"]
+    assert _pkg06_imports("import_module('.ladder', package='learning')") == ["learning.ladder"]
+    assert _pkg06_imports("importlib.import_module(name)\nimport_module('learning.bkt')") == []
+    assert _pkg06_imports("import_module(name, 'learning.policy')") == []  # no literal name
+
+
+def test_inertness_scan_covers_learning_modules_outside_pkg06(tmp_path):
+    """The scan skips only the six PKG-06 modules (they import each other) and
+    tests: a lazy import of a PKG-06 module inside a learning module the app
+    already loads (gate, evidence, checks, learner_state) is a load the
+    subprocess probe below cannot see, since it reads sys.modules after
+    `import main`, before any function body runs."""
+    (tmp_path / "learning").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "learning" / "gate.py").write_text(
+        "def learning_loop_active():\n    from learning import policy\n"
+    )
+    (tmp_path / "learning" / "evidence.py").write_text(
+        "import importlib\n\ndef f():\n    return importlib.import_module('learning.leak')\n"
+    )
+    (tmp_path / "learning" / "checks.py").write_text("def f():\n    from . import ladder\n")
+    (tmp_path / "learning" / "gates.py").write_text("from learning.policy import Band\n")
+    (tmp_path / "tests" / "test_x.py").write_text("from learning import gates\n")
+    assert _inertness_offenders(tmp_path) == [
+        "learning/checks.py",
+        "learning/evidence.py",
+        "learning/gate.py",
+    ]
+
+
+def _inertness_offenders(root) -> list[str]:
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).parts
+        if rel[0] in ("tests", "venv", ".venv"):
+            continue
+        if rel[0] == "learning" and len(rel) == 2 and rel[1][:-3] in _PKG06_MODULES:
+            continue
+        package = ".".join(rel[:-1])
+        if _pkg06_imports(path.read_text(errors="ignore"), package=package):
+            offenders.append("/".join(rel))
+    return offenders
 
 
 def test_zpd_layer_is_inert_nothing_imports_it():
-    offenders = []
-    for path in BACKEND.rglob("*.py"):
-        rel = path.relative_to(BACKEND).parts
-        if rel[0] in ("tests", "learning", "venv", ".venv"):
-            continue
-        if _pkg06_imports(path.read_text(errors="ignore")):
-            offenders.append(str(path.relative_to(BACKEND)))
+    offenders = _inertness_offenders(BACKEND)
     assert offenders == [], f"PKG-06 modules must stay unreferenced until PKG-07: {offenders}"
 
 
 def test_importing_the_app_loads_no_pkg06_module():
-    """The ast scan above skips learning/, so a PKG-06 module pulled into the app
-    through a learning module the app already loads (evidence, checks, gate, …)
-    would pass it. Import the real app in a clean interpreter and read
-    sys.modules: flag-off byte-identity needs no PKG-06 module loaded at all."""
+    """The ast scan above sees import statements and literal dynamic imports,
+    not what actually loads (a computed module name, a loader outside the
+    tree). Import the real app in a clean interpreter and read sys.modules:
+    flag-off byte-identity needs no PKG-06 module loaded at all. The two are
+    complementary: this probe cannot see a lazy import inside a function
+    body, which the ast scan catches."""
     import os
     import subprocess
     import sys
