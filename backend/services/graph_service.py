@@ -1062,11 +1062,19 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         # PKG-03: graded evidence is the only thing that moves p_known on the
         # loop path (spec §1). Legacy keys above are untouched; this block is
         # skipped entirely when the payload carries no evidence.
+        by_id = {r["id"]: r for r in existing_rows if r.get("id")}
+        # The updated_nodes loop wrote times_studied + 1 for each node it
+        # moved (once per node: it never refreshes its row, and its bytes are
+        # pinned), so bring those rows up to date before the evidence mirror
+        # adds to the count — otherwise two studies land as one.
+        for rid in {(_lookup(c["concept"]) or {}).get("id") for c in mastery_changes}:
+            if rid in by_id:
+                by_id[rid]["times_studied"] = (by_id[rid].get("times_studied") or 0) + 1
         mastery_changes.extend(
             _apply_evidence(
                 user_id,
                 evidences,
-                {r["id"]: r for r in existing_rows if r.get("id")},
+                by_id,
                 touched_courses,
                 datetime.now(timezone.utc),
             )

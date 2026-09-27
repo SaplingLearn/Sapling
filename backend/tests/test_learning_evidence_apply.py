@@ -1135,6 +1135,10 @@ class TestApplyEvidence:
         result, mocks, _ = _apply(payload, edges=[])
         assert [c["concept"] for c in result] == ["Recursion", "Recursion"]
         assert [r.get("event_type") for r in _event_rows(mocks)] == ["quiz_correct", "evidence"]
+        # Two studies of n1 (times_studied 1 → 3): the legacy loop writes 2
+        # without refreshing its row, and the evidence mirror adds to that.
+        n1_counts = [u["times_studied"] for f, u in _node_updates(mocks) if f == "eq.n1"]
+        assert n1_counts == [2, 3]
 
     def test_evidence_instances_are_accepted(self):
         from learning.evidence import Evidence
