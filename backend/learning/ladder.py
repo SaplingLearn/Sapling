@@ -8,6 +8,9 @@ tutor prompt (PKG-07), never prose shown to the student.
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import Literal, NamedTuple, Protocol, Sequence
+
+from learning import params
 
 
 class Rung(IntEnum):
@@ -37,3 +40,71 @@ def intent(rung: Rung) -> str:
 
 def next_rung(rung: Rung) -> Rung:
     return Rung(min(int(rung) + 1, int(Rung.H6)))
+
+
+# ── deterministic turns (spec §13 A17) ───────────────────────────────────────
+
+PAYLOAD_JOIN = "\n\n"
+PayloadSource = Literal["passages", "sibling", "reference"]
+
+
+class ItemLike(Protocol):
+    """The check-item fields the ladder reads (PKG-04 CheckItem; spec A2/A22).
+    Structural, so ladder.py never imports learning.checks or storage."""
+
+    question_hash: str
+    concept_key: str
+    format: str
+    difficulty: int
+    prompt: str
+    reference_answer: str
+    stepwise: bool
+
+
+class DeterministicPayload(NamedTuple):
+    rung: Rung
+    text: str
+    source: PayloadSource
+    revealed_hash: str | None = None  # H4: the sibling shown (loop_state["revealed"], A23)
+
+
+def check_pose(prompt: str) -> str:
+    """The check-phase turn: the item prompt verbatim, no model call (A17). The
+    prompt was leak-checked at generation (PKG-04 validate_draft)."""
+    if not prompt.strip():
+        raise ValueError("check_pose: blank item prompt")
+    return prompt
+
+
+def _is_isomorph(sibling: ItemLike, item: ItemLike) -> bool:
+    return (
+        sibling.concept_key == item.concept_key
+        and sibling.format == item.format
+        and sibling.difficulty == item.difficulty
+        and sibling.question_hash != item.question_hash
+        and bool(sibling.stepwise)
+        and bool(sibling.reference_answer.strip())
+    )
+
+
+def deterministic_content(
+    rung: Rung, item: ItemLike, siblings: Sequence[ItemLike], passages: Sequence[str]
+) -> DeterministicPayload | None:
+    """Template content for H2/H4/H6 (spec A17). `passages` is resolved,
+    visibility-filtered, decrypted text passed in (invariant 2). The caller runs
+    leak.detect_leak(item.reference_answer, payload.text, payload.rung) before
+    emitting any payload (invariant 27) and asks for H6 only under
+    gates.h6_allowed. None -> the LLM writes the rung."""
+    rung = Rung(rung)
+    if rung == Rung.H2:
+        kept = [p.strip() for p in passages if p.strip()][: params.LOOP_SOURCE_CHUNKS_MAX]
+        return DeterministicPayload(rung, PAYLOAD_JOIN.join(kept), "passages") if kept else None
+    if rung == Rung.H4:
+        for sibling in siblings:
+            if _is_isomorph(sibling, item):
+                text = PAYLOAD_JOIN.join((sibling.prompt, sibling.reference_answer))
+                return DeterministicPayload(rung, text, "sibling", sibling.question_hash)
+        return None
+    if rung == Rung.H6 and item.reference_answer.strip():
+        return DeterministicPayload(rung, item.reference_answer, "reference")
+    return None

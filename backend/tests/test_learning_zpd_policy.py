@@ -935,3 +935,136 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
             once = strip_leak(text, reference)
             assert detect_leak(reference, once, Rung.H0).leaked is False, (reference, text, once)
             assert strip_leak(once, reference) == once
+
+
+# ── ladder: deterministic turns (spec §13 A17) ────────────────────────────────
+
+ACTIVE_HASH = "a" * 64
+
+
+def _item(question_hash, **over):
+    """Structural stand-in for PKG-04's CheckItem (ladder.ItemLike)."""
+    from types import SimpleNamespace
+
+    base = dict(
+        question_hash=question_hash,
+        concept_key="power_rule",
+        format="free",
+        difficulty=2,
+        prompt="Differentiate x^3.",
+        reference_answer="Bring the exponent down: 3x^2",
+        stepwise=True,
+    )
+    return SimpleNamespace(**{**base, **over})
+
+
+def test_check_pose_is_the_item_prompt_verbatim():
+    from learning.ladder import check_pose
+
+    prompt = "Differentiate x^3. Show the first step."
+    assert check_pose(prompt) == prompt
+    with pytest.raises(ValueError):
+        check_pose("   ")
+
+
+def test_deterministic_h2_joins_at_most_the_source_chunk_cap():
+    from learning.ladder import PAYLOAD_JOIN, Rung, deterministic_content
+
+    item = _item(ACTIVE_HASH)
+    passages = [f"Passage {i} on the power rule." for i in range(params.LOOP_SOURCE_CHUNKS_MAX + 2)]
+    p = deterministic_content(Rung.H2, item, [], ["  "] + passages)
+    assert (p.rung, p.source, p.revealed_hash) == (Rung.H2, "passages", None)
+    assert p.text == PAYLOAD_JOIN.join(passages[: params.LOOP_SOURCE_CHUNKS_MAX])
+    assert deterministic_content(Rung.H2, item, [], []) is None
+    assert deterministic_content(Rung.H2, item, [], ["", "  "]) is None
+
+
+def test_deterministic_h4_takes_the_first_true_isomorph():
+    from learning.ladder import PAYLOAD_JOIN, Rung, deterministic_content
+
+    item = _item(ACTIVE_HASH)
+    good = _item(
+        "b" * 64,
+        prompt="Differentiate x^5.",
+        reference_answer="1. Bring 5 down. 2. Lower the exponent: 5x^4",
+    )
+    later = _item("g" * 64, prompt="Differentiate x^7.")
+    not_isomorphs = [
+        _item(ACTIVE_HASH),  # the active item itself
+        _item("c" * 64, concept_key="chain_rule"),  # other concept
+        _item("d" * 64, format="teachback"),  # other format
+        _item("e" * 64, difficulty=3),  # other difficulty
+        _item("f" * 64, stepwise=False),  # not a worked solution
+        _item("h" * 64, reference_answer="  "),  # nothing to show
+    ]
+    p = deterministic_content(Rung.H4, item, [*not_isomorphs, good, later], [])
+    assert p == (
+        Rung.H4,
+        PAYLOAD_JOIN.join((good.prompt, good.reference_answer)),
+        "sibling",
+        "b" * 64,
+    )
+    assert deterministic_content(Rung.H4, item, not_isomorphs, ["a passage"]) is None
+
+
+def test_deterministic_h6_is_the_reference_and_other_rungs_have_none():
+    from learning.ladder import Rung, deterministic_content
+
+    item = _item(ACTIVE_HASH)
+    assert deterministic_content(Rung.H6, item, [], []) == (
+        Rung.H6,
+        item.reference_answer,
+        "reference",
+        None,
+    )
+    assert deterministic_content(Rung.H6, _item(ACTIVE_HASH, reference_answer=""), [], []) is None
+    for rung in (Rung.H0, Rung.H1, Rung.H3, Rung.H5):
+        assert deterministic_content(rung, item, [_item("b" * 64)], ["a passage"]) is None
+
+
+def test_deterministic_payloads_are_leak_checked_by_the_caller():
+    """Invariant 27's contract: deterministic_content never filters; the caller's
+    detect_leak does. A passage quoting the reference leaks at H2; a pointer does not."""
+    from learning.ladder import Rung, deterministic_content
+    from learning.leak import detect_leak
+
+    item = _item(ACTIVE_HASH, reference_answer=REF_POWER)
+    leaking = deterministic_content(Rung.H2, item, [], ["From the notes: " + REF_POWER])
+    pointer = deterministic_content(
+        Rung.H2, item, [], ["The power rule is in section 2.3 of your notes; read the first line."]
+    )
+    assert detect_leak(item.reference_answer, leaking.text, leaking.rung).leaked is True
+    assert detect_leak(item.reference_answer, pointer.text, pointer.rung).leaked is False
+
+
+def test_pkg04_check_item_satisfies_item_like():
+    """ItemLike mirrors PKG-04's CheckItem field names; a real CheckItem works
+    as the item and as a sibling without an adapter (ladder never imports it)."""
+    import typing
+
+    from learning.checks import CheckItem
+    from learning.ladder import ItemLike, Rung, deterministic_content
+
+    fields = set(typing.get_type_hints(ItemLike)) - {"return"}
+    assert fields <= set(CheckItem.model_fields), fields - set(CheckItem.model_fields)
+
+    def real(qh, reference):
+        return CheckItem(
+            id=f"id-{qh[:4]}",
+            course_id="c1",
+            concept_key="power_rule",
+            format="free",
+            difficulty=2,
+            prompt=f"Differentiate x^{len(reference)}.",
+            reference_answer=reference,
+            rubric=[],
+            common_wrong=[],
+            stepwise=True,
+            source_chunk_ids=[],
+            question_hash=qh,
+        )
+
+    active, sibling = real(ACTIVE_HASH, "3x^2"), real("b" * 64, "1. Bring 5 down. 2. 5x^4")
+    p = deterministic_content(Rung.H4, active, [active, sibling], [])
+    assert p is not None and p.revealed_hash == "b" * 64
+    assert deterministic_content(Rung.H6, active, [], []).text == "3x^2"

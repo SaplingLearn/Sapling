@@ -350,6 +350,21 @@ def test_inv_02_pure_modules_import_nothing_impure():
         assert path.exists(), f"{name} missing — PKG-00 stubs it"
         bad = [r for r in _imports_of(path) if r in FORBIDDEN_IMPORT_ROOTS]
         assert not bad, f"{name} imports {bad}"
+    # A17 extension (PKG-06): passage text reaches ladder.deterministic_content as an
+    # argument — ladder.py never resolves, reads or decrypts passages itself.
+    ladder = LEARNING / "ladder.py"
+    bad = [r for r in _imports_of(ladder) if r in ("services", "routes", "httpx", "supabase")]
+    assert not bad, f"ladder.py imports {bad}: passages must be passed in"
+    fn = next(
+        (
+            n
+            for n in ast.parse(ladder.read_text()).body
+            if isinstance(n, ast.FunctionDef) and n.name == "deterministic_content"
+        ),
+        None,
+    )
+    assert fn is not None, "ladder.deterministic_content() missing"
+    assert [a.arg for a in fn.args.args] == ["rung", "item", "siblings", "passages"]
 
 
 def test_inv_03_channel_guess_slip_bounds():
