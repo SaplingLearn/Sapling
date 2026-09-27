@@ -19,9 +19,14 @@ AI tracing is the fourth use but is wired at ``logfire.configure`` time (see
 ``services/ai_observability.py``); it shares ``disabled_reason`` so the two
 can never disagree about whether PostHog is on.
 
-Privacy: ``distinct_id`` is always the user's UUID (or absent). No names,
-emails, or free text are ever sent — the payloads are the #117 ones, which
-are ids/counts/enums by contract.
+Privacy: ``distinct_id`` is always a real ``users.id`` (``user_<google id>``
+— the app's ids are opaque TEXT, not UUIDs) or absent. No names, emails, or
+free text are ever sent — the payloads are the #117 ones, which are
+ids/counts/enums by contract. Before any user id is sent,
+``services/analytics_consent.consent_for`` must say ALLOWED: nothing is sent
+for a student who opted out (``user_settings.analytics_opt_out``), a
+soft-deleted account, an unknown id, or a request carrying ``Sec-GPC: 1`` /
+``DNT: 1``; and an unreadable answer is a "no".
 
 Gating (``disabled_reason``): unset token, ``POSTHOG_DISABLED``, pytest,
 ``APP_ENV=test``, or any non-``real`` ``SAPLING_MODEL_MODE`` (the E2E and
@@ -200,31 +205,101 @@ def mirror_event(
     request_id: str | None,
     payload: dict | None,
 ) -> None:
-    """Mirror one #117 event to PostHog. Never raises, never blocks.
+    """Mirror one #117 event to PostHog. Never raises.
 
     Called only from ``events_service.log_event``, after its kill-switch
     check. The ``content_fp`` fingerprint is deliberately NOT forwarded: it
     is a hash of student text (a chat message, a session topic), useful for
     joins inside our own DB and nothing PostHog needs.
 
+    Consent first (``_sendable_distinct_id``): opted-out / deleted / unknown
+    users and DNT/GPC requests are skipped. That check is a per-process
+    cached read, so at most one DB round trip per user per TTL — never one
+    per event; the capture itself is an enqueue for posthog's consumer.
+
     ``user_id`` None (sweeper, background work with no actor) becomes a
     personless event — posthog-python assigns a random id and skips the
     person profile.
+
+    The event's #117 category is sent as ``event_category`` (the payload's
+    own ``category`` key, where one exists, is left alone); ``error.4xx`` is
+    not mirrored; ``error.5xx``'s ``path`` is the route template.
     """
     client = _client
     if client is None:
         return
     try:
-        properties: dict[str, Any] = {**(payload or {}), "category": category}
+        distinct_id = _sendable_distinct_id(event_type, user_id)
+        if distinct_id is _SKIP:
+            return
+        properties: dict[str, Any] = dict(payload or {})
+        # The #117 category rides under its own key: several payloads carry a
+        # `category` of their own (document.processed's document category,
+        # rag.relevance_scored's chunk category) that must survive intact.
+        properties["event_category"] = category
         if request_id:
             properties["request_id"] = request_id
-        client.capture(
-            event_type,
-            distinct_id=str(user_id) if user_id else None,
-            properties=properties,
-        )
+        if event_type == "error.5xx":
+            # Bounded cardinality and no ids in PostHog: the matched route
+            # TEMPLATE (/api/profile/{user_id}), never the raw path, whose
+            # segments are user/document/session ids.
+            properties["path"] = (payload or {}).get("route") or "<unmatched>"
+        client.capture(event_type, distinct_id=distinct_id, properties=properties)
     except Exception:
         logger.debug("PostHog mirror failed for %s; dropped", event_type, exc_info=True)
+
+
+#: Events that stay in our own table only. error.4xx is every 401 from an
+#: expired cookie, every 404 probe and every 422: high volume, no product
+#: signal, and a raw path per row.
+_NOT_MIRRORED: frozenset[str] = frozenset({"error.4xx"})
+
+_SKIP = object()
+
+
+def _sendable_distinct_id(event_type: str, user_id: str | None) -> Any:
+    """The distinct_id to mirror under, None for a personless event, or
+    ``_SKIP`` when nothing may be sent.
+
+    Skips: events in ``_NOT_MIRRORED``; any request that sent DNT / GPC; a
+    user who opted out, was deleted, is unknown, or whose consent could not be
+    read (fail closed — ``analytics_consent``). When the event names no user
+    (None, or a placeholder like "anonymous"/"backfill"), the request's
+    session user still decides: an opted-out student's request mirrors
+    nothing, even events that do not carry their id. A genuinely actor-less
+    event (the sweeper) is sent personless.
+    """
+    from services.analytics_consent import Consent, consent_for
+    from services.request_context import current_session_user, request_has_privacy_signal
+
+    if event_type in _NOT_MIRRORED or request_has_privacy_signal():
+        return _SKIP
+    consent = consent_for(user_id)
+    if consent is Consent.ALLOWED:
+        return str(user_id).strip()
+    if consent is Consent.DENIED:
+        return _SKIP
+    # NO_USER: the event names nobody; the request's own user may still object.
+    if consent_for(current_session_user()) is Consent.DENIED:
+        return _SKIP
+    return None
+
+
+def flush(timeout_seconds: float = 10.0) -> None:
+    """Deliver everything queued so far (bounded). Never raises.
+
+    Used before a person delete, so an event captured before the account was
+    deleted cannot arrive AFTER the delete and re-create the person.
+    """
+    client = _client
+    if client is None:
+        return
+    try:
+        client.flush(timeout_seconds=timeout_seconds)
+    except TypeError:  # pragma: no cover - an SDK without the timeout kwarg
+        client.flush()
+    except Exception:
+        logger.warning("PostHog flush before person delete failed", exc_info=True)
 
 
 def capture_exception(
@@ -235,12 +310,13 @@ def capture_exception(
     if client is None:
         return
     try:
+        # Same consent rule as the mirror: an opted-out, deleted or DNT/GPC
+        # request sends no exception either (a person would be created).
+        distinct_id = _sendable_distinct_id("$exception", user_id)
+        if distinct_id is _SKIP:
+            return
         properties = {"request_id": request_id} if request_id else {}
-        client.capture_exception(
-            exc,
-            distinct_id=str(user_id) if user_id else None,
-            properties=properties,
-        )
+        client.capture_exception(exc, distinct_id=distinct_id, properties=properties)
     except Exception:
         logger.debug("PostHog capture_exception failed", exc_info=True)
 
@@ -279,12 +355,31 @@ def delete_person(user_id: str) -> None:
                 user_id,
             )
             return
+        api_host = config.posthog_api_host()
+        if not api_host:
+            # Never guess where the personal key goes (config.posthog_api_host).
+            logger.warning(
+                "PostHog person delete skipped for %s: POSTHOG_HOST is not a "
+                "PostHog-cloud ingestion host, so POSTHOG_API_HOST must be set "
+                "explicitly — delete the person manually in PostHog",
+                user_id,
+            )
+            return
+
+        # Anything captured BEFORE the deletion is still in the SDK queues;
+        # delivered after the delete, it would re-create the person. Drain
+        # both (events + AI spans), bounded, first. Events captured AFTER the
+        # deletion are refused by the consent check (deleted_at) instead.
+        flush(timeout_seconds=_PERSON_DELETE_TIMEOUT_S)
+        from services.ai_observability import flush_ai_spans
+
+        flush_ai_spans(timeout_millis=int(_PERSON_DELETE_TIMEOUT_S * 1000))
 
         # Not a Supabase client: the table() rule is about Supabase. This is a
         # third-party REST API, like the OAuth exchange in routes/auth.py.
         import httpx
 
-        url = f"{config.posthog_api_host()}/api/projects/{project_id}/persons/bulk_delete/"
+        url = f"{api_host}/api/projects/{project_id}/persons/bulk_delete/"
         resp = httpx.post(
             url,
             headers={"Authorization": f"Bearer {key}"},

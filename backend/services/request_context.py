@@ -39,9 +39,55 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9_\-]{8,128}$")
 _log = logging.getLogger("sapling.request")
 
 
+#: ADR 0028: the request carried a browser privacy signal — Global Privacy
+#: Control (`Sec-GPC: 1`) or Do Not Track (`DNT: 1`). Third-party analytics
+#: (the PostHog mirror and AI-span export) send nothing for such a request.
+#: Our own `events` table is first-party observability and is unaffected.
+#: False outside a request (the sweeper, scripts).
+_PRIVACY_SIGNAL_CTX: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "sapling_privacy_signal", default=False,
+)
+
+#: The authenticated session user of the current request, noted by
+#: auth_guard.get_session_user_id (beside request.state.user_id). Lets the
+#: PostHog seam apply a student's analytics opt-out to work that carries no
+#: user of its own (a deps-less agent run, a user_id=None event).
+_SESSION_USER_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "sapling_session_user", default=None,
+)
+
+
 def current_request_id() -> str | None:
     """Return the current request's ID, or None if outside a request scope."""
     return _REQUEST_ID_CTX.get()
+
+
+def privacy_signal_in(headers) -> bool:
+    """Whether a header mapping carries `Sec-GPC: 1` or `DNT: 1`."""
+    return (
+        (headers.get("sec-gpc") or "").strip() == "1"
+        or (headers.get("dnt") or "").strip() == "1"
+    )
+
+
+def request_has_privacy_signal() -> bool:
+    """True when the current request sent `Sec-GPC: 1` or `DNT: 1`."""
+    return _PRIVACY_SIGNAL_CTX.get()
+
+
+def note_session_user(user_id: str | None) -> None:
+    """Record the authenticated user for the rest of this handler's context.
+
+    Called from auth_guard.get_session_user_id, which runs inside the
+    handler: the var is set in the request's own task (or the worker-thread
+    context copy of a sync handler), never the server's, so it cannot
+    outlive the request.
+    """
+    _SESSION_USER_CTX.set(user_id)
+
+
+def current_session_user() -> str | None:
+    return _SESSION_USER_CTX.get()
 
 
 def new_request_id() -> str:
@@ -54,6 +100,19 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     response; emit one structured log line per request with duration."""
 
     async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        # ADR 0028: held for the WHOLE dispatch — including the error-event
+        # emission below, which runs after the request-id var is reset — so
+        # the error.5xx mirror honours the same DNT/GPC signal as everything
+        # the handler emitted. The downstream task copies it at call_next.
+        privacy_token = _PRIVACY_SIGNAL_CTX.set(privacy_signal_in(request.headers))
+        try:
+            return await self._dispatch(request, call_next)
+        finally:
+            _PRIVACY_SIGNAL_CTX.reset(privacy_token)
+
+    async def _dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         incoming = request.headers.get("x-request-id", "").strip()

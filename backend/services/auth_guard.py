@@ -13,6 +13,7 @@ from fastapi import HTTPException, Request
 from config import SESSION_SECRET
 from db.connection import table
 from services import events_service
+from services.request_context import note_session_user
 from services.session_tokens import SESSION_COOKIE_NAME
 
 # #117 note: the 401 paths in _decode_session/get_session_user_id are
@@ -83,6 +84,10 @@ def get_session_user_id(request: Request) -> str:
     # anyio task, so a contextvar set here never propagates back out; the
     # shared Request scope is the only thing that does.
     request.state.user_id = user_id
+    # ADR 0028: ALSO note it for the rest of this handler's own context (the
+    # forward direction, which a contextvar does reach), so the PostHog seam
+    # can apply this user's analytics opt-out to work that names no user.
+    note_session_user(user_id)
     return user_id
 
 
