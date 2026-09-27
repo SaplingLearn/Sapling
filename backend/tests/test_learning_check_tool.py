@@ -428,6 +428,33 @@ def test_an_oversized_answer_is_unavailable_before_any_model_call(monkeypatch, c
     assert any("grader unavailable" in r.getMessage() for r in caplog.records)
 
 
+def test_an_item_without_a_rubric_is_ungradeable(monkeypatch, caplog):
+    """check_item_service falls back to rubric=[] on a malformed rubric_json. With
+    nothing to judge, all_yes can never be true, so grading would record a
+    full-weight 'incorrect' for every answer. Unavailable instead, before any
+    call: the item, not the answer, decides, so both outcomes go missing (inv 28)."""
+    import agents.grader as g
+
+    model, calls = _billed_grader([{**_good(0.95), "item_results": []}])
+    with g.grader_agent.override(model=model), caplog.at_level("WARNING"):
+        res = asyncio.run(
+            g.grade(_item(rubric=[]), format="free", student_answer="perfect", deps=_deps())
+        )
+    assert res.unavailable is True and calls["n"] == 0
+    assert any("grader unavailable" in r.getMessage() for r in caplog.records)
+
+
+def test_grade_answer_records_nothing_for_an_item_without_a_rubric(monkeypatch):
+    import agents.grader as g
+    import agents.tools.check as c
+
+    model, _ = _billed_grader([{**_good(0.95), "item_results": []}])
+    deps = _deps()
+    with g.grader_agent.override(model=model):
+        out = asyncio.run(c.grade_answer(_item(rubric=[]), _answer(), deps=deps, node_id=NODE))
+    assert out.unavailable is True and deps.pending_evidence == []
+
+
 def test_the_answer_bound_keeps_both_grader_runs_inside_the_token_cap():
     """GRADER_ANSWER_MAX_CHARS is sized so that even at one token per character
     the answer, sent on both requests a run may make, fits GRADER_LIMITS."""

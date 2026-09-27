@@ -214,6 +214,13 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
     stack. The single Gemini grader: PKG-05b wraps it without changing the prompt."""
+    if not item.rubric:
+        # Nothing to judge: all_yes could never be true, so every answer would
+        # come back a full-weight "incorrect" (check_item_service falls back to
+        # rubric=[] on a malformed rubric_json). The item decides, not the
+        # answer, so both outcomes go missing alike (inv 28).
+        logger.warning("grader unavailable for item %s: the item has no rubric", item.id)
+        return GradeResult(unavailable=True)
     if len(student_answer) > GRADER_ANSWER_MAX_CHARS:  # never sent, never billed
         logger.warning(
             "grader unavailable for item %s: answer longer than %d characters",
