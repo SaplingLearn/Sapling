@@ -48,6 +48,16 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "jev-preview": (0.000042, 0.0),
 }
 
+#: Model FAMILIES priced by prefix, consulted only when a served id has no
+#: exact entry above. Jev responses report the versioned id that actually
+#: served (`jev-1.14.0` the day the vendor ships it, whatever alias was
+#: requested), and an exact-id-only map would NULL-cost every call from then
+#: on — silently, as a warning in the logs — until someone noticed. TypeSafe
+#: prices the family, not the build; a new rate gets its own exact entry.
+MODEL_FAMILY_PRICING: tuple[tuple[str, tuple[float, float]], ...] = (
+    ("jev-", (0.000042, 0.0)),
+)
+
 #: Fractional digits of a stored cost — llm_usage.cost_usd is NUMERIC(18,10)
 #: (migration 20260927043405). Six (the old NUMERIC(12,6)) rounded the
 #: decision seam's micro-dollar calls: one Jev token is $0.000000042, so a
@@ -118,6 +128,21 @@ def _canonical_model(model: str) -> str:
     return model.rsplit(":", 1)[-1].strip() if model else model
 
 
+def _rates_for(model: str) -> tuple[float, float] | None:
+    """Exact price entry first (raw, then provider-stripped), then the
+    model's family prefix."""
+    if not model:
+        return None
+    canonical = _canonical_model(model)
+    rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(canonical)
+    if rates is not None:
+        return rates
+    for prefix, family_rates in MODEL_FAMILY_PRICING:
+        if canonical.startswith(prefix):
+            return family_rates
+    return None
+
+
 def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Compute USD cost for a call, or ``None`` if the model isn't priced.
 
@@ -125,7 +150,7 @@ def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | 
     ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
     and warns once.
     """
-    rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(_canonical_model(model))
+    rates = _rates_for(model)
     if rates is None:
         # SAPLING_MODEL_MODE=function runs (the e2e/CI seam) report the model
         # as 'function:<task>' — a deliberate free stand-in, not an unpriced
