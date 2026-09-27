@@ -44,14 +44,6 @@ ALLOWED_EMAIL_DOMAINS = [
 # Only "true" (any case) enables; everything else, including unset, is off.
 LEARNING_LOOP_ENABLED = os.getenv("LEARNING_LOOP_ENABLED", "false").strip().lower() == "true"
 
-# Class summary refresher (spec §3.5, §13 A35): with the loop on, the prose in
-# offering_summary.summary_text is written only by the lifespan task in
-# services/course_summary_refresher.py, never on a request path. One pass per
-# interval; each pass makes at most BATCH course_summary calls per process.
-# Engineering choices (†), env-overridable for operations.
-COURSE_SUMMARY_REFRESH_INTERVAL_S = int(os.getenv("COURSE_SUMMARY_REFRESH_INTERVAL_S", "900"))  # †
-COURSE_SUMMARY_REFRESH_BATCH = int(os.getenv("COURSE_SUMMARY_REFRESH_BATCH", "25"))  # †
-
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",

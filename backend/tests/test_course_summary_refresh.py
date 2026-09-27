@@ -6,24 +6,26 @@ for each of the student's offerings of the touched course: the summary's hash
 keyed on raw per-concept scores, which move on every graded answer. 10 calls
 cost $0.021969, 84% of a run whose grading cost $0.000573.
 
-A35: with the loop on, `update_course_context` refreshes the numbers only, and
-the prose is written off every request path by `refresh_stale_summaries` (the
-lifespan refresher), once per offering, and only when what the prose states
-changes: the student count, the class average's tier, and the tier-derived
-struggling/mastered lists. With the loop off, the pre-series behaviour is
-byte-identical (pinned below).
+A35: the prose has no reader, so with the loop on `update_course_context`
+writes the class numbers and no prose at all (NULL text and hash), and nothing
+else writes it: no `course_summary` call on the answer path or off it. (The
+first fix moved the prose to a lifespan refresher; the review of that fix
+showed it still paid about one call per offering per active interval, per
+instance, for text nothing reads.) With the loop off, the pre-series behaviour
+is byte-identical (pinned below).
 
-The graph, the class aggregation and the refresher all run for real here, on a
-small in-memory PostgREST stand-in; only the model call is mocked.
+The graph and the class aggregation run for real here, on a small in-memory
+PostgREST stand-in; only the model call is mocked.
 """
 
 from __future__ import annotations
 
-import asyncio
+import ast
 import logging
+from pathlib import Path
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -31,7 +33,6 @@ import config
 from learning import bkt
 from learning.evidence import flush_pending
 from services import course_context_service as ccs
-from services import course_summary_refresher as refresher
 
 USER = "u1"
 COURSE = "c1"
@@ -203,256 +204,106 @@ WITHIN_TIER = ("mc", "mc", "free_response", "mc_reasoned", "mc")
 # ── the finding ──────────────────────────────────────────────────────────────
 
 
-def test_flushes_that_move_p_but_no_tier_regenerate_nothing_and_a_tier_change_once_per_offering(
-    loop_on,
-):
+def test_with_the_loop_on_no_flush_calls_the_model_not_even_on_a_tier_change(loop_on):
+    """The prose has no reader (A35), so with the loop on nothing pays for it:
+    not on the answer path, and not off it. The numbers stay current."""
     db = _world_db()
     run = _agent()
     with _world(db, run):
         for off in OFFERINGS:
             ccs.update_course_context(off)
-        assert run.await_count == 0, "the aggregate refresh never calls the model"
-        assert ccs.refresh_stale_summaries() == 2, "first prose: one per offering"
-        assert run.await_count == 2
-
         p = db.one("graph_nodes", id="n1")["mastery_score"]
         avgs = set()
         for channel in WITHIN_TIER:
             p_new = _flush(db, {"node_id": "n1", "channel": channel, "correct": False})
             assert p_new != p and bkt.tier_for(p_new) == "struggling"
             p = p_new
-            assert run.await_count == 2, "no model call on the answer path"
-            assert ccs.refresh_stale_summaries() == 0
             avgs.add(db.one("offering_summary", offering_id="off-a")["avg_class_mastery"])
         assert len(avgs) == len(WITHIN_TIER), "the numbers stay current on every flush"
-        assert run.await_count == 2
 
         p = _flush(db, {"node_id": "n1", "channel": "free_response", "correct": True})
         assert bkt.tier_for(p) == "learning"
-        assert run.await_count == 2, "a tier change still calls nothing on the answer path"
-        assert ccs.refresh_stale_summaries() == 2, "exactly one per offering"
-        assert run.await_count == 4
-        assert ccs.refresh_stale_summaries() == 0
+    run.assert_not_awaited()
     for off in OFFERINGS:
         row = db.one("offering_summary", offering_id=off)
-        assert row["top_struggling_concepts"] == []
-        assert row["summary_text"] == "Class summary."
-        assert row["summary_hash"] == ccs.summary_key(
-            row["student_count"],
-            row["avg_class_mastery"],
-            row["top_struggling_concepts"],
-            row["top_mastered_concepts"],
-        )
+        assert row["top_struggling_concepts"] == [], "the lists follow the tier change"
+        assert row["summary_text"] is None and row["summary_hash"] is None
 
 
-def test_loop_era_refresh_writes_numbers_only_and_keeps_existing_prose(loop_on):
+def test_the_loop_era_row_drops_prose_it_can_no_longer_keep_true(loop_on):
+    """Prose written before the loop turned on would contradict the numbers the
+    loop keeps moving, so the loop-era upsert clears it (and its hash)."""
     db = _world_db(
         offering_summary=[
-            {"offering_id": "off-a", "summary_text": "old prose", "summary_hash": "old-key"}
+            {"offering_id": "off-a", "summary_text": "old prose", "summary_hash": "old-hash"}
         ]
     )
-    run = _agent()
-    with _world(db, run):
-        for off in OFFERINGS:
-            ccs.update_course_context(off)
-    run.assert_not_awaited()
-    kept = db.one("offering_summary", offering_id="off-a")
-    assert (kept["summary_text"], kept["summary_hash"]) == ("old prose", "old-key")
-    assert kept["student_count"] == 1 and kept["top_struggling_concepts"] == ["Recursion"]
-    fresh = db.one("offering_summary", offering_id="off-b")
-    assert "summary_text" not in fresh and "summary_hash" not in fresh
-    assert fresh["avg_class_mastery"] == pytest.approx((0.2 + 0.97 + 0.6 + 0.05) / 4, abs=1e-4)
-
-
-def test_the_prompt_states_the_average_as_its_tier_not_the_raw_score(loop_on):
-    db = _world_db()
     run = _agent()
     with _world(db, run):
         ccs.update_course_context("off-a")
-        assert ccs.refresh_stale_summaries() == 1
-    (message,) = run.await_args.args
-    assert "Average class mastery: learning (30%–95%)" in message
-    assert "45.5%" not in message
-    assert "- Recursion" in message and "- Variables" in message
-    assert "CS101 - Intro CS" in message
+    run.assert_not_awaited()
+    row = db.one("offering_summary", offering_id="off-a")
+    assert row["summary_text"] is None and row["summary_hash"] is None
+    assert row["student_count"] == 1 and row["top_struggling_concepts"] == ["Recursion"]
+    assert row["avg_class_mastery"] == pytest.approx((0.2 + 0.97 + 0.6 + 0.05) / 4, abs=1e-4)
 
 
-# ── what the key covers ──────────────────────────────────────────────────────
-
-
-def test_summary_key_ignores_score_moves_inside_a_tier():
-    base = ccs.summary_key(3, 0.40, ["Recursion"], ["Variables"])
-    assert ccs.summary_key(3, 0.60, ["Recursion"], ["Variables"]) == base
-    assert ccs.summary_key(3, 0.94, ["Recursion"], ["Variables"]) == base
-
-
-@pytest.mark.parametrize(
-    "changed",
-    [
-        (4, 0.40, ["Recursion"], ["Variables"]),  # student count
-        (3, 0.96, ["Recursion"], ["Variables"]),  # the average's tier
-        (3, 0.40, [], ["Variables"]),  # the struggling list
-        (3, 0.40, ["Recursion"], ["Variables", "Loops"]),  # the mastered list
-        (3, 0.40, ["Recursion"], ["Loops", "Variables"]),  # its order
-    ],
-)
-def test_summary_key_changes_with_what_the_prose_states(changed):
-    assert ccs.summary_key(*changed) != ccs.summary_key(3, 0.40, ["Recursion"], ["Variables"])
-
-
-def test_average_tier_label_matches_bkt_tier_for_at_every_cut():
-    from learning.params import BAND_NOVICE_MAX, BKT_PROFICIENT, TIER_UNEXPLORED_MAX
-
-    for p in (0.0, TIER_UNEXPLORED_MAX, BAND_NOVICE_MAX, BKT_PROFICIENT, 1.0):
-        label = ccs._avg_tier_label(p)
-        assert label.startswith(bkt.tier_for(p) + " ("), (p, label)
-    for p, lo, hi in ((0.29, 10, 30), (0.3, 30, 95), (0.999, 95, 100), (0.05, 0, 10)):
-        assert ccs._avg_tier_label(p).endswith(f"({lo}%–{hi}%)")
-
-
-def test_loop_era_lists_rank_ties_by_name_not_row_order(loop_on):
-    """Postgres returns rows in heap order, and an UPDATE moves a row, so a tie
-    listed in row order would change the key on a flush that changed nothing
-    the prose says."""
-    tied = [_node("a", "Beta", 0.2), _node("b", "Alpha", 0.2), _node("c", "Gamma", 0.97)]
-    lists = []
-    for rows in (tied, list(reversed(tied))):
-        db = _world_db(graph_nodes=rows)
+def test_the_loop_era_writes_the_same_numbers_as_the_legacy_regime(monkeypatch):
+    """The regimes differ in the prose alone."""
+    numbers = (
+        "offering_id",
+        "student_count",
+        "avg_class_mastery",
+        "top_struggling_concepts",
+        "top_mastered_concepts",
+    )
+    rows = {}
+    for loop in (False, True):
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", loop)
+        db = _world_db()
         with _world(db, _agent()):
             ccs.update_course_context("off-a")
-        lists.append(db.one("offering_summary", offering_id="off-a")["top_struggling_concepts"])
-    assert lists == [["Alpha", "Beta"], ["Alpha", "Beta"]]
+        row = db.one("offering_summary", offering_id="off-a")
+        rows[loop] = {k: row[k] for k in numbers}
+        assert set(row) == set(numbers) | {"summary_text", "summary_hash", "updated_at"}
+    assert rows[True] == rows[False]
 
 
-# ── the refresher's bounds ───────────────────────────────────────────────────
-
-
-def _stale_rows(n: int) -> list[dict]:
-    return [
-        {
-            "offering_id": f"off-{i}",
-            "student_count": 1,
-            "avg_class_mastery": 0.5,
-            "top_struggling_concepts": [],
-            "top_mastered_concepts": [],
-            "summary_text": None,
-            "summary_hash": None,
-        }
-        for i in range(n)
-    ]
-
-
-def test_one_pass_attempts_at_most_the_batch(loop_on, monkeypatch):
-    monkeypatch.setattr(config, "COURSE_SUMMARY_REFRESH_BATCH", 2)
-    db = _world_db(offering_summary=_stale_rows(3))
-    run = _agent()
+def test_the_kill_switch_writes_the_prose_again_once(monkeypatch):
+    """Turning the loop off returns to the pre-series regime: the cleared hash
+    differs from the stats hash, so the next refresh writes the prose once."""
+    db = _world_db()
+    run = _agent("legacy prose")
     with _world(db, run):
-        assert ccs.refresh_stale_summaries() == 2
-        assert ccs.refresh_stale_summaries() == 1
-        assert ccs.refresh_stale_summaries() == 0
-    assert run.await_count == 3
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        ccs.update_course_context("off-a")
+        run.assert_not_awaited()
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+        ccs.update_course_context("off-a")
+        ccs.update_course_context("off-a")
+    assert run.await_count == 1
+    assert db.one("offering_summary", offering_id="off-a")["summary_text"] == "legacy prose"
 
 
-def test_a_failed_regeneration_is_logged_kept_and_retried_next_pass(loop_on, caplog):
-    db = _world_db(offering_summary=_stale_rows(2))
-    run = AsyncMock(
-        side_effect=[
-            RuntimeError("gemini 503"),
-            SimpleNamespace(output=SimpleNamespace(summary="ok")),
-            SimpleNamespace(output=SimpleNamespace(summary="ok")),
-        ]
-    )
-    with (
-        _world(db, run),
-        caplog.at_level(logging.WARNING, logger="services.course_context_service"),
-    ):
-        assert ccs.refresh_stale_summaries() == 1
-        failed = db.one("offering_summary", offering_id="off-0")
-        assert failed["summary_text"] is None and failed["summary_hash"] is None
-        (record,) = [r for r in caplog.records if "off-0" in r.getMessage()]
-        assert record.levelno == logging.WARNING and record.exc_info
-        assert ccs.refresh_stale_summaries() == 1
-    assert db.one("offering_summary", offering_id="off-0")["summary_text"] == "ok"
-
-
-def test_refresh_is_a_noop_with_the_loop_off(loop_off):
-    db = MagicMock()
-    with patch("services.course_context_service.table", db):
-        assert ccs.refresh_stale_summaries() == 0
-    db.assert_not_called()
-
-
-def test_refresher_constants_are_named_in_config():
-    assert isinstance(config.COURSE_SUMMARY_REFRESH_INTERVAL_S, int)
-    assert config.COURSE_SUMMARY_REFRESH_INTERVAL_S > 0
-    assert isinstance(config.COURSE_SUMMARY_REFRESH_BATCH, int)
-    assert config.COURSE_SUMMARY_REFRESH_BATCH > 0
-
-
-# ── the lifespan task ────────────────────────────────────────────────────────
-
-
-def test_refresher_is_not_started_with_the_loop_off(loop_off):
-    async def scenario():
-        refresher.start_refresher()
-        assert refresher._task is None
-        await refresher.stop_refresher()
-
-    asyncio.run(scenario())
-
-
-def test_refresher_starts_and_stops_with_the_loop_on(loop_on, monkeypatch):
-    monkeypatch.setattr(refresher, "refresh_stale_summaries", lambda: 0)
-
-    async def scenario():
-        refresher.start_refresher()
-        task = refresher._task
-        assert task is not None and not task.done()
-        await refresher.stop_refresher()
-        assert task.cancelled() or task.done()
-        assert refresher._task is None
-
-    asyncio.run(scenario())
-
-
-def test_the_refresher_loop_survives_a_pass_that_raises(loop_on, monkeypatch):
-    calls = []
-
-    def flaky():
-        calls.append(1)
-        if len(calls) == 1:
-            raise RuntimeError("transient")
-        return 0
-
-    monkeypatch.setattr(refresher, "refresh_stale_summaries", flaky)
-    monkeypatch.setattr(config, "COURSE_SUMMARY_REFRESH_INTERVAL_S", 0)
-
-    async def scenario():
-        refresher.start_refresher()
-        for _ in range(200):
-            if len(calls) >= 2:
-                break
-            await asyncio.sleep(0.01)
-        await refresher.stop_refresher()
-
-    asyncio.run(scenario())
-    assert len(calls) >= 2
-
-
-def test_the_app_lifespan_starts_and_stops_the_refresher():
-    from fastapi.testclient import TestClient
-
-    with (
-        patch("main.start_refresher") as start,
-        patch("main.stop_refresher", new=AsyncMock()) as stop,
-        patch("main.ensure_bucket_exists", new=AsyncMock()),
-    ):
-        from main import app
-
-        with TestClient(app):
-            start.assert_called_once()
-            stop.assert_not_called()
-        stop.assert_awaited_once()
+def test_only_the_legacy_regime_runs_the_course_summary_agent():
+    """A35: the one call site of the agent is `_generate_summary_with_gemini`,
+    which `update_course_context` reaches only with the loop off. A new writer
+    of the prose (a refresher, a lazy read) needs a reader first, and a spec
+    amendment that adds its cost to §3.5."""
+    backend = Path(ccs.__file__).resolve().parents[1]
+    sites = set()
+    for path in backend.rglob("*.py"):
+        rel = path.relative_to(backend).as_posix()
+        if rel.startswith(("tests/", "venv/")) or rel == "agents/course_summary.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Name) and node.id == "course_summary_agent":
+                    sites.add((rel, fn.name))
+    assert sites == {("services/course_context_service.py", "_generate_summary_with_gemini")}
 
 
 # ── the course-context failure is logged, never swallowed ────────────────────

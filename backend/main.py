@@ -40,7 +40,6 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
-from services.course_summary_refresher import start_refresher, stop_refresher
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -117,11 +116,7 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
-    # §13 A35: with the learning loop on, the class summary prose is written
-    # here, off every request path. No-op with the loop off.
-    start_refresher()
     yield
-    await stop_refresher()
     await stop_sweeper()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
