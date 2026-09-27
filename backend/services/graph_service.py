@@ -814,9 +814,13 @@ def _apply_evidence(
         unassisted = not ev.assisted and ev.max_rung == 0
         st.opps += 1
         if ev.correct and unassisted:
-            st.streak_unassisted += 1
-            if is_strong_channel(ev.channel):
-                st.n_strong_unassisted += 1
+            # A correct re-check of a question already asked this session is
+            # not a first attempt (spec §3.3): an opportunity only, it neither
+            # extends nor breaks the streak †.
+            if not ev.same_session_recheck:
+                st.streak_unassisted += 1
+                if is_strong_channel(ev.channel):
+                    st.n_strong_unassisted += 1
         else:
             st.streak_unassisted = 0
         st.max_streak_unassisted = max(st.max_streak_unassisted, st.streak_unassisted)

@@ -812,6 +812,46 @@ class TestApplyEvidence:
         assert (d["opps"], d["streak_unassisted"], d["n_strong_unassisted"]) == (4, 1, 2)
         assert [w["max_streak_unassisted"] for w in (a, b, c, d)] == [1, 2, 2, 2]
 
+    def test_same_session_recheck_is_not_a_first_attempt(self):
+        """Spec §3.3 / ZPD STATE: the streak and the strong-channel count take
+        unassisted FIRST-attempt corrects. A re-check of a question already
+        asked this session (the student has seen the answer) counts as an
+        opportunity only: it neither extends nor breaks the streak."""
+        seen = {"channel": "free_response", "session_id": "s", "question_hash": "q"}
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {"node_id": "n1", "correct": True, **seen},
+                    {"node_id": "n1", "correct": True, **seen},  # detected in-call
+                    {"node_id": "n1", "correct": True, **seen},
+                    {
+                        "node_id": "n1",
+                        "channel": "mc_reasoned",
+                        "correct": True,
+                        "same_session_recheck": True,  # flagged by the caller
+                    },
+                ]
+            },
+            edges=[],
+        )
+        writes = [w for w in _state_writes(mocks) if w["node_id"] == "n1"]
+        assert [w["opps"] for w in writes] == [1, 2, 3, 4]
+        assert [w["streak_unassisted"] for w in writes] == [1, 1, 1, 1]
+        assert [w["n_strong_unassisted"] for w in writes] == [1, 1, 1, 1]
+        assert writes[-1]["max_streak_unassisted"] == 1
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {"node_id": "n1", "correct": True, **seen},
+                    {"node_id": "n1", "correct": False, **seen},
+                ]
+            },
+            edges=[],
+        )
+        assert [w["streak_unassisted"] for w in _state_writes(mocks)] == [1, 0], (
+            "a wrong re-check still breaks the streak"
+        )
+
     def test_correct_after_worked_example_leaves_p_and_still_schedules(self):
         from learning import fsrs
 
