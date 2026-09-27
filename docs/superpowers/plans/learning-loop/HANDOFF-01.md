@@ -89,3 +89,4 @@ cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
 
 - PKG-02 2026-09-26: added `RUNG_ASSISTED_MAX = 3` (spec §13 A6 name for the §3.3 "H1–H3" bound; consumed by `fsrs.rating_for`) to `backend/learning/params.py`, §3.3 block. No existing name or value changed; `tests/test_learning_bkt.py` unchanged and green (287 passed); `grep -cE "^[A-Z0-9_]+ = " backend/learning/params.py` → 77 — commit 8708325
+- PKG-02 2026-09-26 (review fix): added `FSRS_STABILITY_MIN = 0.001` (the FSRS-6 floor on every new stability, py-fsrs 6.3.2 `STABILITY_MIN`; read by `fsrs.next_state`) to `backend/learning/params.py`, §3.2 block. No existing name or value changed; `tests/test_learning_bkt.py` unchanged and green (287 passed); `grep -cE "^[A-Z0-9_]+ = " backend/learning/params.py` → 78 — commit 9cf1919
