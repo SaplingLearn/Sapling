@@ -23,6 +23,12 @@
     "NoAdministrativeNamesEvaluator": 1.0,
     "OrderedByImportanceEvaluator": 1.0
   },
+  "decisions": {
+    "ConfidenceInRangeEvaluator": 1.0,
+    "GoldAgreementEvaluator": 0.4375,
+    "InjectionHeldEvaluator": 0.75,
+    "NoFalsePositiveEvaluator": 0.375
+  },
   "document_classification": {
     "CategoryEvaluator": 0.862069,
     "ShareabilityEvaluator": 1.0,
@@ -33,6 +39,12 @@
     "HeadlineLengthEvaluator": 1.0,
     "KeyPointsCountEvaluator": 1.0,
     "NoMarkdownLeakEvaluator": 1.0
+  },
+  "grader": {
+    "ConfidenceInRangeEvaluator": 1.0,
+    "NoReferenceLeakEvaluator": 1.0,
+    "RubricAgreementEvaluator": 0.9375,
+    "StrictOnWrongEvaluator": 1.0
   },
   "quiz_generation": {
     "AdaptiveDifficultyEvaluator": 1.0,

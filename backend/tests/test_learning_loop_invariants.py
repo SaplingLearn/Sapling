@@ -643,3 +643,179 @@ def test_inv_13_fsrs_weights_pinned():
         )
     }
     assert learning_modules == {"learning.params"}, learning_modules
+
+
+TOOLS_DIR = BACKEND / "agents" / "tools"
+
+
+def test_inv_14_tools_never_write_graph_tables():
+    """Series extension of spec §8.1, covering agents/tools/check.py::grade_answer:
+    evidence accumulates on deps; only a route persists it through
+    apply_graph_update. grade_answer is a route helper, not a tutor tool (A16).
+
+    Tool modules may READ graph tables (graph_read.py, chat_context.py select
+    graph_nodes/graph_edges), so the scan flags writes: a direct
+    `table("<graph table>").insert/update/upsert/delete(` chain (multi-line
+    tolerant) and, through inv_01's ast half, any graph-table handle that is
+    not a direct `.select`/`.select_with_count` read."""
+    offenders = []
+    for path in sorted(TOOLS_DIR.glob("*.py")):
+        rel = path.relative_to(BACKEND).as_posix()
+        text = path.read_text()
+        for m in _GRAPH_WRITE.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"{rel}:{line} writes {m.group(1)} via .{m.group(2)}(")
+        offenders += _graph_table_offenders(rel, text)
+    assert not offenders, offenders
+    check_path = TOOLS_DIR / "check.py"
+    check = check_path.read_text()
+    assert "apply_graph_update" not in check, "check.py must not persist evidence"
+    assert "from db.connection import" not in check, "check.py must not touch Supabase"
+    db_imports = [
+        m for m in _modules_imported_by(check_path, BACKEND) if m == "db" or m.startswith("db.")
+    ]
+    assert not db_imports, f"check.py imports {db_imports}"
+    assert "RunContext" not in check and "Tool(" not in check, (
+        "grade_answer is not a tutor tool (A16)"
+    )
+
+
+def test_inv_28_symmetric_missingness(monkeypatch):
+    """Spec §8.28 (A20/A22), outage half: with the grader unavailable, a correct
+    and a wrong mc_reason attempt both record nothing — missingness never
+    depends on the outcome. PKG-06b adds the STUDENT_DAILY_GRADES cap half."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import agents.grader
+    import agents.tools.check as check
+    from agents.deps import SaplingDeps
+    from agents.grader import GradeResult
+
+    reason_checks = []
+
+    async def _unavailable(item, *, format, student_answer, deps):
+        reason_checks.append(student_answer)
+        return GradeResult(unavailable=True)
+
+    # PKG-05b: grade_answer grades through services/decisions.py, which resolves
+    # agents.grader.grade at call time, so the stub sits there; the items carry
+    # the question/reference/rubric/wrong fields the seam's grading State reads.
+    monkeypatch.setattr(agents.grader, "grade", _unavailable)
+    graded = dict(prompt="q", reference_answer="ref", rubric=[], common_wrong=[])
+    options = [
+        SimpleNamespace(letter="A", text="right", wrong_key=None),
+        SimpleNamespace(letter="B", text="wrong", wrong_key="w_1"),
+    ]
+    item = SimpleNamespace(
+        id="ci-28",
+        format="mc_reason",
+        options=options,
+        correct_option="A",
+        answer_kind="free",
+        canonical_verified=False,
+        question_hash="qh-28",
+        **graded,
+    )
+    for option in ("A", "B"):  # the correct option, then a wrong one
+        deps = SaplingDeps(
+            user_id="u1",
+            course_id="c1",
+            supabase=None,
+            request_id="r1",
+            session_id="s1",
+            feature="tutor",
+            learning_loop=True,
+        )
+        answer = check.CheckAnswer(question_hash="qh-28", selected_option=option, reason="because")
+        out = asyncio.run(check.grade_answer(item, answer, deps=deps, node_id="n-28"))
+        assert out.unavailable is True and out.evidence is None, option
+        assert deps.pending_evidence == [], option
+    assert len(reason_checks) == 2, "the reason check must run for BOTH outcomes"
+    # A numeric item with a VERIFIED key: a clear mismatch and a match both record
+    # nothing (the A22 numeric gate runs only after the grader returned).
+    numeric = SimpleNamespace(
+        id="ci-28n",
+        format="free",
+        options=None,
+        correct_option=None,
+        answer_kind="numeric",
+        canonical_answer="9.81",
+        tolerance=0.01,
+        canonical_verified=True,
+        question_hash="qh-28n",
+        **graded,
+    )
+    for text in ("12.5", "9.81"):
+        deps = SaplingDeps(
+            user_id="u1",
+            course_id="c1",
+            supabase=None,
+            request_id="r1",
+            session_id="s1",
+            feature="tutor",
+            learning_loop=True,
+        )
+        answer = check.CheckAnswer(question_hash="qh-28n", answer_text=text)
+        out = asyncio.run(check.grade_answer(numeric, answer, deps=deps, node_id="n-28"))
+        assert out.unavailable is True and deps.pending_evidence == [], text
+    assert len(reason_checks) == 4, "the grader runs for both numeric outcomes too"
+
+
+# ── PKG-05b: decision seam (spec §8.24–25, §13 A24) ─────────────────────────
+TYPESAFE_IMPORT = re.compile(r"^\s*(?:import|from)\s+typesafe\b", re.M)
+SYSTEM_ONE_IMPORT = re.compile(r"^\s*(?:import|from)\s+system_one", re.M)
+IDENTIFIER_FIELDS = {"user_id", "email", "name", "first_name", "last_name"}
+A24_STATES = {
+    "GradeState",
+    "WrongReasonState",
+    "ReasonState",
+    "UploadState",
+    "PassageState",
+    "TurnState",
+    "LeakState",
+}
+
+
+def _app_python_files():
+    for top in sorted(BACKEND.iterdir()):
+        if top.name in {"venv", ".venv", "tests", "__pycache__"}:
+            continue
+        if top.is_file() and top.suffix == ".py":
+            yield top
+        elif top.is_dir():
+            yield from sorted(top.rglob("*.py"))
+
+
+def test_inv_24_typesafe_only_in_jev():
+    """typesafe only in agents/_jev.py (PKG-15), pinned exactly; no system-one adapter in app code (§12)."""
+    jev, typesafe, system_one = BACKEND / "agents" / "_jev.py", [], []
+    for path in _app_python_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rel = path.relative_to(BACKEND).as_posix()
+        if path != jev and TYPESAFE_IMPORT.search(text):
+            typesafe.append(rel)
+        if not rel.startswith("scripts/") and SYSTEM_ONE_IMPORT.search(text):
+            system_one.append(rel)
+    assert not typesafe, f"typesafe imported outside agents/_jev.py: {typesafe}"
+    assert not system_one, f"system-one adapter in application code: {system_one}"
+    for line in (BACKEND / "requirements.txt").read_text().splitlines():
+        spec = line.split("#")[0].strip()
+        if spec.lower().startswith("typesafe"):
+            assert re.fullmatch(r"typesafe-sdk==\d+\.\d+\.\d+", spec), f"not an exact pin: {line}"
+
+
+def test_inv_25_decision_states_carry_no_identifiers():
+    """Decision states are text only (A24 privacy gate: data minimisation in code)."""
+    from pydantic import BaseModel
+
+    from services import decisions
+
+    states = {
+        n: o
+        for n, o in vars(decisions).items()
+        if isinstance(o, type) and issubclass(o, BaseModel) and n.endswith("State")
+    }
+    assert A24_STATES <= set(states), f"missing: {sorted(A24_STATES - set(states))}"
+    for name, model in states.items():
+        assert not IDENTIFIER_FIELDS & set(model.model_fields), f"{name} carries identifier fields"

@@ -616,3 +616,32 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
         assert i.option_letters == E2E_CHECK_ITEM_OPTION_LETTERS
         assert i.correct_option == E2E_CHECK_ITEM_CORRECT_OPTION
     assert "check_items" in providers._FUNCTION_HANDLERS
+
+
+# ── Decision seam (learning loop PKG-05b) ─────────────────────────────────
+
+
+def test_env_module_registers_decision_handler_on_dispatch(monkeypatch):
+    """PKG-05b: the decision agent's E2E handler serves BOTH per-run output
+    types off the real schema — the token → "yes" / the first OPTION key,
+    else "no" / "none" — at the fixed E2E_DECISION_CONFIDENCE."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.decision import DecisionPickOutput, build_decision_message, decision_agent
+    from agents.function_handlers_e2e import E2E_DECISION_CONFIDENCE, E2E_DECISION_YES_TOKEN
+
+    opts = [("w_loop", "loop"), ("w_speed", "speed")]
+    hit = build_decision_message(f"Q {E2E_DECISION_YES_TOKEN}", [("S", "x")], opts)
+    miss = build_decision_message("Q", [("S", "x")], opts)
+    with decision_agent.override(model=model_for("decision")):
+        picks = [
+            decision_agent.run_sync(m, deps=_deps(), output_type=DecisionPickOutput).output
+            for m in (hit, miss)
+        ]
+        yes, no = (decision_agent.run_sync(m, deps=_deps()).output for m in (hit, miss))
+    assert [p.choice for p in picks] == ["w_loop", "none"]
+    assert (yes.answer, no.answer) == ("yes", "no")
+    assert yes.confidence == picks[1].confidence == E2E_DECISION_CONFIDENCE
+    # Request-path from PKG-10 on (match_wrong_reason without a prior grade);
+    # until then services/decisions.py is its only runner, and no route calls it.
+    assert "decision" in providers._FUNCTION_HANDLERS

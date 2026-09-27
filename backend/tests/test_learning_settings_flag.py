@@ -21,7 +21,6 @@ from test_learning_loop_invariants import reload_gate
 import routes.profile
 from main import app
 from models import SettingsResponse, UpdateSettingsBody
-from routes.profile import _SETTINGS_COLS
 
 client = TestClient(app)
 
@@ -36,7 +35,7 @@ def _mock_self():
 def _tables():
     """user_settings behaves like PostgREST: select returns only the columns it
     was asked for, even though the stored row also holds the loop flag."""
-    stored = {c.strip(): None for c in _SETTINGS_COLS.split(",")}
+    stored = {c.strip(): None for c in routes.profile._SETTINGS_COLS.split(",")}
     stored.update({"user_id": USER_ID, "theme": "light", FLAG: True})
     captured = {"selects": [], "updates": []}
 
@@ -57,7 +56,7 @@ def _tables():
 
 
 def test_learning_loop_beta_is_not_a_selected_settings_column():
-    cols = {c.strip() for c in _SETTINGS_COLS.split(",")}
+    cols = {c.strip() for c in routes.profile._SETTINGS_COLS.split(",")}
     assert FLAG not in cols, "the student settings select must not name the loop flag"
 
 

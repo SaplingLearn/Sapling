@@ -1,0 +1,9 @@
+{
+  "confidence": 0.9,
+  "feedback_hint": "Consider what happens when a recursive call doesn't have a condition to stop it. How does that differ from a standard loop?",
+  "item_results": [
+    "r1:no",
+    "r2:no"
+  ],
+  "matched_wrong_key": "w_loop"
+}
