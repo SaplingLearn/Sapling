@@ -1837,6 +1837,79 @@ def test_canonical_answer_is_matched_by_value():
     assert v == (True, "ngram")
 
 
+REF_CURRENT = "I = V/R = 5/2000 = 2.5 \u00d7 10^-3 A. Final answer: 2.5 \u00d7 10^-3 A."
+FA_CURRENT = "2.5 \u00d7 10^-3 A"
+
+
+@pytest.mark.parametrize(
+    "canonical,hint,stripped",
+    [
+        # canonical in plain decimal (PKG-04's prompt), hint in scientific notation
+        ("0.0025", "You should get 2.5 \u00d7 10\u207b\u00b3.", "You should get [withheld]."),
+        ("0.0025", "It is 2.5 x 10^-3 amps", "It is [withheld] amps"),
+        ("0.0025", "So I = 2.5e-3 here.", "So I = [withheld] here."),
+        ("0.0025", "So I = 2.5*10**-3.", "So I = [withheld]."),
+        ("0.0025", "About 25 \u00d7 10^-4, then.", "About [withheld], then."),
+        # canonical in e-notation, hint in plain decimal
+        ("2.5e-3", "So I = 0.0025", "So I = [withheld]"),
+        ("2.5e-3", "So I = 0.00250 A.", "So I = [withheld] A."),
+        ("1e3", "It is 1000 m.", "It is [withheld] m."),
+        ("6.022e23", "N is 602,200,000,000,000,000,000,000.", "N is [withheld]."),
+        # a signed canonical matches the magnitude, as the mantissa rule does
+        ("-0.0025", "It is 2.5 \u00d7 10^-3.", "It is [withheld]."),
+    ],
+)
+def test_canonical_answer_is_matched_by_value_in_any_notation(canonical, hint, stripped):
+    """A numeric item's canonical_answer also matches a number whose WRITTEN
+    value (with an exponent right after it: e-notation, "\u00d7 10^k", "x 10^k", a
+    superscript) equals it, in either direction: the hint's unit-less
+    scientific notation otherwise passes both the final-answer run (it carries
+    the unit) and the mantissa match."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": FA_CURRENT, "canonical_answer": canonical}
+    assert detect_leak(REF_CURRENT, hint, Rung.H3, **kw) == (True, "final_answer")
+    once = strip_leak(hint, REF_CURRENT, **kw)
+    assert once == stripped
+    assert detect_leak(REF_CURRENT, once, Rung.H0, **kw) == (False, "none")
+    assert strip_leak(once, REF_CURRENT, **kw) == once
+
+
+def test_a_number_is_its_value_whatever_exponent_follows_it():
+    """The bare number with the canonical value is flagged even when an
+    exponent follows it, as the mantissa rule already is: otherwise a strip
+    that masks the exponent's base for another rule (here the final answer
+    "10") would leave a bare "0.1" the detector then flags (a seeded fuzz
+    found it)."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": "10", "canonical_answer": "1e-1"}
+    text = "Use 0.1, 10\u207b\u00b3 here."
+    assert detect_leak("x", text, Rung.H3, **kw) == (True, "final_answer")
+    once = strip_leak(text, "x", **kw)
+    assert "0.1" not in once and detect_leak("x", once, Rung.H0, **kw) == (False, "none")
+    assert strip_leak(once, "x", **kw) == once
+
+
+@pytest.mark.parametrize(
+    "canonical,hint",
+    [
+        ("0.0025", "Try 2.5 \u00d7 10^-2 first."),  # another value
+        ("0.0025", "Divide 5 by 2000."),
+        ("0.0025", "The exponent is -3 and the mantissa 2.5?"),
+        ("0.0025", "What is 2.5 e.g. in amps?"),  # "e" not before a digit
+    ],
+)
+def test_canonical_value_in_notation_is_not_a_partial_match(canonical, hint):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    kw = {"final_answer": FA_CURRENT, "canonical_answer": canonical}
+    assert detect_leak(REF_CURRENT, hint, Rung.H3, **kw) == (False, "none"), hint
+
+
 def test_a_short_reference_leaks_when_it_appears_whole():
     """A reference shorter than LEAK_NGRAM tokens has no LEAK_NGRAM-gram, so the
     n-gram rule compares its whole token run instead (PKG-04's leak_in_prompt
@@ -2000,6 +2073,9 @@ _PROPERTY_CASES = [
     ("It is 6.022e23 molecules", "6.022e23", "6.022e23"),
     ("The root is -3.", "-3", "-3"),
     ("Expand x^2 - 6x + 9: it factors as (x-3)^2.", "(x-3)^2", None),
+    (REF_CURRENT, FA_CURRENT, "0.0025"),
+    (REF_CURRENT, FA_CURRENT, "2.5e-3"),
+    ("It is 1000 m.", "1000 m", "1e3"),
 ]
 
 
@@ -2019,6 +2095,7 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
     seps += ["*", "×", "·", "−", "²", "³", ".", "", "[withheld]"]
     numbers = ["1250", "1,250", "01250.0", "12,500", "2.5", "2.500", "25", "7.0", "250", ".5"]
     numbers += ["3x^2", "6x²", "6*x**2", "6", "x", "10^23", "m/s²", "−3", "14.0"]
+    numbers += ["2.5e-3", "0.0025", "25", "10⁻³", "10^-4", "e", "10", "1000", "1e3"]
     for reference, final, canonical in _PROPERTY_CASES:
         words = reference.split() + final.split() + numbers
         for _ in range(200):
@@ -2063,7 +2140,9 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
             continue
         kw = {
             "final_answer": final,
-            "canonical_answer": rng.choice([None, "1", "0.5", "-3", "1250", "6.022e23"]),
+            "canonical_answer": rng.choice(
+                [None, "1", "0.5", "-3", "1250", "6.022e23", "0.0025", "2.5e-3", "1e3", "0.1"]
+            ),
         }
         once = strip_leak(text, reference, **kw)
         assert detect_leak(reference, once, Rung.H0, **kw).leaked is False, (text, once, kw)

@@ -410,17 +410,33 @@ _RELATIONS = frozenset({"=", "≈"})
 _FRACTION = "/"
 
 
-def _exponent(after: Sequence[str]) -> str:
+# The most tokens an exponent spans after its number: "x", "10", "^", a sign
+# and the digits.
+_EXPONENT_SPAN = len(_X_TIMES_TEN) + 2
+
+
+def _exponent(after: Sequence[str]) -> tuple[str, int]:
     """The integer exponent written right after a number ("e23", "× 10^23",
-    "x 10^-3"), as text; "0" when there is none."""
+    "x 10^-3"), as text, and how many tokens of `after` it spans; ("0", 0)
+    when there is none."""
     for lead in (_E_NOTATION, _TIMES_TEN, _X_TIMES_TEN):
         if tuple(after[: len(lead)]) != lead:
             continue
-        rest = list(after[len(lead) :])
+        rest = list(after[len(lead) : _EXPONENT_SPAN])
         sign = rest.pop(0) if rest and rest[0] in _SIGNS else ""
         if rest and rest[0].isdigit():
-            return sign + rest[0]
-    return "0"
+            return sign + rest[0], len(lead) + len(sign) + 1
+    return "0", 0
+
+
+def written_value(values: Sequence[str], i: int) -> tuple[Decimal | None, int]:
+    """The magnitude of the number `values[i]` (answer-token values) scaled by
+    an exponent written right after it ("2.5 × 10^-3" and "2.5e-3" are
+    0.0025), and the index of the last token it spans (i when there is no
+    exponent). Reads at most _EXPONENT_SPAN tokens, so a scan over every
+    number stays linear."""
+    exponent, used = _exponent(values[i + 1 : i + 1 + _EXPONENT_SPAN])
+    return _decimal(f"{values[i]}e{exponent}"), i + used
 
 
 def _stated_value(tokens: list[AnswerToken]) -> Decimal | None:
@@ -439,7 +455,8 @@ def _stated_value(tokens: list[AnswerToken]) -> Decimal | None:
         if values[i + 1 : i + 2] == [_FRACTION] and i + 2 < len(tokens) and tokens[i + 2].number:
             numerator, denominator = _decimal(f"{sign}{values[i]}"), _decimal(values[i + 2])
             return numerator / denominator if numerator is not None and denominator else None
-        return _decimal(f"{sign}{values[i]}e{_exponent(values[i + 1 :])}")
+        value, _ = written_value(values, i)
+        return -value if sign and value is not None else value
     return None
 
 

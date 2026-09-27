@@ -750,8 +750,7 @@ class TestFinalAnswerRules:
                 for r in validate_draft(
                     _mc_draft(
                         reference_answer=(
-                            "A: The update step size, not the loss value. "
-                            f"Final answer: {longer}."
+                            f"A: The update step size, not the loss value. Final answer: {longer}."
                         ),
                         final_answer=longer,
                     )

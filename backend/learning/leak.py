@@ -12,7 +12,9 @@ the supervisor architecture's deterministic solution stripper). Two rules:
   (checks.answer_tokens: numbers compared by value, whitespace, '**' as '^',
   unicode superscripts, unicode minus, multiplication signs and surrounding
   punctuation normalised), or, for a numeric item, a number with the value of
-  its canonical_answer occurs.
+  its canonical_answer occurs: its mantissa (a sign and an e-notation exponent
+  are not part of it), or its full value written in any notation (a number
+  with an exponent right after it: "2.5 × 10^-3" and "2.5e-3" are 0.0025).
 
 The reference is never parsed for a final answer (A34): extracting one from
 free text is an unbounded heuristic, and the generator knows the answer, so
@@ -29,10 +31,18 @@ from __future__ import annotations
 
 import bisect
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Literal, NamedTuple
 
 from learning import params
-from learning.checks import AnswerToken, answer_run, answer_tokens, find_runs, number_value
+from learning.checks import (
+    AnswerToken,
+    answer_run,
+    answer_tokens,
+    find_runs,
+    number_value,
+    written_value,
+)
 from learning.ladder import Rung
 
 Detector = Literal["none", "ngram", "final_answer"]
@@ -41,7 +51,9 @@ WITHHELD = "[withheld]"
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
 # PKG-04's canonical_answer is "one number as plain decimal text" (float()-
 # parseable at write time). A sign and an e-notation exponent are not part of
-# the matched value (group 1): "-3" matches a "3", "6.022e23" a "6.022".
+# the matched mantissa (group 1): "-3" matches a "3", "6.022e23" a "6.022";
+# the whole match, unsigned, is the magnitude a number written in any
+# notation is compared with.
 _CANONICAL = re.compile(
     r"[-+]?((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?"
 )
@@ -58,14 +70,21 @@ def tokens(text: str) -> list[str]:
 
 class _Answer(NamedTuple):
     run: tuple[str, ...]  # the final answer as answer-token values
-    canonical: str | None  # the canonical_answer's value, when it is a number
+    canonical: str | None  # the canonical_answer's mantissa, when it is a number
+    magnitude: Decimal | None  # the canonical_answer's full value, unsigned
 
 
-def _canonical_value(canonical_answer: str | None) -> str | None:
+def _canonical_value(canonical_answer: str | None) -> tuple[str | None, Decimal | None]:
     if canonical_answer is None:
-        return None
+        return None, None
     m = _CANONICAL.fullmatch(str(canonical_answer).strip())
-    return number_value(m.group(1)) if m else None
+    if not m:
+        return None, None
+    try:
+        magnitude = abs(Decimal(m.group(0).replace(",", "")))
+    except InvalidOperation:
+        magnitude = None
+    return number_value(m.group(1)), magnitude
 
 
 def _answer(final_answer: str | None, canonical_answer: str | None) -> _Answer:
@@ -74,17 +93,32 @@ def _answer(final_answer: str | None, canonical_answer: str | None) -> _Answer:
     run = answer_run(final_answer)
     if not run:
         raise ValueError(f"final_answer {final_answer!r} holds no answer token (A34)")
-    return _Answer(run, _canonical_value(canonical_answer))
+    return _Answer(run, *_canonical_value(canonical_answer))
 
 
 def _answer_hits(toks: list[AnswerToken], answer: _Answer) -> list[tuple[int, int]]:
     """The spans of every final-answer run in `toks` and, for a numeric item,
-    of every number with the canonical value."""
+    of every number with the canonical mantissa, of every number whose written
+    value (its exponent included, spanned too) is the canonical value, and of
+    every number that is that value without its exponent."""
     values = [t.value for t in toks]
     k = len(answer.run)
     hits = [(toks[i].start, toks[i + k - 1].end) for i in find_runs(values, answer.run)]
     if answer.canonical is not None:
         hits += [(t.start, t.end) for t in toks if t.number and t.value == answer.canonical]
+    if answer.magnitude is not None:
+        for i, t in enumerate(toks):
+            if not t.number:
+                continue
+            value, last = written_value(values, i)
+            if value == answer.magnitude:
+                hits.append((t.start, toks[last].end))
+            elif Decimal(t.value) == answer.magnitude:
+                # The bare number counts too, whatever exponent follows it (as
+                # the mantissa rule does): masking can only cut an exponent
+                # off a number, never add one, so what the stripper leaves is
+                # clean.
+                hits.append((t.start, t.end))
     return hits
 
 
