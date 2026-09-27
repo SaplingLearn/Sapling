@@ -12,10 +12,12 @@ import {
   normalisedIngestPath,
   upstreamRequestHeaders,
   upstreamTarget,
-  upstreamUrl,
 } from "./ingestProxy";
 
-describe("upstreamUrl", () => {
+/** The upstream URL the proxy would call, or null when it refuses. */
+const upstreamUrl = (pathname: string, search: string) => upstreamTarget(pathname, search)?.url ?? null;
+
+describe("upstreamTarget", () => {
   it("routes events and flags to the ingestion host, keeping trailing slash + query", () => {
     expect(upstreamUrl("/ingest/e/", "?ip=0&_=1&ver=1.2")).toBe("https://us.i.posthog.com/e/?ip=0&_=1&ver=1.2");
     expect(upstreamUrl("/ingest/flags/", "?v=2")).toBe("https://us.i.posthog.com/flags/?v=2");
@@ -78,6 +80,16 @@ describe("immutable asset caching", () => {
     expect(isImmutableAsset("/static/array.js", "")).toBe(false);
     expect(isImmutableAsset("/array/phc_x/config.js", "?v=1")).toBe(false);
     expect(isImmutableAsset("/e/", "?v=1")).toBe(false);
+    // posthog-js's semver asset paths are versioned too.
+    expect(isImmutableAsset("/static/1.434.15/surveys.js", "")).toBe(true);
+    expect(isImmutableAsset("/static/1.434.15-beta.1/recorder.js", "")).toBe(true);
+    expect(isImmutableAsset("/static/latest/surveys.js", "")).toBe(false);
+  });
+
+  it("shares one mount point with posthog-js's api_host", async () => {
+    const { DEFAULT_API_HOST } = await import("./analytics");
+    const { INGEST_PREFIX } = await import("./ingestProxy");
+    expect(DEFAULT_API_HOST).toBe(INGEST_PREFIX);
   });
 
   it("upstreamTarget validates once and hands back the normalised path", () => {

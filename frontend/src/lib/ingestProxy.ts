@@ -23,7 +23,10 @@
 export const POSTHOG_INGEST_ORIGIN = "https://us.i.posthog.com";
 export const POSTHOG_ASSETS_ORIGIN = "https://us-assets.i.posthog.com";
 
-/** Mount point of the proxy; must match analytics.ts DEFAULT_API_HOST. */
+/**
+ * Mount point of the proxy — the one definition: analytics.ts's
+ * `DEFAULT_API_HOST` (posthog-js `api_host`) is this constant.
+ */
 export const INGEST_PREFIX = "/ingest";
 
 /**
@@ -88,23 +91,24 @@ export function upstreamTarget(pathname: string, search: string): IngestTarget |
   return { url: target.toString(), path: rest };
 }
 
-/** Convenience: just the upstream URL, or null to refuse. */
-export function upstreamUrl(pathname: string, search: string): string | null {
-  return upstreamTarget(pathname, search)?.url ?? null;
-}
 
 /**
- * A versioned SDK bundle (`/ingest/static/<name>.js?v=<lib version>`):
- * posthog-js puts its own version in the query, so a given URL never changes
- * and the browser can keep it for good instead of revalidating every 4 hours
- * (PostHog's own `max-age=14400`). Unversioned files — `static/array.js`,
+ * A versioned SDK bundle: posthog-js asks for either the legacy
+ * `/ingest/static/<name>.js?v=<lib version>` or (its `'fallback'` default)
+ * the semver path `/ingest/static/<lib version>/<name>.js`. Either way the
+ * version is in the URL, so a given URL never changes and the browser can
+ * keep it for good instead of revalidating every 4 hours (PostHog's own
+ * `max-age=14400`). Unversioned files — `static/array.js`,
  * `array/<key>/config.js` — keep PostHog's headers.
  */
 export const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
+const SEMVER_STATIC = /^\/static\/\d+\.\d+\.\d+[^/]*\/[^/]+$/;
+
 /** `path` is an already-normalised path from upstreamTarget. */
 export function isImmutableAsset(path: string, search: string): boolean {
-  return path.startsWith("/static/") && new URLSearchParams(search).has("v");
+  if (!path.startsWith("/static/")) return false;
+  return SEMVER_STATIC.test(path) || new URLSearchParams(search).has("v");
 }
 
 /**
