@@ -1910,6 +1910,130 @@ def test_final_answer_prefers_the_answer_after_a_final_answer_cue():
     assert final_answer("The force is 10 N m^2; dividing leaves 5") == ("5",)
 
 
+def test_final_answer_takes_the_last_cue_equals_included():
+    """'=' is one more final-answer cue (decision 2(b)), not an absolute
+    override: the last cue of any kind decides, so a reference that first
+    defines the function or a variable with '=' still names its answer with a
+    later "is"/"gives"; the '=' clause is read (whole, as before) only when '='
+    is that cue. A later cue whose clause names nothing ("which is the only
+    root") hands over to the earlier cue."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer
+
+    for reference, answer, symbolic, restated in (
+        (
+            "For f(x) = 2x^3 + 5, the derivative is 6x^2.",
+            ("6x", "2"),
+            "So you get 6x^2.",
+            "Start from f(x) = 2x^3 + 5.",
+        ),
+        (
+            "Let f(x) = 4x^3 + 7. Differentiating term by term, f'(x) is 12x^2.",
+            ("12x", "2"),
+            "It comes out to 12x^2",
+            "Look at f(x) = 4x^3 + 7 again.",
+        ),
+        (
+            "d/dx(2x^3) = 6x^2 and d/dx(5) = 0, so the derivative is 6x^2.",
+            ("6x", "2"),
+            "So you get 6x^2.",
+            "What is the derivative of a constant? It is 0.",
+        ),
+        (
+            "With n = 3, the power rule gives 6x^2.",
+            ("6x", "2"),
+            "So you get 6x^2.",
+            "Here n = 3: what does the power rule say?",
+        ),
+        (
+            "The derivative of 2x^3 + 5 is 6x^2. Its value at x = 1 is 6.",
+            ("6",),
+            "So you get 6x^2.",
+            "Differentiate 2x^3 + 5 first.",
+        ),
+    ):
+        assert final_answer(reference) == answer, reference
+        assert detect_leak(reference, symbolic, Rung.H3) == (True, "final_answer"), reference
+        assert detect_leak(reference, restated, Rung.H3) == (False, "none"), reference
+    # the '=' clause still decides when '=' is the last cue, or the later cue names nothing
+    assert final_answer("x = 7, which is the only root.") == ("7",)
+    assert final_answer("F = m a, which is Newton's second law.") == ("m", "a")
+    assert final_answer("v = 2.50 m/s is the speed") == ("2", "50", "m", "s", "is", "the", "speed")
+    assert final_answer("The answer is x = 7") == ("7",)
+
+
+def test_final_answer_walks_back_past_a_cue_that_names_nothing():
+    """The last cue's clause may name nothing ("Note that 5 is a constant.",
+    "The 5 is a constant so it goes away."): the cues are walked from last to
+    first and the first clause that names a candidate wins, so the answer's
+    own cue is found and the explanation's constant is no answer. A candidate
+    after the last cue stops the walk (position decides, as before)."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer
+
+    for reference, answer, hint in (
+        (
+            "The derivative of 2x^3 + 5 is 6x^2. This is because the constant 5 vanishes.",
+            ("6x", "2"),
+            "So you get 6x^2.",
+        ),
+        (
+            "The derivative of 2x^3 + 5 is 6x^2. Note that 5 is a constant.",
+            ("6x", "2"),
+            "So you get 6x^2.",
+        ),
+        (
+            "The derivative of 2x^3 + 5 is 6x^2. The 5 is a constant so it goes away.",
+            ("6x", "2"),
+            "So you get 6x^2.",
+        ),
+        (
+            "The derivative of 4x^3 + 7 is 12x^2, since the derivative of the constant 7 is 0.",
+            ("12x", "2"),
+            "It comes out to 12x^2",
+        ),
+    ):
+        assert final_answer(reference) == answer, reference
+        assert detect_leak(reference, hint, Rung.H2) == (True, "final_answer"), reference
+        for constant in ("5", "7"):
+            clean = f"What happens to the constant {constant} when you differentiate?"
+            assert detect_leak(reference, clean, Rung.H2) == (False, "none"), (reference, clean)
+    # a candidate after the last cue stops the walk: position decides
+    assert final_answer("The answer is\n42.") == ("42",)
+    assert final_answer("The force is 10 N; dividing by the 2 kg mass leaves 5 m/s^2.") == ("5",)
+    assert final_answer("After 12 steps the value is x =") == ("12",)
+
+
+def test_final_answer_skips_a_justification():
+    """A justification ("because …", "since …", "note that …" up to the next
+    clause break) or a parenthetical gloss ("4 (2^2)") names no answer: its
+    numbers, power terms and cues are skipped, so the number a cue names is
+    not displaced by the power that explains it. A sentence-initial "Since …,"
+    ends at its comma. When every candidate sits in one, they are read after
+    all."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer
+
+    for reference, answer in (
+        ("There are 8 outcomes because 2^3 counts them.", ("8",)),
+        ("The area grows by a factor of 4 because 2^2 is the scale factor squared.", ("4",)),
+        ("The radius doubles, so the area grows by a factor of 4 (2^2).", ("4",)),
+        ("Doubling the side makes the volume 8 times larger because of 2^3.", ("8",)),
+        ("The probability is 0.25 because (0.5)^2 gives it.", ("0", "25")),
+        ("The pH is 3 because the concentration is 10^-3 M.", ("3",)),
+        ("Since 2x^3 differentiates to 6x^2, the answer is 7.", ("7",)),
+        ("Note that the answer is 42.", ("42",)),
+        ("Since the constant vanishes the derivative is 6x^2.", ("6x", "2")),
+    ):
+        assert final_answer(reference) == answer, reference
+    ref = "There are 8 outcomes because 2^3 counts them."
+    assert detect_leak(ref, "so there are 8", Rung.H0) == (True, "final_answer")
+    assert detect_leak(ref, "What is 2^3?", Rung.H0) == (False, "none")
+    # a power base in brackets is no parenthetical
+    assert final_answer("Expand x^2 - 6x + 9: it factors as (x-3)^2.") == ("x", "3", "2")
+    assert final_answer("It is 4 ^ ( 2 )") == ("4", "2")
+
+
 # Coordinator decision 2(a): PKG-04's numeric canonical_answer, decrypted by
 # the caller, is the final answer; the reference text is not parsed for it.
 REF_SLIDE = "The block slides 14 m before it stops; friction removes 3 J per metre of travel."
@@ -2023,6 +2147,11 @@ def test_final_answer_runs_in_linear_time():
         "2x^2 + " * (big // 7) + "5",  # one long expression run
         "5 " + "is" + " " * big + "6x^2",  # a long gap after a cue
         "7 " + "+ " * (big // 2) + "3x^2",  # operators with no operand between
+        "= " * (big // 2) + "x",  # many empty '=' clauses
+        "x = is " * (big // 7),  # '=' and word cues interleaved, none naming anything
+        "because " * (big // 8) + "5",  # many justifications
+        "( " * (big // 4) + ") " * (big // 4),  # deeply nested parentheticals
+        "5 " * (big // 4) + "is x " * (big // 10),  # a long cue walk past candidates
     ):
         start = time.perf_counter()
         detect_leak(reference, reference, Rung.H3)
@@ -2160,6 +2289,10 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
         "Expand x^2 - 6x + 9: it factors as (x-3)^2.",
         "Dilute 5 mL into 5 L; the level drops by 10^-3",
         "The derivative is 6x^2, since the constant 5 vanishes.",
+        "For f(x) = 2x^3 + 5, the derivative is 6x^2.",
+        "There are 8 outcomes because 2^3 counts them.",
+        "The derivative of 2x^3 + 5 is 6x^2. Note that 5 is a constant.",
+        "The radius doubles, so the area grows by a factor of 4 (2^2).",
     ):
         words = reference.split() + numbers
         for _ in range(200):

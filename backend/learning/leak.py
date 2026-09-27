@@ -10,14 +10,15 @@ the supervisor architecture's deterministic solution stripper). Two rules:
   every number compared by value ("1,250" = "1250", "2.50" = "2.5"), so a
   reformatted answer still leaks. The final answer is the item's numeric
   canonical_answer when the caller passes one (PKG-04's, decrypted; the
-  reference is then not parsed for it); else the reference's: the clause
-  after its last '='; else, by the last final-answer cue and then by
-  position, its last standalone number (not a numbered-step label, an
-  exponent or a power's base, so scientific notation gives its mantissa) or
-  its last power term with its +/- expression run ("12x^2", "6x^2 + 2x",
-  "(x-3)^2") when a digit that is no exponent sits in it, so a unit's
-  exponent ("9.8 m/s^2") never displaces the number; Markdown emphasis read
-  as its text.
+  reference is then not parsed for it); else the reference's, named by the
+  last final-answer cue whose clause names one ('=' is a cue: its whole
+  clause), else by position: its last standalone number (not a numbered-step
+  label, an exponent or a power's base, so scientific notation gives its
+  mantissa) or its last power term with its +/- expression run ("12x^2",
+  "6x^2 + 2x", "(x-3)^2") when a digit that is no exponent sits in it, so a
+  unit's exponent ("9.8 m/s^2") never displaces the number; a justification
+  ("because …", "since …", "(2^2)") names nothing; Markdown emphasis read as
+  its text.
 
 Tokens are ASCII alphanumeric runs, lowercased (`[a-z0-9]+` over lowercase for
 ASCII text). The stripper tokenizes the same way over the original text, so
@@ -92,12 +93,15 @@ _ASCII_DIGITS = frozenset(string.digits)
 # A power right after "<number> x|×|*|·|/|per|times" is that number's factor
 # (scientific notation, a rate), never an answer over it.
 _TIMES = frozenset({"x", "×", "*", "·", "/", "per", "times"})
-# A final-answer cue (whole words, any case). The clause after the LAST one
-# names the answer when it holds a power run or the last number.
+# A final-answer cue (whole words, any case; '=' is one too). The cues are
+# walked from the last: the first clause that names a candidate wins.
 _CUE = re.compile(
     r"\b(?:(?:is|are|was|equals|gives|yields|(?:comes|works)[ \t]+out[ \t]+to)\b|answer[ \t]*:)",
     re.I,
 )
+# A justification ("because 2^3 counts them", "since the constant 5 vanishes",
+# "note that 5 is a constant") names no answer; it runs to the next clause break.
+_ASIDE = re.compile(r"\b(?:because|since|note[ \t]+that)\b", re.I)
 
 
 # By-value tokens for the final-answer rule: an ASCII number (thousands
@@ -186,72 +190,186 @@ def _power_runs(text: str) -> list[_Run]:
     return runs
 
 
-def _last_cue_clause(text: str) -> tuple[int, int] | None:
-    """The span of the clause after the text's last final-answer cue ("is",
-    "gives", "comes out to", "answer:", …), up to the next _CLAUSE_BREAK."""
-    cue = None
-    for cue in _CUE.finditer(text):
-        pass
-    if cue is None:
-        return None
-    brk = _CLAUSE_BREAK.search(text, cue.end())
-    return cue.end(), brk.start() if brk else len(text)
+def _next_break(breaks: list[int], pos: int, default: int) -> int:
+    """The start of the first clause break at or after `pos` (`breaks` is the
+    sorted list of _CLAUSE_BREAK starts), else `default`."""
+    i = bisect.bisect_left(breaks, pos)
+    return breaks[i] if i < len(breaks) else default
+
+
+def _asides(text: str, breaks: list[int]) -> list[tuple[int, int]]:
+    """Disjoint, sorted spans that name no answer: a justification ("because",
+    "since", "note that", up to the next clause break) and a parenthetical gloss
+    (a "(" at the start or after whitespace, up to its matching ")" when that is
+    no power's base: "4 (2^2)", not "(x-3)^2" or "f(x)")."""
+    spans = [(m.start(), _next_break(breaks, m.end(), len(text))) for m in _ASIDE.finditer(text)]
+    opened: list[int] = []
+    for i, ch in enumerate(text):
+        if ch == "(":
+            opened.append(i)
+        elif ch == ")" and opened:
+            j = opened.pop()
+            if (j == 0 or text[j - 1].isspace()) and not _BASE_OF.match(text, i):
+                spans.append((j, i + 1))
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+class _Candidates:
+    """The final-answer candidates outside the asides, each list in text order
+    (with its start offsets, for bisect)."""
+
+    def __init__(self, numbers: list[re.Match[str]], runs: list[_Run]):
+        self.numbers = numbers
+        self.runs = runs  # every power run
+        self.answers = [r for r in runs if r.answer]  # the answer-capable ones
+        self.number = numbers[-1] if numbers else None  # the last number
+        self._starts = {
+            "numbers": [m.start() for m in numbers],
+            "runs": [r.start for r in runs],
+            "answers": [r.start for r in self.answers],
+        }
+
+    def last_in(self, kind: str, lo: int, hi: int):
+        """The last `kind` candidate that starts in [lo, hi), else None."""
+        starts = self._starts[kind]
+        i = bisect.bisect_left(starts, hi) - 1
+        return getattr(self, kind)[i] if i >= 0 and starts[i] >= lo else None
+
+    def last_start(self) -> int:
+        return max(
+            self._starts["numbers"][-1] if self.numbers else -1,
+            self._starts["runs"][-1] if self.runs else -1,
+        )
+
+
+def _cue_names(text: str, cands: _Candidates, lo: int, hi: int) -> str | None:
+    """What the clause text[lo:hi] after a final-answer cue names: an
+    answer-capable power run that starts in it; else the last number when it
+    sits there; else, when the clause holds no number at all, any power run in
+    it ("is x^2"). A cue never promotes an earlier number."""
+    run = cands.last_in("answers", lo, hi)
+    if run is not None:
+        return text[run.start : run.end]
+    number = cands.number
+    if number is not None and lo <= number.start() < hi:
+        return number.group(1)
+    if cands.last_in("numbers", lo, hi) is None:
+        run = cands.last_in("runs", lo, hi)
+        if run is not None:
+            return text[run.start : run.end]
+    return None
+
+
+def _eq_clauses(raw: str) -> list[tuple[int, int] | None]:
+    """For each '=' of `raw`, in order, the span of its clause (up to the next
+    clause break) when that holds a token, else None."""
+    eqs = [i for i, ch in enumerate(raw) if ch == "="]
+    if not eqs:
+        return []
+    breaks = [m.start() for m in _CLAUSE_BREAK.finditer(raw)]
+    starts = [m.start() for m in _TOKEN.finditer(raw)]
+    spans: list[tuple[int, int] | None] = []
+    for i in eqs:
+        end = _next_break(breaks, i + 1, len(raw))
+        j = bisect.bisect_left(starts, i + 1)
+        spans.append((i + 1, end) if j < len(starts) and starts[j] < end else None)
+    return spans
+
+
+def _pick(
+    raw: str,
+    text: str,
+    cues: list[tuple[int, int, int]],
+    eq_clauses: list[tuple[int, int] | None],
+    breaks: list[int],
+    numbers: list[re.Match[str]],
+    runs: list[_Run],
+    asides: list[tuple[int, int]],
+) -> str | None:
+    def outside(pos: int) -> bool:
+        i = bisect.bisect_right(asides, (pos, len(text) + 1)) - 1
+        return i < 0 or pos >= asides[i][1]
+
+    cands = _Candidates(
+        [m for m in numbers if outside(m.start())], [r for r in runs if outside(r.start)]
+    )
+    last = cands.last_start()
+    # The cues ('=' included), last to first: the first clause that names a
+    # candidate wins; a '=' clause is read whole, on the raw text. A candidate
+    # after a cue whose clause named nothing stops the walk: position decides.
+    for start, end, eq in cues:
+        if not outside(start):
+            continue
+        if eq >= 0:
+            span = eq_clauses[eq]
+            if span is not None:
+                return raw[span[0] : span[1]]
+        else:
+            named = _cue_names(text, cands, end, _next_break(breaks, end, len(text)))
+            if named is not None:
+                return named
+        if last >= end:
+            break
+    # By position: the last answer-capable power run unless the last number
+    # comes after it (a number inside the run is part of it); else the last
+    # number; else the last power run.
+    number, answers = cands.number, cands.answers
+    if answers and (number is None or number.start() < answers[-1].end):
+        return text[answers[-1].start : answers[-1].end]
+    if number is not None:
+        return number.group(1)
+    return text[cands.runs[-1].start : cands.runs[-1].end] if cands.runs else None
 
 
 def _final_answer_text(reference: str) -> str:
-    reference = _EMPHASIS.sub(r"\2", reference)
-    if "=" in reference:
-        clause = _CLAUSE_BREAK.split(reference.rsplit("=", 1)[1], maxsplit=1)[0]
-        if tokens(clause):
-            return clause
-    text = _SCI_TIMES.sub(" x ", _POWER_SPACE.sub("", _STEP_LABEL.sub(" ", reference)))
+    raw = _EMPHASIS.sub(r"\2", reference)
+    text = _SCI_TIMES.sub(" x ", _POWER_SPACE.sub("", _STEP_LABEL.sub(" ", raw)))
     numbers = [
         m
         for m in _STANDALONE_NUMBER.finditer(text)
         if not _is_exponent(text, m.start()) and not _BASE_OF.match(text, m.end())
     ]
-    number = numbers[-1] if numbers else None
     runs = _power_runs(text)
-    answers = [r for r in runs if r.answer]
-    clause = _last_cue_clause(text)
-    if clause is not None:
-        # The cue names the answer: an answer-capable power run that starts in
-        # its clause; else the last number when it sits there; else, when the
-        # clause holds no number at all, any power run in it ("is x^2"). It
-        # never promotes an earlier number.
-        lo, hi = clause
-        named = [r for r in answers if lo <= r.start < hi]
-        if named:
-            return text[named[-1].start : named[-1].end]
-        if number is not None and lo <= number.start() < hi:
-            return number.group(1)
-        named = [r for r in runs if lo <= r.start < hi]
-        if named and not any(lo <= m.start() < hi for m in numbers):
-            return text[named[-1].start : named[-1].end]
-    # By position: the last answer-capable power run unless the last number
-    # comes after it (a number inside the run is part of it).
-    if answers and (number is None or number.start() < answers[-1].end):
-        return text[answers[-1].start : answers[-1].end]
-    if number is not None:
-        return number.group(1)
-    return text[runs[-1].start : runs[-1].end] if runs else ""
+    breaks = [m.start() for m in _CLAUSE_BREAK.finditer(text)]
+    # (start, end, k): a word cue (k = -1) or the k-th '=' (the preprocessing
+    # adds and drops no '=', so the k-th '=' of `text` is the k-th of `raw`).
+    cues = [(m.start(), m.end(), -1) for m in _CUE.finditer(text)]
+    cues += [(i, i + 1, k) for k, i in enumerate(i for i, ch in enumerate(text) if ch == "=")]
+    cues.sort(reverse=True)
+    eq_clauses = _eq_clauses(raw)
+    asides = _asides(text, breaks)
+    # Asides name no answer; when every candidate sits in one, read them anyway.
+    picked = _pick(raw, text, cues, eq_clauses, breaks, numbers, runs, asides)
+    if picked is None and asides:
+        picked = _pick(raw, text, cues, eq_clauses, breaks, numbers, runs, [])
+    return picked or ""
 
 
 def final_answer(reference: str, *, canonical_answer: str | None = None) -> tuple[str, ...]:
     """Token run of the final answer. With a usable `canonical_answer` (PKG-04's
     numeric value, decrypted by the caller) it is that value's canonical
-    spelling and the reference is not parsed. Otherwise the reference's: the
-    clause after its last '='; else a choice between its last standalone number
-    (not a numbered-step label, an exponent after "^" / a "**" touching its
-    base, or a power's base, so "6.02 x 10^23" gives its mantissa) and its
-    power runs (a power term with the operands a spaced +/- joins to it:
-    "6x^2 + 2x", "(x-3)^2"): the clause after the last final-answer cue
-    ("is", "gives", "comes out to", "answer:", …) names it when it holds an
-    answer-capable run, the last number, or (holding no number) any power run;
-    else the last answer-capable run (a digit that is no exponent in it, not a
-    number's "x 10^n" / "per" factor) unless the last number comes after it;
-    else the last number; else the last power run ("m/s^2"); () when none.
-    Markdown emphasis ("**42**") is read as its text first."""
+    spelling and the reference is not parsed. Otherwise the reference's, a
+    choice between its last standalone number (not a numbered-step label, an
+    exponent after "^" / a "**" touching its base, or a power's base, so
+    "6.02 x 10^23" gives its mantissa) and its power runs (a power term with
+    the operands a spaced +/- joins to it: "6x^2 + 2x", "(x-3)^2"), none of
+    them inside a justification ("because …", "since …", "note that …" to the
+    clause break; a parenthetical "(2^2)"). The final-answer cues ("is",
+    "gives", "comes out to", "answer:", "=", …) are walked from the last: a
+    '=' names its whole clause; a word cue's clause names an answer-capable
+    run in it, the last number, or (holding no number) any power run; a cue
+    that names nothing hands over to the one before it unless a candidate
+    follows it. Then by position: the last answer-capable run (a digit that is
+    no exponent in it, not a number's "x 10^n" / "per" factor) unless the last
+    number comes after it; else the last number; else the last power run
+    ("m/s^2"); () when none. When every candidate sits in a justification,
+    they are read after all. Markdown emphasis ("**42**") is read first."""
     return _answer_runs(reference, canonical_answer)[0]
 
 
