@@ -787,8 +787,11 @@ def generate_for_document(
 # concurrent uploads would starve every other threaded call in the process
 # (the next upload's extraction and persist among them), so real-mode drafting
 # runs HERE, CHECK_ITEM_DRAFT_WORKERS at a time; the rest wait in the queue.
-# A restart drops what is queued or in flight — the nightly `--all-courses`
-# backfill (spec §11.7) drafts it then.
+# The workers are not daemons: concurrent.futures joins them at interpreter
+# exit after they drain the queue, so a graceful shutdown (a deploy's SIGTERM,
+# a `reload=True` restart) waits for every queued drafting to finish, and only
+# the platform's kill after its grace period drops what is still queued or in
+# flight. The nightly `--all-courses` backfill (spec §11.7) drafts that then.
 
 _draft_pool_instance: ThreadPoolExecutor | None = None
 _draft_pool_lock = threading.Lock()
