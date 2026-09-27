@@ -361,7 +361,10 @@ def _list(*, gate: bool, query: str = "", order_due=None, rows=None):
             def _select(cols, **kw):
                 calls["select_cols"] = cols
                 calls["select_kwargs"] = kw
-                return [dict(r) for r in source]
+                # PostgREST returns exactly the named columns: a column the
+                # route does not select is absent from its rows.
+                names = cols.split(",")
+                return [{c: r[c] for c in names} for r in source]
 
             m.select.side_effect = _select
         else:
@@ -413,9 +416,11 @@ class TestListFlashcards:
         assert not any(c["id"].startswith("fresh") for c in r.json()["flashcards"])
 
     def test_gate_on_response_rows_carry_the_fsrs_columns(self):
+        """The stub projects each row onto the selected columns, so the FSRS
+        keys reach the response only because the route selects them."""
         r, _, _ = _list(gate=True)
-        first = r.json()["flashcards"][0]
-        assert FSRS_KEYS <= set(first)
+        rows = r.json()["flashcards"]
+        assert rows and all(FSRS_KEYS <= set(c) for c in rows)
 
     def test_gate_on_real_order_due_ranks_by_distance_from_threshold(self):
         """Unpatched learning.fsrs.order_due through the adapter: the due card
@@ -469,6 +474,7 @@ class TestListFlashcards:
         body = r.json()
         assert set(body) == {"flashcards"}, "no due_count on the legacy path"
         assert [c["id"] for c in body["flashcards"]] == [c["id"] for c in LIST_ROWS]
+        assert all(set(c) == set(LEGACY_LIST_COLS.split(",")) for c in body["flashcards"])
         od.assert_not_called()
 
     def test_gate_off_topic_filter_unchanged(self):
