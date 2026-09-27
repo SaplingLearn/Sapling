@@ -667,3 +667,62 @@ def test_inv_28_symmetric_missingness(monkeypatch):
         out = asyncio.run(check.grade_answer(numeric, answer, deps=deps, node_id="n-28"))
         assert out.unavailable is True and deps.pending_evidence == [], text
     assert len(reason_checks) == 4, "the grader runs for both numeric outcomes too"
+
+
+# ── PKG-05b: decision seam (spec §8.24–25, §13 A24) ─────────────────────────
+TYPESAFE_IMPORT = re.compile(r"^\s*(?:import|from)\s+typesafe\b", re.M)
+SYSTEM_ONE_IMPORT = re.compile(r"^\s*(?:import|from)\s+system_one", re.M)
+IDENTIFIER_FIELDS = {"user_id", "email", "name", "first_name", "last_name"}
+A24_STATES = {
+    "GradeState",
+    "WrongReasonState",
+    "ReasonState",
+    "UploadState",
+    "PassageState",
+    "TurnState",
+    "LeakState",
+}
+
+
+def _app_python_files():
+    for top in sorted(BACKEND.iterdir()):
+        if top.name in {"venv", ".venv", "tests", "__pycache__"}:
+            continue
+        if top.is_file() and top.suffix == ".py":
+            yield top
+        elif top.is_dir():
+            yield from sorted(top.rglob("*.py"))
+
+
+def test_inv_24_typesafe_only_in_jev():
+    """typesafe only in agents/_jev.py (PKG-15), pinned exactly; no system-one adapter in app code (§12)."""
+    jev, typesafe, system_one = BACKEND / "agents" / "_jev.py", [], []
+    for path in _app_python_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rel = path.relative_to(BACKEND).as_posix()
+        if path != jev and TYPESAFE_IMPORT.search(text):
+            typesafe.append(rel)
+        if not rel.startswith("scripts/") and SYSTEM_ONE_IMPORT.search(text):
+            system_one.append(rel)
+    assert not typesafe, f"typesafe imported outside agents/_jev.py: {typesafe}"
+    assert not system_one, f"system-one adapter in application code: {system_one}"
+    for line in (BACKEND / "requirements.txt").read_text().splitlines():
+        spec = line.split("#")[0].strip()
+        if spec.lower().startswith("typesafe"):
+            assert re.fullmatch(r"typesafe-sdk==\d+\.\d+\.\d+", spec), f"not an exact pin: {line}"
+
+
+def test_inv_25_decision_states_carry_no_identifiers():
+    """Decision states are text only (A24 privacy gate: data minimisation in code)."""
+    from pydantic import BaseModel
+
+    from services import decisions
+
+    states = {
+        n: o
+        for n, o in vars(decisions).items()
+        if isinstance(o, type) and issubclass(o, BaseModel) and n.endswith("State")
+    }
+    assert A24_STATES <= set(states), f"missing: {sorted(A24_STATES - set(states))}"
+    for name, model in states.items():
+        assert not IDENTIFIER_FIELDS & set(model.model_fields), f"{name} carries identifier fields"
