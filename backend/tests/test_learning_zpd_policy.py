@@ -832,7 +832,11 @@ def test_matches_non_attempt(text, expected):
         "I think it's even, idk",
         "x = 7 idk",
         "just tell me, is it 7?",  # a digit makes a request-phrase message graded
-        "what's the answer to part 2",  # any digit is an answer
+        "what's the answer to part 2, is it 7?",  # a label aside, a digit is an answer
+        "just tell me if it's 7",
+        "question 3 is 7, just tell me",
+        "just tell me the answer to question 3 and 4",  # "4" labels nothing
+        "idk how to do part 2",  # labels are set aside only beside a request phrase
         # a relation between operands is an answer, digit or not
         "F = ma, idk",
         "a > b? idk",
@@ -1234,6 +1238,35 @@ def test_a_routed_non_attempt_always_holds_a_non_attempt_phrase_property():
     for _ in range(20_000):
         text = "".join(rng.choice(_FUZZ_PARTS) for _ in range(rng.randint(1, 9)))
         assert not non_attempt_phrases(text) or has_non_attempt_phrase(text), repr(text)
+
+
+@pytest.mark.parametrize(
+    "text,phrases",
+    [
+        ("just tell me the answer to question 3", ("just tell me",)),
+        ("what's the answer to part 2", ("what's the answer",)),
+        ("give me the answer for 4b", ("give me the answer",)),
+        ("whats the answer to q3", ("what's the answer",)),
+        ("What's the answer to #3?", ("what's the answer",)),
+        ("what's the answer to no. 3", ("what's the answer",)),
+        ("what's the answer to number 5", ("what's the answer",)),
+        ("just tell me the steps for problem 2.1", ("just tell me",)),
+        ("just tell me part 2(b)", ("just tell me",)),
+        ("give me the answer to questions 3-5", ("give me the answer",)),
+        ("give me the answer to 3", ("give me the answer",)),
+        ("idk, what's the answer to part 2", ("idk", "what's the answer")),
+    ],
+)
+def test_a_question_label_in_a_request_is_no_answer(text, phrases):
+    """Spec §13 A16: "just tell me" / "give me the answer" / "what's the
+    answer" → no evidence, served as a hint request. The number of the
+    question asked about ("question 3", "part 2", "4b" after "the answer
+    for") is no submitted answer, so it never turns the request into a
+    graded, wrong submission; any other digit still does (decision (B))."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == phrases
+    assert has_non_attempt_phrase(text) is True
 
 
 def test_has_non_attempt_phrase_matches_whole_words_only():

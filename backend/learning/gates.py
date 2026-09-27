@@ -42,11 +42,24 @@ _NON_ALNUM = re.compile(r"[^a-z0-9 ]+")
 _APOSTROPHES = re.compile(r"['’‘ʼ`´]")
 _BANDS = get_args(Band)
 # Clause breaks bound a request phrase's object: sentence and clause
-# punctuation, brackets, newlines, and "but". (A message with a digit never
-# reaches the split, so "1.5" and "1,250" need no special case.)
+# punctuation, brackets, newlines, and "but". (A digit that survives
+# _QUESTION_REF makes the message graded before the split matters, so "1.5"
+# and "1,250" need no special case.)
 _CLAUSE = re.compile(r"[.,;:!?()\[\]{}\n]|\bbut\b", re.I)
-# Any digit is an answer.
+# Any digit is an answer, except the number of the question a request asks
+# about.
 _DIGIT = re.compile(r"\d")
+# A question label ("the answer to question 3", "part 2(b)", "q3", "#3",
+# "no. 3", "problems 3-5", "the answer for 4b"): what a request phrase asks
+# about, never a submitted answer (A16). Set aside only in a message holding a
+# request phrase; beside an idk phrase alone a digit is still an answer.
+_QUESTION_REF = re.compile(
+    r"(?:\b(?:questions?|qs?|parts?|problems?|probs?|numbers?|num|exercises?|ex|items?"
+    r"|tasks?|steps?|sections?|sec|pages?|pg|chapters?|ch|hw|homework|labs?|quiz(?:zes)?)"
+    r"\s*[.#]?|\bno\s*\.|#|\banswers?\s+(?:to|for|of|on))\s*#?\s*"
+    r"\d+[a-z]?(?:\.\d+[a-z]?)*(?:\s*[-–]\s*\d+[a-z]?)?(?:\s*\(\s*[a-z0-9]{1,4}\s*\))?",
+    re.I,
+)
 # A relation symbol is an answer only BETWEEN operands ("F = ma", "a > b",
 # "(a+b) = c"), so an emoticon ("=(", ">.<", "=/", ">_<") is not one.
 _RELATION = re.compile(r"(?:[^\W_]|[)\]])\s*[=<>≈≠≤≥]+\s*[-−(\[]*[^\W_]")
@@ -164,11 +177,14 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
     fail toward grading). Phrases match as in has_non_attempt_phrase.
 
     - Any digit, or a relation symbol between operands ("F = ma"; an emoticon
-      "=(" is not one), anywhere: () — graded.
+      "=(" is not one), anywhere: () — graded. In a message holding a request
+      phrase, a question label's number ("the answer to question 3", "part
+      2", "the answer for 4b") is no digit: it names what is asked about.
     - A request phrase ("just tell me", "give me the answer", "what's the
       answer") is returned whatever else the message says; the rest of its
       clause is its object, never an answer. Such a message gets no evidence
-      and is never graded ("just tell me, is it 7?" is graded: a digit).
+      and is never graded ("just tell me, is it 7?" is graded: a digit;
+      "what's the answer to part 2" is a request).
     - An idk phrase ("idk", "i don't know") is returned only when the residue
       is empty: once the phrases, request objects, _PLEA pleas and _NON_ANSWER
       filler are set aside, no word is left, and no clause's residue is a
@@ -179,7 +195,7 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
 
     A message holding both routes to idk when the idk phrase is returned (the
     route checks idk first, A16)."""
-    if _DIGIT.search(text) or _RELATION.search(text):
+    if _RELATION.search(text):
         return ()
     found: set[str] = set()
     residue: list[str] = []
@@ -199,6 +215,8 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
         # a clause holding a plea ("I give up", "I can't do it") is no bare answer
         bare = bare or (not _PLEA.search(rest) and _bare_answer(rest.split()))
         residue += _PLEA.sub(" ", rest).split()
+    if _DIGIT.search(_QUESTION_REF.sub(" ", text) if found & _REQUEST_PATTERNS else text):
+        return ()
     idk_holds = not bare and all(w in _NON_ANSWER for w in residue)
     return tuple(
         p for p in NON_ATTEMPT_PATTERNS if p in found and (p in _REQUEST_PATTERNS or idk_holds)
