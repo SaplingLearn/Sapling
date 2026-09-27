@@ -143,17 +143,28 @@ def initial_stability(rating: int) -> float:
     return W[_check_rating(rating) - 1]
 
 
+def _raw_initial_difficulty(g: int) -> float:
+    """w4 − e^(w5·(G−1)) + 1, unclamped (D0(4) = −4.7716)."""
+    return W[4] - math.exp(W[5] * (g - 1)) + 1
+
+
 def initial_difficulty(rating: int) -> float:
     """D0(G) = clamp(w4 − e^(w5·(G−1)) + 1, 1, 10)."""
-    g = _check_rating(rating)
-    return _clamp_d(W[4] - math.exp(W[5] * (g - 1)) + 1)
+    return _clamp_d(_raw_initial_difficulty(_check_rating(rating)))
+
+
+# FSRS-6 mean-reversion target: the UNCLAMPED D0(4) (py-fsrs 6.3.2
+# ``_next_difficulty`` uses clamp=False). Spec §3.2 writes D0(4), whose clamp
+# makes it 1.0; the ≈0.006-per-update drift is not the model FSRS_W was
+# fitted under. HANDOFF-02 Deviations.
+_D_REVERSION_TARGET = _raw_initial_difficulty(Rating.EASY)
 
 
 def _next_difficulty(d: float, g: int) -> float:
-    """ΔD = −w6·(G−3); D' = D + ΔD·(10−D)/9; D'' = w7·D0(4) + (1−w7)·D'."""
+    """ΔD = −w6·(G−3); D' = D + ΔD·(10−D)/9; D'' = clamp(w7·D0raw(4) + (1−w7)·D', 1, 10)."""
     delta = -W[6] * (g - Rating.GOOD)
     d_prime = d + delta * (_D_MAX - d) / (_D_MAX - _D_MIN)
-    d_pp = W[7] * initial_difficulty(Rating.EASY) + (1 - W[7]) * d_prime
+    d_pp = W[7] * _D_REVERSION_TARGET + (1 - W[7]) * d_prime
     return _clamp_d(d_pp)
 
 

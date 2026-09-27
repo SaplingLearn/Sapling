@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import math
 import pathlib
 import random
 from datetime import datetime, timedelta, timezone
@@ -185,21 +186,21 @@ def test_good_after_three_days_reference():
     d, s = _after_first_good()
     assert retrievability(3.0, s) == _approx(0.8809)
     nd, ns = next_state(d, s, Rating.GOOD, 3.0)
-    assert nd == _approx(2.1170)
+    assert nd == _approx(2.1112)
     assert ns == _approx(13.8269)
 
 
 def test_hard_after_three_days_reference():
     d, s = _after_first_good()
     nd, ns = next_state(d, s, Rating.HARD, 3.0)
-    assert nd == _approx(4.7586)
+    assert nd == _approx(4.7529)
     assert ns == _approx(9.2349)
 
 
 def test_again_after_three_days_reference():
     d, s = _after_first_good()
     nd, ns = next_state(d, s, Rating.AGAIN, 3.0)
-    assert nd == _approx(7.4003)
+    assert nd == _approx(7.3945)
     assert ns == _approx(0.6369)
 
 
@@ -222,11 +223,11 @@ def test_same_day_reference():
     # FSRS-6 floors the same-day increase at 1 for Hard/Good/Easy: the raw
     # spec §3.2 value here is 2.2938 < S, i.e. a correct answer shrank S.
     nd, ns = next_state(d, s, Rating.GOOD, 0.0, same_day=True)
-    assert (nd, ns) == (_approx(2.1170), _approx(2.3065))
+    assert (nd, ns) == (_approx(2.1112), _approx(2.3065))
     nd, ns = next_state(d, s, Rating.HARD, 0.0, same_day=True)
     assert ns == _approx(2.3065)  # raw 1.3334
     nd, ns = next_state(d, s, Rating.AGAIN, 0.0, same_day=True)
-    assert (nd, ns) == (_approx(7.4003), _approx(0.7751))  # Again is not floored
+    assert (nd, ns) == (_approx(7.3945), _approx(0.7751))  # Again is not floored
     # where the raw increase is already >= 1 the floor changes nothing
     _, ns = next_state(d, 0.5, Rating.GOOD, 0.0, same_day=True)
     assert ns == _approx(0.5499)
@@ -287,10 +288,22 @@ def test_difficulty_stays_in_bounds_and_stability_positive():
 
 
 def test_difficulty_update_reference_and_clamp():
-    assert fsrs._next_difficulty(5.0, Rating.GOOD) == _approx(4.9960)
-    assert fsrs._next_difficulty(5.0, Rating.AGAIN) == _approx(8.3475)
-    assert fsrs._next_difficulty(10.0, Rating.AGAIN) == _approx(9.9910)
+    assert fsrs._next_difficulty(5.0, Rating.GOOD) == _approx(4.9902)
+    assert fsrs._next_difficulty(5.0, Rating.AGAIN) == _approx(8.3418)
+    assert fsrs._next_difficulty(10.0, Rating.AGAIN) == _approx(9.9852)
     assert fsrs._next_difficulty(1.0, Rating.EASY) == 1.0
+
+
+def test_mean_reversion_targets_the_unclamped_d0_easy():
+    # FSRS-6 reverts toward the RAW D0(4) = w4 − e^(3·w5) + 1 = −4.7716, not
+    # the clamped 1.0 a first Easy gets (py-fsrs 6.3.2 clamp=False).
+    raw_d0_easy = FSRS_W[4] - math.exp(3 * FSRS_W[5]) + 1
+    assert raw_d0_easy == _approx(-4.7716)
+    assert initial_difficulty(Rating.EASY) == 1.0  # the first rating stays clamped
+    for d in (2.0, 5.0, 8.0):  # Good: ΔD = 0, so D'' is the reversion alone
+        assert fsrs._next_difficulty(d, Rating.GOOD) == A(
+            FSRS_W[7] * raw_d0_easy + (1 - FSRS_W[7]) * d, abs=1e-12
+        )
 
 
 def test_mc_cap_limits_stability_gain():
