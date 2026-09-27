@@ -40,29 +40,41 @@ Anything that forwards spans or exception state is on the student-data path.
    carry a `category` of their own (`document.processed`,
    `rag.relevance_scored`) that must survive.
 3. **US cloud** (`https://us.i.posthog.com` default).
-4. **No PII, no content.** Distinct ids are real `users.id` values only —
+4. **Every PostHog event is attributed to a consenting student, or it is not
+   sent.** There are no personless events: work with no actor — the index
+   sweeper, DBOS workflows, the document pipeline outside a request — sends
+   nothing to PostHog (its rows still land in our own tables). A personless
+   path would otherwise carry an opted-out student's out-of-request work as
+   an anonymous event.
+
+   **No PII, no content.** Distinct ids are real `users.id` values only —
    opaque TEXT (`user_<google id>`), NOT UUIDs, so the rule is "a live row in
    `users`", never a UUID regex. Nothing calls `identify` with profile data;
    GeoIP is disabled. Event payloads are the #117 ones — ids, counts, enums by
    contract.
 5. **One queue, one worker — consent is decided off the request path.**
    Every send (event, `$ai_generation`, exception) goes through ONE path:
-   - *On the request path* (no I/O): drop if the request sent `Sec-GPC: 1` /
-     `DNT: 1` or the event is `error.4xx`; build the properties (route
-     template for `path`/`route`, no foreign user ids, `event_category`);
-     resolve the **actor** — the event's own user id if it is a real one, else
-     the request's authenticated user (`request.state.user_id`, read from the
-     ASGI scope's `state` dict, which the handler, threadpool `Depends` and
-     BackgroundTasks all share), else nobody; placeholders (`anonymous`,
-     `backfill`) are nobody. Then enqueue onto a bounded in-process queue
+   - *On the request path* (`_submit`, no I/O): drop if PostHog is off RIGHT
+     NOW (the gate is re-read, §8), the request sent `Sec-GPC: 1` /
+     `DNT: 1`, or the event is `error.4xx`. Resolve the **actor**: the item's
+     own user id if it is a real one; **only when that id is `None`**, the
+     request's authenticated user (`request.state.user_id`); otherwise —
+     no user, a placeholder (`anonymous`, `backfill`) or a malformed id —
+     **drop**. A caller that names someone is never re-attributed to whoever
+     happens to be signed in. The request is seen through a narrow view held
+     in a contextvar — the `scope["state"]` dict (shared by the handler,
+     threadpool `Depends` and BackgroundTasks) plus a lazy route-template
+     accessor — never the ASGI scope with its headers and cookies. Build the
+     properties (route template for `path`/`route`, no foreign user ids,
+     `event_category`), then enqueue onto a bounded in-process queue
      (`POSTHOG_QUEUE_MAX`, default 10000; a bad or non-positive value falls
      back to the default — `queue.Queue(0)` would be unbounded; full → drop
      the oldest, warn once then every 1000th).
-   - *On the one daemon worker thread*: `analytics_consent.consent_for(actor)`
-     — a blocking PostgREST read is fine here, bounded by a 3 s timeout
-     (through `table().select(timeout=)`, the shared client) — then
-     `posthog.capture` with that `distinct_id`, personless when there is no
-     actor, or drop.
+   - *On the one daemon worker thread*: re-read the gate, then
+     `analytics_consent.consent_for(actor)` — a blocking PostgREST read is
+     fine here, bounded by a 3 s timeout (through `table().select(timeout=)`,
+     the shared client) — then `posthog.capture` with that `distinct_id`, or
+     drop.
 
    Consequences of the shape: no event-loop thread ever reads the database,
    and a cold consent cache only DELAYS an event on the worker; it never drops
@@ -106,7 +118,10 @@ Anything that forwards spans or exception state is on the student-data path.
 8. **Off in tests and E2E.** No client, no queue, no network when: the token is
    unset, `POSTHOG_DISABLED` is truthy, under pytest, `APP_ENV=test`, or the
    seam's mode (`agents._providers.model_mode()` — the one normalisation, not
-   a second parser) is anything but `real`. The local E2E and explore stacks
+   a second parser) is anything but `real`. The gate is read at boot (no
+   client is built) AND on every submit and again on the worker (cheap env
+   reads), so `POSTHOG_DISABLED=1` stops capture — including items already
+   queued — without a restart. The local E2E and explore stacks
    do not rely on that inference — `make e2e-up` does not force function mode
    and runs `APP_ENV=local` against a `backend/.env` that may hold a real
    token — so `scripts/e2e-up.sh` and `scripts/explore.sh` export
@@ -159,11 +174,14 @@ Anything that forwards spans or exception state is on the student-data path.
     and is unaffected by the opt-out or the headers.
 
     **Deploy order.** The code can be live before migration
-    `20260927033814` runs. Settings reads retry without `analytics_opt_out`
+    `20260927033814` runs (and #651 — staging migrations racing the deploy —
+    is still open, so this is a real window, not a theoretical one). Settings reads retry without `analytics_opt_out`
     when PostgREST says that column does not exist (the #630 pattern: read
     the response body), a PATCH of it answers 503 (nothing written), and the
     consent check treats the missing column as "no" — so nobody is sent until
-    the column exists.
+    the column exists. The GET /settings ETag folds in a schema version and
+    whether the field came back, so a body cached before the deploy or the
+    migration can never 304 as current.
 12. **No raw path, no second user, no `error.4xx`.** `error.4xx` (every
     expired-cookie 401, 404 probe and 422) stays in our table only. Every
     mirrored `path` / `route` payload key becomes the current request's
@@ -206,9 +224,13 @@ Anything that forwards spans or exception state is on the student-data path.
   2. an SDK queue that could not deliver within that window (PostHog
      unreachable, retries still pending) and delivers later;
   3. another process's item consent-checked just before its cached answer
-     expired and delivered more than 30 s later.
+     expired and delivered more than 30 s later;
+  4. PostHog-side ingestion lag, or the SDK's retry backoff during an outage:
+     an event handed to the SDK just before the deletion can be ingested after
+     the second pass and re-create the person.
 
-  If re-created persons show up in practice, move the second pass to a durable
-  job (DBOS is already in the stack). An opt-out has the same shape of window
+  The complete fix is a **periodic reconciliation** that deletes every
+  PostHog person whose `users` row is soft-deleted (a follow-up issue); a
+  durable second pass (DBOS is already in the stack) would close only (1). An opt-out has the same shape of window
   (another process: ≤ 60 s) but does not delete what was already sent;
   deleting past data on opt-out is not part of this decision.
