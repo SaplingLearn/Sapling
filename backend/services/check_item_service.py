@@ -684,6 +684,7 @@ def generate_for_concepts(
         recheck = {"user_id": user_id, "document_id": document_id, "course_id": course_id}
         withdrawn = _recheck_sources(source_docs, **recheck)
         if withdrawn is None:
+            unavailable += len(batch)
             continue
         if withdrawn:
             gone.update(withdrawn)

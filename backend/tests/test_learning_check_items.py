@@ -1793,6 +1793,11 @@ class TestWithdrawalDuringDrafting:
             )
         assert shown == [["c1", "c2"], ["c1", "c2"]]
         assert out.items_created == 2 and out.concepts_attempted == 4
+        # the dropped first batch is reported as unavailable, so the backfill
+        # summary explains its exit 1
+        from learning.params import CHECK_ITEM_CONCEPTS_PER_CALL
+
+        assert out.unavailable == CHECK_ITEM_CONCEPTS_PER_CALL
         assert ev.call_args[1]["payload"]["reason"] == "StorageError"
 
     def test_the_recheck_reads_consent_once_per_batch_of_uploaders(self, monkeypatch):
