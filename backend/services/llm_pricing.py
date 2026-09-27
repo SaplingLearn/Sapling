@@ -48,6 +48,15 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "jev-preview": (0.000042, 0.0),
 }
 
+#: Fractional digits of a stored cost — llm_usage.cost_usd is NUMERIC(18,10)
+#: (migration 20260927043405). Six (the old NUMERIC(12,6)) rounded the
+#: decision seam's micro-dollar calls: one Jev token is $0.000000042, so a
+#: 653-token call ($0.000027426) was stored as 0.000027 and a sub-12-token call
+#: as $0. cost_usd() quantizes to this scale and the admin rollups round to
+#: it, so a real call's cost is stored and displayed as computed.
+COST_SCALE = 10
+_COST_QUANTUM = Decimal(1).scaleb(-COST_SCALE)
+
 # Models we've already warned about — so an un-priced model logs once, not
 # once per call. Module-level (per-process); tests reset entries as needed.
 _warned_models: set[str] = set()
@@ -112,8 +121,9 @@ def _canonical_model(model: str) -> str:
 def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Compute USD cost for a call, or ``None`` if the model isn't priced.
 
-    Rounds to 6 decimal places (half-up) to fit ``llm_usage.cost_usd
-    numeric(12,6)``. An unknown model returns ``None`` and warns once.
+    Rounds to ``COST_SCALE`` (10) decimal places, half-up, to match
+    ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
+    and warns once.
     """
     rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(_canonical_model(model))
     if rates is None:
@@ -138,4 +148,4 @@ def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | 
         Decimal(str(in_rate)) * Decimal(int(prompt_tokens))
         + Decimal(str(out_rate)) * Decimal(int(completion_tokens))
     ) / Decimal(1000)
-    return float(cost.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
+    return float(cost.quantize(_COST_QUANTUM, rounding=ROUND_HALF_UP))
