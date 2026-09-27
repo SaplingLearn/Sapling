@@ -112,6 +112,14 @@ NOVICE_FLOOR_MISSES = 3
 # §13 A6, added by PKG-02 (fsrs.rating_for); PKG-03 Evidence.assisted and
 # PKG-06 evidence_for_rung cite it.
 RUNG_ASSISTED_MAX = 3
+# PKG-03 (§13 A6 names). Rungs H1..H6 unlock in order (PKG-06 gates), so any
+# rung >= RUNG_ASSISTED_MIN means help was used (Evidence.assisted); a correct
+# answer after a rung >= RUNG_NO_CREDIT_MIN (H4 worked example..H6) is "no
+# upward BKT evidence" (spec §3.3); Evidence.max_rung is bounded by
+# LADDER_MAX_RUNG (spec §5 "0..6"), which PKG-06's Rung enum reuses.
+RUNG_ASSISTED_MIN = 1
+RUNG_NO_CREDIT_MIN = 4
+LADDER_MAX_RUNG = 6
 # Band-control cut-points (unassisted_next 0.90 / 0.65, "2 windows", the
 # wheelspin opps>=6 arm) are unnamed in spec §3.3; PKG-06 names them here.
 
