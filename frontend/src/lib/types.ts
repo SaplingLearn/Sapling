@@ -272,6 +272,9 @@ export interface UserSettings {
   accent_color: string | null;
   profile_visibility: string;
   activity_status_visible: boolean;
+  // Product-analytics opt-out (PostHog), account-wide. Optional: a backend
+  // that predates the column omits it, which reads as "not opted out".
+  analytics_opt_out?: boolean;
 }
 
 // ── Gradebook ────────────────────────────────────────────────────────────────

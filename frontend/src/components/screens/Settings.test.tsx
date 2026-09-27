@@ -11,7 +11,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import type { PostHog } from "posthog-js";
 import type { UserProfile, UserSettings } from "@/lib/types";
 import { __resetAnalyticsForTests, initAnalytics } from "@/lib/analytics";
@@ -62,7 +62,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Settings } from "./Settings";
-import { fetchSettings, fetchPublicProfile } from "@/lib/api";
+import { fetchSettings, fetchPublicProfile, updateSettings } from "@/lib/api";
 
 function settings(overrides: Partial<UserSettings> = {}): UserSettings {
   return {
@@ -153,11 +153,28 @@ describe("Settings profile form prefill (F8)", () => {
   });
 });
 
+function fakePosthog() {
+  let optedOut = false;
+  return {
+    init: vi.fn(),
+    has_opted_out_capturing: () => optedOut,
+    opt_out_capturing: vi.fn(() => void (optedOut = true)),
+    opt_in_capturing: vi.fn(() => void (optedOut = false)),
+  };
+}
+
+async function startAnalytics(ph: ReturnType<typeof fakePosthog>) {
+  await act(async () => {
+    await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: "phc_test" }, async () => ph as unknown as PostHog);
+  });
+}
+
 describe("Settings → Data: product analytics opt-out", () => {
   beforeEach(() => {
     __resetAnalyticsForTests();
     vi.mocked(fetchSettings).mockResolvedValue(settings());
     vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
+    vi.mocked(updateSettings).mockReset().mockResolvedValue(settings());
   });
   afterEach(() => __resetAnalyticsForTests());
 
@@ -166,33 +183,94 @@ describe("Settings → Data: product analytics opt-out", () => {
     fireEvent.click(screen.getByTestId("settings-tab-data"));
     const toggle = await screen.findByTestId("settings-analytics-toggle");
     expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("role", "switch");
     expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toHaveAttribute("aria-labelledby", "settings-analytics-label");
     expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/isn't running/);
+    fireEvent.click(toggle);
+    expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it("opts out and back in through posthog-js", async () => {
-    let optedOut = false;
-    const ph = {
-      init: vi.fn(),
-      has_opted_out_capturing: () => optedOut,
-      opt_out_capturing: vi.fn(() => void (optedOut = true)),
-      opt_in_capturing: vi.fn(() => void (optedOut = false)),
-    };
-    await act(async () => {
-      await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: "phc_test" }, async () => ph as unknown as PostHog);
-    });
+  it("opts out and back in through posthog-js, saving each choice to the account", async () => {
+    const ph = fakePosthog();
+    await startAnalytics(ph);
     render(<Settings />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
     fireEvent.click(screen.getByTestId("settings-tab-data"));
     const toggle = await screen.findByTestId("settings-analytics-toggle");
     expect(toggle).toBeEnabled();
     expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/every browser/);
 
     fireEvent.click(toggle);
     expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
     expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: true });
 
     fireEvent.click(toggle);
     expect(ph.opt_in_capturing).toHaveBeenCalledTimes(1);
     expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: false });
+  });
+
+  it("applies an opt-out saved on another browser when the page loads", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue(settings({ analytics_opt_out: true }));
+    const ph = fakePosthog();
+    await startAnalytics(ph);
+    render(<Settings />);
+    fireEvent.click(screen.getByTestId("settings-tab-data"));
+    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
+    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("a backend without the field leaves this browser's own opt-out in force", async () => {
+    // settings() carries no analytics_opt_out — the pre-#677 payload.
+    const ph = fakePosthog();
+    ph.opt_out_capturing(); // opted out locally earlier
+    await startAnalytics(ph);
+    render(<Settings />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("settings-tab-data"));
+    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(ph.opt_in_capturing).not.toHaveBeenCalled();
+  });
+
+  it("the switch is disabled under Do Not Track / GPC", async () => {
+    await startAnalytics(fakePosthog());
+    Object.defineProperty(navigator, "globalPrivacyControl", { value: true, configurable: true });
+    try {
+      render(<Settings />);
+      fireEvent.click(screen.getByTestId("settings-tab-data"));
+      const toggle = await screen.findByTestId("settings-analytics-toggle");
+      expect(toggle).toBeDisabled();
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/Do Not Track/);
+    } finally {
+      delete (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl;
+    }
+  });
+});
+
+describe("Settings → Notifications toggles (shared Toggle)", () => {
+  beforeEach(() => {
+    vi.mocked(fetchSettings).mockResolvedValue(settings({ notification_push: false }));
+    vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
+    vi.mocked(updateSettings).mockReset().mockResolvedValue(settings());
+  });
+
+  it("render as labelled switches and still PATCH their own field", async () => {
+    render(<Settings />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("settings-tab-notifications"));
+    const push = await screen.findByTestId("settings-toggle-notification_push");
+    expect(push).toHaveAttribute("role", "switch");
+    expect(push).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("switch", { name: "Push" })).toBe(push);
+    fireEvent.click(push);
+    expect(push).toHaveAttribute("aria-checked", "true");
+    expect(updateSettings).toHaveBeenCalledWith("u1", { notification_push: true });
   });
 });
