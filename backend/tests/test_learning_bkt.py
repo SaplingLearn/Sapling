@@ -245,6 +245,36 @@ def test_idk_uses_channel_g_with_s_idk_and_ignores_correct():
     assert got < bkt.update(P_HIGH, "free_response", False)
 
 
+def _idk_posterior(p: float, channel: str) -> float:
+    """Spec §3.1 incorrect line with the item channel's G and S_IDK, written
+    out here so the test does not trust bkt._posterior."""
+    g = params.CHANNELS[channel]["G"]
+    return p * params.S_IDK / (p * params.S_IDK + (1.0 - p) * (1.0 - g))
+
+
+@pytest.mark.parametrize("channel", sorted(params.CHANNELS))
+def test_idk_uses_the_item_channels_g(channel):
+    """§13 A1: idk keeps the item channel's G. Only free_response was checked
+    before, so an idk that always used G = 0.08 passed."""
+    post = _idk_posterior(P_HIGH, channel)
+    want = post + (1.0 - post) * params.BKT_T
+    assert bkt.update(P_HIGH, channel, False, idk=True) == pytest.approx(want, abs=1e-12)
+    assert bkt.update(P_HIGH, channel, True, idk=True) == pytest.approx(want, abs=1e-12)
+
+
+def test_idk_on_mc_hand_computed():
+    # 0.90·0.02 / (0.018 + 0.10·0.75) = 0.1935; + 0.8065·0.15 = 0.3145
+    assert bkt.update(P_HIGH, "mc", False, idk=True) == pytest.approx(0.3145, abs=TOL)
+
+
+@pytest.mark.parametrize("channel", ["free_response", "mc"])
+def test_idk_honours_weight_and_skips_learn_step(channel):
+    post = _idk_posterior(P_HIGH, channel)
+    want = P_HIGH + 0.5 * (post - P_HIGH)
+    got = bkt.update(P_HIGH, channel, False, weight=0.5, idk=True)
+    assert got == pytest.approx(want, abs=1e-12)
+
+
 def test_weight_interpolates_and_skips_learn_step():
     half = bkt.update(P_LOW, "free_response", True, weight=0.5)
     assert half == pytest.approx(0.5641, abs=TOL)
