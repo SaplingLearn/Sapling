@@ -2,8 +2,12 @@
 /**
  * The REAL posthog-js, driven through src/lib/analytics.ts, wherever the
  * SDK's own behaviour is what matters:
- * - anonymous page / opted-out student / failed account read → zero requests
- *   (posthog-js is never even loaded);
+ * - anonymous page / opted-out student / failed account read / a signed-in
+ *   student on a public page → zero requests (posthog-js never loads);
+ * - leaving the app shell (Settings → /privacy) drops capture for that page
+ *   at once, and returning resumes it;
+ * - no autocapture: a clicked link never sends `attr__href` or
+ *   `$elements_chain`;
  * - an allowed student → `$identify` + exactly one `$pageview`, no `/flags`;
  * - opting out mid-page stops capture at once; opting in captures only after
  *   the account save succeeded; a stale account read after a toggle is
@@ -23,6 +27,7 @@ import {
   __resetAnalyticsForTests,
   applyAccountAnalytics,
   beginAccountRead,
+  resumeAnalytics,
   buildPosthogConfig,
   chooseAnalytics,
   scrubEvent,
@@ -132,6 +137,38 @@ describe("zero requests unless allowed, real posthog-js", () => {
   });
 });
 
+describe("app-shell routes only, real posthog-js", () => {
+  for (const path of ["/", "/privacy", "/auth/callback"]) {
+    it(`signed in on ${path}: posthog-js never loads, zero requests`, async () => {
+      window.history.replaceState({}, "", path);
+      expect(await signIn("u-public", false)).toBeNull();
+      resumeAnalytics();
+      await sleep(300);
+      expect(instances).toHaveLength(0);
+      expect(ingest()).toEqual([]);
+    });
+  }
+
+  it(
+    "Settings → /privacy drops capture for that page at once; back in the shell it resumes",
+    async () => {
+      window.history.replaceState({}, "", "/settings");
+      const ph = (await signIn("u-nav", false))!;
+      await vi.waitFor(() => expect(eventBodies()).toContain("/settings"), { timeout: FLUSH + 2000 });
+      window.history.pushState({}, "", "/privacy"); // posthog-js captures a history_change pageview here
+      ph.capture("probe_on_privacy", {}, { send_instantly: true });
+      window.history.pushState({}, "", "/dashboard");
+      ph.capture("probe_back_in_shell", {}, { send_instantly: true });
+      await vi.waitFor(() => expect(eventBodies()).toContain("probe_back_in_shell"), { timeout: 3000 });
+      await sleep(FLUSH);
+      const bodies = eventBodies();
+      expect(bodies).not.toContain("probe_on_privacy");
+      expect(bodies).not.toContain("/privacy");
+    },
+    15_000,
+  );
+});
+
 describe("an allowed student, real posthog-js", () => {
   it(
     "$identify + exactly ONE $pageview, no /flags, nothing stored in the browser",
@@ -149,6 +186,30 @@ describe("an allowed student, real posthog-js", () => {
       expect(storageSnapshot()).toBe(before);
     },
     15_000,
+  );
+
+  it(
+    "no autocapture: clicking a link sends no attr__href / $elements_chain",
+    async () => {
+      await signIn("u-click", false);
+      const a = document.createElement("a");
+      a.href = "/notetaker?note=secret-note-id";
+      a.textContent = "My private note title";
+      document.body.appendChild(a);
+      a.addEventListener("click", (e) => e.preventDefault());
+      a.click();
+      a.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await sleep(FLUSH);
+      const bodies = eventBodies();
+      expect(bodies).toContain("$pageview"); // capture is running…
+      expect(bodies).not.toContain("$autocapture"); // …but not autocapture
+      expect(bodies).not.toContain("attr__href");
+      expect(bodies).not.toContain("$elements_chain");
+      expect(bodies).not.toContain("secret-note-id");
+      expect(bodies).not.toContain("My private note title");
+      a.remove();
+    },
+    10_000,
   );
 
   it("opting out mid-page stops capture at once (before the save resolves)", async () => {

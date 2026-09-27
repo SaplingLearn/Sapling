@@ -50,6 +50,7 @@
  */
 import type { CaptureResult, PostHog, PostHogConfig } from "posthog-js";
 
+import { isAppShellRoute } from "./appRoutes";
 import { INGEST_PREFIX } from "./ingestProxy";
 import { isTruthyBuildFlag } from "./testMode";
 
@@ -70,8 +71,6 @@ export function readAnalyticsEnv(): AnalyticsEnv {
   };
 }
 
-/** The same-origin proxy path (src/app/ingest/[...path]/route.ts). */
-export const DEFAULT_API_HOST = INGEST_PREFIX;
 /** PostHog US app — where toolbar / "view in PostHog" links point. */
 export const UI_HOST = "https://us.posthog.com";
 
@@ -121,7 +120,9 @@ export const PERSONAL_DATA_QUERY_PARAMS = [
  * (`/auth/callback?auth_token=…`) and the Google avatar URL.
  */
 export function stripUrlQuery(value: unknown): unknown {
-  if (typeof value !== "string" || !/^https?:\/\//i.test(value)) return value;
+  // Absolute (`https://…`), protocol-relative (`//…`) and root-relative
+  // (`/path?…`) URLs alike: a relative href can carry a query too.
+  if (typeof value !== "string" || !/^(https?:\/\/|\/)/i.test(value)) return value;
   const cut = value.search(/[?#]/);
   return cut === -1 ? value : value.slice(0, cut);
 }
@@ -182,7 +183,8 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
 /** The full init config. Exported so tests can pin the privacy posture. */
 export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
   return {
-    api_host: (env.NEXT_PUBLIC_POSTHOG_HOST ?? "").trim() || DEFAULT_API_HOST,
+    // The same-origin proxy (src/app/ingest/[...path]/route.ts).
+    api_host: (env.NEXT_PUBLIC_POSTHOG_HOST ?? "").trim() || INGEST_PREFIX,
     ui_host: UI_HOST,
     defaults: "2026-01-30",
     // Nothing in cookies or localStorage: identity, session and super
@@ -198,8 +200,16 @@ export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
     enable_recording_console_log: false,
     // Error messages can quote user content; keep them out.
     capture_exceptions: false,
-    // Autocapture stays on, but content-free.
-    autocapture: { capture_copied_text: false },
+    // Pageviews + pageleave only. No autocapture (its element chains carry
+    // hrefs, relative ones included), no rageclicks, dead clicks, heatmaps
+    // or web vitals: product usage comes from backend events instead.
+    autocapture: false,
+    rageclick: false,
+    capture_dead_clicks: false,
+    enable_heatmaps: false,
+    capture_heatmaps: false,
+    capture_performance: false,
+    // Belt and braces, should any of the above ever be switched back on.
     mask_all_text: true,
     mask_all_element_attributes: true,
     // Mask the sign-in handoff (and friends) inside every URL posthog-js
@@ -231,8 +241,19 @@ export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
  * - `unknown`: nobody signed in, or their account answer has not arrived (or
  *   the read failed) — nothing is captured, the switch is disabled
  * - `on` / `off`: the signed-in student's account preference
+ * - `off_unsaved`: the student switched it off, but saving that to their
+ *   account failed — off for this visit only, retry offered
+ * - `on_not_running`: the account says on, but posthog-js could not be
+ *   loaded here (a blocker, a failed chunk) — nothing is being collected
  */
-export type AnalyticsState = "unavailable" | "browser_blocked" | "unknown" | "on" | "off";
+export type AnalyticsState =
+  | "unavailable"
+  | "browser_blocked"
+  | "unknown"
+  | "on"
+  | "off"
+  | "off_unsaved"
+  | "on_not_running";
 
 let env: AnalyticsEnv = readAnalyticsEnv();
 export type PosthogLoader = () => Promise<PostHog>;
@@ -241,11 +262,13 @@ let load: PosthogLoader = defaultLoader;
 
 /** The account answer for `currentUser` on this page load. */
 let account: "unknown" | "on" | "off" = "unknown";
+/** An opt-out whose account save failed: off for this visit only. */
+let offUnsaved = false;
 let currentUser: string | null = null;
 /**
- * Bumped by every new account read, toggle and sign-out. An account read
- * that started under an older generation is stale and ignored, so a slow
- * GET /settings can never undo a toggle made after it started.
+ * Bumped by every new account read, sign-out, and a toggle both before AND
+ * after its save. An account read issued under an older generation is stale
+ * and ignored, so a slow GET /settings can never undo a toggle.
  */
 let generation = 0;
 /** A Settings toggle whose account save is still in flight. */
@@ -254,6 +277,11 @@ let toggleInFlight = false;
 /** The live client, once loaded and initialised. */
 let client: PostHog | null = null;
 let loading: Promise<PostHog | null> | null = null;
+/** The last load attempt failed (the chunk was blocked, init threw). */
+let loadFailed = false;
+
+/** Where capture may happen: the signed-in app shell only. Injectable for tests. */
+let isAppRoute: (pathname: string) => boolean = isAppShellRoute;
 
 const listeners = new Set<() => void>();
 function notify(): void {
@@ -269,6 +297,10 @@ function browserSignalsDoNotTrack(): boolean {
   );
 }
 
+function currentPathIsAppRoute(): boolean {
+  return typeof window !== "undefined" && isAppRoute(window.location.pathname);
+}
+
 /**
  * Whether this build runs analytics at all (a key, not local/test mode).
  * Callers use it to skip work — like reading the account preference — that
@@ -281,6 +313,8 @@ export function isAnalyticsConfigured(): boolean {
 export function getAnalyticsState(): AnalyticsState {
   if (!isAnalyticsConfigured()) return "unavailable";
   if (browserSignalsDoNotTrack()) return "browser_blocked";
+  if (account === "off") return offUnsaved ? "off_unsaved" : "off";
+  if (account === "on" && loadFailed && !client) return "on_not_running";
   return account;
 }
 
@@ -296,28 +330,54 @@ export function subscribeAnalytics(listener: () => void): () => void {
   };
 }
 
+/** Capture is allowed right now: configured, no DNT/GPC, account on, on an app route. */
+function captureAllowed(): boolean {
+  return (
+    isAnalyticsConfigured() &&
+    !browserSignalsDoNotTrack() &&
+    account === "on" &&
+    currentPathIsAppRoute()
+  );
+}
+
 /**
- * `before_send`: drop everything unless the state is `on`, otherwise scrub.
- * Returning null is posthog-js's documented way to discard an event; it runs
- * before the event is queued, so a dropped event never reaches the wire.
+ * `before_send`: drop everything unless capture is allowed, otherwise scrub.
+ * The route is read LIVE (window.location) at capture time, so a history
+ * change out of the shell — Settings → /privacy — is dropped even though
+ * posthog-js fires its `$pageview` before React has re-rendered. Returning
+ * null is posthog-js's documented way to discard an event; it runs before
+ * the event is queued, so a dropped event never reaches the wire.
  */
 export function gatedBeforeSend(event: CaptureResult | null): CaptureResult | null {
   if (!event) return event;
-  if (getAnalyticsState() !== "on") return null;
+  if (!captureAllowed()) return null;
+  // posthog-js links each pageview to the previous one ($prev_pageview_*).
+  // If that previous page was outside the shell — its own pageview was
+  // dropped above — don't let the next one say where the student had been.
+  const props = event.properties as Record<string, unknown> | undefined;
+  const prev = props?.$prev_pageview_pathname;
+  if (props && typeof prev === "string" && !isAppRoute(prev)) {
+    for (const key of Object.keys(props)) if (key.startsWith("$prev_pageview_")) delete props[key];
+  }
   return scrubEvent(event);
 }
 
 /**
  * Load + init posthog-js once, identifying `currentUser` in the `loaded`
  * hook — which runs before posthog-js captures its initial `$pageview`, so
- * that single pageview is already the student's.
+ * that single pageview is already the student's. Only ever started on an
+ * app route with the account on. A failed load is not retried here; the
+ * next call (the next time the student enters the shell) tries again — one
+ * attempt per call, never a loop.
  */
 function ensureStarted(): void {
+  if (!captureAllowed()) return;
   if (client) {
     identify();
     return;
   }
   if (loading) return;
+  loadFailed = false;
   loading = load()
     .then((ph) => {
       ph.init((env.NEXT_PUBLIC_POSTHOG_KEY ?? "").trim(), {
@@ -327,34 +387,44 @@ function ensureStarted(): void {
           identify();
         },
       });
-      client = ph;
       return ph;
     })
     .catch((err) => {
       // An analytics failure (blocked chunk, extension) must never break the app.
       console.warn("[analytics] PostHog failed to initialise; continuing without it", err);
+      loadFailed = true;
+      loading = null; // so a later ensureStarted can try again
+      notify();
       return null;
     });
 }
 
-/** identify(uuid) — only while `on`, and resetting first if someone else was. */
+/** identify(uuid) — only while capture is allowed, resetting first if someone else was. */
 function identify(): void {
-  if (!client || !currentUser || getAnalyticsState() !== "on") return;
-  const current = client.get_distinct_id();
-  if (current === currentUser) return;
+  if (!client || !currentUser || !captureAllowed()) return;
+  if (client.get_distinct_id() === currentUser) return;
   if (client.get_property("$user_state") === "identified") client.reset();
   client.identify(currentUser);
 }
 
 // ── the UserProvider's side ─────────────────────────────────────────────────
 
+/** Whether `userId`'s account preference still has to be read this page load. */
+export function needsAccountRead(userId: string): boolean {
+  return currentUser !== userId || account === "unknown";
+}
+
 /**
- * A signed-in student is here and their account preference is about to be
- * read. Returns the generation to hand back to applyAccountAnalytics.
+ * A signed-in student is on an app route and their account preference is
+ * about to be read. Returns the generation to hand back to
+ * applyAccountAnalytics.
  */
 export function beginAccountRead(userId: string): number {
   generation += 1;
-  if (currentUser !== userId) account = "unknown";
+  if (currentUser !== userId) {
+    account = "unknown";
+    offUnsaved = false;
+  }
   currentUser = userId;
   notify();
   return generation;
@@ -368,7 +438,14 @@ export function beginAccountRead(userId: string): number {
 export function applyAccountAnalytics(gen: number, userId: string, optOut: unknown): void {
   if (gen !== generation || userId !== currentUser) return;
   account = optOut === false ? "on" : optOut === true ? "off" : "unknown";
-  if (account === "on" && getAnalyticsState() === "on") ensureStarted();
+  offUnsaved = false;
+  ensureStarted();
+  notify();
+}
+
+/** Back on an app route with the answer already known: start if not running. */
+export function resumeAnalytics(): void {
+  ensureStarted();
   notify();
 }
 
@@ -376,6 +453,7 @@ export function applyAccountAnalytics(gen: number, userId: string, optOut: unkno
 export function stopAnalytics(): void {
   generation += 1;
   account = "unknown";
+  offUnsaved = false;
   currentUser = null;
   // Forget the in-memory identity, so a later sign-in on this same page is a
   // different person, never merged. Nothing persisted to forget.
@@ -387,10 +465,13 @@ export function stopAnalytics(): void {
 
 /**
  * A choice made on the Settings switch. Opting OUT stops capture at once,
- * then saves `analytics_opt_out: true`; if that save fails capture stays
- * off for this page load. Opting IN saves `false` FIRST and only then
- * starts capture. One toggle at a time (`busy` otherwise), and every toggle
- * invalidates account reads already in flight.
+ * then saves `analytics_opt_out: true`; if that save fails capture stays off
+ * for this visit (`off_unsaved`, retry offered). Opting IN saves `false`
+ * FIRST and only then starts capture — and reports `saved` whenever the save
+ * succeeded, but applies it only if the same student is still signed in.
+ * One toggle at a time (`busy` otherwise); the generation is bumped before
+ * and after the save, so no account read begun before or during the toggle
+ * can overwrite its result.
  */
 export async function chooseAnalytics(
   userId: string,
@@ -406,12 +487,14 @@ export async function chooseAnalytics(
   try {
     if (!enabled) {
       account = "off";
+      offUnsaved = false;
       notify();
       try {
         await save(true);
         return "saved";
       } catch {
-        return "failed"; // stays off for this page load
+        if (currentUser === userId) offUnsaved = true; // off for this visit only
+        return "failed";
       }
     }
     try {
@@ -419,28 +502,34 @@ export async function chooseAnalytics(
     } catch {
       return "failed";
     }
-    if (userId !== currentUser) return "failed"; // signed out meanwhile
-    account = "on";
-    ensureStarted();
+    if (currentUser === userId) {
+      account = "on";
+      offUnsaved = false;
+      ensureStarted();
+    }
     return "saved";
   } finally {
+    generation += 1;
     toggleInFlight = false;
     notify();
   }
 }
 
-/** Test-only: forget module state and swap the env / loader. */
+/** Test-only: forget module state and swap the env / loader / route rule. */
 export function __resetAnalyticsForTests(
-  opts: { env?: AnalyticsEnv; load?: PosthogLoader } = {},
+  opts: { env?: AnalyticsEnv; load?: PosthogLoader; isAppRoute?: (pathname: string) => boolean } = {},
 ): void {
   env = opts.env ?? {};
   load = opts.load ?? defaultLoader;
+  isAppRoute = opts.isAppRoute ?? isAppShellRoute;
   account = "unknown";
+  offUnsaved = false;
   currentUser = null;
   generation = 0;
   toggleInFlight = false;
   client = null;
   loading = null;
+  loadFailed = false;
   listeners.clear();
 }
 
