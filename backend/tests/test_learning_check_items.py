@@ -3,8 +3,10 @@ plumbing, route hook, backfill. Spec §3.4, §3.5, §4, §8.6/8.9/8.12, §13 A2/
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -396,3 +398,394 @@ class TestRankChunks:
         assert [c["id"] for c in rank_chunks_for_concept("Pi", chunks, limit=8, min_score=1)] == [
             "a"
         ]
+
+
+# ── services/check_item_service.py ─────────────────────────────────────────
+
+
+def _cached_tables(data: dict):
+    mocks: dict = {}
+
+    def factory(name):
+        if name not in mocks:
+            rows = data.get(name, [])
+            m = MagicMock()
+            m.select.return_value = rows
+            m.select_with_count.return_value = (rows, len(rows))  # db.connection.page_all
+            m.upsert.return_value = []
+            m.delete.return_value = []
+            mocks[name] = m
+        return mocks[name]
+
+    return factory, mocks
+
+
+def _doc(**over):
+    from services.encryption import encrypt_if_present
+
+    return {
+        "id": "doc-1",
+        "user_id": "u1",
+        "shareability": "course_material",
+        "shareability_confidence": 0.9,
+        "extracted_text": encrypt_if_present("plain body"),
+        **over,
+    }
+
+
+class TestCreateItems:
+    def test_encrypts_at_write_and_hashes_plaintext(self):
+        from learning.checks import item_id, question_hash
+        from services import check_item_service as svc
+        from services.encryption import decrypt_if_present
+
+        factory, mocks = _cached_tables({})
+        with patch("services.check_item_service.table", side_effect=factory):
+            ids = svc.create_items(
+                "course-1", "learning rate", "doc-1", [_draft()], allowed_chunk_ids={"c1"}
+            )
+
+        upsert = mocks["check_items"].upsert
+        upsert.assert_called_once()
+        rows, kwargs = upsert.call_args[0][0], upsert.call_args[1]
+        assert kwargs == {"on_conflict": "course_id,concept_key,question_hash"}
+        row = rows[0]
+        assert (
+            ids
+            == [row["id"]]
+            == [item_id("course-1", "learning rate", question_hash(_draft().prompt))]
+        )
+        assert (
+            row["course_id"] == "course-1"
+            and row["concept_key"] == "learning rate"
+            and "node_id" not in row
+        )
+        assert row["question_hash"] == question_hash(_draft().prompt)
+        assert (
+            row["prompt"] != _draft().prompt
+            and decrypt_if_present(row["prompt"]) == _draft().prompt
+        )
+        assert decrypt_if_present(row["reference_answer"]) == _draft().reference_answer
+        assert json.loads(decrypt_if_present(row["rubric_json"])) == [
+            {"id": "r1", "text": "Names the step size."},
+            {"id": "r2", "text": "Ties it to the gradient direction."},
+        ]
+        assert json.loads(decrypt_if_present(row["common_wrong_json"])) == [
+            {
+                "key": "rate_is_iterations",
+                "text": "Confuses the rate with the number of iterations.",
+            },
+        ]
+        assert row["source_chunk_ids"] == ["c1"]
+        assert row["source_document_ids"] == ["doc-1"]
+        assert row["graded"] is False and row["format"] == "free" and row["difficulty"] == 1
+        assert (
+            row["answer_kind"] == "free"
+            and row["canonical_verified"] is False
+            and row["stepwise"] is False
+        )
+        assert row["options_json"] is None and row["correct_option"] is None
+        assert row["canonical_answer"] is None and row["tolerance"] is None
+
+    def test_mc_reason_options_and_numeric_key_are_encrypted(self):
+        from services import check_item_service as svc
+        from services.encryption import decrypt_if_present, decrypt_json
+
+        numeric = _draft(
+            prompt="What learning rate does the worked example use?",
+            reference_answer="It uses 0.01.",
+            answer_kind="numeric",
+            canonical_answer="0.01",
+            tolerance="0.001",
+        )
+        factory, mocks = _cached_tables({})
+        with patch("services.check_item_service.table", side_effect=factory):
+            svc.create_items("course-1", "learning rate", "doc-1", [_mc_draft(), numeric])
+        mc, num = mocks["check_items"].upsert.call_args[0][0]
+        assert decrypt_json(mc["options_json"]) == [
+            {"letter": "A", "text": "The update step size", "wrong_key": None},
+            {"letter": "B", "text": "The iteration count", "wrong_key": "rate_is_iterations"},
+            {"letter": "C", "text": "The loss value", "wrong_key": "rate_is_loss"},
+            {"letter": "D", "text": "The gradient sign", "wrong_key": "rate_is_sign"},
+        ]
+        assert mc["correct_option"] != "A" and decrypt_if_present(mc["correct_option"]) == "A"
+        assert num["answer_kind"] == "numeric" and num["tolerance"] == 0.001
+        assert (
+            num["canonical_answer"] != "0.01"
+            and decrypt_if_present(num["canonical_answer"]) == "0.01"
+        )
+        assert num["canonical_verified"] is False and num["options_json"] is None
+
+    def test_invalid_drafts_are_dropped_not_stored(self, caplog):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            caplog.at_level("WARNING"),
+        ):
+            ids = svc.create_items(
+                "course-1", "learning rate", None, [_draft(rubric=["one"]), _draft(prompt="ok?")]
+            )
+        rows = mocks["check_items"].upsert.call_args[0][0]
+        assert len(rows) == 1 and len(ids) == 1
+        assert rows[0]["source_document_ids"] == []
+        assert any("rubric" in r.getMessage() for r in caplog.records)
+
+    def test_all_invalid_or_duplicate_prompts_never_double_write_a_row(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({})
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert svc.create_items("course-1", "k", None, [_draft(rubric=[])]) == []
+            ids = svc.create_items(
+                "course-1", "k", None, [_draft(), _draft(prompt=" " + _draft().prompt)]
+            )
+        # an all-invalid batch makes no call; one upsert never names a row twice
+        assert mocks["check_items"].upsert.call_count == 1
+        assert len(ids) == 1 and len(mocks["check_items"].upsert.call_args[0][0]) == 1
+
+
+class TestReadItems:
+    def _stored_row(self):
+        from learning.checks import question_hash
+        from services.encryption import encrypt_if_present
+
+        enc = encrypt_if_present
+        return {
+            "id": "i1",
+            "course_id": "course-1",
+            "concept_key": "recursion",
+            "document_id": "doc-1",
+            "format": "free",
+            "difficulty": 1,
+            "prompt": enc("What is a base case?"),
+            "reference_answer": enc("The stopping condition."),
+            "rubric_json": enc(
+                json.dumps([{"id": "r1", "text": "stops"}, {"id": "r2", "text": "condition"}])
+            ),
+            "common_wrong_json": enc(json.dumps([{"key": "no_stop", "text": "never stops"}])),
+            "options_json": None,
+            "correct_option": None,
+            "answer_kind": "free",
+            "canonical_answer": None,
+            "tolerance": None,
+            "canonical_verified": False,
+            "stepwise": False,
+            "source_chunk_ids": ["c1"],
+            "source_document_ids": ["doc-1"],
+            "question_hash": question_hash("What is a base case?"),
+            "graded": False,
+            "created_at": "2026-09-26T00:00:00Z",
+        }
+
+    def test_list_items_decrypts_and_filters_on_plaintext_columns_only(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({"check_items": [self._stored_row()]})
+        with patch("services.check_item_service.table", side_effect=factory):
+            items = svc.list_items("course-1", "recursion", format="free", difficulty=1)
+        assert items[0].prompt == "What is a base case?" and items[0].concept_key == "recursion"
+        assert items[0].rubric[1].text == "condition" and items[0].common_wrong[0].key == "no_stop"
+        filters = mocks["check_items"].select.call_args[1]["filters"]
+        assert filters == {
+            "course_id": "eq.course-1",
+            "concept_key": "eq.recursion",
+            "format": "eq.free",
+            "difficulty": "eq.1",
+        }
+
+    def test_mc_and_numeric_rows_decrypt_every_a22_field(self):
+        from services import check_item_service as svc
+        from services.encryption import encrypt_if_present, encrypt_json
+
+        row = dict(
+            self._stored_row(),
+            format="mc_reason",
+            options_json=encrypt_json(
+                [
+                    {"letter": "A", "text": "stops", "wrong_key": None},
+                    {"letter": "B", "text": "loops", "wrong_key": "no_stop"},
+                ]
+            ),
+            correct_option=encrypt_if_present("A"),
+            answer_kind="numeric",
+            canonical_answer=encrypt_if_present("3"),
+            tolerance=0.5,
+        )
+        factory, _ = _cached_tables({"check_items": [row]})
+        with patch("services.check_item_service.table", side_effect=factory):
+            (item,) = svc.list_items("course-1", "recursion")
+        assert [o.letter for o in item.options] == ["A", "B"] and item.options[0].wrong_key is None
+        assert item.options[1].wrong_key == "no_stop" and item.correct_option == "A"
+        assert item.canonical_answer == "3" and item.tolerance == 0.5
+        assert item.canonical_verified is False and item.graded is False
+
+    def test_items_for_concepts_groups_by_concept_key(self):
+        from services import check_item_service as svc
+
+        row2 = dict(self._stored_row(), id="i2", concept_key="base case")
+        factory, mocks = _cached_tables({"check_items": [self._stored_row(), row2]})
+        with patch("services.check_item_service.table", side_effect=factory):
+            grouped = svc.items_for_concepts("course-1", ["recursion", "base case"])
+        assert set(grouped) == {"recursion", "base case"} and grouped["base case"][0].id == "i2"
+        filters = mocks["check_items"].select.call_args[1]["filters"]
+        assert filters["course_id"] == "eq.course-1" and filters["concept_key"].startswith("in.(")
+        assert filters["concept_key"] == 'in.("recursion","base case")'
+
+    def test_items_for_no_concepts_reads_nothing(self):
+        from services import check_item_service as svc
+
+        with patch("services.check_item_service.table") as t:
+            assert svc.items_for_concepts("course-1", []) == {}
+        t.assert_not_called()
+
+    def test_bad_rubric_json_yields_empty_rubric_not_a_raise(self, caplog):
+        from services import check_item_service as svc
+        from services.encryption import encrypt_if_present
+
+        row = dict(
+            self._stored_row(),
+            rubric_json=encrypt_if_present("not json"),
+            options_json=encrypt_if_present("{broken"),
+        )
+        factory, _ = _cached_tables({"check_items": [row]})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            caplog.at_level("WARNING"),
+        ):
+            items = svc.list_items("course-1", "recursion")
+        assert items[0].rubric == [] and items[0].options is None
+        assert items[0].common_wrong[0].key == "no_stop"
+        assert any("rubric_json" in r.getMessage() for r in caplog.records)
+
+    def test_course_has_items_count_and_coverage(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables(
+            {
+                "check_items": [self._stored_row()],
+                "graph_nodes": [
+                    {"concept_name": "Recursion"},
+                    {"concept_name": " recursion "},
+                    {"concept_name": "Momentum"},
+                ],
+            }
+        )
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert svc.course_has_items("course-1") is True
+            assert svc.count_items("course-1", "recursion") == 1
+            assert svc.coverage("course-1") == (1, 2)
+        first = mocks["check_items"].select.call_args_list[0][1]
+        assert first["filters"] == {"course_id": "eq.course-1"} and first["limit"] == 1
+        # both course-wide coverage reads page with a total order
+        for name in ("graph_nodes", "check_items"):
+            call = mocks[name].select_with_count.call_args
+            assert call[1]["order"] == "id" and call[1]["filters"] == {"course_id": "eq.course-1"}
+
+    def test_course_without_items(self):
+        from services import check_item_service as svc
+
+        factory, _ = _cached_tables({"check_items": []})
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert svc.course_has_items("course-1") is False
+            assert svc.count_items("course-1", "recursion") == 0
+
+    def test_concept_key_is_the_graph_normalizer_and_the_hook_is_an_unwired_stub(self):
+        from services import check_item_service as svc
+        from services.graph_service import _normalize_concept
+
+        for name in ("Learning  Rate", " learning rate", "LEARNING RATE"):
+            assert svc.concept_key(name) == _normalize_concept(name) == "learning rate"
+        assert svc.answerable_hook is None
+
+
+class TestItemSources:
+    def test_chunks_for_document_reads_by_doc_id_and_decrypts(self):
+        from services import check_item_service as svc
+        from services.encryption import encrypt_if_present
+
+        rows = [
+            {
+                "id": "c1",
+                "chunk_index": 0,
+                "chunk_text": encrypt_if_present("gradient text"),
+                "visibility": "shared",
+                "doc_id": "doc-1",
+            }
+        ]
+        factory, mocks = _cached_tables({"course_chunks": rows})
+        with patch("services.check_item_service.table", side_effect=factory):
+            chunks = svc.chunks_for_document("doc-1")
+        assert chunks == [
+            {
+                "id": "c1",
+                "chunk_index": 0,
+                "chunk_text": "gradient text",
+                "visibility": "shared",
+                "doc_id": "doc-1",
+            }
+        ]
+        call = mocks["course_chunks"].select.call_args
+        assert call[1]["filters"] == {"doc_id": "eq.doc-1"} and call[1]["order"] == "chunk_index"
+
+    def test_only_shared_course_material_is_a_source(self):
+        from services import check_item_service as svc
+
+        with patch("services.check_item_service.decide_visibility", return_value="shared") as dv:
+            assert svc.document_is_item_source(_doc()) is True
+            dv.assert_called_once_with("u1", shareability="course_material", confidence=0.9)
+            assert svc.document_is_item_source(_doc(shareability="completed_work")) is False
+            assert svc.document_is_item_source(_doc(shareability="personal_notes")) is False
+            assert svc.document_is_item_source(_doc(shareability=None)) is False
+        with patch("services.check_item_service.decide_visibility", return_value="private"):
+            assert (
+                svc.document_is_item_source(_doc()) is False
+            )  # opted-out uploader or low confidence
+
+    def test_private_chunks_are_never_a_source_and_never_trigger_the_fallback(self):
+        from services import check_item_service as svc
+        from services.encryption import encrypt_if_present
+
+        shared = {
+            "id": "c1",
+            "chunk_index": 0,
+            "chunk_text": encrypt_if_present("a"),
+            "visibility": "shared",
+            "doc_id": "doc-1",
+        }
+        private = {
+            "id": "c2",
+            "chunk_index": 1,
+            "chunk_text": encrypt_if_present("b"),
+            "visibility": "private",
+            "doc_id": "doc-1",
+        }
+        with patch("services.check_item_service.decide_visibility", return_value="shared"):
+            for rows, want in (([shared, private], ["c1"]), ([private], [])):
+                factory, _ = _cached_tables({"course_chunks": rows})
+                with patch("services.check_item_service.table", side_effect=factory):
+                    assert [c["id"] for c in svc.source_chunks(_doc())] == want
+
+    def test_unindexed_source_falls_back_to_extracted_text(self):
+        from services import check_item_service as svc
+
+        factory, _ = _cached_tables({"course_chunks": []})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("services.check_item_service.decide_visibility", return_value="shared"),
+        ):
+            assert svc.source_chunks(_doc()) == [
+                {"id": None, "chunk_index": 0, "chunk_text": "plain body", "doc_id": "doc-1"}
+            ]
+            assert svc.source_chunks(_doc(extracted_text=None)) == []
+
+    def test_non_source_reads_no_chunks(self):
+        from services import check_item_service as svc
+
+        with (
+            patch("services.check_item_service.table") as t,
+            patch("services.check_item_service.decide_visibility", return_value="private"),
+        ):
+            assert svc.source_chunks(_doc()) == []
+        t.assert_not_called()
