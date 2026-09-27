@@ -526,15 +526,52 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
 
 
 # The markers agents.check_items.build_prompt puts before each passage: "[chunk
-# <id>]" or "[passage]" (a leading space or tab goes with one). Never course
-# content — only an agent that copied one into its text writes it there.
-_CHUNK_MARKER = re.compile(r"[ \t]*\[(?:chunk[ \t]+[^\s\[\]]+|passage)\]", re.IGNORECASE)
+# <id>]" or "[passage]". Never course content — only an agent that copied one
+# into its text writes it there. Copied markers come in runs ("[chunk a],
+# [chunk b]", "(see [chunk a] and [chunk b])"), so a run goes as one: markers
+# joined by a comma, semicolon, slash, "&", "and", "or" or nothing, with a
+# "see"/"cf." before it, and the brackets around it when they hold nothing
+# else. No quantifier precedes the first bracket or lead word, so a long
+# whitespace run is scanned once per bracket (the whitespace before a run is
+# trimmed by _seam, not matched).
+_MARKER = r"\[(?:chunk[ \t]+[^\s\[\]]+|passage)\]"
+_MARKER_RUN = rf"(?:\b(?:see|cf\.?)[ \t]+)?{_MARKER}(?:\s*(?:[,;/&]\s*|(?:and|or)\s+)?{_MARKER})*"
+_CHUNK_MARKER = re.compile(rf"[(\[]\s*{_MARKER_RUN}\s*[)\]]|{_MARKER_RUN}", re.IGNORECASE)
+# Punctuation that can meet across a removed run, and the marks that end a
+# sentence (kept over a comma, semicolon or colon).
+_SEAM = ".,;:!?"
 _TEXT_FIELDS = ("prompt", "reference_answer", "final_answer")
 _TEXT_LISTS = ("rubric", "wrong_texts")
 
 
+def _seam(left: str, right: str) -> str:
+    """`left` + `right` once a marker run between them is gone: the spaces
+    before the run go with it, and where punctuation meets across the gap
+    one mark stays — left's, unless only right's ends a sentence ("7;" + "."
+    is "7."); at the start of the text, right's is dropped."""
+    left = left.rstrip(" \t")
+    body = right.lstrip()
+    mark = body[: len(body) - len(body.lstrip(_SEAM))]
+    if not mark:
+        return left + right
+    core = left.rstrip(_SEAM)
+    ours = left[len(core) :]
+    if not left.strip():
+        return left + body[len(mark) :]
+    if not ours:
+        return left + body
+    end = next((c for c in mark if c in _SENTENCE_END), "")
+    if end and not any(c in _SENTENCE_END for c in ours):
+        return core + end + body[len(mark) :]
+    return left + body[len(mark) :]
+
+
 def _unmarked(text: str) -> str:
-    return _CHUNK_MARKER.sub("", text).strip() if _CHUNK_MARKER.search(text) else text
+    if not _CHUNK_MARKER.search(text):
+        return text
+    while (hit := _CHUNK_MARKER.search(text)) is not None:
+        text = _seam(text[: hit.start()], text[hit.end() :])
+    return text.strip()
 
 
 def _remove_markers(draft: CheckItemDraft) -> list[str]:
@@ -601,7 +638,10 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     from its prompt into any text the item stores (prompt, reference, final
     answer, rubric, wrong texts, option texts) is removed, in every format:
     it is the prompt builder's, never course content, and the reference
-    reaches the grader and the tutor's H4/H6 hint payloads. chunk_ids is
+    reaches the grader and the tutor's H4/H6 hint payloads. A run of markers
+    goes as one, with its separators, a "see"/"cf." before it and brackets
+    that held nothing else, and where punctuation meets across the gap one
+    mark stays, so no "Afro-Eurasia.," or "(,)." is left behind. chunk_ids is
     untouched. Runs first, so every other rule reads the clean text.
 
     stepwise — a draft that claims `stepwise` while its reference has fewer

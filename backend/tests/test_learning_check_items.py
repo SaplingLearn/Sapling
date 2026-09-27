@@ -933,6 +933,63 @@ class TestRepairAndOptions:
         assert fixed.reference_answer == "The size of each update step."
         assert [r.split(":")[0] for r in repairs] == ["chunk_marker"]
 
+    @pytest.mark.parametrize(
+        "text,clean",
+        [
+            # review of A37, live: a list of markers after the closing sentence
+            (
+                "Final answer: Afro-Eurasia. [chunk a1f], [chunk 9bc]",
+                "Final answer: Afro-Eurasia.",
+            ),
+            # review of A37, offline: bracketed and "see ... and ..." lists
+            ("The trace is 7 ([chunk a1], [chunk b2]).", "The trace is 7."),
+            ("The trace is 7 (see [chunk b2] and [chunk c3]).", "The trace is 7."),
+            ("The trace is 7; see [chunk b2] and [chunk c3].", "The trace is 7."),
+            ("The trace is 7 [chunk a1][chunk b2] [passage].", "The trace is 7."),
+            # live 2026-09-27 (BIO110): the marker as a sentence of its own
+            (
+                f"It unwinds the helix. [chunk {_HEX}]. Final answer: Helicase.",
+                "It unwinds the helix. Final answer: Helicase.",
+            ),
+            # a marker between list items keeps the list's own punctuation
+            (
+                "The trace [chunk a1], the determinant [chunk b2], and the eigenvalues.",
+                "The trace, the determinant, and the eigenvalues.",
+            ),
+            ("It is 7 [chunk a1] and not 10.", "It is 7 and not 10."),
+            ("[chunk a1] The trace is 7.", "The trace is 7."),
+            ("(the trace [chunk a1]) is 7.", "(the trace) is 7."),
+            ('He wrote "the trace [chunk a1]".', 'He wrote "the trace".'),
+            ("See [chunk a1]. The trace is 7.", "The trace is 7."),
+        ],
+    )
+    def test_the_marker_repair_leaves_no_separator_behind(self, text, clean):
+        """Review of A37: removing each marker alone left the separators
+        between adjacent markers ("Afro-Eurasia.,", "(,).", "see and.") and a
+        doubled full stop, in text the grader and the H4/H6 hints read. A run
+        of markers joined by commas, semicolons, "and"/"or" or nothing — with
+        a "see"/"cf." before it and brackets that held nothing else — goes as
+        one, and where punctuation meets across the gap one mark is kept (a
+        sentence end over a comma or semicolon)."""
+        from learning.checks import repair_draft
+
+        fixed, repairs = repair_draft(_draft(reference_answer=text))
+        assert fixed.reference_answer == clean
+        assert [r.split(":")[0] for r in repairs] == ["chunk_marker"]
+
+    def test_the_marker_repair_is_linear_on_long_whitespace(self):
+        """No quantified lead-in before a marker: a long whitespace run that
+        ends without one is scanned once per bracket, not once per space."""
+        import time
+
+        from learning.checks import repair_draft
+
+        text = "[chunk a1]" + " " * 50_000 + "x" + "(" + " " * 50_000 + "y"
+        start = time.perf_counter()
+        fixed, _ = repair_draft(_draft(reference_answer=text))
+        assert time.perf_counter() - start < 1.0
+        assert fixed.reference_answer.startswith("x(")
+
     def test_the_marker_repair_reads_only_the_prompt_builders_markers(self):
         from learning.checks import repair_draft
 
