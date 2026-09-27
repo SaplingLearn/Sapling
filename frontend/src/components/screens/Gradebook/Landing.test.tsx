@@ -114,6 +114,7 @@ const chipLabels = () =>
 
 beforeEach(() => {
   mockUser.userId = "u1";
+  mockUser.userReady = true;
   mockedGetSummary.mockResolvedValue({ courses: [], gpa: null, semester: "" });
   mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS });
   mockedGetGpa.mockResolvedValue({ gpa: null, courses: [], semester: null, scope: "cumulative" });
@@ -227,6 +228,35 @@ describe("GradebookLanding semester chips", () => {
 
     expect(await screen.findByText(/A blank semester, ready to plant\./)).toBeInTheDocument();
     expect(screen.queryByText("Spring 2026")).toBeNull();
+  });
+
+  it("shows no demo chips while the user's identity is still resolving", async () => {
+    // UserContext starts at { userId: '', userReady: false } and hydrates a
+    // tick later. The landing used to treat that '' as "logged out" and put
+    // the demo chips up; a click on one was then overwritten when the real
+    // terms landed (the gradebook.spec.ts chip-race journey).
+    mockUser.userId = "";
+    mockUser.userReady = false;
+    let resolveCourses!: (v: { courses: EnrolledCourse[] }) => void;
+    mockedGetCourses.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCourses = resolve;
+      }),
+    );
+
+    const { rerender } = render(<GradebookLanding />);
+    mockUser.userId = "u1";
+    mockUser.userReady = true;
+    rerender(<GradebookLanding />);
+
+    // Terms in flight: nothing clickable, and certainly not the demo terms.
+    await waitFor(() => expect(mockedGetCourses).toHaveBeenCalledWith("u1"));
+    expect(screen.queryByRole("button", { name: "Spring 2026" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Fall 2025" })).toBeNull();
+
+    resolveCourses({ courses: [course("bio", "Fall 2024"), course("psy", "Spring 2025")] });
+    await screen.findByRole("button", { name: "Fall 2024" });
+    expect(chipLabels()).toEqual(["Spring 2025", "Fall 2024"]);
   });
 
   it("still previews the sample semesters when logged out", async () => {

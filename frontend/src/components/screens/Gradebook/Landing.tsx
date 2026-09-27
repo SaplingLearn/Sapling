@@ -119,6 +119,13 @@ export function GradebookLanding() {
   );
 
   React.useEffect(() => {
+    // Until UserContext has hydrated, `userId` is '' for EVERY visitor, so it
+    // says nothing yet. Taking the logged-out branch on it put the demo chips
+    // in front of a signed-in user for the length of their terms request, and
+    // a click on one ("Fall 2025") was then overwritten by the real load's
+    // setSelected(currentTerm). With this gate a signed-in user has no chips
+    // at all until their own terms land, so there is no choice to overwrite.
+    if (!userReady) return;
     // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
     // user with no terms must see their own empty state, never demo chips.
     if (!userId) {
@@ -155,7 +162,7 @@ export function GradebookLanding() {
         setSelected("");
       })
       .finally(() => setTermsReady(true));
-  }, [userId, requestedTerm]);
+  }, [userId, userReady, requestedTerm]);
 
   React.useEffect(() => {
     if (!termsReady) return;
