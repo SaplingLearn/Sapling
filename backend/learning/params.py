@@ -103,6 +103,11 @@ PI_MIN_ROOM = 5
 WHEELSPIN_OPPS = 10
 MISCONCEPTION_CONFIDENCE = 0.7
 NOVICE_FLOOR_MISSES = 3
+# Spec §3.2 rating map / §3.3 evidence mapping: correct after H1..H3 is "assisted"
+# (FSRS Hard, WEIGHT_ASSISTED); correct after H4..H6 is FSRS Again. Name from
+# §13 A6, added by PKG-02 (fsrs.rating_for); PKG-03 Evidence.assisted and
+# PKG-06 evidence_for_rung cite it.
+RUNG_ASSISTED_MAX = 3
 # Band-control cut-points (unassisted_next 0.90 / 0.65, "2 windows", the
 # wheelspin opps>=6 arm) are unnamed in spec §3.3; PKG-06 names them here.
 
