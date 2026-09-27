@@ -187,3 +187,18 @@ def test_every_default_task_model_is_priced():
 def test_gemini_31_flash_lite_cost():
     # gemini-3.1-flash-lite: $0.25 in / $1.50 out per 1M tokens.
     assert llm_pricing.cost_usd("gemini-3.1-flash-lite", 1000, 1000) == pytest.approx(0.00175)
+
+
+def test_any_served_jev_version_is_priced_at_the_family_rate():
+    """#672 review: Jev reports the versioned id that SERVED — a new build
+    (or whatever `jev-latest` resolves to) must not NULL-cost every call."""
+    for served in ("jev-1.14.0", "jev-2.0.0-rc1", "typesafe:jev-1.14.0"):
+        assert llm_pricing.cost_usd(served, 653, 20) == 0.000027426, served
+    # An exact entry still wins over the family (and gemini is untouched).
+    llm_pricing.MODEL_PRICING["jev-9.9.9"] = (0.001, 0.0)
+    try:
+        assert llm_pricing.cost_usd("jev-9.9.9", 1000, 0) == 0.001
+    finally:
+        del llm_pricing.MODEL_PRICING["jev-9.9.9"]
+    llm_pricing._warned_models.discard("jevish-model")
+    assert llm_pricing.cost_usd("jevish-model", 100, 0) is None
