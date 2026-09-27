@@ -2411,6 +2411,32 @@ class TestAgentPlumbing:
         for phrase in ("as long and as detailed as the other options", "never its own reason"):
             assert phrase in text["description"], phrase
 
+    def test_the_mc_reference_is_a_students_reason_never_the_models_working(self):
+        """Third review of A37: two stored references were the model's own
+        working (the rule word "deliberation" now drops them), a definition
+        item's reference only restated its definition, so it failed code's
+        reason criterion (MC_REASON_CRITERION), and a d3 stem that asked
+        "what fallacy, and why" got options that each carried a reason. The
+        prompt asks for the reason a strong student would write — a fact,
+        cause, mechanism or example — never thinking aloud about the item, a
+        question the passages answer, and an option that is the answer
+        alone. Direct runs: deliberation drops 8 of 264 mc_reason drafts →
+        1 of 312, and the criterion failed the reference's own reason on 4
+        of 30 graded items → 1 of 30."""
+        from agents.check_items import _PROMPT, CheckItemsOutput
+
+        for phrase in (
+            "the answer a strong student would write",
+            "at least one fact, cause, mechanism or example",
+            "never only the option's own words or its definition reworded",
+            "never your own thinking aloud",
+            "ask only what the passages answer",
+            "the option is the answer alone",
+        ):
+            assert phrase in _PROMPT, phrase
+        text = CheckItemsOutput.model_json_schema()["$defs"]["OptionDraft"]["properties"]["text"]
+        assert "the answer alone" in text["description"]
+
     def test_build_prompt_names_every_concept_and_marks_passages(self):
         from agents.check_items import build_prompt
 
