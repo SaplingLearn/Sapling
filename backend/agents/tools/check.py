@@ -14,6 +14,14 @@ same format and answer as before, so grader prompts and llm_usage rows are
 byte-identical — and the numeric clear-mismatch via
 `deterministic_yes_no("numeric_gate", False)`. `grader_backend` comes from the
 verdict's provenance (`decisions.evidence_backend`).
+
+Spec §13 A33 (CodeRabbit PR #673): an answer that addresses the grader (verdict
+tokens, grading directives, role or format markers) is refused by
+agents.grader.grade() before any model call, and the seam hands it back as a
+`Refused` verdict. grade_answer then returns GradeOutcome(unavailable=True,
+refused=<reason>) and appends nothing: the attempt counts neither for nor
+against the student, and the route asks for the answer in the student's own
+words instead of reporting an outage.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ from pydantic import BaseModel
 
 from agents.deps import SaplingDeps
 from agents.grader import GradeResult
+from learning.answer_guard import Refusal
 from learning.evidence import Evidence, GraderBackend
 from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK
 from services import decisions  # a module import: tests patch its functions
@@ -57,7 +66,13 @@ class CheckAnswer(BaseModel):
 @dataclass
 class GradeOutcome:
     """Code-side verdict. `unavailable=True` → nothing was appended, for either
-    outcome (A22, invariant 28). Never carries the reference answer."""
+    outcome (A22, invariant 28). Never carries the reference answer.
+
+    `refused` (A33) names why the answer was not graded: it addressed the grader.
+    A refused outcome is also `unavailable` (fail closed for any caller that reads
+    only that flag). The route shows "please answer in your own words" instead
+    of the outage message, and never counts it as a genuine attempt for hint
+    unlocking (PKG-06/07 `gates.genuine_attempt`)."""
 
     correct: bool | None = None
     confidence: float | None = None
@@ -65,6 +80,7 @@ class GradeOutcome:
     matched_wrong_key: str | None = None  # the grader's reason match, as returned
     wrong_key: str | None = None  # what PKG-10 may record (A22 rule in _wrong_key)
     unavailable: bool = False
+    refused: Refusal | None = None
     grader_backend: GraderBackend | None = None
     evidence: dict | None = None  # the Evidence dict appended to deps.pending_evidence
 
@@ -127,7 +143,8 @@ def _maps(item) -> dict:
 
 def _via_seam(verdict) -> tuple[GradeResult, GraderBackend | None]:
     """PKG-05b: verdict → (GradeResult, grader_backend). None = honest degrade: unavailable, no
-    evidence for either outcome (inv 28). GradeResult.backend marks a grader_second verdict."""
+    evidence for either outcome (inv 28). GradeResult.backend marks a grader_second verdict.
+    A `decisions.Refused` verdict carries its GradeResult with `refused` set (A33)."""
     if verdict is None:
         return GradeResult(unavailable=True), None
     second = verdict.result.backend == "gemini_second"
@@ -207,6 +224,8 @@ async def grade_answer(
         result, backend = await _rubric_grade(
             item, format=item.format, student_answer=answer.answer_text, deps=deps
         )
+    if result.refused:  # A33: addressed to the grader; nothing for EITHER outcome
+        return GradeOutcome(unavailable=True, refused=result.refused)
     if result.unavailable:  # A22 / invariant 28: nothing for EITHER outcome
         return GradeOutcome(unavailable=True)
 
