@@ -416,13 +416,27 @@ def _finite_float(text: str) -> float | None:
 
 
 # An option named by its letter — "option B", "choice (C)", "Options B and D",
-# "Options: A. …". Code letters the options after validation (A37), so a
-# letter the agent wrote names nothing, and a reference that says "Option A is
-# correct" would tell the grader the wrong option once code moved it. Only an
-# UPPERCASE letter standing alone right after the word counts: "option a
-# student picks", "optional" and "option, A-level" do not. A bare "(A)" is not
-# read: a stem names its variables that way ("the area of a circle (A)").
-_LETTER_REF = re.compile(r"\b(?i:options?|choices?)\s*:?\s*[(\[]?[A-Z][)\].:]?(?![\w'\u2019-])")
+# "Options: A. …", "Option B's claim", "option (b)", "option d". Code letters
+# the options after validation (A37), so a letter the agent wrote names
+# nothing, and a reference that says "Option A is correct" would tell the
+# grader the wrong option once code moved it. Only a letter code assigns
+# (A–D for CHECK_ITEM_MC_OPTIONS = 4) counts, right after the word: in
+# brackets in either case; bare, uppercase or b–d, standing alone or as a
+# possessive ("B's"). A bare lowercase "a" is the article ("option a student
+# picks") unless a ")" follows it; "optional", "option, A-level", "option
+# B-tree" and "the option I prefer" do not count. A bare "(A)" with no
+# "option" before it is not read: a stem names its variables that way ("the
+# area of a circle (A)").
+_OPTION_LETTERS = string.ascii_uppercase[:CHECK_ITEM_MC_OPTIONS]
+_ALONE = r"(?![\w-]|['\u2019](?!s\b))"  # nothing word-like follows, a possessive 's aside
+_LETTER_REF = re.compile(
+    r"\b(?i:options?|choices?)\s*:?\s*(?:"
+    rf"[(\[](?i:[{_OPTION_LETTERS}])[)\]]"  # (b), [C]
+    rf"|[{_OPTION_LETTERS}][).:]?{_ALONE}"  # B, B), B., B's
+    rf"|[{_OPTION_LETTERS[1:].lower()}]{_ALONE}"  # b, c, d
+    rf"|[{_OPTION_LETTERS.lower()}]\){_ALONE}"  # a), b)
+    ")"
+)
 
 
 # Closing punctuation an option's text may carry or not ("The loss value." is

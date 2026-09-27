@@ -574,6 +574,28 @@ class TestValidateDraft:
                 "reference_answer": "It scales each step. Options:  A. The iteration count  "
                 "B. The update step size  Final answer: The update step size."
             },
+            # review of A37: a possessive, a bracketed or a bare lowercase letter
+            {
+                "reference_answer": "Option B's claim confuses the rate with the loss. "
+                "Final answer: The update step size."
+            },
+            {
+                "reference_answer": "Option B\u2019s claim confuses the rate with the loss. "
+                "Final answer: The update step size."
+            },
+            {
+                "reference_answer": "option (b) is wrong: the rate scales each step. "
+                "Final answer: The update step size."
+            },
+            {"prompt": "Is choice [c] the quantity the learning rate scales? Give your reason."},
+            {
+                "reference_answer": "option d is tempting, but the rate scales each step. "
+                "Final answer: The update step size."
+            },
+            {
+                "reference_answer": "Pick option a) because the rate scales each step. "
+                "Final answer: The update step size."
+            },
         ],
     )
     def test_an_mc_reason_item_never_names_an_option_by_letter(self, over):
@@ -594,6 +616,10 @@ class TestValidateDraft:
             "P(A) is a probability, not an option.",
             # live eval recording 2026-09-27: a stem naming its variable
             "The area of a circle (A) depends on its radius (r).",
+            # review of A37: only the letters code assigns (A-D) name an option
+            "The option I prefer is the update step size.",
+            "An option B-tree index is not in the passage.",
+            "Option E is not one code assigns.",
         ],
     )
     def test_the_letter_rule_reads_only_an_option_named_by_its_letter(self, text):
