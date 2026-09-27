@@ -1958,16 +1958,55 @@ def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canoni
     assert detect_leak(reference, hint, Rung.H3, **kw) == (False, "none"), hint
 
 
-def test_strip_leak_may_leave_unbalanced_latex():
-    """Known cosmetic gap (HANDOFF-06): the stripper masks answer tokens, not
-    LaTeX groups, so a brace inside $...$ can survive. Detect-clean still
-    holds."""
+REF_FACTOR = "Expand x^2 - 6x + 9: it factors as (x-3)^2."
+
+
+@pytest.mark.parametrize(
+    "reference,final,canonical,emitted,stripped",
+    [
+        # a bracket opened inside a withheld run is closed with it
+        (DIFF_REF, "6x^2", None, "So you get $6x^{2}$.", "So you get $[withheld]$."),
+        (DIFF_REF, "6x^2", None, "So you get $6x^{ 2 }$.", "So you get $[withheld]$."),
+        (REF_CURRENT, FA_CURRENT, "2.5e-3", "I = 2.5 × 10^(-3)", "I = [withheld]"),
+        (REF_CURRENT, FA_CURRENT, "2.5e-3", "I = 2.5 × 10^{-3}", "I = [withheld]"),
+        (REF_CURRENT, FA_CURRENT, "2.5e-3", "So 2.5 × 10^{(-3)} here", "So [withheld] here"),
+        (REF_CURRENT, FA_CURRENT, "0.0025", "I = 2.5 × (10^-3).", "I = [withheld]."),
+        # a closer inside the run takes the opener right before it
+        (REF_FACTOR, "(x-3)^2", None, "So it is (x-3)^2 then.", "So it is [withheld] then."),
+        (REF_FACTOR, "(x-3)^2", None, "So it is ((x-3)^2).", "So it is ([withheld])."),
+        (REF_FACTOR, "(x-3)^2", None, "So it is [(x - 3)^2].", "So it is [[withheld]]."),
+        # brackets around a whole run are not the run's, and stay
+        (REF_CURRENT, FA_CURRENT, "0.0025", "I = (2.5 × 10^-3)", "I = ([withheld])"),
+        (DIFF_REF, "6x^2", None, "Is it {6x^2}?", "Is it {[withheld]}?"),
+    ],
+)
+def test_strip_leak_keeps_brackets_paired(reference, final, canonical, emitted, stripped):
+    """The stripper masks answer tokens, and brackets are no token: a run that
+    spans an exponent's "(" or a LaTeX "{" (or a factor's ")") would leave its
+    partner behind ("I = [withheld])", "$[withheld]}$"). A bracket paired
+    across the run's edge is withheld with it when only whitespace parts it
+    from the run; detect-clean and idempotence are unchanged."""
     from learning.ladder import Rung
     from learning.leak import detect_leak, strip_leak
 
-    once = strip_leak("So you get $6x^{2}$.", DIFF_REF, final_answer="6x^2")
-    assert once == "So you get $[withheld]}$."
-    assert detect_leak(DIFF_REF, once, Rung.H0, final_answer="6x^2") == (False, "none")
+    kw = {"final_answer": final, "canonical_answer": canonical}
+    once = strip_leak(emitted, reference, **kw)
+    assert once == stripped
+    assert detect_leak(reference, once, Rung.H0, **kw) == (False, "none")
+    assert strip_leak(once, reference, **kw) == once
+
+
+def test_strip_leak_may_leave_a_bracket_a_token_parts_from_the_run():
+    """Known cosmetic gap (HANDOFF-06): a bracket whose partner lies beyond a
+    token outside the run stays, so the partner is not masked with it (masking
+    the "+ 1" too would withhold text that is no leak). Detect-clean holds."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": FA_CURRENT, "canonical_answer": "0.0025"}
+    once = strip_leak("I = 2.5 × 10^(-3 + 1)", REF_CURRENT, **kw)
+    assert once == "I = [withheld] + 1)"
+    assert detect_leak(REF_CURRENT, once, Rung.H0, **kw) == (False, "none")
 
 
 def test_a_short_reference_leaks_when_it_appears_whole():
@@ -2156,6 +2195,7 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
     numbers = ["1250", "1,250", "01250.0", "12,500", "2.5", "2.500", "25", "7.0", "250", ".5"]
     numbers += ["3x^2", "6x²", "6*x**2", "6", "x", "10^23", "m/s²", "−3", "14.0"]
     numbers += ["2.5e-3", "0.0025", "25", "10⁻³", "10^-4", "e", "10", "1000", "1e3"]
+    numbers += ["10^(-3)", "10^{-3}", "(10^-3)", "{2}", "(x-3)^2", "$6x^{2}$", "[", "}"]
     for reference, final, canonical in _PROPERTY_CASES:
         words = reference.split() + final.split() + numbers
         for _ in range(200):
@@ -2191,6 +2231,7 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
     alphabet = list("abxyz0123456789 .,*^-+=/()\u00b2\u00b3\u207b\u00b9\u207d\u207e\u207f")
     alphabet += list("\u00d7\u00b7\u2212\u2013\ufb01\uff11\u212a\u0663\n")
     alphabet += ["**", "1,250", "0.5", ".5", WITHHELD, "e", "10"]
+    alphabet += ["{", "}", "[", "]", "10^(-3)", "10^{-3}", "( ", " )"]
     checked = 0
     for _ in range(5000):
         text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 40)))
@@ -2227,6 +2268,8 @@ def test_leak_check_runs_in_linear_time():
         ("²" * big, "x"),
         ("1," * big, "1,1"),
         ("( " * (big // 4) + ") " * (big // 4), "a"),
+        ("(1" * (big // 2) + " )" * (big // 2), "1"),  # a run holding every opener
+        ("( " * (big // 2) + "1)" * (big // 2), "1"),  # and every closer
     ):
         start = time.perf_counter()
         detect_leak(text, text, Rung.H3, final_answer=final)

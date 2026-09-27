@@ -24,7 +24,9 @@ it states it. A missing or empty final_answer is a programmer error
 
 The n-gram rule's tokens are ASCII alphanumeric runs, lowercased. The
 stripper widens every leaked span to whole tokens of both tokenizations and
-replaces it, so whatever it leaves the detector cannot flag.
+replaces it, so whatever it leaves the detector cannot flag; it also withholds
+the partner of a bracket the span holds unpaired when only whitespace parts
+the two, so "10^(-3)" or "$6x^{2}$" leaves no stray ")" or "}".
 """
 
 from __future__ import annotations
@@ -49,6 +51,10 @@ Detector = Literal["none", "ngram", "final_answer"]
 WITHHELD = "[withheld]"
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
+# Bracket pairs a withheld run keeps whole (_paired): no token of either
+# tokenization, so masking one never changes what the detector reads.
+_OPENERS = {"(": ")", "[": "]", "{": "}"}
+_CLOSERS = {closer: opener for opener, closer in _OPENERS.items()}
 # PKG-04's canonical_answer is "one number as plain decimal text" (float()-
 # parseable at write time). A sign and an e-notation exponent are not part of
 # the matched mantissa (group 1): "-3" matches a "3", "6.022e23" a "6.022";
@@ -171,6 +177,40 @@ def _atoms(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
+def _paired(text: str, start: int, end: int) -> tuple[int, int]:
+    """The run text[start:end] widened over the partners of the brackets it
+    holds unpaired: a closer right after it (whitespace aside) for each opener
+    left open, innermost first, and an opener right before it for each closer
+    with no opener inside, so "10^(-3" takes its ")" and "x-3)^2" its "(".
+    Brackets and whitespace are no token of either tokenization, so the
+    widened run withholds no more of what the detector reads."""
+    opened: list[str] = []
+    unopened: list[str] = []
+    for ch in text[start:end]:
+        if ch in _OPENERS:
+            opened.append(ch)
+        elif ch in _CLOSERS:
+            if opened and opened[-1] == _CLOSERS[ch]:
+                opened.pop()
+            elif not opened:
+                unopened.append(ch)
+    for opener in reversed(opened):
+        at = end
+        while at < len(text) and text[at].isspace():
+            at += 1
+        if at == len(text) or text[at] != _OPENERS[opener]:
+            break
+        end = at + 1
+    for closer in unopened:
+        at = start
+        while at > 0 and text[at - 1].isspace():
+            at -= 1
+        if at == 0 or text[at - 1] != _CLOSERS[closer]:
+            break
+        start = at - 1
+    return start, end
+
+
 def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: _Answer) -> str:
     ascii_spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
     words = [text[a:b].lower() for a, b in ascii_spans]
@@ -204,7 +244,9 @@ def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: _Answ
         runs.append((start, end))
     out: list[str] = []
     cursor = 0
-    for start, end in runs:
+    # Widening a run over bracket partners never reaches another run: runs
+    # that only separators part were merged above, so a token parts them.
+    for start, end in (_paired(text, a, b) for a, b in runs):
         out.append(text[cursor:start])
         out.append(WITHHELD)
         cursor = end
@@ -222,8 +264,10 @@ def strip_leak(
     """Replace every maximal run of leaked text (an n-gram of the reference, a
     final-answer run, a number of the canonical value — `final_answer` and
     `canonical_answer` as in detect_leak) with WITHHELD, widened to whole
-    tokens so no number or word is cut in two; the text between runs is
-    untouched. One pass leaves nothing detect_leak(reference_answer, ·, H0,
+    tokens so no number or word is cut in two, and over the partner of a
+    bracket it holds unpaired when only whitespace parts them (a bracket is
+    no token, so this withholds nothing the detector reads); the text between
+    runs is otherwise untouched. One pass leaves nothing detect_leak(reference_answer, ·, H0,
     final_answer=<same>, canonical_answer=<same>) flags (unless the reference
     or the final answer itself holds the word "withheld"), and a second pass
     is a no-op: existing WITHHELD markers are never re-matched. ValueError on a
