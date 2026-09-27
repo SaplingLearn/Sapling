@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from learning import params
+from learning import bkt, params
 
 # ---------------------------------------------------------------- params
 
@@ -167,3 +167,108 @@ def test_params_imports_only_stdlib():
     src = pathlib.Path(params.__file__).read_text()
     for root in ("agents", "pydantic_ai", "google", "db", "config", "learning.fsrs"):
         assert f"import {root}" not in src and f"from {root}" not in src, root
+
+
+# ------------------------------------------------------------------ update
+
+
+P_LOW = 0.30
+P_HIGH = 0.90
+TOL = 1e-3
+
+
+@pytest.mark.parametrize(
+    "channel, post, final",
+    [
+        ("free_response", 0.8282, 0.8540),
+        ("mc_reasoned", 0.7941, 0.8250),
+        ("mc", 0.6067, 0.6657),
+        ("teachback_llm", 0.5783, 0.6416),
+        ("chat_turn", 0.5000, 0.5750),
+    ],
+)
+def test_correct_from_p_low_matches_hand_computation(channel, post, final):
+    g, s = params.CHANNELS[channel]["G"], params.CHANNELS[channel]["S"]
+    assert bkt._posterior(P_LOW, g, s, True) == pytest.approx(post, abs=TOL)
+    assert bkt.update(P_LOW, channel, True) == pytest.approx(final, abs=TOL)
+
+
+def test_wrong_free_response_from_p_high_twice():
+    """0.90 → 0.570 → 0.257 through update (learn step after each full-weight
+    observation). The research report's ≈0.50 / ≈0.09 are the observation-only
+    posteriors, pinned in the next test."""
+    once = bkt.update(P_HIGH, "free_response", False)
+    assert once == pytest.approx(0.5703, abs=TOL)
+    twice = bkt.update(once, "free_response", False)
+    assert twice == pytest.approx(0.2572, abs=TOL)
+
+
+def test_wrong_free_response_observation_only_chain():
+    g, s = params.CHANNELS["free_response"]["G"], params.CHANNELS["free_response"]["S"]
+    once = bkt._posterior(P_HIGH, g, s, False)
+    assert once == pytest.approx(0.4945, abs=TOL)
+    assert bkt._posterior(once, g, s, False) == pytest.approx(0.0961, abs=TOL)
+
+
+def test_idk_uses_channel_g_with_s_idk_and_ignores_correct():
+    g = params.CHANNELS["free_response"]["G"]
+    assert bkt._posterior(P_HIGH, g, params.S_IDK, False) == pytest.approx(0.1636, abs=TOL)
+    got = bkt.update(P_HIGH, "free_response", False, idk=True)
+    assert got == pytest.approx(0.2891, abs=TOL)
+    assert bkt.update(P_HIGH, "free_response", True, idk=True) == got
+    # idk drops belief harder than an ordinary wrong answer on the same channel
+    assert got < bkt.update(P_HIGH, "free_response", False)
+
+
+def test_weight_interpolates_and_skips_learn_step():
+    half = bkt.update(P_LOW, "free_response", True, weight=0.5)
+    assert half == pytest.approx(0.5641, abs=TOL)
+    assert bkt.update(P_LOW, "free_response", True, weight=0.0) == pytest.approx(P_LOW)
+    full = bkt.update(P_LOW, "free_response", True, weight=1.0)
+    assert half < full
+
+
+def test_learn_step_applies_only_at_full_weight():
+    # weight=1.0 wrong from a low p can still RISE (learn step); weight<1 cannot
+    assert bkt.update(0.0, "chat_turn", False) == pytest.approx(params.BKT_T)
+    assert bkt.update(0.0, "chat_turn", False, weight=0.999) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("channel", sorted(params.CHANNELS))
+@pytest.mark.parametrize("p", [0.0, 0.05, 0.35, 0.5, 0.8, 0.95, 1.0])
+def test_monotone_and_bounded(channel, p):
+    up = bkt.update(p, channel, True)
+    down = bkt.update(p, channel, False, weight=0.5)
+    assert 0.0 <= up <= 1.0 and 0.0 <= down <= 1.0
+    assert up >= p
+    assert down <= p
+
+
+def test_stronger_channel_moves_more():
+    fr = bkt.update(P_LOW, "free_response", True)
+    mcr = bkt.update(P_LOW, "mc_reasoned", True)
+    mc = bkt.update(P_LOW, "mc", True)
+    chat = bkt.update(P_LOW, "chat_turn", True)
+    assert fr > mcr > mc > chat > P_LOW
+
+
+def test_one_graded_check_outweighs_a_chat_turn():
+    """Spec §1: a chat-turn "correct" is undone, and more, by one graded wrong."""
+    chat = bkt.update(P_LOW, "chat_turn", True)
+    assert chat > P_LOW
+    assert bkt.update(chat, "free_response", False) < P_LOW
+
+
+def test_update_rejects_bad_inputs():
+    with pytest.raises(ValueError, match="channel"):
+        bkt.update(P_LOW, "idk", True)
+    with pytest.raises(ValueError, match="channel"):
+        bkt.update(P_LOW, "essay", True)
+    with pytest.raises(ValueError, match="p"):
+        bkt.update(1.5, "mc", True)
+    with pytest.raises(ValueError, match="p"):
+        bkt.update(-0.1, "mc", True)
+    with pytest.raises(ValueError, match="weight"):
+        bkt.update(P_LOW, "mc", True, weight=1.5)
+    with pytest.raises(ValueError, match="weight"):
+        bkt.update(P_LOW, "mc", True, weight=-0.5)
