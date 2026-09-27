@@ -1,4 +1,5 @@
-"""ZPD policy (spec §3.3). Pure and typed: inputs are learner state and step
+"""ZPD policy (spec §3.3) plus the loop tutor's tier and context routing
+(spec §3.5, §13 A15/A18). Pure and typed: inputs are learner state and step
 state, never student text (invariant 4). Timestamps are float Unix seconds.
 
 Every threshold is a `params` name; the only bare numerals are identities
@@ -12,15 +13,20 @@ import copy
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, NamedTuple, Sequence
+from typing import Any, Literal, NamedTuple, Sequence, get_args
 
 from learning import params
 from learning.ladder import Rung
 
 Band = Literal["novice", "develop", "profic"]
+Tier = Literal["lite", "standard", "deep", "none"]  # "none" = no model call (template or pause)
+TurnPhase = Literal["opener", "teach", "check_pose", "hint", "feedback_correct", "feedback_wrong"]
+ContextPhase = Literal["teach", "check", "hint", "feedback"]
+BudgetLevel = Literal["normal", "soft", "hard"]
+ToolChoice = Literal["auto", "none"]
 LOOP_STATE_VERSION = 1
 WINDOW_KEEP = params.BAND_WINDOW * params.BAND_CONTROL_STOP_WINDOWS
-_BANDS: tuple[str, ...] = ("novice", "develop", "profic")
+_BANDS = get_args(Band)
 
 
 class BandAction(str, Enum):
@@ -69,6 +75,14 @@ class RungEvidence(NamedTuple):
     weight: float
     counts_toward_streak: bool
     fsrs_rating: int
+
+
+class ContextPolicy(NamedTuple):
+    rag_k: int
+    graph_block: bool
+    source_chunks: int  # how many of the item's source_chunk_ids the caller resolves
+    catalog: bool
+    tool_choice: ToolChoice  # "none" -> ModelSettings(tool_choice='none'); declarations unchanged
 
 
 # ── ceiling (spec §3.3 CEILING; §13 A4) ──────────────────────────────────────
@@ -194,6 +208,103 @@ def wheelspin(opps: int, ever_streak3: bool, unassisted_next: float | None) -> b
         and opps >= params.WHEELSPIN_OPPS_EARLY
         and unassisted_next < params.WHEELSPIN_UNASSISTED_MAX
     )
+
+
+# ── tutor tier routing (spec §3.5 LOOP_MODEL_TIER, §13 A15) ──────────────────
+
+
+def _base_tier(
+    phase: TurnPhase,
+    band: Band,
+    rung: Rung,
+    failed_genuine_attempts: int,
+    misconception_active: bool,
+    deterministic_payload: bool,
+) -> Tier:
+    """LOOP_MODEL_TIER rows 2-5 (spec §3.5), first match wins."""
+    hint = phase == "hint"
+    if (
+        phase == "check_pose"
+        or (hint and rung == Rung.H6)
+        or (hint and rung in (Rung.H2, Rung.H4) and deterministic_payload)
+    ):
+        return "none"
+    if phase == "feedback_correct" or (hint and rung == Rung.H0 and band == "profic"):
+        return "lite"
+    if (
+        (phase == "teach" and band == "novice")
+        or (hint and rung in (Rung.H4, Rung.H5))
+        or misconception_active
+        or failed_genuine_attempts >= params.LOOP_TIER_DEEP_MIN_FAILS
+    ):
+        return "deep"
+    # opener, develop/profic teach, H1/H3, feedback_wrong; † any turn the table does not name
+    return "standard"
+
+
+def model_tier(
+    phase: TurnPhase,
+    band: Band,
+    rung: Rung,
+    failed_genuine_attempts: int,
+    misconception_active: bool,
+    *,
+    deterministic_payload: bool = False,
+    budget_level: BudgetLevel = "normal",
+    deep_cap_reached: bool = False,
+    novice_deep_cap_reached: bool = False,
+    arm_session: bool = False,
+) -> Tier:
+    """Tutor tier for one turn (spec §3.5 LOOP_MODEL_TIER, §13 A15). Typed state in,
+    tier out; never the student's text (invariant 4). Adjustments only lower deep.
+
+    `deterministic_payload` is True only when the caller already holds a
+    leak-clean payload for this rung (ladder.deterministic_content +
+    leak.detect_leak). The two cap booleans are the caller's comparisons with
+    PKG-06b's LOOP_SESSION_MAX_DEEP_REQUESTS(_NOVICE); this function never reads
+    a budget. `loop_arm` sessions are never downgraded; they pause at hard."""
+    if budget_level == "hard":
+        return "none"
+    tier = _base_tier(
+        phase,
+        band,
+        Rung(rung),
+        failed_genuine_attempts,
+        misconception_active,
+        deterministic_payload,
+    )
+    if tier != "deep" or arm_session:
+        return tier
+    if band == "novice":
+        # the $-based soft level never downgrades novice deep turns; only the novice cap does
+        return "standard" if novice_deep_cap_reached else "deep"
+    return "standard" if (budget_level == "soft" or deep_cap_reached) else "deep"
+
+
+# ── context and tool policy by phase (spec §13 A18) ──────────────────────────
+
+
+def context_policy(
+    phase: ContextPhase, *, opener: bool, budget_level: BudgetLevel
+) -> ContextPolicy:
+    """What context a loop run gets. teach: RAG + the graph block, tools on only
+    at the normal level; hint/feedback: the item's own source chunks (resolved by
+    PKG-07 through the visibility-aware reader), no tools; check: nothing. The
+    catalog rides the opener only. `hard` returns the soft policy: no model runs
+    at hard (model_tier gives "none"), so it matters only to a caller that
+    ignores model_tier."""
+    constrained = budget_level != "normal"
+    if phase == "teach":
+        return ContextPolicy(
+            params.LOOP_RAG_K_TEACH_SOFT if constrained else params.LOOP_RAG_K_TEACH,
+            True,
+            0,
+            opener,
+            "none" if constrained else "auto",
+        )
+    if phase in ("hint", "feedback"):
+        return ContextPolicy(0, False, params.LOOP_SOURCE_CHUNKS_MAX, opener, "none")
+    return ContextPolicy(0, False, 0, opener, "none")
 
 
 # ── sessions.loop_state document (spec §4, §9) ───────────────────────────────

@@ -449,3 +449,196 @@ def test_loop_state_from_json_rejects_malformed_documents(bad):
 
     with pytest.raises(ValueError):
         LoopState.from_json(bad)
+
+
+# ── policy: tutor tier routing (spec §3.5 LOOP_MODEL_TIER, A15) ────────────────
+
+TIER_ORDER = {"none": 0, "lite": 1, "standard": 2, "deep": 3}
+FAILS = params.LOOP_TIER_DEEP_MIN_FAILS
+
+TIER_CASES = [
+    # (phase, band, rung, fails, misconception, kwargs) -> tier
+    ("teach", "develop", 0, 0, False, {"budget_level": "hard"}, "none"),
+    (
+        "feedback_wrong",
+        "novice",
+        0,
+        FAILS,
+        True,
+        {"budget_level": "hard", "arm_session": True},
+        "none",
+    ),
+    ("check_pose", "novice", 0, 0, False, {}, "none"),
+    ("check_pose", "develop", 0, FAILS, True, {}, "none"),  # the pose is a template, always
+    ("hint", "develop", 2, 0, False, {"deterministic_payload": True}, "none"),
+    ("hint", "novice", 4, 0, False, {"deterministic_payload": True}, "none"),
+    ("hint", "develop", 6, 0, False, {}, "none"),
+    ("feedback_correct", "novice", 0, 0, False, {}, "lite"),
+    (
+        "feedback_correct",
+        "develop",
+        0,
+        FAILS,
+        False,
+        {},
+        "lite",
+    ),  # a correct answer closed the step
+    ("hint", "profic", 0, 0, False, {}, "lite"),  # proficient-band verification †
+    ("teach", "novice", 0, 0, False, {}, "deep"),
+    ("hint", "novice", 4, 0, False, {}, "deep"),  # H4 with no usable sibling
+    ("hint", "develop", 5, 0, False, {}, "deep"),
+    ("teach", "develop", 0, 0, True, {}, "deep"),  # misconception confrontation
+    ("hint", "develop", 1, FAILS, False, {}, "deep"),
+    ("feedback_wrong", "profic", 0, FAILS, False, {}, "deep"),
+    ("opener", "novice", 0, 0, False, {}, "standard"),
+    ("teach", "develop", 0, 0, False, {}, "standard"),
+    ("teach", "profic", 0, 0, False, {}, "standard"),
+    ("hint", "develop", 1, FAILS - 1, False, {}, "standard"),
+    ("hint", "novice", 3, 0, False, {}, "standard"),
+    ("feedback_wrong", "develop", 0, FAILS - 1, False, {}, "standard"),
+    ("hint", "develop", 2, 0, False, {}, "standard"),  # H2, no clean payload †
+    ("hint", "develop", 0, 0, False, {}, "standard"),  # H0 outside profic †
+    # then-rows: downgrades (deep -> standard only)
+    ("teach", "develop", 0, 0, True, {"budget_level": "soft"}, "standard"),
+    ("hint", "profic", 5, 0, False, {"deep_cap_reached": True}, "standard"),
+    ("teach", "develop", 0, 0, True, {"budget_level": "soft", "arm_session": True}, "deep"),
+    (
+        "teach",
+        "novice",
+        0,
+        0,
+        False,
+        {"budget_level": "soft"},
+        "deep",
+    ),  # $-soft never downgrades novice deep
+    (
+        "teach",
+        "novice",
+        0,
+        0,
+        False,
+        {"deep_cap_reached": True},
+        "deep",
+    ),  # the develop/profic cap is not the novice cap
+    ("teach", "novice", 0, 0, False, {"novice_deep_cap_reached": True}, "standard"),
+    (
+        "teach",
+        "novice",
+        0,
+        0,
+        False,
+        {"novice_deep_cap_reached": True, "arm_session": True},
+        "deep",
+    ),
+    ("hint", "develop", 5, 0, False, {"novice_deep_cap_reached": True}, "deep"),
+    ("feedback_correct", "develop", 0, 0, False, {"budget_level": "soft"}, "lite"),
+]
+
+
+@pytest.mark.parametrize("phase,band,rung,fails,misc,kw,tier", TIER_CASES)
+def test_model_tier_table(phase, band, rung, fails, misc, kw, tier):
+    from learning.ladder import Rung
+    from learning.policy import model_tier
+
+    assert model_tier(phase, band, Rung(rung), fails, misc, **kw) == tier
+
+
+def test_model_tier_adjustments_never_raise_a_tier():
+    import itertools
+    from typing import get_args
+
+    from learning.ladder import Rung
+    from learning.policy import Tier, TurnPhase, model_tier
+
+    flags = [
+        {"budget_level": "soft"},
+        {"deep_cap_reached": True},
+        {"novice_deep_cap_reached": True},
+        {"budget_level": "soft", "arm_session": True},
+    ]
+    for phase, band, rung, fails, misc, det in itertools.product(
+        get_args(TurnPhase),
+        ("novice", "develop", "profic"),
+        list(Rung),
+        range(FAILS + 1),
+        (False, True),
+        (False, True),
+    ):
+        base = model_tier(phase, band, rung, fails, misc, deterministic_payload=det)
+        assert base in get_args(Tier)
+        assert (
+            model_tier(
+                phase, band, rung, fails, misc, deterministic_payload=det, budget_level="hard"
+            )
+            == "none"
+        )
+        assert (
+            model_tier(phase, band, rung, fails, misc, deterministic_payload=det, arm_session=True)
+            == base
+        )
+        for kw in flags:
+            adjusted = model_tier(phase, band, rung, fails, misc, deterministic_payload=det, **kw)
+            assert TIER_ORDER[adjusted] <= TIER_ORDER[base], (
+                phase,
+                band,
+                rung,
+                fails,
+                misc,
+                det,
+                kw,
+            )
+            assert adjusted == base or (base, adjusted) == ("deep", "standard")
+
+
+def test_model_tier_takes_a_plain_int_rung():
+    """PKG-07 may pass loop_state's stored int; Rung(rung) normalises it and an
+    off-ladder value is a programmer error."""
+    from learning.policy import model_tier
+
+    assert model_tier("hint", "develop", 6, 0, False) == "none"
+    with pytest.raises(ValueError):
+        model_tier("hint", "develop", params.LADDER_MAX_RUNG + 1, 0, False)
+
+
+# ── policy: context and tool policy by phase (A18) ────────────────────────────
+
+
+def test_context_policy_by_phase():
+    from learning.policy import ContextPolicy, context_policy
+
+    k, k_soft, chunks = (
+        params.LOOP_RAG_K_TEACH,
+        params.LOOP_RAG_K_TEACH_SOFT,
+        params.LOOP_SOURCE_CHUNKS_MAX,
+    )
+    assert context_policy("teach", opener=False, budget_level="normal") == ContextPolicy(
+        k, True, 0, False, "auto"
+    )
+    assert context_policy("teach", opener=True, budget_level="normal") == ContextPolicy(
+        k, True, 0, True, "auto"
+    )
+    for level in ("soft", "hard"):
+        assert context_policy("teach", opener=False, budget_level=level) == ContextPolicy(
+            k_soft, True, 0, False, "none"
+        )
+    for phase in ("hint", "feedback"):
+        for level in ("normal", "soft", "hard"):
+            assert context_policy(phase, opener=False, budget_level=level) == ContextPolicy(
+                0, False, chunks, False, "none"
+            )
+    assert context_policy("check", opener=False, budget_level="normal") == ContextPolicy(
+        0, False, 0, False, "none"
+    )
+
+
+def test_context_policy_catalog_only_on_the_opener_and_tools_only_in_normal_teach():
+    from typing import get_args
+
+    from learning.policy import BudgetLevel, ContextPhase, context_policy
+
+    for phase in get_args(ContextPhase):
+        for level in get_args(BudgetLevel):
+            assert context_policy(phase, opener=False, budget_level=level).catalog is False
+            assert context_policy(phase, opener=True, budget_level=level).catalog is True
+            expected = "auto" if (phase == "teach" and level == "normal") else "none"
+            assert context_policy(phase, opener=False, budget_level=level).tool_choice == expected

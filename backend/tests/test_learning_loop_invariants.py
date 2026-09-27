@@ -377,6 +377,8 @@ def test_inv_03_channel_guess_slip_bounds():
 
 
 _TEXTLIKE_PARAM = re.compile(r"(message|text|answer|reply|prompt|content|utterance)", re.I)
+_ROUTING_FUNCS = ("model_tier", "context_policy")
+_ROUTING_ANN = re.compile(r"bool|int|Rung|Band|TurnPhase|ContextPhase|BudgetLevel")
 
 
 def test_inv_04_policy_takes_no_message_text():
@@ -402,6 +404,34 @@ def test_inv_04_policy_takes_no_message_text():
         assert any(isinstance(n, ast.FunctionDef) and n.name == name for n in tree.body), (
             f"{name}() missing"
         )
+    # A15/A18 (PKG-06 Task 3b): the routing functions take typed state only.
+    aliases = {
+        t.id: ast.unparse(n.value)
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        for t in n.targets
+        if isinstance(t, ast.Name)
+    }
+    for alias in ("Band", "Tier", "TurnPhase", "ContextPhase", "BudgetLevel"):
+        assert aliases.get(alias, "").startswith("Literal["), f"{alias} must be a Literal alias"
+    for name in _ROUTING_FUNCS:
+        node = next(
+            (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), None
+        )
+        assert node is not None, f"{name}() missing"
+        for arg in node.args.args + node.args.kwonlyargs + node.args.posonlyargs:
+            ann = ast.unparse(arg.annotation) if arg.annotation is not None else ""
+            assert _ROUTING_ANN.fullmatch(ann), (
+                f"{name}({arg.arg}: {ann or 'unannotated'}): Literal/enum/bool/int only"
+            )
+    # Every import form, not only `import learning.gates` at line start:
+    # `from learning import gates`, `from . import gates`, function-level imports.
+    imported = [
+        m.split(".")[-1]
+        for m in _modules_imported_by(LEARNING / "policy.py", BACKEND)
+        if m.split(".")[0] in ("learning", "re")
+    ]
+    assert "re" not in imported and "gates" not in imported, f"policy.py imports {imported}"
 
 
 # Spec §8.5 as amended: zpd/learn/review plus ai (PKG-06b) and decision (PKG-05b).
