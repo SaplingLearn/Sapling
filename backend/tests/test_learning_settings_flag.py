@@ -68,13 +68,35 @@ def test_learning_loop_beta_can_be_turned_off():
 
 
 def test_unknown_key_never_reaches_the_update():
+    """UpdateSettingsBody drops unknown JSON keys itself (pydantic's default
+    extra='ignore'), so a request body alone never reaches the ALLOWED filter.
+    Widen model_dump so non-whitelisted keys do reach it; they must still be
+    dropped before table().update."""
+    real_dump = UpdateSettingsBody.model_dump
+
+    def dump_with_unlisted_keys(self, *args, **kwargs):
+        return {
+            **real_dump(self, *args, **kwargs),
+            "learning_loop_beta_override": True,
+            "is_admin": True,
+        }
+
     table_side_effect, captured = _tables()
-    with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+    with (
+        _mock_self(),
+        patch("routes.profile.table", side_effect=table_side_effect),
+        patch.object(UpdateSettingsBody, "model_dump", dump_with_unlisted_keys),
+    ):
         r = client.patch(
-            f"/api/profile/{USER_ID}/settings", json={"learning_loop_beta_override": True}
+            f"/api/profile/{USER_ID}/settings",
+            json={"learning_loop_beta": True, "learning_loop_beta_override": True},
         )
     assert r.status_code == 200
-    assert captured["updates"] == [], "an unknown settings key reached table().update"
+    assert len(captured["updates"]) == 1
+    written = captured["updates"][0]
+    assert written["learning_loop_beta"] is True
+    assert "learning_loop_beta_override" not in written, "an unknown key reached table().update"
+    assert "is_admin" not in written, "an unknown key reached table().update"
 
 
 def test_toggling_the_loop_flag_does_not_resync_class_context():
