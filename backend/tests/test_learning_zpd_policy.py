@@ -823,19 +823,116 @@ def test_matches_non_attempt(text, expected):
         "idk, 42",
         "is it 7 just tell me",  # before a request phrase is not its object
         "no, idk",  # "no" answers a yes/no item, so it is graded, never idk
+        # coordinator decision (B): answer-capable words are answers
+        "even, idk",
+        "on, idk",
+        "in? idk",
+        "hours? idk",
+        "at the start? idk",
+        "I think it's even, idk",
+        "x = 7 idk",
+        "just tell me, is it 7?",  # a digit makes a request-phrase message graded
+        "what's the answer to part 2",  # any digit is an answer
+        # a relation between operands is an answer, digit or not
+        "F = ma, idk",
+        "a > b? idk",
+        "x ≠ y, i don't know",
+        "just tell me if F = ma",
+        "(a+b) = c idk",
     ],
 )
 def test_a_hedged_answer_is_not_a_non_attempt(text):
     """Spec §3.3: a genuine attempt is "a submitted answer or shown work, not
     idk/just tell me". A16 routes a matched message away from grading (idk
     evidence or a hint request), so a submitted answer that also carries a
-    hedge must not match, whether or not punctuation separates the two: a
-    number or a content word outside a request phrase's object, or a relation
-    symbol anywhere, is an answer."""
+    hedge must not match, whether or not punctuation separates the two
+    (coordinator decision (B): fail toward grading). Any digit, or a relation
+    symbol between operands, is an answer anywhere; beside an idk phrase, any
+    word outside the filler set is one."""
     from learning.gates import matches_non_attempt, non_attempt_phrases
 
     assert matches_non_attempt(text) is False
     assert non_attempt_phrases(text) == ()
+
+
+# Words that can answer an item on their own. None is filler: beside an idk
+# phrase each is an answer and the message is graded (decision (B)).
+_ANSWER_CAPABLE = (
+    "even", "on", "in", "some", "any", "much", "still", "then", "when", "hour",
+    "hours", "minute", "minutes", "start", "started", "begin", "up", "yes", "no",
+    "true", "false", "hard", "right", "both", "none", "one", "bit", "lot", "lost",
+    "solution", "id", "us", "impossible", "forever",
+)  # fmt: skip
+
+
+@pytest.mark.parametrize("word", _ANSWER_CAPABLE)
+def test_an_answer_capable_word_beside_an_idk_phrase_is_graded(word):
+    from learning.gates import non_attempt_phrases
+
+    for text in (f"{word}, idk", f"idk {word}", f"{word}? I don't know", f"the {word} idk"):
+        assert non_attempt_phrases(text) == (), text
+
+
+@pytest.mark.parametrize(
+    "text,phrases",
+    [
+        ("idk", ("idk",)),
+        ("I don't know", ("i don't know",)),
+        ("idk lmao", ("idk",)),
+        ("idk =(", ("idk",)),  # an emoticon is not a relation
+        ("idk >.<", ("idk",)),
+        ("idk =)", ("idk",)),
+        ("idk >_<", ("idk",)),
+        ("idk :-(", ("idk",)),
+        ("idk xD", ("idk",)),
+        ("idk man", ("idk",)),
+        ("nah idk", ("idk",)),
+        ("idk bruh", ("idk",)),
+        ("idk haha ngl", ("idk",)),
+        ("sry idk tho", ("idk",)),
+        ("idk, give me another hint", ("idk",)),
+        ("idk, show me an example", ("idk",)),
+        ("idk skip", ("idk",)),
+        ("idk, next question", ("idk",)),
+        ("idk, i forgot", ("idk",)),
+        ("idk, I don't remember", ("idk",)),
+        ("idk what that means", ("idk",)),
+        ("I dont know how to do this problem", ("i don't know",)),
+        ("I missed the lecture, idk", ("idk",)),
+        # answer-capable words inside a recognised plea n-gram stay a plea
+        ("idk, where do I even start?", ("idk",)),
+        ("i don't know how to begin", ("i don't know",)),
+        ("idk how to get started", ("idk",)),
+        ("idk, I've been at this for hours", ("idk",)),
+        ("idk, I spent an hour on this", ("idk",)),
+        ("idk, this is too much", ("idk",)),
+        ("idk, I'm lost", ("idk",)),
+        ("idk, I'm a bit confused", ("idk",)),
+        ("idk, this is impossible", ("idk",)),
+        ("idk, it's taking forever", ("idk",)),
+        ("idk, I really don't know", ("idk",)),
+        # a request phrase: no digit and no relation → never graded
+        ("just tell me", ("just tell me",)),
+        ("man just tell me", ("just tell me",)),
+        ("just tell me the steps", ("just tell me",)),
+        ("just tell me =/", ("just tell me",)),
+        ("just tell me >:(", ("just tell me",)),
+        ("just tell me, I hate this", ("just tell me",)),
+        ("bruh just tell me", ("just tell me",)),
+        ("just tell me, is it the mitochondria?", ("just tell me",)),
+        # idk beside a request: idk only when its residue is empty
+        ("idk, just tell me", ("just tell me", "idk")),
+        ("idk the mitochondria, just tell me", ("just tell me",)),
+    ],
+)
+def test_the_a16_route_split_idk_request_or_graded(text, phrases):
+    """Decision (B): an idk phrase routes to idk evidence only when nothing
+    but phrases, a request's object, pleas and filler remain; a request phrase
+    routes to no evidence unless a digit or an operand relation appears."""
+    from learning.gates import matches_non_attempt, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == phrases
+    assert matches_non_attempt(text) is True
 
 
 @pytest.mark.parametrize(
@@ -904,23 +1001,164 @@ def test_a_plea_beside_a_non_attempt_phrase_is_still_a_non_attempt(text, phrases
     assert non_attempt_phrases(text) == phrases
 
 
-def test_pleas_never_count_toward_hint_unlocking_or_h6():
-    """A plea is never a genuine attempt, so two of them in the develop band,
-    each past the independent gate, unlock no rung and never reach H6."""
-    from learning.gates import h6_allowed, is_genuine_attempt, matches_non_attempt, rung_unlock
-    from learning.policy import ceiling
+def _two_attempts(texts):
+    """Feed `texts` as develop-band attempts, each past the independent gate,
+    through the route's contract: matched_non_attempt = has_non_attempt_phrase."""
+    from learning.gates import has_non_attempt_phrase, is_genuine_attempt
 
     step = _step(first=0.0)
     now = 0.0
-    for text in ("Just tell me. This is too hard", "give me the answer, I give up"):
+    for text in texts:
         now += IND * 10
-        if is_genuine_attempt(len(text), False, matches_non_attempt(text), IND * 10, "develop"):
+        if is_genuine_attempt(len(text), False, has_non_attempt_phrase(text), IND * 10, "develop"):
             step.attempted_at.append(now)
             step.genuine_attempts += 1
+    return step, now
+
+
+def test_pleas_never_count_toward_hint_unlocking_or_h6():
+    """A plea is never a genuine attempt, so two of them in the develop band,
+    each past the independent gate, unlock no rung and never reach H6."""
+    from learning.gates import h6_allowed, rung_unlock
+    from learning.policy import ceiling
+
+    step, now = _two_attempts(("Just tell me. This is too hard", "give me the answer, I give up"))
     assert step.genuine_attempts == 0 and step.attempted_at == []
     assert rung_unlock(step, now) is False
     assert ceiling(_learner("develop"), step) < ceiling(_learner("develop"), _step(fails=2))
     assert h6_allowed(step, item_taught=True, item_practice=True, item_graded=False) is False
+
+
+# Review round 2's 49 probe pleas plus the coordinator's (A) list: every one
+# holds a non-attempt phrase, so none may unlock a rung or count toward H6.
+_PROBE_PLEAS = (
+    "bro just tell me", "bruh just tell me", "idk man", "nah idk", "idk bruh", "idk lmao",
+    "idk haha", "idk ngl", "idk what that means", "i don't know what the question is asking",
+    "idk how to do this problem", "idk how to approach this", "idk this makes no sense",
+    "idk what you mean", "idk, what does that mean?", "i don't know how to do this one",
+    "idk im bad at this", "idk im dumb", "just tell me, I hate this",
+    "idk, can you explain it differently?", "idk where to even begin", "idk what to write",
+    "idk what formula to use", "i don't know which equation to use", "idk what this is",
+    "i don't know, help", "idk please help me", "idk, I'm confused", "i don't know!!! ugh",
+    "idk, i forgot", "idk i never learned this", "idk we didnt cover this",
+    "i don't know, i wasn't in class", "just tell me already", "just tell me pls",
+    "can you just tell me the answer", "give me the answer now", "whats the answer lol",
+    "idk sorry", "I don't know, sorry", "idk, next question", "idk skip",
+    "idk, can we move on?", "idk, give me another hint", "idk, can I get a hint",
+    "idk, show me an example", "idk, walk me through it", "i don't know, explain please",
+    "idk what im doing",
+    # the coordinator's list beyond the probe
+    "idk xD", "idk =(", "idk >.<", "just tell me =/", "I dont know how to do this problem",
+)  # fmt: skip
+
+
+def test_the_probe_plea_list_is_complete():
+    assert len(_PROBE_PLEAS) == 49 + 5 and len(set(_PROBE_PLEAS)) == len(_PROBE_PLEAS)
+
+
+@pytest.mark.parametrize("text", _PROBE_PLEAS)
+def test_every_probe_plea_holds_a_non_attempt_phrase(text):
+    """Decision (A), fail closed: a NON_ATTEMPT_PATTERNS phrase anywhere (or a
+    _PLEA plea) makes the message no genuine attempt, whatever else it says."""
+    from learning.gates import has_non_attempt_phrase
+
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "first,second", list(zip(_PROBE_PLEAS, _PROBE_PLEAS[1:] + _PROBE_PLEAS[:1]))
+)
+def test_two_probe_pleas_unlock_no_rung_and_never_reach_h6(first, second):
+    from learning.gates import h6_allowed, rung_unlock
+
+    step, now = _two_attempts((first, second))
+    assert step.genuine_attempts == 0 and step.attempted_at == []
+    assert rung_unlock(step, now) is False
+    assert h6_allowed(step, item_taught=True, item_practice=True, item_graded=False) is False
+
+
+# Decision (B)'s accepted residual: a probe plea whose residue holds a word
+# that can answer an item alone ("one", "bad", "formula", "equation",
+# "never", "in") is graded, never idk. It still unlocks nothing (A).
+_PROBE_PLEAS_GRADED = (
+    "i don't know how to do this one",
+    "idk im bad at this",
+    "idk what formula to use",
+    "i don't know which equation to use",
+    "idk i never learned this",
+    "i don't know, i wasn't in class",
+)
+
+
+def test_probe_pleas_route_to_idk_or_a_request_except_the_residual():
+    from learning.gates import non_attempt_phrases
+
+    graded = tuple(t for t in _PROBE_PLEAS if non_attempt_phrases(t) == ())
+    assert graded == _PROBE_PLEAS_GRADED
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["idk maybe 7", "even, idk", "the mitochondria idk", "x = 7 idk", "just tell me, is it 7?"],
+)
+def test_a_hedged_answer_is_graded_but_never_unlocks_hints(text):
+    """The split: (B) grades a hedged submission, (A) keeps it from counting
+    toward hint unlocking or H6. matches_non_attempt is the routing rule and
+    is never the is_genuine_attempt argument."""
+    from learning.gates import has_non_attempt_phrase, matches_non_attempt, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == () and matches_non_attempt(text) is False
+    assert has_non_attempt_phrase(text) is True
+    step, _ = _two_attempts((text, text))
+    assert step.genuine_attempts == 0
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["no idea", "Where do I start?", "I really don't know", "dunno", "not sure", "I give up",
+     "this is too hard", "I'm lost", "I've been at this for hours"],
+)  # fmt: skip
+def test_a_plea_without_a_pattern_phrase_is_graded_but_no_attempt(text):
+    """NON_ATTEMPT_PATTERNS is exactly the spec's five, so a plea without one
+    routes to grading (Known gaps); a _PLEA plea still vetoes the attempt."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == ()
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["I think it's photosynthesis", "x = 7", "the mitochondria", "no", "even", "an electron", ""],
+)
+def test_an_answer_without_a_phrase_or_plea_can_be_a_genuine_attempt(text):
+    from learning.gates import has_non_attempt_phrase
+
+    assert has_non_attempt_phrase(text) is False
+
+
+def test_every_routed_non_attempt_is_also_no_genuine_attempt():
+    """A message the route sends to idk evidence or a hint request is never a
+    genuine attempt: non_attempt_phrases(t) != () implies has_non_attempt_phrase(t)."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    texts = [t for t, _ in _PLEAS] + list(_PROBE_PLEAS) + [
+        "Sorry, idk", "idk, just tell me", "Please just tell me how photosynthesis works",
+        "ok. What's the answer?", "Honestly? I don’t know", "IDK...", "i dont know",
+        "Just TELL me the steps", "give me the answer!!", "whats the answer?",
+    ]  # fmt: skip
+    routed = [t for t in texts if non_attempt_phrases(t)]
+    assert len(routed) > len(texts) // 2
+    assert all(has_non_attempt_phrase(t) for t in routed)
+
+
+def test_has_non_attempt_phrase_matches_whole_words_only():
+    from learning.gates import has_non_attempt_phrase
+
+    assert has_non_attempt_phrase("idkfa") is False
+    assert has_non_attempt_phrase("I don’t know") is True  # typographic apostrophe
+    assert has_non_attempt_phrase("IDK!!!") is True
+    assert has_non_attempt_phrase("just. tell me") is True  # normalised across punctuation
 
 
 def test_non_attempt_patterns_are_exactly_the_spec_list():
