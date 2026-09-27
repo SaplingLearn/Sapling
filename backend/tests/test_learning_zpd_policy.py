@@ -432,6 +432,37 @@ def test_loop_state_keeps_the_keys_later_packages_add():
     assert back["plan"]["cursor"] == 0
 
 
+def test_loop_state_steps_keep_the_step_keys_later_packages_add():
+    """A later package's per-item fields (spec §9: wrong, check_item_id, node_id,
+    feedback_given, taught) survive a round trip under "steps"; the typed keys
+    still win over a same-named extra."""
+    from learning.policy import LoopState
+
+    doc = LoopState().to_json()
+    doc["steps"]["q" * 64] = {
+        "rung": 1,
+        "attempts": 1,
+        "first_shown_at": 1000.0,
+        "check_item_id": "ci-1",
+        "node_id": "node-1",
+        "wrong": 1,
+        "taught": True,
+    }
+    state = LoopState.from_json(doc)
+    step = state.steps["q" * 64]
+    assert step.genuine_attempts == 1 and step.extra == {
+        "check_item_id": "ci-1",
+        "node_id": "node-1",
+        "wrong": 1,
+        "taught": True,
+    }
+    back = state.to_json()["steps"]["q" * 64]
+    assert back["check_item_id"] == "ci-1" and back["taught"] is True and back["rung"] == 1
+    step.extra["rung"] = 6  # a stray extra never overrides the typed rung
+    assert state.to_json()["steps"]["q" * 64]["rung"] == 1
+    assert LoopState.from_json(state.to_json()).steps["q" * 64].extra.get("rung") is None
+
+
 @pytest.mark.parametrize(
     "bad",
     [

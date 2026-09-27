@@ -13,6 +13,7 @@ import logging
 from typing import Any, Callable, Literal
 
 from learning.ladder import Rung
+from learning.leak import Detector
 from learning.policy import Band, BandAction, CeilingReason, Tier
 from services.events_service import log_event
 
@@ -20,7 +21,6 @@ logger = logging.getLogger("sapling.learning.zpd_events")
 
 Phase = Literal["probe", "plan", "teach", "check", "feedback", "close", "posttest"]  # A8: posttest
 Rating = Literal["too_easy", "appropriate", "too_hard"]
-Detector = Literal["none", "ngram", "final_answer"]
 BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
 GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]  # spec §5 (A22/A24)
 

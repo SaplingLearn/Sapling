@@ -59,6 +59,9 @@ class StepState:
     attempted_at: list[float] = field(default_factory=list)  # genuine attempts only
     showed_work: bool = False
     exam_mode: bool = False
+    # step keys PKG-06 does not own (a later package's per-item fields), carried
+    # through a load/save untouched
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -358,6 +361,7 @@ def _step_from_json(question_hash: str, raw: object) -> StepState:
         attempted_at=[float(t) for t in attempted],
         showed_work=_flag(raw.get("showed_work", False), "showed_work"),
         exam_mode=_flag(raw.get("exam_mode", False), "exam_mode"),
+        extra={k: copy.deepcopy(v) for k, v in raw.items() if k not in _STEP_KEYS},
     )
 
 
@@ -366,8 +370,10 @@ class LoopState:
     """The typed view of `sessions.loop_state`: ids, numbers and bools only.
 
     `extra` carries every top-level key this package does not own ("revealed",
-    "plan", "probe", "sr", "review", … added by PKG-07+), uninterpreted, so a
-    load/save round trip never drops a later package's state."""
+    "plan", "probe", "sr", "review", … added by PKG-07+), and `StepState.extra`
+    every step key it does not own, uninterpreted, so a load/save round trip
+    never drops a later package's state. The typed keys win over a same-named
+    extra."""
 
     steps: dict[str, StepState] = field(default_factory=dict)
     current: str | None = None
@@ -392,6 +398,7 @@ class LoopState:
                 "first_attempts": list(self.first_attempts),
                 "steps": {
                     qh: {
+                        **copy.deepcopy(s.extra),
                         "rung": int(s.rung),
                         "attempts": s.genuine_attempts,
                         "first_shown_at": s.first_shown_at,
