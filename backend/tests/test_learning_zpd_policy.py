@@ -1818,6 +1818,98 @@ def test_final_answer_reads_through_markdown_emphasis():
     assert final_answer("Use x ** 2 then 4") == ("4",)
 
 
+# Review round 6 (coordinator decision 2b): symbolic answers after an
+# intermediate constant.
+DIFF_CONST = "Differentiate term by term: the derivative of 2x^3 + 5 is 6x^2."
+DIFF_CONST_7 = "Differentiate term by term: the derivative of 4x^3 + 7 is 12x^2."
+DIFF_SUM = "Differentiate 2x^3 + x^2 + 4 term by term: the derivative is 6x^2 + 2x."
+
+
+def test_final_answer_takes_a_power_term_after_the_last_number():
+    """The fallback chooses between the last standalone number and the last
+    power term BY POSITION: a power term after the number whose base carries a
+    digit is the answer, with the +/- expression run it sits in, so a hint
+    stating it leaks and a hint naming the intermediate constant does not. A
+    unit's exponent after a number ("9.8 m/s^2", "12 cm^2") has no digit in its
+    base, so the number stays the answer."""
+    from learning.ladder import Rung
+    from learning.leak import WITHHELD, detect_leak, final_answer, strip_leak
+
+    assert final_answer(DIFF_CONST) == ("6x", "2")
+    assert final_answer(DIFF_CONST_7) == ("12x", "2")
+    assert final_answer(DIFF_SUM) == ("6x", "2", "2x")
+    for reference, hint in (
+        (DIFF_CONST, "Good, so you should get 6x^2."),
+        (DIFF_CONST_7, "It comes out to 12x^2."),
+        (DIFF_SUM, "Then you get 6x^2 + 2x."),
+    ):
+        assert detect_leak(reference, hint, Rung.H3) == (True, "final_answer"), hint
+        once = strip_leak(hint, reference)
+        assert WITHHELD in once and detect_leak(reference, once, Rung.H0) == (False, "none")
+    assert strip_leak("It comes out to 12x^2.", DIFF_CONST_7) == "It comes out to [withheld]."
+    for reference, hint in (
+        (DIFF_CONST_7, "What happens to the constant 7 when you differentiate?"),
+        (DIFF_CONST, "What happens to the constant 5 when you differentiate?"),
+        (DIFF_SUM, "What does the constant 4 turn into?"),
+    ):
+        assert detect_leak(reference, hint, Rung.H3) == (False, "none"), hint
+        assert strip_leak(hint, reference) == hint
+    # a unit's exponent after a number: the number stays the answer
+    assert final_answer("The acceleration is 9.8 m/s^2.") == ("9", "8")
+    assert final_answer("The area of the square is 12 cm^2.") == ("12",)
+    assert final_answer("A dropped ball speeds up at 9.8 m/s^2") == ("9", "8")
+    assert final_answer("Each side is 4 cm, so the square covers 16 cm^2.") == ("16",)
+    assert detect_leak("A dropped ball speeds up at 9.8 m/s^2", "About 9.8 here", Rung.H3).leaked
+    # other power terms whose base carries a digit
+    assert final_answer("Expand x^2 - 6x + 9: it factors as (x-3)^2.") == ("x", "3", "2")
+    assert final_answer("Dilute 5 mL into 5 L; the level drops by 10^-3") == ("10", "3")
+    assert final_answer("Spaced out, x^2 + 2x + 1 is ( x + 1 )^2") == ("x", "1", "2")
+    # a number inside the power term's expression run belongs to it
+    assert final_answer("The derivative of x^3 + 4x is 3x^2 + 4.") == ("3x", "2", "4")
+    assert final_answer("The integral of 12x is 6x^2 + C") == ("6x", "2", "c")
+    assert final_answer("Term by term, x^3 + 4x leaves 3x^2 + 4") == ("3x", "2", "4")  # no cue
+    # scientific notation and rates keep their mantissa / leading number
+    assert final_answer("It is about 6 x 10^23") == ("6",)
+    assert final_answer("Light travels at 3.0 × 10^8 m/s") == ("3", "0")
+    assert final_answer("The rate is 5 per 10^-3 s") == ("5",)
+    for unspaced in ("6.02x10^23", "6.02×10^23", "6.02·10^23", "6.02*10^23"):
+        assert final_answer(f"There are {unspaced} atoms") == ("6", "02"), unspaced
+    assert final_answer("It is 2**10 bytes") == ("2", "10")  # a power's base is no factor
+    assert final_answer("The answer is x^2 + 1") == ("x", "2", "1")
+    # a digitless power run is no answer over a number (a unit is never promoted)
+    assert final_answer("The pressure is 3 N/m^2, and the force doubles to 6") == ("6",)
+    assert final_answer("The volume is 5 m^3") == ("5",)
+
+
+def test_final_answer_prefers_the_answer_after_a_final_answer_cue():
+    """When the last number and the last power term compete, the one in the
+    clause after the last final-answer cue ('is', 'equals', 'gives', 'yields',
+    'comes out to', 'works out to', 'answer:') wins; with no cue naming one of
+    them, position decides. A cue never promotes an earlier number over the
+    last one ("The force is 10 N; ... leaves 5 m/s^2" keeps 5)."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer
+
+    assert final_answer("The derivative is 6x^2, since the constant 5 vanishes.") == ("6x", "2")
+    assert final_answer("Since 2x^3 differentiates to 6x^2, the answer is 7.") == ("7",)
+    assert final_answer("The force is 10 N; dividing by the 2 kg mass leaves 5 m/s^2.") == ("5",)
+    assert final_answer("Power rule on x^3 + 4 gives 3x^2") == ("3x", "2")
+    assert final_answer("Final answer: 12x^2, from the 4 in 4x^3") == ("12x", "2")
+    assert final_answer("The answer is\n42.") == ("42",)
+    ref = "The derivative is 6x^2, since the constant 5 vanishes."
+    assert detect_leak(ref, "Where does the 5 go?", Rung.H3) == (False, "none")
+    assert detect_leak(ref, "You get 6x^2 here.", Rung.H3) == (True, "final_answer")
+    # the last number named by the cue beats a later power term
+    assert final_answer("The answer is 7, since 2x^3 differentiates to 6x^2.") == ("7",)
+    assert final_answer("It comes out to 12x^2 once the 7 drops out") == ("12x", "2")
+    assert final_answer("Applying the rule works out to 3x^2, not 4") == ("3x", "2")
+    assert final_answer("Each term yields 6x^2 + 2x after the 4 vanishes") == ("6x", "2", "2x")
+    # a cue clause that holds no number names even a digitless power term
+    assert final_answer("The derivative of x^3/3 + 7 is x^2.") == ("x", "2")
+    assert final_answer("The unit of acceleration is m/s^2") == ("m", "s", "2")
+    assert final_answer("The force is 10 N m^2; dividing leaves 5") == ("5",)
+
+
 # Coordinator decision 2(a): PKG-04's numeric canonical_answer, decrypted by
 # the caller, is the final answer; the reference text is not parsed for it.
 REF_SLIDE = "The block slides 14 m before it stops; friction removes 3 J per metre of travel."
@@ -1927,6 +2019,10 @@ def test_final_answer_runs_in_linear_time():
         "the answer is " + "x^" * (big // 2),
         "a" + " " * big + "b",
         "(" * big + "2",
+        "is " * (big // 3) + "5 is 6x^2",  # many cues
+        "2x^2 + " * (big // 7) + "5",  # one long expression run
+        "5 " + "is" + " " * big + "6x^2",  # a long gap after a cue
+        "7 " + "+ " * (big // 2) + "3x^2",  # operators with no operand between
     ):
         start = time.perf_counter()
         detect_leak(reference, reference, Rung.H3)
@@ -2040,6 +2136,7 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
     seps = [" ", ", ", "\n", " — ", "; ", " é ", "(", ") ", "/", " = ", "^", "**", " x "]
     numbers = ["1250", "1,250", "01250.0", "12,500", "2.5", "2.500", "25", "7.0", "250"]
     numbers += ["3x^2", "3x", "6.02", "10^23", "10", "**42**", "cos(x^2)", "5^2", "6.022e23"]
+    numbers += ["6x^2", "12x^2", "+", "2x", "7", "(x-3)^2", "10^-3", "is", "gives"]
     for reference in (
         REF_POWER,
         REF_EQ,
@@ -2057,6 +2154,12 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
         "By the chain rule the derivative of sin(x^2) is 2x cos(x^2).",
         "It is 6.022e23 molecules",
         "**Final answer:** 1,250",
+        DIFF_CONST,
+        DIFF_CONST_7,
+        DIFF_SUM,
+        "Expand x^2 - 6x + 9: it factors as (x-3)^2.",
+        "Dilute 5 mL into 5 L; the level drops by 10^-3",
+        "The derivative is 6x^2, since the constant 5 vanishes.",
     ):
         words = reference.split() + numbers
         for _ in range(200):

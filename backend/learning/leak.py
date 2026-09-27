@@ -11,10 +11,13 @@ the supervisor architecture's deterministic solution stripper). Two rules:
   reformatted answer still leaks. The final answer is the item's numeric
   canonical_answer when the caller passes one (PKG-04's, decrypted; the
   reference is then not parsed for it); else the reference's: the clause
-  after its last '='; else its last standalone number that is not a
-  numbered-step label, an exponent or a power's base, so scientific notation
-  gives its mantissa; else its last power term, "3x^2"; Markdown emphasis
-  read as its text.
+  after its last '='; else, by the last final-answer cue and then by
+  position, its last standalone number (not a numbered-step label, an
+  exponent or a power's base, so scientific notation gives its mantissa) or
+  its last power term with its +/- expression run ("12x^2", "6x^2 + 2x",
+  "(x-3)^2") when a digit that is no exponent sits in it, so a unit's
+  exponent ("9.8 m/s^2") never displaces the number; Markdown emphasis read
+  as its text.
 
 Tokens are ASCII alphanumeric runs, lowercased (`[a-z0-9]+` over lowercase for
 ASCII text). The stripper tokenizes the same way over the original text, so
@@ -59,8 +62,9 @@ _STARSTAR = "**"
 # ("4 ^ ( 2 )" is "4^(2)"). Each alternative starts a whitespace run only at its
 # first character, so the substitution is linear.
 _POWER_SPACE = re.compile(r"(?<![ \t])[ \t]+(?=\^|\*\*|[)\]}])|(?<=[\^(\[{])[ \t]+|(?<=\*\*)[ \t]+")
-# Unspaced scientific notation ("6.02x10^23") reads as spaced ("6.02 x 10^23").
-_SCI_TIMES = re.compile(r"(?<=\d)[xX](?=10(?:\^|\*\*))")
+# Unspaced scientific notation ("6.02x10^23", "6.02×10^23", "6.02*10^23") reads
+# as spaced ("6.02 x 10^23").
+_SCI_TIMES = re.compile(r"(?<=\d)[xX×·*](?=10(?:\^|\*\*))")
 # What may stand between an exponent operator ("^", "**" touching its base) and
 # its exponent: "10^-3", "4^(2)". A number after one is an exponent ("m/s^2",
 # "cm^2", "3x^2"), and a number before one is a power's base ("10^23" of
@@ -74,6 +78,26 @@ _CHUNK = re.compile(r"\S+")
 # thousands separator), a semicolon, "and"/"so", a newline, or sentence
 # punctuation that is not a decimal point.
 _CLAUSE_BREAK = re.compile(r"(?<!\d),|,(?!\d{3}(?!\d))|[;\n]|\band\b|\bso\b|[.!?](?!\d)", re.I)
+# Expression runs (_power_runs): operand chunks joined by a spaced binary +/-.
+# An operand is made of math characters only and holds a digit, a bracket or
+# an exponent, or is one letter ("C"); closing punctuation ends its run. Over
+# the one-letter-per-chunk kind string (_chunk_kind) a run is one _RUN match.
+_RUN_OPS = frozenset({"+", "-", "−"})
+_RUN_CLOSERS = ".,;:!?"
+_OPERAND_CHARS = re.compile(r"[A-Za-z0-9.^*/()\[\]{}+\-−]+")
+_MATH_MARK = re.compile(r"[0-9()\[\]{}^]")
+_RUN = re.compile(r"o(?:po)*(?:pc)?|c|q")
+_DIGITS = re.compile(r"[0-9]+")
+_ASCII_DIGITS = frozenset(string.digits)
+# A power right after "<number> x|×|*|·|/|per|times" is that number's factor
+# (scientific notation, a rate), never an answer over it.
+_TIMES = frozenset({"x", "×", "*", "·", "/", "per", "times"})
+# A final-answer cue (whole words, any case). The clause after the LAST one
+# names the answer when it holds a power run or the last number.
+_CUE = re.compile(
+    r"\b(?:(?:is|are|was|equals|gives|yields|(?:comes|works)[ \t]+out[ \t]+to)\b|answer[ \t]*:)",
+    re.I,
+)
 
 
 # By-value tokens for the final-answer rule: an ASCII number (thousands
@@ -112,6 +136,68 @@ def _is_exponent(text: str, start: int) -> bool:
     return i > 0 and text.startswith(_STARSTAR, i) and text[i - 1] in _OPERAND_END
 
 
+def _is_power(chunk: str) -> bool:
+    return bool(("^" in chunk or _OPERAND_POWER.search(chunk)) and _TOKEN.search(chunk))
+
+
+def _chunk_kind(chunk: str) -> str:
+    """One letter per whitespace-delimited chunk, for _RUN: "p" a +/- operator;
+    "o" an operand ("6x^2", "2x", "(x", "1)^2", "C"), "c" one that closing
+    punctuation ends ("2x.", "9:"); "q" any other power term ("$x^2$"); "n"
+    anything else (a word, "is")."""
+    if chunk in _RUN_OPS:
+        return "p"
+    core = chunk.rstrip(_RUN_CLOSERS)
+    if _OPERAND_CHARS.fullmatch(core) and (
+        _MATH_MARK.search(core) or (len(core) == 1 and core.isalpha())
+    ):
+        return "o" if core == chunk else "c"
+    return "q" if _is_power(chunk) else "n"
+
+
+class _Run(NamedTuple):
+    start: int
+    end: int
+    answer: bool  # may be the final answer over a standalone number
+
+
+def _power_runs(text: str) -> list[_Run]:
+    """Every expression run that holds a power term, in order. A run is a
+    power chunk with the operands a binary +/- joins to it ("6x^2 + 2x",
+    "( x + 1 )^2" after _POWER_SPACE, "3x^2 + 4"). It can be the answer over a
+    standalone number when a digit that is no exponent sits in it ("12x^2",
+    "(x-3)^2", "10^-3", "x^2 + 1"; not "m/s^2", "cm^2", "x^2") and it is not the
+    power factor of a number ("6 x 10^23", "3.0 × 10^8", "5 per 10^-3")."""
+    chunks = list(_CHUNK.finditer(text))
+    texts = [c.group() for c in chunks]
+    after_factor = []  # chunk i follows "<number> <times/per>"
+    prev = prev_prev = ""
+    for chunk in texts:
+        after_factor.append(prev.lower() in _TIMES and prev_prev[-1:] in _ASCII_DIGITS)
+        prev_prev, prev = prev, chunk
+    runs = []
+    for m in _RUN.finditer("".join(_chunk_kind(t) for t in texts)):
+        first, last = m.start(), m.end() - 1
+        if not any(_is_power(t) for t in texts[first : last + 1]):
+            continue
+        start, end = chunks[first].start(), chunks[last].end()
+        digit = any(not _is_exponent(text, d.start()) for d in _DIGITS.finditer(text, start, end))
+        runs.append(_Run(start, end, digit and not after_factor[first]))
+    return runs
+
+
+def _last_cue_clause(text: str) -> tuple[int, int] | None:
+    """The span of the clause after the text's last final-answer cue ("is",
+    "gives", "comes out to", "answer:", …), up to the next _CLAUSE_BREAK."""
+    cue = None
+    for cue in _CUE.finditer(text):
+        pass
+    if cue is None:
+        return None
+    brk = _CLAUSE_BREAK.search(text, cue.end())
+    return cue.end(), brk.start() if brk else len(text)
+
+
 def _final_answer_text(reference: str) -> str:
     reference = _EMPHASIS.sub(r"\2", reference)
     if "=" in reference:
@@ -120,29 +206,52 @@ def _final_answer_text(reference: str) -> str:
             return clause
     text = _SCI_TIMES.sub(" x ", _POWER_SPACE.sub("", _STEP_LABEL.sub(" ", reference)))
     numbers = [
-        m.group(1)
+        m
         for m in _STANDALONE_NUMBER.finditer(text)
         if not _is_exponent(text, m.start()) and not _BASE_OF.match(text, m.end())
     ]
-    if numbers:
-        return numbers[-1]
-    powers = [
-        chunk
-        for chunk in _CHUNK.findall(text)
-        if ("^" in chunk or _OPERAND_POWER.search(chunk)) and _TOKEN.search(chunk)
-    ]
-    return powers[-1] if powers else ""
+    number = numbers[-1] if numbers else None
+    runs = _power_runs(text)
+    answers = [r for r in runs if r.answer]
+    clause = _last_cue_clause(text)
+    if clause is not None:
+        # The cue names the answer: an answer-capable power run that starts in
+        # its clause; else the last number when it sits there; else, when the
+        # clause holds no number at all, any power run in it ("is x^2"). It
+        # never promotes an earlier number.
+        lo, hi = clause
+        named = [r for r in answers if lo <= r.start < hi]
+        if named:
+            return text[named[-1].start : named[-1].end]
+        if number is not None and lo <= number.start() < hi:
+            return number.group(1)
+        named = [r for r in runs if lo <= r.start < hi]
+        if named and not any(lo <= m.start() < hi for m in numbers):
+            return text[named[-1].start : named[-1].end]
+    # By position: the last answer-capable power run unless the last number
+    # comes after it (a number inside the run is part of it).
+    if answers and (number is None or number.start() < answers[-1].end):
+        return text[answers[-1].start : answers[-1].end]
+    if number is not None:
+        return number.group(1)
+    return text[runs[-1].start : runs[-1].end] if runs else ""
 
 
 def final_answer(reference: str, *, canonical_answer: str | None = None) -> tuple[str, ...]:
     """Token run of the final answer. With a usable `canonical_answer` (PKG-04's
     numeric value, decrypted by the caller) it is that value's canonical
     spelling and the reference is not parsed. Otherwise the reference's: the
-    clause after its last '='; else its last standalone number that is not a
-    numbered-step label, an exponent (after "^" / a "**" touching its base) or a
-    power's base (so "6.02 x 10^23" gives its mantissa); else its last
-    whitespace-delimited power term ("3x^2", "cos(x^2)", "5^2"); () when it has
-    none. Markdown emphasis ("**42**") is read as its text first."""
+    clause after its last '='; else a choice between its last standalone number
+    (not a numbered-step label, an exponent after "^" / a "**" touching its
+    base, or a power's base, so "6.02 x 10^23" gives its mantissa) and its
+    power runs (a power term with the operands a spaced +/- joins to it:
+    "6x^2 + 2x", "(x-3)^2"): the clause after the last final-answer cue
+    ("is", "gives", "comes out to", "answer:", …) names it when it holds an
+    answer-capable run, the last number, or (holding no number) any power run;
+    else the last answer-capable run (a digit that is no exponent in it, not a
+    number's "x 10^n" / "per" factor) unless the last number comes after it;
+    else the last number; else the last power run ("m/s^2"); () when none.
+    Markdown emphasis ("**42**") is read as its text first."""
     return _answer_runs(reference, canonical_answer)[0]
 
 
