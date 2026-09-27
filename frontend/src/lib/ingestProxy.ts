@@ -24,8 +24,8 @@ export const POSTHOG_INGEST_ORIGIN = "https://us.i.posthog.com";
 export const POSTHOG_ASSETS_ORIGIN = "https://us-assets.i.posthog.com";
 
 /**
- * Mount point of the proxy — the one definition: analytics.ts's
- * `DEFAULT_API_HOST` (posthog-js `api_host`) is this constant.
+ * Mount point of the proxy — the one definition: analytics.ts passes this
+ * constant as posthog-js's `api_host`.
  */
 export const INGEST_PREFIX = "/ingest";
 
@@ -109,6 +109,69 @@ const SEMVER_STATIC = /^\/static\/\d+\.\d+\.\d+[^/]*\/[^/]+$/;
 export function isImmutableAsset(path: string, search: string): boolean {
   if (!path.startsWith("/static/")) return false;
   return SEMVER_STATIC.test(path) || new URLSearchParams(search).has("v");
+}
+
+// ── guards: this is not an open relay ───────────────────────────────────────
+
+/**
+ * Exactly the endpoints the SDK config in src/lib/analytics.ts uses.
+ * Events go to `/e/` (or `/i/v0/e/`, `/batch/` in other SDK versions) by
+ * POST; lazily loaded SDK bundles come from `/static/` by GET/HEAD. Flags,
+ * remote config (`/array/…`, `/flags/`, `/decide/`) and session recording
+ * (`/s/`) are disabled in that config, so they are refused here too.
+ */
+const EVENT_PATHS = new Set(["/e/", "/i/v0/e/", "/batch/"]);
+const STATIC_PATH = /^\/static\/(?:\d+\.\d+\.\d+[^/]*\/)?[A-Za-z0-9._-]+\.js$/;
+
+export function isAllowedIngestRequest(method: string, path: string): boolean {
+  if (EVENT_PATHS.has(path)) return method === "POST";
+  if (STATIC_PATH.test(path)) return method === "GET" || method === "HEAD";
+  return false;
+}
+
+/**
+ * Analytics only ever runs for a signed-in student, so a caller without the
+ * `sapling_session` cookie is refused. Its presence is all that is checked
+ * (validating it would cost a backend round-trip per batch), and it is
+ * never forwarded — see upstreamRequestHeaders.
+ */
+export const SESSION_COOKIE_NAME = "sapling_session";
+
+export function hasSessionCookie(headers: Headers): boolean {
+  const cookie = headers.get("cookie") ?? "";
+  return cookie.split(";").some((part) => {
+    const [name, ...rest] = part.trim().split("=");
+    return name === SESSION_COOKIE_NAME && rest.join("=").length > 0;
+  });
+}
+
+/** Largest request body forwarded upstream; a posthog-js batch is far smaller. */
+export const MAX_INGEST_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Pass `body` through, erroring the stream (so the upstream fetch fails) as
+ * soon as more than `max` bytes have gone by — the cap for a chunked body
+ * with no Content-Length to check up front.
+ */
+export function capStream(
+  body: ReadableStream<Uint8Array>,
+  max: number,
+  onExceeded: () => void,
+): ReadableStream<Uint8Array> {
+  let seen = 0;
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > max) {
+          onExceeded();
+          controller.error(new Error("ingest body over limit"));
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
 }
 
 /**

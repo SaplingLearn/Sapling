@@ -70,6 +70,9 @@ test("trailing slashes still 308 everywhere except /ingest, which refuses traver
     ["/settings/", "/settings"],
     ["/news/some-post/", "/news/some-post"],
     ["/api/auth/me/", "/api/auth/me"],
+    // Encoded slugs keep their encoding (no %20 → %2520 double-encoding).
+    ["/notes/a%20b/", "/notes/a%20b"],
+    ["/news/caf%C3%A9/", "/news/caf%C3%A9"],
   ] as const) {
     const res = await page.request.get(from, { maxRedirects: 0 });
     expect(res.status(), from).toBe(308);
@@ -77,4 +80,6 @@ test("trailing slashes still 308 everywhere except /ingest, which refuses traver
   }
   const traversal = await page.request.get("/ingest/static/..%2fflags/", { maxRedirects: 0 });
   expect(traversal.status()).toBe(404);
+  // Not an open relay: the flags endpoint this SDK config never uses is refused.
+  expect((await page.request.post("/ingest/flags/?v=2", { data: "{}", maxRedirects: 0 })).status()).toBe(404);
 });
