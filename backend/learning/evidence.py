@@ -47,6 +47,7 @@ __all__ = [
     "Evidence",
     "GraderBackend",
     "evidence_weight",
+    "flush_pending",
     "is_strong_channel",
 ]
 
@@ -108,3 +109,24 @@ def evidence_weight(ev: Evidence) -> float:
     if ev.confidence is not None and ev.confidence < GRADER_LOW_CONFIDENCE:
         w *= WEIGHT_LOW_CONFIDENCE
     return w
+
+
+def flush_pending(deps, course_id: str | None) -> list:
+    """Persist `deps.pending_evidence` through the single graph writer, once.
+
+    Called by the ROUTE after grade_answer (PKG-07's /check/answer, A16), never
+    by grade_answer itself. Empty list → `[]` and no call. Otherwise ONE
+    apply_graph_update call with a snapshot of the list; errors propagate, and
+    the list is cleared only after a successful write so the route can decide
+    whether to retry or report. Returns apply_graph_update's changes.
+    """
+    if not deps.pending_evidence:
+        return []
+    # Local import: services.graph_service imports this module (PKG-03), so a
+    # module-level import here would be circular.
+    from services.graph_service import apply_graph_update
+
+    changes = apply_graph_update(deps.user_id, {"evidence": list(deps.pending_evidence)}, course_id)
+    deps.pending_evidence.clear()
+    return changes
+

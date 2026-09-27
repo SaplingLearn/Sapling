@@ -669,3 +669,77 @@ def test_grade_answer_never_touches_db_tables(check, monkeypatch):
     _run(check, _deps(), _answer())
     _run(check, _deps(), _answer(idk=True))
     assert names == []
+
+
+# ── flush_pending (route persistence contract) ────────────────────────────
+
+
+def test_flush_pending_calls_apply_graph_update_once_and_clears(monkeypatch):
+    import services.graph_service as gs
+    from learning import evidence as ev
+
+    calls = []
+    monkeypatch.setattr(gs, "apply_graph_update", lambda uid, gu, cid=None: calls.append((uid, gu, cid)) or [{"concept": "x"}])
+    deps = _deps()
+    deps.pending_evidence.extend([{"node_id": "n1", "channel": "free_response", "correct": True},
+                                  {"node_id": "n1", "channel": "free_response", "idk": True, "correct": False}])
+    out = ev.flush_pending(deps, "c1")
+    assert out == [{"concept": "x"}]
+    assert len(calls) == 1
+    uid, gu, cid = calls[0]
+    assert uid == "u1" and cid == "c1" and set(gu) == {"evidence"} and len(gu["evidence"]) == 2
+    assert deps.pending_evidence == []
+
+
+def test_flush_pending_empty_is_a_noop(monkeypatch):
+    import services.graph_service as gs
+    from learning import evidence as ev
+
+    monkeypatch.setattr(gs, "apply_graph_update", lambda *a, **k: pytest.fail("must not be called"))
+    assert ev.flush_pending(_deps(), "c1") == []
+
+
+def test_flush_pending_keeps_the_list_when_the_write_fails(monkeypatch):
+    """Errors propagate; the list is cleared only after a successful write."""
+    import services.graph_service as gs
+    from learning import evidence as ev
+
+    def _boom(*a, **k):
+        raise RuntimeError("postgrest down")
+
+    monkeypatch.setattr(gs, "apply_graph_update", _boom)
+    deps = _deps()
+    deps.pending_evidence.append({"node_id": "n1", "channel": "mc", "correct": True})
+    with pytest.raises(RuntimeError, match="postgrest down"):
+        ev.flush_pending(deps, "c1")
+    assert len(deps.pending_evidence) == 1
+
+
+def test_flush_pending_sends_a_snapshot_not_the_live_list(monkeypatch):
+    import services.graph_service as gs
+    from learning import evidence as ev
+
+    sent = []
+    monkeypatch.setattr(gs, "apply_graph_update", lambda uid, gu, cid=None: sent.append(gu["evidence"]) or [])
+    deps = _deps()
+    deps.pending_evidence.append({"node_id": "n1", "channel": "mc", "correct": True})
+    ev.flush_pending(deps, "c1")
+    assert sent[0] is not deps.pending_evidence and len(sent[0]) == 1
+
+
+def test_grade_answer_then_flush_pending_reaches_the_single_writer(check, monkeypatch):
+    """The A16 route sequence: grade_answer appends, flush_pending persists the
+    batch once through apply_graph_update as PKG-03 Evidence rows."""
+    import services.graph_service as gs
+    from learning import evidence as ev
+
+    payloads = []
+    monkeypatch.setattr(gs, "apply_graph_update", lambda uid, gu, cid=None: payloads.append(gu) or [])
+    deps = _deps()
+    _run(check, deps, _answer())
+    _run(check, deps, _answer(idk=True))
+    assert ev.flush_pending(deps, "c1") == []
+    [payload] = payloads
+    rows = [ev.Evidence.model_validate(row) for row in payload["evidence"]]
+    assert [(r.correct, r.idk, r.grader_backend) for r in rows] == [(True, False, "gemini"), (False, True, None)]
+    assert deps.pending_evidence == []
