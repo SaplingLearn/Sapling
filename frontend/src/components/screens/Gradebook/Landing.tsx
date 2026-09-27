@@ -126,6 +126,14 @@ export function GradebookLanding() {
     // setSelected(currentTerm). With this gate a signed-in user has no chips
     // at all until their own terms land, so there is no choice to overwrite.
     if (!userReady) return;
+    // A new identity (sign-out, a cleared stale session) starts from nothing:
+    // the previous identity's chips and selection must not stay clickable, and
+    // the summary effect must wait for THIS identity's terms.
+    let stale = false;
+    setSemesters([]);
+    setSelected("");
+    setTermsReady(false);
+    setLoading(true);
     // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
     // user with no terms must see their own empty state, never demo chips.
     if (!userId) {
@@ -141,6 +149,7 @@ export function GradebookLanding() {
       getSemesters().catch(() => ({ semesters: [] })),
     ])
       .then(([coursesRes, semestersRes]) => {
+        if (stale) return;
         const all = coursesRes.courses ?? [];
         const terms = semestersRes.semesters ?? [];
         const labels = courseTermLabels(all, terms);
@@ -158,10 +167,18 @@ export function GradebookLanding() {
         setColorMap(colors);
       })
       .catch(() => {
+        if (stale) return;
         setSemesters([]);
         setSelected("");
       })
-      .finally(() => setTermsReady(true));
+      .finally(() => {
+        if (!stale) setTermsReady(true);
+      });
+    // An identity that changes mid-load must not have the old identity's
+    // terms applied over it.
+    return () => {
+      stale = true;
+    };
   }, [userId, userReady, requestedTerm]);
 
   React.useEffect(() => {

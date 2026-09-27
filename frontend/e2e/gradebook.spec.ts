@@ -102,7 +102,7 @@ test("a course taken in two terms opens the right enrollment from each chip", as
   await expect(page.getByText("We couldn't load this course.")).toHaveCount(0);
 });
 
-test("a chip picked while the terms are loading is not undone when they land", async ({
+test("no term chip is clickable until the user's own terms have loaded", async ({
   page,
 }) => {
   // The race behind the first journey's local flake: the landing's
@@ -129,22 +129,20 @@ test("a chip picked while the terms are loading is not undone when they land", a
   await page.goto("/gradebook");
   await requested;
 
-  // Click "Fall 2025" while the terms are in flight. Broken build: the demo
-  // chip is already up and the click lands mid-load. Fixed build: no chip
-  // exists until the terms land, so the click's auto-wait parks until after
-  // the release. The race only bounds how long the fixed build is given to
-  // NOT render a chip before we release.
+  // The request only fires after the render in which identity resolved, so
+  // on the broken build the demo chips are already committed by now. While
+  // the terms are held there must be no chip to click at all.
   const fallChip = page.getByRole("button", { name: "Fall 2025", exact: true });
-  const clicked = fallChip.click();
-  await Promise.race([clicked, page.waitForTimeout(1_000)]);
-  release();
-  await clicked;
+  await expect(page.getByTestId("gradebook-transcript-open")).toBeVisible();
+  await expect(fallChip).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Spring 2026", exact: true })).toHaveCount(0);
 
   // "Fall 2026" is a real term of rich-user-active that the demo chips don't
-  // have, so its chip being up proves the terms load has been APPLIED — and
-  // setSemesters/setSelected commit in the same batch, so the selection below
-  // is final, not a pre-load snapshot that happens to still read "Fall 2025".
+  // have, so its chip being up proves the terms load has been APPLIED; a
+  // click after that is final, never overwritten by a later load.
+  release();
   await expect(page.getByRole("button", { name: "Fall 2026", exact: true })).toBeVisible();
+  await fallChip.click();
   await expect(fallChip).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByRole("button", { name: "Spring 2026", exact: true }),

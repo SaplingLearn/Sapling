@@ -9,7 +9,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GradebookCourseSummary } from "@/lib/types";
 
@@ -341,11 +341,41 @@ describe("GradebookLanding term GPA + term-aware card links (#139)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fall 2024" }));
     await screen.findByRole("link", { name: /psy/i });
 
-    releaseSpring();
-    await new Promise((r) => setTimeout(r, 0));
+    await act(async () => {
+      releaseSpring();
+    });
 
     expect(screen.queryByRole("link", { name: /bio/i })).toBeNull();
     expect(screen.getByRole("link", { name: /psy/i })).toBeInTheDocument();
+  });
+
+  it("never applies a previous identity's terms that land after it changed", async () => {
+    // u1's course list is still in flight when the identity changes (a stale
+    // session cleared, an account switch). u2's terms land first; u1's late
+    // answer must not replace u2's chips or selection.
+    let releaseU1: () => void = () => {};
+    mockedGetCourses.mockImplementation((uid) => {
+      if (uid === "u1") {
+        return new Promise((resolve) => {
+          releaseU1 = () => resolve({ courses: [course("bio", "Spring 2025")] });
+        });
+      }
+      return Promise.resolve({ courses: [course("psy", "Fall 2024")] });
+    });
+
+    const { rerender } = render(<GradebookLanding />);
+    await waitFor(() => expect(mockedGetCourses).toHaveBeenCalledWith("u1"));
+
+    mockUser.userId = "u2";
+    rerender(<GradebookLanding />);
+    await screen.findByRole("button", { name: "Fall 2024" });
+
+    await act(async () => {
+      releaseU1();
+    });
+
+    expect(chipLabels()).toEqual(["Fall 2024"]);
+    expect(mockedGetSummary).not.toHaveBeenCalledWith("u2", "Spring 2025");
   });
 
   it("opens the transcript modal from the Transcript button", async () => {
