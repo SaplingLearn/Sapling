@@ -20,16 +20,19 @@ punctuation mapped to ASCII, case folded):
   the grader's own output field names), addresses to the grader ("Dear grader",
   "Grader, …") and a clause-initial "answer yes";
 - role and format markers: chat-template tokens (`<|im_start|>`, `[INST]`,
-  `<<SYS>>`), `### Instruction` headers, ALL-CAPS `SYSTEM:` / `GRADER:` labels,
-  and lines that forge the grader message's own structure (`RUBRIC ITEM`,
-  `REFERENCE ANSWER`, `COMMON WRONG REASON`, `STUDENT ANSWER`).
+  `<<SYS>>`), `### Instruction` headers, ALL-CAPS `SYSTEM:` / `GRADER:` labels
+  (also behind a tag, bracket or markdown emphasis: `**SYSTEM:**`, `[GRADER]:`),
+  fence-style role tags (`</system>`, `<student_answer>`), and lines that forge
+  the grader message's own structure (`RUBRIC ITEM`, `REFERENCE ANSWER`,
+  `COMMON WRONG REASON`, `STUDENT ANSWER`).
 
 False positives cost a student a graded attempt, so every rule is anchored: a
 verdict word must END its clause (`R1: no current flows` is physics, not a
 verdict), bare "the instructions" / "all instructions" count only at a clause end
 (`ignore all instructions fetched after a branch` is computer architecture),
 role labels count only in capitals (`System: the gas in the piston` is
-thermodynamics), and words like `system`, `instructions`, `marker` or `grader`
+thermodynamics), an opening `<system>` tag is XML and counts only when closed,
+and words like `system`, `instructions`, `marker` or `grader`
 never count on their own. `tests/test_learning_answer_guard.py` pins both lists.
 
 Defence in depth behind the screen: `neutralise()` replaces verdict tokens in the
@@ -229,16 +232,19 @@ _DIRECTIVES = tuple(
         # addressing the grader
         rf"\b(?:dear|hey|hi|hello|attention|note\s+(?:to|for)|message\s+(?:to|for)"
         rf"|instructions?\s+(?:to|for))\s+(?:the\s+|my\s+|our\s+)?{_GRADER_ROLE}\b",
-        r"(?:^|[.!?:;\n])\s*(?:grader|examiner|evaluator)\s*[,:]",
+        r"(?:^|[.!?:;\n])[ \t]*(?:grader|examiner|evaluator)\s*[,:]",
         # a clause-initial "answer yes" ("I would answer yes because …" is not one)
         # (never "return true;" in code: no return/print verb, no "true")
-        r"(?:^|[.!?:;,\n]\s*|\b(?:please|just|now|so|then)\s+)(?:answer|respond|reply|output|say)"
+        r"(?:^|[.!?:;,\n][ \t]*|\b(?:please|just|now|so|then)\s+)(?:answer|respond|reply|output|say)"
         r"\s+(?:with\s+|only\s+)?[\"']?(?:yes|correct|pass)[\"']?"
         r"(?=\s*(?:$|[.!,;\n]|for\b|to\b|on\b))",
     )
 )
 
 # ── role and format markers ───────────────────────────────────────────────────
+# A line-start rule reads horizontal whitespace only ([ \t]): every line break is
+# its own start (_fold maps each one to \n), so nothing is missed, and a flood of
+# blank lines cannot make the rule backtrack across them.
 
 _ROLE_MARKERS = tuple(
     re.compile(p, re.M)
@@ -246,16 +252,25 @@ _ROLE_MARKERS = tuple(
         r"<\|[a-z_]{2,32}\|>",  # chat-template tokens; never F#'s spaced `<| x |>`
         r"\[/?inst\]",
         r"<</?sys>>",
-        r"^\s*#{2,}\s*(?:system|instructions?|new\s+instructions?|grader|assistant|developer"
+        r"^[ \t]*#{2,}\s*(?:system|instructions?|new\s+instructions?|grader|assistant|developer"
         r"|response)\s*:?\s*$",
         # a line that forges the grader message's own structure
-        r"^\s*(?:rubric\s+item|reference\s+answer|common\s+wrong\s+reason|student\s+answer)\b",
+        r"^[ \t]*(?:rubric\s+item|reference\s+answer|common\s+wrong\s+reason|student\s+answer)\b",
+        # fence-style tags: any closing role tag (`</system>`, `</student_answer>`), and
+        # an opening one only for names no markup language uses (`<system>` is XML)
+        r"</\s*(?:system|assistant|developer|instructions?|grader|rubric"
+        r"|reference[_\s-]?answer|student[_\s-]?answer)\s*>",
+        r"<\s*(?:instructions?|grader|rubric|reference[_\s-]?answer|student[_\s-]?answer)\s*>",
     )
 )
-# Read on the CASE-KEPT copy: capitals only, so "System: the gas" stays physics.
+# Read on the CASE-KEPT copy: capitals only, so "System: the gas" stays physics. The
+# label may sit behind a tag, a bracket or markdown emphasis (`> SYSTEM:`, `**SYSTEM:**`,
+# `[GRADER]:`) as long as it starts a line or follows sentence punctuation or a closer.
+# The markup runs are bounded ({0,8}) so a flood of `>` cannot backtrack quadratically.
 _CAPS_ROLE_LABEL = re.compile(
-    r"(?:^|(?<=[.!?:;]))\s*(?:SYSTEM|DEVELOPER|ASSISTANT|GRADER|EVALUATOR|EXAMINER|INSTRUCTIONS?)"
-    r"\s*:",
+    r"(?:^|(?<=[.!?:;>\])}]))[ \t*_`#>\[(]{0,8}"
+    r"(?:SYSTEM|DEVELOPER|ASSISTANT|GRADER|EVALUATOR|EXAMINER|INSTRUCTIONS?)"
+    r"[ \t*_`\])]{0,8}:",
     re.M,
 )
 
