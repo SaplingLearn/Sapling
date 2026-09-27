@@ -30,7 +30,6 @@ from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from services import quiz_config, quiz_errors
-from services.ai_observability import posthog_ai_span_processors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
 from services.request_context import (
@@ -75,10 +74,6 @@ logfire.configure(
         callback=scrub_value,
         extra_patterns=list(EXTRA_PATTERNS),
     ),
-    # ADR 0028: PostHog LLM analytics rides the same Pydantic AI spans through
-    # an ALLOWLIST processor (model/tokens/cost/names only — never prompts,
-    # completions or tool args). [] when PostHog is off (tests, E2E, no token).
-    additional_span_processors=posthog_ai_span_processors(),
 )
 logfire.instrument_pydantic_ai()
 
@@ -134,7 +129,7 @@ async def _lifespan(_app: FastAPI):
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
-    # After events_service: flush the PostHog mirror's queue last.
+    # After events_service: drain the PostHog queue, then its SDK, last.
     posthog_client.shutdown_posthog()
     shutdown_dbos()
 
@@ -277,7 +272,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
     rid = getattr(request.state, "request_id", None) or current_request_id()
-    # ADR 0028: PostHog error tracking. No-op when PostHog is off; message
+    # ADR 0028: PostHog error tracking — queued, consent-checked on the
+    # PostHog worker like every event. No-op when PostHog is off; message
     # redacted and no frame locals (posthog_client._scrub_event). The user is
     # whatever auth_guard stamped on request.state (#117 1b) — a users.id or
     # None. This handler runs in ServerErrorMiddleware, OUTSIDE

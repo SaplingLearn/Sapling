@@ -783,14 +783,15 @@ def delete_account(
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{user_id}"},
     )
-    # ADR 0028: from here on the consent lookup reads deleted_at, so no new
-    # event or AI span names this user (which would re-create the person the
-    # delete below removes). Drop the cached "allowed" answer now.
+    # ADR 0028: from here on the PostHog worker's consent check reads
+    # deleted_at, so nothing — not even items already queued — names this user
+    # (which would re-create the person the delete below removes). Drop the
+    # cached "allowed" answer now.
     clear_analytics_consent_cache(user_id)
     # Best-effort PostHog person + event delete, AFTER the response so it adds
     # no latency and cannot fail the deletion (it never raises; unconfigured
-    # -> WARN + skip). It drains the SDK queues first. Only reached once the
-    # soft delete landed.
+    # -> WARN + skip). It drains our queue and the SDK's first, and repeats
+    # after the consent TTL. Only reached once the soft delete landed.
     background_tasks.add_task(delete_posthog_person, user_id)
     return {"deleted": True}
 

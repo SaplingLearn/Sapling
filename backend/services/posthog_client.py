@@ -1,51 +1,64 @@
-"""The PostHog seam: one process-wide client, one gate, three uses (ADR 0028).
+"""The PostHog seam: one gate, one queue, one worker (ADR 0028).
 
 PostHog runs ALONGSIDE the in-house ``events`` / ``llm_usage`` tables
 (``services/events_service.py``), not instead of them — admin analytics and
 the Canopy metrics stay on ours. Everything PostHog-shaped in the backend goes
-through this module:
+through this module, and every send goes through ONE path:
 
-* **Events** — ``mirror_event`` is called from exactly one place,
-  ``events_service.log_event``, so PostHog sees the #117 taxonomy under the
-  same names and payloads, honours ``EVENTS_LOGGING_ENABLED``, and there is no
-  second taxonomy to drift. Routes never call PostHog directly.
-* **Exceptions** — ``capture_exception`` from main.py's 500 handler. No local
-  variables, and ``_scrub_event`` redacts exception messages before anything
-  is queued (a pydantic ``ValidationError`` or a PostgREST error echoes its
-  input, and inputs here include decrypted notes/messages/documents).
-* **Account deletion** — ``delete_person`` (best-effort REST call).
+    request path                         worker thread (one, daemon)
+    ────────────                         ───────────────────────────
+    mirror_event / capture_ai_generation
+    / capture_exception
+      → drop if DNT/GPC or error.4xx
+      → build properties (route template,
+        no foreign ids, event_category)
+      → resolve the ACTOR (the event's
+        user, else the request's session
+        user from scope["state"])
+      → enqueue ─────────────────────────→ consent_for(actor) (may block: it
+        (bounded; drop-oldest)               is this thread's job) → capture
+                                             to posthog-python, or drop
 
-AI tracing is the fourth use but is wired at ``logfire.configure`` time (see
-``services/ai_observability.py``); it shares ``disabled_reason`` so the two
-can never disagree about whether PostHog is on.
+The request path does no consent work and no I/O, so no event-loop thread
+ever waits on the database, and a cold consent cache DELAYS an event on the
+worker instead of dropping it.
+
+Uses:
+
+* **Events** — ``mirror_event``, called only from ``events_service.log_event``:
+  same #117 names and payloads, same ``EVENTS_LOGGING_ENABLED`` kill switch,
+  no second taxonomy. Routes never call PostHog directly.
+* **LLM analytics** — ``capture_ai_generation``, called only from
+  ``agents/usage.py::record_agent_usage`` (the chokepoint every agent run
+  already reports through): a ``$ai_generation`` with model, provider,
+  tokens, cost and trace id — never ``$ai_input`` / ``$ai_output``.
+* **Exceptions** — ``capture_exception`` from main.py's 500 handler. No
+  local variables, and ``_scrub_event`` redacts exception messages before
+  the SDK queues anything.
+* **Account deletion** — ``delete_person`` (best-effort REST call, twice).
 
 Privacy: ``distinct_id`` is always a real ``users.id`` (``user_<google id>``
-— the app's ids are opaque TEXT, not UUIDs) or absent. No names, emails, or
-free text are ever sent — the payloads are the #117 ones, which are
-ids/counts/enums by contract. Before any user id is sent,
-``services/analytics_consent.consent_for`` must say ALLOWED: nothing is sent
-for a student who opted out (``user_settings.analytics_opt_out``), a
-soft-deleted account, an unknown id, or a request carrying ``Sec-GPC: 1`` /
-``DNT: 1``; and an unreadable answer is a "no".
+— opaque TEXT, not UUIDs) that ``analytics_consent.consent_for`` said ALLOWED
+for, or absent. Nothing is sent for a student who opted out
+(``user_settings.analytics_opt_out``), a soft-deleted account, an unknown id,
+an unreadable answer, or a request carrying ``Sec-GPC: 1`` / ``DNT: 1``.
 
 Gating (``disabled_reason``): unset token, ``POSTHOG_DISABLED``, pytest,
-``APP_ENV=test``, or any non-``real`` ``SAPLING_MODEL_MODE`` (the E2E and
-explore lanes) all mean NO client is constructed: no consumer threads, no
+``APP_ENV=test``, or any non-``real`` seam mode (the E2E and explore lanes)
+all mean NO client is constructed and nothing is enqueued: no threads, no
 network. Local dev with a token set does send.
-
-Fire-and-forget: the posthog client is batched — ``capture`` does a
-``queue.put(block=False)`` and a background consumer thread uploads — so a
-mirror never blocks the request thread, and every entry point here swallows
-its own failures.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import queue
 import sys
 import threading
-from typing import Any, Mapping
+import time
+from datetime import datetime, timezone
+from typing import Any, Mapping, NamedTuple
 
 import config
 
@@ -109,7 +122,7 @@ _REDACTED = "[redacted]"
 
 
 def _scrub_event(msg: dict) -> dict | None:
-    """Last line of defence before an event is queued.
+    """Last line of defence before the SDK queues an event.
 
     ``$exception``: keep the type, module, mechanism and code-location frames
     (what issue grouping keys on), but drop the exception message and any
@@ -184,8 +197,10 @@ def get_posthog_client() -> Any:
 
 
 def shutdown_posthog() -> None:
-    """Flush and stop the consumer threads (lifespan shutdown). Never raises."""
+    """Drain our queue, then flush and stop posthog's consumers (lifespan
+    shutdown). Bounded; never raises."""
     global _client
+    flush_queue(timeout_seconds=5.0)
     with _client_lock:
         client, _client = _client, None
     if client is None:
@@ -202,54 +217,152 @@ def set_client_for_tests(client: Any) -> None:
     _client = client
 
 
-# ── Uses ────────────────────────────────────────────────────────────────────
+# ── The queue and its worker ────────────────────────────────────────────────
 
 
-def mirror_event(
-    event_type: str,
-    *,
-    category: str,
-    user_id: str | None,
-    request_id: str | None,
-    payload: dict | None,
-) -> None:
-    """Mirror one #117 event to PostHog. Never raises.
+class _Item(NamedTuple):
+    kind: str                 # "event" | "exception"
+    name: str                 # event name ("$exception" for exceptions)
+    properties: dict
+    actor: str | None         # the user to check consent for; None = no actor
+    captured_at: float        # epoch seconds, so a delayed send keeps its time
+    exc: BaseException | None = None
 
-    Called only from ``events_service.log_event``, after its kill-switch
-    check. The ``content_fp`` fingerprint is deliberately NOT forwarded: it
-    is a hash of student text (a chat message, a session topic), useful for
-    joins inside our own DB and nothing PostHog needs.
 
-    Consent first (``_sendable_distinct_id``): opted-out / deleted / unknown
-    users and DNT/GPC requests are skipped. That check is a per-process
-    cached read, so at most one DB round trip per user per TTL — never one
-    per event; the capture itself is an enqueue for posthog's consumer.
+_QUEUE_MAX = int(os.getenv("POSTHOG_QUEUE_MAX", "10000"))
+_queue: "queue.Queue[_Item]" = queue.Queue(maxsize=_QUEUE_MAX)
+_queue_lock = threading.Lock()
+_dropped = 0
+_worker: threading.Thread | None = None
+_worker_lock = threading.Lock()
 
-    ``user_id`` None (sweeper, background work with no actor) becomes a
-    personless event — posthog-python assigns a random id and skips the
-    person profile.
 
-    The event's #117 category is sent as ``event_category`` (the payload's
-    own ``category`` key, where one exists, is left alone); ``error.4xx`` is
-    not mirrored; any ``path`` / ``route`` becomes the route template
-    (``_mirrored_properties``).
+def _enqueue(item: _Item) -> None:
+    """Non-blocking put; when full, drop the OLDEST item (the newest events
+    are the ones anyone is looking at). Warns once, then every 1000th."""
+    global _dropped
+    _ensure_worker()
+    with _queue_lock:
+        while True:
+            try:
+                _queue.put_nowait(item)
+                return
+            except queue.Full:
+                try:
+                    _queue.get_nowait()
+                    _queue.task_done()
+                except queue.Empty:  # pragma: no cover - drained meanwhile
+                    continue
+                _dropped += 1
+                if _dropped == 1 or _dropped % 1000 == 0:
+                    logger.warning(
+                        "PostHog queue full (max=%d); dropped %d oldest item(s) so far",
+                        _queue.maxsize, _dropped,
+                    )
 
-    This check runs at ENQUEUE time for every event, so a user deleted or
-    opted out a moment ago is refused from the next event on (in this
-    process at once; in others once their cached answer expires).
-    """
+
+def _ensure_worker() -> None:
+    global _worker
+    if _worker is not None and _worker.is_alive():
+        return
+    with _worker_lock:
+        if _worker is not None and _worker.is_alive():
+            return
+        _worker = threading.Thread(target=_work, name="posthog-send", daemon=True)
+        _worker.start()
+
+
+def _work() -> None:
+    while True:
+        item = _queue.get()
+        try:
+            _deliver(item)
+        except Exception:  # pragma: no cover - _deliver guards itself
+            logger.debug("PostHog worker slipped; item dropped", exc_info=True)
+        finally:
+            _queue.task_done()
+
+
+_SKIP = object()
+
+
+def _distinct_id_for(actor: str | None) -> Any:
+    """The distinct_id to send under, None for personless, or ``_SKIP``.
+    Runs on the worker; may block on the consent read. Fails closed."""
+    if actor is None:
+        return None
+    from services.analytics_consent import Consent, consent_for
+
+    return str(actor).strip() if consent_for(actor) is Consent.ALLOWED else _SKIP
+
+
+def _deliver(item: _Item) -> None:
     client = _client
     if client is None:
         return
     try:
-        distinct_id = _sendable_distinct_id(event_type, user_id)
+        distinct_id = _distinct_id_for(item.actor)
         if distinct_id is _SKIP:
             return
-        properties = _mirrored_properties(payload, category=category, request_id=request_id)
-        client.capture(event_type, distinct_id=distinct_id, properties=properties)
+        if item.kind == "exception":
+            client.capture_exception(
+                item.exc, distinct_id=distinct_id, properties=item.properties,
+            )
+        else:
+            client.capture(
+                item.name,
+                distinct_id=distinct_id,
+                properties=item.properties,
+                timestamp=datetime.fromtimestamp(item.captured_at, tz=timezone.utc),
+            )
     except Exception:
-        logger.debug("PostHog mirror failed for %s; dropped", event_type, exc_info=True)
+        logger.debug("PostHog send failed for %s; dropped", item.name, exc_info=True)
 
+
+def flush_queue(timeout_seconds: float = 10.0) -> bool:
+    """Block until every item enqueued so far has been delivered or dropped
+    by the worker, or the timeout passes. Returns whether it drained."""
+    deadline = time.monotonic() + timeout_seconds
+    with _queue.all_tasks_done:
+        while _queue.unfinished_tasks:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            _queue.all_tasks_done.wait(remaining)
+    return True
+
+
+def queue_dropped_count() -> int:
+    return _dropped
+
+
+# ── Actor + properties (request path: no I/O) ───────────────────────────────
+
+
+def _actor(user_id: str | None) -> str | None:
+    """The user this item is FOR: the event's own id if it is a real one,
+    else the request's authenticated user (``request.state.user_id`` via the
+    ASGI scope — visible in handlers, threadpool Depends and BackgroundTasks),
+    else nobody. Placeholders (``anonymous``/``backfill``) are nobody."""
+    from services.analytics_consent import is_placeholder
+    from services.request_context import current_session_user
+
+    if not is_placeholder(user_id):
+        return str(user_id).strip()
+    session_user = current_session_user()
+    return None if is_placeholder(session_user) else str(session_user).strip()
+
+
+def _request_opted_out() -> bool:
+    from services.request_context import request_has_privacy_signal
+
+    return request_has_privacy_signal()
+
+
+#: Events that stay in our own table only. error.4xx is every 401 from an
+#: expired cookie, every 404 probe and every 422: high volume, no product
+#: signal, and a raw path per row.
+_NOT_MIRRORED: frozenset[str] = frozenset({"error.4xx"})
 
 #: Payload keys that carry a request path. Whatever the emitter put there (a
 #: raw path like auth.permission_denied's `/api/profile/<another user's id>`,
@@ -288,57 +401,101 @@ def _mirrored_properties(
     return properties
 
 
-#: Events that stay in our own table only. error.4xx is every 401 from an
-#: expired cookie, every 404 probe and every 422: high volume, no product
-#: signal, and a raw path per row.
-_NOT_MIRRORED: frozenset[str] = frozenset({"error.4xx"})
-
-_SKIP = object()
+# ── Uses ────────────────────────────────────────────────────────────────────
 
 
-def _sendable_distinct_id(event_type: str, user_id: str | None) -> Any:
-    """The distinct_id to mirror under, None for a personless event, or
-    ``_SKIP`` when nothing may be sent.
+def mirror_event(
+    event_type: str,
+    *,
+    category: str,
+    user_id: str | None,
+    request_id: str | None,
+    payload: dict | None,
+) -> None:
+    """Queue one #117 event for PostHog. Never raises, never blocks, no I/O.
 
-    Skips: events in ``_NOT_MIRRORED``; any request that sent DNT / GPC; a
-    user who opted out, was deleted, is unknown, or whose consent could not be
-    read (fail closed — ``analytics_consent``). When the event names no user
-    (None, or a placeholder like "anonymous"/"backfill"), the request's
-    session user still decides: an opted-out student's request mirrors
-    nothing, even events that do not carry their id. A genuinely actor-less
-    event (the sweeper) is sent personless.
+    Called only from ``events_service.log_event``, after its kill-switch
+    check. ``content_fp`` is never forwarded (a hash of student text).
+    ``error.4xx`` is not mirrored; ``path``/``route`` become the route
+    template; the #117 category is sent as ``event_category``. Consent is
+    decided on the worker, at send time.
     """
-    from services.analytics_consent import Consent, consent_for
-    from services.request_context import current_session_user, request_has_privacy_signal
-
-    if event_type in _NOT_MIRRORED or request_has_privacy_signal():
-        return _SKIP
-    consent = consent_for(user_id)
-    if consent is Consent.ALLOWED:
-        return str(user_id).strip()
-    if consent is Consent.DENIED:
-        return _SKIP
-    # NO_USER: the event names nobody; the request's own user may still object.
-    if consent_for(current_session_user()) is Consent.DENIED:
-        return _SKIP
-    return None
-
-
-def flush(timeout_seconds: float = 10.0) -> None:
-    """Deliver everything queued so far (bounded). Never raises.
-
-    Used before a person delete, so an event captured before the account was
-    deleted cannot arrive AFTER the delete and re-create the person.
-    """
-    client = _client
-    if client is None:
+    if _client is None or event_type in _NOT_MIRRORED:
         return
     try:
-        client.flush(timeout_seconds=timeout_seconds)
-    except TypeError:  # pragma: no cover - an SDK without the timeout kwarg
-        client.flush()
+        if _request_opted_out():
+            return
+        _enqueue(_Item(
+            kind="event",
+            name=event_type,
+            properties=_mirrored_properties(payload, category=category, request_id=request_id),
+            actor=_actor(user_id),
+            captured_at=time.time(),
+        ))
     except Exception:
-        logger.warning("PostHog flush before person delete failed", exc_info=True)
+        logger.debug("PostHog mirror failed for %s; dropped", event_type, exc_info=True)
+
+
+def capture_ai_generation(
+    *,
+    user_id: str | None,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float | None,
+    request_id: str | None,
+    feature: str,
+    task: str | None,
+    latency_s: float | None = None,
+) -> None:
+    """Queue a privacy-mode ``$ai_generation`` for PostHog LLM analytics.
+
+    Called only from ``agents/usage.py::record_agent_usage``. Carries ONLY
+    model, provider, token counts, cost, latency (when known), the request id
+    as trace id, and the feature/task name — never ``$ai_input`` /
+    ``$ai_output`` or any other content. Same queue and consent path as
+    events. Never raises.
+    """
+    if _client is None:
+        return
+    try:
+        if _request_opted_out():
+            return
+        properties: dict[str, Any] = {
+            "$ai_model": model,
+            "$ai_provider": _provider_of(model),
+            "$ai_input_tokens": int(input_tokens),
+            "$ai_output_tokens": int(output_tokens),
+            "$ai_span_name": task or feature,
+            "feature": feature,
+        }
+        if task:
+            properties["task"] = task
+        if cost_usd is not None:
+            properties["$ai_total_cost_usd"] = float(cost_usd)
+        if latency_s is not None:
+            properties["$ai_latency"] = float(latency_s)
+        if request_id:
+            properties["$ai_trace_id"] = request_id
+        _enqueue(_Item(
+            kind="event",
+            name="$ai_generation",
+            properties=properties,
+            actor=_actor(user_id),
+            captured_at=time.time(),
+        ))
+    except Exception:
+        logger.debug("PostHog $ai_generation failed; dropped", exc_info=True)
+
+
+def _provider_of(model: str) -> str:
+    """``provider:model`` → provider; a bare Gemini id → gemini."""
+    name = (model or "").strip().lower()
+    if ":" in name:
+        return name.split(":", 1)[0]
+    if name.startswith("gemini"):
+        return "gemini"
+    return "unknown"
 
 
 def capture_exception(
@@ -348,41 +505,55 @@ def capture_exception(
     request_id: str | None,
     privacy_signal: bool = False,
 ) -> None:
-    """Send an unhandled exception to PostHog error tracking. Never raises.
+    """Queue an unhandled exception for PostHog error tracking. Never raises.
 
-    ``privacy_signal``: the request sent DNT/GPC. Passed explicitly because
-    the 500 handler runs outside RequestIDMiddleware, after the per-request
-    contextvar has been reset; the contextvar is still consulted too.
+    Same consent path as events. ``privacy_signal`` (the request sent
+    DNT/GPC) is passed explicitly because the 500 handler runs outside
+    RequestIDMiddleware, after the per-request contextvar has been reset.
     """
-    client = _client
-    if client is None:
-        return
-    if privacy_signal:
+    if _client is None or privacy_signal:
         return
     try:
-        # Same consent rule as the mirror: an opted-out, deleted or DNT/GPC
-        # request sends no exception either (a person would be created).
-        distinct_id = _sendable_distinct_id("$exception", user_id)
-        if distinct_id is _SKIP:
+        if _request_opted_out():
             return
-        properties = {"request_id": request_id} if request_id else {}
-        client.capture_exception(exc, distinct_id=distinct_id, properties=properties)
+        _enqueue(_Item(
+            kind="exception",
+            name="$exception",
+            properties={"request_id": request_id} if request_id else {},
+            actor=_actor(user_id),
+            captured_at=time.time(),
+            exc=exc,
+        ))
     except Exception:
         logger.debug("PostHog capture_exception failed", exc_info=True)
 
 
+def flush(timeout_seconds: float = 10.0) -> None:
+    """Deliver everything queued so far — ours first, then the SDK's
+    (bounded). Never raises."""
+    flush_queue(timeout_seconds=timeout_seconds)
+    client = _client
+    if client is None:
+        return
+    try:
+        client.flush(timeout_seconds=timeout_seconds)
+    except Exception:
+        logger.warning("PostHog flush failed", exc_info=True)
+
+
+# ── Account deletion ────────────────────────────────────────────────────────
+
 _PERSON_DELETE_TIMEOUT_S = 10.0
 
 #: The second delete waits out every other process's cached "allowed"
-#: (analytics_consent.TTL_S) plus a margin for their SDK queues to deliver
-#: (posthog-python flushes every ~0.5 s; the margin also covers a slow batch).
+#: (analytics_consent._TTL_S) plus a margin for their queues to deliver.
 _SECOND_DELETE_MARGIN_S = 30.0
 
 
 def _second_delete_delay_s() -> float:
-    from services.analytics_consent import TTL_S
+    from services.analytics_consent import _TTL_S
 
-    return TTL_S + _SECOND_DELETE_MARGIN_S
+    return _TTL_S + _SECOND_DELETE_MARGIN_S
 
 
 def delete_person(user_id: str) -> None:
@@ -395,13 +566,13 @@ def delete_person(user_id: str) -> None:
     plus the project id); without them it WARNs and skips, which leaves a
     manual deletion to do in the PostHog UI.
 
-    Why twice: after the soft delete, THIS process refuses the user at once
-    (the route clears its cached consent), but another replica may still hold
-    a cached "allowed" for up to ``analytics_consent.TTL_S``, and an agent run
-    in flight re-checks consent only when its spans end. Anything those send
-    after the first ``bulk_delete`` re-creates the person, so a second pass
-    runs after TTL + margin (a daemon timer: lost if this process exits
-    first, which is logged at scheduling time and in the ADR).
+    Each pass drains OUR queue, then posthog's, then issues ``bulk_delete``,
+    so nothing this process captured before the pass arrives after it. Why
+    twice: THIS process refuses the user from the moment the route clears
+    its cached consent, but another replica may hold a cached "allowed" for
+    up to the consent TTL; anything it sends after the first ``bulk_delete``
+    would re-create the person. The second pass runs after TTL + margin (a
+    daemon timer: lost if this process exits first — logged, and in the ADR).
 
     Gated like everything else: under pytest / APP_ENV=test / function mode /
     the kill switch it makes no request. A deletion skipped that way is logged
@@ -429,7 +600,7 @@ def _schedule_second_pass(user_id: str) -> None:
 
 
 def _delete_pass(user_id: str, *, label: str) -> bool:
-    """One flush + ``bulk_delete``. Returns whether the request was ISSUED
+    """One drain + ``bulk_delete``. Returns whether the request was ISSUED
     (False = skipped as unconfigured/gated, so no second pass is scheduled).
     Never raises."""
     try:
@@ -461,16 +632,11 @@ def _delete_pass(user_id: str, *, label: str) -> bool:
             )
             return False
 
-        # Anything THIS process captured before now is still in the SDK
-        # queues; delivered after the delete, it would re-create the person.
-        # Drain both (events + AI spans), bounded, first.
+        # Our queue, then the SDK's — both bounded.
         flush(timeout_seconds=_PERSON_DELETE_TIMEOUT_S)
-        from services.ai_observability import flush_ai_spans
 
-        flush_ai_spans(timeout_millis=int(_PERSON_DELETE_TIMEOUT_S * 1000))
-
-        # Not a Supabase client: the table() rule is about Supabase. This is a
-        # third-party REST API, like the OAuth exchange in routes/auth.py.
+        # The one sanctioned direct httpx call outside db/ (CLAUDE.md): a
+        # third-party REST API, not Supabase — like the OAuth exchange.
         import httpx
 
         url = f"{api_host}/api/projects/{project_id}/persons/bulk_delete/"

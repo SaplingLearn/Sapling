@@ -23,8 +23,10 @@ Design guarantees:
   same payload, ``distinct_id`` = the user id, behind the same kill switch,
   and only for users who have not opted out (``analytics_consent``).
   Routes never call PostHog themselves, so there is exactly one taxonomy —
-  this one. The mirror is a non-blocking enqueue onto posthog's own batched
-  consumer and is inert when PostHog is off (tests, E2E, no token).
+  this one. The mirror is a non-blocking enqueue onto the PostHog seam's own
+  queue (consent is decided on its worker, never here) and is inert when
+  PostHog is off (tests, E2E, no token). ``log_llm_usage`` likewise mirrors
+  each usage row as a content-free ``$ai_generation``.
 
 Cost computation and token-field normalization live in
 ``services/llm_pricing.py``; this module just persists what it's given.
@@ -273,11 +275,13 @@ def log_llm_usage(
     """
     if not _logging_enabled():
         return
+    if request_id is None:
+        request_id = current_request_id()
     try:
         tokens = llm_pricing.normalize_usage(usage)
         row = {
             "user_id": user_id,
-            "request_id": request_id if request_id is not None else current_request_id(),
+            "request_id": request_id,
             "feature": feature,
             "task": task,
             "model": model,
@@ -292,6 +296,23 @@ def log_llm_usage(
         _enqueue("llm_usage", row)
     except Exception:  # pragma: no cover - defensive
         logger.exception("log_llm_usage failed; row dropped")
+        return
+    # ADR 0028: the PostHog LLM-analytics mirror of the same row — a
+    # privacy-mode $ai_generation (model, tokens, cost, trace id; never
+    # content), behind the same kill switch, queued for the consent worker.
+    try:
+        posthog_client.capture_ai_generation(
+            user_id=user_id,
+            model=model,
+            input_tokens=row["prompt_tokens"],
+            output_tokens=row["completion_tokens"],
+            cost_usd=row["cost_usd"],
+            request_id=request_id,
+            feature=feature,
+            task=task,
+        )
+    except Exception:  # pragma: no cover - defensive; the capture is guarded
+        logger.debug("PostHog $ai_generation mirror failed", exc_info=True)
 
 
 # ── Enqueue + drop accounting ───────────────────────────────────────────────
