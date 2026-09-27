@@ -438,7 +438,8 @@ class LoopState:
         `StepState.extra`, so the next save never erases a later package's
         state ("revealed", "plan", the session request counters, a step's
         check_item_id / taught). A step that fails validation restarts with
-        its PKG-06 fields at their defaults (a finite first_shown_at kept); a
+        its PKG-06 fields at their defaults (a finite first_shown_at kept, and
+        exam mode unless the stored exam_mode is absent or False); a
         non-object step, or every step when `steps` is not an object, is
         dropped, and `current` naming a dropped step is cleared; a bad
         `current` / `checks_since_rating` takes its default. A non-object
@@ -473,7 +474,9 @@ class LoopState:
 def _fresh_step(question_hash: str, raw: object) -> dict[str, StepState]:
     """A malformed step restarted: PKG-06 fields at their defaults (a finite
     first_shown_at kept), every other key kept in `extra`; {} for a non-object
-    step, which has nothing to keep."""
+    step, which has nothing to keep. Every default fails closed except
+    exam_mode's, so the exam flag is kept: a stored `exam_mode` other than
+    False (True, or a malformed value) is exam mode, never a lost H1 cap."""
     if not isinstance(raw, dict):
         return {}
     first = raw.get("first_shown_at")
@@ -481,6 +484,7 @@ def _fresh_step(question_hash: str, raw: object) -> dict[str, StepState]:
         question_hash: StepState(
             question_hash=question_hash,
             first_shown_at=float(first) if _is_number(first) else 0.0,
+            exam_mode=raw.get("exam_mode", False) is not False,
             extra={k: copy.deepcopy(v) for k, v in raw.items() if k not in _STEP_KEYS},
         )
     }

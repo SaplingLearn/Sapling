@@ -526,9 +526,41 @@ def test_loop_state_from_json_rejects_malformed_documents(bad):
         LoopState.from_json(bad)
     recovered = LoopState.recover(bad)  # the store's fallback never raises
     assert LoopState.from_json(recovered.to_json()) == recovered
-    for step in recovered.steps.values():  # a malformed step restarts fresh
+    for qh, step in recovered.steps.items():  # a malformed step restarts fresh
         assert (step.rung, step.genuine_attempts, step.attempted_at) == (0, 0, [])
-        assert (step.last_rung_at, step.showed_work, step.exam_mode) == (None, False, False)
+        assert (step.last_rung_at, step.showed_work) == (None, False)
+        # the exam flag fails closed: a malformed one ("false") is exam mode
+        assert step.exam_mode is ("exam_mode" in bad["steps"][qh])
+
+
+def test_recover_keeps_the_exam_cap_of_a_malformed_step():
+    """A malformed step restarts fresh, but exam mode is the strictest ceiling
+    row (H1, and h6_allowed never admits H6): a stored `exam_mode: true` is
+    kept and a non-bool one is exam mode, so recovery never loosens the cap."""
+    from learning.gates import h6_allowed
+    from learning.ladder import Rung
+    from learning.policy import CeilingReason, LoopState, ceiling_with_reason
+
+    qh = "q" * 64
+    for flag in (True, "false", 1, None):
+        raw = {
+            "rung": 9,
+            "attempts": 3,
+            "first_shown_at": 100.0,
+            "exam_mode": flag,
+            "check_item_id": "x",
+        }
+        step = LoopState.recover({"steps": {qh: raw}}).steps[qh]
+        assert step.exam_mode is True, flag
+        assert step.extra == {"check_item_id": "x"}
+        step.genuine_attempts = 2
+        assert ceiling_with_reason(_learner("develop"), step) == (Rung.H1, CeilingReason.EXAM)
+        assert h6_allowed(step, item_taught=True, item_practice=True, item_graded=False) is False
+    for raw in (
+        {"rung": 9, "first_shown_at": 1.0},
+        {"rung": 9, "first_shown_at": 1.0, "exam_mode": False},
+    ):
+        assert LoopState.recover({"steps": {qh: raw}}).steps[qh].exam_mode is False
 
 
 def test_recover_keeps_a_malformed_steps_foreign_keys():
