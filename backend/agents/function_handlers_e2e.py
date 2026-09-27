@@ -344,3 +344,35 @@ register_function_handler(
     "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
 )
 register_function_handler("note_chat", _note_chat_handler)
+
+
+# ── Typed decision seam / tutor router (#640, ADR 0027) ─────────────────────
+#
+# services/decisions.py runs the `decision` agent on the FunctionModel whenever
+# SAPLING_MODEL_MODE=function (the `function` backend is automatic there), and
+# the observe-only tutor router (services/tutor_router.py) calls it once per
+# student chat turn. Request-path (scheduled from the chat routes on the
+# request's own loop, not a post-response BackgroundTask), so it is registered
+# — unregistered, every tutor turn would log a handled
+# UnregisteredHandlerError and emit an all-defaults decision.
+#
+# Fixed answers for the router's five keys, every one ABOVE the default
+# confidence floor so the lane exercises the "answer applied" path rather than
+# the defaults path. They are deliberately the answers the router's safe
+# defaults would give anyway (retrieve, no rewrite, not graded, not an
+# injection) plus a complexity — and nothing acts on them (observe-only), so
+# no journey's visible behaviour depends on them. Emitted through the agent's
+# OUTPUT tool, validated by the real DecisionOutput schema. Pinned by
+# tests/test_e2e_function_handlers.py; keep in sync.
+
+E2E_DECISION_ANSWERS = [
+    {"key": "needs_retrieval", "value": "yes", "confidence": 0.9},
+    {"key": "needs_rewrite", "value": "no", "confidence": 0.8},
+    {"key": "complexity", "value": "medium", "confidence": 0.7},
+    {"key": "is_graded_work_request", "value": "no", "confidence": 0.95},
+    {"key": "injection_attempt", "value": "no", "confidence": 0.99},
+]
+
+register_function_handler(
+    "decision", _structured_output({"answers": E2E_DECISION_ANSWERS})
+)

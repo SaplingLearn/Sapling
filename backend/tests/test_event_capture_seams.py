@@ -120,6 +120,9 @@ def test_event_taxonomy_is_pinned():
         # #629: the Class Intel toggle moved but course_chunks.visibility did
         # not follow. A privacy control that fails silently is not one.
         "rag.visibility_resync_failed",
+        # #640/#642 (ADR 0027): one row per typed-decision call. Emit
+        # coverage lives in test_decisions.py / test_tutor_router.py.
+        "decision.made",
     })
 
 

@@ -279,3 +279,25 @@ register_function_handler(
     "note_concepts", _structured_output({"concepts": SHOWCASE_NOTE_CONCEPTS})
 )
 register_function_handler("note_chat", _note_chat_handler)
+
+
+# ── Typed decision seam / tutor router (#640, ADR 0027) ─────────────────────
+#
+# Function mode turns the decision seam on automatically, so the observe-only
+# tutor router runs on every chat turn of a screenshot session too. Nothing it
+# answers is rendered; it is registered so those turns stay quiet (no handled
+# UnregisteredHandlerError warning per turn). Same shape as the E2E module's
+# answers, kept as a local copy for the reason `_structured_output` is.
+
+register_function_handler(
+    "decision",
+    _structured_output({
+        "answers": [
+            {"key": "needs_retrieval", "value": "yes", "confidence": 0.9},
+            {"key": "needs_rewrite", "value": "no", "confidence": 0.8},
+            {"key": "complexity", "value": "medium", "confidence": 0.7},
+            {"key": "is_graded_work_request", "value": "no", "confidence": 0.95},
+            {"key": "injection_attempt", "value": "no", "confidence": 0.99},
+        ],
+    }),
+)

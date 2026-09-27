@@ -65,6 +65,7 @@ EXPECTED_STRUCTURED_AGENTS = {
     "concept_extraction_agent",
     "concept_scan_agent",
     "course_summary_agent",
+    "decision_agent",
     "flashcard_agent",
     "note_concepts_agent",
     "note_summary_agent",
