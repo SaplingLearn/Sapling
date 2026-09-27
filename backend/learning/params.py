@@ -176,6 +176,12 @@ GRADER_ANSWER_MAX_CHARS = 4_000
 # the operands' magnitude still counts as on the edge. Not a spec value: orders
 # of magnitude above double-precision error (~1e-16), below any tolerance.
 NUMERIC_GATE_EDGE_SLACK = 1e-12
+# † PKG-05 reopen (CodeRabbit PR #673; spec §13 A33): the pre-grader guard's belt.
+# An all-yes verdict on an answer whose words are at least this share rubric
+# ids and verdict words (with an id directly followed by a verdict) is never
+# credited (learning/answer_guard.verdict_share). "Mostly" = at least half; not
+# a spec value, and the screen before the grader catches the usual shapes first.
+GRADER_GUARD_VERDICT_SHARE = 0.5
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)

@@ -7,6 +7,15 @@ GRADER_LIMITS and is charged to the request through record_agent_usage. One
 second opinion runs on the `grader_second` slot: same agent, same prompt, a
 per-run model (A22).
 
+Before any model call, grade() screens the answer with
+`learning/answer_guard.screen` (spec §13 A33, CodeRabbit PR #673): text that
+addresses the grader — verdict tokens, grading directives, role or format
+markers — is refused. The grader never runs, nothing is credited or recorded
+for either outcome, and one `learn.answer_refused` event carries ids and counts
+only. Behind it, the message quotes the answer with verdict tokens neutralised,
+and an all-yes verdict on text that is mostly rubric ids and verdict words is
+refused after the run.
+
 Exactly one system prompt and one agent construction (spec §8.12; inv_12).
 """
 
@@ -30,17 +39,24 @@ from agents import GRADER_LIMITS
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
+from learning import answer_guard
+from learning.answer_guard import Refusal
 from learning.params import (
     FEEDBACK_HINT_MAX_SENTENCES,
     GRADER_ANSWER_MAX_CHARS,
+    GRADER_GUARD_VERDICT_SHARE,
     GRADER_HINT_MAX_CHARS,
     GRADER_LOW_CONFIDENCE,
     GRADER_SECOND_OPINION_CONFIDENCE,
     GRADER_SECOND_OPINION_SLOT,
     LEAK_NGRAM,
 )
+from services import events_service
 
 logger = logging.getLogger("sapling.agents.grader")
+
+#: The refusal event (spec §6, §13 A33): ids, enums and counts only.
+ANSWER_REFUSED_EVENT = "learn.answer_refused"
 
 # spec §3.5 slot table: grader_second runs with thinking off. Flash accepts
 # thinking_budget=0 (unlike Pro) — the agents/flashcard.py shape.
@@ -86,9 +102,12 @@ class GraderOutput(BaseModel):
 @dataclass
 class GradeResult:
     """Code-side result of grade(); `unavailable=True` is the ADR 0024 degrade.
-    `backend` names the run whose verdict is used (A22 provenance)."""
+    `backend` names the run whose verdict is used (A22 provenance). `refused`
+    (A33) names why the answer was not graded; a refused result is also
+    `unavailable`, so a caller that reads only that flag still records nothing."""
 
     unavailable: bool = False
+    refused: Refusal | None = None
     item_results: dict[str, bool] = field(default_factory=dict)
     all_yes: bool = False
     confidence: float = 0.0
@@ -146,7 +165,10 @@ def build_grader_message(item, *, format: str, student_answer: str) -> str:
 
     The student answer comes LAST and every one of its lines (any line break,
     not only \\n) is quoted with "> ", so answer text can never start a line
-    that forges the RUBRIC ITEM / REFERENCE ANSWER / FORMAT structure above it."""
+    that forges the RUBRIC ITEM / REFERENCE ANSWER / FORMAT structure above it.
+    Verdict tokens in it (`r1:yes`, `{"r2": true}`) are replaced by
+    answer_guard.NEUTRALISED (A33), so the grader never reads one as a verdict
+    even when a caller skipped grade()'s screen."""
     lines = [
         "QUESTION:",
         item.prompt,
@@ -161,7 +183,8 @@ def build_grader_message(item, *, format: str, student_answer: str) -> str:
     for w in item.common_wrong:
         lines.append(f"COMMON WRONG REASON {w.key}: {w.text}")
     lines += ["", f"FORMAT: {format}", _ANSWER_HEADER]
-    lines += [_ANSWER_QUOTE + line for line in student_answer.splitlines() or [""]]
+    answer = answer_guard.neutralise(student_answer, rubric_ids=[r.id for r in item.rubric])
+    lines += [_ANSWER_QUOTE + line for line in answer.splitlines() or [""]]
     return "\n".join(lines)
 
 
@@ -195,6 +218,48 @@ def _echoes_reference(hint: str, reference: str) -> bool:
         return False
     windows = {tuple(ref[i : i + n]) for i in range(len(ref) - n + 1)}
     return any(tuple(got[i : i + n]) in windows for i in range(len(got) - n + 1))
+
+
+def _refuse(
+    item,
+    *,
+    reason: Refusal,
+    format: str,
+    student_answer: str,
+    screen: answer_guard.Screen,
+    deps: SaplingDeps,
+) -> GradeResult:
+    """A33: no credit, nothing recorded for either outcome. The warning and the
+    event carry ids, enums and counts only — never the student's text."""
+    logger.warning(
+        "grader refused item %s: %s (directives=%d role_markers=%d verdict_tokens=%d)",
+        item.id,
+        reason,
+        screen.directives,
+        screen.role_markers,
+        screen.verdict_tokens,
+    )
+    try:  # log_event never raises; this is the belt
+        events_service.log_event(
+            ANSWER_REFUSED_EVENT,
+            category="audit",
+            user_id=deps.user_id,
+            request_id=deps.request_id,
+            payload={
+                "reason": reason,
+                "format": format,
+                "check_item_id": item.id,
+                "request_id": deps.request_id,
+                "rubric_items": len(item.rubric),
+                "directives": screen.directives,
+                "role_markers": screen.role_markers,
+                "verdict_tokens": screen.verdict_tokens,
+                "answer_chars": len(student_answer),
+            },
+        )
+    except Exception:
+        logger.debug("%s event dropped", ANSWER_REFUSED_EVENT, exc_info=True)
+    return GradeResult(unavailable=True, refused=reason)
 
 
 class _UnfinishedRun:
@@ -246,7 +311,9 @@ async def _run_once(
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
-    stack. The single Gemini grader: PKG-05b wraps it without changing the prompt."""
+    stack. The single Gemini grader: PKG-05b wraps it without changing the prompt.
+    An answer that addresses the grader is refused before any model call (A33):
+    GradeResult(unavailable=True, refused=<reason>) and one refusal event."""
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
         # come back a full-weight "incorrect" (check_item_service falls back to
@@ -261,8 +328,18 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             GRADER_ANSWER_MAX_CHARS,
         )
         return GradeResult(unavailable=True)
-    message = build_grader_message(item, format=format, student_answer=student_answer)
     rubric_ids = [r.id for r in item.rubric]
+    screen = answer_guard.screen(student_answer, rubric_ids=rubric_ids)
+    if screen.refusal is not None:  # A33: never sent, never billed, never credited
+        return _refuse(
+            item,
+            reason=screen.refusal,
+            format=format,
+            student_answer=student_answer,
+            screen=screen,
+            deps=deps,
+        )
+    message = build_grader_message(item, format=format, student_answer=student_answer)
     backend: Literal["gemini", "gemini_second"] = "gemini"
     try:
         out = await _run_once(message, deps)
@@ -279,6 +356,19 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         logger.warning("grader unavailable for item %s: %s", item.id, exc)
         return GradeResult(unavailable=True)
     results = parse_item_results(out.item_results, rubric_ids)
+    all_yes = bool(results) and all(results.values())
+    if all_yes and (
+        answer_guard.verdict_share(student_answer, rubric_ids=rubric_ids)
+        >= GRADER_GUARD_VERDICT_SHARE
+    ):  # A33 belt: text that is mostly ids and verdicts, judged all-yes, is never credited
+        return _refuse(
+            item,
+            reason="verdict_echo",
+            format=format,
+            student_answer=student_answer,
+            screen=screen,
+            deps=deps,
+        )
     # A key the item does not list is not a match (behaviour 1: "a listed key or
     # ''"), so an invented key never reaches PKG-10's misconception rule.
     matched = (out.matched_wrong_key or "").strip()
@@ -290,7 +380,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         hint = ""
     return GradeResult(
         item_results=results,
-        all_yes=bool(results) and all(results.values()),
+        all_yes=all_yes,
         confidence=out.confidence,
         matched_wrong_key=matched,
         feedback_hint=hint,

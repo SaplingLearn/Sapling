@@ -1269,7 +1269,12 @@ def test_nothing_calls_the_grading_helpers_yet():
 # The files the prompt's "no numeric literals for weights/thresholds/rungs" rule
 # covers. Its pre-PR grep matches only the N.N form, so an exponent (1e-12) or
 # a bare int rung slips past it; this reads every numeric constant instead.
-LOOP_CODE_FILES = ("agents/grader.py", "agents/tools/check.py", "learning/evidence.py")
+LOOP_CODE_FILES = (
+    "agents/grader.py",
+    "agents/tools/check.py",
+    "learning/evidence.py",
+    "learning/answer_guard.py",
+)
 # Identity values are never a policy value: a 1.0 weight or magnitude floor, a
 # 0.0 default tolerance, a 0 lower bound, GraderOutput's ge=0.0 / le=1.0.
 IDENTITY_LITERALS = frozenset({0, 1})
