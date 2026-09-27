@@ -857,6 +857,26 @@ class TestItemSources:
             ]
             assert svc.source_chunks(_doc(extracted_text=None)) == []
 
+    def test_a_long_unindexed_source_is_split_into_passages(self):
+        """The fallback is chunked like indexing chunks it, so ranking bounds
+        what each call carries (<= CHECK_ITEM_MAX_CHUNKS passages per concept)
+        instead of re-sending the whole document in every batch."""
+        from services import check_item_service as svc
+        from services.encryption import encrypt_if_present
+
+        paragraphs = [f"Topic {i} " + " ".join(["word"] * 60) + "." for i in range(3)]
+        text = "\n\n".join(paragraphs)
+        factory, _ = _cached_tables({"course_chunks": []})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("services.check_item_service.decide_visibility", return_value="shared"),
+        ):
+            passages = svc.source_chunks(_doc(extracted_text=encrypt_if_present(text)))
+        assert passages == [
+            {"id": None, "chunk_index": i, "chunk_text": paragraphs[i], "doc_id": "doc-1"}
+            for i in range(3)
+        ]
+
     def test_non_source_reads_no_chunks(self):
         from services import check_item_service as svc
 
@@ -1437,6 +1457,40 @@ class TestGenerate:
         assert row["source_chunk_ids"] == [] and row["source_document_ids"] == ["doc-1"]
         doc_read = mocks["documents"].select.call_args[1]
         assert doc_read["filters"] == {"id": "eq.doc-1", "deleted_at": "is.null"}
+
+    def test_an_unindexed_document_is_never_sent_whole_to_every_call(self, monkeypatch):
+        import config
+        from learning.params import CHECK_ITEM_CONCEPTS_PER_CALL, CHECK_ITEM_MAX_CHUNKS
+        from services.encryption import encrypt_if_present
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        paragraphs = [f"Topic {i} " + " ".join(["word"] * 60) + "." for i in range(30)]
+        text = "\n\n".join(paragraphs)
+        factory, _ = _cached_tables(
+            {
+                "documents": [_doc(extracted_text=encrypt_if_present(text))],
+                "course_chunks": [],
+                "check_items": [],
+            }
+        )
+        calls = []
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            calls.append([p["text"] for p in passages])
+            return _drafts_for(*concepts)
+
+        names = [f"Concept {n}" for n in range(CHECK_ITEM_CONCEPTS_PER_CALL + 1)]
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with t, d, patch("services.check_item_service.decide_visibility", return_value="shared"):
+            svc.generate_for_document(
+                "doc-1", user_id="u1", course_id="course-1", concept_names=names, flex=True
+            )
+        assert len(calls) == 2
+        for texts in calls:
+            assert text not in texts
+            assert len(texts) <= CHECK_ITEM_MAX_CHUNKS * CHECK_ITEM_CONCEPTS_PER_CALL
+            assert set(texts) <= set(paragraphs)
 
     def test_generate_for_document_caps_concepts_per_upload(self, monkeypatch):
         import config

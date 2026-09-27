@@ -53,6 +53,7 @@ from learning.params import (
     CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, decide_visibility
+from services.chunker import chunk_document
 from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json
 from services.events_service import log_event
 from services.graph_service import _normalize_concept
@@ -380,8 +381,10 @@ def document_is_item_source(row: dict) -> bool:
 def source_chunks(doc_row: dict) -> list[dict]:
     """The passages an item may be drafted from. Not a source → []. Indexed →
     its SHARED chunks only (none shared → [], never the fallback). Not indexed
-    → its decrypted extracted_text as ONE passage with no id. Every passage
-    carries its `doc_id`."""
+    → its decrypted extracted_text, split by the indexer's block chunker into
+    id-less passages (chunk_index 0, 1, …), so ranking bounds what each agent
+    call carries exactly as for an indexed document — never the whole text in
+    every batch. Every passage carries its `doc_id`."""
     doc_id = doc_row.get("id")
     if not document_is_item_source(doc_row):
         logger.info("check items: document %s is not shared course material; skipped", doc_id)
@@ -398,7 +401,10 @@ def source_chunks(doc_row: dict) -> list[dict]:
     if not text or not str(text).strip():
         logger.warning("check items: document %s has no chunks and no extracted text", doc_id)
         return []
-    return [{"id": None, "chunk_index": 0, "chunk_text": text, "doc_id": doc_id}]
+    return [
+        {"id": None, "chunk_index": i, "chunk_text": piece, "doc_id": doc_id}
+        for i, piece in enumerate(chunk_document(str(text)))
+    ]
 
 
 # ── withdrawal (A23): consent stays answerable for items ──────────────────
