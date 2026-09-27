@@ -30,9 +30,14 @@ from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from services import quiz_config, quiz_errors
+from services.ai_observability import posthog_ai_span_processors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
-from services.request_context import RequestIDMiddleware, current_request_id
+from services.request_context import (
+    PostHogContextMiddleware,
+    RequestIDMiddleware,
+    current_request_id,
+)
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -40,6 +45,12 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services.posthog_client import get_posthog_client, initialize_posthog
+from services.posthog_logs import (
+    initialize_posthog_log_capture,
+    log_backend_ready,
+    shutdown_posthog_log_capture,
+)
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -69,7 +80,10 @@ logfire.configure(
         callback=scrub_value,
         extra_patterns=list(EXTRA_PATTERNS),
     ),
+    additional_span_processors=posthog_ai_span_processors(),
 )
+# Reuse the established Pydantic AI instrumentation so the PostHog processor
+# receives the same agent, tool, and generation spans without a duplicate hook.
 logfire.instrument_pydantic_ai()
 
 # ── App lifespan: self-bootstrap external resources ─────────────────────────
@@ -92,6 +106,8 @@ async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
+    initialize_posthog()
+    initialize_posthog_log_capture()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -116,11 +132,16 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    log_backend_ready()
     yield
+    shutdown_posthog_log_capture()
     await stop_sweeper()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
+    posthog_client = get_posthog_client()
+    if posthog_client is not None:
+        posthog_client.flush()
     shutdown_dbos()
 
 
@@ -192,11 +213,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add LAST so it's the outermost middleware (runs first on the way in,
-# last on the way out — exactly what we want for stamping every request,
-# tagging every response, and emitting one structured log line per
-# request, including ones that fail inside CORS.
+# Request IDs run outside CORS so every response is tagged and logged.
 app.add_middleware(RequestIDMiddleware)
+
+# Add LAST so the verified session user's PostHog context surrounds every
+# downstream request handler and exception capture. It is a no-op when
+# PostHog is not configured or the request has no valid session.
+app.add_middleware(PostHogContextMiddleware)
 
 
 # #540 A3: on /api/quiz/* paths, quiz_errors.error_content wraps errors in
@@ -261,6 +284,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
+    posthog_client = get_posthog_client()
+    if posthog_client is not None:
+        posthog_client.capture_exception(exc)
     rid = getattr(request.state, "request_id", None) or current_request_id()
     content = quiz_errors.error_content(
         request.url.path, 500, "Internal server error.", rid,

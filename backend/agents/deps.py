@@ -68,3 +68,13 @@ class SaplingDeps:
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None
+
+    def __post_init__(self) -> None:
+        """Attach this run's existing session and user identity to AI spans."""
+        from services.ai_observability import bind_ai_context
+
+        bind_ai_context(
+            session_id=self.session_id,
+            distinct_id=self.user_id,
+            request_id=self.request_id,
+        )

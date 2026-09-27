@@ -26,6 +26,7 @@ from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_pre
 from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
+from services.posthog_client import get_posthog_client
 from services.streak_service import touch_streak_safe
 from services.xp_service import award_xp_safe
 
@@ -445,6 +446,12 @@ def _consume_pending(session_id: str, user_id: str) -> None:
         },
         content=pending["topic"],
     )
+    posthog_client = get_posthog_client()
+    if posthog_client is not None:
+        posthog_client.capture(
+            "study_session_started",
+            properties={"mode": pending["mode"]},
+        )
     save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
 
 
@@ -1225,6 +1232,15 @@ def end_session(body: EndSessionBody, request: Request):
             "concepts_covered": len(concepts_covered),
         },
     )
+    posthog_client = get_posthog_client()
+    if posthog_client is not None:
+        posthog_client.capture(
+            "study_session_ended",
+            properties={
+                "duration_minutes": elapsed_minutes,
+                "concepts_covered": len(concepts_covered),
+            },
+        )
 
     table("sessions").update(
         {"summary_json": encrypt_json(summary)},
