@@ -752,3 +752,21 @@ def test_promotion_checks_pass_an_identical_candidate_and_catch_a_worse_one(ev):
         gemini_cost_per_decision_usd=0.00007,
     )
     assert all(ev.promotion_checks(base, base, shadow=good)[n] is True for n in live)
+
+
+def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
+    """The E2E lane end to end (PKG-07's /check/answer will run exactly this): function
+    mode serves the grader from the env module's handler THROUGH the seam — backend
+    `function` on the event, `gemini` on the evidence (the Gemini slot it stands in for)."""
+    import agents.grader as g
+    import agents.tools.check as c
+    from agents._providers import model_for
+    from agents.function_handlers_e2e import E2E_GRADER_CORRECT_TOKEN
+
+    deps = _pkg05("_deps")
+    answer = _pkg05("_answer", answer_text=f"{E2E_GRADER_CORRECT_TOKEN}: it stops the calls")
+    with g.grader_agent.override(model=model_for("grader")):
+        out = asyncio.run(c.grade_answer(_pkg05("_item"), answer, deps=deps, node_id=NODE))
+    assert (out.unavailable, out.correct, out.grader_backend) == (False, True, "gemini")
+    assert deps.pending_evidence[-1]["grader_backend"] == "gemini"
+    assert [(et, kw["payload"]["backend"]) for et, kw in events] == [("decision.made", "function")]
