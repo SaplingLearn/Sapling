@@ -495,8 +495,9 @@ def test_spec_3_6_settings_and_ownership(seam):
     assert not any(
         hasattr(seam, n) for n in ("classify_upload", "rerank", "route_turn")
     )  # #641/#640
-    for path in (BACKEND / "learning").glob("*.py"):
-        assert not re.search(r"services(\.| import )decisions", path.read_text()), path.name
+    for path in (BACKEND / "learning").rglob("*.py"):
+        rel = path.relative_to(BACKEND).as_posix()
+        assert not _seam_refs(path.read_text(), rel), rel
 
 
 # ── Task 4: decision.* events ──────────────────────────────────────────────
@@ -728,11 +729,72 @@ def test_grade_answer_numeric_mismatch_is_stamped_deterministic(seam, monkeypatc
     ]
 
 
+SEAM_MODULE = "services.decisions"
+
+
+def _absolute(module: str | None, level: int, rel: str) -> str:
+    """The absolute module an ImportFrom names, resolving a relative one against `rel`."""
+    if not level:
+        return module or ""
+    package = rel.removesuffix(".py").split("/")[:-1]
+    base = package[: len(package) - (level - 1)] if level - 1 <= len(package) else []
+    return ".".join([*base, *([module] if module else [])])
+
+
+def _seam_refs(source: str, rel: str = "") -> list[tuple[int, str]]:
+    """(line, what) for each import of services.decisions in `source` (the file at
+    backend-relative `rel`): any spelling — a multi-name or parenthesized
+    `from services import …`, `import services.decisions`, a relative import from
+    inside services/, or a dynamic import by name. Comments and prose never count
+    (the PKG-05 `_grading_refs` shape)."""
+    import ast
+
+    refs: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            refs += [
+                (node.lineno, f"import {a.name}")
+                for a in node.names
+                if a.name == SEAM_MODULE or a.name.startswith(SEAM_MODULE + ".")
+            ]
+        elif isinstance(node, ast.ImportFrom):
+            module = _absolute(node.module, node.level, rel)
+            names = {a.name for a in node.names}
+            targets = {module} | {f"{module}.{n}" for n in names}
+            if any(t == SEAM_MODULE or t.startswith(SEAM_MODULE + ".") for t in targets):
+                refs.append((node.lineno, f"from {'.' * node.level}{node.module or ''} import"))
+        elif isinstance(node, ast.Constant) and node.value == SEAM_MODULE:
+            refs.append((node.lineno, f"names {node.value!r}"))
+    return refs
+
+
+@pytest.mark.parametrize(
+    ("source", "rel", "hits"),
+    [
+        ("from services import decisions", "", 1),
+        ("from services.decisions import judge_leak", "", 1),
+        ("import services.decisions as seam", "", 1),
+        ("from services import events_service, decisions", "", 1),
+        ("from services import (\n    events_service,\n    decisions,\n)", "", 1),
+        ("import importlib\nimportlib.import_module('services.decisions')", "", 1),
+        ("from . import decisions", "services/x.py", 1),
+        ("from .decisions import judge_leak", "services/x.py", 1),
+        ("from .. import decisions", "agents/tools/x.py", 0),
+        ("# the route calls services.decisions.judge_leak", "", 0),
+        ('"""Read services/decisions.py::item_answerable."""', "", 0),
+        ("from services import events_service\nfrom agents import decision", "", 0),
+    ],
+)
+def test_seam_ref_detector(source, rel, hits):
+    """Mutation cases for the flag-dark importer scan below."""
+    assert len(_seam_refs(source, rel)) == hits, _seam_refs(source, rel)
+
+
 def test_seam_callers_are_only_grade_answer():
     importers = sorted(
         p.relative_to(BACKEND).as_posix()
         for p in _app_files()
-        if re.search(r"services(\.| import )decisions\b", p.read_text())
+        if _seam_refs(p.read_text(), p.relative_to(BACKEND).as_posix())
     )
     assert importers == ["agents/tools/check.py"]
 
