@@ -21,10 +21,11 @@ Backends (``SAPLING_DECISIONS_BACKEND``):
                 `decision` model slot — gemini-2.5-flash-lite unless
                 SAPLING_MODEL_DECISION overrides it.
     jev         TypeSafe's Jev over HTTP (services/typesafe_client.py). On a
-                missing key, a timeout, any HTTP/transport error, a malformed
-                body, or a state that cannot fit the 32k budget even after
-                truncation, it degrades to flash_lite, and from there to safe
-                defaults.
+                missing key, a timeout, any HTTP/transport error or a
+                malformed body it degrades to flash_lite, and from there to
+                safe defaults. A state that cannot fit Jev's 32k budget even
+                after truncation goes to flash_lite only if it fits that
+                agent's own token budget; otherwise straight to defaults.
     function    automatic under SAPLING_MODEL_MODE=function (unless the backend
                 is explicitly `off`): the same agent on the FunctionModel,
                 answered by the handler registered for task "decision"
@@ -488,6 +489,32 @@ async def _run_agent(
     return raws, served_model_name(result, "decision")
 
 
+#: Output-side reserve per decision-agent request: a five-key answer list is
+#: a few hundred tokens; this is generous.
+_AGENT_OUTPUT_RESERVE = 1_000
+
+
+def _agent_budget_fits(state: Any, questions: Sequence[Question]) -> bool:
+    """Whether the decision agent can answer ``state`` inside WORKER_LIMITS.
+
+    The threshold: the prompt, estimated with Jev's pessimistic ~3
+    chars/token (Gemini's tokenizer runs nearer 4), plus an output reserve,
+    must fit the total-token limit ``request_limit`` times over — the worst
+    case, since each output-validation retry re-sends the whole prompt. A
+    state over Jev's 32k budget is roughly 3x past that today, so this
+    normally says no; it exists so a fallback is attempted only when it can
+    succeed, and stays right if either budget changes.
+    """
+    from agents import WORKER_LIMITS
+
+    limit = WORKER_LIMITS.total_tokens_limit
+    if limit is None:
+        return True
+    requests = WORKER_LIMITS.request_limit or 1
+    prompt_tokens = typesafe_client.tokens_for_chars(len(_agent_prompt(state, questions)))
+    return (prompt_tokens + _AGENT_OUTPUT_RESERVE) * requests <= limit
+
+
 # ── Backend: Jev ────────────────────────────────────────────────────────────
 
 
@@ -516,7 +543,10 @@ def _fit_state(state: Any, truncatable: Sequence[str], question_tokens: int) -> 
     oldest (front) item first, each key exhausted before the next — e.g. a
     conversation tail. If that is not enough, the state is NOT clipped
     further: silently cutting the text being judged would change the
-    judgment. It degrades instead (flash_lite has a far larger context).
+    judgment. It fails instead, and the seam falls back to flash_lite only
+    when the state fits that agent's own token budget
+    (:func:`_agent_budget_fits`) — at today's limits it does not, and the
+    answer is the safe defaults.
 
     Linear: every item is serialized once. ``json.dumps`` output is
     context-free (no indent), so a list's serialized length is exactly
@@ -532,9 +562,7 @@ def _fit_state(state: Any, truncatable: Sequence[str], question_tokens: int) -> 
         return json.dumps(v, ensure_ascii=False, default=str)
 
     def fits(chars: int) -> bool:
-        # typesafe_client.estimate_tokens(text) is a function of len(text)
-        # only; applied to a stand-in of the same length it is exact.
-        return typesafe_client.estimate_tokens("x" * chars) <= budget
+        return typesafe_client.tokens_for_chars(chars) <= budget
 
     lists = {
         key: state[key] for key in truncatable
@@ -731,7 +759,14 @@ async def _answer_with(
                 fallback_reason = f"jev_unexpected_{type(exc).__name__}"
             if jev_raws is not None:
                 return done(_resolve(questions, jev_raws, floor), model)
-            if not allow_fallback:
+            if not allow_fallback or (
+                fallback_reason == "jev_state_over_budget"
+                and not _agent_budget_fits(state, questions)
+            ):
+                # No fallback wanted — or none that could succeed: a state
+                # too big for Jev is, at today's limits, too big for the
+                # decision agent's WORKER_LIMITS too, and running it would
+                # only bill a UsageLimitExceeded. Safe defaults, same reason.
                 served = "none"
                 return done(_all_defaults(questions, "no_backend"), None)
             served = FLASH_LITE
@@ -836,9 +871,15 @@ def emit(
     extra: Mapping[str, Any] | None = None,
 ) -> None:
     """Record one ``decision.made`` event. Never raises. Payload carries
-    enums/bools/floats only — never state text."""
+    enums/bools/floats only — never state text.
+
+    ``extra`` is the caller's context (session_id, mode, ...). It can ADD
+    keys, never replace the seam's own: a caller extra named ``backend`` or
+    ``answers`` would otherwise rewrite who answered and what — exactly the
+    fields an accuracy review trusts. Colliding extras are dropped (warned
+    once per key)."""
     try:
-        payload: dict[str, Any] = {
+        core: dict[str, Any] = {
             "feature": feature,
             "backend": result.backend,
             "requested": result.requested,
@@ -849,7 +890,7 @@ def emit(
             "answers": result.event_answers(),
         }
         if shadow is not None:
-            payload["shadow"] = {
+            core["shadow"] = {
                 "backend": shadow.backend,
                 "requested": shadow.requested,
                 "fallback_reason": shadow.fallback_reason,
@@ -858,8 +899,10 @@ def emit(
                 "answers": shadow.event_answers(),
                 "agree": _agreement(result, shadow),
             }
-        if extra:
-            payload.update(extra)
+        for key in sorted(set(extra or ()) & set(core)):
+            _warn_once(f"decision_extra:{key}",
+                       "decision event extra %r collides with a core field; dropped", key)
+        payload = {**(extra or {}), **core}
         events_service.log_event(
             "decision.made", category="usage", user_id=user_id,
             request_id=request_id, payload=payload,

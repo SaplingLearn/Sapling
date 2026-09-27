@@ -71,11 +71,15 @@ toggle is an open product question.
 3. **Degradation, never failure.** Jev degrades to `flash_lite` on a missing
    key (without a network call), a timeout (`SAPLING_DECISIONS_JEV_TIMEOUT_MS`,
    default 1.5 s, enforced as a wall-clock deadline), any HTTP or transport
-   error, a malformed body, or a state that cannot fit the 32k
-   state-plus-longest-question budget. To fit, the seam first drops the oldest
-   items of caller-named list fields such as a conversation tail; it never
-   clips the text being judged, and degrades instead. If `flash_lite` also
-   fails, every key gets its safe default. Per key, an answer below
+   error, or a malformed body. A state that cannot fit the 32k
+   state-plus-longest-question budget is first trimmed (the oldest items of
+   caller-named list fields such as a conversation tail; the text being
+   judged is never clipped); if it still cannot fit, it goes to `flash_lite`
+   only when the prompt also fits the decision agent's `WORKER_LIMITS`
+   (estimated prompt plus output reserve, times the request limit, since
+   each validation retry re-sends it) and otherwise straight to safe
+   defaults (`jev_state_over_budget`) — at today's limits, always the
+   latter. If `flash_lite` fails, every key gets its safe default. Per key, an answer below
    `SAPLING_DECISIONS_CONFIDENCE_FLOOR` (default 0.5, TypeSafe's own
    suggestion) or outside the allowed set also falls to its default. Answers
    match the allowed keys trimmed and case-insensitively; an off-list answer
@@ -95,7 +99,8 @@ toggle is an open product question.
    priced in `services/llm_pricing.py` (input only). `llm_usage.cost_usd` is
    NUMERIC(18,10) (migration `20260927043405`): a Jev token is $0.000000042,
    and the old 6dp column rounded decision-sized costs (a sub-12-token call
-   to $0).
+   to $0). Any served `jev-*` id without an exact price entry is priced at
+   the family rate, so a vendor version bump never NULL-costs a call.
 
 5. **Shadow mode for the #642 acceptance.** `SAPLING_DECISIONS_SHADOW` runs a
    second backend concurrently and records its answers plus per-key agreement

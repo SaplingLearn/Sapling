@@ -101,7 +101,14 @@ def estimate_tokens(text: str) -> int:
     fallback; one we wrongly think fits gets a 422 and degrades anyway, only
     slower and after spending a round trip.
     """
-    return len(text) // 3 + 1
+    return tokens_for_chars(len(text))
+
+
+def tokens_for_chars(chars: int) -> int:
+    """:func:`estimate_tokens` for a text of ``chars`` characters, without
+    the text — the estimate depends on length only, so a caller that tracks
+    a running length (decisions._fit_state) never has to build a string."""
+    return chars // 3 + 1
 
 
 # ── Per-event-loop client (the #354 lesson, applied to httpx) ──────────────
