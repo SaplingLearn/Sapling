@@ -20,7 +20,8 @@ Design guarantees:
   no-ops.
 * **PostHog mirror (ADR 0028).** ``log_event`` is also the ONE place events
   reach PostHog (``services/posthog_client.mirror_event``): same event name,
-  same payload, ``distinct_id`` = the user UUID, behind the same kill switch.
+  same payload, ``distinct_id`` = the user id, behind the same kill switch,
+  and only for users who have not opted out (``analytics_consent``).
   Routes never call PostHog themselves, so there is exactly one taxonomy —
   this one. The mirror is a non-blocking enqueue onto posthog's own batched
   consumer and is inert when PostHog is off (tests, E2E, no token).
@@ -225,12 +226,15 @@ def log_event(
     """
     if not _logging_enabled():
         return
+    # Resolved ONCE: the row and the PostHog mirror must carry the same id.
+    if request_id is None:
+        request_id = current_request_id()
     try:
         row = {
             "event_type": event_type,
             "category": category,
             "user_id": user_id,
-            "request_id": request_id if request_id is not None else current_request_id(),
+            "request_id": request_id,
             "payload": payload or {},
             "content_fp": fingerprint_text(content, length=16) if content else None,
         }
@@ -244,7 +248,7 @@ def log_event(
             event_type,
             category=category,
             user_id=user_id,
-            request_id=request_id if request_id is not None else current_request_id(),
+            request_id=request_id,
             payload=payload,
         )
     except Exception:  # pragma: no cover - defensive; mirror_event is guarded

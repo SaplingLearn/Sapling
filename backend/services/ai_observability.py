@@ -34,8 +34,32 @@ latency, errors), none of it content:
   ``tool_arguments``, ``tool_response``)
 * status CODE, and ``error.type`` — the exception CLASS, taken from the
   span's exception event when the span has no ``error.type`` of its own
-* attribution: ``posthog.distinct_id`` (the user UUID) and ``$ai_session_id``
+* attribution: ``posthog.distinct_id`` (the user id) and ``$ai_session_id``
   (a chat session id or request id), from ``bind_ai_context``.
+
+**Attribution is bound per agent run, never ambiently.** ``bind_ai_context`` is
+a context manager: it sets the attribution for the spans started inside it
+and resets it on exit, so nothing leaks into later runs, the rest of the
+request, or its BackgroundTasks. ``install_agent_run_boundary`` wraps
+``pydantic_ai.Agent.iter`` — the one entry that ``run``, ``run_sync``,
+``run_stream`` and ``run_stream_events`` all go through — so every run binds
+from its own ``deps`` (``SaplingDeps.user_id`` / ``session_id`` /
+``request_id``) and unbinds when it ends; a deps-less run binds the request's
+session user, if any. It is installed only when PostHog is on.
+
+**Consent.** A user id is only stamped when ``analytics_consent.consent_for``
+says ALLOWED. A student who opted out (``user_settings.analytics_opt_out``), a
+deleted account, an unreadable consent answer, or a request carrying
+``Sec-GPC: 1`` / ``DNT: 1`` SUPPRESSES the run: its spans are not exported at
+all (not even anonymously). A run with no actor (the sweeper, a placeholder id
+like "backfill") is exported without a ``posthog.distinct_id``.
+
+PostHog reads ``posthog.distinct_id`` per SPAN: its OTLP capture resolves the
+distinct id from span attributes first and falls back to resource attributes
+(``rust/capture/src/otel/identity.rs``, ``extract_distinct_id_for_span`` —
+"span attributes taking precedence over resource attributes ... distinct_id
+must be resolved per-span"). A resource attribute is per process, so the span
+is the only place a multi-user server can put it.
 
 Gated by ``services.posthog_client.disabled_reason`` — the same gate as the
 event client, so tests and the function-mode E2E lanes build no processor and
@@ -45,21 +69,33 @@ no exporter at all.
 from __future__ import annotations
 
 import contextvars
+import functools
 import logging
 import threading
-from typing import Any, Sequence
+from contextlib import asynccontextmanager, contextmanager
+from typing import Any, Iterator, NamedTuple, Sequence
 
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.trace import Status
 
+from services.request_context import request_has_privacy_signal
+
 logger = logging.getLogger("sapling.ai_observability")
 
-_AI_SESSION_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "posthog_ai_session_id", default=None,
-)
-_AI_DISTINCT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "posthog_ai_distinct_id", default=None,
+
+class _Attribution(NamedTuple):
+    suppress: bool
+    distinct_id: str | None
+    session_id: str | None
+
+
+_SUPPRESSED = _Attribution(True, None, None)
+
+#: The attribution for spans started in this context: None = nothing bound
+#: (spans export unattributed), or an _Attribution set by bind_ai_context.
+_AI_ATTRIBUTION: contextvars.ContextVar[_Attribution | None] = contextvars.ContextVar(
+    "posthog_ai_attribution", default=None,
 )
 
 DISTINCT_ID_ATTR = "posthog.distinct_id"
@@ -100,22 +136,113 @@ _MAX_STR_LEN = 128
 _RESOURCE_KEYS = ("service.name", "service.version", "deployment.environment")
 
 
+def _resolve_attribution(
+    *, session_id: str | None, distinct_id: str | None, request_id: str | None,
+) -> _Attribution:
+    from services.analytics_consent import Consent, consent_for
+    from services.request_context import current_session_user
+
+    if request_has_privacy_signal():
+        return _SUPPRESSED
+    consent = consent_for(distinct_id)
+    if consent is Consent.DENIED:
+        return _SUPPRESSED
+    user: str | None = str(distinct_id).strip() if consent is Consent.ALLOWED else None
+    if user is None:
+        # No actor named (a deps-less run, a placeholder id): the request's
+        # own user may still have opted out.
+        actor = current_session_user()
+        actor_consent = consent_for(actor)
+        if actor_consent is Consent.DENIED:
+            return _SUPPRESSED
+        if actor_consent is Consent.ALLOWED:
+            user = str(actor).strip()
+    resolved = session_id or request_id
+    return _Attribution(False, user, str(resolved) if resolved else None)
+
+
+@contextmanager
 def bind_ai_context(
     *, session_id: str | None, distinct_id: str | None, request_id: str | None,
-) -> None:
-    """Attribute the agent runs that follow (in this context) to a user.
+) -> Iterator[None]:
+    """Attribute the agent spans started inside this block, then unbind.
 
-    Called from ``SaplingDeps.__post_init__``. Chat runs carry their persisted
-    session id; other request-scoped runs use the request id as a one-request
-    AI session, so unrelated uploads/quizzes are not grouped together.
-    Never raises — it runs inside a dataclass constructor.
+    Chat runs carry their persisted session id; other request-scoped runs use
+    the request id as a one-request AI session, so unrelated uploads/quizzes
+    are not grouped together. Fails closed: if consent cannot be resolved,
+    the block's spans are suppressed. Never raises on its own account.
     """
     try:
-        resolved = session_id or request_id
-        _AI_SESSION_ID.set(str(resolved) if resolved else None)
-        _AI_DISTINCT_ID.set(str(distinct_id) if distinct_id else None)
-    except Exception:  # pragma: no cover - defensive
-        logger.debug("bind_ai_context failed", exc_info=True)
+        attribution = _resolve_attribution(
+            session_id=session_id, distinct_id=distinct_id, request_id=request_id,
+        )
+    except Exception:
+        logger.debug("AI attribution resolution failed; suppressing", exc_info=True)
+        attribution = _SUPPRESSED
+    token = _AI_ATTRIBUTION.set(attribution)
+    try:
+        yield
+    finally:
+        try:
+            _AI_ATTRIBUTION.reset(token)
+        except ValueError:  # pragma: no cover - exited from another context
+            logger.debug("bind_ai_context exited in a different context")
+
+
+@contextmanager
+def bind_ai_context_for_deps(deps: Any) -> Iterator[None]:
+    """``bind_ai_context`` from an agent run's deps (a SaplingDeps, or None)."""
+    from services.request_context import current_request_id
+
+    with bind_ai_context(
+        session_id=getattr(deps, "session_id", None),
+        distinct_id=getattr(deps, "user_id", None),
+        request_id=getattr(deps, "request_id", None) or current_request_id(),
+    ):
+        yield
+
+
+_BOUNDARY_MARK = "__sapling_ai_attribution__"
+_original_agent_iter: Any = None
+
+
+def install_agent_run_boundary() -> None:
+    """Bind/unbind attribution around every Pydantic AI agent run. Idempotent.
+
+    Wraps ``Agent.iter`` (public API; ``run``/``run_stream``/
+    ``run_stream_events`` all enter through it), so there is one boundary
+    for every call site instead of a ``with`` at each of them — and a new
+    call site cannot forget it. The wrapper only adds a context around the
+    original; arguments and the yielded run are untouched.
+    """
+    global _original_agent_iter
+    from pydantic_ai import Agent
+
+    current = Agent.iter
+    if getattr(current, _BOUNDARY_MARK, False):
+        return
+    original = current
+
+    @asynccontextmanager
+    async def iter_with_attribution(self, *args: Any, **kwargs: Any):
+        with bind_ai_context_for_deps(kwargs.get("deps")):
+            async with original(self, *args, **kwargs) as run:
+                yield run
+
+    functools.update_wrapper(iter_with_attribution, original)
+    setattr(iter_with_attribution, _BOUNDARY_MARK, True)
+    _original_agent_iter = original
+    Agent.iter = iter_with_attribution
+
+
+def uninstall_agent_run_boundary() -> None:
+    """Undo ``install_agent_run_boundary`` (test-only)."""
+    global _original_agent_iter
+    from pydantic_ai import Agent
+
+    if _original_agent_iter is not None and getattr(Agent.iter, _BOUNDARY_MARK, False):
+        Agent.iter = _original_agent_iter
+    _original_agent_iter = None
 
 
 def _scalar_ok(value: Any) -> bool:
@@ -182,18 +309,35 @@ def sanitize_span(
     )
 
 
-def _is_ai_span(span: ReadableSpan) -> bool:
-    from posthog.ai.otel import is_ai_span
+#: Instrumentation scopes whose spans can be AI spans. Pydantic AI creates
+#: every agent-run / model-request / tool span on a tracer named
+#: "pydantic-ai" (models/instrumented.py), under Logfire as well. Spans from
+#: any other scope (HTTP, DB, httpx, ...) — the vast majority — are rejected
+#: on a string compare, with no lock and no allowlist work.
+_AI_SCOPES: frozenset[str] = frozenset({"pydantic-ai"})
 
-    return is_ai_span(span)
+_SUPPRESS_MARK: dict[str, str] = {}  # identity marker in _pending
+
+
+def _may_be_ai(span: Any) -> bool:
+    scope = getattr(span, "instrumentation_scope", None)
+    return scope is not None and scope.name in _AI_SCOPES
+
+
+def _fallback_is_ai_span(span: ReadableSpan) -> bool:  # pragma: no cover
+    prefixes = ("gen_ai.", "llm.", "ai.", "traceloop.")
+    if span.name.startswith(prefixes):
+        return True
+    return any(k.startswith(prefixes) for k in (span.attributes or {}))
 
 
 class AllowlistSpanProcessor(SpanProcessor):
     """Sanitize AI spans, then hand them to ``delegate`` (PostHog's exporter).
 
-    Non-AI spans (HTTP, DB, everything Logfire traces that is not Pydantic
-    AI) never reach the delegate at all. Every hook swallows its own errors:
-    an analytics exporter must not be able to break a span Logfire needs.
+    Only spans from the Pydantic AI tracer that PostHog would also classify
+    as AI spans reach the delegate; everything else Logfire traces never
+    does. Every hook swallows its own errors: an analytics exporter must not
+    be able to break a span Logfire needs.
     """
 
     # Attribution is captured at span START (the contextvars are the caller's
@@ -203,36 +347,50 @@ class AllowlistSpanProcessor(SpanProcessor):
 
     def __init__(self, delegate: SpanProcessor) -> None:
         self._delegate = delegate
-        self._pending: dict[int, dict[str, str]] = {}
+        self._pending: dict[int, Any] = {}
         self._lock = threading.Lock()
+        # Resolved once, not per span end.
+        try:
+            from posthog.ai.otel import is_ai_span
+        except Exception:  # pragma: no cover - posthog[otel] missing
+            is_ai_span = _fallback_is_ai_span
+        self._is_ai_span = is_ai_span
 
     def on_start(self, span: Any, parent_context: Any = None) -> None:
+        if not _may_be_ai(span):
+            return
         try:
-            distinct_id = _AI_DISTINCT_ID.get()
-            session_id = _AI_SESSION_ID.get()
-            if not (distinct_id or session_id):
+            bound = _AI_ATTRIBUTION.get()
+            if request_has_privacy_signal() or (bound is not None and bound.suppress):
+                entry: Any = _SUPPRESS_MARK
+            elif bound is None or not (bound.distinct_id or bound.session_id):
                 return
-            attribution = {}
-            if distinct_id:
-                attribution[DISTINCT_ID_ATTR] = distinct_id
-            if session_id:
-                attribution[SESSION_ID_ATTR] = session_id
+            else:
+                entry = {}
+                if bound.distinct_id:
+                    entry[DISTINCT_ID_ATTR] = bound.distinct_id
+                if bound.session_id:
+                    entry[SESSION_ID_ATTR] = bound.session_id
             with self._lock:
                 if len(self._pending) >= self._MAX_PENDING:
                     # Spans that never ended (should not happen): forget the
                     # oldest rather than grow without bound.
                     self._pending.pop(next(iter(self._pending)))
-                self._pending[span.context.span_id] = attribution
+                self._pending[span.context.span_id] = entry
         except Exception:
             logger.debug("AllowlistSpanProcessor.on_start failed", exc_info=True)
 
     def on_end(self, span: ReadableSpan) -> None:
+        if not _may_be_ai(span):
+            return
         try:
             with self._lock:
-                attribution = self._pending.pop(span.context.span_id, None)
-            if not _is_ai_span(span):
+                entry = self._pending.pop(span.context.span_id, None)
+            if entry is _SUPPRESS_MARK:
                 return
-            self._delegate.on_end(sanitize_span(span, attribution=attribution))
+            if not self._is_ai_span(span):
+                return
+            self._delegate.on_end(sanitize_span(span, attribution=entry))
         except Exception:
             logger.debug("AllowlistSpanProcessor.on_end failed", exc_info=True)
 
@@ -249,6 +407,25 @@ class AllowlistSpanProcessor(SpanProcessor):
             return False
 
 
+#: The live processor (None when PostHog is off), for flush_ai_spans.
+_processor: AllowlistSpanProcessor | None = None
+
+
+def flush_ai_spans(timeout_millis: int = 10_000) -> None:
+    """Export every AI span already queued (bounded). Never raises.
+
+    Called before a PostHog person delete, so a span from before the account
+    deletion cannot arrive after it and re-create the person.
+    """
+    processor = _processor
+    if processor is None:
+        return
+    try:
+        processor.force_flush(timeout_millis)
+    except Exception:  # pragma: no cover - force_flush already swallows
+        logger.debug("flush_ai_spans failed", exc_info=True)
+
+
 def posthog_ai_span_processors() -> Sequence[SpanProcessor]:
     """The processors to add to Logfire's pipeline: [] whenever PostHog is off.
 
@@ -256,6 +433,7 @@ def posthog_ai_span_processors() -> Sequence[SpanProcessor]:
     inputs (env, pytest) must already be settled then — they are: the E2E
     lanes export SAPLING_MODEL_MODE before uvicorn starts.
     """
+    global _processor
     from services.posthog_client import disabled_reason
 
     reason = disabled_reason()
@@ -265,14 +443,15 @@ def posthog_ai_span_processors() -> Sequence[SpanProcessor]:
         import config
         from posthog.ai.otel import PostHogSpanProcessor
 
-        return [
-            AllowlistSpanProcessor(
-                PostHogSpanProcessor(
-                    api_key=config.posthog_project_token(),
-                    host=config.posthog_host(),
-                ),
+        processor = AllowlistSpanProcessor(
+            PostHogSpanProcessor(
+                api_key=config.posthog_project_token(),
+                host=config.posthog_host(),
             ),
-        ]
+        )
+        install_agent_run_boundary()
+        _processor = processor
+        return [processor]
     except Exception:
         logger.warning("PostHog AI tracing init failed; AI spans not exported", exc_info=True)
         return []

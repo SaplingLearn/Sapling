@@ -217,11 +217,28 @@ def posthog_project_id() -> str:
     return (os.getenv("POSTHOG_PROJECT_ID") or "").strip()
 
 
-def posthog_api_host() -> str:
-    """Private REST API host. The ingestion host (`us.i.posthog.com`) does not
-    serve `/api/projects/...`; the app host does. POSTHOG_API_HOST overrides;
-    otherwise it is derived from POSTHOG_HOST's `<region>.i.posthog.com`."""
+#: The ONLY ingestion hosts an API host is ever derived from. The personal API
+#: key (`person:write`) is sent to whatever posthog_api_host() returns, so a
+#: derivation must never be able to point it at a host that is not PostHog's
+#: own app: a string rewrite of an arbitrary POSTHOG_HOST (a reverse proxy, a
+#: typo, a self-hosted ingest) would hand the key to that host.
+_POSTHOG_INGEST_TO_API_HOST = {
+    "https://us.i.posthog.com": "https://us.posthog.com",
+    "https://eu.i.posthog.com": "https://eu.posthog.com",
+}
+
+
+def posthog_api_host() -> str | None:
+    """Private REST API host for the personal-key calls (person deletion), or
+    None when it cannot be determined safely.
+
+    The ingestion host (`us.i.posthog.com`) does not serve `/api/projects/...`;
+    the app host does. POSTHOG_API_HOST, when set, is used as-is (self-hosted
+    or proxied setups must name their API host explicitly). Otherwise it is
+    derived ONLY from the two PostHog-cloud ingestion hosts; any other
+    POSTHOG_HOST returns None and the caller WARNs and skips rather than
+    guessing where to send the key."""
     explicit = (os.getenv("POSTHOG_API_HOST") or "").strip().rstrip("/")
     if explicit:
         return explicit
-    return posthog_host().replace(".i.posthog.com", ".posthog.com")
+    return _POSTHOG_INGEST_TO_API_HOST.get(posthog_host().lower())
