@@ -163,7 +163,9 @@ class OptionDraft(BaseModel):
     text: str = Field(
         description=(
             "the option exactly as the student reads it; at most "
-            f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens (the correct one is the final_answer)"
+            f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens (the correct one is the final_answer); "
+            "as long and as detailed as the other options (the correct one is never the "
+            "longest) and never its own reason"
         )
     )
     is_correct: bool = Field(

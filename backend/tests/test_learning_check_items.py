@@ -933,8 +933,7 @@ class TestRepairAndOptions:
         draft = _mc_draft(
             prompt="Which quantity does the learning rate scale? [passage] Pick one.",
             reference_answer=(
-                f"The rate scales each step {mark}. [CHUNK c2] Final answer: The update "
-                "step size."
+                f"The rate scales each step {mark}. [CHUNK c2] Final answer: The update step size."
             ),
             rubric=[f"Ties the rate to the step {mark}", "Names the gradient."],
             wrong_texts=["Counts iterations [chunk c1].", "Treats the rate as the loss.", "x"],
@@ -2241,6 +2240,21 @@ class TestAgentPlumbing:
             in schema["CheckItemDraft"]["properties"]["options"]["description"]
         )
         assert "null" in schema["OptionDraft"]["properties"]["wrong_key"]["description"]
+
+    def test_the_options_are_asked_alike_in_length_and_without_their_own_reason(self):
+        """Review of A37: the correct option was the single longest in 10 of
+        12 live HIST200 items, and it often carried its own justification,
+        so a restated pick read as a reason. The prompt and the option's text
+        description (which flash-lite follows where the prompt alone does
+        not) ask for options alike in length and detail, the correct one
+        never the longest, and no option stating its reason."""
+        from agents.check_items import _PROMPT, CheckItemsOutput
+
+        for phrase in ("alike in length", "never the longest", "carries its own reason"):
+            assert phrase in _PROMPT, phrase
+        text = CheckItemsOutput.model_json_schema()["$defs"]["OptionDraft"]["properties"]["text"]
+        for phrase in ("as long and as detailed as the other options", "never its own reason"):
+            assert phrase in text["description"], phrase
 
     def test_build_prompt_names_every_concept_and_marks_passages(self):
         from agents.check_items import build_prompt
