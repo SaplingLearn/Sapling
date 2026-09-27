@@ -166,6 +166,8 @@ async def _reason_grade(item, *, selected_option: str, reason: str, deps: Saplin
         selected_option=selected_option,
         correct_option=item.correct_option or "",
         reason=reason,
+        # course vocabulary for grade()'s answer screen (A33); never in the message
+        options={o.letter: o.text for o in item.options or []},
     )
     return _via_seam(await decisions.reason_is_correct(state, deps=deps, item_id=item.id))
 

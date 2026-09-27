@@ -817,13 +817,14 @@ def _vocabulary(context: str, rubric_ids: tuple[str, ...]) -> _Vocabulary:
 def item_terms(item) -> dict:
     """What the screen reads off an item: its rubric ids and its student-facing
     text (question, reference answer, option texts) as `context`. `item` is a
-    CheckItem, the seam's GraderItem, or a dict with the same fields."""
+    CheckItem, the seam's GraderItem (whose options are plain texts), or a dict
+    with the same fields."""
 
     def get(obj, name: str):
         return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
 
     parts = [get(item, "prompt"), get(item, "reference_answer")]
-    parts += [get(o, "text") for o in get(item, "options") or []]
+    parts += [o if isinstance(o, str) else get(o, "text") for o in get(item, "options") or []]
     ids = tuple(str(get(r, "id")) for r in get(item, "rubric") or [] if get(r, "id"))
     return {
         "rubric_ids": ids,

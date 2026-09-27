@@ -1510,6 +1510,59 @@ def test_grade_answer_records_nothing_when_the_grader_reports_text_aimed_at_it(m
 # ── the decision seam (PKG-05b) ──────────────────────────────────────────────
 
 
+# An mc_reason item's option texts are course vocabulary (A33, item_terms), but the
+# seam rebuilt the grader's item without them: in production an honest reason
+# that paraphrased the item's own option was refused before any model run
+# (red team round 3; the unit tests read item_terms off a CheckItem only).
+SUPPORT_BOT = dict(
+    prompt="What is the main risk shown in the support-bot log excerpt?",
+    reference_answer="A: hidden configuration text can be extracted by crafted input.",
+    rubric=[RubricItem(id="r1", text="explains that crafted input can extract hidden configuration")],
+    common_wrong=[WrongReason(key="w_dos", text="thinks it is a denial of service")],
+    format="mc_reason",
+    options=[
+        Option(letter="A", text="An attacker can reveal the system prompt", wrong_key=None),
+        Option(letter="B", text="The bot is overloaded", wrong_key="w_dos"),
+    ],
+    correct_option="A",
+)
+SUPPORT_BOT_REASON = (
+    "Because crafted input can make the bot reveal the system prompt, which holds hidden "
+    "configuration."
+)
+
+
+def test_the_seam_hands_grade_the_option_texts():
+    from agents.tools.check import _maps
+    from services.decisions import GradeState, ReasonState, grader_item_from
+
+    item = _item(**SUPPORT_BOT)
+    state = ReasonState(
+        **_maps(item),
+        options={o.letter: o.text for o in item.options},
+        selected_option="A",
+        correct_option="A",
+        reason=SUPPORT_BOT_REASON,
+    )
+    terms = guard.item_terms(grader_item_from(state))
+    assert terms == guard.item_terms(item)
+    assert "An attacker can reveal the system prompt" in terms["context"]
+    free = GradeState(**_maps(_item()), answer="x", format="free")
+    assert grader_item_from(free).options == ()
+
+
+def test_an_honest_reason_paraphrasing_its_own_option_is_graded(grader, events):
+    """Through the production path: grade_answer → seam → grade()."""
+    from agents.tools.check import CheckAnswer
+
+    g, calls = grader
+    deps = _deps()
+    answer = CheckAnswer(question_hash="qh-1", selected_option="A", reason=SUPPORT_BOT_REASON)
+    out = _grade_answer(_item(**SUPPORT_BOT), answer, deps)
+    assert out.refused is None and out.correct is True and calls["n"] >= 1
+    assert "learn.answer_refused" not in [e for e, _ in events]
+
+
 def test_the_seam_returns_a_deterministic_refusal_not_a_verdict(grader, events):
     from services import decisions
 
