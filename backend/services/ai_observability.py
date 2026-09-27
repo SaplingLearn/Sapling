@@ -47,12 +47,23 @@ from its own ``deps`` (``SaplingDeps.user_id`` / ``session_id`` /
 ``request_id``) and unbinds when it ends; a deps-less run binds the request's
 session user, if any. It is installed only when PostHog is on.
 
-**Consent.** A user id is only stamped when ``analytics_consent.consent_for``
-says ALLOWED. A student who opted out (``user_settings.analytics_opt_out``), a
-deleted account, an unreadable consent answer, or a request carrying
-``Sec-GPC: 1`` / ``DNT: 1`` SUPPRESSES the run: its spans are not exported at
-all (not even anonymously). A run with no actor (the sweeper, a placeholder id
-like "backfill") is exported without a ``posthog.distinct_id``.
+**Consent is decided when each span ENDS, not when the run starts.** The
+run boundary only records WHO the run is for (the deps user, else the
+request's session user, else nobody) and starts warming that user's consent
+answer in the background — it does no I/O itself. ``on_end`` then asks
+``analytics_consent.consent_for`` (cached; never blocks an event loop — a miss
+there is a "no"): a student who opted out, a deleted account, an unreadable or
+not-yet-known answer SUPPRESSES the span — not exported at all, not even
+anonymously — and so does a request carrying ``Sec-GPC: 1`` / ``DNT: 1``
+(captured when the span starts). Checking at the end means a run that was in
+flight when its user was deleted or opted out stops exporting from that
+moment. A run with no actor (the sweeper, a placeholder id like "backfill")
+is exported without a ``posthog.distinct_id``.
+
+**Fail closed on bookkeeping too.** Every Pydantic AI span gets an entry at
+start; a span whose entry is missing at end (evicted at the
+``_MAX_PENDING`` cap, or never seen) is dropped rather than exported
+unattributed.
 
 PostHog reads ``posthog.distinct_id`` per SPAN: its OTLP capture resolves the
 distinct id from span attributes first and falls back to resource attributes
@@ -86,7 +97,8 @@ logger = logging.getLogger("sapling.ai_observability")
 
 class _Attribution(NamedTuple):
     suppress: bool
-    distinct_id: str | None
+    #: The user to check consent for when each span ends (None = no actor).
+    candidate: str | None
     session_id: str | None
 
 
@@ -139,26 +151,26 @@ _RESOURCE_KEYS = ("service.name", "service.version", "deployment.environment")
 def _resolve_attribution(
     *, session_id: str | None, distinct_id: str | None, request_id: str | None,
 ) -> _Attribution:
-    from services.analytics_consent import Consent, consent_for
+    """Who the run is for. No consent read here (see on_end) — only a
+    non-blocking warm-up so the answer is cached by the time spans end."""
+    from services.analytics_consent import is_placeholder, warm
     from services.request_context import current_session_user
 
     if request_has_privacy_signal():
         return _SUPPRESSED
-    consent = consent_for(distinct_id)
-    if consent is Consent.DENIED:
-        return _SUPPRESSED
-    user: str | None = str(distinct_id).strip() if consent is Consent.ALLOWED else None
-    if user is None:
+    candidate: str | None = None
+    if not is_placeholder(distinct_id):
+        candidate = str(distinct_id).strip()
+    else:
         # No actor named (a deps-less run, a placeholder id): the request's
-        # own user may still have opted out.
+        # own user, if any — both to attribute and to honour their opt-out.
         actor = current_session_user()
-        actor_consent = consent_for(actor)
-        if actor_consent is Consent.DENIED:
-            return _SUPPRESSED
-        if actor_consent is Consent.ALLOWED:
-            user = str(actor).strip()
+        if not is_placeholder(actor):
+            candidate = str(actor).strip()
+    if candidate is not None:
+        warm(candidate)
     resolved = session_id or request_id
-    return _Attribution(False, user, str(resolved) if resolved else None)
+    return _Attribution(False, candidate, str(resolved) if resolved else None)
 
 
 @contextmanager
@@ -169,8 +181,9 @@ def bind_ai_context(
 
     Chat runs carry their persisted session id; other request-scoped runs use
     the request id as a one-request AI session, so unrelated uploads/quizzes
-    are not grouped together. Fails closed: if consent cannot be resolved,
-    the block's spans are suppressed. Never raises on its own account.
+    are not grouped together. Fails closed: if the attribution cannot be
+    resolved, the block's spans are suppressed. Never raises on its own
+    account, and does no blocking I/O (it runs on the event loop).
     """
     try:
         attribution = _resolve_attribution(
@@ -316,7 +329,32 @@ def sanitize_span(
 #: on a string compare, with no lock and no allowlist work.
 _AI_SCOPES: frozenset[str] = frozenset({"pydantic-ai"})
 
-_SUPPRESS_MARK: dict[str, str] = {}  # identity marker in _pending
+# Identity markers in AllowlistSpanProcessor._pending.
+_SUPPRESS_MARK = object()   # DNT/GPC or a suppressed binding: never export
+_UNBOUND_MARK = object()    # started outside any run binding: export unattributed
+_MISSING = object()         # no entry at end (evicted / unseen): never export
+
+
+def _span_attribution(entry: Any) -> dict[str, str] | None:
+    """The attributes to stamp on an ending span, or None to DROP it.
+
+    Consent is (re-)checked here, at the end of every span, against the
+    cached answer — so a deletion or opt-out that lands mid-run takes effect
+    for the rest of that run. Non-blocking on an event loop (a miss is a no).
+    """
+    if entry is _UNBOUND_MARK:
+        return {}
+    attribution: dict[str, str] = {}
+    if entry.session_id:
+        attribution[SESSION_ID_ATTR] = entry.session_id
+    if entry.candidate is None:
+        return attribution
+    from services.analytics_consent import Consent, consent_for
+
+    if consent_for(entry.candidate) is not Consent.ALLOWED:
+        return None
+    attribution[DISTINCT_ID_ATTR] = entry.candidate
+    return attribution
 
 
 def _may_be_ai(span: Any) -> bool:
@@ -347,6 +385,7 @@ class AllowlistSpanProcessor(SpanProcessor):
 
     def __init__(self, delegate: SpanProcessor) -> None:
         self._delegate = delegate
+        # span_id -> _Attribution | _SUPPRESS_MARK | _UNBOUND_MARK
         self._pending: dict[int, Any] = {}
         self._lock = threading.Lock()
         # Resolved once, not per span end.
@@ -363,18 +402,14 @@ class AllowlistSpanProcessor(SpanProcessor):
             bound = _AI_ATTRIBUTION.get()
             if request_has_privacy_signal() or (bound is not None and bound.suppress):
                 entry: Any = _SUPPRESS_MARK
-            elif bound is None or not (bound.distinct_id or bound.session_id):
-                return
             else:
-                entry = {}
-                if bound.distinct_id:
-                    entry[DISTINCT_ID_ATTR] = bound.distinct_id
-                if bound.session_id:
-                    entry[SESSION_ID_ATTR] = bound.session_id
+                entry = bound if bound is not None else _UNBOUND_MARK
             with self._lock:
                 if len(self._pending) >= self._MAX_PENDING:
                     # Spans that never ended (should not happen): forget the
-                    # oldest rather than grow without bound.
+                    # oldest rather than grow without bound. Its end then
+                    # finds no entry and is DROPPED (fail closed), never
+                    # exported without the suppression it was started under.
                     self._pending.pop(next(iter(self._pending)))
                 self._pending[span.context.span_id] = entry
         except Exception:
@@ -385,12 +420,15 @@ class AllowlistSpanProcessor(SpanProcessor):
             return
         try:
             with self._lock:
-                entry = self._pending.pop(span.context.span_id, None)
-            if entry is _SUPPRESS_MARK:
+                entry = self._pending.pop(span.context.span_id, _MISSING)
+            if entry is _MISSING or entry is _SUPPRESS_MARK:
                 return
             if not self._is_ai_span(span):
                 return
-            self._delegate.on_end(sanitize_span(span, attribution=entry))
+            attribution = _span_attribution(entry)
+            if attribution is None:
+                return
+            self._delegate.on_end(sanitize_span(span, attribution=attribution))
         except Exception:
             logger.debug("AllowlistSpanProcessor.on_end failed", exc_info=True)
 

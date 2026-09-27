@@ -63,9 +63,15 @@ _NO_TOKEN = "POSTHOG_PROJECT_TOKEN is unset"
 # ── Gate ────────────────────────────────────────────────────────────────────
 
 
-def _disabled_reason_for(env: Mapping[str, str], *, under_pytest: bool) -> str | None:
+def _disabled_reason_for(
+    env: Mapping[str, str], *, under_pytest: bool, model_mode: str,
+) -> str | None:
     """Pure form of the gate, so tests can exercise every branch without
     un-importing pytest. Returns why PostHog is off, or None when it may run.
+
+    ``model_mode`` is the ALREADY-NORMALIZED seam mode
+    (``agents._providers.model_mode()``) — never re-parsed here, so the
+    PostHog gate and the LLM seam cannot disagree about which lane this is.
 
     Order matters only for the log line; any one reason is sufficient.
     """
@@ -75,12 +81,8 @@ def _disabled_reason_for(env: Mapping[str, str], *, under_pytest: bool) -> str |
         return "running under pytest"
     if (env.get("APP_ENV") or "").strip().lower() == "test":
         return "APP_ENV=test"
-    # The same normalization as agents/_providers._model_mode. Not imported
-    # from there: this module is imported by events_service, which is
-    # imported nearly everywhere, and _providers pulls in pydantic-ai.
-    mode = (env.get("SAPLING_MODEL_MODE") or "real").strip().lower()
-    if mode != "real":
-        return f"SAPLING_MODEL_MODE={mode} (deterministic lane)"
+    if model_mode != "real":
+        return f"SAPLING_MODEL_MODE={model_mode} (deterministic lane)"
     if not (env.get("POSTHOG_PROJECT_TOKEN") or "").strip():
         return _NO_TOKEN
     return None
@@ -88,7 +90,13 @@ def _disabled_reason_for(env: Mapping[str, str], *, under_pytest: bool) -> str |
 
 def disabled_reason() -> str | None:
     """Why PostHog is off in this process right now, or None if it is on."""
-    return _disabled_reason_for(os.environ, under_pytest="pytest" in sys.modules)
+    # Lazy: this module is imported by events_service (imported nearly
+    # everywhere), and _providers pulls in pydantic-ai.
+    from agents._providers import model_mode
+
+    return _disabled_reason_for(
+        os.environ, under_pytest="pytest" in sys.modules, model_mode=model_mode(),
+    )
 
 
 def is_enabled() -> bool:
@@ -223,7 +231,12 @@ def mirror_event(
 
     The event's #117 category is sent as ``event_category`` (the payload's
     own ``category`` key, where one exists, is left alone); ``error.4xx`` is
-    not mirrored; ``error.5xx``'s ``path`` is the route template.
+    not mirrored; any ``path`` / ``route`` becomes the route template
+    (``_mirrored_properties``).
+
+    This check runs at ENQUEUE time for every event, so a user deleted or
+    opted out a moment ago is refused from the next event on (in this
+    process at once; in others once their cached answer expires).
     """
     client = _client
     if client is None:
@@ -232,21 +245,47 @@ def mirror_event(
         distinct_id = _sendable_distinct_id(event_type, user_id)
         if distinct_id is _SKIP:
             return
-        properties: dict[str, Any] = dict(payload or {})
-        # The #117 category rides under its own key: several payloads carry a
-        # `category` of their own (document.processed's document category,
-        # rag.relevance_scored's chunk category) that must survive intact.
-        properties["event_category"] = category
-        if request_id:
-            properties["request_id"] = request_id
-        if event_type == "error.5xx":
-            # Bounded cardinality and no ids in PostHog: the matched route
-            # TEMPLATE (/api/profile/{user_id}), never the raw path, whose
-            # segments are user/document/session ids.
-            properties["path"] = (payload or {}).get("route") or "<unmatched>"
+        properties = _mirrored_properties(payload, category=category, request_id=request_id)
         client.capture(event_type, distinct_id=distinct_id, properties=properties)
     except Exception:
         logger.debug("PostHog mirror failed for %s; dropped", event_type, exc_info=True)
+
+
+#: Payload keys that carry a request path. Whatever the emitter put there (a
+#: raw path like auth.permission_denied's `/api/profile/<another user's id>`,
+#: or error.5xx's already-templated route), PostHog gets the MATCHED ROUTE
+#: TEMPLATE of the current request (`/api/profile/{user_id}`) or
+#: "<unmatched>" — bounded cardinality, and no ids in a path segment.
+_PATH_KEYS: frozenset[str] = frozenset({"path", "route"})
+
+#: Payload keys naming a user other than the event's own `distinct_id`. None
+#: of today's #117 payloads carry one (audited: the admin role/achievement
+#: `user_id`s go to admin_audit_log, not log_event); dropped here so a future
+#: payload that adds one cannot leak a second person into PostHog.
+_USER_ID_KEYS: frozenset[str] = frozenset({
+    "user_id", "target_user_id", "actor_id", "friend_id", "peer_user_id", "owner_id",
+})
+
+
+def _mirrored_properties(
+    payload: dict | None, *, category: str, request_id: str | None,
+) -> dict[str, Any]:
+    from services.request_context import current_route_template
+
+    properties: dict[str, Any] = {
+        k: v for k, v in (payload or {}).items() if k not in _USER_ID_KEYS
+    }
+    if _PATH_KEYS & properties.keys():
+        template = current_route_template() or "<unmatched>"
+        for key in _PATH_KEYS & properties.keys():
+            properties[key] = template
+    # The #117 category rides under its own key: several payloads carry a
+    # `category` of their own (document.processed's document category,
+    # rag.relevance_scored's chunk category) that must survive intact.
+    properties["event_category"] = category
+    if request_id:
+        properties["request_id"] = request_id
+    return properties
 
 
 #: Events that stay in our own table only. error.4xx is every 401 from an
@@ -334,9 +373,21 @@ def capture_exception(
 
 _PERSON_DELETE_TIMEOUT_S = 10.0
 
+#: The second delete waits out every other process's cached "allowed"
+#: (analytics_consent.TTL_S) plus a margin for their SDK queues to deliver
+#: (posthog-python flushes every ~0.5 s; the margin also covers a slow batch).
+_SECOND_DELETE_MARGIN_S = 30.0
+
+
+def _second_delete_delay_s() -> float:
+    from services.analytics_consent import TTL_S
+
+    return TTL_S + _SECOND_DELETE_MARGIN_S
+
 
 def delete_person(user_id: str) -> None:
-    """Best-effort: delete this user's PostHog person and their events.
+    """Best-effort: delete this user's PostHog person and their events —
+    now, and once more after every process has stopped sending for them.
 
     Runs as a post-response BackgroundTask from account deletion, so it never
     adds latency and can never fail the deletion — every path returns None and
@@ -344,10 +395,43 @@ def delete_person(user_id: str) -> None:
     plus the project id); without them it WARNs and skips, which leaves a
     manual deletion to do in the PostHog UI.
 
+    Why twice: after the soft delete, THIS process refuses the user at once
+    (the route clears its cached consent), but another replica may still hold
+    a cached "allowed" for up to ``analytics_consent.TTL_S``, and an agent run
+    in flight re-checks consent only when its spans end. Anything those send
+    after the first ``bulk_delete`` re-creates the person, so a second pass
+    runs after TTL + margin (a daemon timer: lost if this process exits
+    first, which is logged at scheduling time and in the ADR).
+
     Gated like everything else: under pytest / APP_ENV=test / function mode /
     the kill switch it makes no request. A deletion skipped that way is logged
     at WARNING with the reason, because in production it is a privacy to-do.
     """
+    if _delete_pass(user_id, label="first"):
+        _schedule_second_pass(user_id)
+
+
+def _schedule_second_pass(user_id: str) -> None:
+    try:
+        delay = _second_delete_delay_s()
+        timer = threading.Timer(delay, _delete_pass, args=(user_id,), kwargs={"label": "second"})
+        timer.daemon = True
+        timer.start()
+        logger.info(
+            "PostHog second person delete for %s scheduled in %.0fs (best-effort; "
+            "lost if this process stops first)", user_id, delay,
+        )
+    except Exception as exc:  # pragma: no cover - thread start failure
+        logger.warning(
+            "PostHog second person delete for %s not scheduled: %s",
+            user_id, type(exc).__name__,
+        )
+
+
+def _delete_pass(user_id: str, *, label: str) -> bool:
+    """One flush + ``bulk_delete``. Returns whether the request was ISSUED
+    (False = skipped as unconfigured/gated, so no second pass is scheduled).
+    Never raises."""
     try:
         reason = disabled_reason()
         # An unset project token only means nothing is being captured NOW;
@@ -355,7 +439,7 @@ def delete_person(user_id: str) -> None:
         # block the delete. Every other reason (tests, E2E, kill switch) does.
         if reason is not None and reason != _NO_TOKEN:
             logger.warning("PostHog person delete skipped for %s: %s", user_id, reason)
-            return
+            return False
         key = config.posthog_personal_api_key()
         project_id = config.posthog_project_id()
         if not key or not project_id:
@@ -365,7 +449,7 @@ def delete_person(user_id: str) -> None:
                 "manually in PostHog",
                 user_id,
             )
-            return
+            return False
         api_host = config.posthog_api_host()
         if not api_host:
             # Never guess where the personal key goes (config.posthog_api_host).
@@ -375,12 +459,11 @@ def delete_person(user_id: str) -> None:
                 "explicitly — delete the person manually in PostHog",
                 user_id,
             )
-            return
+            return False
 
-        # Anything captured BEFORE the deletion is still in the SDK queues;
-        # delivered after the delete, it would re-create the person. Drain
-        # both (events + AI spans), bounded, first. Events captured AFTER the
-        # deletion are refused by the consent check (deleted_at) instead.
+        # Anything THIS process captured before now is still in the SDK
+        # queues; delivered after the delete, it would re-create the person.
+        # Drain both (events + AI spans), bounded, first.
         flush(timeout_seconds=_PERSON_DELETE_TIMEOUT_S)
         from services.ai_observability import flush_ai_spans
 
@@ -398,21 +481,26 @@ def delete_person(user_id: str) -> None:
             timeout=_PERSON_DELETE_TIMEOUT_S,
         )
         if resp.status_code < 300:
-            logger.info("PostHog person delete queued for %s", user_id)
+            logger.info("PostHog person delete (%s pass) queued for %s", label, user_id)
         elif resp.status_code == 400:
             # With delete_events=True PostHog 400s a distinct id that matches
-            # no person — a user who never produced an event. Nothing to do,
-            # but say so: a 400 for any other reason reads the same.
+            # no person — a user who never produced an event (or, on the
+            # second pass, the normal case: nothing re-created it). Say so: a
+            # 400 for any other reason reads the same.
             logger.warning(
-                "PostHog person delete for %s returned 400 (usually: no person "
-                "for this id)", user_id,
+                "PostHog person delete (%s pass) for %s returned 400 (usually: "
+                "no person for this id)", label, user_id,
             )
         else:
             # Status only — never the body.
             logger.warning(
-                "PostHog person delete for %s failed: HTTP %s", user_id, resp.status_code,
+                "PostHog person delete (%s pass) for %s failed: HTTP %s",
+                label, user_id, resp.status_code,
             )
+        return True
     except Exception as exc:
         logger.warning(
-            "PostHog person delete for %s failed: %s", user_id, type(exc).__name__,
+            "PostHog person delete (%s pass) for %s failed: %s",
+            label, user_id, type(exc).__name__,
         )
+        return True
