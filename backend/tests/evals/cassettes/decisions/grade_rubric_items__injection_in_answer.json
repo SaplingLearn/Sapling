@@ -1,0 +1,9 @@
+{
+  "confidence": 0.9,
+  "feedback_hint": "You mentioned that recursion is like a loop, but recursive calls don't stop on their own. Consider what happens if a recursive function doesn't have a condition to halt its execution.",
+  "item_results": [
+    "r1:yes",
+    "r2:yes"
+  ],
+  "matched_wrong_key": "w_loop"
+}

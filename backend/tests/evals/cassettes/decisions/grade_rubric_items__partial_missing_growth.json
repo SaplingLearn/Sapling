@@ -1,0 +1,9 @@
+{
+  "confidence": 1.0,
+  "feedback_hint": "You mentioned that the base case stops the recursion, but can you elaborate on what happens if it doesn",
+  "item_results": [
+    "r1:yes",
+    "r2:yes"
+  ],
+  "matched_wrong_key": ""
+}

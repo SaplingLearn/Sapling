@@ -40,6 +40,7 @@ DATASETS = [
     "chat_tutor",
     "check_items",
     "grader",
+    "decisions",
 ]
 
 

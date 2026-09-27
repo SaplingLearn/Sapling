@@ -5,6 +5,7 @@ events captured by patching events_service.log_event. No DB, no network."""
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import pathlib
 import re
@@ -659,3 +660,95 @@ def test_seam_callers_are_only_grade_answer():
         if re.search(r"services(\.| import )decisions\b", p.read_text())
     )
     assert importers == ["agents/tools/check.py"]
+
+
+# ── Task 6: eval harness (gold loaders + §3.6 gates) ──────────────────────
+
+
+@pytest.fixture(scope="module")
+def ev():
+    saved = list(sys.path)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "decisions_eval", BACKEND / "tests" / "evals" / "decisions.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path[:] = saved  # the eval puts tests/evals on sys.path; keep the suite's clean
+    return mod
+
+
+def _results(ev, *gots):
+    golds = [
+        ("grade_rubric_items", {"r1": "yes", "r2": "yes"}, ()),
+        ("grade_rubric_items", {"r1": "yes", "r2": "no"}, ()),
+        ("reason_is_correct", {"answer": "no"}, ("injection",)),
+    ]
+    return [
+        ev.CaseResult(decision=d, gold=g, got=got or g, confidence=1.0, tags=t)
+        for (d, g, t), got in zip(golds, gots or (None, None, None))
+    ]
+
+
+def test_gold_loader_refuses_unconsented_provenance_and_fixtures_comply(ev, tmp_path):
+    for provenance in ("production", "student_answers", None):
+        path = tmp_path / "judge_leak.json"
+        path.write_text(
+            json.dumps({"decision": "judge_leak", "provenance": provenance, "cases": []})
+        )
+        with pytest.raises(ev.GoldProvenanceError):
+            ev.load_gold(path)
+    files = sorted(ev.FIXTURES.glob("*.json"))
+    assert {p.stem for p in files} == {
+        "grade_rubric_items",
+        "reason_is_correct",
+        "match_wrong_reason",
+        "item_answerable",
+        "judge_leak",
+    }
+    for path in files:
+        doc = json.loads(path.read_text())
+        assert doc["provenance"] == "synthetic" and doc["decision"] == path.stem
+        assert 1 <= len(doc["cases"]) <= ev.DECISION_EVAL_MAX_CASES
+    cases = ev.all_cases()
+    assert len({c.name for c in cases}) == len(cases) and any(
+        "injection" in c.inputs.tags for c in cases
+    )
+
+
+def test_promotion_checks_pass_an_identical_candidate_and_catch_a_worse_one(ev):
+    base = _results(ev)
+    same = ev.promotion_checks(base, base)
+    worse = ev.promotion_checks(
+        _results(ev, None, {"r1": "yes", "r2": "yes"}, {"answer": "yes"}), base
+    )
+    assert same["DECISION_PROMOTE_MIN_GOLD"] is False  # 3 < 200: the series' gold promotes nothing
+    for name in (
+        "DECISION_PROMOTE_MAX_ACC_DROP",
+        "GRADER_PROMOTE_MIN_KAPPA",
+        "DECISION_PROMOTE_MAX_ECE",
+        "false_positive_not_worse",
+        "injection_flip_not_worse",
+        "GRADER_BKT_REPLAY_MAX_DELTA",
+    ):
+        assert same[name] is True and worse[name] is False, name
+    live = (
+        "DECISION_SHADOW_MIN_DAYS",
+        "DECISION_SHADOW_MIN_N",
+        "DECISION_SHADOW_MIN_AGREEMENT",
+        "DECISION_P95_MS",
+        "DECISION_MAX_ERROR_RATE",
+        "cost_not_worse",
+    )
+    assert all(same[n] is None for n in (*live, "SHARE_FALSE_POSITIVE_MAX"))
+    good = ev.ShadowStats(
+        days=7,
+        n=1000,
+        agreement=0.95,
+        p95_ms=120,
+        error_rate=0.001,
+        cost_per_decision_usd=0.00003,
+        gemini_cost_per_decision_usd=0.00007,
+    )
+    assert all(ev.promotion_checks(base, base, shadow=good)[n] is True for n in live)
