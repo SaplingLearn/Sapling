@@ -14,6 +14,7 @@ scoring and generation correctness.
 - E4: concurrency — double-submit, double-answer on one index,
   generate-while-generating for the same concept.
 """
+import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -557,8 +558,21 @@ LOOP_QUESTIONS = [
 ]
 
 
-def _loop_table(questions=LOOP_QUESTIONS):
+# Every table() the legacy submit_quiz opens for this fixture, in order:
+# attempt load, the atomic completed_at claim, the quiz_responses read, the concept
+# node, the snapshot write, the quiz-context node read. Recorded against the
+# pre-series route (base a1a416b) by the PKG-11 review; the flag-off path must
+# not add a table to it.
+LEGACY_SUBMIT_TABLES = [
+    "quiz_attempts", "quiz_attempts", "quiz_responses",
+    "graph_nodes", "quiz_attempts", "graph_nodes",
+]
+
+
+def _loop_table(questions=LOOP_QUESTIONS, tables: list | None = None):
     def factory(name):
+        if tables is not None:
+            tables.append(name)
         mock = MagicMock()
         if name == "quiz_attempts":
             mock.select.return_value = [{
@@ -587,11 +601,19 @@ def _noop_ctx_agent():
     )
 
 
-def _submit_one_right_one_wrong(*, gate: bool, apply_mock: MagicMock, mastery_after_mock: MagicMock):
+def _submit_one_right_one_wrong(
+    *, gate: bool | None, apply_mock: MagicMock, mastery_after_mock: MagicMock,
+    tables: list | None = None,
+):
+    """`gate=None` runs the REAL learning.gate (the caller sets the flag)."""
     ctx_run = _noop_ctx_agent()
+    gate_cm = (
+        contextlib.nullcontext() if gate is None
+        else patch("routes.quiz.learning_loop_active", return_value=gate)
+    )
     with (
-        patch("routes.quiz.table", side_effect=_loop_table()),
-        patch("routes.quiz.learning_loop_active", return_value=gate),
+        patch("routes.quiz.table", side_effect=_loop_table(tables=tables)),
+        gate_cm,
         patch("routes.quiz.apply_graph_update", new=apply_mock),
         patch("routes.quiz.mastery_after", new=mastery_after_mock),
         patch("routes.quiz.get_quiz_context", return_value={}),
@@ -706,10 +728,13 @@ class TestLearningLoopEvidencePath:
 
         apply_mock = MagicMock(return_value=[])
         mastery_after_mock = MagicMock(side_effect=real_mastery_after)
+        tables: list = []
         r, _ = _submit_one_right_one_wrong(
             gate=False, apply_mock=apply_mock, mastery_after_mock=mastery_after_mock,
+            tables=tables,
         )
         assert r.status_code == 200
+        assert tables == LEGACY_SUBMIT_TABLES, "the flag-off path opens no new table"
         mastery_after_mock.assert_called_once_with(0.5, score=1, total=2)
         payload = apply_mock.call_args[0][1]
         assert set(payload) == {"updated_nodes"}, "the legacy payload must not change"
@@ -719,6 +744,26 @@ class TestLearningLoopEvidencePath:
         assert node["event_type"] == "quiz_partial"
         # 1 right, 1 wrong → +PER_CORRECT − PER_WRONG, exactly the seam's arithmetic.
         assert node["mastery_delta"] == pytest.approx(real_mastery_after(0.5, score=1, total=2) - 0.5)
+
+    def test_real_gate_flag_off_reads_nothing_and_takes_the_legacy_path(self, monkeypatch):
+        """The real gate, not a patched one: with LEARNING_LOOP_ENABLED off it
+        opens no table, and the route opens exactly the legacy tables."""
+        import config
+        from services.quiz_config import mastery_after as real_mastery_after
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+        gate_table = MagicMock(side_effect=AssertionError("flag off, yet the gate opened a table"))
+        monkeypatch.setattr("learning.gate.table", gate_table)
+        apply_mock = MagicMock(return_value=[])
+        tables: list = []
+        r, _ = _submit_one_right_one_wrong(
+            gate=None, apply_mock=apply_mock,
+            mastery_after_mock=MagicMock(side_effect=real_mastery_after), tables=tables,
+        )
+        assert r.status_code == 200, r.text
+        gate_table.assert_not_called()
+        assert tables == LEGACY_SUBMIT_TABLES
+        assert set(apply_mock.call_args[0][1]) == {"updated_nodes"}
 
     def test_gate_is_evaluated_once_per_submit(self):
         gate = MagicMock(return_value=True)

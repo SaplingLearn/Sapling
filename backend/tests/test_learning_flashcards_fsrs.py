@@ -11,6 +11,7 @@ payload key sets: the pre-series behaviour must be byte-identical.
 
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import re
 from datetime import datetime, timedelta, timezone
@@ -19,7 +20,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+import config
 from main import app
+from test_learning_loop_invariants import db_client_calls
 
 client = TestClient(app)
 
@@ -37,6 +40,28 @@ RATE_SELECT_KWARGS = {"filters": {"id": "eq.card-1", "user_id": f"eq.{USER_ID}"}
 RATE_UPDATE_KWARGS = {"filters": {"id": "eq.card-1"}}
 FSRS_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
 FSRS_KEYS = {"fsrs_d", "fsrs_s", "due_at", "reps", "lapses"}
+# Every table() the legacy handlers open, in order: list reads flashcards once;
+# rate reads the card, then updates it. The flag-off path adds nothing to these.
+LEGACY_LIST_TABLES = ["flashcards"]
+LEGACY_RATE_TABLES = ["flashcards", "flashcards"]
+
+
+def _gate_patch(gate: bool | None):
+    """`gate=None` runs the REAL learning.gate with LEARNING_LOOP_ENABLED off
+    (see _real_gate_off); a bool patches the route's gate symbol."""
+    if gate is None:
+        return contextlib.nullcontext()
+    return patch("routes.flashcards.learning_loop_active", return_value=gate)
+
+
+@pytest.fixture
+def _real_gate_off(monkeypatch):
+    """LEARNING_LOOP_ENABLED off (whatever backend/.env says) and a spy on the
+    gate's own table(): the flag-off gate must not open a table at all."""
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+    spy = MagicMock(side_effect=AssertionError("flag off, yet the gate opened a table"))
+    monkeypatch.setattr("learning.gate.table", spy)
+    return spy
 
 
 # ── Migration ────────────────────────────────────────────────────────────────
@@ -91,7 +116,7 @@ TWO_DAYS_AGO = (NOW - timedelta(days=2)).isoformat()
 def _rate_tables(row: dict):
     """table() stand-in for rate_card: one select hit, an update that records
     its payload and its filters on `calls`."""
-    calls: dict = {}
+    calls: dict = {"tables": []}
 
     def _select(cols, **kw):
         calls["select_cols"] = cols
@@ -104,6 +129,7 @@ def _rate_tables(row: dict):
         return [{"id": row["id"]}]
 
     def side_effect(name):
+        calls["tables"].append(name)
         m = MagicMock()
         if name == "flashcards":
             m.select.side_effect = _select
@@ -115,13 +141,13 @@ def _rate_tables(row: dict):
     return side_effect, calls
 
 
-def _rate(rating: int, *, gate: bool, row: dict, next_state=None, interval=None, check=None):
+def _rate(rating: int, *, gate: bool | None, row: dict, next_state=None, interval=None, check=None):
     side_effect, calls = _rate_tables(row)
     ns = next_state or MagicMock(return_value=(4.5, 9.0))
     iv = interval or MagicMock(return_value=8.0)
     with (
         patch("routes.flashcards.table", side_effect=side_effect),
-        patch("routes.flashcards.learning_loop_active", return_value=gate),
+        _gate_patch(gate),
         patch("routes.flashcards.next_state", new=ns),
         patch("routes.flashcards.interval", new=iv),
         patch("routes.flashcards.check_achievements", new=check or MagicMock()),
@@ -280,8 +306,23 @@ class TestRateCard:
         assert set(calls["update"]) == LEGACY_RATE_KEYS
         assert calls["update_kwargs"] == RATE_UPDATE_KWARGS
         assert calls["update"]["times_reviewed"] == 4 and calls["update"]["last_rating"] == 5
+        assert calls["tables"] == LEGACY_RATE_TABLES, "the flag-off path opens no new table"
         ns.assert_not_called()
         iv.assert_not_called()
+
+    def test_real_gate_flag_off_reads_nothing_and_takes_the_legacy_path(self, _real_gate_off):
+        """The real gate, not a patched one: with LEARNING_LOOP_ENABLED off the
+        rating costs exactly the legacy queries and nothing reaches the DB
+        client beyond the route's own (stubbed) table() calls."""
+        before = db_client_calls()
+        r, calls, ns, _ = _rate(5, gate=None, row=SEEN_ROW)
+        assert r.status_code == 200 and r.json() == {"ok": True}
+        assert calls["select_cols"] == LEGACY_RATE_COLS
+        assert set(calls["update"]) == LEGACY_RATE_KEYS
+        assert calls["tables"] == LEGACY_RATE_TABLES
+        _real_gate_off.assert_not_called()
+        assert db_client_calls()[len(before):] == []
+        ns.assert_not_called()
 
 
 # ── get_flashcards ───────────────────────────────────────────────────────────
@@ -350,11 +391,14 @@ LIST_ROWS = [
 ]
 
 
-def _list(*, gate: bool, query: str = "", order_due=None, rows=None):
-    calls: dict = {}
+def _list(*, gate, query: str = "", order_due=None, rows=None):
+    """`gate`: a bool patches the route's gate; None runs the real gate; a
+    Mock is installed as the gate itself (to count its calls)."""
+    calls: dict = {"tables": []}
     source = LIST_ROWS if rows is None else rows
 
     def side_effect(name):
+        calls["tables"].append(name)
         m = MagicMock()
         if name == "flashcards":
 
@@ -373,9 +417,14 @@ def _list(*, gate: bool, query: str = "", order_due=None, rows=None):
 
     # HANDOFF-02: order_due(items, now, *, stability_key, last_review_key).
     od = order_due or MagicMock(side_effect=lambda rows, now, **kw: list(reversed(rows)))
+    gate_cm = (
+        patch("routes.flashcards.learning_loop_active", new=gate)
+        if isinstance(gate, MagicMock)
+        else _gate_patch(gate)
+    )
     with (
         patch("routes.flashcards.table", side_effect=side_effect),
-        patch("routes.flashcards.learning_loop_active", return_value=gate),
+        gate_cm,
         patch("routes.flashcards.order_due", new=od),
     ):
         r = client.get(f"/api/flashcards/user/{USER_ID}{query}")
@@ -475,7 +524,25 @@ class TestListFlashcards:
         assert set(body) == {"flashcards"}, "no due_count on the legacy path"
         assert [c["id"] for c in body["flashcards"]] == [c["id"] for c in LIST_ROWS]
         assert all(set(c) == set(LEGACY_LIST_COLS.split(",")) for c in body["flashcards"])
+        assert calls["tables"] == LEGACY_LIST_TABLES, "the flag-off path opens no new table"
         od.assert_not_called()
+
+    def test_real_gate_flag_off_reads_nothing_and_takes_the_legacy_path(self, _real_gate_off):
+        before = db_client_calls()
+        r, calls, od = _list(gate=None, query="?due_only=true")
+        assert r.status_code == 200
+        assert set(r.json()) == {"flashcards"}
+        assert calls["select_cols"] == LEGACY_LIST_COLS
+        assert calls["tables"] == LEGACY_LIST_TABLES
+        _real_gate_off.assert_not_called()
+        assert db_client_calls()[len(before):] == []
+        od.assert_not_called()
+
+    def test_gate_is_evaluated_once_per_list(self):
+        gate = MagicMock(return_value=True)
+        r, _, _ = _list(gate=gate)
+        assert r.status_code == 200, r.text
+        gate.assert_called_once_with(USER_ID)
 
     def test_gate_off_topic_filter_unchanged(self):
         r, calls, _ = _list(gate=False, query="?topic=T")
