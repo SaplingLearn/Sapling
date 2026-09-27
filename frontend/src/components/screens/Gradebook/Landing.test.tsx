@@ -317,6 +317,37 @@ describe("GradebookLanding term GPA + term-aware card links (#139)", () => {
     expect(card.getAttribute("href")).toBe("/gradebook/bio?semester=Fall%202024");
   });
 
+  it("drops a slower summary for a term the user already clicked away from", async () => {
+    // Spring's summary is still in flight when the user picks Fall; Fall's
+    // answers first. Spring's late answer must not repaint Fall's chip with
+    // Spring's courses.
+    mockedGetCourses.mockResolvedValue({
+      courses: [course("bio", "Spring 2025"), course("psy", "Fall 2024")],
+    });
+    let releaseSpring: () => void = () => {};
+    mockedGetSummary.mockImplementation((_uid, term) => {
+      if (term === "Spring 2025") {
+        return new Promise((resolve) => {
+          releaseSpring = () =>
+            resolve({ courses: [summaryCourse("bio", "Spring 2025")], gpa: null, semester: "Spring 2025" });
+        });
+      }
+      return Promise.resolve({ courses: [summaryCourse("psy", "Fall 2024")], gpa: null, semester: "Fall 2024" });
+    });
+
+    render(<GradebookLanding />);
+
+    await waitFor(() => expect(mockedGetSummary).toHaveBeenCalledWith("u1", "Spring 2025"));
+    fireEvent.click(screen.getByRole("button", { name: "Fall 2024" }));
+    await screen.findByRole("link", { name: /psy/i });
+
+    releaseSpring();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByRole("link", { name: /bio/i })).toBeNull();
+    expect(screen.getByRole("link", { name: /psy/i })).toBeInTheDocument();
+  });
+
   it("opens the transcript modal from the Transcript button", async () => {
     mockedGetCourses.mockResolvedValue({ courses: [course("bio", "Fall 2024")] });
 

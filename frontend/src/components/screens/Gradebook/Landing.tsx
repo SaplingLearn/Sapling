@@ -178,17 +178,28 @@ export function GradebookLanding() {
       setLoading(false);
       return;
     }
+    // Two quick chip clicks put two summaries in flight; whichever answers
+    // last would otherwise paint its term's courses under the current chip.
+    // Only the request for the term still selected may touch state.
+    let stale = false;
     setLoading(true);
     getGradebookSummary(userId, selected)
       .then((res) => {
+        if (stale) return;
         setCourses(res.courses.length ? res.courses : []);
         setTermGpa(res.gpa ?? null);
       })
       .catch(() => {
+        if (stale) return;
         setCourses([]);
         setTermGpa(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
   }, [userId, selected, termsReady]);
 
   const gridRef = React.useRef<HTMLDivElement>(null);
