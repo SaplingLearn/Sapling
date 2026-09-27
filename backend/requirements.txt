@@ -70,8 +70,9 @@ pydantic-ai-slim[google]>=0.0.20,<2
 # records zeros. The Dockerfile installs THIS file, not the lock, so the cap
 # must live here. Lift it only together with a pydantic-ai bump that accepts
 # the new fields — tests/test_agent_usage.py::test_real_gemini_response_*
-# goes red under the broken pairing.
-genai-prices>=0.0.62,<0.1
+# goes red under the broken pairing, and agents/usage.py WARNs on any real run
+# that reports 0 tokens.
+genai-prices<0.1
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from agents.usage import record_agent_usage
-from agents._providers import model_for
+from agents._providers import model_for, model_name_for
 from services import events_service
 
 
@@ -128,7 +128,7 @@ def _gemini_reply():
                 finish_reason=types.FinishReason.STOP,
             )
         ],
-        model_version="gemini-2.5-flash-lite",
+        model_version=model_name_for("concept_describe"),
         response_id="resp-689",
         usage_metadata=types.GenerateContentResponseUsageMetadata(
             prompt_token_count=199,
@@ -157,15 +157,73 @@ def test_real_gemini_response_records_nonzero_tokens(sink, monkeypatch):
     monkeypatch.setattr(genai_models.AsyncModels, "generate_content", _fake_generate_content)
 
     agent = Agent(model_for("concept_describe"))
-    result = asyncio.run(agent.run("Describe photosynthesis."))
+
+    async def _run():
+        # `async with` closes the per-loop provider's HTTP client before
+        # asyncio.run tears the loop down.
+        async with agent:
+            return await agent.run("Describe photosynthesis.")
+
+    result = asyncio.run(_run())
     record_agent_usage(result, feature="graph", task="concept_describe")
     events_service.flush_now()
 
     row = sink[0][1][0]
-    assert row["model"] == "gemini-2.5-flash-lite"
+    assert row["model"] == model_name_for("concept_describe")
     assert (row["prompt_tokens"], row["completion_tokens"], row["total_tokens"]) == (
         199,
         38,
         237,
     ), "Gemini reported 199/38 tokens; the llm_usage row must carry them (#689)"
-    assert row["cost_usd"] and row["cost_usd"] > 0
+    assert (row["cost_usd"] or 0) > 0
+
+
+# ── #689 follow-up: a real run that reports 0 tokens must be loud ──────────
+#
+# The cap above fixes one dependency pairing; this catches the CLASS. A real
+# model that made a request but reported no tokens means usage extraction
+# broke somewhere below us, and every cost rollup and AI budget cap is about
+# to read $0. Function mode legitimately reports zeros, so it stays quiet.
+
+
+class _ZeroUsage:
+    requests = 1
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+
+
+class _ZeroResult(_FakeResult):
+    def usage(self):
+        return _ZeroUsage()
+
+    def all_messages(self):
+        return []
+
+
+def test_real_run_reporting_zero_tokens_warns(sink, monkeypatch, caplog):
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+        record_agent_usage(_ZeroResult(), feature="graph", task="concept_describe")
+    assert any("reported 0 tokens" in r.getMessage() for r in caplog.records)
+
+
+def test_function_mode_zero_tokens_stay_quiet(sink, monkeypatch, caplog):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+        record_agent_usage(_ZeroResult(), feature="graph", task="concept_describe")
+    assert not any("reported 0 tokens" in r.getMessage() for r in caplog.records)
+
+
+def test_real_run_with_tokens_stays_quiet(sink, monkeypatch, caplog):
+    class _Usage(_FakeUsage):
+        requests = 1
+
+    class _Result(_ZeroResult):
+        def usage(self):
+            return _Usage()
+
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+        record_agent_usage(_Result(), feature="graph", task="concept_describe")
+    assert not any("reported 0 tokens" in r.getMessage() for r in caplog.records)
