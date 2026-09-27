@@ -5,17 +5,19 @@ from __future__ import annotations
 
 import pathlib
 import re
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 import config
 from learning import params
-from services import events_service, llm_pricing
+from services import ai_budget, events_service, llm_pricing
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 MIG_DIR = BACKEND / "db" / "migrations"
 UID = "user_andres"
+NOW = datetime(2026, 9, 26, 15, 0, 0, tzinfo=timezone.utc)
 
 
 def _usage_sink(monkeypatch) -> list:
@@ -162,3 +164,54 @@ def test_session_caps_in_params_match_spec():
         params.LOOP_SESSION_MAX_DEEP_REQUESTS,
         params.LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     ) == (40, 6, 12)
+
+
+# ── ai.budget_capped (spec §6) ───────────────────────────────────────────────
+
+
+@pytest.fixture
+def events(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        ai_budget, "log_event", lambda event_type, **kw: calls.append((event_type, kw))
+    )
+    return calls
+
+
+def test_budget_capped_is_in_the_taxonomy():
+    assert "ai.budget_capped" in events_service.EVENT_TAXONOMY
+    assert ai_budget.BUDGET_CAPPED_EVENT == "ai.budget_capped"
+
+
+def test_emit_capped_once_per_user_scope_level_and_utc_day(events, monkeypatch):
+    monkeypatch.setattr(ai_budget, "_utcnow", lambda: NOW)
+    for _ in range(3):
+        ai_budget._emit_capped(
+            UID, "daily_usd", "hard", band="develop", spent_usd=0.25, cap_usd=0.2
+        )
+    ai_budget._emit_capped(UID, "daily_usd", "soft", band="develop", spent_usd=0.17, cap_usd=0.2)
+    assert [kw["payload"]["level"] for _, kw in events] == ["hard", "soft"]
+    event_type, kw = events[0]
+    assert (event_type, kw["category"], kw["user_id"]) == ("ai.budget_capped", "usage", UID)
+    assert kw["payload"] == {
+        "user_id": UID,
+        "scope": "daily_usd",
+        "band": "develop",
+        "level": "hard",
+        "spent_usd": 0.25,
+        "cap_usd": 0.2,
+    }
+    monkeypatch.setattr(ai_budget, "_utcnow", lambda: NOW + timedelta(days=1))
+    ai_budget._emit_capped(UID, "daily_usd", "hard", band="develop")
+    assert len(events) == 3, "a new UTC day re-arms the event"
+    assert "spent_usd" not in events[2][1]["payload"], "None values are omitted, never zeroed"
+
+
+def test_ai_budget_runs_no_model_and_lives_outside_learning():
+    path = BACKEND / "services" / "ai_budget.py"
+    roots = {
+        m.group(1).split(".")[0]
+        for m in re.finditer(r"^\s*(?:from|import)\s+([\w.]+)", path.read_text(), re.M)
+    }
+    assert not roots & {"agents", "pydantic_ai", "google"}, roots
+    assert not (BACKEND / "learning" / "ai_budget.py").exists()

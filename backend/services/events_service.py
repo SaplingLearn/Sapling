@@ -88,6 +88,7 @@ decision.shadow               usage     decision, request_id, primary_value, sha
                                         PKG-15 plumbing, never fired in the series; enums only
 decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
                                         / both_failed; PKG-15 adds the Jev error enums), request_id
+ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -214,6 +215,10 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "decision.made",
     "decision.shadow",
     "decision.fallback",
+    # PKG-06b (spec §6, §13 A20): a per-student AI cap was hit. category="usage": it fires at
+    # most once per user/scope/level/day, but for many students at once near a price change;
+    # the /errors feed must not drown in it.
+    "ai.budget_capped",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
