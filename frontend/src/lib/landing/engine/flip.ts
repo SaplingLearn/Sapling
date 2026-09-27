@@ -98,6 +98,51 @@ export function remeasureFlip(st: FlipState): void {
 }
 
 /**
+ * The counter-scale that keeps the panel's CONTENTS in proportion.
+ *
+ * The panel and the card are different shapes: 1440x900 is 1.60 wide, a
+ * 372x314 card is 1.18. Squeezing one into the other is a non-uniform scale —
+ * 0.258 across against 0.349 down at that size — so everything inside came out
+ * 35% narrower than it was tall. Type condensed, the avatar an oval, the whole
+ * demo subtly wrong in a way that reads as cheap rather than as small.
+ *
+ * So the BOX still takes the non-uniform scale, because it has to land exactly
+ * on the card, and the contents take the inverse of the difference. Both
+ * multiply out to the same uniform factor — the larger of the two, so the
+ * contents cover the box rather than leaving a gap — and what is left over
+ * runs past the edge, where the panel's own `overflow: hidden` clips it.
+ *
+ * The result reads as a crop of the demo rather than a squashed copy of it,
+ * which is what zooming into something actually looks like. Whichever axis is
+ * already the larger gets a factor of exactly 1, so this is a no-op on a card
+ * that happens to share the viewport's aspect ratio.
+ */
+function counterScale(sx: number, sy: number): string {
+  const s = Math.max(sx, sy);
+  return 'scale(' + (s / sx).toFixed(4) + ',' + (s / sy).toFixed(4) + ')';
+}
+
+/** Keyframes for the panel's children: cropped-and-proportional, then at rest. */
+export function contentFrames(sx: number, sy: number): Keyframe[] {
+  return [
+    { transformOrigin: 'top left', transform: counterScale(sx, sy) },
+    { transformOrigin: 'top left', transform: 'none' },
+  ];
+}
+
+/**
+ * The scale the panel is flown at, exposed so the contents can undo its
+ * distortion. Null when there is nothing to fly from.
+ */
+export function flipScale(st: FlipState, panel: HTMLElement): { sx: number; sy: number } | null {
+  const r = st.rect;
+  if (!r) return null;
+  const p = panel.getBoundingClientRect();
+  if (!p.width || !p.height) return null;
+  return { sx: Math.max(0.05, r.width / p.width), sy: Math.max(0.05, r.height / p.height) };
+}
+
+/**
  * The two keyframes: the panel scaled down onto the card, and the panel at
  * rest. Returns null when there is nothing to fly from.
  */
@@ -154,7 +199,28 @@ export function flipOpen(st: FlipState, panel: HTMLElement): void {
   if (!f) return;
   panel.getAnimations().forEach((a) => a.cancel());
   if (st.el) st.el.style.visibility = 'hidden';
+
+  // Read the scale BEFORE starting the flight. `flipScale` measures the panel,
+  // and once the transform is running that measurement is of the scaled box,
+  // not the full-size one — which silently yields a counter-scale of 1 and no
+  // correction at all.
+  const sc = flipScale(st, panel);
+
   panel.animate(f, { duration: OPEN_MS, easing: OPEN_EASE, fill: 'both' });
+
+  if (sc) {
+    const cf = contentFrames(sc.sx, sc.sy);
+    for (const child of Array.from(panel.children)) {
+      if (!(child instanceof HTMLElement) || !child.animate) continue;
+      // Deliberately NOT cancelling the child's existing animations. They are
+      // the `panelFade` CSS rules that stagger the demo in over the expansion,
+      // and clearing them made the contents appear fully painted on frame one —
+      // losing the very thing that keeps the open from reading as a white
+      // flash. There is nothing to stack with anyway: the overlay unmounts on
+      // close, so these children are new on every open.
+      child.animate(cf, { duration: OPEN_MS, easing: OPEN_EASE, fill: 'both' });
+    }
+  }
 }
 
 /**
@@ -193,6 +259,10 @@ export function flipClose(
     setTimeout(finish, NO_FLIP_MS);
     return;
   }
+  // Measured here, alongside the frames, for the reason spelled out in
+  // `flipOpen`: once the flight is running the panel no longer measures its
+  // full size.
+  const sc = flipScale(st, panel);
   // The flight is created FIRST, before either fade below.
   //
   // Ordering is not cosmetic here. Animating opacity across the panel's whole
@@ -219,6 +289,16 @@ export function flipClose(
     [{ opacity: 1, offset: 0 }, { opacity: 1, offset: HANDOFF }, { opacity: 0, offset: 1 }],
     { duration: CLOSE_MS, easing: 'linear', fill: 'both' },
   );
+
+  // ...and the contents give their proportions back on the way down, so the
+  // demo crops rather than squashes as the box changes shape.
+  if (sc) {
+    const cf = contentFrames(sc.sx, sc.sy);
+    for (const child of Array.from(panel.children)) {
+      if (!(child instanceof HTMLElement) || !child.animate) continue;
+      child.animate([cf[1], cf[0]], { duration: CLOSE_MS, easing: CLOSE_EASE, fill: 'both' });
+    }
+  }
 
   // The scrim goes with it. The opening fades this in (`panelFade`) while the
   // white box grows; the close used to leave it at full strength until the
