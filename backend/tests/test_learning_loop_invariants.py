@@ -119,6 +119,10 @@ def _learning_files(module: str, root: pathlib.Path) -> list[pathlib.Path]:
 GRAPH_TABLES = ("graph_nodes", "graph_edges", "node_mastery_events", "learner_state")
 GRAPH_WRITER = "services/graph_service.py"
 GRAPH_WRITER_FUNCS = ("apply_graph_update", "_apply_evidence")
+GRAPH_ENTRY = GRAPH_WRITER_FUNCS[0]
+# Writers that name neither table() nor write_state at a call site, so the
+# halves below cannot see a second caller: reachable only via GRAPH_ENTRY.
+GRAPH_PRIVATE_WRITERS = GRAPH_WRITER_FUNCS[1:]
 # learning/learner_state.py is the learner_state table-access module (spec §2).
 # Its one write, table("learner_state").upsert inside write_state, runs only
 # through write_state, and the second half of inv_01 pins every write_state
@@ -208,10 +212,46 @@ def _graph_table_offenders(rel: str, source: str) -> list[str]:
     return offenders
 
 
+def _private_writer_offenders(rel: str, source: str) -> list[str]:
+    """inv_01: every reference to a GRAPH_PRIVATE_WRITERS function — a call,
+    an import, an attribute, a getattr string — must sit inside
+    GRAPH_ENTRY's body in the writer file. `_apply_evidence` writes
+    learner_state, graph_nodes and node_mastery_events, so a second caller
+    would be a second entry point the table/write_state halves cannot see."""
+    tree = ast.parse(source)
+    entry = [
+        (fn.lineno, fn.end_lineno)
+        for fn in tree.body
+        if rel == GRAPH_WRITER and isinstance(fn, ast.FunctionDef) and fn.name == GRAPH_ENTRY
+    ]
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            name = node.id
+        elif isinstance(node, ast.Attribute):
+            name = node.attr
+        elif isinstance(node, ast.alias):
+            name = node.name.rsplit(".", 1)[-1]
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            name = node.value
+        else:
+            continue
+        if name not in GRAPH_PRIVATE_WRITERS:
+            continue
+        if any(lo <= node.lineno <= hi for lo, hi in entry):
+            continue
+        offenders.append(
+            f"{rel}:{node.lineno} references {name} outside {GRAPH_WRITER}::{GRAPH_ENTRY}"
+        )
+    return offenders
+
+
 def test_inv_01_single_graph_writer():
     offenders: list[str] = []
     for rel, path in _application_py_files():
         text = path.read_text()
+        if any(name in text for name in GRAPH_PRIVATE_WRITERS):
+            offenders += _private_writer_offenders(rel, text)
         if rel != GRAPH_WRITER:
             for m in _WRITE_CHAIN.finditer(text):
                 if (

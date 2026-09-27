@@ -1225,3 +1225,33 @@ def test_inv_01_write_detector(source, rel, offends):
     import test_learning_loop_invariants as inv
 
     assert bool(inv._graph_table_offenders(rel, source)) is offends
+
+
+_CALL_PRIVATE = "_apply_evidence(u, [], {}, set(), None)"
+
+
+@pytest.mark.parametrize(
+    ("source", "rel", "offends"),
+    [
+        (
+            f"def apply_graph_update(u, g):\n    return {_CALL_PRIVATE}",
+            "services/graph_service.py",
+            False,
+        ),
+        (f"def add_node(u):\n    return {_CALL_PRIVATE}", "services/graph_service.py", True),
+        (f"def _apply_evidence(u):\n    return {_CALL_PRIVATE}", "services/graph_service.py", True),
+        ("from services.graph_service import _apply_evidence", "routes/x.py", True),
+        ("from services.graph_service import _apply_evidence as ae", "learning/x.py", True),
+        (f"import services.graph_service as gs\ngs.{_CALL_PRIVATE}", "routes/x.py", True),
+        ('getattr(gs, "_apply_evidence")(u)', "scripts/x.py", True),
+        ("from services.graph_service import apply_graph_update", "routes/x.py", False),
+        ('x = "_apply_evidence is private"', "routes/x.py", False),
+    ],
+)
+def test_inv_01_private_writer_detector(source, rel, offends):
+    """inv_01 pins write_state to the writer's functions, but _apply_evidence
+    writes learner_state, graph_nodes and node_mastery_events without naming
+    either, so it must be reachable only through apply_graph_update."""
+    import test_learning_loop_invariants as inv
+
+    assert bool(inv._private_writer_offenders(rel, source)) is offends
