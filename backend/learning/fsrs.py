@@ -10,6 +10,7 @@ emits Easy (``rating_for`` returns at most Good).
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import IntEnum
 from typing import Any, Iterable, Mapping, Sequence
@@ -27,6 +28,8 @@ from learning.params import (
     REVIEW_ORDER_THRESHOLD,
     REVIEW_SECONDS_PER_CHECK,
     RUNG_ASSISTED_MAX,
+    SR_INITIAL_CRITERION,
+    SR_RELEARN_SESSIONS,
 )
 
 W = FSRS_W
@@ -293,3 +296,83 @@ def budget_select(
 ) -> list:
     """First ``budget_items()`` of an already-ordered list; never more."""
     return list(items)[: budget_items(budget_min, seconds_per)]
+
+
+# --- successive relearning --------------------------------------------------
+
+SR_ACQUISITION = "acquisition"
+SR_RELEARN = "relearn"
+SR_DONE = "done"
+_SR_PHASES = (SR_ACQUISITION, SR_RELEARN, SR_DONE)
+
+
+@dataclass(frozen=True)
+class SuccessiveRelearning:
+    """Rawson & Dunlosky protocol: SR_INITIAL_CRITERION correct recalls in the
+    acquisition session, then SR_RELEARN_SESSIONS later sessions each to one
+    correct recall. Immutable; ``advance`` returns the next state."""
+
+    phase: str = SR_ACQUISITION
+    correct_in_acquisition: int = 0
+    relearn_sessions_done: int = 0
+    credited_session: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.phase not in _SR_PHASES:
+            raise ValueError(f"phase must be one of {_SR_PHASES}, got {self.phase!r}")
+        if self.correct_in_acquisition < 0 or self.relearn_sessions_done < 0:
+            raise ValueError(
+                "counters must be >= 0, got "
+                f"{self.correct_in_acquisition}, {self.relearn_sessions_done}"
+            )
+
+    def advance(self, correct: bool, *, session_id: str) -> SuccessiveRelearning:
+        if self.phase == SR_DONE:
+            return self
+        if self.phase == SR_ACQUISITION:
+            if not correct:
+                return self
+            n = self.correct_in_acquisition + 1
+            if n >= SR_INITIAL_CRITERION:
+                return replace(
+                    self,
+                    phase=SR_RELEARN,
+                    correct_in_acquisition=n,
+                    credited_session=session_id,
+                )
+            return replace(self, correct_in_acquisition=n)
+        # relearn: one credit per session, never the session that met the criterion
+        if not correct or session_id == self.credited_session:
+            return self
+        done = self.relearn_sessions_done + 1
+        return replace(
+            self,
+            phase=SR_DONE if done >= SR_RELEARN_SESSIONS else SR_RELEARN,
+            relearn_sessions_done=done,
+            credited_session=session_id,
+        )
+
+    @property
+    def complete(self) -> bool:
+        return self.phase == SR_DONE
+
+    def as_dict(self) -> dict:
+        return {
+            "phase": self.phase,
+            "correct_in_acquisition": self.correct_in_acquisition,
+            "relearn_sessions_done": self.relearn_sessions_done,
+            "credited_session": self.credited_session,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | None) -> SuccessiveRelearning:
+        """Inverse of ``as_dict``; None or {} is a fresh state. A stored state
+        with an unknown phase or a negative counter raises ValueError."""
+        if not data:
+            return cls()
+        return cls(
+            phase=str(data.get("phase", SR_ACQUISITION)),
+            correct_in_acquisition=int(data.get("correct_in_acquisition", 0)),
+            relearn_sessions_done=int(data.get("relearn_sessions_done", 0)),
+            credited_session=data.get("credited_session"),
+        )

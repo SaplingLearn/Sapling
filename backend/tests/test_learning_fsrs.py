@@ -17,6 +17,7 @@ import pytest
 from learning import fsrs
 from learning.fsrs import (
     Rating,
+    SuccessiveRelearning,
     budget_items,
     budget_select,
     initial_difficulty,
@@ -31,18 +32,20 @@ from learning.fsrs import (
     retrievability,
 )
 from learning.params import (
+    CHANNELS,
     FSRS_EXAM_WINDOW_DAYS,
     FSRS_LARGE_SET_CONCEPTS,
     FSRS_RETENTION_DEFAULT,
     FSRS_RETENTION_EXAM,
     FSRS_RETENTION_LARGE_SET,
     FSRS_S0_GOOD,
-    CHANNELS,
     FSRS_W,
     MC_STABILITY_GAIN_CAP,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_ORDER_THRESHOLD,
     REVIEW_SECONDS_PER_CHECK,
+    SR_INITIAL_CRITERION,
+    SR_RELEARN_SESSIONS,
 )
 
 A = pytest.approx
@@ -495,3 +498,57 @@ def test_routes_import_fsrs_only_behind_the_gate():
         text = path.read_text()
         if _imports_fsrs(text):
             assert "learning_loop_active" in text, f"{path.name} imports fsrs without the gate"
+
+
+# --- successive relearning --------------------------------------------------
+
+
+def test_relearning_initial_criterion_then_three_sessions():
+    st = SuccessiveRelearning()
+    assert st.phase == fsrs.SR_ACQUISITION and not st.complete
+    st = st.advance(False, session_id="s1")
+    assert st.correct_in_acquisition == 0
+    for i in range(SR_INITIAL_CRITERION - 1):
+        st = st.advance(True, session_id="s1")
+        assert st.phase == fsrs.SR_ACQUISITION, i
+    st = st.advance(True, session_id="s1")
+    assert st.phase == fsrs.SR_RELEARN
+    assert st.correct_in_acquisition == SR_INITIAL_CRITERION
+    # a correct recall in the acquisition session does not count as a relearn session
+    assert st.advance(True, session_id="s1") == st
+    for k in range(1, SR_RELEARN_SESSIONS + 1):
+        st = st.advance(False, session_id=f"r{k}")
+        st = st.advance(True, session_id=f"r{k}")
+        st = st.advance(True, session_id=f"r{k}")  # second correct in the same session: no-op
+        assert st.relearn_sessions_done == k
+    assert st.phase == fsrs.SR_DONE and st.complete
+    assert st.advance(True, session_id="later") == st
+
+
+def test_relearning_acquisition_counts_cumulative_not_consecutive():
+    st = SuccessiveRelearning()
+    for correct in (True, False, True, False, True):
+        st = st.advance(correct, session_id="s1")
+    assert st.phase == fsrs.SR_RELEARN
+
+
+def test_relearning_is_immutable_and_round_trips():
+    a = SuccessiveRelearning()
+    b = a.advance(True, session_id="s1")
+    assert a.correct_in_acquisition == 0 and b.correct_in_acquisition == 1
+    assert SuccessiveRelearning.from_dict(b.as_dict()) == b
+    assert SuccessiveRelearning.from_dict(None) == SuccessiveRelearning()
+    assert SuccessiveRelearning.from_dict({}) == SuccessiveRelearning()
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"phase": "review"},
+        {"correct_in_acquisition": -1},
+        {"relearn_sessions_done": -1},
+    ],
+)
+def test_relearning_rejects_a_corrupt_stored_state(data):
+    with pytest.raises(ValueError):
+        SuccessiveRelearning.from_dict(data)
