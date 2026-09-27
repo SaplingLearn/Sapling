@@ -118,9 +118,12 @@ const nextConfig: NextConfig = {
       // turns off (see above): `/about/` → `/about` as before, except under
       // `/ingest/` (PostHog needs the slash) and `/api/` (OpenNext never
       // redirected those, so production behaviour there is unchanged).
+      // Split into a first segment + `:rest*` on purpose: OpenNext compiles the
+      // destination with path-to-regexp, which rejects a single param whose
+      // value contains a "/" (a `/:path(.*)/` form 500s on /news/<slug>/).
       {
-        source: "/:path((?!ingest/|api/).*[^/])/",
-        destination: "/:path",
+        source: "/:first((?!(?:ingest|api)/)[^/]+)/:rest*/",
+        destination: "/:first/:rest*",
         permanent: true,
       },
     ];
