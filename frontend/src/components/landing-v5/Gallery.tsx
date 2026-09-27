@@ -79,19 +79,35 @@ const MINI_H = 166;
 const CARD_H = 314;
 
 /**
- * Most minis fit the 166px pane at their natural (unscaled) height — the
- * pane's `overflow: hidden` never engages for them. The AI Tutor mini (three
- * chat bubbles plus a hint row) runs to ~188px, taller than the pane, so it
- * was losing its hint row and "NEVER THE ANSWER" tag to that same clip
- * (#624). Rather than grow the pane (and every other card with it) or leave
- * it cropped, it gets a uniform `transform: scale()` down to the exact
- * factor that makes its natural height fit — scaling both axes together, not
- * just height, is what keeps the chat bubbles undistorted instead of
- * squashed. Keyed by `CARDS` index; add an entry here if a future mini ever
- * runs long, rather than resizing the pane.
+ * Scale factor for a mini too tall for the pane, keyed by `CARDS` index.
+ *
+ * Most minis fit the 166px pane and never engage its `overflow: hidden`. The
+ * AI Tutor mini — three chat bubbles plus a hint row — does not, and was
+ * losing its hint row and "NEVER THE ANSWER" tag to the clip (#624). It gets
+ * a uniform `transform: scale()` instead, both axes together, because
+ * squashing height alone would distort the bubbles.
+ *
+ * The SOURCE BOX IS INFLATED BY 1/scale ON BOTH AXES, and that is the part
+ * worth reading twice. A uniform scale shrinks width as much as height, so a
+ * wrapper left at `width: 100%` came back 12% narrow: the tutor preview sat
+ * 304px wide in a 346px pane with 21px of white down either side, visibly
+ * smaller and differently framed from the seven beside it. Inflating first
+ * means the scaled result lands at exactly the pane's size.
+ *
+ * Inflating the width is also why the factor is 0.94 rather than the 0.883
+ * this started at. A wider source box wraps the bubble text less, so the mini
+ * needs ~176px rather than 188, and needs less shrinking to fit — the
+ * preview now reads at nearly the same size as its neighbours. Measured, not
+ * chosen: at scale 1 the content spills 24px past the box and at 0.96 it
+ * spills 3.
+ *
+ * Both axes inflate as PERCENTAGES, which is why neither is written as
+ * `MINI_H / fit`. A percentage resolves against the pane's content box; the
+ * constant is its border box, and the 1px border between them left the mini
+ * a pixel proud of the frame it was supposed to sit inside.
  */
-const MINI_FIT: Partial<Record<number, { naturalH: number; scale: number }>> = {
-  7: { naturalH: 188, scale: MINI_H / 188 },
+const MINI_FIT: Partial<Record<number, number>> = {
+  7: 0.93,
 };
 
 const CARD: React.CSSProperties = {
@@ -131,7 +147,12 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
       >
         <div aria-hidden="true" style={{ position: 'relative', height: MINI_H, borderRadius: 13, overflow: 'hidden', background: '#FDFCF9', border: '1px solid #EBF1EC' }}>
           {fit ? (
-            <div style={{ height: fit.naturalH, width: '100%', transform: `scale(${fit.scale})`, transformOrigin: 'top center' }}>
+            <div
+              style={{
+                width: `${100 / fit}%`, height: `${100 / fit}%`,
+                transform: `scale(${fit})`, transformOrigin: 'top left',
+              }}
+            >
               {GALLERY_MINIS[i]}
             </div>
           ) : (
