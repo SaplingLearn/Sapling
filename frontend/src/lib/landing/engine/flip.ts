@@ -28,21 +28,27 @@ const OPEN_EASE = 'cubic-bezier(0.22,1,0.36,1)';
 const CLOSE_MS = Math.round(OPEN_MS * 0.55);
 const CLOSE_EASE = OPEN_EASE;
 /*
- * How long the panel's contents take to clear before the box collapses.
+ * How long the panel's contents take to clear, as the box collapses.
  *
- * The opening expands a blank white panel and only then fades the demo in
- * over it (`panelFade`, 420ms on a 160ms delay), so what actually grows out
- * of the card is a plain white rectangle. The close was shrinking a fully
- * painted panel — a whole screenshot of the demo, scaled down into a
- * 372px card — which is a different gesture wearing the same geometry.
- * Emptying the panel first gives back the white rectangle, so the thing that
- * shrinks into the card is the thing that grew out of it.
+ * This is the open's content timing, reversed — and the reversal is the whole
+ * point. On the way in, `panelFade` holds the demo at zero for the first
+ * 160ms of a 620ms box and has it fully painted by 580ms: the panel is blank
+ * only while it is still SMALL, and by the time it fills the screen there is
+ * something in it. Nobody reads that as a white flash, because the white is
+ * never big.
  *
- * Short and front-loaded on purpose: the contents are gone within the first
- * quarter of the collapse, so almost the whole flight is the white box. Kept
- * as a fraction of the flight so it stays that quarter if CLOSE_MS is retuned.
+ * Clearing the contents quickly did the opposite. At a quarter of the flight
+ * the panel went blank while still near full-screen, and the remaining
+ * three quarters were a full-bleed white rectangle shrinking — which is
+ * exactly the flash this was meant to avoid, just pointed the other way.
+ *
+ * 0.74 of the flight is 1 − 0.26: the demo stays up while the box is large
+ * and is gone by the time it is card-sized, so the white phase lands in the
+ * last quarter of the close and mirrors the first quarter of the open.
+ * `ease-in` keeps it near full opacity early and drops it late, so the fade
+ * tracks the box getting small rather than running ahead of it.
  */
-const CONTENT_CLEAR_MS = Math.round(CLOSE_MS * 0.26);
+const CONTENT_CLEAR_MS = Math.round(CLOSE_MS * 0.74);
 /** Safety net in case `onfinish` never fires (tab backgrounded mid-close). */
 const CLOSE_FALLBACK_MS = CLOSE_MS + 240;
 /** How long to wait before finishing when there is no card to fly back to. */
@@ -173,15 +179,15 @@ export function flipClose(
     fill: 'both',
   });
 
-  // Empty the panel to its own white ground first. Every direct child is
-  // faded rather than the panel itself: fading the panel would take its
-  // background with it and the card would be flown back to by a transparent
-  // hole, showing the gallery sliding underneath.
+  // Dissolve the contents to the panel's own white ground as it goes. Every
+  // direct child is faded rather than the panel itself: fading the panel would
+  // take its background with it and the card would be flown back to by a
+  // transparent hole, with the gallery sliding underneath.
   for (const child of Array.from(panel.children)) {
     if (!(child instanceof HTMLElement) || !child.animate) continue;
     child.animate([{ opacity: 1 }, { opacity: 0 }], {
       duration: CONTENT_CLEAR_MS,
-      easing: 'ease-out',
+      easing: 'ease-in',
       fill: 'both',
     });
   }
