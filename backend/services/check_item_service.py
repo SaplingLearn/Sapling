@@ -529,11 +529,13 @@ def _report_failure(
     )
 
 
-def _still_withdrawn(
+def _recheck_sources(
     source_docs: list[str], *, user_id: str | None, document_id: str | None, course_id: str
-) -> list[str]:
-    """`_withdrawn_sources`, failing CLOSED: a failed re-read treats every
-    source as withdrawn (the drafts are dropped, reported as StorageError)."""
+) -> list[str] | None:
+    """`_withdrawn_sources`, or None when the re-read failed — logged and
+    reported as StorageError. The caller drops the call's drafts on either
+    answer (fail closed), but only a real withdrawal leaves the run's later
+    batches: a blip is not a withdrawal."""
     try:
         return _withdrawn_sources(source_docs)
     except Exception:
@@ -543,7 +545,7 @@ def _still_withdrawn(
             exc_info=True,
         )
         _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
-        return list(source_docs)
+        return None
 
 
 def _passage_key(chunk: dict):
@@ -571,7 +573,9 @@ def generate_for_concepts(
     already at CHECK_ITEM_INITIAL_PER_CONCEPT items skipped BEFORE any agent
     call, every key no passage scores >= `min_chunk_score` for dropped
     (A23 relevance floor), the rest drafted CHECK_ITEM_CONCEPTS_PER_CALL per
-    agent call. Synchronous: it runs in a worker thread with no event loop.
+    agent call. Each call's sources are re-checked around its write (A23);
+    a source found withdrawn leaves every later call of the run.
+    Synchronous: it runs in a worker thread with no event loop.
     `user_id=None` (the backfill) records usage against the system actor."""
     if not config.LEARNING_LOOP_ENABLED:
         return _NOTHING
@@ -610,8 +614,28 @@ def generate_for_concepts(
         feature="check_items",
     )
     created = attempted = unavailable = 0
+    # Documents a re-check found withdrawn during this run. The backfill reads
+    # a course's sources once and then drafts batch after batch, so each later
+    # batch is re-ranked without them: their text is never sent again, and a
+    # concept they alone covered counts unmatched instead of costing a call
+    # whose drafts would be dropped.
+    gone: set[str] = set()
     for start in range(0, len(todo), CHECK_ITEM_CONCEPTS_PER_CALL):
         batch = todo[start : start + CHECK_ITEM_CONCEPTS_PER_CALL]
+        if gone:
+            remaining = [c for c in chunks if c.get("doc_id") not in gone]
+            kept = []
+            for key, name, _ in batch:
+                ranked = rank_chunks_for_concept(
+                    name, remaining, limit=CHECK_ITEM_MAX_CHUNKS, min_score=min_chunk_score
+                )
+                if ranked:
+                    kept.append((key, name, ranked))
+                else:
+                    unmatched += 1
+            batch = kept
+            if not batch:
+                continue
         names = [name for _, name, _ in batch]
         passages: list[dict] = []
         seen: set = set()
@@ -658,8 +682,11 @@ def generate_for_concepts(
         # document deleted or opted out meanwhile had its items retired while
         # these did not exist yet, so re-check right before writing...
         recheck = {"user_id": user_id, "document_id": document_id, "course_id": course_id}
-        withdrawn = _still_withdrawn(source_docs, **recheck)
+        withdrawn = _recheck_sources(source_docs, **recheck)
+        if withdrawn is None:
+            continue
         if withdrawn:
+            gone.update(withdrawn)
             logger.info(
                 "check items: %d source document(s) withdrawn while drafting; "
                 "the call's drafts are dropped (course=%s)",
@@ -695,6 +722,7 @@ def generate_for_concepts(
             try:
                 withdrawn = _withdrawn_sources(source_docs)
                 if withdrawn:
+                    gone.update(withdrawn)
                     retire_items_for_documents(withdrawn)
             except Exception:
                 logger.error(

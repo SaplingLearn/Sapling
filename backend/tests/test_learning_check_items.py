@@ -1649,6 +1649,100 @@ class TestWithdrawalDuringDrafting:
         mocks["check_items"].delete.assert_not_called()
         assert ev.call_args[1]["payload"]["reason"] == "StorageError"
 
+    @pytest.mark.parametrize("found_by", ["pre_write", "post_write"])
+    def test_a_withdrawn_source_leaves_every_later_batch(self, monkeypatch, found_by):
+        """The backfill reads a course's sources once and then drafts batch
+        after batch. A document found withdrawn by one call's re-check is
+        never sent to a later call, and later concepts are drafted from the
+        passages that remain (or count unmatched when none does)."""
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"check_items": []})
+        shared_text = "alpha beta gamma delta epsilon zeta"
+        chunks = [
+            {"id": "c1", "chunk_index": 0, "chunk_text": shared_text, "doc_id": "doc-1"},
+            {"id": "c2", "chunk_index": 1, "chunk_text": shared_text + " omega", "doc_id": "doc-2"},
+        ]
+        names = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Omega"]
+        shown = []
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            shown.append((list(concepts), [p["id"] for p in passages]))
+            return _drafts_for(*concepts)
+
+        # batch 1's pre-write and post-write re-checks, then batch 2's
+        first = [["doc-2"]] if found_by == "pre_write" else [[], ["doc-2"]]
+        rechecks = first + [[], []]
+        t, d, _ = _gen_patches(factory, fake_draft)
+        with (
+            t,
+            d,
+            patch(
+                "services.check_item_service._withdrawn_sources", side_effect=rechecks
+            ) as recheck,
+        ):
+            out = svc.generate_for_concepts(
+                user_id=None,
+                course_id="course-1",
+                concept_names=names,
+                chunks=chunks,
+                flex=True,
+                min_chunk_score=1,
+            )
+        assert shown == [
+            (["Alpha", "Beta", "Gamma"], ["c1", "c2"]),
+            (["Delta", "Epsilon", "Zeta"], ["c1"]),
+        ]
+        assert [c.args[0] for c in recheck.call_args_list][len(first) :] == [["doc-1"]] * 2
+        later = [r for call in mocks["check_items"].upsert.call_args_list for r in call[0][0]]
+        assert {r["concept_key"] for r in later} >= {"delta", "epsilon", "zeta"}
+        for row in later:
+            if row["concept_key"] in {"delta", "epsilon", "zeta"}:
+                assert row["source_document_ids"] == ["doc-1"]
+        written_first = 0 if found_by == "pre_write" else 6
+        assert out == (written_first + 6, 6, 0, 0, 1)
+
+    def test_a_failed_recheck_drops_its_call_but_prunes_nothing(self, monkeypatch):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables({"check_items": []})
+        chunks = [
+            {"id": "c1", "chunk_index": 0, "chunk_text": "alpha beta", "doc_id": "doc-1"},
+            {"id": "c2", "chunk_index": 1, "chunk_text": "alpha beta", "doc_id": "doc-2"},
+        ]
+        shown = []
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            shown.append([p["id"] for p in passages])
+            return _drafts_for(*concepts)
+
+        names = ["Alpha", "Beta", "Alpha Beta", "Beta Alpha Two"]
+        t, d, e = _gen_patches(factory, fake_draft)
+        with (
+            t,
+            d,
+            e as ev,
+            patch(
+                "services.check_item_service._withdrawn_sources",
+                side_effect=[RuntimeError("pg blip"), [], []],
+            ),
+        ):
+            out = svc.generate_for_concepts(
+                user_id=None,
+                course_id="course-1",
+                concept_names=names,
+                chunks=chunks,
+                flex=True,
+                min_chunk_score=1,
+            )
+        assert shown == [["c1", "c2"], ["c1", "c2"]]
+        assert out.items_created == 2 and out.concepts_attempted == 4
+        assert ev.call_args[1]["payload"]["reason"] == "StorageError"
+
     def test_the_recheck_reads_consent_once_per_batch_of_uploaders(self, monkeypatch):
         _, mocks, _ = self._run(monkeypatch, doc_reads=[[_doc()], [_doc()], [_doc()]])
         reads = [c[1]["filters"] for c in mocks["user_settings"].select.call_args_list]
