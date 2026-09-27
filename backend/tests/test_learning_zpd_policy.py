@@ -1944,8 +1944,9 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
     from learning.leak import detect_leak, strip_leak
 
     rng = random.Random(606)
-    seps = [" ", ", ", "\n", " — ", "; ", " é ", "(", ") ", "/", " = "]
+    seps = [" ", ", ", "\n", " — ", "; ", " é ", "(", ") ", "/", " = ", "^", "**", " x "]
     numbers = ["1250", "1,250", "01250.0", "12,500", "2.5", "2.500", "25", "7.0", "250"]
+    numbers += ["3x^2", "3x", "6.02", "10^23", "10", "**42**", "cos(x^2)", "5^2", "6.022e23"]
     for reference in (
         REF_POWER,
         REF_EQ,
@@ -1957,6 +1958,12 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
         REF_WORK,
         REF_SPEED,
         "x = 250",
+        "The derivative is 3x^2",
+        "The number of molecules is 6.02 x 10^23.",
+        "The answer is **42**.",
+        "By the chain rule the derivative of sin(x^2) is 2x cos(x^2).",
+        "It is 6.022e23 molecules",
+        "**Final answer:** 1,250",
     ):
         words = reference.split() + numbers
         for _ in range(200):
