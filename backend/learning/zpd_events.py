@@ -6,7 +6,10 @@ log_event they never raise into a request: a payload that cannot be built, or
 that holds a string longer than params.EVENT_PAYLOAD_STR_MAX or a value that
 is not None/bool/int/float/str/list/dict (a caller bug that could log student
 or tutor text into the plaintext events table), is dropped with a log line.
-Emitted by nobody in PKG-06; PKG-07, PKG-08 and PKG-10 call them.
+The payload's `request_id` (zpd.leak) is exempt from the length cap: it is the
+same value as the events row's request_id column (request_context accepts up
+to 128 chars). Emitted by nobody in PKG-06; PKG-07, PKG-08 and PKG-10 call
+them.
 """
 
 from __future__ import annotations
@@ -55,7 +58,13 @@ def _emit(
     except Exception:
         logger.warning("%s: payload could not be built; event dropped", event_type, exc_info=True)
         return
-    if not _is_plain(payload):
+    # The request id is the events row's own column value too: never capped.
+    checked = {
+        k: v
+        for k, v in payload.items()
+        if not (k == "request_id" and isinstance(request_id, str) and v == request_id)
+    }
+    if not _is_plain(checked):
         logger.warning("%s: payload is not ids/counts/enums/bools only; event dropped", event_type)
         return
     log_event(

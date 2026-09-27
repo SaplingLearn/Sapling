@@ -1819,6 +1819,38 @@ def test_emit_helpers_drop_a_payload_that_could_carry_text(monkeypatch, caplog):
     assert [et for et, _ in calls] == ["zpd.wheelspin", "zpd.band_adjust"]
 
 
+def test_zpd_leak_keeps_a_long_request_id(monkeypatch, caplog):
+    """request_context accepts a caller's X-Request-ID of up to 128 chars, and
+    zpd.leak carries request_id in its payload (spec §6). The same value is the
+    events row's request_id column, so the length cap never drops the leak
+    signal for it; any other long string still drops the event."""
+    from learning import zpd_events
+    from learning.ladder import Rung
+    from services.request_context import _SAFE_ID
+
+    rid = "a" * 100
+    assert _SAFE_ID.match(rid)
+    calls = _recorder(monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        zpd_events.emit_zpd_leak(
+            user_id="u", request_id=rid, rung_emitted=Rung.H3, ceiling=Rung.H3, detector="ngram"
+        )
+    [(event_type, kw)] = calls
+    assert event_type == "zpd.leak"
+    assert kw["request_id"] == rid and kw["payload"]["request_id"] == rid
+    assert not any("event dropped" in r.getMessage() for r in caplog.records)
+    zpd_events.emit_zpd_wheelspin(
+        user_id="u",
+        request_id=rid,
+        concept_id="n" * 65,
+        opps=6,
+        unassisted_next=None,
+        htc_k=None,
+        prerequisite_ids=[],
+    )
+    assert len(calls) == 1
+
+
 def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
     """Through the real events_service: enqueue only, worker never runs here."""
     from learning import zpd_events
