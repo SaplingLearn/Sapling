@@ -19,6 +19,7 @@ from learning.params import (
     BKT_L0,
     BKT_MASTERED,
     BKT_MASTERED_MIN_STRONG,
+    BKT_P_MAX,
     BKT_PROFICIENT,
     BKT_T,
     CHANNELS,
@@ -77,6 +78,10 @@ def update(
     when weight == 1.0. idk=True is an incorrect observation with the item
     channel's G and S_IDK (`correct` is ignored). `channel` must be a key of
     CHANNELS; "idk" is the flag, not a channel.
+
+    The result is capped at BKT_P_MAX (†): at p == 1.0 the incorrect posterior
+    is 1, so a belief that rounded up to 1.0 could never be lowered again. Any
+    p in [0, 1] is still a valid input; one above the cap comes back at it.
     """
     if channel not in CHANNELS:
         raise ValueError(f"unknown channel {channel!r}; idk is the idk=True flag, not a channel")
@@ -91,7 +96,7 @@ def update(
     p_new = p + weight * (p_post - p)
     if weight == _FULL_WEIGHT:
         p_new = p_new + (1.0 - p_new) * BKT_T
-    return _clamp01(p_new)
+    return min(BKT_P_MAX, _clamp01(p_new))
 
 
 # Spec §3.2 retrievability, reproduced privately so PKG-01 and PKG-02 can merge

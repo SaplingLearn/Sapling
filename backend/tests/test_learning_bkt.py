@@ -279,6 +279,8 @@ def test_fsrs_weights_and_s0():
 
 def test_ordered_pairs_are_ordered():
     assert params.BKT_PROFICIENT < params.BKT_MASTERED
+    # BKT_P_MAX: spec §13 row pending; the cap must leave BKT_MASTERED reachable.
+    assert params.BKT_MASTERED < params.BKT_P_MAX < 1.0
     assert params.TIER_UNEXPLORED_MAX < params.BAND_NOVICE_MAX < params.BAND_DEVELOP_MAX
     assert params.PROBE_TARGET_LO < params.PROBE_TARGET_HI
     assert params.ACQ_TARGET_LO < params.ACQ_TARGET_HI
@@ -421,10 +423,13 @@ def test_learn_step_applies_only_at_full_weight():
 @pytest.mark.parametrize("channel", sorted(params.CHANNELS))
 @pytest.mark.parametrize("p", [0.0, 0.05, 0.35, 0.5, 0.8, 0.95, 1.0])
 def test_monotone_and_bounded(channel, p):
+    """Correct never lowers belief below where it started, except that update
+    caps its output at BKT_P_MAX, so an input above the cap (1.0) comes back
+    at the cap."""
     up = bkt.update(p, channel, True)
     down = bkt.update(p, channel, False, weight=0.5)
-    assert 0.0 <= up <= 1.0 and 0.0 <= down <= 1.0
-    assert up >= p
+    assert 0.0 <= up <= params.BKT_P_MAX and 0.0 <= down <= params.BKT_P_MAX
+    assert up >= min(p, params.BKT_P_MAX)
     assert down <= p
 
 
@@ -535,22 +540,75 @@ def test_decayed_p_infinite_days_is_the_prior():
     assert bkt.decayed_p(0.05, math.inf, None) == pytest.approx(params.BKT_L0)
 
 
-def test_float_saturation_at_one_is_released_by_any_elapsed_time():
-    """HANDOFF-01 Known gap (j). Back-to-back full-weight corrects with no decay
-    between them round p to exactly 1.0 (15 on free_response), where the
-    incorrect posterior is 1·S/(1·S + 0) = 1: no wrong answer or idk moves it.
-    In exact arithmetic p stays below 1. Decay with any positive elapsed time
-    releases it, which is what PKG-03 must rely on between chained updates."""
+def test_bkt_p_max_value():
+    """BKT_P_MAX is not a spec §3.1 name (spec §13 row pending, CodeRabbit PR
+    #673), so it is pinned here rather than in SPEC_VALUES: a † engineering
+    choice that keeps belief interior."""
+    assert params.BKT_P_MAX == 0.999
+    assert type(params.BKT_P_MAX) is float
+
+
+def _correct_streak(n: int) -> float:
     p = params.BKT_L0
-    for _ in range(15):
+    for _ in range(n):
         p = bkt.update(p, "free_response", True)
-    assert p == 1.0
-    assert bkt.update(p, "free_response", False) == 1.0  # the gap, pinned
-    assert bkt.update(p, "free_response", False, idk=True) == 1.0
-    one_second = 1.0 / 86_400
-    released = bkt.decayed_p(p, one_second, None)
-    assert released < 1.0
-    assert bkt.update(released, "free_response", False) < released
+    return p
+
+
+@pytest.mark.parametrize("n", [15, 50])
+def test_correct_streak_stops_at_the_cap(n):
+    """HANDOFF-01 Known gap (j), closed. Back-to-back full-weight corrects used
+    to round p to exactly 1.0 (15 on free_response), where the incorrect
+    posterior is 1·S/(1·S + 0) = 1 and no wrong answer or idk moved it. update
+    now stops at BKT_P_MAX (reached after 3 corrects from BKT_L0)."""
+    p = _correct_streak(n)
+    assert p == params.BKT_P_MAX
+    assert p < 1.0
+    assert bkt.decayed_p(p, 1.0, None) <= p  # decay never pushes it back up
+
+
+def test_one_wrong_from_the_cap_lowers_p_but_does_not_unmaster():
+    """From BKT_P_MAX a wrong free_response: posterior 0.999·0.10 /
+    (0.0999 + 0.001·0.92) = 0.99087; learn step + 0.00913·0.15 = 0.99224.
+    One slip lowers belief and stays at or above BKT_MASTERED."""
+    p = _correct_streak(15)
+    once = bkt.update(p, "free_response", False)
+    assert once == pytest.approx(0.99224, abs=1e-5)
+    assert once < p
+    assert once >= params.BKT_MASTERED
+    assert bkt.is_mastered(once, params.BKT_MASTERED_MIN_STRONG)
+
+
+def test_two_wrongs_from_the_cap_unmaster():
+    """Second wrong from 0.99224: posterior 0.93291; learn step 0.94297,
+    below BKT_MASTERED (and BKT_PROFICIENT)."""
+    once = bkt.update(_correct_streak(15), "free_response", False)
+    twice = bkt.update(once, "free_response", False)
+    assert twice == pytest.approx(0.94297, abs=1e-5)
+    assert twice < params.BKT_MASTERED
+    assert not bkt.is_mastered(twice, params.BKT_MASTERED_MIN_STRONG)
+
+
+def test_idk_from_the_cap_lowers_p():
+    """idk from BKT_P_MAX on free_response: posterior 0.999·0.02 /
+    (0.01998 + 0.001·0.92) = 0.95598; learn step 0.96258."""
+    p = _correct_streak(15)
+    got = bkt.update(p, "free_response", True, idk=True)
+    assert got == pytest.approx(0.96258, abs=1e-5)
+    assert got < p
+
+
+@pytest.mark.parametrize("channel", sorted(params.CHANNELS))
+@pytest.mark.parametrize("p", [params.BKT_P_MAX, math.nextafter(1.0, 0.0), 1.0])
+def test_update_output_never_exceeds_the_cap(channel, p):
+    """A stored p above the cap is still a valid input (the domain is [0, 1]);
+    whatever is observed, the result is at most BKT_P_MAX, and wrong or idk
+    evidence always lowers belief (1.0 used to be a fixed point)."""
+    for correct in (True, False):
+        for weight in (0.0, 0.5, 1.0):
+            assert bkt.update(p, channel, correct, weight=weight) <= params.BKT_P_MAX
+    assert bkt.update(p, channel, False) < p
+    assert bkt.update(p, channel, False, idk=True) < p
 
 
 # ------------------------------------------- propagate / band / tier / mastery
