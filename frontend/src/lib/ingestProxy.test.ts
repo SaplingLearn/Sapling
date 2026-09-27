@@ -8,9 +8,11 @@ import { describe, it, expect } from "vitest";
 import {
   IMMUTABLE_CACHE_CONTROL,
   downstreamResponseHeaders,
-  capStream,
-  hasSessionCookie,
+  ingestTokens,
+  ingestTokensOk,
   isAllowedIngestRequest,
+  readCappedBody,
+  sessionTokenFrom,
   isImmutableAsset,
   normalisedIngestPath,
   upstreamRequestHeaders,
@@ -172,23 +174,57 @@ describe("relay guards", () => {
     }
   });
 
-  it("hasSessionCookie wants a non-empty sapling_session, by exact name", () => {
+  it("sessionTokenFrom reads a non-empty sapling_session, by exact name", () => {
     const h = (cookie?: string) => new Headers(cookie ? { cookie } : {});
-    expect(hasSessionCookie(h("sapling_session=abc"))).toBe(true);
-    expect(hasSessionCookie(h("a=1; sapling_session=abc.def=; b=2"))).toBe(true);
-    expect(hasSessionCookie(h())).toBe(false);
-    expect(hasSessionCookie(h("sapling_session="))).toBe(false);
-    expect(hasSessionCookie(h("xsapling_session=abc"))).toBe(false);
-    expect(hasSessionCookie(h("sapling_session_old=abc"))).toBe(false);
+    expect(sessionTokenFrom(h("sapling_session=abc"))).toBe("abc");
+    expect(sessionTokenFrom(h("a=1; sapling_session=abc.def=; b=2"))).toBe("abc.def=");
+    expect(sessionTokenFrom(h())).toBeNull();
+    expect(sessionTokenFrom(h("sapling_session="))).toBeNull();
+    expect(sessionTokenFrom(h("xsapling_session=abc"))).toBeNull();
+    expect(sessionTokenFrom(h("sapling_session_old=abc"))).toBeNull();
   });
 
-  it("capStream passes a body under the cap and errors one over it", async () => {
+  it("readCappedBody returns a body under the cap and refuses one over it", async () => {
     const body = (n: number) => new Response(new Uint8Array(n)).body!;
-    let over = false;
-    const ok = await new Response(capStream(body(100), 100, () => (over = true))).arrayBuffer();
-    expect(ok.byteLength).toBe(100);
-    expect(over).toBe(false);
-    await expect(new Response(capStream(body(101), 100, () => (over = true))).arrayBuffer()).rejects.toThrow();
-    expect(over).toBe(true);
+    expect((await readCappedBody(body(100), 100))!.byteLength).toBe(100);
+    expect(await readCappedBody(body(101), 100)).toBeNull();
+    expect((await readCappedBody(null, 100))!.byteLength).toBe(0);
+  });
+});
+
+describe("project-key check (ingestTokens / ingestTokensOk)", () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+  const KEY = "phc_ours";
+  const beacon = (json: string) => {
+    const bin = String.fromCharCode(...new TextEncoder().encode(json));
+    return enc("data=" + encodeURIComponent(btoa(bin)));
+  };
+
+  it("reads the key from every body shape posthog-js sends (uncompressed)", () => {
+    const shapes = [
+      JSON.stringify({ api_key: KEY, batch: [{ event: "$pageview", properties: { token: KEY } }] }),
+      JSON.stringify({ event: "$pageview", properties: { token: KEY } }),
+      JSON.stringify([{ event: "$pageview", properties: { token: KEY } }]),
+    ];
+    for (const body of shapes) expect(ingestTokensOk(ingestTokens(enc(body), "?ver=1"), KEY), body).toBe(true);
+    // sendBeacon ($pageleave) always uses base64 form encoding.
+    const b = beacon(JSON.stringify({ event: "$pageleave", properties: { token: KEY, title: "Café" } }));
+    expect(ingestTokensOk(ingestTokens(b, "?compression=base64"), KEY)).toBe(true);
+  });
+
+  it("refuses a foreign key, a mixed batch, or no key at all", () => {
+    const foreign = JSON.stringify({ event: "x", properties: { token: "phc_someone_else" } });
+    const mixed = JSON.stringify({ api_key: KEY, batch: [{ event: "x", properties: { token: "phc_other" } }] });
+    const none = JSON.stringify({ event: "x", properties: {} });
+    for (const body of [foreign, mixed, none]) expect(ingestTokensOk(ingestTokens(enc(body), ""), KEY), body).toBe(false);
+    // …and nothing is OK when this build has no key.
+    expect(ingestTokensOk([KEY], "")).toBe(false);
+  });
+
+  it("does not decompress: a gzip body or garbage is unparseable (null)", () => {
+    expect(ingestTokens(enc("{}"), "?compression=gzip-js")).toBeNull();
+    expect(ingestTokens(new Uint8Array([0x1f, 0x8b, 8, 0, 0xff]), "")).toBeNull();
+    expect(ingestTokens(enc("not json"), "")).toBeNull();
+    expect(ingestTokens(enc("data=%%%"), "")).toBeNull();
   });
 });

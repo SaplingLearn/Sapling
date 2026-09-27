@@ -130,48 +130,118 @@ export function isAllowedIngestRequest(method: string, path: string): boolean {
 }
 
 /**
- * Analytics only ever runs for a signed-in student, so a caller without the
- * `sapling_session` cookie is refused. Its presence is all that is checked
- * (validating it would cost a backend round-trip per batch), and it is
- * never forwarded — see upstreamRequestHeaders.
+ * Analytics only ever runs for a signed-in student, so a caller must present
+ * a VALID `sapling_session`: the route checks it with `verifySession()`
+ * (src/lib/sessionToken.ts) — the same local HMAC + expiry check
+ * middleware.ts runs, no backend call. The cookie is never forwarded — see
+ * upstreamRequestHeaders.
  */
 export const SESSION_COOKIE_NAME = "sapling_session";
 
-export function hasSessionCookie(headers: Headers): boolean {
+/** The raw `sapling_session` cookie value, or null. */
+export function sessionTokenFrom(headers: Headers): string | null {
   const cookie = headers.get("cookie") ?? "";
-  return cookie.split(";").some((part) => {
+  for (const part of cookie.split(";")) {
     const [name, ...rest] = part.trim().split("=");
-    return name === SESSION_COOKIE_NAME && rest.join("=").length > 0;
-  });
+    if (name === SESSION_COOKIE_NAME) {
+      const value = rest.join("=");
+      return value.length > 0 ? value : null;
+    }
+  }
+  return null;
 }
 
-/** Largest request body forwarded upstream; a posthog-js batch is far smaller. */
+/** Largest request body forwarded upstream; a posthog-js request is far smaller. */
 export const MAX_INGEST_BODY_BYTES = 1024 * 1024;
 
 /**
- * Pass `body` through, erroring the stream (so the upstream fetch fails) as
- * soon as more than `max` bytes have gone by — the cap for a chunked body
- * with no Content-Length to check up front.
+ * Read a request body into memory, refusing (null) as soon as it passes
+ * `max` bytes — so a chunked body with no Content-Length is capped too. The
+ * body is buffered rather than streamed because its project key has to be
+ * checked (ingestTokensOk) before anything goes upstream; the cap bounds it.
  */
-export function capStream(
-  body: ReadableStream<Uint8Array>,
+export async function readCappedBody(
+  body: ReadableStream<Uint8Array> | null,
   max: number,
-  onExceeded: () => void,
-): ReadableStream<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!body) return new Uint8Array(new ArrayBuffer(0));
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
   let seen = 0;
-  return body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        seen += chunk.byteLength;
-        if (seen > max) {
-          onExceeded();
-          controller.error(new Error("ingest body over limit"));
-          return;
-        }
-        controller.enqueue(chunk);
-      },
-    }),
-  );
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    seen += value.byteLength;
+    if (seen > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(new ArrayBuffer(seen));
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
+}
+
+/**
+ * The project keys an event/batch body names, or null when the body is not
+ * in a form this proxy accepts. posthog-js is configured with
+ * `disable_compression` (src/lib/analytics.ts), so a body is one of:
+ * - JSON (`application/json`): a batch `{ api_key, batch: [...] }`, a single
+ *   event `{ event, properties: { token } }`, or an array of events;
+ * - `data=<base64 JSON>` (`application/x-www-form-urlencoded`): what
+ *   posthog-js always uses for `sendBeacon` (e.g. `$pageleave`).
+ * A gzip body (`compression=gzip-js`) is refused rather than decompressed:
+ * posthog-js never sends one with this config, and not decompressing
+ * attacker-supplied input keeps the 1 MiB cap a real bound.
+ */
+export function ingestTokens(body: Uint8Array, search: string): string[] | null {
+  const compression = new URLSearchParams(search).get("compression");
+  if (compression && compression !== "base64") return null;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+    if (text.startsWith("data=")) {
+      const b64 = decodeURIComponent(text.slice("data=".length).replace(/\+/g, " "));
+      const bin = atob(b64);
+      text = new TextDecoder("utf-8", { fatal: true }).decode(
+        Uint8Array.from(bin, (c) => c.charCodeAt(0)),
+      );
+    }
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const tokens: string[] = [];
+  const visit = (node: unknown, depth: number): void => {
+    if (depth > 2 || node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, depth + 1);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+    for (const key of ["api_key", "token"]) if (typeof obj[key] === "string") tokens.push(obj[key] as string);
+    const props = obj.properties as Record<string, unknown> | undefined;
+    if (props && typeof props.token === "string") tokens.push(props.token);
+    if (Array.isArray(obj.batch)) visit(obj.batch, depth + 1);
+  };
+  visit(parsed, 0);
+  return tokens;
+}
+
+/** Every key the body names is this deployment's project key — and there is one. */
+export function ingestTokensOk(tokens: string[] | null, projectKey: string): boolean {
+  const key = projectKey.trim();
+  return !!key && tokens !== null && tokens.length > 0 && tokens.every((t) => t === key);
 }
 
 /**
