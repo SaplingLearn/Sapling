@@ -900,6 +900,7 @@ def _apply_evidence(
             "check_item_id": ev.check_item_id,
             "question_hash": ev.question_hash,
             "confidence": ev.confidence,
+            "grader_backend": ev.grader_backend,  # A22; null when no verdict (idk)
         })
         changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
         if row.get("course_id"):

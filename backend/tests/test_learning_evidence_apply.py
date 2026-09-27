@@ -1640,3 +1640,24 @@ def test_inv_01_private_writer_detector(source, rel, offends):
     import test_learning_loop_invariants as inv
 
     assert bool(inv._private_writer_offenders(rel, source)) is offends
+
+
+# ── grader_backend (reopened by PKG-05; spec §5, §13 A22) ─────────────────────
+
+
+class TestGraderBackend:
+    def test_field_defaults_to_none_and_accepts_only_the_four_backends(self):
+        assert _ev().grader_backend is None
+        for backend in ("deterministic", "gemini", "gemini_second", "jev"):
+            assert _ev(grader_backend=backend).grader_backend == backend
+        with pytest.raises(ValidationError):
+            _ev(grader_backend="gpt")
+
+    def test_evidence_row_journals_grader_backend_null_when_absent(self):
+        _, mocks, _ = _apply({"evidence": [
+            {"node_id": "n1", "channel": "free_response", "correct": True, "grader_backend": "gemini"},
+            {"node_id": "n1", "channel": "mc", "correct": False},
+        ]}, edges=[])
+        first, second = _event_rows(mocks)
+        assert first["grader_backend"] == "gemini"
+        assert "grader_backend" in second and second["grader_backend"] is None

@@ -30,6 +30,10 @@ from learning.params import (
 #: params.CHANNELS and fsrs.RATING_CHANNELS (pinned by test).
 Channel = Literal["free_response", "mc_reasoned", "mc", "teachback_llm", "chat_turn"]
 
+#: Which backend produced an evidence verdict (spec §5, §13 A22). "jev" is PKG-15's.
+#: Equal to the node_mastery_events.grader_backend CHECK list (pinned by test).
+GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]
+
 #: node_mastery_events.event_type for rows written by the evidence path (spec §4).
 EVIDENCE_EVENT_TYPE = "evidence"
 #: graph_edges.relationship_type the propagation walks (spec §3.1).
@@ -41,6 +45,7 @@ __all__ = [
     "PROPAGATION_CHANNEL",  # re-exported from params: one name, one value
     "Channel",
     "Evidence",
+    "GraderBackend",
     "evidence_weight",
     "is_strong_channel",
 ]
@@ -59,6 +64,7 @@ class Evidence(BaseModel):
     question_hash: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)  # grader confidence
     same_session_recheck: bool = False
+    grader_backend: GraderBackend | None = None  # A22 provenance; PKG-05 reopen of PKG-03
 
     @model_validator(mode="after")
     def _consistency(self) -> Evidence:
