@@ -1,0 +1,328 @@
+{
+  "items": [
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1"
+      ],
+      "concept": "Limits",
+      "correct_option": "",
+      "difficulty": 1,
+      "format": "free",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "In your own words, what is a limit in mathematics?",
+      "reference_answer": "A limit describes the value that a function 'approaches' as the input (or independent variable) gets closer and closer to a particular point.",
+      "rubric": [
+        "Mentions the function approaching a value",
+        "Mentions the input approaching a point"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "approaches_value_instead_of_input",
+        "confuses_limit_with_function_value"
+      ],
+      "wrong_texts": [
+        "Confuses what approaches what, stating the input approaches a value instead of the function approaching a value.",
+        "Treats the limit as the actual value of the function at the point, rather than the value the function approaches."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1"
+      ],
+      "concept": "Limits",
+      "correct_option": "",
+      "difficulty": 2,
+      "format": "free",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "If a function f(x) approaches 5 as x approaches 3, what is the limit of f(x) as x approaches 3?",
+      "reference_answer": "The limit of f(x) as x approaches 3 is 5.",
+      "rubric": [
+        "Correctly identifies the limit value",
+        "Correctly identifies the condition under which the limit is taken"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "incorrect_value",
+        "incorrect_input"
+      ],
+      "wrong_texts": [
+        "States a value other than 5 as the limit.",
+        "States the limit is as x approaches something other than 3."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1"
+      ],
+      "concept": "Limits",
+      "correct_option": "",
+      "difficulty": 3,
+      "format": "free",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "A student graphs a function and observes that the graph gets closer and closer to the horizontal line y=2 as the x-values get very large. What can be said about the limit of the function as x approaches infinity?",
+      "reference_answer": "The limit of the function as x approaches infinity is 2.",
+      "rubric": [
+        "Correctly states the limit value",
+        "Correctly identifies the condition (x approaches infinity)"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_output_with_input",
+        "incorrect_limit_value"
+      ],
+      "wrong_texts": [
+        "Confuses the role of x and y, perhaps stating infinity is the limit.",
+        "States a limit value other than 2."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1"
+      ],
+      "concept": "Limits",
+      "correct_option": "",
+      "difficulty": 1,
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate who missed the lecture what a limit is using your own words.",
+      "reference_answer": "Imagine you're walking along a function's graph. A limit tells you the height (the y-value) you're getting really, really close to as you approach a specific spot on the x-axis, even if you can't quite reach that exact spot.",
+      "rubric": [
+        "Explains the concept of approaching a value",
+        "Explains the concept of the input approaching a point"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_function_value_with_limit",
+        "limit_equals_function_value"
+      ],
+      "wrong_texts": [
+        "Describes the limit as the actual value of the function at the point.",
+        "Fails to distinguish between the value the function approaches and the value it might actually attain."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1",
+        "eval-doc-1:c2"
+      ],
+      "concept": "Limits",
+      "correct_option": "",
+      "difficulty": 2,
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Explain to a classmate how the definition of the derivative uses the concept of a limit.",
+      "reference_answer": "The derivative is defined as the limit of the difference quotient. This means we're looking at the slope of secant lines between two points on a curve, and we're seeing what that slope approaches as those two points get infinitely close to each other. The limit allows us to find the instantaneous rate of change, or the slope of the tangent line.",
+      "rubric": [
+        "Mentions the difference quotient",
+        "Explains that the limit is taken as the points get closer"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_secant_with_tangent",
+        "ignores_limit_concept"
+      ],
+      "wrong_texts": [
+        "Confuses the secant line slope with the final tangent line slope, or doesn't explain how the limit bridges this.",
+        "Describes the derivative without referencing how the limit is applied to the difference quotient."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1",
+        "eval-doc-1:c2"
+      ],
+      "concept": "Limits",
+      "correct_option": "",
+      "difficulty": 3,
+      "format": "teachback",
+      "option_letters": [],
+      "option_texts": [],
+      "option_wrong_keys": [],
+      "prompt": "Your friend is struggling to understand why limits are important for calculus. Explain to them the foundational role of limits in calculus, referencing their connection to derivatives.",
+      "reference_answer": "Limits are super important because they are the bedrock of calculus. Specifically, the derivative, which tells us how fast something is changing, is defined as a limit. Without understanding limits, we can't properly define or calculate derivatives, which are fundamental to solving many problems in science and engineering.",
+      "rubric": [
+        "States limits are foundational to calculus",
+        "Connects limits to the definition of derivatives"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_limit_with_derivative",
+        "ignores_foundational_role"
+      ],
+      "wrong_texts": [
+        "Treats limits and derivatives as the same concept or confuses their relationship.",
+        "Explains derivatives without emphasizing that limits are the essential concept that makes derivatives possible."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1"
+      ],
+      "concept": "Limits",
+      "correct_option": "B",
+      "difficulty": 1,
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "The exact value of the function at a specific point.",
+        "The value a function approaches as its input approaches a specific point.",
+        "The rate of change of the function at a specific point.",
+        "The maximum or minimum value of the function over its entire domain."
+      ],
+      "option_wrong_keys": [
+        "confuses_limit_with_function_value",
+        "",
+        "confuses_limit_with_derivative",
+        "confuses_limit_with_extrema"
+      ],
+      "prompt": "What does a limit describe about a function?",
+      "reference_answer": "The reference answer is B. A limit describes the value a function approaches as its input approaches a specific point.",
+      "rubric": [
+        "Correctly identifies that a limit is about the value a function approaches",
+        "Correctly identifies that a limit is concerned with the input approaching a point"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_limit_with_function_value",
+        "confuses_limit_with_derivative",
+        "confuses_limit_with_extrema"
+      ],
+      "wrong_texts": [
+        "Confuses the limit with the actual value of the function at the point.",
+        "Confuses the concept of a limit with the concept of a derivative (rate of change).",
+        "Confuses the limit with finding the absolute maximum or minimum values of a function."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1"
+      ],
+      "concept": "Limits",
+      "correct_option": "C",
+      "difficulty": 2,
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "The limit is 0.",
+        "The limit is undefined.",
+        "The limit is -2.",
+        "The limit is the value of the function at x=0."
+      ],
+      "option_wrong_keys": [
+        "confuses_input_with_output",
+        "limit_does_not_exist_concept",
+        "",
+        "confuses_limit_with_function_value"
+      ],
+      "prompt": "Consider a function where as x gets closer and closer to 0 from the left side, the function's value gets closer and closer to -2. What is the limit of the function as x approaches 0 from the left?",
+      "reference_answer": "The reference answer is C. The limit of the function as x approaches 0 from the left is -2.",
+      "rubric": [
+        "Correctly identifies the limit value",
+        "Correctly identifies the direction of approach (from the left)"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_input_with_output",
+        "limit_does_not_exist_concept",
+        "confuses_limit_with_function_value"
+      ],
+      "wrong_texts": [
+        "Confuses the input value (0) with the output value (-2).",
+        "Incorrectly assumes the limit does not exist without sufficient information.",
+        "Assumes the limit must be the function's value at the point, which may not be given or relevant."
+      ]
+    },
+    {
+      "answer_kind": "free",
+      "canonical_answer": "",
+      "chunk_ids": [
+        "eval-doc-1:c1",
+        "eval-doc-1:c2"
+      ],
+      "concept": "Limits",
+      "correct_option": "D",
+      "difficulty": 3,
+      "format": "mc_reason",
+      "option_letters": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "option_texts": [
+        "The limit finds the average rate of change of the function over its entire domain.",
+        "The limit defines the function's value at the point 'a'.",
+        "The limit is used to find the area under the curve of the function.",
+        "The limit is used to find the slope of the tangent line by examining the slopes of secant lines as the two points defining the secant line approach each other."
+      ],
+      "option_wrong_keys": [
+        "confuses_average_with_instantaneous_rate",
+        "confuses_limit_with_function_value",
+        "confuses_limit_with_integration",
+        ""
+      ],
+      "prompt": "The derivative of a function f(x) at a point 'a' represents the instantaneous rate of change of the function at that point. This is calculated using a limit. Which of the following best describes the role of the limit in this calculation?",
+      "reference_answer": "The reference answer is D. The limit is used to find the slope of the tangent line by examining the slopes of secant lines as the two points defining the secant line approach each other.",
+      "rubric": [
+        "Correctly links the limit to finding the slope of the tangent line",
+        "Correctly explains the process involving secant lines approaching each other"
+      ],
+      "stepwise": false,
+      "tolerance": "",
+      "wrong_keys": [
+        "confuses_average_with_instantaneous_rate",
+        "confuses_limit_with_function_value",
+        "confuses_limit_with_integration"
+      ],
+      "wrong_texts": [
+        "Confuses the instantaneous rate of change (derivative) with the average rate of change.",
+        "Mistakes the limit for the actual value of the function at the point.",
+        "Confuses the concept of limits in derivatives with the concept of integration (area under the curve)."
+      ]
+    }
+  ]
+}
