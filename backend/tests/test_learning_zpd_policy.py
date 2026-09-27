@@ -3000,6 +3000,19 @@ def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
 
 
 _PKG06_MODULES = ("policy", "gates", "leak", "ladder", "loop_state_store", "zpd_events")
+# PKG-06b (spec §14 row 06b; HANDOFF-06 "BudgetDecision.tier_ceiling reuses Tier"): the AI budget
+# imports policy's three type aliases, and nothing else from the PKG-06 layer. Exact names, so any
+# other PKG-06 import there (model_tier, a gates helper) is still an offender.
+_PKG06_SANCTIONED_IMPORTS = {
+    "services/ai_budget.py": frozenset(
+        {
+            "learning.policy",
+            "learning.policy.Band",
+            "learning.policy.BudgetLevel",
+            "learning.policy.Tier",
+        }
+    ),
+}
 
 
 def _pkg06_imports(source: str, package: str = "") -> list[str]:
@@ -3109,9 +3122,31 @@ def _inertness_offenders(root) -> list[str]:
         if rel[0] == "learning" and len(rel) == 2 and rel[1][:-3] in _PKG06_MODULES:
             continue
         package = ".".join(rel[:-1])
-        if _pkg06_imports(path.read_text(errors="ignore"), package=package):
+        found = _pkg06_imports(path.read_text(errors="ignore"), package=package)
+        if not set(found) <= _PKG06_SANCTIONED_IMPORTS.get("/".join(rel), frozenset()):
             offenders.append("/".join(rel))
     return offenders
+
+
+def test_inertness_scan_sanctions_only_the_budget_alias_import(tmp_path):
+    """PKG-06b: services/ai_budget.py may import exactly Band, BudgetLevel and Tier
+    from learning.policy; any other PKG-06 name there, or the same import anywhere
+    else, is still flagged."""
+    (tmp_path / "services").mkdir()
+    (tmp_path / "services" / "ai_budget.py").write_text(
+        "from learning.policy import Band, BudgetLevel, Tier\n"
+    )
+    (tmp_path / "services" / "other.py").write_text("from learning.policy import Tier\n")
+    assert _inertness_offenders(tmp_path) == ["services/other.py"]
+    for extra in (
+        "from learning.policy import Tier, model_tier\n",
+        "from learning.policy import Tier\nfrom learning import gates\n",
+        "import learning.leak\n",
+    ):
+        (tmp_path / "services" / "ai_budget.py").write_text(extra)
+        assert _inertness_offenders(tmp_path) == ["services/ai_budget.py", "services/other.py"], (
+            extra
+        )
 
 
 def test_zpd_layer_is_inert_nothing_imports_it():
@@ -3125,7 +3160,12 @@ def test_importing_the_app_loads_no_pkg06_module():
     tree). Import the real app in a clean interpreter and read sys.modules:
     flag-off byte-identity needs no PKG-06 module loaded at all. The two are
     complementary: this probe cannot see a lazy import inside a function
-    body, which the ast scan catches."""
+    body, which the ast scan catches.
+
+    PKG-06b: services/ai_budget.py imports policy's type aliases (sanctioned
+    above) and main.py registers its 429 handler, so the real module would
+    load learning.policy. The probe stubs it with the two names main.py uses,
+    so it still sees every OTHER loader of a PKG-06 module."""
     import os
     import subprocess
     import sys
@@ -3146,6 +3186,13 @@ def test_importing_the_app_loads_no_pkg06_module():
     program = (
         "import dotenv; dotenv.load_dotenv = lambda *a, **k: False\n"
         "import sys\n"
+        "import types\n"
+        "stub = types.ModuleType('services.ai_budget')\n"
+        "stub.AIBudgetExceeded = type('AIBudgetExceeded', (Exception,), {})\n"
+        "async def budget_exceeded_handler(request, exc):\n"
+        "    return None\n"
+        "stub.budget_exceeded_handler = budget_exceeded_handler\n"
+        "sys.modules['services.ai_budget'] = stub\n"
         "import main\n"
         f"loaded = [m for m in {wanted!r} if m in sys.modules]\n"
         "print('LEARNING_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('learning.'))))\n"
