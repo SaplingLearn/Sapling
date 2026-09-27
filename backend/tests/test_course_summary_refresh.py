@@ -336,6 +336,43 @@ def test_a_failed_course_context_refresh_is_logged_not_raised(payload, caplog):
     assert {r.getMessage().split("offering=")[1].split()[0] for r in hits} == set(OFFERINGS)
 
 
+@pytest.mark.parametrize(
+    ("call", "expected", "offerings"),
+    [
+        ("add_course", {"course_id": COURSE, "already_existed": False}, ("off-a",)),
+        ("delete_node", {"deleted": True}, OFFERINGS),
+        ("delete_course", {"deleted": True}, OFFERINGS),
+    ],
+)
+def test_every_other_failed_course_context_refresh_is_logged_not_raised(
+    call, expected, offerings, caplog
+):
+    """The other three callers in graph_service follow the same rule as
+    apply_graph_update: the write they follow stands, and the failure shows."""
+    from services import graph_service
+
+    db = _world_db(enrollments=[]) if call == "add_course" else _world_db()
+    args = {
+        "add_course": (USER, COURSE),
+        "delete_node": (USER, "n1"),
+        "delete_course": (USER, COURSE),
+    }[call]
+    with (
+        _world(db, _agent()),
+        patch("services.academics.resolve_offering", return_value="off-a"),
+        patch(
+            "services.course_context_service.update_course_context",
+            side_effect=RuntimeError("DB down"),
+        ),
+        caplog.at_level(logging.WARNING, logger="services.graph_service"),
+    ):
+        assert getattr(graph_service, call)(*args) == expected
+    hits = [r for r in caplog.records if "course-context refresh failed" in r.getMessage()]
+    assert [r.levelno for r in hits] == [logging.WARNING] * len(offerings)
+    assert all(r.exc_info for r in hits)
+    assert sorted(r.getMessage().split("offering=")[1].split()[0] for r in hits) == sorted(offerings)
+
+
 # ── legacy: byte-identical with the loop off ─────────────────────────────────
 
 
