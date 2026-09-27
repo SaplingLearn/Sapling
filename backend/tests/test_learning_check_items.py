@@ -761,8 +761,31 @@ class TestItemSources:
                 "doc_id": "doc-1",
             }
         ]
-        call = mocks["course_chunks"].select.call_args
-        assert call[1]["filters"] == {"doc_id": "eq.doc-1"} and call[1]["order"] == "chunk_index"
+        call = mocks["course_chunks"].select_with_count.call_args
+        assert call[1]["filters"] == {"doc_id": "eq.doc-1"}
+        assert call[1]["order"] == "chunk_index,id", "page_all needs a total order"
+
+    def test_a_document_past_the_row_cap_is_read_whole(self):
+        """A textbook indexes to more than PostgREST's max_rows chunks; an
+        unpaged select truncates silently, so late passages were never
+        ranked."""
+        from db.connection import MAX_ROWS
+        from services import check_item_service as svc
+
+        rows = [
+            {"id": f"c{i}", "chunk_index": i, "chunk_text": None, "visibility": "shared"}
+            for i in range(MAX_ROWS + 1)
+        ]
+        factory, mocks = _cached_tables({})
+        mocks_t = factory("course_chunks")
+        mocks_t.select.return_value = rows[:MAX_ROWS]
+        mocks_t.select_with_count.side_effect = [
+            (rows[:MAX_ROWS], len(rows)),
+            (rows[MAX_ROWS:], len(rows)),
+        ]
+        with patch("services.check_item_service.table", side_effect=factory):
+            chunks = svc.chunks_for_document("doc-1")
+        assert len(chunks) == MAX_ROWS + 1 and chunks[-1]["id"] == f"c{MAX_ROWS}"
 
     def test_only_shared_course_material_is_a_source(self):
         from services import check_item_service as svc

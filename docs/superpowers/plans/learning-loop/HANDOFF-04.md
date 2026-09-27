@@ -29,7 +29,7 @@ The `check_items` table exists (migration `20260927065932_learning_check_items.s
 - `::course_has_items(course_id) -> bool` — one `select("id", limit=1)`; feeds PKG-08's `no_check_items` and the A26 empty state.
 - `::count_items(course_id, concept_key) -> int` — a select of ids.
 - `::coverage(course_id) -> (with_items, concepts)` — over the course's `graph_nodes` concept keys; both reads page with `order="id"` (graph_nodes through the read-only handle `_GraphNodesRead`, see Deviations).
-- `::chunks_for_document(document_id) -> list[dict]` — `course_chunks` rows `id, chunk_index, chunk_text, visibility, doc_id` by `doc_id`, ordered by `chunk_index`, `chunk_text` decrypted.
+- `::chunks_for_document(document_id) -> list[dict]` — `course_chunks` rows `id, chunk_index, chunk_text, visibility, doc_id` by `doc_id`, read through `page_all(..., order="chunk_index,id")` (a document past PostgREST's 1000-row cap is read whole), `chunk_text` decrypted.
 - `::document_is_item_source(row) -> bool` — `shareability == COURSE_MATERIAL` AND `decide_visibility(...) == SHARED`.
 - `::source_chunks(doc_row) -> list[dict]` — not a source → `[]` (INFO); indexed → its SHARED rows only (none → `[]`, never the fallback); unindexed → `[{"id": None, "chunk_index": 0, "chunk_text": <decrypted extracted_text>, "doc_id": <id>}]` or `[]` (WARNING) when blank. Every passage carries `doc_id`.
 - `::answerable_hook: Callable[[list[str], str, str], bool] | None = None` — the A24 stub; nothing sets or calls it.

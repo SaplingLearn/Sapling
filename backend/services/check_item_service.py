@@ -344,14 +344,17 @@ def coverage(course_id: str) -> tuple[int, int]:
 
 def chunks_for_document(document_id: str) -> list[dict]:
     """The document's course_chunks rows by doc_id, chunk_text decrypted (the
-    boundary rag_service.retrieve_chunks_detailed owns for similarity reads)."""
-    rows = table("course_chunks").select(
+    boundary rag_service.retrieve_chunks_detailed owns for similarity reads).
+    Paged: a textbook can index to more chunks than PostgREST's max_rows, and
+    an unpaged select truncates silently."""
+    rows = page_all(
+        table("course_chunks"),
         "id,chunk_index,chunk_text,visibility,doc_id",
         filters={"doc_id": f"eq.{document_id}"},
-        order="chunk_index",
+        order="chunk_index,id",
     )
     out = []
-    for row in rows or []:
+    for row in rows:
         chunk = dict(row)
         chunk["chunk_text"] = decrypt_if_present(chunk.get("chunk_text"))
         out.append(chunk)
