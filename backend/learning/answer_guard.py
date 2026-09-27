@@ -52,6 +52,17 @@ addressed (`as the evaluator of the expression` is SICP); and words like
 `system`, `instructions`, `marker` or `grader` never count on their own.
 `tests/test_learning_answer_guard.py` pins both lists.
 
+The item's own text is course vocabulary (`item_terms`: the question, the
+reference answer and the option texts — never the rubric or common-wrong texts,
+which are the grader's instructions). Rubric ids are internal, so an id that
+text uses (R1 in a circuit, a relation, a reaction, a variable) is a course
+entity whose verdicts are the student's answer: never refused, neutralised or
+counted by the belt. A rule the item's own text trips does not count for that
+item, and an item about LLMs (prompt injection, jailbreaks, system prompts, chat
+templates) exempts the rules whose shapes are its subject matter (`ai=True`:
+"ignore previous instructions", "you are now DAN", `<|im_start|>`, `</system>`) —
+never a grading-directed one.
+
 Defence in depth behind the screen: `neutralise()` replaces verdict tokens in the
 text the grader message quotes, and `verdict_share()` lets grade() refuse an
 all-yes verdict on text that is mostly rubric ids and positive verdict words.
@@ -68,7 +79,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Literal, get_args
 
@@ -279,82 +290,149 @@ _RUBRIC_OBJECT = (
 )
 _CONDITION = r"(?:only\s+)?(?:if|when|whenever|unless|provided)\b"
 
-_DIRECTIVES = tuple(
-    re.compile(p)
-    for p in (
-        # ignore previous instructions / your rules / the grading criteria
+# Each rule is a named signal. `ai` marks a rule whose shape is also the subject
+# matter of a course about LLMs (prompt injection, jailbreaks, chat templates):
+# an item about LLMs exempts it (_Vocabulary). Grading-directed rules never are.
+
+
+@dataclass(frozen=True)
+class _Signal:
+    name: str
+    kind: Literal["directive", "marker"]
+    count: Callable[[_Folded], int]
+    ai: bool = False
+
+
+def _matches(
+    pattern: str,
+    *,
+    flags: int = 0,
+    cased: bool = False,
+    keep: Callable[[str, re.Match[str]], bool] | None = None,
+) -> Callable[[_Folded], int]:
+    """A counter of `pattern`'s matches in the folded text (the case-kept copy
+    when `cased`); `keep`, when given, must hold for a match to count."""
+    rx = re.compile(pattern, flags)
+
+    def count(folded: _Folded) -> int:
+        text = folded.cased if cased else folded.text
+        return sum(1 for m in rx.finditer(text) if keep is None or keep(text, m))
+
+    return count
+
+
+def _directive(name: str, pattern: str, **kw) -> _Signal:
+    ai = kw.pop("ai", False)
+    return _Signal(name, "directive", _matches(pattern, **kw), ai)
+
+
+_DIRECTIVES = (
+    # ignore previous instructions / your rules / the grading criteria
+    _directive(
+        "ignore_instructions",
         rf"\b{_IGNORE}\s+(?:{_WEAK_QUALIFIER}\s+)*{_STRONG_QUALIFIER}\s+(?:\w+\s+)?{_TARGET}\b",
-        # ignore all instructions. — a weak qualifier counts only at a clause end
+        ai=True,
+    ),
+    # ignore all instructions. — a weak qualifier counts only at a clause end
+    _directive(
+        "ignore_all_instructions",
         rf"\b{_IGNORE}\s+(?:{_WEAK_QUALIFIER}\s+)+{_TARGET}{_CLAUSE_END}",
-        # ignore the rubric / the reference answer
+        ai=True,
+    ),
+    # ignore the rubric / the reference answer
+    _directive(
+        "ignore_rubric",
         rf"\b{_IGNORE}\s+(?:(?:{_WEAK_QUALIFIER}|{_STRONG_QUALIFIER})\s+)*{_GRADER_NOUN}\b",
-        # disregard everything above
+    ),
+    # disregard everything above
+    _directive(
+        "disregard_above",
         rf"\b{_IGNORE}\s+(?:everything|anything|all|the\s+(?:text|lines|messages?))\s+"
         r"(?:(?:of\s+)?(?:the\s+)?)(?:above|before|previous(?:ly)?|prior)\b",
-        # you are now the grader / an unrestricted assistant — a grader or AI role,
-        # never "you are now a mail sorter" or "you are now going to divide"
+        ai=True,
+    ),
+    # you are now the grader / an unrestricted assistant — a grader or AI role,
+    # never "you are now a mail sorter" or "you are now going to divide"
+    _directive(
+        "you_are_now",
         r"\byou\s+are\s+(?:now|no\s+longer)\s+(?:(?:a|an|the|my|our|acting\s+as|playing)\s+)*"
         r"(?:(?:new|different|lenient|generous|nice|kind|helpful)\s+)*"
         r"(?:grader|examiner|marker|assistant|ai|chatbot|dan|unrestricted|unfiltered|jailbroken)\b",
-        rf"\b(?:act|behave|respond)\s+as\s+(?:(?:a|an|the)\s+)?{_GRADER_ROLE}\b",
-        # never "your new task is to call yourself" (a teachback analogy)
-        r"\byour\s+new\s+(?:role|instructions?|rules)\b",
-        # the system prompt, as a thing to act on
+        ai=True,
+    ),
+    _directive(
+        "act_as_grader", rf"\b(?:act|behave|respond)\s+as\s+(?:(?:a|an|the)\s+)?{_GRADER_ROLE}\b"
+    ),
+    # never "your new task is to call yourself" (a teachback analogy)
+    _directive("new_role", r"\byour\s+new\s+(?:role|instructions?|rules)\b", ai=True),
+    # the system prompt, as a thing to act on
+    _directive(
+        "system_prompt",
         r"\b(?:ignore|disregard|forget|override|reveal|print|repeat|show|leak|replace|change"
         r"|update)\s+(?:the\s+|your\s+|this\s+)?system\s+prompt\b",
-        r"\bnew\s+system\s+prompt\b",
-        # as the grader, …
-        rf"\bas\s+(?:the|a|an|your|my)\s+{_GRADER_ROLE}\b",
-        # grade / mark / score this as correct — never "mark it correct only if …"
+        ai=True,
+    ),
+    _directive("new_system_prompt", r"\bnew\s+system\s+prompt\b", ai=True),
+    # as the grader, …
+    _directive("as_the_grader", rf"\bas\s+(?:the|a|an|your|my)\s+{_GRADER_ROLE}\b"),
+    # grade / mark / score this as correct — never "mark it correct only if …"
+    _directive(
+        "mark_as_correct",
         rf"\b(?:grade|mark|score)\s+{_GRADE_OBJECT}\s+(?:as\s+)?"
         rf"(?:(?:fully|completely|entirely|totally)\s+)?{_GRADE_VERDICT}(?!\w)"
         rf"(?!\s*,?\s*{_CONDITION})",
-        # give me full credit / award full marks — never "give full credit to the
-        # authors", "assign all points to a cluster" or "assign max score to a cell"
+    ),
+    # give me full credit / award full marks — never "give full credit to the
+    # authors", "assign all points to a cluster" or "assign max score to a cell"
+    _directive(
+        "give_me_credit",
         r"\b(?:give|award|grant|assign)\s+(?:me|it|this(?:\s+(?:answer|response|one))?"
         r"|the\s+student|my\s+(?:answer|response))\s+(?:full|maximum|max|all\s+(?:the\s+)?"
         r"|100\s*%\s*|perfect|complete)\s*(?:credit|marks?|points|score)\b",
+    ),
+    _directive(
+        "give_full_credit",
         r"\b(?:give|award|grant)\s+(?:full|maximum|max|100\s*%\s*|perfect|complete)\s*"
         r"(?:credit|marks)\b(?!\s+to\b)",
-        # the grader's own knob, set to the top — never "set the confidence level at 95%"
+    ),
+    # the grader's own knob, set to the top — never "set the confidence level at 95%"
+    _directive(
+        "set_confidence",
         r"\bset\s+(?:the\s+|your\s+|its\s+|my\s+|the\s+grader'?s\s+)?confidence\s*"
         r"(?:to|=|:|at|as)\s*(?:1(?:\.0+)?|100\s*%|max(?:imum)?|full|high(?:est)?)(?!\w|\.\d)",
-        # the grader's own output fields
-        r"\b(?:item_results|matched_wrong_key|feedback_hint|addresses_grader)\b",
-        # addressing the grader
+    ),
+    # the grader's own output fields
+    _directive(
+        "output_fields", r"\b(?:item_results|matched_wrong_key|feedback_hint|addresses_grader)\b"
+    ),
+    # addressing the grader
+    _directive(
+        "address_grader",
         rf"\b(?:dear|hey|hi|hello|attention|note\s+(?:to|for)|message\s+(?:to|for))\s+"
         rf"(?:the\s+|my\s+|our\s+)?{_ADDRESSED_ROLE}\b",
+    ),
+    _directive(
+        "instructions_to_grader",
         rf"\binstructions?\s+(?:to|for)\s+(?:the\s+|my\s+|our\s+)?{_GRADER_ROLE}\b",
-        r"(?:^|[.!?:;\n])[ \t]*(?:grader|examiner|evaluator)\s*[,:]",
-        # "answer yes" addressed to the grader: for this answer or the rubric —
-        # never a decider's "if it accepts, output yes" or "answer yes to the prompt"
+    ),
+    _directive("grader_label", r"(?:^|[.!?:;\n])[ \t]*(?:grader|examiner|evaluator)\s*[,:]"),
+    # "answer yes" addressed to the grader: for this answer or the rubric —
+    # never a decider's "if it accepts, output yes" or "answer yes to the prompt"
+    _directive(
+        "answer_yes_for",
         rf"\b(?:answer|respond|reply|say)\s+(?:with\s+|only\s+)?[\"']?(?:yes|correct|pass)[\"']?"
         rf"\s+(?:for|to|on)\s+{_RUBRIC_OBJECT}(?!\w)",
-    )
+    ),
 )
 
 # ── role and format markers ───────────────────────────────────────────────────
-# A line-start rule reads horizontal whitespace only ([ \t]): every line break is
-# its own start (_fold maps each one to \n), so nothing is missed, and a flood of
-# blank lines cannot make the rule backtrack across them.
 
-_ROLE_MARKERS = tuple(
-    re.compile(p, re.M)
-    for p in (
-        r"<\|[a-z_]{2,32}\|>",  # chat-template tokens; never F#'s spaced `<| x |>`
-        r"\[/?inst\]",
-        r"<</?sys>>",
-        r"</?(?:start|end)_of_turn>",  # Gemma's turn tokens
-        r"^[ \t]*#{2,}\s*(?:system|instructions?|new\s+instructions?|grader|assistant|developer"
-        r"|response)\s*:?\s*$",
-        # a staff or grader note in brackets: "[Note from course staff: …]",
-        # "(Evaluator: …)", "[Teacher's note: …]" — never "(Teacher: why? …)"
-        r"[\[(]\s*(?:(?:a\s+)?note\s+(?:from|by)\s+(?:the\s+|your\s+|my\s+)?)?"
-        r"(?:(?:teaching|course)\s+staff|staff|instructor|professor|ta|grader|evaluator|examiner"
-        r"|marker|admin(?:istrator)?|moderator|platform|teacher(?=\s*'s\s+note))"
-        r"(?:\s*'s)?(?:\s+(?:note|comment|review|update|override|message))?\s*:",
-    )
-)
+
+def _marker(name: str, pattern: str, **kw) -> _Signal:
+    ai = kw.pop("ai", False)
+    return _Signal(name, "marker", _matches(pattern, flags=re.M, **kw), ai)
+
+
 # Fence-style tags. The grader message's own sections (`<student_answer>`,
 # `<rubric>`, `<grader>`) count open or closed; a generic role name counts only as
 # a closing tag with no matching opening one (`</system>` after the answer), since
@@ -374,15 +452,20 @@ def _tag_key(name: str) -> str:
     return "instructions" if key == "instruction" else key
 
 
-def _fence_markers(folded_text: str) -> int:
-    opened = Counter(_tag_key(n) for n in _FENCE_OPEN.findall(folded_text))
-    closed = Counter(_tag_key(n) for n in _FENCE_CLOSE.findall(folded_text))
-    return sum(
-        opened[name] + closed[name]
-        if name in _STRUCTURE_TAGS
-        else max(0, closed[name] - opened[name])
-        for name in opened.keys() | closed.keys()
-    )
+def _fence_counts(folded: _Folded) -> tuple[Counter, Counter]:
+    opened = Counter(_tag_key(n) for n in _FENCE_OPEN.findall(folded.text))
+    closed = Counter(_tag_key(n) for n in _FENCE_CLOSE.findall(folded.text))
+    return opened, closed
+
+
+def _structure_tags(folded: _Folded) -> int:
+    opened, closed = _fence_counts(folded)
+    return sum(opened[name] + closed[name] for name in _STRUCTURE_TAGS)
+
+
+def _unmatched_role_tags(folded: _Folded) -> int:
+    opened, closed = _fence_counts(folded)
+    return sum(max(0, closed[n] - opened[n]) for n in closed.keys() - _STRUCTURE_TAGS)
 
 
 # Read on the CASE-KEPT copy: capitals only, so "System: the gas" stays physics. The
@@ -397,21 +480,106 @@ _CAPS_ROLE_LABEL = re.compile(
 )
 # A physics or thermodynamics answer labels its SYSTEM next to its SURROUNDINGS.
 _CAPS_SYSTEM_COMPANION = re.compile(r"\b(?:SURROUNDINGS|ENVIRONMENT|BOUNDARY)\s*:")
-# Lines that forge the grader message's own structure, in the capitals it uses
-# (`RUBRIC ITEM r1:`, `REFERENCE ANSWER`, a fake `END OF STUDENT ANSWER` with a
-# `GRADING NOTE` after it) — never "Student answer: …" or "Rubric item 1 is about …".
-_CAPS_STRUCTURE_LINE = re.compile(
-    r"^[ \t*_#>]{0,8}(?:RUBRIC ITEM|REFERENCE ANSWER|COMMON WRONG REASON|STUDENT ANSWER"
-    r"|END OF (?:THE )?(?:STUDENT(?:'S)? )?(?:ANSWER|RESPONSE|SUBMISSION)"
-    r"|GRADING NOTE|GRADER(?:'S)? NOTE)\b",
-    re.M,
+
+
+def _caps_role_labels(folded: _Folded) -> int:
+    physics = _CAPS_SYSTEM_COMPANION.search(folded.cased) is not None
+    return sum(
+        not (physics and m["label"] == "SYSTEM") for m in _CAPS_ROLE_LABEL.finditer(folded.cased)
+    )
+
+
+# A line-start rule reads horizontal whitespace only ([ \t]): every line break is
+# its own start (_fold maps each one to \n), so nothing is missed, and a flood of
+# blank lines cannot make the rule backtrack across them.
+_MARKERS = (
+    _marker("chat_token", r"<\|[a-z_]{2,32}\|>", ai=True),  # never F#'s spaced `<| x |>`
+    _marker("inst_token", r"\[/?inst\]", ai=True),
+    _marker("sys_token", r"<</?sys>>", ai=True),
+    _marker("turn_token", r"</?(?:start|end)_of_turn>", ai=True),  # Gemma's turn tokens
+    _marker(
+        "instruction_header",
+        r"^[ \t]*#{2,}\s*(?:system|instructions?|new\s+instructions?|grader|assistant|developer"
+        r"|response)\s*:?\s*$",
+        ai=True,
+    ),
+    # a staff or grader note in brackets: "[Note from course staff: …]",
+    # "(Evaluator: …)", "[Teacher's note: …]" — never "(Teacher: why? …)"
+    _marker(
+        "staff_note",
+        r"[\[(]\s*(?:(?:a\s+)?note\s+(?:from|by)\s+(?:the\s+|your\s+|my\s+)?)?"
+        r"(?:(?:teaching|course)\s+staff|staff|instructor|professor|ta|grader|evaluator|examiner"
+        r"|marker|admin(?:istrator)?|moderator|platform|teacher(?=\s*'s\s+note))"
+        r"(?:\s*'s)?(?:\s+(?:note|comment|review|update|override|message))?\s*:",
+    ),
+    _Signal("structure_tag", "marker", _structure_tags),
+    _Signal("role_tag", "marker", _unmatched_role_tags, ai=True),
+    _Signal("caps_role_label", "marker", _caps_role_labels),
+    # Lines that forge the grader message's own structure, in the capitals it uses
+    # (`RUBRIC ITEM r1:`, `REFERENCE ANSWER`, a fake `END OF STUDENT ANSWER` with a
+    # `GRADING NOTE` after it) — never "Student answer: …" or "Rubric item 1 is about …".
+    _marker(
+        "caps_structure_line",
+        r"^[ \t*_#>]{0,8}(?:RUBRIC ITEM|REFERENCE ANSWER|COMMON WRONG REASON|STUDENT ANSWER"
+        r"|END OF (?:THE )?(?:STUDENT(?:'S)? )?(?:ANSWER|RESPONSE|SUBMISSION)"
+        r"|GRADING NOTE|GRADER(?:'S)? NOTE)\b",
+        cased=True,
+    ),
+)
+_SIGNALS = _DIRECTIVES + _MARKERS
+
+# ── the item's own text ───────────────────────────────────────────────────────
+# Rubric ids are internal and never shown to a student, so an id the item's own
+# student-facing text uses (R1 in a circuit, a relation, a reaction, a variable)
+# is a course entity: its verdicts are answers about it, never refused,
+# neutralised or counted by the belt. A rule the item's own text trips is course
+# vocabulary for that item, and an item about LLMs exempts every `ai` rule. The
+# rubric and common-wrong texts are the grader's instructions, never course text.
+
+_AI_TOPIC = re.compile(
+    r"\b(?:prompt[\s-]+injections?|jailbreak\w*|system\s+prompts?|(?:large\s+)?language\s+"
+    r"models?|llms?|chat\s*bots?|chat\s+templates?|guardrails?)\b"
 )
 
 
-def _caps_markers(cased: str) -> int:
-    physics = _CAPS_SYSTEM_COMPANION.search(cased) is not None
-    labels = sum(not (physics and m["label"] == "SYSTEM") for m in _CAPS_ROLE_LABEL.finditer(cased))
-    return labels + len(_CAPS_STRUCTURE_LINE.findall(cased))
+@dataclass(frozen=True)
+class _Vocabulary:
+    entities: frozenset[str] = frozenset()  # id spellings (separators dropped) the item uses
+    exempt: frozenset[str] = frozenset()  # signal names the item's own text trips
+
+
+def _spelling(raw_id: str) -> str:
+    return re.sub(r"[\s_-]+", "", raw_id)
+
+
+def _vocabulary(context: str, rubric_ids: tuple[str, ...]) -> _Vocabulary:
+    if not context:
+        return _Vocabulary()
+    folded = _fold(context)
+    ids = re.compile(rf"(?<!\w)(?:{_id_alternation(rubric_ids)})(?!\w)")
+    exempt = {s.name for s in _SIGNALS if s.count(folded)}
+    if _AI_TOPIC.search(folded.text):
+        exempt |= {s.name for s in _SIGNALS if s.ai}
+    return _Vocabulary(
+        frozenset(_spelling(m.group()) for m in ids.finditer(folded.text)), frozenset(exempt)
+    )
+
+
+def item_terms(item) -> dict:
+    """What the screen reads off an item: its rubric ids and its student-facing
+    text (question, reference answer, option texts) as `context`. `item` is a
+    CheckItem, the seam's GraderItem, or a dict with the same fields."""
+
+    def get(obj, name: str):
+        return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+
+    parts = [get(item, "prompt"), get(item, "reference_answer")]
+    parts += [get(o, "text") for o in get(item, "options") or []]
+    ids = tuple(str(get(r, "id")) for r in get(item, "rubric") or [] if get(r, "id"))
+    return {
+        "rubric_ids": ids,
+        "context": "\n".join(p for p in parts if isinstance(p, str) and p),
+    }
 
 
 # ── public API ────────────────────────────────────────────────────────────────
@@ -443,24 +611,30 @@ def _folds(text: str) -> tuple[_Folded, _Folded]:
     return _fold(text), _fold(text, spaced=True)
 
 
-def _screen_fold(folded: _Folded, rubric_ids: tuple[str, ...]) -> Screen:
-    verdicts = list(_verdict_pattern(rubric_ids).finditer(folded.text))
+def _verdicts(folded: _Folded, pattern: re.Pattern[str], vocab: _Vocabulary) -> list:
+    """The verdict-token matches in one fold, minus those naming a course entity."""
+    return [m for m in pattern.finditer(folded.text) if _spelling(m["id"]) not in vocab.entities]
+
+
+def _screen_fold(folded: _Folded, rubric_ids: tuple[str, ...], vocab: _Vocabulary) -> Screen:
+    verdicts = _verdicts(folded, _verdict_pattern(rubric_ids), vocab)
+    live = [s for s in _SIGNALS if s.name not in vocab.exempt]
     return Screen(
-        directives=sum(len(p.findall(folded.text)) for p in _DIRECTIVES),
-        role_markers=sum(len(p.findall(folded.text)) for p in _ROLE_MARKERS)
-        + _fence_markers(folded.text)
-        + _caps_markers(folded.cased),
+        directives=sum(s.count(folded) for s in live if s.kind == "directive"),
+        role_markers=sum(s.count(folded) for s in live if s.kind == "marker"),
         verdict_tokens=len(verdicts),
         verdict_attack=_verdict_attack(verdicts, rubric_ids),
     )
 
 
-def screen(text: str, *, rubric_ids: Iterable[str] = ()) -> Screen:
+def screen(text: str, *, rubric_ids: Iterable[str] = (), context: str = "") -> Screen:
     """Count the grader-directed signals in `text` (the whole submission as the
-    grader would see it). `rubric_ids` are this item's ids. Each count is the
-    larger of the two folds' (see _INVISIBLE)."""
+    grader would see it). `rubric_ids` are this item's ids and `context` its
+    student-facing text (`item_terms`). Each count is the larger of the two
+    folds' (see _INVISIBLE)."""
     ids = tuple(rubric_ids)
-    a, b = (_screen_fold(f, ids) for f in _folds(text))
+    vocab = _vocabulary(context, ids)
+    a, b = (_screen_fold(f, ids, vocab) for f in _folds(text))
     return Screen(
         directives=max(a.directives, b.directives),
         role_markers=max(a.role_markers, b.role_markers),
@@ -469,15 +643,16 @@ def screen(text: str, *, rubric_ids: Iterable[str] = ()) -> Screen:
     )
 
 
-def neutralise(text: str, *, rubric_ids: Iterable[str] = ()) -> str:
+def neutralise(text: str, *, rubric_ids: Iterable[str] = (), context: str = "") -> str:
     """`text` with every verdict token (found in either fold) replaced by
-    NEUTRALISED; every other character is the student's own (the original,
-    never the detection copy)."""
-    verdicts = _verdict_pattern(rubric_ids)
+    NEUTRALISED, except one naming a course entity; every other character is the
+    student's own (the original, never the detection copy)."""
+    ids = tuple(rubric_ids)
+    pattern, vocab = _verdict_pattern(ids), _vocabulary(context, ids)
     spans = sorted(
         (folded.origin[m.start()], folded.origin[m.end() - 1] + 1)
         for folded in _folds(text)
-        for m in verdicts.finditer(folded.text)
+        for m in _verdicts(folded, pattern, vocab)
         if m.end() > m.start()
     )
     if not spans:
@@ -492,20 +667,25 @@ def neutralise(text: str, *, rubric_ids: Iterable[str] = ()) -> str:
     return "".join(out)
 
 
-def verdict_share(text: str, *, rubric_ids: Iterable[str] = ()) -> float:
+def verdict_share(text: str, *, rubric_ids: Iterable[str] = (), context: str = "") -> float:
     """The share of `text`'s words that are rubric ids or verdict words, when at
     least one id is directly followed by a verdict word and none by a negative
     one; else 0.0 (the larger of the two folds'). A bare "yes", an answer that
-    names R1 and R2 as resistors, and "R1 no, R2 yes" score 0.0."""
-    return max(_verdict_share(folded.text, rubric_ids) for folded in _folds(text))
+    names R1 and R2 as resistors, "R1 no, R2 yes", and ids the item's own text
+    uses (course entities) score 0.0."""
+    ids = tuple(rubric_ids)
+    vocab = _vocabulary(context, ids)
+    return max(_verdict_share(folded.text, ids, vocab) for folded in _folds(text))
 
 
-def _verdict_share(folded_text: str, rubric_ids: Iterable[str]) -> float:
+def _verdict_share(folded_text: str, rubric_ids: tuple[str, ...], vocab: _Vocabulary) -> float:
     words = _WORD.findall(folded_text)
     own = {normalise(rid).strip() for rid in rubric_ids}
 
     def is_id(word: str) -> bool:
-        return word in own or bool(_GENERIC_ID_TOKEN.fullmatch(word))
+        return (word in own or bool(_GENERIC_ID_TOKEN.fullmatch(word))) and (
+            _spelling(word) not in vocab.entities
+        )
 
     pairs = [(a, b) for a, b in zip(words, words[1:]) if is_id(a)]
     # A negative verdict next to an id ("R1 no, R2 yes") is an answer about R1 and

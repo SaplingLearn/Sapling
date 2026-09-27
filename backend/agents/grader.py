@@ -206,7 +206,8 @@ def build_grader_message(item, *, format: str, student_answer: str) -> str:
     structure above it; the single unquoted `_ANSWER_END` line closes it (A33).
     Verdict tokens in it (`r1:yes`, `{"r2": true}`) are replaced by
     answer_guard.NEUTRALISED (A33), so the grader never reads one as a verdict
-    even when a caller skipped grade()'s screen."""
+    even when a caller skipped grade()'s screen — except an id the item's own
+    text uses (R1 in a circuit question), which is the student's answer."""
     lines = [
         "QUESTION:",
         item.prompt,
@@ -221,7 +222,7 @@ def build_grader_message(item, *, format: str, student_answer: str) -> str:
     for w in item.common_wrong:
         lines.append(f"COMMON WRONG REASON {w.key}: {w.text}")
     lines += ["", f"FORMAT: {format}", _ANSWER_HEADER]
-    answer = answer_guard.neutralise(student_answer, rubric_ids=[r.id for r in item.rubric])
+    answer = answer_guard.neutralise(student_answer, **answer_guard.item_terms(item))
     lines += [_ANSWER_QUOTE + line for line in answer.splitlines() or [""]]
     lines.append(_ANSWER_END)
     return "\n".join(lines)
@@ -370,7 +371,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         )
         return GradeResult(unavailable=True)
     rubric_ids = [r.id for r in item.rubric]
-    screen = answer_guard.screen(student_answer, rubric_ids=rubric_ids)
+    terms = answer_guard.item_terms(item)  # its ids and its own text (course vocabulary)
+    screen = answer_guard.screen(student_answer, **terms)
     if screen.refusal is not None:  # A33: never sent, never billed, never credited
         return _refuse(
             item,
@@ -409,8 +411,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     results = parse_item_results(out.item_results, rubric_ids)
     all_yes = bool(results) and all(results.values())
     if all_yes and (
-        answer_guard.verdict_share(student_answer, rubric_ids=rubric_ids)
-        >= GRADER_GUARD_VERDICT_SHARE
+        answer_guard.verdict_share(student_answer, **terms) >= GRADER_GUARD_VERDICT_SHARE
     ):  # A33 belt: text that is mostly ids and verdicts, judged all-yes, is never credited
         return _refuse(
             item,
