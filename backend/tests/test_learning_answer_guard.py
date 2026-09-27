@@ -1090,6 +1090,44 @@ def test_labels_are_never_logged_or_sent_in_an_event(monkeypatch, events, caplog
     assert not any(label in blob for label in drawn[0].values())
 
 
+def test_grader_spans_carry_no_labels_and_no_student_text(monkeypatch, events):
+    """Memory only, Logfire included. main.py scrubs prompt/message attributes
+    with a callback, but logfire lists pydantic-ai's message attributes
+    (gen_ai.input/output.messages, pydantic_ai.all_messages) as safe keys the
+    callback never sees, and `final_result` matches no pattern: the decrypted
+    question, reference, rubric texts under their labels, the student's answer
+    and item_results left the process whenever LOGFIRE_TOKEN was set (red team
+    round 3). The grader's spans keep their timing and usage, never content."""
+    import logfire
+    from logfire.testing import SimpleSpanProcessor, TestExporter
+    from pydantic_ai import Agent
+
+    import agents.grader as g
+    from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
+
+    monkeypatch.setattr(Agent, "_instrument_default", Agent._instrument_default)
+    exporter = TestExporter()
+    logfire.configure(
+        send_to_logfire=False,
+        console=False,
+        scrubbing=logfire.ScrubbingOptions(callback=scrub_value, extra_patterns=list(EXTRA_PATTERNS)),
+        additional_span_processors=[SimpleSpanProcessor(exporter)],
+    )
+    logfire.instrument_pydantic_ai()
+    drawn = []
+    real = g.rubric_labels
+    monkeypatch.setattr(g, "rubric_labels", lambda *a, **kw: drawn.append(real(*a, **kw)) or drawn[-1])
+    answer = "The base case is WHAT_THE_STUDENT_WROTE; it stops the calls."
+    res, _ = _grade_with(monkeypatch, [_all_yes(0.95)], answer=answer)
+    assert res.refused is None and drawn
+    logfire.force_flush()
+    spans = exporter.exported_spans_as_dict()
+    assert any("grader" in json.dumps(s["attributes"]) for s in spans), "no grader span"
+    blob = json.dumps(spans)
+    for secret in (*drawn[0].values(), "WHAT_THE_STUDENT_WROTE", "names the base case"):
+        assert secret not in blob, secret
+
+
 # ── grade(): the production grading path ─────────────────────────────────────
 
 

@@ -45,8 +45,10 @@ import httpx
 from google.genai.types import ThinkingConfig
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.models.google import GoogleModelSettings
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS
@@ -195,6 +197,11 @@ grader_agent = Agent[SaplingDeps, GraderOutput](
     retries=2,  # #153 output-validation budget; tool-less so retries= is that budget
     system_prompt=_SYSTEM_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "grader"},
+    # Spans keep timing and usage, never content (A33): the message holds the
+    # decrypted item, the student's answer and this call's rubric labels, and
+    # logfire exempts pydantic-ai's message attributes and `final_result` from
+    # main.py's scrubber. An agent's own Instrumentation replaces the global one.
+    capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
 )
 
 
