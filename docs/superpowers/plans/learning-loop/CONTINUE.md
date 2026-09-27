@@ -1,137 +1,226 @@
-# Continuing the learning-loop build
+# Learning loop: handover
 
-Handover note for whoever picks up the learning-loop series. Written 2026-09-27 at about 16:45 ET. Read this first, then `README.md` in this folder, then `LEDGER.md`.
+**For:** Andres. **Written:** 2026-09-27, 17:40 ET. **Updated:** whenever the build hands more work over.
 
-The goal of the series: the learning loop (spec `docs/superpowers/specs/2026-09-26-learning-loop-design.md`) becomes the default learning system for every student, with no opt-in. `LEARNING_LOOP_ENABLED=false` stays as the kill switch.
+**Goal:** the learning loop becomes the default learning system for every student, with no opt-in. `LEARNING_LOOP_ENABLED=false` stays as the kill switch.
 
-## Where things stand
+**Sources:**
+- Spec: `docs/superpowers/specs/2026-09-26-learning-loop-design.md`. Its §13 amendments (A1–A37) win over everything else.
+- Status: `LEDGER.md` in this folder. A package's state is its **latest** row.
 
-**Integration branch:** `feat/learning-loop`, which is PR #673. Every finished package is merged into it, and CI is green on it.
+This note has four parts:
+1. what is done;
+2. what is being worked on right now (**do not start these**);
+3. what is handed to you: open work nobody is doing;
+4. what to do if the running build stops.
 
-| Package | State |
-|---|---|
-| 00 foundation, 01 bkt-core, 02 fsrs-core, 03 evidence-state | merged, verified (incl. migration replay + E2E on a local stack) |
-| 11 quiz-flashcards (built early, after 03) | merged, verified |
-| 04 check-items, 05 grader-check-tool, 05b decision-seam | merged, verified |
-| 06 zpd-policy | merged, verified (8 review rounds; see "Decisions already made") |
-| 06b ai-budget-and-usage | built on `feat/learning-loop-06b-ai-budget-and-usage` (pushed); was in review when this note was written — check the LEDGER for a later row |
-| 07, 08, 09, 10, 12, 13, 14 | not started |
+---
 
-A package's current status is its **latest** row in `LEDGER.md`.
+## 1. Done
 
-### In-flight fixes (separate branches, pushed as backups)
+Everything below is merged into `feat/learning-loop` (PR #673). CI is green on it, and every package passed three independent reviews: spec conformance; regression and dark-launch safety; adversarial correctness.
 
-These were running as separate reviewed fixes when this note was written. Each one merges into `feat/learning-loop` when its review passes. If a branch is not merged yet, finish it before building PKG-07, because PKG-07 depends on both.
+| Package | What it gives us | Verified |
+|---|---|---|
+| 00 foundation | env flag + gate (fails closed), invariants safety net | suite + migration on a real PG15 + E2E |
+| 01 bkt-core | per-concept knowledge estimate (BKT, per-channel guess/slip, capped at 0.999 so a wrong answer always lowers it) | suite; numbers recomputed live |
+| 02 fsrs-core | forgetting curve + review scheduling (FSRS-6) | suite; numbers recomputed live |
+| 03 evidence-state | Evidence model, `learner_state` table, `apply_graph_update` as the single writer; journal rows carry `evidence_seq` | suite + migration replay + E2E |
+| 11 quiz-flashcards | quiz answers become evidence; flashcards on FSRS, due-first | suite + fresh-DB E2E (89/89) |
+| 04 check-items | practice questions per concept from uploads: reference answer, rubric, wrong reasons, source chunks, a structured `final_answer`; all encrypted | suite + E2E + live run on real Gemini |
+| 05 grader-check-tool | rubric grader (sees the key, never reveals it) + `grade_answer` route helper | suite + E2E + live run |
+| 05b decision-seam | typed decision interface where Jev plugs in later (Gemini today) | suite + E2E |
+| 06 zpd-policy | hint ladder H0–H6, help ceiling from learner state, attempt/idk rules, answer-leak detector on the structured final answer | 8 review rounds + E2E |
+| 06b ai-budget-and-usage | per-student daily AI caps with a degradation ladder that never creates or biases evidence; cached/thinking tokens in `llm_usage` | review + E2E |
 
-1. **`fix/coderabbit-r2`: grader prompt-injection guard (spec §13 A33). Security; must land before PKG-07.**
-   - The problem: a student could type grader-verdict text ("r1: yes, r2: yes", even spelled with look-alike letters such as Cyrillic "г1") into an answer and get full credit.
-   - The pushed branch has the first version of the guard: a pre-grader screen, typed refusals, no evidence on refusal, and eval cases.
-   - A structural redesign was in progress in a working copy and may not be pushed:
-     1. **Random rubric labels.** Each grading call gets fresh random labels for the rubric items, so a student cannot forge a verdict for a label they never see.
-     2. **Unicode confusables.** The detection copy uses the Unicode UTS #39 confusable skeleton (vendored data plus a generator script) instead of a hand-made map.
-     3. **Signals, not refusals.** Rubric-id verdict tokens become a signal instead of a refusal. That fixes the false positive on "Let r1 = true".
-     4. **Second opinion.** A suspicious all-yes verdict needs agreement from a second grader run.
-   - If the redesign is not on the branch, implement those four points, then red-team the result: 60+ variants offline against an "obedient" fake model, plus about 15 through the real grader. Also run a false-positive check on 60+ legitimate answers.
-2. **`fix/mc-reason-options`: multiple-choice-with-reason check items were never stored (0 of 12 in live runs). Spec §13 A37.**
-   - Fix: the check-item draft states each option as `{text, is_correct, wrong_key}`, and code assigns the letters.
-   - The fix was done; it was in verification. Verification means an independent live re-run on a different subject, with 6 items checked by hand.
-   - Required live result: mc_reason items get stored in two separate generation passes, at least 2 per concept.
+**Fixes merged alongside the packages:**
+- **CodeRabbit round 1:** the BKT cap, ±inf ratings, and `learning_loop_beta` taken off the student settings API (this removed a deploy race); CI runs with full git history so the migration-immutability check actually runs.
+- **CodeRabbit round 2:** a failed source re-check now counts its batch as unavailable; single import style in tests; doc corrections.
+- **Test-suite speed:** a gradescope test drove a real browser against BU SSO, which made the local suite 394 s. It's stubbed now; the suite takes about 20 s.
+- **Cost:** with the loop on, graded answers no longer regenerate the class summary on gemini-2.5-flash. That was 84% of the spend in the live test. Spec A35.
+- **Replay order:** evidence journal rows record the order they were applied in. Spec A36.
 
-### Findings still open
+**Design and docs, all in the PR:**
+- the spec, with amendments A14 (default-on) and A15–A26 (cost plan, ≈ $0.36 per student-month);
+- 17 package prompts, the ledger and the hand-offs;
+- the research reports in `docs/research/learning-loop/`.
 
-- The rich E2E seed has no `course_chunks` and no `user_settings` rows. PKG-13's loop journeys need both, so seed them there.
-- `make explore` / `scripts/explore.sh` does not work on macOS as written: `sleep infinity` is not supported, and `localhost:3000` is hard-coded.
-- `e2e/gradebook.spec.ts:35` fails some of the time on fast Macs, because of a term-chip race in `Landing.tsx`. It passes in CI and predates the series. Treat it as pre-existing; don't let it block a package.
+**Live sequence test, 2026-09-27 (real Gemini, local stack).**
+- It ran: gate → question generation → correct, wrong and "idk" answers → injection attempt → forgetting at +1/+7/+30 days → quiz evidence → flashcards → cost. A second agent recomputed every number from the spec equations, and all of them matched.
+- The whole run cost $0.029. One grade costs about $0.00014.
 
-## Rules for the rest of the build
+**Migrations in the PR (9):** `20260926231744_learning_loop_beta`, `20260927024349_learning_learner_state`, `20260927035346_learning_flashcards_fsrs`, `20260927065932_learning_check_items`, `20260927093149_learning_grader_backend`, `20260927093843_learning_session_loop_state`, `20260927165158_learning_check_items_final_answer`, `20260927182054_learning_mastery_event_seq`, `20260927194913_learning_llm_usage_tokens`. All of them replay from an empty DB on the local stack. None has been applied to staging or production.
 
-These are the owner's rules. Do not relax them.
+---
 
-- **No accepted gaps.** If review keeps finding edge cases in a heuristic, replace the heuristic with a structured source of truth, record it as a spec §13 amendment, and review again. PKG-06's final-answer and the grader labels are the two examples. Do not lower the review bar, and do not merge with open critical or major findings.
-- **Precedence:** spec §13 (A1–A37) beats the actual symbols in earlier HANDOFF files and the code on disk, which beat the prompt text. Record every adaptation as a Deviation.
-- **Every package:**
-  1. Test-first.
-  2. `ruff check .`, the invariants module and the full backend suite pass. The suite takes about 20 s now.
-  3. Frontend checks (`npm run typecheck && npm run lint && npm test`) when `frontend/` changes.
-  4. One E2E cycle (Playwright journeys plus `python -m e2e_oracles`) on a fresh database when the package touches routes, agents, migrations or UI.
-  5. Evals re-recorded for that package's own dataset only, with ≤ 8 cases.
-- **Review each package with three independent reviewers before merging:**
-  - **Conformance:** checks the package against the prompt and the spec.
-  - **Regression, scope and dark-launch safety:** with `LEARNING_LOOP_ENABLED` unset, nothing changes for students.
-  - **Adversarial correctness:** maths, answer leaks, privacy, the single-writer rule, and cost routing.
-  - Fix what they confirm, test-first, then re-review.
-- **Secrets:** never commit `.env`. Before every commit, `git diff --cached | grep -cE "AIza[S]y|GOC[S]PX"` must print 0.
-- **Commit trailer:** use your own configured `Co-Authored-By` line.
+## 2. Being worked on right now: do not start these
 
-## How to build the next package
+Automated runs on the build machine own these three. Each one merges into `feat/learning-loop` itself when its review passes.
 
-Order (spec §14): **06b → 07 → 08 → 09 → 10 → 12 → 13 → 14.**
+| Work | Branch | Owner right now |
+|---|---|---|
+| **Build of PKG-07 → 08 → 09 → 10, 12, 13, 14**, then a final launch check (both E2E lanes) | lanes `feat/learning-loop-NN-<slug>`, merged one by one into `feat/learning-loop` | build workflow (per package: implement → 3 reviewers → fix → E2E gate → merge + push) |
+| **Grader prompt-injection guard, structural version** (spec A33) | `fix/coderabbit-r2` (backup pushed) | security workflow |
+| **mc_reason check items stored with structured options** (spec A37) | `fix/mc-reason-options` (backup pushed) | fix workflow |
 
-- **12** only needs 05, 06b, 07 and 11, so it can run next to 08–10 in its own worktree.
-- **13** needs 08, 09, 10 and 12.
-- **14** needs everything.
+**Grader guard, what's changing:**
+- random rubric labels on each grading call;
+- a vendored Unicode UTS #39 confusables table;
+- rubric-id verdict tokens become a signal instead of a refusal;
+- a second grader opinion on a suspicious all-yes verdict;
+- then a 60+ variant red team and a false-positive check.
 
-For each package:
+**mc_reason, why and what:**
+- Why: 0 of 12 were being stored, because the model broke the "correct option has an empty wrong key" convention.
+- Now: options are `{text, is_correct, wrong_key}` objects, and code assigns the letters.
+- It needs a live yield check before it merges.
 
-1. Cut a branch from the integration branch:
+**How to tell when these are done:**
+- a `NN | verified` row in `LEDGER.md`;
+- merge commits on `feat/learning-loop` ("Merge PKG-NN …", "Merge … fix/…").
+
+Please don't push to the lane or fix branches while these runs are active.
+
+---
+
+## 3. Handed to you: open work nobody is doing
+
+In priority order.
+
+### 3.1 Staging and production setup for the loop (owner ops)
+
+1. **Staging auto-migrate.** `.github/workflows/migrate-staging.yml` only runs when the `STAGING_SUPABASE_DB_URL` secret is set (feed #71). Check it's set before PR #673 merges, because the 9 learning migrations above apply on merge. If it isn't set, run by hand: `dotenv -f .env.staging run -- python -m db.migrate`.
+2. **Staging env (spec §7 table, A14).**
+   - Set `LEARNING_LOOP_ENABLED=true` on staging once PKG-07 is merged.
+   - Turn the loop on for staff/QA accounts only, by SQL: `update user_settings set learning_loop_beta = true where user_id in (…)`. Upsert the row if it's missing. There is no API or UI for this, by design (A31).
+   - Note: with the flag on, every staging upload drafts check items.
+3. **Production.** Leave `LEARNING_LOOP_ENABLED` unset during the build. **Pin it to `false` before PR #673 merges** (§11.7 step 1). The first `make promote` after PKG-14 half B ships the ungated changes to every production student, whatever the pin says; read the §11.7 opening paragraph before you promote.
+4. **Platform budget alert.** Choose the production `PLATFORM_DAILY_BUDGET_USD`. Then confirm on staging that an `ai.budget_capped{scope: platform}` event reaches you (§11.1 item 4).
+
+### 3.2 Confirm the real AI bill (cost plan check)
+
+Run the `llm_usage` cost rollup on staging and on production. Use the admin analytics page (`/api/admin/analytics`) or SQL grouped by `task` and model, before and after the loop is enabled for staff. Compare against the plan: about $0.36 per student-month, and about $0.00014 per grade.
+
+- **Before the fix:** the class-summary regeneration was the dominant cost. With the loop off, legacy behaviour is unchanged, so check how much it costs today.
+- **Check these tasks:** confirm the new `llm_usage` columns (`cached_tokens`, `thinking_tokens`) fill in. Confirm the tier slots appear by name in `task`.
+
+### 3.3 Pre-existing bug: gradebook term chip race
+
+`frontend/e2e/gradebook.spec.ts:35` fails on fast machines. It passes in CI.
+
+- **Cause** (`Landing.tsx`): the demo term chips render while `userId` is still `''`. A click on "Fall 2025" is then undone when the terms load and call `setSelected(currentTerm)`, back to Spring 2026.
+- **Fix:** don't let the terms load overwrite a selection the user already made, or don't render clickable chips until the terms have loaded. Add a regression journey (`docs/e2e-exploration.md` §7–§8).
+- This isn't part of the learning loop, but it makes local E2E runs noisy.
+
+### 3.4 Local tooling on macOS
+
+- `make explore` / `scripts/explore.sh` don't work on macOS: the lock holder runs `sleep infinity`, which macOS rejects, and `mint_storage_state` hard-codes `localhost:3000`.
+- `tools/e2e-env.macos.sh` is the working macOS setup used for this series: Colima, Supabase CLI 2.116.0, bash 5, and shims for `flock`, `setsid`, and uvicorn port 5000 held by AirPlay. Worth folding into `docs/local-supabase.md` and the scripts properly.
+
+### 3.5 Decide: decisions-eval injection baseline
+
+`tests/evals/decisions.py` measures the raw model and keeps `InjectionHeld` at 0.750. The served grading path is gated at 1.0 in the grader eval. This is on purpose: it's the baseline a future Jev backend (PKG-15) is compared against.
+
+**Decide:** keep the raw-model baseline, or route the decisions eval's grading rows through `grade()` and re-record the cassettes.
+
+### 3.6 PKG-15: Jev backend (post-series)
+
+The decision seam (PKG-05b) is ready. Jev can't be built until:
+1. there's a Typesafe contract or early-access key;
+2. the A24 privacy gate is passed. Zero data retention is enterprise-only, and the under-18 terms matter because student text would be sent.
+
+Owner and legal work first. The prompt shape is in spec A24/§14; research is in the cost/Jev report.
+
+### 3.7 Canopy prompt library is stale
+
+The 30 `learning-loop-pkg-NN-*` prompts in Canopy's Prompt Library are from before the 2026-09-27 amendments (A14–A37) and the two new packages (05b, 06b). The repo files in this folder are the current ones. Re-sync the library from the repo, or retire it.
+
+### 3.8 Human review of PR #673
+
+The PR is large: about 166 files. CodeRabbit **paused** its reviews while the branch was changing fast.
+
+- **Start now** with the merged packages: 00–06b and 11. Go commit by commit in package order; each fix is its own `fix(learning-loop): PKG-NN — …` commit.
+- **After the build finishes:** post `@coderabbitai review` and triage its findings the same way (root-cause fixes, no accepted gaps).
+
+---
+
+## 4. If the running build stops
+
+If the automated build stops before PKG-14 is merged (for example, the build machine's session ends), the remaining packages become yours.
+
+1. Find the first package whose latest LEDGER row is not `verified`.
+2. Check for pushed work on its lane branch `feat/learning-loop-NN-<slug>`.
+3. For `fix/coderabbit-r2` or `fix/mc-reason-options`, if unmerged, finish them first. PKG-07 depends on both.
+
+**Order** (spec §14): 07 → 08 → 09 → 10 → 12 → 13 → 14.
+- 12 needs 05, 06b, 07 and 11, so it can run in parallel with 08–10.
+- 13 needs 08, 09, 10 and 12. 14 needs everything.
+
+**Per package:**
+1. Create the lane:
    ```
    git fetch origin
    git worktree add -b feat/learning-loop-NN-<slug> ../ll-NN origin/feat/learning-loop
    ```
-2. Open a fresh Claude Code session in that worktree. Paste the whole `PKG-NN-<slug>.md` file, followed by the **session overrides** below and any **package notes** for that package.
-3. When the package is done and reviewed, run its E2E cycle.
-4. Merge it into `feat/learning-loop`:
+2. Open a fresh Claude Code session in that worktree.
+3. Paste the whole `PKG-NN-<slug>.md`, followed by the session overrides and the package notes below.
+4. Before merging:
+   - three independent reviews;
+   - fixes test-first;
+   - one E2E cycle on a fresh DB.
+5. Merge:
    ```
    git merge --no-ff feat/learning-loop-NN-<slug>
    ```
-   Resolve LEDGER/HANDOFF conflicts as an ordered union that keeps every row. Keep both sides of any code conflict.
-5. Re-run the full suite, push `feat/learning-loop`, and append a `NN | verified` ledger row.
+   For LEDGER/HANDOFF conflicts, keep every row, in order. For code conflicts, keep both sides.
+6. Run the full suite, push `feat/learning-loop`, and append a `NN | verified` ledger row.
 
 ### Session overrides (paste after the prompt)
 
 ```
 SESSION OVERRIDES (these beat the prompt file and the README):
 1. Branch: you are on feat/learning-loop-NN-<slug>, cut from feat/learning-loop (PR #673), which already has every earlier package. Where the prompt says "branch from main" or "open a PR", read "feat/learning-loop" and "PR #673". Do not push or merge; the last step is the hand-off + ledger commit.
-2. Tests: cd backend && venv/bin/python -m pytest tests/ -q -p no:cacheprovider --ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py → 0 failures. Run targeted tests + tests/test_learning_loop_invariants.py + ruff after every task.
+2. Tests: cd backend && venv/bin/python -m pytest tests/ -q -p no:cacheprovider --ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py → 0 failures. Run targeted tests + tests/test_learning_loop_invariants.py + ruff after every task. Frontend: npm run typecheck && npm run lint && npm test when frontend/ changes.
 3. Secrets: never print or commit .env values; git diff --cached | grep -cE "AIza[S]y|GOC[S]PX" must be 0 before every commit; stage explicit paths only.
-4. E2E: run one whole cycle (e2e-up → playwright → oracles → e2e-down) under the machine lock when the prompt's self-check needs it; replay migrations from an empty DB when the package adds one.
-5. Evals: only for this package's own dataset, ≤ 8 cases, real GEMINI_API_KEY; never re-record another dataset.
+4. E2E: one whole cycle (e2e-up → playwright → oracles → e2e-down) under the machine lock when the prompt's self-check needs it; replay migrations from an empty DB when the package adds one.
+5. Evals: only this package's own dataset, ≤ 8 cases, real GEMINI_API_KEY; never re-record another dataset.
 6. Precedence: spec §13 (A1–A37) > earlier HANDOFF files and the code on disk > this prompt. Record every adaptation as a Deviation. A package's ledger state is its LATEST row.
 7. Scope: only this package's Files lists, LEDGER.md, HANDOFF-NN.md, and earlier-package reopens per the README protocol.
 8. No accepted gaps: if a rule keeps failing review on edge cases, replace it with structured data and a §13 row; never merge with open critical/major findings.
 ```
 
-### Package notes (decisions already made; add them to the relevant session)
+### Package notes: decisions already made
 
-- **PKG-07:**
-  - `gates.is_genuine_attempt`'s `matched_non_attempt` argument is `gates.has_non_attempt_phrase(text)`, never `matches_non_attempt`. `non_attempt_phrases` is only for grade-or-idk routing of explicit submissions (A16).
-  - `leak.detect_leak` / `strip_leak` take the active item's decrypted `final_answer` (required) and `canonical_answer` (when present) as keywords (A34). Never derive a final answer from reference text.
-  - `/check/answer` handles the grader guard's refused result as: no credit, no evidence, not a genuine attempt, and a "please answer in your own words" reply (A33).
-- **PKG-12:** it can be built next to 08–10. Build it only against what PKG-07 and PKG-11 shipped.
-- **PKG-13:**
-  - Build the loop UI (Learn + Study) to the spec §11.3 launch-readiness bar.
-  - Add Playwright journeys that assert database state.
-  - Seed `course_chunks` and a staff `learning_loop_beta` row for the loop journeys.
-- **PKG-14:**
-  - The owner gave the go-ahead to make the loop the default. Do half A, then half B, in the same run. Commit half B after every half A commit, so it can be reverted on its own.
-  - Verify both E2E lanes locally: the default lane, with no opt-in, and the kill-switch lane, with `LEARNING_LOOP_ENABLED=false`.
-  - Owner-only steps: staging smoke, staging kill-switch drill, pinning production `LEARNING_LOOP_ENABLED=false` **before PR #673 merges**, the production backfill, `make promote`, and cost approval (spec §11.7). List them as unchecked in HANDOFF-14; never run them from a build session.
-  - Do not add `loop_arm` to the student settings API (same reason as A31).
+**PKG-07:**
+- `gates.is_genuine_attempt(matched_non_attempt=gates.has_non_attempt_phrase(text))` — never `matches_non_attempt`. `non_attempt_phrases` is only for grade-or-idk routing of explicit submissions (A16).
+- `leak.detect_leak` / `strip_leak` take the item's decrypted `final_answer` (required) and `canonical_answer` (when present) as keyword arguments (A34). Never derive a final answer from reference text.
+- `/check/answer` handles a grader-guard refusal as: no credit, no evidence, not a genuine attempt, and a "please answer in your own words" reply (A33).
 
-## Local E2E stack
+**PKG-12:** build it only against what PKG-07 and PKG-11 shipped.
 
-- **Linux (Podman):** follow `docs/local-supabase.md`. Then `make e2e-up`, `cd frontend && npx playwright test`, `cd backend && venv/bin/python -m e2e_oracles`, `make e2e-down`, all inside one `flock` on `/tmp/claude-$(id -u)/sapling-e2e-stack.lock`.
-- **macOS without Docker Desktop:** `tools/e2e-env.macos.sh` is the setup used for this series. It uses Colima, the docker CLI, Supabase CLI 2.116.0, bash 5, and Python shims for `flock` and `setsid`, all installed under `~/.local/opt`. It provides `e2e_cycle <worktree> [playwright args]`, which runs one whole cycle inside the lock. Its header comments list the macOS gotchas:
-  - macOS's `/bin/bash` 3.2 cannot run the stack scripts.
-  - AirPlay Receiver holds port 5000.
-  - Port 3000 is often taken by another project.
-- **Optional automation:** `tools/build-dag.workflow.js` is the Claude Code Workflow script that built packages 04–06 (per package: implement, three-lens review, fix rounds, E2E gate, merge, push). It needs Workflow tool access; set `repo`, `scratch` and `integration_worktree` in its args.
+**PKG-13:**
+- Build the loop UI (Learn + Study) to the spec §11.3 bar.
+- Write Playwright journeys that assert database state.
+- The rich seed has **no `course_chunks` and no `user_settings` rows**, so seed both for the loop journeys: a staff `learning_loop_beta` row and indexed chunks.
 
-## Owner launch steps (spec §11.7), after PKG-14 merges into the PR
+**PKG-14:**
+- The owner's go-ahead to make the loop the default is given. Do half A, then half B, in the same run. Half B's commits come after every half A commit, so half B can be reverted on its own.
+- Verify both E2E lanes locally:
+  - the default lane, with no opt-in;
+  - the kill-switch lane, with `LEARNING_LOOP_ENABLED=false`.
+- The staging, production and cost-approval steps are the owner's (§11.7, and 3.1 above). List them unchecked in HANDOFF-14.
+- Do not add `loop_arm` to the student settings API (same reason as A31).
 
-1. Pin production `LEARNING_LOOP_ENABLED=false`, and set the platform budget alert.
-2. Merge PR #673. Staging picks it up.
-3. Run the staging check-items backfill, the smoke test (probe → plan → teach → check → close) and the kill-switch drill.
+**Tools:**
+- `tools/e2e-env.macos.sh`: the macOS stack. `e2e_cycle <worktree> [playwright args]`, with `E2E_FRESH_DB=1` and `E2E_MID_HOOK`.
+- `tools/build-dag.workflow.js`: the Claude Code Workflow script behind this build. Set `repo`, `scratch` and `integration_worktree` in its args.
+- Linux uses Podman per `docs/local-supabase.md`.
+
+## Owner launch steps (spec §11.7), after PKG-14 is merged into the PR
+
+1. Pin production `LEARNING_LOOP_ENABLED=false` and set the platform budget alert.
+2. Merge PR #673; staging picks it up and auto-migrates.
+3. On staging, run the check-items backfill, the smoke test (probe → plan → teach → check → close) and the kill-switch drill.
 4. Approve the cost against the ≈ $0.36 per student-month target.
 5. `make promote`, then the production backfill (`--all-courses`), then unpin.
-6. Watch the abort criteria for 7 days. Rollback steps are in §11.7.
+6. Watch the abort criteria for 7 days. The rollback steps are in §11.7.
