@@ -636,6 +636,7 @@ def _answer(**over):
 @pytest.fixture
 def check(monkeypatch):
     """grade_answer with its one seam stubbed: the grader."""
+    import agents.grader
     import agents.tools.check as c
 
     state = {"item": _item(), "result": _result(), "grade_calls": []}
@@ -644,7 +645,7 @@ def check(monkeypatch):
         state["grade_calls"].append((format, student_answer))
         return state["result"]
 
-    monkeypatch.setattr(c, "grade", _grade)
+    monkeypatch.setattr(agents.grader, "grade", _grade)
     return c, state
 
 
@@ -1178,10 +1179,13 @@ def test_grade_answer_then_flush_pending_reaches_the_single_writer(check, monkey
 # until PKG-07's /check/answer. Each package that adds a real caller (PKG-07's
 # routes/learn_loop.py, then PKG-08 probe, PKG-12 review, PKG-14 post-test)
 # adds its module here; agents/tools/check.py is the one sanctioned importer of
-# agents.grader (grade_answer calls grade).
+# agents.grader (grade_answer calls grade). PKG-05b: services/decisions.py is the
+# typed decision seam grade_answer grades through; it imports agents.grader to
+# delegate to grade() and is itself reached only from grade_answer (pinned by
+# tests/test_learning_decisions.py::test_seam_callers_are_only_grade_answer).
 GRADING_MODULES = ("agents.grader", "agents.tools.check")
 GRADING_HELPER_CALLS = frozenset({"grade_answer", "flush_pending"})
-SANCTIONED_GRADING_CALLERS = frozenset({"agents/tools/check.py"})
+SANCTIONED_GRADING_CALLERS = frozenset({"agents/tools/check.py", "services/decisions.py"})
 
 
 def _grading_refs(source: str) -> list[tuple[int, str]]:

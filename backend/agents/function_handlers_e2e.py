@@ -472,3 +472,31 @@ def _grader_handler(messages, info) -> ModelResponse:
 
 register_function_handler("grader", _grader_handler)
 register_function_handler("grader_second", _grader_handler)
+
+
+# ── Learning loop decision seam (PKG-05b) ───────────────────────────────────
+#
+# Content-driven in exactly one way (like the grader handler): E2E_DECISION_YES_TOKEN in
+# the prompt → "yes" / the first listed OPTION key; else "no" / "none". The run's output
+# type is read off info.output_tools[0], so the REAL schema validates. Keep in sync with
+# tests/test_learning_decisions.py and tests/test_e2e_function_handlers.py.
+E2E_DECISION_YES_TOKEN = "E2E_DECISION_YES"
+E2E_DECISION_CONFIDENCE = 0.9
+_OPTION_KEY_RE = re.compile(r"^OPTION (\S+):", re.M)
+
+
+def _decision_handler(messages, info) -> ModelResponse:
+    text, tool = _last_user_prompt_text(messages), info.output_tools[0]
+    hit = E2E_DECISION_YES_TOKEN in text
+    if "choice" in (tool.parameters_json_schema or {}).get("properties", {}):
+        keys = _OPTION_KEY_RE.findall(text)
+        args = {
+            "choice": keys[0] if hit and keys else "none",
+            "confidence": E2E_DECISION_CONFIDENCE,
+        }
+    else:
+        args = {"answer": "yes" if hit else "no", "confidence": E2E_DECISION_CONFIDENCE}
+    return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
+
+
+register_function_handler("decision", _decision_handler)

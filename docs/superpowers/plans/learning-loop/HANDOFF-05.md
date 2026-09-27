@@ -135,3 +135,6 @@ cd backend && SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/grader.py    
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+
+- PKG-05b 2026-09-27: `services/decisions.py` joins `SANCTIONED_GRADING_CALLERS` in `tests/test_learning_check_tool.py` (the typed decision seam imports `agents.grader` to delegate to `grade()`; it is reached only from `grade_answer`, pinned by `tests/test_learning_decisions.py::test_seam_callers_are_only_grade_answer`) — commit d517e42
+- PKG-05b 2026-09-27: grade_answer grades through services/decisions (grade_rubric_items / reason_is_correct / deterministic_yes_no); grader_backend from Verdict.backend (`decisions.evidence_backend`, `GradeResult.backend == "gemini_second"` → `gemini_second`); prompts and llm_usage rows byte-identical — commit a232174; grader stubs retargeted to agents.grader.grade (the `check` fixture and inv_28, whose `SimpleNamespace` items also gain `prompt`/`reference_answer`/`rubric`/`common_wrong`, the fields the grading State reads)

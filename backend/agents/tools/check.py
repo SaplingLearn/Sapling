@@ -6,6 +6,14 @@ tool (A16): the check route (PKG-07), the probe (PKG-08), review (PKG-12) and
 the post-test (PKG-14) call it. It NEVER persists: the calling route runs
 learning.evidence.flush_pending once (spec §5, §8.1; inv_14). No Supabase
 import here by design.
+
+PKG-05b: it grades through the typed decision seam (services/decisions.py,
+spec §13 A24): the rubric grade via `grade_rubric_items`, the mc_reason reason
+check via `reason_is_correct` — each one agents.grader.grade() call with the
+same format and answer as before, so grader prompts and llm_usage rows are
+byte-identical — and the numeric clear-mismatch via
+`deterministic_yes_no("numeric_gate", False)`. `grader_backend` comes from the
+verdict's provenance (`decisions.evidence_backend`).
 """
 
 from __future__ import annotations
@@ -17,9 +25,11 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from agents.deps import SaplingDeps
-from agents.grader import grade
+from agents.grader import GradeResult
 from learning.evidence import Evidence, GraderBackend
 from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK
+from services import decisions  # a module import: tests patch its functions
+from services.decisions import GradeState, ReasonState
 
 if TYPE_CHECKING:
     from learning.checks import CheckItem
@@ -103,6 +113,42 @@ def _wrong_key(item, answer: CheckAnswer, *, correct: bool, matched: str | None)
     return matched if chosen is not None and chosen.wrong_key == matched else None
 
 
+def _maps(item) -> dict:
+    """The decrypted item fields a grading State carries, in item order (so the
+    grader message rebuilt from the State is byte-identical; rubric ids and wrong
+    keys are unique per item, PKG-04)."""
+    return dict(
+        question=item.prompt,
+        reference=item.reference_answer,
+        rubric={r.id: r.text for r in item.rubric},
+        wrong={w.key: w.text for w in item.common_wrong},
+    )
+
+
+def _via_seam(verdict) -> tuple[GradeResult, GraderBackend | None]:
+    """PKG-05b: verdict → (GradeResult, grader_backend). None = honest degrade: unavailable, no
+    evidence for either outcome (inv 28). GradeResult.backend marks a grader_second verdict."""
+    if verdict is None:
+        return GradeResult(unavailable=True), None
+    second = verdict.result.backend == "gemini_second"
+    return verdict.result, decisions.evidence_backend(verdict, second_opinion=second)
+
+
+async def _rubric_grade(item, *, format: str, student_answer: str, deps: SaplingDeps):
+    state = GradeState(**_maps(item), answer=student_answer, format=format)
+    return _via_seam(await decisions.grade_rubric_items(state, deps=deps, item_id=item.id))
+
+
+async def _reason_grade(item, *, selected_option: str, reason: str, deps: SaplingDeps):
+    state = ReasonState(
+        **_maps(item),
+        selected_option=selected_option,
+        correct_option=item.correct_option or "",
+        reason=reason,
+    )
+    return _via_seam(await decisions.reason_is_correct(state, deps=deps, item_id=item.id))
+
+
 def _record(deps: SaplingDeps, outcome: GradeOutcome, ev: Evidence) -> GradeOutcome:
     """Append the Evidence dict. Its weight is PKG-03's evidence_weight(ev),
     derived by the model at validation from the flags: assisted (a correct
@@ -150,12 +196,17 @@ async def grade_answer(
     if answer.idk:  # A1: an incorrect observation on the item's channel; no grader call
         return _record(deps, GradeOutcome(correct=False), Evidence(idk=True, correct=False, **base))
 
-    student_answer = answer.answer_text
     if item.format == _MC_REASON:  # the reason check runs for BOTH option outcomes (A22)
-        student_answer = (
-            f"Selected option: {answer.selected_option or ''}\nReason: {answer.reason or ''}"
+        result, backend = await _reason_grade(
+            item,
+            selected_option=answer.selected_option or "",
+            reason=answer.reason or "",
+            deps=deps,
         )
-    result = await grade(item, format=item.format, student_answer=student_answer, deps=deps)
+    else:
+        result, backend = await _rubric_grade(
+            item, format=item.format, student_answer=answer.answer_text, deps=deps
+        )
     if result.unavailable:  # A22 / invariant 28: nothing for EITHER outcome
         return GradeOutcome(unavailable=True)
 
@@ -163,13 +214,15 @@ async def grade_answer(
     if item.format == _MC_REASON:
         correct = correct and _option_matches(answer.selected_option, item.correct_option)
     matched = result.matched_wrong_key or None
-    backend: GraderBackend | None = result.backend
     confidence: float | None = result.confidence
     if item.format != _MC_REASON and _numeric_mismatch(item, answer):
         # A22 numeric gate, AFTER the grader returned (it ran for both outcomes, so an
         # outage or the grade cap above recorded nothing for either — invariant 28).
         # It can only ever say "incorrect"; the grader's matched key still stands.
-        correct, backend, confidence = False, "deterministic", None
+        det = decisions.evidence_backend(
+            decisions.deterministic_yes_no("numeric_gate", False, deps=deps)
+        )
+        correct, backend, confidence = False, det, None
     outcome = GradeOutcome(
         correct=correct,
         confidence=confidence,

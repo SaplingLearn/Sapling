@@ -72,7 +72,7 @@ _COLUMNS = (
     "source_document_ids,question_hash,graded,created_at"
 )
 
-#: A24 stub for services.decisions.item_answerable (PKG-05b): "is this item
+#: A24 stub for services/decisions.py::item_answerable (PKG-05b): "is this item
 #: answerable from these passages?". Nothing in the series sets it and nothing
 #: calls it — do not add a call site here.
 answerable_hook: Callable[[list[str], str, str], bool] | None = None

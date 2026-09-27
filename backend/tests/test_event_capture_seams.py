@@ -122,6 +122,10 @@ def test_event_taxonomy_is_pinned():
         "rag.visibility_resync_failed",
         # Learning loop PKG-04 (spec §6, A8): a check-item batch or write failed.
         "learn.check_items_failed",
+        # PKG-05b: the typed decision seam (spec §6). Emit coverage: test_learning_decisions.py.
+        "decision.made",
+        "decision.shadow",
+        "decision.fallback",
     })
 
 
