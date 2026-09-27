@@ -172,7 +172,14 @@ def _stability_recall(d: float, s: float, r: float, g: int) -> float:
 
 
 def _stability_lapse(d: float, s: float, r: float) -> float:
-    return W[11] * d ** (-W[12]) * ((s + 1) ** W[13] - 1) * math.exp(W[14] * (1 - r))
+    """min(w11·D^(−w12)·((S+1)^w13 − 1)·e^(w14·(1−R)), S / e^(w17·w18)).
+
+    The cap is FSRS-6's (py-fsrs 6.3.2 ``_next_forget_stability``); spec
+    §3.2's transcription omits it, and without it an Again at low D, tiny S
+    and a long gap raised S. HANDOFF-02 Deviations.
+    """
+    long_term = W[11] * d ** (-W[12]) * ((s + 1) ** W[13] - 1) * math.exp(W[14] * (1 - r))
+    return min(long_term, s / math.exp(W[17] * W[18]))
 
 
 def _stability_same_day(s: float, g: int) -> float:

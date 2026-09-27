@@ -203,6 +203,20 @@ def test_again_after_three_days_reference():
     assert ns == _approx(0.6369)
 
 
+def test_lapse_is_capped_below_the_prior_stability():
+    # FSRS-6 caps S_lapse at S / e^(w17·w18). Without the cap, low D, tiny S
+    # and a long gap made an Again RAISE S (0.05 → 0.0572 here).
+    _, ns = next_state(1.0, 0.05, Rating.AGAIN, 60.0)
+    assert ns == _approx(0.0476)
+    rng = random.Random(19)
+    for _ in range(2000):
+        d = rng.uniform(1.0, 10.0)
+        s = rng.uniform(0.05, 5.0) if rng.random() < 0.5 else rng.uniform(0.05, 500.0)
+        days = rng.uniform(0.0, 365.0)
+        _, ns = next_state(d, s, Rating.AGAIN, days)
+        assert 0.0 < ns < s, (d, s, days)
+
+
 def test_same_day_reference():
     d, s = _after_first_good()
     # FSRS-6 floors the same-day increase at 1 for Hard/Good/Easy: the raw
