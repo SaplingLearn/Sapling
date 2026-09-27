@@ -117,6 +117,8 @@ Collected from every `process.env.*` reference in `src/`:
 | `NEXT_PUBLIC_SUPABASE_URL` | browser | Supabase client | `lib/supabase.ts` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | browser | Supabase client | `lib/supabase.ts` |
 | `STATIC_EXPORT` | build time only | `next export` toggle | `next.config.ts` |
+| `NEXT_PUBLIC_POSTHOG_KEY` | browser (build-time inlined) | PostHog product analytics; unset = off | `lib/analytics.ts` (via `instrumentation-client.ts`) |
+| `NEXT_PUBLIC_POSTHOG_HOST` | browser (build-time inlined) | Optional `api_host` override; default is the `/ingest` proxy | `lib/analytics.ts` |
 
 `NEXT_PUBLIC_*` are bundled into the client — never put secrets in them.
 
@@ -134,6 +136,6 @@ Collected from every `process.env.*` reference in `src/`:
 ## 9. Things to rework / decide
 
 - **`framer-motion` appears unused** — check if the rebuild needs it; otherwise drop.
-- **Decide on analytics**: product should pick one (Plausible/Mixpanel/PostHog) before rebuild so it can be wired consistently, not bolted on later.
+- ~~**Decide on analytics**~~ — decided: PostHog (US). Wired in `src/lib/analytics.ts` + `src/instrumentation-client.ts`, proxied same-origin through `src/app/ingest/[...path]/route.ts`; masked autocapture, no session replay, opt-out in Settings → Data.
 - **Add Sentry (or equivalent)**: the rebuild will have new bugs; client error tracking is cheap insurance.
 - **Replace `SpaceBackground.tsx` dead import (if later added)** — currently unused.

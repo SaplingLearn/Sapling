@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 import { API_URL, getMe } from '@/lib/api';
+import { identifyUser, resetAnalytics } from '@/lib/analytics';
 
 interface UserOption {
   id: string;
@@ -186,7 +187,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setFeaturedRole(null);
     setIsAdmin(false);
     localStorage.removeItem('sapling_user');
+    // Sign-out, account deletion (Settings → signOut) and a dead session all
+    // land here: detach analytics from this user. No-op when analytics is off.
+    resetAnalytics();
   }, []);
+
+  // Product analytics identity: the user's UUID only — never name, email or
+  // any other trait (src/lib/analytics.ts). No-op when analytics is off.
+  useEffect(() => {
+    if (userReady && isAuthenticated && userId) identifyUser(userId);
+  }, [userReady, isAuthenticated, userId]);
 
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid) return;

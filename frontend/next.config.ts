@@ -99,6 +99,12 @@ const nextConfig: NextConfig = {
     "react-kapsule",
     "three",
   ],
+  // PostHog's endpoints end in a slash (`/ingest/e/`, `/ingest/flags/?v=2`);
+  // Next's default trailing-slash redirect would 308 every analytics batch
+  // before the /ingest route handler (src/app/ingest/[...path]/route.ts) sees
+  // it. With this set, the page routes' own slash normalisation is kept by the
+  // `redirects()` entry below instead.
+  skipTrailingSlashRedirect: true,
   async rewrites() {
     return [
       { source: "/api/auth/session", destination: "/api/auth/session" },
@@ -108,6 +114,15 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       { source: "/auth", destination: "/", permanent: false },
+      // Stand-in for the trailing-slash redirect `skipTrailingSlashRedirect`
+      // turns off (see above): `/about/` → `/about` as before, except under
+      // `/ingest/` (PostHog needs the slash) and `/api/` (OpenNext never
+      // redirected those, so production behaviour there is unchanged).
+      {
+        source: "/:path((?!ingest/|api/).*[^/])/",
+        destination: "/:path",
+        permanent: true,
+      },
     ];
   },
   async headers() {

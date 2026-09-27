@@ -11,8 +11,10 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
+import type { PostHog } from "posthog-js";
 import type { UserProfile, UserSettings } from "@/lib/types";
+import { __resetAnalyticsForTests, initAnalytics } from "@/lib/analytics";
 
 vi.mock("@/context/UserContext", () => ({
   useUser: () => ({
@@ -148,5 +150,49 @@ describe("Settings profile form prefill (F8)", () => {
     expect(screen.getByDisplayValue("Settings bio")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("your-handle")).toHaveValue("settings-handle");
     expect(screen.queryByDisplayValue("Profile Name")).toBeNull();
+  });
+});
+
+describe("Settings → Data: product analytics opt-out", () => {
+  beforeEach(() => {
+    __resetAnalyticsForTests();
+    vi.mocked(fetchSettings).mockResolvedValue(settings());
+    vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
+  });
+  afterEach(() => __resetAnalyticsForTests());
+
+  it("renders a disabled switch when analytics is not running in this build", async () => {
+    render(<Settings />);
+    fireEvent.click(screen.getByTestId("settings-tab-data"));
+    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/isn't running/);
+  });
+
+  it("opts out and back in through posthog-js", async () => {
+    let optedOut = false;
+    const ph = {
+      init: vi.fn(),
+      has_opted_out_capturing: () => optedOut,
+      opt_out_capturing: vi.fn(() => void (optedOut = true)),
+      opt_in_capturing: vi.fn(() => void (optedOut = false)),
+    };
+    await act(async () => {
+      await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: "phc_test" }, async () => ph as unknown as PostHog);
+    });
+    render(<Settings />);
+    fireEvent.click(screen.getByTestId("settings-tab-data"));
+    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    expect(toggle).toBeEnabled();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(toggle);
+    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(toggle);
+    expect(ph.opt_in_capturing).toHaveBeenCalledTimes(1);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
   });
 });

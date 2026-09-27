@@ -108,6 +108,7 @@ const eslintConfig = [
       "src/components/screens/achievements/HeroCard.tsx",
       "src/components/screens/achievements/LeaderboardTab.tsx",
       "src/components/screens/achievements/ActivityTab.tsx",
+      "src/components/screens/Settings.tsx",
     ],
     rules: {
       "no-restricted-syntax": [
