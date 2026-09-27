@@ -295,13 +295,23 @@ def count_items(course_id: str, concept_key: str) -> int:
     return len(rows or [])
 
 
+class _GraphNodesRead:
+    """A read-only `page_all` handle over graph_nodes. Invariant 1 (PKG-03's
+    ast half) allows `table("graph_nodes")` only as a direct `.select` /
+    `.select_with_count` read, so the handle is never passed around: every
+    page is one direct read, and page_all's paging contract is reused as is."""
+
+    def select_with_count(self, *args, **kwargs):
+        return table("graph_nodes").select_with_count(*args, **kwargs)
+
+
 def coverage(course_id: str) -> tuple[int, int]:
     """(concept keys of the course's graph_nodes that have >= 1 item, concept
     keys of the course's graph_nodes). Both reads page with a total order."""
     scope = {"course_id": f"eq.{course_id}"}
     concepts = {
         concept_key(r.get("concept_name") or "")
-        for r in page_all(table("graph_nodes"), "concept_name", filters=scope, order="id")
+        for r in page_all(_GraphNodesRead(), "concept_name", filters=scope, order="id")
     }
     concepts.discard("")
     with_items = {
