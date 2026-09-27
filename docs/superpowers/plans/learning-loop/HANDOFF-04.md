@@ -19,7 +19,7 @@ The `check_items` table exists (migration `20260927065932_learning_check_items.s
 - `::validate_draft(draft) -> list[str]` — every reason a draft is unusable; each reason contains its rule word (`format`, `difficulty`, `prompt`, `reference`, `rubric`, `wrong`, `leak`, `answer_kind`, `option`, `canonical`, `tolerance`, `stepwise`). See Deviations for the rules beyond Behaviour 4.
 - `::parse_tolerance(draft) -> float | None` — the stored `tolerance` (numeric items with one only).
 - `::clean_chunk_ids(draft, allowed) -> list[str]` — cited ids in `allowed`, cited order, deduplicated.
-- `::rank_chunks_for_concept(concept_name, chunks, *, limit, min_score=0) -> list[dict]` — score = distinct casefolded name tokens of length >= `_MIN_TOKEN_LEN` (3) that occur as WORDS in the chunk (a name with no such token scores 1 when its whole word sequence occurs); below `min_score` dropped; order `(score desc, chunk_index asc, id)`; first `limit`.
+- `::rank_chunks_for_concept(concept_name, chunks, *, limit, min_score=0) -> list[dict]` — score = distinct casefolded name tokens of length >= `_MIN_TOKEN_LEN` (3), English function words (`_STOPWORDS`: "the", "and", "for", "with", …) excluded, that occur as WORDS in the chunk (a name with no such token scores 1 when its whole word sequence occurs); below `min_score` dropped; order `(score desc, chunk_index asc, id)`; first `limit`.
 - `::select_item(items, *, format, difficulty, exclude_hashes=()) -> CheckItem | None` — exact format only; the exact difficulty first (ties by `(created_at or "", id)`), else the nearest (lower first on ties).
 - `::posttest_reserve_hash(items) -> str | None` — lowest hash among `free` items at `CHECK_ITEM_DIFFICULTIES[1]`, else the lowest overall, else None (A23).
 - `backend/services/check_item_service.py::concept_key(name)` — `graph_service._normalize_concept`, imported.
@@ -69,7 +69,7 @@ The `check_items` table exists (migration `20260927065932_learning_check_items.s
 - `CHECK_ITEM_FLEX_RETRIES = 2` † (A23 "retries on 503/429"; spec lacks the count)
 - `CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1` † (§3.5, A23 relevance floor)
 
-Module-level, not loop tuning: `learning/checks.py::_MIN_TOKEN_LEN = 3` (tokenizer floor the prompt allows), `agents/check_items.py::_FLEX_RETRY_STATUS = {429, 503}`, `services/check_item_service.py::_DOC_ID_BATCH = 50` (URL-length bound, #629's `_ID_BATCH` rationale).
+Module-level, not loop tuning: `learning/checks.py::_MIN_TOKEN_LEN = 3` (tokenizer floor the prompt allows), `learning/checks.py::_STOPWORDS` (function words that never count toward the relevance floor), `agents/check_items.py::_FLEX_RETRY_STATUS = {429, 503}`, `services/check_item_service.py::_DOC_ID_BATCH = 50` (URL-length bound, #629's `_ID_BATCH` rationale).
 
 ## Deviations from spec
 
@@ -106,7 +106,7 @@ Module-level, not loop tuning: `learning/checks.py::_MIN_TOKEN_LEN = 3` (tokeniz
 - The eval baseline is a first recording (DraftValid 0.796, RubricCount 0.833, the rest 1.0).
 - Coverage after launch depends on the owner's nightly `--all-courses` job (spec §11.7 step 11) — the upload hook drafts at most `CHECK_ITEM_MAX_CONCEPTS_PER_DOC` concepts per upload and nothing else adds items.
 - Withdrawal DELETES items; re-sharing restores nothing until a later upload or backfill drafts afresh. An item drafted from several documents (a backfill batch can mix passages of several uploaders) is deleted when any one of them is withdrawn — and every item of one agent call records every document that call showed, so withdrawing one uploader's document also retires the call's items for the other concepts of its batch (the price of A23 provenance at call granularity).
-- A concept whose name no shared passage contains as a word is never backfilled (`unmatched`, A23 relevance floor). Matching is whole-token, so an inflected name ("Derivatives" vs a passage saying "derivative") counts as unmatched.
+- A concept whose name no shared passage contains as a word is never backfilled (`unmatched`, A23 relevance floor). Matching is whole-token, so an inflected name ("Derivatives" vs a passage saying "derivative") counts as unmatched. Function words never count (review round 1: "Causes of the French Revolution" met the floor against a CS passage through "the"), so an off-topic name must share a content word with a shared passage to be drafted — one shared content word still suffices (spec's floor is 1).
 - The extracted-text fallback passage is the document's whole text (unbounded length). It is used only for an unindexed source document — always in function mode, and in real mode only when indexing failed or wrote nothing.
 - The function-mode handler serves only the two `E2E_DOC_CONCEPTS` names; a function-mode backfill of any other concept drops its drafts with a WARNING (seen in the live probe: `unmatched 5`, 6 items re-upserted idempotently).
 - Self-check 1's `ruff format --check learning tests/test_learning_*.py` reports one file, `tests/test_learning_flashcards_fsrs.py` (PKG-11's, pre-existing, untouched here); every PKG-04 file is formatted and `ruff check .` passes.

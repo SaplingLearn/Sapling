@@ -39,6 +39,22 @@ _WORD = re.compile(r"\w+")
 # The one small literal the PKG-04 prompt allows here: a tokenizer floor, not a
 # loop tuning knob, so it does not live in learning/params.py.
 _MIN_TOKEN_LEN = 3
+# English function words of that length or more. They occur in almost any
+# passage, so a match on one says nothing about the concept: without this,
+# "Causes of the French Revolution" met the backfill's relevance floor (A23)
+# against a CS passage through "the" and was drafted from unrelated text.
+_STOPWORDS = frozenset(
+    """
+    about above across after against along also among and any are because been
+    before being below between both but can could did does doing down during each
+    either few for from had has have having her here hers him his how into its
+    just may might more most must nor not off onto only other our ours out over
+    own per same shall she should some such than that the their theirs them then
+    there these they this those through too under until upon very via was were
+    what when where which while who whom whose why will with within without would
+    yet you your yours
+    """.split()
+)
 _MC_REASON = "mc_reason"
 _NUMERIC = "numeric"
 
@@ -280,13 +296,14 @@ def clean_chunk_ids(draft: CheckItemDraft, allowed: Iterable[str]) -> list[str]:
 
 def _score(concept_name: str, text: str) -> int:
     name = normalize(concept_name)
-    tokens = {t for t in _WORD.findall(name) if len(t) >= _MIN_TOKEN_LEN}
+    tokens = {t for t in _WORD.findall(name) if len(t) >= _MIN_TOKEN_LEN and t not in _STOPWORDS}
     words = set(_WORD.findall(normalize(text)))
     if tokens:
         return len(tokens & words)
-    # A name with no token of the floor length ("Pi", "UI") scores 1 when the
-    # whole name appears as a word sequence, so the backfill's relevance floor
-    # never makes such a concept permanently undraftable.
+    # A name with no content token of the floor length ("Pi", "UI", "This and
+    # That") scores 1 when the whole name appears as a word sequence, so the
+    # backfill's relevance floor never makes such a concept permanently
+    # undraftable.
     phrase = _words(name)
     return int(bool(phrase) and f" {phrase} " in f" {_words(text)} ")
 
@@ -295,9 +312,10 @@ def rank_chunks_for_concept(
     concept_name: str, chunks, *, limit: int, min_score: int = 0
 ) -> list[dict]:
     """Deterministic passage ranking (no embeddings, no LLM — spec §12): the
-    number of distinct casefolded name tokens (length >= _MIN_TOKEN_LEN) that
-    occur as words in the chunk, below `min_score` dropped, ordered by
-    (score desc, chunk_index asc, id), the first `limit` returned."""
+    number of distinct casefolded name tokens (length >= _MIN_TOKEN_LEN, not a
+    _STOPWORDS function word) that occur as words in the chunk, below
+    `min_score` dropped, ordered by (score desc, chunk_index asc, id), the
+    first `limit` returned."""
     scored = []
     for chunk in chunks:
         score = _score(concept_name, chunk.get("chunk_text") or "")

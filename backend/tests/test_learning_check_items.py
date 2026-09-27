@@ -388,6 +388,40 @@ class TestRankChunks:
             for c in rank_chunks_for_concept("Gradient Descent", chunks, limit=8, min_score=1)
         ] == ["b"]
 
+    def test_function_words_never_satisfy_the_relevance_floor(self):
+        """A23: an off-topic concept (a private note, a tutor chat) must make
+        no agent call. "the"/"of" occur in almost any English passage, so they
+        are not concept tokens."""
+        from learning.checks import rank_chunks_for_concept
+
+        cs = [
+            {
+                "id": "a",
+                "chunk_index": 0,
+                "chunk_text": "The base case stops the recursion; each call shrinks the input.",
+            }
+        ]
+        for name in (
+            "Causes of the French Revolution",
+            "History and Memory",
+            "Theories for Change With Them",
+        ):
+            assert rank_chunks_for_concept(name, cs, limit=8, min_score=1) == [], name
+        # a content token still matches, whatever function words surround it
+        assert [
+            c["id"] for c in rank_chunks_for_concept("The Base Case", cs, limit=8, min_score=1)
+        ] == ["a"]
+
+    def test_a_name_of_only_function_words_matches_as_a_whole_phrase(self):
+        from learning.checks import rank_chunks_for_concept
+
+        chunks = [
+            {"id": "a", "chunk_index": 0, "chunk_text": "Chapter: this and that, in brief."},
+            {"id": "b", "chunk_index": 1, "chunk_text": "That is all there is to this."},
+        ]
+        ranked = rank_chunks_for_concept("This and That", chunks, limit=8, min_score=1)
+        assert [c["id"] for c in ranked] == ["a"]
+
     def test_short_names_match_as_a_whole_word(self):
         from learning.checks import rank_chunks_for_concept
 
