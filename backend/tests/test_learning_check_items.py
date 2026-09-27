@@ -795,6 +795,77 @@ class TestRepairAndOptions:
         )
         assert repair_draft(kept) == (kept, [])
 
+    # An mc_reason reference that gives the reason and leaves out its closing
+    # sentence — the shape of 9 of the 15 mc_reason drops in the review's direct
+    # runs (3 of 16 calls wrote no "Final answer:" at all).
+    _NO_CLOSE = "The rate scales each step taken along the negative gradient."
+
+    def test_repair_closes_an_mc_reference_that_left_out_its_final_answer_sentence(self):
+        """A37 final_answer repair: the reference names no "Final answer",
+        exactly one option is marked is_correct and final_answer IS that
+        option's text — two explicit statements of the answer agree — so code
+        appends "Final answer: <final_answer>." (A34's closing sentence). No
+        guess: the answer is the one the draft states twice."""
+        from learning.checks import repair_draft, validate_draft
+
+        for final in ("The update step size", "The update step size."):
+            draft = _mc_draft(reference_answer=self._NO_CLOSE, final_answer=final)
+            assert any(r.startswith("final_answer") for r in validate_draft(draft))
+            fixed, repairs = repair_draft(draft)
+            assert fixed.reference_answer == (
+                "The rate scales each step taken along the negative gradient. "
+                "Final answer: The update step size."
+            )
+            assert final.rstrip(".") in fixed.reference_answer  # verbatim, for FinalAnswerValid
+            assert len(repairs) == 1 and repairs[0].startswith("final_answer:"), repairs
+            assert validate_draft(fixed) == []
+            assert draft.reference_answer == self._NO_CLOSE  # the input is never mutated
+        # a reference that ends without a full stop still reads as two sentences
+        fixed, _ = repair_draft(_mc_draft(reference_answer="It scales each step"))
+        assert fixed.reference_answer == "It scales each step. Final answer: The update step size."
+
+    @pytest.mark.parametrize(
+        "over",
+        [
+            # the reference HAS a closing sentence and it names another answer:
+            # a contradiction, not an omission
+            {"reference_answer": "The rate scales each step. Final answer: The loss value."},
+            {"reference_answer": "The rate scales each step. The final answer is the loss."},
+            # final_answer is not the text of the option marked correct
+            {"reference_answer": _NO_CLOSE, "final_answer": "The loss value"},
+            # which option is correct is not stated exactly once
+            {
+                "reference_answer": _NO_CLOSE,
+                "options": _opts((_CORRECT[0], False, "rate_is_loss"), _ITER, _LOSS, _SIGN),
+            },
+            {
+                "reference_answer": _NO_CLOSE,
+                "options": _opts(_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN),
+            },
+            # nothing to close
+            {"reference_answer": "   "},
+        ],
+    )
+    def test_the_final_answer_repair_never_guesses(self, over):
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _mc_draft(**over)
+        fixed, repairs = repair_draft(draft)
+        assert not [r for r in repairs if r.startswith("final_answer")], repairs
+        assert fixed.reference_answer == draft.reference_answer
+        assert validate_draft(fixed) != []
+
+    def test_the_final_answer_repair_is_mc_reason_only(self):
+        """A free or teachback final answer has no second statement to agree
+        with: A34's check that the reference contains it is the one thing that
+        ties it to the reference, so such a draft is dropped, never closed."""
+        from learning.checks import repair_draft, validate_draft
+
+        for fmt in ("free", "teachback"):
+            draft = _draft(format=fmt, reference_answer=self._NO_CLOSE)
+            assert repair_draft(draft) == (draft, [])
+            assert any(r.startswith("final_answer") for r in validate_draft(draft))
+
     def test_option_reasons_and_repairs_hold_no_semicolon(self):
         """create_items logs a draft's reasons (and its repairs) joined by
         "; ", so one reason must not contain it: the live check's parser read

@@ -525,6 +525,20 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
     return reasons
 
 
+# A reference's closing sentence names its final answer (A34): "Final answer:".
+_FINAL_LABEL = re.compile(r"\bfinal\s+answer\b", re.IGNORECASE)
+_SENTENCE_END = (".", "!", "?")
+
+
+def _closed(reference: str, final_answer: str) -> str:
+    """`reference` with A34's closing sentence, "Final answer: <final_answer>.",
+    appended — the final answer verbatim, one full stop between sentences."""
+    body, answer = reference.rstrip(), final_answer.strip()
+    if not body.endswith(_SENTENCE_END):
+        body += "."
+    return f"{body} Final answer: {answer}" + ("" if answer.endswith(_SENTENCE_END) else ".")
+
+
 def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     """`draft` with the repairs that need no guess made (§13 A37), and one
     line per repair, led by the rule it satisfies. The input is never mutated.
@@ -535,6 +549,16 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     A34's rule that final_answer equal the correct option's text still
     cross-checks the flag.
 
+    final_answer — an mc_reason reference that names no "Final answer" and
+    does not contain the final answer gets A34's closing sentence, "Final
+    answer: <final_answer>.", when exactly one option is marked is_correct and
+    final_answer is that option's text: the draft states its answer twice,
+    explicitly and in agreement, and only the sentence quoting it is missing.
+    A reference whose closing sentence names something else is a
+    contradiction, not an omission, and stays dropped; so does a free or
+    teachback reference, whose final answer has no second statement to agree
+    with (A34's containment check is what ties it to the reference).
+
     stepwise — a draft that claims `stepwise` while its reference has fewer
     than CHECK_ITEM_STEPWISE_MIN_STEPS numbered lines drops the claim: code
     measures the reference, and an item that is not stepwise only stops being
@@ -543,33 +567,40 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     Nothing else is repaired: which option is correct (none or several
     marked) is never inferred, and a distractor's missing, shared or unlisted
     key is never guessed."""
-    update: dict = {}
+    fixed = draft.model_copy(deep=True)
     repairs: list[str] = []
-    correct = [i for i, o in enumerate(draft.options) if o.is_correct]
-    if (
-        draft.format == _MC_REASON
-        and len(correct) == 1
-        and draft.options[correct[0]].wrong_key is not None
-    ):
-        i = correct[0]
-        options = [o.model_copy() for o in draft.options]
-        key, options[i] = options[i].wrong_key, options[i].model_copy(update={"wrong_key": None})
-        update["options"] = options
+    correct = [o for o in fixed.options if o.is_correct]
+    mc_one = fixed.format == _MC_REASON and len(correct) == 1
+    if mc_one and correct[0].wrong_key is not None:
+        n = fixed.options.index(correct[0]) + 1
+        key, correct[0].wrong_key = correct[0].wrong_key, None
         repairs.append(
-            f"correct_key: option {i + 1} is marked correct, so its wrong_key {key!r} "
+            f"correct_key: option {n} is marked correct, so its wrong_key {key!r} "
             "was cleared (repaired)"
         )
-    if draft.stepwise:
-        steps = len(_STEP_LINE.findall(draft.reference_answer))
+    final = answer_run(fixed.final_answer)
+    if (
+        mc_one
+        and final
+        and final == answer_run(correct[0].text)
+        and fixed.reference_answer.strip()
+        and not _FINAL_LABEL.search(fixed.reference_answer)
+        and not contains_run(answer_run(fixed.reference_answer), final)
+    ):
+        fixed.reference_answer = _closed(fixed.reference_answer, fixed.final_answer)
+        repairs.append(
+            "final_answer: the reference had no closing 'Final answer:' sentence, so one "
+            "quoting the option marked correct was appended (repaired)"
+        )
+    if fixed.stepwise:
+        steps = len(_STEP_LINE.findall(fixed.reference_answer))
         if steps < CHECK_ITEM_STEPWISE_MIN_STEPS:
-            update["stepwise"] = False
+            fixed.stepwise = False
             repairs.append(
                 f"stepwise: the reference has {steps} numbered step(s), fewer than "
                 f"{CHECK_ITEM_STEPWISE_MIN_STEPS}, so the stepwise claim was dropped (repaired)"
             )
-    if not update:
-        return draft, []
-    return draft.model_copy(update=update), repairs
+    return (fixed, repairs) if repairs else (draft, [])
 
 
 def lettered_options(draft: CheckItemDraft, *, slot_key: bytes) -> tuple[list[Option], str]:
