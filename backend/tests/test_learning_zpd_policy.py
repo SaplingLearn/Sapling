@@ -3001,26 +3001,39 @@ def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
 
 _PKG06_MODULES = ("policy", "gates", "leak", "ladder", "loop_state_store", "zpd_events")
 # PKG-06b (spec §14 row 06b; HANDOFF-06 "BudgetDecision.tier_ceiling reuses Tier"): the AI budget
-# imports policy's three type aliases, and nothing else from the PKG-06 layer. Exact names, so any
-# other PKG-06 import there (model_tier, a gates helper) is still an offender.
+# imports policy's three type aliases, and nothing else from the PKG-06 layer. Matched per import
+# STATEMENT — `from learning.policy import <some of these names>`, absolute — so the bare module
+# (`import learning.policy`, `from learning import policy`: every policy function) and any other
+# PKG-06 name there (model_tier, a gates helper) are still offenders.
 _PKG06_SANCTIONED_IMPORTS = {
-    "services/ai_budget.py": frozenset(
-        {
-            "learning.policy",
-            "learning.policy.Band",
-            "learning.policy.BudgetLevel",
-            "learning.policy.Tier",
-        }
-    ),
+    "services/ai_budget.py": ("learning.policy", frozenset({"Band", "BudgetLevel", "Tier"})),
 }
 
 
-def _pkg06_imports(source: str, package: str = "") -> list[str]:
+def _sanctioned_import(rel: str):
+    """A node predicate: True for the one import statement `rel` may make (none for most files)."""
+    import ast
+
+    rule = _PKG06_SANCTIONED_IMPORTS.get(rel)
+
+    def skip(node) -> bool:
+        return (
+            rule is not None
+            and isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module == rule[0]
+            and {a.name for a in node.names} <= rule[1]
+        )
+
+    return skip
+
+
+def _pkg06_imports(source: str, package: str = "", skip=lambda node: False) -> list[str]:
     """Every PKG-06 module `source` imports, in any form: `import learning.x`,
     `from learning.x import y`, `from learning import x`, a relative import
     resolved against `package` (the importing file's dotted package), and
     `importlib.import_module(...)` / `import_module(...)` / `__import__(...)`
-    with a string literal, at any depth."""
+    with a string literal, at any depth. Nodes `skip` accepts are left out."""
     import ast
 
     def resolve(level: int, module: str | None, base: str) -> str | None:
@@ -3031,6 +3044,8 @@ def _pkg06_imports(source: str, package: str = "") -> list[str]:
 
     found = []
     for node in ast.walk(ast.parse(source)):
+        if skip(node):
+            continue
         if isinstance(node, ast.Import):
             names = [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom):
@@ -3121,10 +3136,10 @@ def _inertness_offenders(root) -> list[str]:
             continue
         if rel[0] == "learning" and len(rel) == 2 and rel[1][:-3] in _PKG06_MODULES:
             continue
-        package = ".".join(rel[:-1])
-        found = _pkg06_imports(path.read_text(errors="ignore"), package=package)
-        if not set(found) <= _PKG06_SANCTIONED_IMPORTS.get("/".join(rel), frozenset()):
-            offenders.append("/".join(rel))
+        package, name = ".".join(rel[:-1]), "/".join(rel)
+        text = path.read_text(errors="ignore")
+        if _pkg06_imports(text, package=package, skip=_sanctioned_import(name)):
+            offenders.append(name)
     return offenders
 
 
@@ -3138,10 +3153,19 @@ def test_inertness_scan_sanctions_only_the_budget_alias_import(tmp_path):
     )
     (tmp_path / "services" / "other.py").write_text("from learning.policy import Tier\n")
     assert _inertness_offenders(tmp_path) == ["services/other.py"]
+    (tmp_path / "services" / "ai_budget.py").write_text("from learning.policy import Tier as T\n")
+    assert _inertness_offenders(tmp_path) == ["services/other.py"]  # a subset, renamed or not
     for extra in (
         "from learning.policy import Tier, model_tier\n",
         "from learning.policy import Tier\nfrom learning import gates\n",
         "import learning.leak\n",
+        # the bare module reaches every policy function (policy.model_tier …): never sanctioned
+        "from learning import policy\n",
+        "import learning.policy\n",
+        "import learning.policy as p\n",
+        "from learning.policy import Tier\nimport learning.policy\n",
+        "from learning.policy import *\n",
+        "def f():\n    import importlib\n    return importlib.import_module('learning.policy')\n",
     ):
         (tmp_path / "services" / "ai_budget.py").write_text(extra)
         assert _inertness_offenders(tmp_path) == ["services/ai_budget.py", "services/other.py"], (
