@@ -1137,18 +1137,29 @@ async def _stream_turn(turn: _LoopTurn):
     """The SSE run site (chat, check-answer turns, opener). Loop events are
     yielded AROUND stream_agent_turn, never from inside it."""
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
-    turn.plan(decision)
+    try:
+        turn.plan(decision)
+    except Exception:
+        # ADR 0024 honest degrade: nothing was shown or written — one terminal error
+        logger.exception("Loop turn could not be planned")
+        yield sapling_event_to_sse(_stream_error(turn, _STREAM_UNAVAILABLE))
+        return
     for ev in turn.pre_events():
         yield sapling_event_to_sse(ev)
     if turn.paused:
         yield sapling_event_to_sse(_budget_event(decision))
         return
     if decision.level == "hard":
-        yield sapling_event_to_sse(
-            _budget_event(decision)
-        )  # a deterministic turn at the hard level
+        # a deterministic turn served at the hard level carries the pause notice
+        yield sapling_event_to_sse(_budget_event(decision))
     if turn.tier == "none":
-        extra = turn.complete(turn.text, {}, [])
+        try:
+            extra = turn.complete(turn.text, {}, [])
+        except Exception:
+            # Behaviour 19: stream_agent_turn's on_complete guard, for the template path
+            logger.warning("Deterministic loop turn failed to persist", exc_info=True)
+            yield sapling_event_to_sse(_stream_error(turn, _STREAM_INTERRUPTED))
+            return
         data = {"graph_update": {}, "mastery_changes": [], **extra}
         for ev in _pre_done_events(data):
             yield sapling_event_to_sse(ev)
@@ -1171,6 +1182,21 @@ async def _stream_turn(turn: _LoopTurn):
             for extra_ev in _pre_done_events(ev.data or {}):
                 yield sapling_event_to_sse(extra_ev)
         yield sapling_event_to_sse(ev)
+
+
+_STREAM_UNAVAILABLE = "The tutor is unavailable. Please retry."
+_STREAM_INTERRUPTED = "The tutor was interrupted. Please retry."
+
+
+def _stream_error(turn: _LoopTurn, message: str) -> SaplingEvent:
+    """A terminal `error` event in services/chat_stream.py's shape; retryable, as
+    a loop turn writes no graph or mastery rows before it completes."""
+    return SaplingEvent(
+        type="error",
+        step="reply",
+        message=message,
+        data={"request_id": turn.request_id, "retryable": True},
+    )
 
 
 def _sse(turn: _LoopTurn) -> EventSourceResponse:

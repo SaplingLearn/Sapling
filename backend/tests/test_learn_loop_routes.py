@@ -885,6 +885,37 @@ def test_feedback_after_correct_runs_lite(gate_on, seams):
     assert seams.model_tier.call_args.args[0] == "feedback_correct"
 
 
+def test_a_stream_that_fails_before_the_ladder_ends_in_a_terminal_error(gate_on, seams):
+    """ADR 0024 honest degrade on the loop's own SSE path: a failure while the
+    turn is planned (a context read) ends the stream with ONE terminal
+    `error` event — never a broken stream — and persists nothing."""
+    seams.store["doc"] = {}
+    seams.blocks.side_effect = RuntimeError("rag read failed")
+    never = MagicMock(side_effect=AssertionError("no model run after a failed plan"))
+    with patch("routes.learn_loop.stream_agent_turn", never):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "hi"},
+        )
+    evs = _sse_events(r.text)
+    assert [e["type"] for e in evs] == ["error"]
+    assert evs[0]["data"]["retryable"] is True and evs[0]["data"]["request_id"]
+    seams.save_msg.assert_not_called()
+    seams.save.assert_not_called()
+
+
+def test_a_deterministic_stream_whose_persistence_fails_ends_in_a_terminal_error(gate_on, seams):
+    """Behaviour 19: a failed persistence inside complete is a terminal error —
+    on the deterministic path too, where there is no stream_agent_turn guard."""
+    seams.save.side_effect = RuntimeError("sessions update failed")
+    r = client.post(
+        "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "?"}
+    )
+    evs = _sse_events(r.text)
+    assert [e["type"] for e in evs] == ["phase", "check", "error"]
+    assert "done" not in [e["type"] for e in evs]
+
+
 def test_rung1_fallback_is_the_json_turn_on_the_same_tier(gate_on, seams):
     seams.store["doc"] = {}
 
