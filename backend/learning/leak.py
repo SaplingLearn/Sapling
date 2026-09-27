@@ -7,7 +7,8 @@ the supervisor architecture's deterministic solution stripper). Two rules:
   consecutively in the emitted text (a reference shorter than LEAK_NGRAM
   tokens: its whole token run, as PKG-04's checks.leak_in_prompt compares);
 - final_answer: the reference's final answer (the clause after its last '=',
-  else its last standalone number that is not a numbered-step label) appears
+  else its last standalone number that is not a numbered-step label or an
+  exponent) appears
   as a consecutive token run, or with every number compared by value ("1,250"
   = "1250", "2.50" = "2.5"), so a reformatted answer still leaks.
 
@@ -38,6 +39,10 @@ _STANDALONE_NUMBER = re.compile(
 # an answer. A number alone on its line ("42."), a decimal ("1.5 m") and a
 # clock time ("12:30") are.
 _STEP_LABEL = re.compile(r"^[ \t]*(?:step[ \t]*)?\d+[.):](?!\d)(?=[ \t]*\S)", re.M | re.I)
+# What may stand between an exponent operator ("^", "**") and its exponent:
+# "10^-3", "4 ^ ( 2 )". A number after one is an exponent ("m/s^2", "cm^2",
+# "3x^2"), never the answer.
+_EXPONENT_GAP = " \t({[-−+"
 # The final answer ends at the next clause or sentence break: a comma (not a
 # thousands separator), a semicolon, "and"/"so", a newline, or sentence
 # punctuation that is not a decimal point.
@@ -67,14 +72,19 @@ def _final_answer_text(reference: str) -> str:
         clause = _CLAUSE_BREAK.split(reference.rsplit("=", 1)[1], maxsplit=1)[0]
         if tokens(clause):
             return clause
-    numbers = _STANDALONE_NUMBER.findall(_STEP_LABEL.sub(" ", reference))
+    text = _STEP_LABEL.sub(" ", reference)
+    numbers = [
+        m.group(1)
+        for m in _STANDALONE_NUMBER.finditer(text)
+        if not text[: m.start()].rstrip(_EXPONENT_GAP).endswith(("^", "**"))
+    ]
     return numbers[-1] if numbers else ""
 
 
 def final_answer(reference: str) -> tuple[str, ...]:
     """Token run of the reference's final answer: the clause after its last '=',
-    else its last standalone number that is not a numbered-step label; () when
-    it has neither."""
+    else its last standalone number that is not a numbered-step label or an
+    exponent (after "^" / "**"); () when it has neither."""
     return tuple(tokens(_final_answer_text(reference)))
 
 

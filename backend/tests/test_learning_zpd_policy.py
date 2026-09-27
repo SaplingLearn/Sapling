@@ -1429,6 +1429,32 @@ def test_final_answer_skips_numbered_step_labels():
     assert final_answer("Time: 12:30") == ("30",)  # a clock time is no label
 
 
+def test_final_answer_skips_exponents():
+    """The standalone-number fallback never takes an exponent ("m/s^2",
+    "cm^2", "10^23", "3x^2", "x**2", "10^-3"): the real value is the answer, so
+    a bare "9.8" in a hint leaks and an unrelated "2" does not."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer, strip_leak
+
+    accel = "The acceleration is 9.8 m/s^2."
+    assert final_answer(accel) == ("9", "8")
+    assert detect_leak(accel, "Good thinking: it comes out to about 9.8 here.", Rung.H3) == (
+        True,
+        "final_answer",
+    )
+    assert detect_leak(accel, "Look at step 2 again.", Rung.H3) == (False, "none")
+    area = "The area of the square is 12 cm^2."
+    assert final_answer(area) == ("12",)
+    assert detect_leak(area, "So the area works out to 12 square centimetres.", Rung.H1).leaked
+    assert final_answer("Bring the exponent down: 3x^2") == ()
+    assert strip_leak("Try step 2 again.", "Bring the exponent down: 3x^2") == "Try step 2 again."
+    assert final_answer("It is about 6 x 10^23") == ("10",)
+    assert final_answer("Expand x**2 to get 4") == ("4",)
+    assert final_answer("The rate is 5 per 10^-3 s") == ("10",)
+    assert final_answer("It is 4 ^ ( 2 )") == ("4",)
+    assert final_answer("Raise it to the 2") == ("2",)  # no '^': still an answer
+
+
 def test_final_answer_keeps_a_thousands_separator():
     from learning.ladder import Rung
     from learning.leak import detect_leak, final_answer
