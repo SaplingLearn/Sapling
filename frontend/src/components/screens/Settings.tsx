@@ -27,6 +27,12 @@ import {
 } from "@/lib/api";
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
+import {
+  getAnalyticsState,
+  getServerAnalyticsState,
+  setAnalyticsEnabled,
+  subscribeAnalytics,
+} from "@/lib/analytics";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -571,6 +577,8 @@ export function Settings() {
                 </button>
               </div>
 
+              <AnalyticsPreference />
+
               <div
                 className="h-serif"
                 style={{ fontSize: 18, margin: "28px 0 12px", color: "var(--err)" }}
@@ -600,6 +608,7 @@ export function Settings() {
           {tabs.map((t) => (
             <button
               key={t}
+              data-testid={`settings-tab-${t}`}
               onClick={() => setTab(t)}
               style={{
                 display: "block",
@@ -648,6 +657,86 @@ export function Settings() {
         <PreviewModal profile={preview} onClose={() => setPreviewOpen(false)} />
       )}
     </FullHeightScreen>
+  );
+}
+
+/**
+ * Product-analytics opt-out (PostHog). The choice is stored per browser by
+ * posthog-js and survives sign-out (src/lib/analytics.ts resetAnalytics). When
+ * analytics is not running in this build — no key, local mode, the E2E/test
+ * build — the switch renders disabled so the page never implies a choice it
+ * cannot honour.
+ */
+function AnalyticsPreference() {
+  const state = React.useSyncExternalStore(
+    subscribeAnalytics,
+    getAnalyticsState,
+    getServerAnalyticsState,
+  );
+  const on = state === "on";
+  const disabled = state === "unavailable" || state === "browser_blocked";
+  const note =
+    state === "unavailable"
+      ? "Analytics isn't running in this version of Sapling, so nothing is being collected."
+      : state === "browser_blocked"
+        ? "Your browser's Do Not Track or Global Privacy Control setting is on, so nothing is collected."
+        : "Applies to this browser.";
+
+  return (
+    <div className="card" data-testid="settings-analytics" style={{ padding: "var(--pad-lg)", marginTop: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }} id="settings-analytics-label">
+            Product analytics
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
+            Share which pages you visit and which buttons you click, tied to a pseudonymous ID, so we
+            can see what to improve. Never your name, email, or the content of your notes, documents
+            or messages. <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">
+            {note}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-labelledby="settings-analytics-label"
+          data-testid="settings-analytics-toggle"
+          disabled={disabled}
+          onClick={() => setAnalyticsEnabled(!on)}
+          style={{
+            flexShrink: 0,
+            width: 36,
+            height: 20,
+            padding: 0,
+            border: "none",
+            borderRadius: "var(--r-full)",
+            background: on ? "var(--accent)" : "var(--bg-soft)",
+            position: "relative",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.5 : 1,
+            transition: "all var(--dur) var(--ease)",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: 2,
+              left: on ? 18 : 2,
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              background: "#fff",
+              boxShadow: "var(--shadow-sm)",
+              transition: "all var(--dur) var(--ease)",
+            }}
+          />
+        </button>
+      </div>
+    </div>
   );
 }
 

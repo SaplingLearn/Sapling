@@ -107,6 +107,7 @@ const sections = [
         label: "Information collected automatically:",
         list: [
           "Basic usage data and session metadata to maintain and improve the Service",
+          "Product analytics: the pages you visit and the buttons and links you click, tied to a pseudonymous ID rather than your name or email. The text on screen is masked before anything is sent, so the content of your notes, documents and messages is never included",
         ],
       },
     ],
@@ -130,6 +131,7 @@ const sections = [
     body: "We do not sell your personal data. We share information only in the following limited circumstances:",
     highlights: [
       { label: "Service providers:", text: "We use Supabase (database), Google Gemini (AI processing), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
+      { label: "Product analytics:", text: "We use PostHog, hosted in the United States, to understand how the Service is used so we can improve it. PostHog receives a pseudonymous user ID, page views and interaction events (for example, that a button was clicked). It does not receive your name, email address, or the content of your notes, documents or messages, and we do not record your screen. You can turn product analytics off at any time under Settings → Data, and we honour your browser's Do Not Track and Global Privacy Control signals." },
       { label: "Study rooms:", text: "Your display name, avatar, and knowledge graph data are visible to other members of study rooms you join. Class-wide data shared with other users is anonymized." },
       { label: "Legal requirements:", text: "We may disclose information if required by law or to protect the rights and safety of our users." },
     ],
@@ -208,7 +210,7 @@ export default function PrivacyPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: May 3, 2026</span>
+              <span style={META}>Last updated: September 26, 2026</span>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>
