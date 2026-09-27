@@ -289,7 +289,7 @@ def build_grader_message(item, *, format: str, student_answer: str, labels: dict
 def _results_line(item, labels: dict[str, str]) -> str:
     """The message's last line (A33): every label again with its item's text, in
     order, right before the output. Live, without it one letter-labelled run in
-    12 answered with an item's text in place of its label (a silent "no"); with
+    15 answered with an item's text in place of its label (a silent "no"); with
     it, none of the 495 runs measured (HANDOFF-05 Post-hoc changes)."""
     items = ", ".join(f"{labels[r.id]} ({r.text})" for r in item.rubric)
     return f"Give item_results for {items}, in that order, each judged on its own."
