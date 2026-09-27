@@ -1764,3 +1764,47 @@ def test_zpd_layer_is_inert_nothing_imports_it():
         if _pkg06_imports(path.read_text(errors="ignore")):
             offenders.append(str(path.relative_to(BACKEND)))
     assert offenders == [], f"PKG-06 modules must stay unreferenced until PKG-07: {offenders}"
+
+
+def test_importing_the_app_loads_no_pkg06_module():
+    """The ast scan above skips learning/, so a PKG-06 module pulled into the app
+    through a learning module the app already loads (evidence, checks, gate, …)
+    would pass it. Import the real app in a clean interpreter and read
+    sys.modules: flag-off byte-identity needs no PKG-06 module loaded at all."""
+    import os
+    import subprocess
+    import sys
+
+    env = {
+        k: v for k, v in os.environ.items() if k not in ("GEMINI_API_KEY", "LEARNING_LOOP_ENABLED")
+    }
+    env.update(
+        {
+            "ENCRYPTION_KEY": "0" * 64,
+            "APP_ENV": "test",
+            "SUPABASE_URL": "https://dummy.supabase.co",
+            "SUPABASE_SERVICE_KEY": "dummy-service-key",
+            "SESSION_SECRET": "dummy-session-secret",
+        }
+    )
+    wanted = tuple(f"learning.{m}" for m in _PKG06_MODULES)
+    program = (
+        "import dotenv; dotenv.load_dotenv = lambda *a, **k: False\n"
+        "import sys\n"
+        "import main\n"
+        f"loaded = [m for m in {wanted!r} if m in sys.modules]\n"
+        "print('LEARNING_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('learning.'))))\n"
+        "print('PKG06_LOADED=' + ','.join(loaded))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=BACKEND,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert proc.returncode == 0, "importing main failed:\n" + proc.stderr
+    lines = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "_LOADED=" in line)
+    assert "learning.gate" in lines["LEARNING_LOADED"].split(","), lines  # not vacuous
+    assert lines["PKG06_LOADED"] == "", f"the app imports PKG-06 modules: {lines['PKG06_LOADED']}"
