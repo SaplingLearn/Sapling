@@ -919,6 +919,49 @@ def test_final_answer_clause_ends_at_a_sentence_break():
     assert final_answer("") == ()
 
 
+REF_STEPS = (
+    "1. Identify the limiting reagent from the mole ratio.\n"
+    "2. Use it to compute the theoretical yield."
+)
+
+
+def test_final_answer_skips_numbered_step_labels():
+    """A stepwise reference (A17's H4-eligible items) with no '=' and no number
+    of its own has no final answer: its step labels are not answers, or every
+    stepwise sibling and every "step 2" in a hint would be a leak."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer, strip_leak
+
+    assert final_answer(REF_STEPS) == ()
+    assert final_answer("1) Convert to moles.\n2) The yield is 42 g") == ("42",)
+    assert final_answer("Steps:\n  1. Add 3.\n  2. Divide by 2.") == ("2",)  # "by 2" is no label
+    assert final_answer("The answer is\n42.") == ("42",)  # a number alone on a line is no label
+    sibling = (
+        "Nitrogen reacts with hydrogen...\n\n1. Convert each mass to moles.\n"
+        "2. Compare against the balanced equation..."
+    )
+    assert detect_leak(REF_STEPS, sibling, Rung.H4) == (False, "none")
+    hint = "What should step 2 of your plan be?"
+    assert detect_leak(REF_STEPS, hint, Rung.H3) == (False, "none")
+    assert strip_leak(hint, REF_STEPS) == hint
+
+
+def test_final_answer_keeps_a_thousands_separator():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer
+
+    assert final_answer("The work done = 1,250 J") == ("1", "250", "j")
+    assert final_answer("The work done is 1,250 J") == ("1", "250")
+    assert final_answer("x = 3, so the rest follows") == ("3",)  # ", " is still a clause break
+    assert detect_leak(
+        "The work done = 1,250 J", "Start with step 1: what is the force?", Rung.H1
+    ) == (
+        False,
+        "none",
+    )
+    assert detect_leak("The work done = 1,250 J", "It comes to 1,250 J.", Rung.H1).leaked is True
+
+
 @pytest.mark.parametrize("reference,emitted,_", LEAKS)
 def test_strip_leak_makes_text_safe_and_is_idempotent(reference, emitted, _):
     from learning.ladder import Rung

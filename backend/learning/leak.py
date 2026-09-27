@@ -6,7 +6,8 @@ the supervisor architecture's deterministic solution stripper). Two rules:
 - ngram: any LEAK_NGRAM consecutive tokens of the reference appear
   consecutively in the emitted text;
 - final_answer: the reference's final answer (the clause after its last '=',
-  else its last standalone number) appears as a consecutive token run.
+  else its last standalone number that is not a numbered-step label) appears
+  as a consecutive token run.
 
 Tokens are ASCII alphanumeric runs, lowercased (`[a-z0-9]+` over lowercase for
 ASCII text). The stripper tokenizes the same way over the original text, so
@@ -25,11 +26,18 @@ Detector = Literal["none", "ngram", "final_answer"]
 WITHHELD = "[withheld]"
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
-_STANDALONE_NUMBER = re.compile(r"(?<!\w)(?<!\d\.)(-?\d+(?:\.\d+)?(?:/\d+)?)(?!\w)(?!\.\d)")
-# The final answer ends at the next clause or sentence break: a comma, a
-# semicolon, "and"/"so", a newline, or sentence punctuation that is not a
-# decimal point.
-_CLAUSE_BREAK = re.compile(r"[,;\n]|\band\b|\bso\b|[.!?](?!\d)", re.I)
+# A number, a thousands-separated one ("1,250") included.
+_STANDALONE_NUMBER = re.compile(
+    r"(?<!\w)(?<!\d\.)(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:/\d+)?)(?!\w)(?!\.\d)"
+)
+# A numbered-step label at the start of a line ("2. Use it", "  3) Solve"; the
+# stepwise shape of checks._STEP_LINE) is not an answer. A number alone on its
+# line ("42.") is.
+_STEP_LABEL = re.compile(r"^[ \t]*\d+[.)](?=[ \t]+\S)", re.M)
+# The final answer ends at the next clause or sentence break: a comma (not a
+# thousands separator), a semicolon, "and"/"so", a newline, or sentence
+# punctuation that is not a decimal point.
+_CLAUSE_BREAK = re.compile(r"(?<!\d),|,(?!\d{3}(?!\d))|[;\n]|\band\b|\bso\b|[.!?](?!\d)", re.I)
 
 
 class LeakVerdict(NamedTuple):
@@ -43,13 +51,14 @@ def tokens(text: str) -> list[str]:
 
 def final_answer(reference: str) -> tuple[str, ...]:
     """Token run of the reference's final answer: the clause after its last '=',
-    else its last standalone number; () when it has neither."""
+    else its last standalone number that is not a numbered-step label; () when
+    it has neither."""
     if "=" in reference:
         rhs = reference.rsplit("=", 1)[1]
         answer = tuple(tokens(_CLAUSE_BREAK.split(rhs, maxsplit=1)[0]))
         if answer:
             return answer
-    numbers = _STANDALONE_NUMBER.findall(reference)
+    numbers = _STANDALONE_NUMBER.findall(_STEP_LABEL.sub(" ", reference))
     return tuple(tokens(numbers[-1])) if numbers else ()
 
 
