@@ -13,6 +13,7 @@ Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §3.1–§3.4.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 # --------------------------------------------------------------- §3.1 BKT
@@ -205,6 +206,21 @@ LOOP_RAG_K_TEACH = 5  # teach-phase RAG k (unchanged from legacy)
 LOOP_RAG_K_TEACH_SOFT = 3  # † teach RAG k at the soft (and hard) budget level
 LOOP_SOURCE_CHUNKS_MAX = 2  # † the item's own source chunks for hint/feedback turns and H2
 LOOP_TIER_DEEP_MIN_FAILS = 2  # LOOP_MODEL_TIER: "≥ 2 failed genuine attempts" → deep
+
+
+def gate_seconds(name: str, scale: float = 1.0) -> float:
+    """A `GATE_*` seconds constant times `scale` (spec §13 A5).
+
+    A5 scales every gate by `config.LEARNING_GATE_TIME_SCALE` (default 1.0; the
+    E2E lane sets 0.01). This module is stdlib-only and must not import config,
+    so the factor is an argument: `learning.gates` threads it from its callers'
+    `time_scale=`, and the route layer reads the config value (HANDOFF-06)."""
+    value = globals().get(name) if name.startswith("GATE_") else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"gate_seconds: {name!r} is not a GATE_* seconds constant")
+    if not (math.isfinite(scale) and scale > 0):
+        raise ValueError(f"gate_seconds: scale must be finite and > 0, got {scale!r}")
+    return float(value) * scale
 
 
 # ------------------------------------------------------ §3.1 validity check

@@ -642,3 +642,156 @@ def test_context_policy_catalog_only_on_the_opener_and_tools_only_in_normal_teac
             assert context_policy(phase, opener=True, budget_level=level).catalog is True
             expected = "auto" if (phase == "teach" and level == "normal") else "none"
             assert context_policy(phase, opener=False, budget_level=level).tool_choice == expected
+
+
+# ── gates (spec §3.3 GATES; §13 A5, A32) ──────────────────────────────────────
+
+IND, IND_N, DWELL = (
+    params.GATE_INDEPENDENT_MIN_S,
+    params.GATE_INDEPENDENT_MIN_S_NOVICE,
+    params.GATE_RUNG_DWELL_MIN_S,
+)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("just tell me", True),
+        ("Just TELL me the steps", True),
+        ("give me the answer!!", True),
+        ("idk", True),
+        ("IDK...", True),
+        ("I don't know", True),
+        ("I don’t know", True),  # typographic apostrophe
+        ("i dont know", True),
+        ("what's the answer", True),
+        ("whats the answer?", True),
+        ("I think the derivative is 2x", False),
+        ("idkfa", False),
+        ("the answer is 7", False),
+        ("", False),
+    ],
+)
+def test_matches_non_attempt(text, expected):
+    from learning.gates import NON_ATTEMPT_PATTERNS, matches_non_attempt
+
+    assert len(NON_ATTEMPT_PATTERNS) == 5
+    assert matches_non_attempt(text) is expected
+
+
+def test_non_attempt_patterns_are_exactly_the_spec_list():
+    from learning.gates import NON_ATTEMPT_PATTERNS
+
+    assert NON_ATTEMPT_PATTERNS == (
+        "just tell me",
+        "give me the answer",
+        "idk",
+        "i don't know",
+        "what's the answer",
+    )
+
+
+@pytest.mark.parametrize(
+    "chars,work,matched,secs,band,expected",
+    [
+        (12, False, False, IND, "develop", True),
+        (12, False, False, IND - 1, "develop", False),
+        (12, False, False, IND, "novice", False),  # novice needs the longer gate
+        (12, False, False, IND_N, "novice", True),
+        (0, True, False, IND, "profic", True),  # shown work counts without text
+        (0, False, False, IND_N, "novice", False),  # nothing submitted
+        (40, True, True, IND_N, "novice", False),  # non-attempt phrase wins
+    ],
+)
+def test_is_genuine_attempt(chars, work, matched, secs, band, expected):
+    from learning.gates import is_genuine_attempt
+
+    assert is_genuine_attempt(chars, work, matched, secs, band) is expected
+
+
+def test_rung_unlock_needs_dwell_and_an_attempt_since_last_rung():
+    from learning.gates import rung_unlock
+
+    t0 = 1000.0
+    assert rung_unlock(_step(first=t0), now=t0 + DWELL) is False  # no attempt yet
+    assert rung_unlock(_step(first=t0, attempts=(t0 + 1,)), now=t0 + DWELL - 1) is False  # too soon
+    assert rung_unlock(_step(first=t0, attempts=(t0 + 1,)), now=t0 + DWELL) is True
+    shown = t0 + 50
+    # attempt predates rung
+    assert rung_unlock(_step(first=t0, last=shown, attempts=(t0 + 1,)), now=shown + DWELL) is False
+    assert (
+        rung_unlock(_step(first=t0, last=shown, attempts=(t0 + 1, shown + 2)), now=shown + DWELL)
+        is True
+    )
+
+
+def test_gate_seconds_scale_every_gate_constant():
+    """§13 A5: every GATE_* seconds constant is scaled by one factor (the E2E
+    lane sets 0.01; production never sets it). The factor is passed in: pure
+    modules never read config (invariant 2, HANDOFF-01 Known gap (g))."""
+    from learning.gates import is_genuine_attempt, rung_unlock
+
+    scale = 0.01
+    for name in (
+        "GATE_INDEPENDENT_MIN_S",
+        "GATE_INDEPENDENT_MIN_S_NOVICE",
+        "GATE_RUNG_DWELL_MIN_S",
+    ):
+        assert params.gate_seconds(name) == float(getattr(params, name))
+        assert params.gate_seconds(name, scale) == pytest.approx(getattr(params, name) * scale)
+    for bad_name in ("BAND_WINDOW", "LEAK_NGRAM", "gate_seconds", "GATE_NOPE"):
+        with pytest.raises(ValueError):
+            params.gate_seconds(bad_name)
+    for bad_scale in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            params.gate_seconds("GATE_RUNG_DWELL_MIN_S", bad_scale)
+    secs = IND_N * scale
+    assert is_genuine_attempt(12, False, False, secs, "novice", time_scale=scale) is True
+    assert is_genuine_attempt(12, False, False, secs, "novice") is False
+    t0 = 1000.0
+    fast = _step(first=t0, attempts=(t0 + DWELL * scale / 2,))
+    assert rung_unlock(fast, now=t0 + DWELL * scale, time_scale=scale) is True
+    assert rung_unlock(fast, now=t0 + DWELL * scale) is False
+
+
+def test_gates_reject_programmer_errors():
+    from learning.gates import is_genuine_attempt
+
+    with pytest.raises(ValueError):
+        is_genuine_attempt(12, False, False, IND, "expert")
+    with pytest.raises(ValueError):
+        is_genuine_attempt(12, False, False, float("nan"), "develop")
+
+
+def test_h6_allowed_and_offer_allowed():
+    from learning.gates import h6_allowed, offer_allowed
+
+    n = params.H6_MIN_GENUINE_ATTEMPTS
+    ok = {"item_taught": True, "item_practice": True, "item_graded": False}
+    assert h6_allowed(_step(fails=n), **ok) is True
+    assert h6_allowed(_step(fails=n - 1), **ok) is False
+    assert h6_allowed(_step(fails=n), **{**ok, "item_taught": False}) is False  # not taught
+    assert (
+        h6_allowed(_step(fails=n), **{**ok, "item_practice": False}) is False
+    )  # ungraded but not practice (A32)
+    assert h6_allowed(_step(fails=n), **{**ok, "item_graded": True}) is False  # graded coursework
+    assert h6_allowed(_step(fails=n, exam=True), **ok) is False
+    with pytest.raises(TypeError):
+        h6_allowed(
+            _step(fails=n), True, True, False
+        )  # keyword-only: the three predicates cannot be swapped
+    assert offer_allowed("novice", True) is True
+    assert offer_allowed("novice", False) is False
+    assert offer_allowed("develop", True) is False
+    assert offer_allowed("profic", True) is False
+
+
+def test_policy_never_imports_the_text_gate_but_gates_may_import_policy():
+    """Invariant 4's direction: gates reads text and uses policy's types;
+    policy never reaches gates."""
+    import importlib
+
+    gates = importlib.import_module("learning.gates")
+    policy = importlib.import_module("learning.policy")
+    assert gates.StepState is policy.StepState
+    assert not hasattr(policy, "matches_non_attempt") and not hasattr(policy, "gates")
