@@ -27,6 +27,7 @@ from models import (
 from services.academics import school_peer_user_ids
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
+from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
 from services.achievement_service import LOWER_IS_BETTER, get_user_stat
 
@@ -758,7 +759,12 @@ def get_roles(user_id: str):
 # ── Delete Account ───────────────────────────────────────────────────────────
 
 @router.delete("/{user_id}/account")
-def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
+def delete_account(
+    user_id: str,
+    body: DeleteAccountBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     require_self(user_id, request)
 
     if body.confirmation != "DELETE":
@@ -768,6 +774,10 @@ def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{user_id}"},
     )
+    # ADR 0028: best-effort PostHog person + event delete, AFTER the response
+    # so it adds no latency and cannot fail the deletion (it never raises;
+    # unconfigured -> WARN + skip). Only reached once the soft delete landed.
+    background_tasks.add_task(delete_posthog_person, user_id)
     return {"deleted": True}
 
 
