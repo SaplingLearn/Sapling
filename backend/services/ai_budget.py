@@ -11,11 +11,17 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
-from typing import Literal, NamedTuple
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Literal, NamedTuple, get_args
 
-from learning.policy import Band
+import config
+from db.connection import page_all, table
+from learning import params
+from learning.policy import Band, BudgetLevel, Tier
 from services.events_service import log_event
+from services.request_context import current_request_id
 
 logger = logging.getLogger("sapling.ai_budget")
 
@@ -33,6 +39,47 @@ Scope = Literal[
 EventLevel = Literal["soft", "hard", "grader_cap"]
 
 BUDGET_CAPPED_EVENT = "ai.budget_capped"  # spec §6
+GRADE_TASKS = frozenset({"grader", "grader_second", "decision"})  # spec §3.5 STUDENT_DAILY_GRADES
+RATE_LIMIT_WINDOW_S = 60  # spec §3.5: LEARN_RATE_LIMIT_PER_MIN counts rows in the last 60 s
+_REQUEST_CACHE_MAX = 512  # entries; a memory bound, not a policy threshold
+_DECEMBER = 12
+_USAGE_COLUMNS = "id,cost_usd,total_tokens,task,created_at"
+_PLATFORM_COLUMNS = "id,cost_usd,created_at"
+_USAGE_ORDER = "created_at.asc,id.asc"  # page_all needs a total order
+# spec §3.5 tie order among the hard scopes (Behaviour 4: the binding scope is the latest reset)
+_HARD_ORDER: tuple[Scope, ...] = (
+    "daily_usd",
+    "monthly_usd",
+    "daily_tokens",
+    "session_requests",
+    "rate_limit",
+)
+_USD_SCOPES: frozenset[str] = frozenset({"daily_usd", "monthly_usd"})
+
+
+@dataclass(frozen=True)
+class BudgetDecision:
+    """spec §3.5. ``tier_ceiling`` caps what policy.model_tier may choose; ``pause_novice``
+    (tutor kind, hard level) = serve no check for a novice-band concept on any surface except the probe."""
+
+    level: BudgetLevel
+    tier_ceiling: Tier
+    scope: Scope | None = None
+    reset_at: datetime | None = None
+    pause_novice: bool = False
+
+
+_NORMAL = BudgetDecision(level="normal", tier_ceiling="deep")
+
+
+@dataclass(frozen=True)
+class _Usage:
+    month_usd: float
+    day_usd: float
+    day_tokens: int
+    day_grades: int
+    minute_rows: int
+    minute_oldest: datetime | None
 
 
 class _EmitKey(NamedTuple):
@@ -44,6 +91,8 @@ class _EmitKey(NamedTuple):
 
 _lock = threading.Lock()
 _emitted: set[_EmitKey] = set()
+_request_cache: dict[tuple[str, str], _Usage] = {}
+_platform_checked_at: float | None = None
 
 
 def _utcnow() -> datetime:
@@ -86,5 +135,300 @@ def _emit_capped(
 
 def reset_for_tests() -> None:
     """Clear the per-process state (tests/conftest.py::_reset_ai_budget)."""
+    global _platform_checked_at
     with _lock:
         _emitted.clear()
+        _request_cache.clear()
+        _platform_checked_at = None
+
+
+# ── time helpers (UTC) ────────────────────────────────────────────────────────
+def _day_start(now: datetime) -> datetime:
+    return now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _next_day(now: datetime) -> datetime:
+    return _day_start(now) + timedelta(days=1)
+
+
+def _month_start(now: datetime) -> datetime:
+    return _day_start(now).replace(day=1)
+
+
+def _next_month(now: datetime) -> datetime:
+    start = _month_start(now)
+    if start.month == _DECEMBER:
+        return start.replace(year=start.year + 1, month=1)
+    return start.replace(month=start.month + 1)
+
+
+def _iso(ts: datetime) -> str:
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_ts(value: object) -> datetime | None:
+    """A PostgREST timestamptz; naive → UTC; unparseable → None (the row is skipped)."""
+    if isinstance(value, datetime):
+        ts = value
+    elif isinstance(value, str):
+        try:
+            ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+
+# ── the one usage read ────────────────────────────────────────────────────────
+def _daily_cap(band: Band | None) -> float:
+    """spec §3.5: the band's daily $ cap; novice turns run to the novice allowance."""
+    multiplier = config.BUDGET_NOVICE_MULTIPLIER if band == "novice" else 1.0
+    return config.STUDENT_DAILY_BUDGET_USD * multiplier
+
+
+def _rate_reset(usage: _Usage, now: datetime) -> datetime:
+    return (usage.minute_oldest or now) + timedelta(seconds=RATE_LIMIT_WINDOW_S)
+
+
+def _spend_fields(scope: Scope, usage: _Usage | None, cap: float) -> dict:
+    """Behaviour 5: spent_usd = the month's $ for monthly_usd, else today's; cap_usd only for
+    the $ scopes. Nothing when the read failed (None values are omitted, never zeroed)."""
+    if usage is None:
+        return {}
+    spent = usage.month_usd if scope == "monthly_usd" else usage.day_usd
+    cap_usd = None
+    if scope in _USD_SCOPES:
+        cap_usd = config.STUDENT_MONTHLY_BUDGET_USD if scope == "monthly_usd" else cap
+    return {"spent_usd": spent, "cap_usd": cap_usd}
+
+
+def _binding(hard: dict[Scope, datetime | None]) -> Scope:
+    """Behaviour 4: the triggered scope whose reset is LATEST, so a pause banner never promises
+    an early resume (max keeps the first in _HARD_ORDER on a tie); session_requests (reset None)
+    only when no timed scope triggered."""
+    timed = [s for s in _HARD_ORDER if hard.get(s) is not None]
+    if timed:
+        return max(timed, key=lambda s: hard[s])
+    return next(s for s in _HARD_ORDER if s in hard)
+
+
+def _load_rows(user_id: str, since: datetime) -> list[dict]:
+    """Every llm_usage row of the user since ``since``: one logical read, paged past max_rows."""
+    return list(
+        page_all(
+            table("llm_usage"),
+            _USAGE_COLUMNS,
+            filters={"user_id": f"eq.{user_id}", "created_at": f"gte.{_iso(since)}"},
+            order=_USAGE_ORDER,
+        )
+    )
+
+
+def _summarise(rows: list[dict], now: datetime) -> _Usage:
+    day0, minute0 = _day_start(now), now - timedelta(seconds=RATE_LIMIT_WINDOW_S)
+    month_usd = day_usd = 0.0
+    day_tokens = day_grades = minute_rows = 0
+    oldest: datetime | None = None
+    for row in rows:
+        ts = _parse_ts(row.get("created_at"))
+        if ts is None:
+            continue
+        cost = float(row.get("cost_usd") or 0)
+        month_usd += cost
+        if ts >= day0:
+            day_usd += cost
+            day_tokens += int(row.get("total_tokens") or 0)
+            day_grades += row.get("task") in GRADE_TASKS
+        if ts >= minute0:
+            minute_rows += 1
+            oldest = ts if oldest is None or ts < oldest else oldest
+    return _Usage(month_usd, day_usd, day_tokens, day_grades, minute_rows, oldest)
+
+
+def _usage(user_id: str) -> _Usage | None:
+    """One llm_usage read per (request, user); None on a read error (fail open)."""
+    rid = current_request_id()
+    key = (rid, user_id) if rid else None
+    if key is not None:
+        with _lock:
+            hit = _request_cache.get(key)
+        if hit is not None:
+            return hit
+    now = _utcnow()
+    try:
+        rows = _load_rows(user_id, _month_start(now))
+    except Exception as exc:  # fail open — see HANDOFF-06b Open questions (b)
+        logger.warning("ai_budget: llm_usage read failed for %s: %s", user_id, exc)
+        return None
+    summary = _summarise(rows, now)
+    if key is not None:
+        with _lock:
+            if len(_request_cache) >= _REQUEST_CACHE_MAX:
+                _request_cache.pop(next(iter(_request_cache)))
+            _request_cache[key] = summary
+    return summary
+
+
+# ── the ladder ────────────────────────────────────────────────────────────────
+def _grade_decision(user_id: str, usage: _Usage | None, now: datetime) -> BudgetDecision:
+    """The grader cap (spec §3.5): grading has its own cap, so a tutor-hard student still grades."""
+    if usage is None or usage.day_grades < config.STUDENT_DAILY_GRADES:
+        return _NORMAL
+    _emit_capped(user_id, "daily_grades", "grader_cap", **_spend_fields("daily_grades", usage, 0.0))
+    return BudgetDecision(
+        level="hard", tier_ceiling="none", scope="daily_grades", reset_at=_next_day(now)
+    )
+
+
+def _spend_decision(
+    user_id: str,
+    kind: Kind,
+    band: Band | None,
+    usage: _Usage | None,
+    now: datetime,
+    *,
+    tutor_requests: int,
+    deep_requests: int,
+    arm_session: bool,
+) -> BudgetDecision:
+    cap = _daily_cap(band)
+    hard: dict[Scope, datetime | None] = {}
+    if usage is not None:
+        if usage.day_usd >= cap:
+            hard["daily_usd"] = _next_day(now)
+        if usage.month_usd >= config.STUDENT_MONTHLY_BUDGET_USD:
+            hard["monthly_usd"] = _next_month(now)
+        if usage.day_tokens >= config.STUDENT_DAILY_TOKENS:
+            hard["daily_tokens"] = _next_day(now)
+        if kind == "tutor" and usage.minute_rows >= config.LEARN_RATE_LIMIT_PER_MIN:
+            hard["rate_limit"] = _rate_reset(usage, now)
+    if kind == "tutor" and tutor_requests >= params.LOOP_SESSION_MAX_TUTOR_REQUESTS:
+        hard["session_requests"] = None
+    if hard:
+        scope = _binding(hard)
+        _emit_capped(user_id, scope, "hard", band=band, **_spend_fields(scope, usage, cap))
+        # A 60-second burst pauses tutor turns but never drops novice-band concepts from review
+        # or the check surfaces (spec §3.5 hard row): pause_novice needs a trigger besides it.
+        return BudgetDecision(
+            level="hard",
+            tier_ceiling="none",
+            scope=scope,
+            reset_at=hard[scope],
+            pause_novice=kind == "tutor" and set(hard) != {"rate_limit"},
+        )
+    if kind == "close":
+        return _NORMAL  # one call, nothing to downgrade: the close has no soft level
+    soft: list[Scope] = []
+    if usage is not None and usage.day_usd >= config.STUDENT_SOFT_FRACTION * cap:
+        soft.append("daily_usd")
+    if (
+        usage is not None
+        and usage.day_tokens >= config.STUDENT_SOFT_FRACTION * config.STUDENT_DAILY_TOKENS
+    ):
+        soft.append("daily_tokens")
+    deep_cap = (
+        params.LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE
+        if band == "novice"
+        else params.LOOP_SESSION_MAX_DEEP_REQUESTS
+    )
+    if deep_requests >= deep_cap:
+        soft.append("session_deep")
+    if not soft:
+        return _NORMAL
+    scope = soft[0]
+    _emit_capped(user_id, scope, "soft", band=band, **_spend_fields(scope, usage, cap))
+    if arm_session:
+        return _NORMAL  # arms are exempt from downgrades; they pause at hard (spec §3.5)
+    # The $- and token-based soft level never downgrades novice deep turns; only the novice
+    # deep-request cap does (spec §3.5 soft row, LOOP_MODEL_TIER).
+    novice_keeps_deep = band == "novice" and "session_deep" not in soft
+    return BudgetDecision(
+        level="soft",
+        tier_ceiling="deep" if novice_keeps_deep else "standard",
+        scope=scope,
+        reset_at=None if scope == "session_deep" else _next_day(now),
+    )
+
+
+def check(
+    user_id: str,
+    kind: Kind,
+    band: Band | None = None,
+    *,
+    session_tutor_requests: int = 0,
+    session_deep_requests: int = 0,
+    arm_session: bool = False,
+) -> BudgetDecision:
+    """The degradation ladder of spec §3.5. Call it module-qualified — ``ai_budget.check(`` —
+    before every grader, grader_second, decision, loop_tutor* and session_close run
+    (invariant 23). ``band`` is required for ``tutor`` and ignored for the grader cap; the
+    session counters are the ints PKG-07 keeps in sessions.loop_state."""
+    if kind not in get_args(Kind):
+        raise ValueError(f"ai_budget.check: unknown kind {kind!r}")
+    if kind == "tutor" and band is None:
+        raise ValueError("ai_budget.check: band is required for kind='tutor' (spec §3.5)")
+    if band is not None and band not in get_args(Band):
+        raise ValueError(f"ai_budget.check: unknown band {band!r}")
+    _maybe_check_platform()
+    if not user_id:
+        return _NORMAL  # system actors carry no student budget
+    usage, now = _usage(user_id), _utcnow()
+    if kind in ("grader", "decision"):
+        return _grade_decision(user_id, usage, now)
+    return _spend_decision(
+        user_id,
+        kind,
+        band,
+        usage,
+        now,
+        tutor_requests=session_tutor_requests,
+        deep_requests=session_deep_requests,
+        arm_session=arm_session,
+    )
+
+
+# ── platform alert (alert-only; spec §3.5 PLATFORM_*) ─────────────────────────
+def _spawn(fn: Callable[[], None]) -> None:
+    """Off the request thread; tests replace it with an inline call."""
+    threading.Thread(target=fn, name="ai-budget-platform", daemon=True).start()
+
+
+def _maybe_check_platform() -> None:
+    """At most one platform read per PLATFORM_CHECK_INTERVAL_S per process; none when unset."""
+    global _platform_checked_at
+    if config.PLATFORM_DAILY_BUDGET_USD is None:
+        return
+    now = time.monotonic()
+    with _lock:
+        last = _platform_checked_at
+        if last is not None and now - last < config.PLATFORM_CHECK_INTERVAL_S:
+            return
+        _platform_checked_at = now
+    _spawn(_check_platform)
+
+
+def _check_platform() -> None:
+    """Today's spend over all users against PLATFORM_DAILY_BUDGET_USD. Never changes a decision."""
+    budget = config.PLATFORM_DAILY_BUDGET_USD
+    if budget is None:
+        return
+    try:
+        rows = page_all(
+            table("llm_usage"),
+            _PLATFORM_COLUMNS,
+            filters={"created_at": f"gte.{_iso(_day_start(_utcnow()))}"},
+            order=_USAGE_ORDER,
+        )
+        spent = sum(float(row.get("cost_usd") or 0) for row in rows)
+    except Exception as exc:
+        logger.warning("ai_budget: platform spend read failed: %s", exc)
+        return
+    if spent >= config.PLATFORM_ALERT_FRACTION * budget:
+        logger.warning(
+            "ai_budget: platform spend today is %s USD, at or above %s of the %s USD daily budget",
+            spent,
+            config.PLATFORM_ALERT_FRACTION,
+            budget,
+        )
+        _emit_capped(None, "platform", "soft", spent_usd=spent, cap_usd=budget)
