@@ -13,6 +13,7 @@ via env vars without touching code:
     SAPLING_MODEL_CHECK_ITEMS=gemini-2.5-flash-lite
     SAPLING_MODEL_GRADER=gemini-2.5-flash-lite
     SAPLING_MODEL_GRADER_SECOND=gemini-2.5-flash
+    SAPLING_MODEL_DECISION=gemini-2.5-flash-lite
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX, and
@@ -51,6 +52,8 @@ AgentTask = Literal[
     "check_items",
     # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
     "grader", "grader_second",
+    # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
+    "decision",
 ]
 
 
@@ -108,6 +111,8 @@ _DEFAULTS: dict[AgentTask, str] = {
     # One second opinion on a DIFFERENT model, same agent and prompt (spec §3.5, A22);
     # thinking is pinned off per run in agents/grader.py.
     "grader_second": "gemini-2.5-flash",
+    # Decision seam (PKG-05b, spec §3.5/§3.6): one short closed judgment per run → lite tier, thinking off.
+    "decision": "gemini-2.5-flash-lite",
 }
 
 

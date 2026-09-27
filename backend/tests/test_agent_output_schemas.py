@@ -77,6 +77,7 @@ EXPECTED_STRUCTURED_AGENTS = {
     "concept_extraction_agent",
     "concept_scan_agent",
     "course_summary_agent",
+    "decision_agent",  # learning loop PKG-05b (flat 2-field yes/no default; pick output per run)
     "flashcard_agent",
     "grader_agent",  # learning loop PKG-05 (flat 4-field GraderOutput; grader + grader_second slots)
     "note_concepts_agent",
