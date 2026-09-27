@@ -283,7 +283,7 @@ export default function WikiPage() {
           <WikiSearchBox style={{ margin: '26px 0 0', animation: 'fadeUp 700ms ease 220ms both' }} />
         </header>
 
-        <div style={{ marginTop: MASTHEAD_GAP, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
+        <div className="wiki-grid" style={{ marginTop: MASTHEAD_GAP, display: 'grid', gridTemplateColumns: 'minmax(0,190px) minmax(0,1fr)', gap: 'clamp(24px,4vw,56px)', alignItems: 'start' }}>
           <WikiRail />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: SECTION_GAP }}>
