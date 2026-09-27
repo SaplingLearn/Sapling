@@ -244,3 +244,33 @@ class _Boom:
 
 def test_inv_12_one_prompt_stack_per_series_agent():
     pytest.skip("asserted by PKG-04")
+
+
+def test_inv_13_fsrs_weights_pinned():
+    """PKG-02: FSRS_W is the spec §3.2 FSRS-6 default vector, and fsrs.py reads
+    it only from learning.params — a refit is a deliberate edit to params.py."""
+    from learning.params import FSRS_S0_GOOD, FSRS_W
+
+    assert len(FSRS_W) == 21
+    assert tuple(FSRS_W[:3]) == (0.212, 1.2931, 2.3065)
+    assert FSRS_S0_GOOD == FSRS_W[2]
+    learning_imports = {
+        line.split()[1]
+        for line in (LEARNING / "fsrs.py").read_text().splitlines()
+        if re.match(r"\s*from\s+learning", line)
+    }
+    assert learning_imports == {"learning.params"}, learning_imports
+    # The line scan above misses `import learning.bkt`, `from . import bkt` and
+    # imports inside functions; the ast walk sees them. `from learning.params
+    # import X` also yields `learning.params.X`, which is not a module file.
+    learning_modules = {
+        module
+        for module in _modules_imported_by(LEARNING / "fsrs.py", BACKEND)
+        if module.split(".")[0] == "learning"
+        and module != "learning"
+        and (
+            BACKEND.joinpath(*module.split(".")).with_suffix(".py").is_file()
+            or BACKEND.joinpath(*module.split("."), "__init__.py").is_file()
+        )
+    }
+    assert learning_modules == {"learning.params"}, learning_modules
