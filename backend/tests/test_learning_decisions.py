@@ -913,6 +913,26 @@ def test_acc_drop_gate_passes_an_exact_two_point_drop_at_every_count(ev, base_ri
     ]
 
 
+def test_gold_volume_gate_counts_each_decision_separately(ev):
+    """§3.6: DECISION_PROMOTE_MIN_GOLD is gold labels PER decision, so a mixed
+    grading list passes only when every decision in it has enough on its own."""
+
+    def gate(results):
+        return ev.promotion_checks(results, results)["DECISION_PROMOTE_MIN_GOLD"]
+
+    half = 100
+    mixed = _scored(ev, half, half, "grade_rubric_items") + _scored(
+        ev, half, half, "reason_is_correct"
+    )
+    assert len(mixed) >= ev.seam.DECISION_PROMOTE_MIN_GOLD and gate(mixed) is False
+    full = ev.seam.DECISION_PROMOTE_MIN_GOLD
+    both = _scored(ev, full, full, "grade_rubric_items") + _scored(
+        ev, full, full, "reason_is_correct"
+    )
+    assert gate(both) is True
+    assert gate(both[: full + half]) is False and gate([]) is False
+
+
 def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
     """The E2E lane end to end (PKG-07's /check/answer will run exactly this): function
     mode serves the grader from the env module's handler THROUGH the seam — backend

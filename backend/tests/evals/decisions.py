@@ -326,6 +326,15 @@ def bkt_replay_delta(candidate: list[CaseResult], baseline: list[CaseResult]) ->
     )
 
 
+def gold_per_decision(results: list[CaseResult]) -> int:
+    """The smallest gold count of any decision in `results` (§3.6 counts gold PER
+    decision, and a grading list may mix grade_rubric_items with reason_is_correct)."""
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r.decision] = counts.get(r.decision, 0) + 1
+    return min(counts.values(), default=0)
+
+
 def promotion_checks(
     candidate: list[CaseResult],
     baseline: list[CaseResult],
@@ -336,7 +345,7 @@ def promotion_checks(
     applicable here (SHARE_FALSE_POSITIVE_MAX is #641's; the live gates need PKG-15's shadow)."""
     grading, s = bool(candidate) and all(r.decision in GRADING_CHANNEL for r in candidate), shadow
     return {
-        "DECISION_PROMOTE_MIN_GOLD": len(candidate) >= seam.DECISION_PROMOTE_MIN_GOLD,
+        "DECISION_PROMOTE_MIN_GOLD": gold_per_decision(candidate) >= seam.DECISION_PROMOTE_MIN_GOLD,
         "DECISION_PROMOTE_MAX_ACC_DROP": accuracy(baseline) - accuracy(candidate)
         <= seam.DECISION_PROMOTE_MAX_ACC_DROP + GATE_TOLERANCE,
         "GRADER_PROMOTE_MIN_KAPPA": cohen_kappa(candidate) >= seam.GRADER_PROMOTE_MIN_KAPPA
