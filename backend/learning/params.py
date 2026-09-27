@@ -206,6 +206,9 @@ CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds 
 # never the whole reference, yet room for a number with its unit, an
 # expression, an mc_reason option's text or a teachback claim.
 CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS = 20
+# † A37: options per mc_reason item — A22's four (A–D). The agent writes them as
+# objects; code letters them and places the correct one (checks.lettered_options).
+CHECK_ITEM_MC_OPTIONS = 4
 
 # ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
 # FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating

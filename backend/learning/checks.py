@@ -17,6 +17,14 @@ checks a draft's final_answer with it, and PKG-06's learning/leak.py matches
 the stored final_answer in tutor text with it. It lives here, not in leak.py,
 because the upload path (which validates drafts) must not load the dark
 PKG-06 layer.
+
+An mc_reason draft states its options as objects (§13 A37): each option's text,
+whether it is the correct one, and — on a distractor — the wrong key naming the
+misconception that makes it tempting. It carries no letters. `repair_draft`
+makes the repairs that need no guess, `validate_draft` names every remaining
+fault by its rule, and `lettered_options` letters the valid options and places
+the correct one, so the model can neither drift a key off its option nor bias
+the answer's position.
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import string
 import unicodedata
 from collections.abc import Iterable, Sequence
 from decimal import Decimal, InvalidOperation
@@ -37,6 +46,7 @@ from learning.params import (
     CHECK_ITEM_DIFFICULTIES,
     CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS,
     CHECK_ITEM_FORMATS,
+    CHECK_ITEM_MC_OPTIONS,
     CHECK_ITEM_MIN_RUBRIC,
     CHECK_ITEM_MIN_WRONG,
     CHECK_ITEM_STEPWISE_MIN_STEPS,
@@ -142,9 +152,33 @@ class CheckItem(BaseModel):
     final_answer: str | None = None
 
 
+class OptionDraft(BaseModel):
+    """One mc_reason option as the agent states it (§13 A37). No letter: code
+    letters the options and places the correct one after validation."""
+
+    text: str = Field(
+        description=(
+            "the option exactly as the student reads it; at most "
+            f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens (the correct one is the final_answer)"
+        )
+    )
+    is_correct: bool = Field(
+        description="true on exactly one option, the correct answer; false on every distractor"
+    )
+    wrong_key: str | None = Field(
+        default=None,
+        description=(
+            "null on the correct option; on a distractor, the one entry of this item's "
+            "wrong_keys that names the misconception making it tempting (a different "
+            "entry for each distractor)"
+        ),
+    )
+
+
 class CheckItemDraft(BaseModel):
-    """The agent's per-item output. FLAT — str / int / bool / list[str] only
-    (docs/attempts/2026-05-03-orchestrator-schema-complexity.md)."""
+    """The agent's per-item output. Flat — str / int / bool / list[str] —
+    except `options`, one list of small objects (§13 A37;
+    docs/attempts/2026-05-03-orchestrator-schema-complexity.md)."""
 
     concept: str = Field(
         description="which of this call's concepts the item assesses, copied exactly"
@@ -152,6 +186,14 @@ class CheckItemDraft(BaseModel):
     format: str = Field(description="one of free | teachback | mc_reason")
     difficulty: int = Field(description="1 recall, 2 application, 3 transfer")
     prompt: str
+    options: list[OptionDraft] = Field(
+        default_factory=list,
+        description=(
+            f"mc_reason only: exactly {CHECK_ITEM_MC_OPTIONS} options, the correct one first "
+            "(is_correct true, wrong_key null), then the distractors (is_correct false, each "
+            "with its own wrong_key); [] for free and teachback"
+        ),
+    )
     reference_answer: str = Field(
         description="complete model answer; its LAST sentence is 'Final answer: <final_answer>.'"
     )
@@ -162,21 +204,24 @@ class CheckItemDraft(BaseModel):
             f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens"
         )
     )
-    rubric: list[str] = Field(default_factory=list)
+    rubric: list[str] = Field(
+        default_factory=list,
+        description=(
+            f"every format: at least {CHECK_ITEM_MIN_RUBRIC} criteria, each one binary check a "
+            "grader marks present or absent; for mc_reason they judge the student's reason"
+        ),
+    )
     wrong_keys: list[str] = Field(
         default_factory=list,
-        description="every format: snake_case misconception ids, same length as wrong_texts",
+        description=(
+            f"every format, never empty: at least {CHECK_ITEM_MIN_WRONG} snake_case misconception "
+            f"id(s) — for mc_reason at least {CHECK_ITEM_MC_OPTIONS - 1}, one per distractor in "
+            "the distractors' order — same length as wrong_texts"
+        ),
     )
     wrong_texts: list[str] = Field(
         default_factory=list, description="wrong_texts[i] describes wrong_keys[i]"
     )
-    option_letters: list[str] = Field(default_factory=list)  # mc_reason only
-    option_texts: list[str] = Field(default_factory=list)
-    option_wrong_keys: list[str] = Field(
-        default_factory=list,
-        description='one entry per option letter, same order; "" for the correct option',
-    )
-    correct_option: str = ""
     answer_kind: str = "free"
     canonical_answer: str = ""  # numeric only; "" = none
     tolerance: str = ""  # "" = none; parsed in code
@@ -368,35 +413,167 @@ def _finite_float(text: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
+# An option named by its letter — "option B", "choice (C)", "Options B and D",
+# "Options: A. …". Code letters the options after validation (A37), so a
+# letter the agent wrote names nothing, and a reference that says "Option A is
+# correct" would tell the grader the wrong option once code moved it. Only an
+# UPPERCASE letter standing alone right after the word counts: "option a
+# student picks", "optional" and "option, A-level" do not. A bare "(A)" is not
+# read: a stem names its variables that way ("the area of a circle (A)").
+_LETTER_REF = re.compile(r"\b(?i:options?|choices?)\s*:?\s*[(\[]?[A-Z][)\].:]?(?![\w'\u2019-])")
+
+
+# Closing punctuation an option's text may carry or not ("The loss value." is
+# "The loss value").
+_OPTION_END = ".,;:!?"
+
+
+def _option_form(text: str) -> str:
+    """How two option texts compare for the option_text rule: whitespace runs
+    collapsed, casefolded, closing punctuation dropped — every other character
+    kept, so "f'(g(x)) * g'(x)" and "f(g'(x)) * g'(x)" stay two options (the
+    A34 answer tokens drop primes and brackets, which is right for a final
+    answer's run and wrong here)."""
+    return normalize(text).rstrip(_OPTION_END).rstrip()
+
+
+def _blank(key: str | None) -> bool:
+    return not (key or "").strip()
+
+
+#: The A37 option rules, by the word each reason of `_option_reasons` leads with.
+MC_OPTION_RULES = (
+    "option_count",
+    "one_correct",
+    "correct_key",
+    "distractor_key",
+    "option_text",
+    "letter",
+)
+
+
 def _option_reasons(draft: CheckItemDraft) -> list[str]:
-    letters, texts, keys = draft.option_letters, draft.option_texts, draft.option_wrong_keys
-    if not (len(letters) == len(texts) == len(keys)):
-        return [
-            f"option arrays differ in length: {len(letters)} letters, "
-            f"{len(texts)} texts, {len(keys)} wrong keys"
-        ]
+    """The A37 option rules of an mc_reason draft, each reason led by its
+    rule word (MC_OPTION_RULES). Options are numbered from 1 as the agent
+    wrote them."""
+    options = draft.options
     reasons = []
-    if len(set(letters)) != len(letters):
-        reasons.append("option letters are not distinct")
-    correct = [i for i, letter in enumerate(letters) if letter == draft.correct_option]
-    if len(correct) != 1:
+    if len(options) != CHECK_ITEM_MC_OPTIONS:
         reasons.append(
-            f"option: {len(correct)} option_letters entries equal correct_option "
-            f"{draft.correct_option!r} (need exactly 1)"
+            f"option_count: {len(options)} options; mc_reason needs exactly {CHECK_ITEM_MC_OPTIONS}"
         )
-        return reasons
-    if keys[correct[0]]:
-        reasons.append("option: the correct option carries a wrong_key")
-    distractors = [i for i in range(len(letters)) if i != correct[0]]
-    if not distractors:
-        reasons.append("option: mc_reason has no distractor")
-    listed = set(draft.wrong_keys)
-    for i in distractors:
-        if keys[i] not in listed:
+    correct = [n for n, o in enumerate(options, start=1) if o.is_correct]
+    if len(correct) != 1:
+        reasons.append(f"one_correct: {len(correct)} options marked is_correct; exactly 1 must be")
+    for n in correct:
+        if not _blank(options[n - 1].wrong_key):
             reasons.append(
-                f"option {letters[i]!r}: distractor wrong_key {keys[i]!r} is not in wrong_keys"
+                f"correct_key: option {n} is marked correct and carries wrong_key "
+                f"{options[n - 1].wrong_key!r}; the correct option has none"
+            )
+    listed = set(draft.wrong_keys)
+    keyed: dict[str, int] = {}
+    for n, option in enumerate(options, start=1):
+        if option.is_correct:
+            continue
+        if _blank(option.wrong_key):
+            reasons.append(f"distractor_key: option {n} has no wrong_key")
+            continue
+        if option.wrong_key not in listed:
+            reasons.append(
+                f"distractor_key: option {n}'s wrong_key {option.wrong_key!r} is not in wrong_keys"
+            )
+        if option.wrong_key in keyed:
+            reasons.append(
+                f"distractor_key: options {keyed[option.wrong_key]} and {n} share wrong_key "
+                f"{option.wrong_key!r}; each distractor names its own misconception"
+            )
+        keyed.setdefault(option.wrong_key, n)
+    seen: dict[str, int] = {}
+    for n, option in enumerate(options, start=1):
+        form = _option_form(option.text)
+        if not answer_run(option.text):
+            reasons.append(f"option_text: option {n} states nothing")
+        elif form in seen:
+            reasons.append(f"option_text: options {seen[form]} and {n} read the same")
+        else:
+            seen[form] = n
+    for field in ("prompt", "reference_answer"):
+        hit = _LETTER_REF.search(getattr(draft, field))
+        if hit:
+            reasons.append(
+                f"letter: the {field} names an option by its letter ({hit.group(0)!r}); "
+                "code letters the options"
             )
     return reasons
+
+
+def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
+    """`draft` with the repairs that need no guess made (§13 A37), and one
+    line per repair, led by the rule it satisfies. The input is never mutated.
+
+    correct_key — an mc_reason draft with EXACTLY one option marked is_correct
+    whose wrong_key is not null (a key, or "") gets that key cleared:
+    is_correct is explicit, so which option is correct is not in doubt, and
+    A34's rule that final_answer equal the correct option's text still
+    cross-checks the flag.
+
+    stepwise — a draft that claims `stepwise` while its reference has fewer
+    than CHECK_ITEM_STEPWISE_MIN_STEPS numbered lines drops the claim: code
+    measures the reference, and an item that is not stepwise only stops being
+    an H4 sibling candidate (A17).
+
+    Nothing else is repaired: which option is correct (none or several
+    marked) is never inferred, and a distractor's missing, shared or unlisted
+    key is never guessed."""
+    update: dict = {}
+    repairs: list[str] = []
+    correct = [i for i, o in enumerate(draft.options) if o.is_correct]
+    if (
+        draft.format == _MC_REASON
+        and len(correct) == 1
+        and draft.options[correct[0]].wrong_key is not None
+    ):
+        i = correct[0]
+        options = [o.model_copy() for o in draft.options]
+        key, options[i] = options[i].wrong_key, options[i].model_copy(update={"wrong_key": None})
+        update["options"] = options
+        repairs.append(
+            f"correct_key: option {i + 1} is marked correct; its wrong_key {key!r} "
+            "was cleared (repaired)"
+        )
+    if draft.stepwise:
+        steps = len(_STEP_LINE.findall(draft.reference_answer))
+        if steps < CHECK_ITEM_STEPWISE_MIN_STEPS:
+            update["stepwise"] = False
+            repairs.append(
+                f"stepwise: the reference has {steps} numbered step(s), fewer than "
+                f"{CHECK_ITEM_STEPWISE_MIN_STEPS}; the stepwise claim was dropped (repaired)"
+            )
+    if not update:
+        return draft, []
+    return draft.model_copy(update=update), repairs
+
+
+def lettered_options(draft: CheckItemDraft) -> tuple[list[Option], str]:
+    """The stored options of a valid mc_reason draft and the correct letter
+    (§13 A37): the distractors in the order the agent wrote them, the correct
+    option inserted at a slot drawn from the item's question_hash — uniform
+    over the slots, stable for a prompt (a re-run upserts the same letters),
+    and never the agent's choice — then lettered A, B, C, … in that order.
+    The correct option stores no wrong_key. Raises ValueError unless exactly
+    one option is marked correct (validate_draft first)."""
+    correct = [o for o in draft.options if o.is_correct]
+    if len(correct) != 1:
+        raise ValueError(f"{len(correct)} options marked is_correct; exactly 1 must be")
+    distractors = [o for o in draft.options if not o.is_correct]
+    slot = int(question_hash(draft.prompt), 16) % len(draft.options)
+    ordered = distractors[:slot] + correct + distractors[slot:]
+    options = [
+        Option(letter=letter, text=o.text, wrong_key=None if o.is_correct else o.wrong_key)
+        for letter, o in zip(string.ascii_uppercase, ordered)
+    ]
+    return options, options[slot].letter
 
 
 def _decimal(text: str) -> Decimal | None:
@@ -465,11 +642,8 @@ def _stated_value(tokens: list[AnswerToken]) -> Decimal | None:
 
 
 def _correct_option_text(draft: CheckItemDraft) -> str | None:
-    letters, texts = draft.option_letters, draft.option_texts
-    hits = [i for i, letter in enumerate(letters) if letter == draft.correct_option]
-    if len(letters) != len(texts) or len(hits) != 1:
-        return None  # the option rule reports it
-    return texts[hits[0]]
+    correct = [o.text for o in draft.options if o.is_correct]
+    return correct[0] if len(correct) == 1 else None  # else the one_correct rule reports it
 
 
 def _unhyphenated(run: tuple[str, ...]) -> tuple[str, ...]:
@@ -561,8 +735,10 @@ def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
 def validate_draft(draft: CheckItemDraft) -> list[str]:
     """Every reason `draft` is unusable; [] when it may be stored. Each reason
     names the rule it is about (format, difficulty, prompt, reference, rubric,
-    wrong, leak, answer_kind, option, canonical, tolerance, stepwise,
-    final_answer)."""
+    wrong, leak, answer_kind, canonical, tolerance, stepwise, final_answer; an
+    mc_reason draft's A37 option rules lead with option_count, one_correct,
+    correct_key, distractor_key, option_text or letter). Run repair_draft
+    first to store what it can repair."""
     reasons: list[str] = []
     if draft.format not in CHECK_ITEM_FORMATS:
         reasons.append(f"format {draft.format!r} is not one of {CHECK_ITEM_FORMATS}")

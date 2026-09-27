@@ -39,6 +39,10 @@ class TestParams:
         assert params.CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE == 1
         assert params.CHECK_ITEM_DRAFT_WORKERS >= 1
         assert params.CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS == 20  # † A34
+        assert params.CHECK_ITEM_MC_OPTIONS == 4  # † A37: A22's four options, A-D
+        # every distractor carries a distinct wrong key, so an mc_reason item
+        # lists at least CHECK_ITEM_MC_OPTIONS - 1 of them
+        assert params.CHECK_ITEM_MC_OPTIONS - 1 >= params.CHECK_ITEM_MIN_WRONG
 
     def test_initial_set_is_every_pair_and_covers_its_consumers(self):
         from learning import params
@@ -162,11 +166,33 @@ def _draft(**over):
     return CheckItemDraft(**base)
 
 
+# The agent's mc_reason options (spec §13 A37): objects, the correct one flagged
+# is_correct with no wrong_key, each distractor keyed to a different one of the
+# item's wrong_keys. Written correct-first, as the prompt asks; code letters
+# them and places the correct one (checks.lettered_options).
+_MC_OPTIONS = (
+    ("The update step size", True, None),
+    ("The iteration count", False, "rate_is_iterations"),
+    ("The loss value", False, "rate_is_loss"),
+    ("The gradient sign", False, "rate_is_sign"),
+)
+_CORRECT, _ITER, _LOSS, _SIGN = _MC_OPTIONS
+
+
+def _opts(*rows):
+    from learning.checks import OptionDraft
+
+    return [OptionDraft(text=t, is_correct=c, wrong_key=k) for t, c, k in rows]
+
+
 def _mc_draft(**over):
     base = dict(
         format="mc_reason",
         prompt="Which quantity does the learning rate scale? Pick one and give your reason.",
-        reference_answer="A: The update step size — it scales each step along the negative gradient.",
+        reference_answer=(
+            "The update step size: the rate scales each step along the negative gradient. "
+            "Final answer: The update step size."
+        ),
         final_answer="The update step size",
         wrong_keys=["rate_is_iterations", "rate_is_loss", "rate_is_sign"],
         wrong_texts=[
@@ -174,15 +200,7 @@ def _mc_draft(**over):
             "Treats the rate as the loss.",
             "Thinks it flips the sign.",
         ],
-        option_letters=["A", "B", "C", "D"],
-        option_texts=[
-            "The update step size",
-            "The iteration count",
-            "The loss value",
-            "The gradient sign",
-        ],
-        option_wrong_keys=["", "rate_is_iterations", "rate_is_loss", "rate_is_sign"],
-        correct_option="A",
+        options=_opts(*_MC_OPTIONS),
     )
     base.update(over)
     return _draft(**base)
@@ -495,27 +513,147 @@ class TestValidateDraft:
         reasons = validate_draft(_draft(**over))
         assert any(reason in r for r in reasons), reasons
 
+    # Each A37 mc_reason rule, by the word its reason starts with.
+    @pytest.mark.parametrize(
+        "options,rule",
+        [
+            ((_CORRECT, _ITER, _LOSS), "option_count"),
+            (
+                (_CORRECT, _ITER, _LOSS, _SIGN, ("The batch size", False, "rate_is_batch")),
+                "option_count",
+            ),
+            ((), "option_count"),
+            (
+                (
+                    (_CORRECT[0], False, "rate_is_sign"),
+                    _ITER,
+                    _LOSS,
+                    ("The sign", False, "rate_is_sign"),
+                ),
+                "one_correct",
+            ),
+            ((_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN), "one_correct"),
+            (((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN), "correct_key"),
+            ((_CORRECT, (_ITER[0], False, None), _LOSS, _SIGN), "distractor_key"),
+            ((_CORRECT, (_ITER[0], False, "  "), _LOSS, _SIGN), "distractor_key"),
+            ((_CORRECT, (_ITER[0], False, "rate_is_loss"), _LOSS, _SIGN), "distractor_key"),
+            ((_CORRECT, (_ITER[0], False, "not_listed"), _LOSS, _SIGN), "distractor_key"),
+            (
+                (_CORRECT, _ITER, ("the ITERATION count.", False, "rate_is_loss"), _SIGN),
+                "option_text",
+            ),
+            ((_CORRECT, _ITER, ("...", False, "rate_is_loss"), _SIGN), "option_text"),
+        ],
+    )
+    def test_each_mc_reason_rule_names_itself(self, options, rule):
+        from learning.checks import validate_draft
+
+        reasons = validate_draft(_mc_draft(options=_opts(*options)))
+        assert any(r.startswith(f"{rule}:") for r in reasons), reasons
+
     @pytest.mark.parametrize(
         "over",
         [
-            {"option_texts": ["only", "three", "texts"]},
-            {"correct_option": "E"},
-            {"option_letters": ["A", "A", "C", "D"]},
-            {"option_wrong_keys": ["", "rate_is_iterations", "not_listed", "rate_is_sign"]},
-            {"option_wrong_keys": ["", "", "rate_is_loss", "rate_is_sign"]},
+            {
+                "reference_answer": "Option A is right: the update step size scales each step. "
+                "Final answer: The update step size."
+            },
+            {
+                "reference_answer": "The answer is choice (B), the update step size. "
+                "Final answer: The update step size."
+            },
+            {"prompt": "Is option C the quantity the learning rate scales? Give your reason."},
+            {
+                "reference_answer": "Options B and D both miss it: the update step size is scaled. "
+                "Final answer: The update step size."
+            },
+            # live probe 2026-09-27: a reference that re-listed the options by letter
+            {
+                "reference_answer": "It scales each step. Options:  A. The iteration count  "
+                "B. The update step size  Final answer: The update step size."
+            },
         ],
     )
-    def test_mc_reason_needs_one_correct_option_and_keyed_distractors(self, over):
+    def test_an_mc_reason_item_never_names_an_option_by_letter(self, over):
+        """Code letters the options after validation (A37), so a letter the
+        agent wrote names nothing: a reference saying "Option A" would tell
+        the grader the wrong option once code moved it."""
         from learning.checks import validate_draft
 
-        assert any("option" in r for r in validate_draft(_mc_draft(**over)))
+        reasons = validate_draft(_mc_draft(**over))
+        assert any(r.startswith("letter:") for r in reasons), reasons
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Another option a student might pick is the loss value.",  # lowercase article
+            "The optional step is Alpha. Final answer: The update step size.",
+            "One option, A-level maths, is not in the passage.",
+            "P(A) is a probability, not an option.",
+            # live eval recording 2026-09-27: a stem naming its variable
+            "The area of a circle (A) depends on its radius (r).",
+        ],
+    )
+    def test_the_letter_rule_reads_only_an_option_named_by_its_letter(self, text):
+        from learning.checks import validate_draft
+
+        ref = f"The update step size: {text} Final answer: The update step size."
+        assert not any(
+            r.startswith("letter:") for r in validate_draft(_mc_draft(reference_answer=ref))
+        )
+
+    def test_math_options_that_differ_only_in_primes_or_brackets_are_distinct(self):
+        """option_text compares the texts, not their A34 answer tokens (which
+        drop primes and brackets): a chain-rule item's options differ exactly
+        there (live eval probe, 2026-09-27)."""
+        from learning.checks import validate_draft
+
+        draft = _mc_draft(
+            prompt="Which expression is d/dx f(g(x))? Pick one and give your reason.",
+            reference_answer=(
+                "The outer derivative is taken at the inner function, times the inner "
+                "derivative. Final answer: f'(g(x)) * g'(x)."
+            ),
+            final_answer="f'(g(x)) * g'(x)",
+            options=_opts(
+                ("f'(g(x)) * g'(x)", True, None),
+                ("f(g'(x)) * g'(x)", False, "rate_is_iterations"),
+                ("f'(x) * g'(x)", False, "rate_is_loss"),
+                ("f'(g(x)) + g'(x)", False, "rate_is_sign"),
+            ),
+        )
+        assert validate_draft(draft) == []
+
+    def test_an_mc_reason_rubric_needs_two_criteria_for_the_reason(self):
+        from learning.checks import validate_draft
+
+        reasons = validate_draft(_mc_draft(rubric=["Names the step size."]))
+        assert any(r.startswith("rubric") for r in reasons), reasons
+
+    def test_the_live_run_1_shape_is_named_rule_by_rule(self):
+        """Live sequence test 2026-09-27, run 1: the correct option carried a
+        wrong_key, two distractors shared a key, a one-item rubric. Each fault
+        is reported by its own rule; none is guessed around."""
+        from learning.checks import validate_draft
+
+        draft = _mc_draft(
+            options=_opts(
+                (_CORRECT[0], True, "rate_is_iterations"),
+                _ITER,
+                (_LOSS[0], False, "rate_is_iterations"),
+                _SIGN,
+            ),
+            rubric=["Names the step size."],
+        )
+        words = {r.split(":")[0].split(" ")[0] for r in validate_draft(draft)}
+        assert {"correct_key", "distractor_key", "rubric"} <= words, words
 
     def test_option_and_numeric_fields_are_ignored_where_they_do_not_apply(self):
         from learning.checks import validate_draft
 
         # free answer kind: canonical/tolerance ignored; non-mc format: options ignored.
         assert validate_draft(_draft(canonical_answer="junk", tolerance="-1")) == []
-        assert validate_draft(_draft(option_letters=["A"], correct_option="Z")) == []
+        assert validate_draft(_draft(options=_opts(("junk", True, "k"), ("junk", True, "k")))) == []
 
     @pytest.mark.parametrize(
         "prompt,reference,leaks",
@@ -557,6 +695,116 @@ class TestValidateDraft:
             "c2",
             "c1",
         ]
+
+
+class TestRepairAndOptions:
+    """Spec §13 A37: the agent states mc_reason options as objects; code
+    repairs only what needs no guess, then letters them and places the
+    correct one."""
+
+    def test_repair_clears_the_wrong_key_of_the_one_option_marked_correct(self):
+        from learning.checks import repair_draft, validate_draft
+
+        for key in ("rate_is_loss", ""):
+            draft = _mc_draft(options=_opts((_CORRECT[0], True, key), _ITER, _LOSS, _SIGN))
+            fixed, repairs = repair_draft(draft)
+            assert [o.wrong_key for o in fixed.options] == [
+                None,
+                *(k for _, _, k in _MC_OPTIONS[1:]),
+            ]
+            assert len(repairs) == 1 and repairs[0].startswith("correct_key:"), repairs
+            assert validate_draft(fixed) == []
+            # the input is never mutated
+            assert draft.options[0].wrong_key == key
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            # no option marked correct: which one is, is never inferred
+            ((_CORRECT[0], False, "rate_is_loss"), _ITER, _LOSS, _SIGN),
+            # two marked correct: neither is picked
+            (
+                (_CORRECT[0], True, "rate_is_loss"),
+                (_ITER[0], True, "rate_is_iterations"),
+                _LOSS,
+                _SIGN,
+            ),
+            # a distractor without its key: which misconception it is, is never guessed
+            (_CORRECT, (_ITER[0], False, None), _LOSS, _SIGN),
+        ],
+    )
+    def test_repair_never_guesses(self, options):
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _mc_draft(options=_opts(*options))
+        fixed, repairs = repair_draft(draft)
+        assert repairs == [] and fixed == draft
+        assert validate_draft(fixed) != []
+
+    def test_repair_leaves_valid_drafts_and_other_formats_options_alone(self):
+        from learning.checks import repair_draft
+
+        for draft in (_mc_draft(), _draft(), _draft(options=_opts(("x", True, "k")))):
+            assert repair_draft(draft) == (draft, [])
+
+    def test_repair_withdraws_a_stepwise_claim_the_reference_does_not_bear_out(self):
+        """stepwise is a claim about the reference's form that code can
+        measure: with fewer than CHECK_ITEM_STEPWISE_MIN_STEPS numbered lines
+        the item is simply not stepwise (it only stops being an H4 sibling
+        candidate, A17), in every format. A reference that does carry the
+        steps keeps the claim."""
+        from learning.checks import repair_draft, validate_draft
+
+        for draft in (_draft(stepwise=True), _mc_draft(stepwise=True)):
+            assert validate_draft(draft) != []
+            fixed, repairs = repair_draft(draft)
+            assert fixed.stepwise is False and validate_draft(fixed) == []
+            assert len(repairs) == 1 and repairs[0].startswith("stepwise:"), repairs
+            assert draft.stepwise is True  # the input is never mutated
+        steps = "1. Compute the gradient.\n2) Step against it by the rate."
+        kept = _draft(
+            stepwise=True, reference_answer=steps, final_answer="Step against it by the rate"
+        )
+        assert repair_draft(kept) == (kept, [])
+
+    def test_code_letters_the_options_and_places_the_correct_one(self):
+        from learning.checks import lettered_options
+
+        options, correct = lettered_options(_mc_draft())
+        assert [o.letter for o in options] == ["A", "B", "C", "D"]
+        (right,) = [o for o in options if o.wrong_key is None]
+        assert right.letter == correct and right.text == _CORRECT[0]
+        # the distractors keep the order and the keys the agent gave them
+        assert [(o.text, o.wrong_key) for o in options if o is not right] == [
+            (t, k) for t, _, k in _MC_OPTIONS[1:]
+        ]
+        assert lettered_options(_mc_draft()) == (options, correct)  # stable per prompt
+
+    def test_the_correct_position_is_codes_not_the_agents(self):
+        """The agent writes the correct option first; code moves it to a slot
+        drawn from the item's question_hash, so every slot is used about
+        equally and the model cannot bias the key."""
+        from collections import Counter
+
+        from learning.checks import lettered_options
+        from learning.params import CHECK_ITEM_MC_OPTIONS
+
+        n = 400
+        slots = Counter(
+            lettered_options(_mc_draft(prompt=f"Which quantity does rate {i} scale?"))[1]
+            for i in range(n)
+        )
+        assert set(slots) == set("ABCD"[:CHECK_ITEM_MC_OPTIONS])
+        expected = n / CHECK_ITEM_MC_OPTIONS
+        assert all(abs(c - expected) < expected / 3 for c in slots.values()), slots
+
+    def test_lettering_refuses_a_draft_without_exactly_one_correct_option(self):
+        from learning.checks import lettered_options
+
+        with pytest.raises(ValueError):
+            lettered_options(
+                _mc_draft(options=_opts(_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN))
+            )
 
 
 class TestFinalAnswerRules:
@@ -829,7 +1077,7 @@ class TestFinalAnswerRules:
         reasons = [r for r in validate_draft(wrong) if "final_answer" in r]
         assert any("option" in r for r in reasons), reasons
         # an item whose options are already broken reports the option rule only
-        broken = _mc_draft(correct_option="E")
+        broken = _mc_draft(options=_opts(_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN))
         assert not any("final_answer" in r for r in validate_draft(broken))
 
     def test_free_and_teachback_answers_need_no_number(self):
@@ -1095,6 +1343,7 @@ class TestCreateItems:
         assert row["canonical_answer"] is None and row["tolerance"] is None
 
     def test_mc_reason_options_and_numeric_key_are_encrypted(self):
+        from learning.checks import lettered_options
         from services import check_item_service as svc
         from services.encryption import decrypt_if_present, decrypt_json
 
@@ -1110,13 +1359,14 @@ class TestCreateItems:
         with patch("services.check_item_service.table", side_effect=factory):
             svc.create_items("course-1", "learning rate", "doc-1", [_mc_draft(), numeric])
         mc, num = mocks["check_items"].upsert.call_args[0][0]
-        assert decrypt_json(mc["options_json"]) == [
-            {"letter": "A", "text": "The update step size", "wrong_key": None},
-            {"letter": "B", "text": "The iteration count", "wrong_key": "rate_is_iterations"},
-            {"letter": "C", "text": "The loss value", "wrong_key": "rate_is_loss"},
-            {"letter": "D", "text": "The gradient sign", "wrong_key": "rate_is_sign"},
-        ]
-        assert mc["correct_option"] != "A" and decrypt_if_present(mc["correct_option"]) == "A"
+        # The stored shape the grader and the routes read is unchanged by A37:
+        # [{letter, text, wrong_key}] + the correct letter — lettered by code.
+        options, letter = lettered_options(_mc_draft())
+        assert decrypt_json(mc["options_json"]) == [o.model_dump() for o in options]
+        assert [o["letter"] for o in decrypt_json(mc["options_json"])] == ["A", "B", "C", "D"]
+        assert mc["correct_option"] != letter and decrypt_if_present(mc["correct_option"]) == letter
+        (right,) = [o for o in decrypt_json(mc["options_json"]) if o["wrong_key"] is None]
+        assert right == {"letter": letter, "text": "The update step size", "wrong_key": None}
         assert num["answer_kind"] == "numeric" and num["tolerance"] == 0.001
         assert (
             num["canonical_answer"] != "0.01"
@@ -1139,6 +1389,42 @@ class TestCreateItems:
         assert len(rows) == 1 and len(ids) == 1
         assert rows[0]["source_document_ids"] == []
         assert any("rubric" in r.getMessage() for r in caplog.records)
+
+    def test_a_repairable_mc_draft_is_repaired_logged_and_stored(self, caplog):
+        """A37: the one repair that needs no guess (the option marked correct
+        carried a wrong_key) is made in code and logged by its rule; the row
+        stores the correct option with no key."""
+        from services import check_item_service as svc
+        from services.encryption import decrypt_if_present, decrypt_json
+
+        draft = _mc_draft(options=_opts((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN))
+        factory, mocks = _cached_tables({})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            caplog.at_level("INFO", logger="sapling.services.check_items"),
+        ):
+            ids = svc.create_items("course-1", "learning rate", None, [draft])
+        (row,) = mocks["check_items"].upsert.call_args[0][0]
+        assert len(ids) == 1
+        options = decrypt_json(row["options_json"])
+        letter = decrypt_if_present(row["correct_option"])
+        assert [o["letter"] for o in options if o["wrong_key"] is None] == [letter]
+        assert any(
+            "correct_key" in r.getMessage() and "repaired" in r.getMessage() for r in caplog.records
+        )
+
+    def test_an_unrepairable_mc_draft_is_dropped_with_its_rules(self, caplog):
+        from services import check_item_service as svc
+
+        draft = _mc_draft(options=_opts((_CORRECT[0], False, "rate_is_loss"), _ITER, _LOSS, _SIGN))
+        factory, mocks = _cached_tables({})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            caplog.at_level("WARNING"),
+        ):
+            assert svc.create_items("course-1", "learning rate", None, [draft]) == []
+        assert "check_items" not in mocks  # nothing valid: no write at all
+        assert any("one_correct" in r.getMessage() for r in caplog.records)
 
     def test_all_invalid_or_duplicate_prompts_never_double_write_a_row(self):
         from services import check_item_service as svc
@@ -1505,6 +1791,10 @@ class TestItemSources:
 # ── agents/check_items.py + generation ─────────────────────────────────────
 
 
+# A minimal valid agent output: an empty item list fails validation (A37).
+_ONE_ITEM = {"items": [_draft(concept="A").model_dump()]}
+
+
 def _agent_deps():
     from agents.deps import SaplingDeps
 
@@ -1523,15 +1813,59 @@ class TestAgentPlumbing:
         assert "learn.check_items_failed" in EVENT_TAXONOMY
 
     def test_output_schema_is_flat_and_never_carries_canonical_verified(self):
+        """Flat but for one list of small objects (spec §13 A37): the
+        mc_reason options, each stating its own text, whether it is correct
+        and its wrong_key — so a key can never drift off its option."""
         from agents.check_items import CheckItemsOutput
 
-        props = CheckItemsOutput.model_json_schema()["$defs"]["CheckItemDraft"]["properties"]
+        schema = CheckItemsOutput.model_json_schema()
+        props = schema["$defs"]["CheckItemDraft"]["properties"]
         for name, spec in props.items():
             kind = spec.get("type")
             assert kind in ("string", "integer", "boolean", "array"), (name, spec)
-            if kind == "array":
+            if kind == "array" and name != "options":
                 assert spec["items"] == {"type": "string"}, (name, spec)
+        assert props["options"]["items"] == {"$ref": "#/$defs/OptionDraft"}
+        option = schema["$defs"]["OptionDraft"]
+        assert set(option["properties"]) == {"text", "is_correct", "wrong_key"}
+        assert set(option["required"]) == {"text", "is_correct"}
+        assert option["properties"]["is_correct"]["type"] == "boolean"
+        assert {"type": "null"} in option["properties"]["wrong_key"]["anyOf"]
+        for gone in ("option_letters", "option_texts", "option_wrong_keys", "correct_option"):
+            assert gone not in props, f"A37: {gone} is code's, not the agent's"
         assert "canonical_verified" not in props, "A22: never an agent output"
+
+    def test_an_empty_draft_list_is_an_output_error_not_a_quiet_zero(self):
+        """Every call names at least one concept and the prompt asks for
+        every (format, difficulty) pair of each, so an empty list is never
+        the right output: it fails validation (the agent's output retries,
+        then CheckItemsUnavailable) instead of storing nothing silently (the
+        eval recording of 2026-09-27 got `{"items": []}` for one concept)."""
+        from pydantic import ValidationError
+
+        from agents.check_items import CheckItemsOutput
+
+        with pytest.raises(ValidationError):
+            CheckItemsOutput(items=[])
+        with pytest.raises(ValidationError):
+            CheckItemsOutput()
+        assert CheckItemsOutput.model_json_schema()["properties"]["items"]["minItems"] == 1
+
+    def test_the_prompt_states_the_option_objects_and_leaves_letters_to_code(self):
+        from agents.check_items import _PROMPT, CheckItemsOutput
+        from learning.params import CHECK_ITEM_MC_OPTIONS
+
+        for phrase in ("`options`", "`is_correct`", "`wrong_key`", "null", "never name an option"):
+            assert phrase in _PROMPT, phrase
+        assert f"exactly {CHECK_ITEM_MC_OPTIONS} options" in _PROMPT
+        for gone in ("option_letters", "option_texts", "option_wrong_keys", "correct_option"):
+            assert gone not in _PROMPT, gone
+        schema = CheckItemsOutput.model_json_schema()["$defs"]
+        assert (
+            f"exactly {CHECK_ITEM_MC_OPTIONS}"
+            in schema["CheckItemDraft"]["properties"]["options"]["description"]
+        )
+        assert "null" in schema["OptionDraft"]["properties"]["wrong_key"]["description"]
 
     def test_build_prompt_names_every_concept_and_marks_passages(self):
         from agents.check_items import build_prompt
@@ -1608,7 +1942,7 @@ class TestDraftItems:
             if len(seen) == 1:
                 raise ModelHTTPError(status_code=503, model_name="flex")
             return ModelResponse(
-                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"items": []})]
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=_ONE_ITEM)]
             )
 
         with ci.check_items_agent.override(model=FunctionModel(flaky)):
@@ -1671,7 +2005,7 @@ class TestDraftItems:
 
         def ok(messages, info):
             return ModelResponse(
-                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"items": []})]
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=_ONE_ITEM)]
             )
 
         system = SaplingDeps(user_id="", course_id="course-1", supabase=None, request_id="r")

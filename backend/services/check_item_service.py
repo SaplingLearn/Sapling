@@ -40,9 +40,11 @@ from learning.checks import (
     WrongReason,
     clean_chunk_ids,
     item_id,
+    lettered_options,
     parse_tolerance,
     question_hash,
     rank_chunks_for_concept,
+    repair_draft,
     validate_draft,
 )
 from learning.params import (
@@ -104,19 +106,12 @@ def _build_row(
     options = None
     correct_option = None
     if draft.format == _MC_REASON:
-        options = encrypt_json(
-            [
-                {
-                    "letter": letter,
-                    "text": text,
-                    "wrong_key": None if letter == draft.correct_option else (key_ or None),
-                }
-                for letter, text, key_ in zip(
-                    draft.option_letters, draft.option_texts, draft.option_wrong_keys
-                )
-            ]
-        )
-        correct_option = encrypt_if_present(draft.correct_option)
+        # A37: code letters the options and places the correct one; the stored
+        # shape ([{letter, text, wrong_key}] + the letter) is what the grader
+        # and the routes read.
+        lettered, letter = lettered_options(draft)
+        options = encrypt_json([o.model_dump() for o in lettered])
+        correct_option = encrypt_if_present(letter)
     numeric = draft.answer_kind == _NUMERIC
     return {
         "id": item_id(course_id, key, qh),
@@ -157,9 +152,11 @@ def create_items(
     allowed_chunk_ids: Iterable[str] = (),
     source_document_ids: Iterable[str] = (),
 ) -> list[str]:
-    """Validate each draft (invalid → dropped + WARNING), then upsert every
-    valid row in ONE call on (course_id, concept_key, question_hash). Returns
-    the stored ids. Raises on a PostgREST failure (the caller logs it)."""
+    """Repair each draft where no guess is needed (A37; logged at INFO by
+    rule), validate it (invalid → dropped + WARNING naming every rule), then
+    upsert every valid row in ONE call on (course_id, concept_key,
+    question_hash). Returns the stored ids. Raises on a PostgREST failure (the
+    caller logs it)."""
     allowed = set(allowed_chunk_ids)
     source_docs = sorted({d for d in source_document_ids if d})
     if not source_docs and document_id:
@@ -167,6 +164,15 @@ def create_items(
     rows: list[dict] = []
     seen: set[str] = set()
     for draft in drafts:
+        draft, repairs = repair_draft(draft)
+        if repairs:
+            logger.info(
+                "check item draft repaired (course=%s concept=%s format=%s): %s",
+                course_id,
+                concept_key,
+                draft.format,
+                "; ".join(repairs),
+            )
         reasons = validate_draft(draft)
         if reasons:
             logger.warning(

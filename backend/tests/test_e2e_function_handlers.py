@@ -597,31 +597,39 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
         result = check_items_agent.run_sync("Concepts: Gradient Descent; Learning Rate", deps=_deps())
 
     from agents.function_handlers_e2e import (
-        E2E_CHECK_ITEM_CORRECT_OPTION,
         E2E_CHECK_ITEM_FINAL_ANSWER,
-        E2E_CHECK_ITEM_MC_REFERENCE,
-        E2E_CHECK_ITEM_OPTION_LETTERS,
-        E2E_CHECK_ITEM_OPTION_TEXTS,
+        E2E_CHECK_ITEM_MC_WRONG_KEYS,
+        E2E_CHECK_ITEM_OPTIONS,
         E2E_CHECK_ITEM_REFERENCE,
         E2E_DOC_CONCEPTS,
     )
+    from learning.checks import lettered_options, repair_draft
+    from learning.params import CHECK_ITEM_MC_OPTIONS
+
     items = result.output.items
     assert [(i.concept, i.format) for i in items] == [
         (name, fmt) for name, _, _ in E2E_DOC_CONCEPTS for fmt in CHECK_ITEM_FORMATS
     ]
     assert len({i.prompt for i in items}) == len(items), "prompts must differ so hashes differ"
     for i in items:
-        want = E2E_CHECK_ITEM_MC_REFERENCE if i.format == "mc_reason" else E2E_CHECK_ITEM_REFERENCE
-        assert i.reference_answer == want and i.answer_kind == "free" and i.stepwise is False
+        assert i.reference_answer == E2E_CHECK_ITEM_REFERENCE
+        assert i.answer_kind == "free" and i.stepwise is False
         # A34: every item states its final answer (validate_draft checks it occurs
         # in the reference, not in the prompt, and is the correct option's text)
         assert i.final_answer == E2E_CHECK_ITEM_FINAL_ANSWER
         assert validate_draft(i) == [], validate_draft(i)
+        assert repair_draft(i) == (i, []), "the constants need no repair"
     for i in (i for i in items if i.format == "mc_reason"):
-        assert i.option_letters == E2E_CHECK_ITEM_OPTION_LETTERS
-        assert i.correct_option == E2E_CHECK_ITEM_CORRECT_OPTION
-        correct = E2E_CHECK_ITEM_OPTION_TEXTS[i.option_letters.index(i.correct_option)]
-        assert correct == E2E_CHECK_ITEM_FINAL_ANSWER
+        # A37: option objects, no letters — code letters them and places the key
+        assert [o.model_dump() for o in i.options] == E2E_CHECK_ITEM_OPTIONS
+        assert len(i.options) == CHECK_ITEM_MC_OPTIONS
+        (correct,) = [o for o in i.options if o.is_correct]
+        assert correct.text == E2E_CHECK_ITEM_FINAL_ANSWER and correct.wrong_key is None
+        assert [o.wrong_key for o in i.options if not o.is_correct] == E2E_CHECK_ITEM_MC_WRONG_KEYS
+        stored, letter = lettered_options(i)
+        assert [o.letter for o in stored if o.wrong_key is None] == [letter]
+    for i in (i for i in items if i.format != "mc_reason"):
+        assert i.options == []
     assert "check_items" in providers._FUNCTION_HANDLERS
 
 

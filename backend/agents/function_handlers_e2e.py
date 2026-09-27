@@ -377,16 +377,11 @@ E2E_CHECK_ITEM_RUBRIC = [
 ]
 E2E_CHECK_ITEM_WRONG_KEY = "rate_is_iteration_count"
 E2E_CHECK_ITEM_WRONG_TEXT = "Confuses the learning rate with the number of iterations."
-# mc_reason (A22): four options A–D, exactly one correct, every distractor keyed
-# to one of the item's own wrong_keys.
-E2E_CHECK_ITEM_OPTION_LETTERS = ["A", "B", "C", "D"]
-E2E_CHECK_ITEM_OPTION_TEXTS = [
-    E2E_CHECK_ITEM_FINAL_ANSWER,
-    "The number of iterations to run",
-    "The value of the loss",
-    "The sign of the gradient",
-]
-E2E_CHECK_ITEM_CORRECT_OPTION = "A"
+# mc_reason (A22, A37): four option OBJECTS — the correct one first, flagged
+# is_correct with no wrong_key, then three distractors, each keyed to a different
+# one of the item's own wrong_keys. No letters: code letters the options and
+# places the correct one from the question_hash (checks.lettered_options), so
+# the stored letter of each concept's item is fixed by its prompt.
 E2E_CHECK_ITEM_MC_WRONG_KEYS = [
     E2E_CHECK_ITEM_WRONG_KEY,
     "rate_is_loss_value",
@@ -397,7 +392,15 @@ E2E_CHECK_ITEM_MC_WRONG_TEXTS = [
     "Treats the learning rate as the loss being minimised.",
     "Thinks the learning rate sets the direction of the step.",
 ]
-E2E_CHECK_ITEM_MC_REFERENCE = f"{E2E_CHECK_ITEM_CORRECT_OPTION}: {E2E_CHECK_ITEM_REFERENCE}"
+E2E_CHECK_ITEM_OPTIONS = [
+    {"text": E2E_CHECK_ITEM_FINAL_ANSWER, "is_correct": True, "wrong_key": None},
+    {"text": "The number of iterations to run", "is_correct": False,
+     "wrong_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[0]},
+    {"text": "The value of the loss", "is_correct": False,
+     "wrong_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[1]},
+    {"text": "The sign of the gradient", "is_correct": False,
+     "wrong_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[2]},
+]
 
 
 def _e2e_check_item(concept: str, fmt: str) -> dict:
@@ -416,14 +419,11 @@ def _e2e_check_item(concept: str, fmt: str) -> dict:
         "chunk_ids": [],
     }
     if fmt == "mc_reason":
+        # The reference quotes the correct option's text and names no letter.
         item.update({
-            "reference_answer": E2E_CHECK_ITEM_MC_REFERENCE,
             "wrong_keys": E2E_CHECK_ITEM_MC_WRONG_KEYS,
             "wrong_texts": E2E_CHECK_ITEM_MC_WRONG_TEXTS,
-            "option_letters": E2E_CHECK_ITEM_OPTION_LETTERS,
-            "option_texts": E2E_CHECK_ITEM_OPTION_TEXTS,
-            "option_wrong_keys": [""] + E2E_CHECK_ITEM_MC_WRONG_KEYS,
-            "correct_option": E2E_CHECK_ITEM_CORRECT_OPTION,
+            "options": E2E_CHECK_ITEM_OPTIONS,
         })
     return item
 
