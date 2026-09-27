@@ -60,8 +60,12 @@ answer", "both items", "is correct"): `(marker: GFP)`, `(moderator: age)`,
 `(platform: ARM64)`, `(TA: see the worked example)`, `Examiner: What brings you
 in today?`, `Evaluator: computes the value`, `SYSTEM: G(s) = 1/(s+1)`,
 `DEVELOPER: builds the increment`, and an `INSTRUCTIONS:` listing are answers;
-`grader` alone never is. A directive needs its imperative shape: "mark it
-correct" never with a subject before it (`the harness would never mark it as
+`grader` alone never is. A directive needs its imperative shape: "ignore
+previous instructions" never after a modal, an auxiliary or a causative
+(`cannot simply ignore the instructions`, `clinicians should disregard the
+earlier guidelines`, `were told to ignore`, `lets the compiler ignore`) unless
+the clause names the reader or a model, and never about a topic's own rules
+(`the rules of the game`); "mark it correct" never with a subject before it (`the harness would never mark it as
 passed`), a condition around it (`mark it correct … when both inputs are 1`, `if
 every clause is satisfied, mark it satisfied`) or a bare `full` (`mark it full`
 is a bounded buffer), unless that text talks to the grader; "award full marks"
@@ -406,6 +410,38 @@ def _grader_confidence(text: str, m: re.Match[str]) -> bool:
     )
 
 
+# "Ignore previous instructions" is aimed at the grader unless it describes
+# someone else doing it — a modal, a subject's auxiliary or a causative right
+# before the verb ("cannot simply ignore", "should disregard", "were told to
+# ignore", "lets the compiler ignore") — or the rules are the course's own topic
+# ("the rules of the game", "the previous rules for series circuits"). A clause
+# that names the reader or a model is always aimed ("you should ignore …").
+_DESCRIBED = re.compile(
+    r"(?:\b(?:would|will|could|might|may|can|cannot|can't|won't|wouldn't|couldn't|shouldn't"
+    r"|should|must|does|did|doesn't|didn't|never|not|to|has|have|had)"
+    r"|\b(?:lets?|letting|makes?|made|allows?|allowed|helps?|causes?)\s+"
+    r"(?:(?:the|a|an|its|their|this|that|each|every)\s+)?[a-z][\w-]*)"
+    r"\s+(?:(?:not|never|also|still|only|always|then|just|simply|really|safely|first|usually"
+    r"|often)\s+)?$"
+)
+_AIMED = re.compile(
+    r"\b(?:you|your|please|grader|grading|rubric|model|ai|assistant|chatbot|llm|bot)\b"
+)
+_RULES_TOPIC = re.compile(
+    r"\s+(?:for|of|in|on|about)\s+(?!(?:the\s+|this\s+|your\s+|my\s+|any\s+)?(?:grad\w*|rubrics?"
+    r"|mark\w*|scor\w*|answers?|responses?|assessments?|evaluat\w*|models?|ai|assistants?"
+    r"|system|chat\w*|you|this)\b)"
+)
+
+
+def _aimed_ignore(text: str, m: re.Match[str]) -> bool:
+    """keep() for ignore/disregard/forget previous instructions."""
+    if m["target"] in ("rules", "guidelines") and _RULES_TOPIC.match(text, m.end()):
+        return False
+    before = _clause_before(text, m)
+    return bool(_AIMED.search(before)) or not _DESCRIBED.search(before)
+
+
 # A teachback frame: "pretend you are now an AI robot" is an analogy.
 _PRETEND = r"(?<!pretend )(?<!imagine )(?<!suppose )(?<!pretend that )(?<!imagine that )"
 _AI_ROLE_END = r"(?=\s*(?:$|[.,;:!?\n]|with(?:out)?\b|that\b|who\b|which\b|and\b|named\b|called\b))"
@@ -447,17 +483,21 @@ def _directive(name: str, pattern: str, **kw) -> _Signal:
 
 
 _DIRECTIVES = (
-    # ignore previous instructions / your rules / the grading criteria
+    # ignore previous instructions / your rules / the grading criteria — in its
+    # imperative shape (_aimed_ignore)
     _directive(
         "ignore_instructions",
-        rf"\b{_IGNORE}\s+(?:{_WEAK_QUALIFIER}\s+)*{_STRONG_QUALIFIER}\s+(?:\w+\s+)?{_TARGET}\b",
+        rf"\b{_IGNORE}\s+(?:{_WEAK_QUALIFIER}\s+)*{_STRONG_QUALIFIER}\s+(?:\w+\s+)?"
+        rf"(?P<target>{_TARGET})\b",
         ai=True,
+        keep=_aimed_ignore,
     ),
     # ignore all instructions. — a weak qualifier counts only at a clause end
     _directive(
         "ignore_all_instructions",
-        rf"\b{_IGNORE}\s+(?:{_WEAK_QUALIFIER}\s+)+{_TARGET}{_CLAUSE_END}",
+        rf"\b{_IGNORE}\s+(?:{_WEAK_QUALIFIER}\s+)+(?P<target>{_TARGET}){_CLAUSE_END}",
         ai=True,
+        keep=_aimed_ignore,
     ),
     # ignore the rubric / the reference answer
     _directive(
