@@ -273,3 +273,41 @@ describe("SideNav — collapsed state", () => {
     expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
   });
 });
+
+describe("SideNav — /font-lab override", () => {
+  const FONT_LAB_KEY = "sapling_font_lab_selection_v1";
+
+  // jsdom's CSSStyleDeclaration normalizes the quoting on a font-family
+  // string (single quotes in, double quotes out) — the assertions below
+  // match that normalized form, not the literal source string.
+  it("is a no-op for everyone who has never opened /font-lab", () => {
+    const rail = renderRail();
+    const logo = screen.getByText("Sapling");
+    expect(logo.style.fontFamily).toBe('"Spectral", Georgia, serif');
+    const group = rail.querySelector<HTMLElement>(".label-micro")!;
+    expect(group.style.fontFamily).toBe("");
+    expect(rail.style.fontFamily).toBe("");
+  });
+
+  it("applies a stored pick to the real rail once /font-lab has written one", () => {
+    window.localStorage.setItem(
+      FONT_LAB_KEY,
+      JSON.stringify({ heading: "Fraunces", body: "DM Sans", label: "Space Grotesk", subtitle: "DM Sans" }),
+    );
+    const rail = renderRail();
+    const logo = screen.getByText("Sapling");
+    expect(logo.style.fontFamily).toBe('"Fraunces", serif');
+    const group = rail.querySelector<HTMLElement>(".label-micro")!;
+    expect(group.style.fontFamily).toBe('"Space Grotesk", sans-serif');
+    // body and subtitle both matched the shipped default, so neither role
+    // is treated as "overridden" and the rail keeps inheriting its normal stack.
+    expect(rail.style.fontFamily).toBe("");
+  });
+
+  it("ignores an unparsable value instead of throwing", () => {
+    window.localStorage.setItem(FONT_LAB_KEY, "{not json");
+    const rail = renderRail();
+    expect(screen.getByText("Sapling").style.fontFamily).toBe('"Spectral", Georgia, serif');
+    expect(rail).toBeTruthy();
+  });
+});

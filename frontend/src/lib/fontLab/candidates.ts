@@ -304,9 +304,8 @@ export const CANDIDATES: Record<FontRole, FontCandidate[]> = {
       family: "DM Sans",
       axes: "wght@400",
       previewWeight: 400,
-      italic: true,
       incumbent: true,
-      note: "Current approach: same sans as body, just lighter/smaller. Coherent, but doesn't feel 'secondary'.",
+      note: "Current approach: same sans as body, just lighter/smaller, upright. Coherent, but doesn't feel 'secondary'.",
     },
     {
       family: "Spectral",

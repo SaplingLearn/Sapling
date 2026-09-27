@@ -11,21 +11,12 @@ import {
   type FontCandidate,
 } from "@/lib/fontLab/candidates";
 import { allFontCandidates, genericFor, stackFor, useGoogleFonts } from "@/lib/fontLab/useGoogleFonts";
-
-const STORAGE_KEY = "sapling_font_lab_selection_v1";
+import { FONT_LAB_EVENT, FONT_LAB_STORAGE_KEY, readFontLabSelection } from "@/lib/fontLab/navOverride";
 
 type Selection = Record<FontRole, string>;
 
 function loadSelection(): Selection {
-  if (typeof window === "undefined") return DEFAULT_SELECTION;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SELECTION;
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_SELECTION, ...parsed };
-  } catch {
-    return DEFAULT_SELECTION;
-  }
+  return { ...DEFAULT_SELECTION, ...readFontLabSelection() };
 }
 
 function findCandidate(role: FontRole, family: string): FontCandidate {
@@ -69,7 +60,11 @@ export function FontLab() {
   React.useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(selection));
+      window.localStorage.setItem(FONT_LAB_STORAGE_KEY, JSON.stringify(selection));
+      // `storage` only fires in OTHER tabs, never the one that wrote it — so
+      // a dashboard tab open in this same window needs this to pick up the
+      // change without a manual reload.
+      window.dispatchEvent(new Event(FONT_LAB_EVENT));
     } catch {
       // Best-effort. A design lab losing its scratch state on a private
       // window isn't worth a user-visible error.
@@ -85,6 +80,11 @@ export function FontLab() {
       label: findCandidate("label", selection.label),
       subtitle: findCandidate("subtitle", selection.subtitle),
     }),
+    [selection]
+  );
+
+  const isOverridden = React.useMemo(
+    () => ROLES.some((role) => selection[role.id] !== DEFAULT_SELECTION[role.id]),
     [selection]
   );
 
@@ -155,19 +155,48 @@ export function FontLab() {
             Font Lab
           </h1>
           <p style={{ fontSize: 14, color: "var(--text-dim)", maxWidth: 640, marginTop: 8, lineHeight: 1.55 }}>
-            The rail on the left is a live copy of the dashboard sidebar. Pick a
-            face per role below and it updates immediately — mix and match
-            until something earns its place next to Sapling&apos;s green. Your
-            picks persist in this browser; nothing here touches the real
-            product until you hand the winning combination to implementation.
+            The rail on the left is a live copy of the dashboard sidebar. Pick
+            a face per role below and it updates immediately — mix and match
+            until something earns its place next to Sapling&apos;s green.
           </p>
-          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <p style={{ fontSize: 14, color: "var(--text-dim)", maxWidth: 640, marginTop: 8, lineHeight: 1.55 }}>
+            <strong style={{ color: "var(--text)" }}>Your picks also go live on the real dashboard</strong>
+            {" "}— open{" "}
+            <a href="/dashboard" style={{ color: "var(--brand-forest)" }}>
+              /dashboard
+            </a>{" "}
+            in this browser (same tab or a new one) and the actual SideNav will
+            render with whatever you&apos;ve selected here, no code changes
+            needed. This only affects your own browser&apos;s localStorage —
+            nobody else sees it. Hit &quot;Reset to shipped fonts&quot; to fall
+            back to what&apos;s actually deployed.
+          </p>
+          <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center" }}>
             <button type="button" onClick={copyCss} style={btnStyle(true)}>
               {copied ? "Copied ✓" : "Copy CSS variables"}
             </button>
             <button type="button" onClick={reset} style={btnStyle(false)}>
               Reset to shipped fonts
             </button>
+            {isOverridden && (
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  color: "var(--brand-forest)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--brand-forest)" }}
+                />
+                LIVE on your dashboard
+              </span>
+            )}
           </div>
           {!fontsReady && (
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 10 }}>

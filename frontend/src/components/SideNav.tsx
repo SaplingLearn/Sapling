@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
+import { useNavFontOverride } from "@/lib/fontLab/navOverride";
 
 type Entry = { href: string; label: string; icon: string };
 
@@ -142,6 +143,9 @@ export function SideNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const [collapsed, setCollapsed] = useCollapsed();
+  // Design-exploration hook for /font-lab (#font-lab) — null for everyone
+  // who has never opened that page, so this is a no-op in the shipped app.
+  const navFonts = useNavFontOverride();
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
@@ -161,6 +165,7 @@ export function SideNav() {
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
+        fontFamily: navFonts?.body ?? undefined,
         // The rail itself never scrolls: only the destinations region below
         // does, so the account footer stays pinned at the bottom.
         overflow: "hidden",
@@ -205,7 +210,7 @@ export function SideNav() {
           >
             <span
               style={{
-                fontFamily: "'Spectral', Georgia, serif",
+                fontFamily: navFonts?.heading ?? "'Spectral', Georgia, serif",
                 fontWeight: 700,
                 fontSize: 20,
                 color: "var(--brand-forest)",
@@ -257,7 +262,14 @@ export function SideNav() {
           >
             <div
               className="label-micro"
-              style={{ position: "absolute", left: 10, bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
+              style={{
+                position: "absolute",
+                left: 10,
+                bottom: HEADER.below,
+                lineHeight: `${HEADER.line}px`,
+                fontFamily: navFonts?.label ?? undefined,
+                ...fade(collapsed),
+              }}
             >
               {section.label}
             </div>
@@ -399,7 +411,7 @@ export function SideNav() {
                   >
                     {userName || "You"}
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Account</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: navFonts?.subtitle ?? undefined }}>Account</div>
                 </div>
             </div>
           </div>
