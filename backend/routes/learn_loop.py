@@ -31,6 +31,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -47,11 +48,13 @@ from agents.loop_tutor import (
     routable_tier,
     tier_run_kwargs,
 )
+from agents.tools.check import CheckAnswer, grade_answer
 from agents.usage import record_agent_usage
 from db.connection import table
 from learning import gates, ladder, policy, zpd_events
 from learning.bkt import band as bkt_band
 from learning.checks import CheckItem
+from learning.evidence import flush_pending
 from learning.gate import learning_loop_active
 from learning.ladder import Rung
 from learning.leak import detect_leak, strip_leak
@@ -66,7 +69,7 @@ from learning.params import (
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
 )
 from learning.policy import LearnerView, LoopState, StepState
-from models import ChatBody
+from models import ChatBody, LoopCheckAnswerBody
 from routes.learn import (  # legacy helpers, reused verbatim — never copied
     PENDING_SESSIONS,
     _CONTINUATION_NUDGE,
@@ -110,6 +113,17 @@ _FEEDBACK_VERDICT_LINES = {
 }
 _FEEDBACK_ANSWER_LEAD = "The answer: "
 _FEEDBACK_NEXT_STEP = "When you're ready, try the next check."
+
+#: The idk subset of gates.NON_ATTEMPT_PATTERNS (A16: idk → idk evidence and
+#: the answer is released; any other non-attempt phrase → a hint request).
+IDK_PHRASES: tuple[str, ...] = ("idk", "i don't know")
+
+_GRADE_UNAVAILABLE_REPLY = (
+    "I couldn't check that answer just now, so nothing was recorded. "
+    "Please submit it again in a moment."
+)
+_IDK_RENDERED = "I don't know"
+_SUBMISSION_KINDS = ("feedback", "hint_request", "unavailable")
 
 
 def _gate(user_id: str, request: Request) -> None:
@@ -465,12 +479,13 @@ class _LoopTurn:
         persist_user_row: bool = True,
         state: dict | None = None,
         verdict: str | None = None,
+        scope: tuple[str, str] | None = None,
     ):
         self.user_id, self.session_id = body.user_id, body.session_id
         self.mode = body.mode
         self.message, self.kind, self.persist_user_row = message, kind, persist_user_row
         self.request_id = _request_id(request)
-        self.offering_id, self.course_id = _session_scope(body.session_id, body.user_id)
+        self.offering_id, self.course_id = scope or _session_scope(body.session_id, body.user_id)
         self.state = state if state is not None else _load_loop_state(body.session_id)
         self._derive(verdict)
 
@@ -590,6 +605,8 @@ class _LoopTurn:
         return self.phase  # "teach" | "hint"
 
     def _deterministic_text(self, *, hard: bool) -> str | None:
+        if self.kind == "unavailable":
+            return _GRADE_UNAVAILABLE_REPLY
         if self.phase == "check" and self.item is not None:
             return ladder.check_pose(self.item.prompt)
         if self.phase == "feedback" and hard and self.item is not None:
@@ -733,7 +750,9 @@ class _LoopTurn:
                 content=self.message,
             )
         _save_loop_state(self.session_id, state)
+        extra = self._submission_extra()
         return {
+            **extra,
             "reply": reply,
             "leak_redacted": redacted,
             "phase": self.phase,
@@ -746,6 +765,18 @@ class _LoopTurn:
             ),
             "hint_offer": {"rung": offer_rung} if offer_rung is not None else None,
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
+        }
+
+
+    def _submission_extra(self) -> dict:
+        """The check-answer response keys (A16) — only on a submission's turn."""
+        if self.kind not in _SUBMISSION_KINDS:
+            return {}
+        return {
+            "graded": self.kind == "feedback",
+            "verdict": self.verdict,
+            "unavailable": self.kind == "unavailable",
+            "answer_released": self.answer_released,
         }
 
 
@@ -914,3 +945,154 @@ async def chat_stream(body: ChatBody, request: Request):
     _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
     return _sse(_LoopTurn(body=body, request=request, message=body.message))
+
+
+# ── The explicit-submission route (A16) ───────────────────────────────────
+
+
+@dataclass
+class _Submission:
+    kind: str  # "feedback" | "hint_request" | "unavailable"
+    state: dict
+    rendered: str  # the user row persisted for this submission
+    scope: tuple[str, str]
+    verdict: str | None = None
+
+
+def _is_idk_phrase(text: str) -> bool:
+    """A16's idk split, as HANDOFF-06 defines it: the submission routes to idk
+    when gates.non_attempt_phrases (the A16 routing rule, which fails toward
+    grading) returns an IDK_PHRASES phrase — so a hedged answer ("idk maybe
+    7") is graded, never turned into idk evidence."""
+    return any(p in IDK_PHRASES for p in gates.non_attempt_phrases(text or ""))
+
+
+def _render_submission(body: LoopCheckAnswerBody, *, idk: bool) -> str:
+    if body.answer:
+        return body.answer
+    if body.option:
+        return f"({body.option}) {body.reason}".strip()
+    if idk:
+        return _IDK_RENDERED
+    return body.reason
+
+
+def _record_attempt(entry: dict, now: float, *, failed: bool) -> None:
+    """A genuine attempt: its time counts toward hint unlocking
+    (`attempted_at`), and one that did not close the step correct is a failed
+    genuine attempt (PKG-06's `attempts`, the ceiling's input)."""
+    entry["attempted_at"] = [*(entry.get("attempted_at") or []), now]
+    if failed:
+        entry["attempts"] = int(entry.get("attempts") or 0) + 1
+
+
+async def _grade_submission(body: LoopCheckAnswerBody, request: Request) -> _Submission:
+    """The ONLY loop-chat evidence path (spec A16; invariant 26's allow-list):
+    grade ONE explicit submission and persist its evidence with ONE
+    flush_pending, before any feedback turn or stream starts."""
+    scope = _session_scope(body.session_id, body.user_id)
+    course_id = scope[1]
+    state = _load_loop_state(body.session_id)
+    entry = _steps(state).get(body.question_hash)
+    if not isinstance(entry, dict) or state.get("current") != body.question_hash:
+        raise HTTPException(status_code=404, detail="No such check item in this session")
+    item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
+    if item is None:  # A23 withdrawal: nothing is graded
+        raise HTTPException(status_code=409, detail="check item withdrawn")
+    text = body.answer or body.reason
+    idk = body.idk or _is_idk_phrase(text)
+    rendered = _render_submission(body, idk=idk)
+    if not idk and gates.matches_non_attempt(text):
+        return _Submission("hint_request", state, rendered, scope)  # never graded
+    node_id = _node_for_item(body.user_id, item)
+    if node_id is None:  # evidence needs the student's node for this concept (A2)
+        raise HTTPException(status_code=409, detail="no graph node for this item")
+    band, p_before = _band_for(body.user_id, node_id)
+    now = _now_s()
+    # hint-unlock bookkeeping only: the independent-time gate never blocks grading (A16)
+    genuine = not idk and _genuine(text, _seconds_since(entry.get("first_shown_at"), now), band)
+    deps = SaplingDeps(
+        user_id=body.user_id,
+        course_id=course_id or None,
+        supabase=None,
+        request_id=_request_id(request),
+        session_id=body.session_id,
+        feature="loop_check",
+        learning_loop=True,
+    )
+    rung = int(entry.get("rung") or 0)
+    outcome = await grade_answer(
+        _item_like(item),
+        CheckAnswer(
+            question_hash=body.question_hash,
+            answer_text=body.answer,
+            selected_option=body.option,
+            reason=body.reason,
+            idk=idk,
+        ),
+        deps=deps,
+        node_id=node_id,
+        max_rung=rung,
+    )
+    if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
+        if genuine:
+            _record_attempt(entry, now, failed=True)
+        _save_loop_state(body.session_id, state)
+        return _Submission("unavailable", state, rendered, scope)
+    flush_pending(deps, course_id or None)  # ONE call: the loop's only evidence write
+    correct = bool(outcome.correct)
+    verdict = "idk" if idk else ("correct" if correct else "not_yet")
+    if genuine:
+        _record_attempt(entry, now, failed=not correct)
+    evidence = outcome.evidence or {}
+    if entry.get("graded_at") is None:
+        entry["first_attempt_correct"] = correct
+    entry.update(
+        {
+            "graded": int(entry.get("graded") or 0) + 1,
+            "wrong": int(entry.get("wrong") or 0) + (0 if correct else 1),
+            "graded_at": now,
+            "last_correct": correct,
+            "last_verdict": verdict,
+            "max_rung": rung,
+            "assisted": bool(evidence.get("assisted")),
+            "node_id": node_id,
+            "channel": evidence.get("channel"),
+            "confidence": outcome.confidence,
+            "grader_backend": outcome.grader_backend,
+            "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
+            "p_before": p_before,
+            "feedback_given": False,
+        }
+    )
+    _save_loop_state(body.session_id, state)  # a failed feedback turn is recovered by _phase_for
+    return _Submission("feedback", state, rendered, scope, verdict)
+
+
+def _submission_turn(sub: _Submission, body: LoopCheckAnswerBody, request: Request) -> _LoopTurn:
+    chat_body = ChatBody(session_id=body.session_id, user_id=body.user_id, message=sub.rendered)
+    return _LoopTurn(
+        body=chat_body,
+        request=request,
+        message=sub.rendered,
+        kind=sub.kind,
+        state=sub.state,
+        verdict=sub.verdict,
+        scope=sub.scope,
+    )
+
+
+@router.post("/check/answer", dependencies=_RATE_LIMITED)
+async def check_answer(body: LoopCheckAnswerBody, request: Request):
+    _gate(body.user_id, request)
+    _consume_pending(body.session_id, body.user_id)
+    sub = await _agent_turn_or_http_error(_grade_submission(body, request), what="loop grader")
+    return await _json_turn(lambda: _submission_turn(sub, body, request), "loop feedback agent")
+
+
+@router.post("/check/answer/stream", dependencies=_RATE_LIMITED)
+async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
+    _gate(body.user_id, request)
+    _consume_pending(body.session_id, body.user_id)
+    sub = await _agent_turn_or_http_error(_grade_submission(body, request), what="loop grader")
+    return _sse(_submission_turn(sub, body, request))

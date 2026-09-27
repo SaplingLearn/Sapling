@@ -84,7 +84,7 @@ WRONG = SimpleNamespace(
 )
 UNAVAILABLE = SimpleNamespace(**{**vars(CORRECT), "correct": None, "unavailable": True, "evidence": None})
 # Tasks 6-7b extend these as their endpoints land.
-MODEL_ROUTES = ["/chat", "/chat/stream"]
+MODEL_ROUTES = ["/chat", "/chat/stream", "/check/answer", "/check/answer/stream"]
 NO_MODEL_ROUTES = ["/status"]
 
 
@@ -222,6 +222,8 @@ def seams():
             },
         )
         p("_now_s", return_value=NOW)
+        ns.grade = p("grade_answer", new_callable=AsyncMock, return_value=CORRECT)
+        ns.flush = p("flush_pending", return_value=[{"node_id": "node-1"}])
         ns.ai_budget.check.return_value = NORMAL
         yield ns
 
@@ -232,6 +234,16 @@ _EVERY_ENDPOINT = [
     ("GET", "/api/learn/loop/status?user_id=u1&session_id=s1", None),
     ("POST", "/api/learn/loop/chat", {"session_id": "s1", "user_id": "u1", "message": "hi"}),
     ("POST", "/api/learn/loop/chat/stream", {"session_id": "s1", "user_id": "u1", "message": "hi"}),
+    (
+        "POST",
+        "/api/learn/loop/check/answer",
+        {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "answer": "n == 0"},
+    ),
+    (
+        "POST",
+        "/api/learn/loop/check/answer/stream",
+        {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "answer": "n == 0"},
+    ),
 ]
 
 
@@ -851,3 +863,248 @@ def test_a_withdrawn_active_item_is_dropped_and_the_turn_teaches(gate_on, seams)
     assert body["phase"] == "teach" and seen["msg"].startswith("[LOOP PHASE: teach]")
     doc = seams.store["doc"]
     assert doc["current"] is None and "qh-1" in doc["steps"], "the entry stays for bookkeeping"
+
+
+# ── Task 6: the explicit-submission route (A16) ────────────────────────────
+
+
+def _answer(**kw) -> dict:
+    return {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", **kw}
+
+
+def _feedback_agent(reply="Right: the base case stops it. What would factorial(1) return?"):
+    agent, seen = _json_agent(reply)
+    return (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        seen,
+    )
+
+
+def test_idk_phrases_are_non_attempt_patterns():
+    from learning.gates import NON_ATTEMPT_PATTERNS
+    from routes.learn_loop import IDK_PHRASES
+
+    assert set(IDK_PHRASES) <= set(NON_ATTEMPT_PATTERNS)
+
+
+@pytest.mark.parametrize(
+    "text,idk",
+    [
+        ("idk", True),
+        ("I don't know", True),
+        ("I don’t know", True),
+        ("idk, just tell me", True),  # the route checks idk first (A16)
+        ("just tell me", False),
+        ("idk maybe 7", False),  # a hedged answer is graded (HANDOFF-06 (B))
+        ("even, idk", False),
+        ("n == 0", False),
+    ],
+)
+def test_is_idk_phrase_is_the_a16_routing_rule(text, idk):
+    """HANDOFF-06: the idk split is gates.non_attempt_phrases, so a hedged answer
+    is graded, never turned into idk evidence."""
+    from routes.learn_loop import _is_idk_phrase
+
+    assert _is_idk_phrase(text) is idk
+
+
+def test_render_submission():
+    from models import LoopCheckAnswerBody
+    from routes.learn_loop import _render_submission
+
+    body = LoopCheckAnswerBody(**_answer(answer="n == 0"))
+    assert _render_submission(body, idk=False) == "n == 0"
+    mc = LoopCheckAnswerBody(**_answer(option="B", reason="it stops"))
+    assert _render_submission(mc, idk=False) == "(B) it stops"
+    assert _render_submission(LoopCheckAnswerBody(**_answer(idk=True)), idk=True) == "I don't know"
+    assert _render_submission(LoopCheckAnswerBody(**_answer(reason="why")), idk=False) == "why"
+
+
+def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams):
+    agent_p, usage_p, seen = _feedback_agent()
+    with agent_p, usage_p as usage:
+        r = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["graded"] is True and body["verdict"] == "correct" and body["answer_released"] is False
+    assert body["phase"] == "feedback" and body["tier"] == "lite" and body["unavailable"] is False
+    seams.grade.assert_awaited_once()
+    item, answer = seams.grade.call_args.args
+    assert item is ITEM and answer.answer_text == "n == 0 returns 1" and answer.idk is False
+    assert answer.question_hash == "qh-1"
+    kw = seams.grade.call_args.kwargs
+    assert kw["max_rung"] == 1 and kw["node_id"] == "node-1"
+    assert kw["deps"].learning_loop is True and kw["deps"].feature == "loop_check"
+    assert kw["deps"].session_id == "s1" and kw["deps"].course_id == "c1"
+    seams.flush.assert_called_once_with(kw["deps"], "c1")
+    assert "[VERDICT: correct]" in seen["msg"] and ITEM.reference_answer not in seen["msg"]
+    assert seams.model_tier.call_args.args[0] == "feedback_correct"
+    assert usage.call_args.kwargs["task"] == "loop_tutor_lite"
+    step = seams.zpd.emit_zpd_step.call_args.kwargs
+    assert step["tier"] == "lite" and step["grader_backend"] == "gemini" and step["question_hash"] == "qh-1"
+    assert step["first_attempt_correct"] is True and step["n_attempts"] == 1
+    assert step["time_to_correct_ms"] == 600_000 and step["confidence"] == 0.9
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert seams.store["doc"]["current"] is None and entry["feedback_given"] is True
+    assert entry["graded"] == 1 and entry["last_verdict"] == "correct" and entry["graded_at"] == NOW
+    assert entry["attempted_at"] == [NOW], "a genuine attempt counts toward hint unlocking"
+    assert entry["attempts"] == 0, "a correct attempt closes the step: it is no failed attempt"
+    assert entry["p_before"] == 0.5 and entry["fsrs_rating"] == policy.evidence_for_rung(True, Rung.H1).fsrs_rating
+    assert [c.args[1] for c in seams.save_msg.call_args_list] == ["user", "assistant"]
+    assert seams.save_msg.call_args_list[0].args[2] == "n == 0 returns 1"
+
+
+def test_check_answer_wrong_releases_the_answer_in_the_feedback_turn(gate_on, seams):
+    seams.grade.return_value = WRONG
+    agent_p, usage_p, seen = _feedback_agent(
+        "Not quite: factorial(0) returns 1 at the base case. Try factorial(1) next?"
+    )
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="it calls factorial(-1)")).json()
+    assert body["verdict"] == "not_yet" and body["answer_released"] is True and body["tier"] == "standard"
+    assert "[VERDICT: not_yet]" in seen["msg"] and "state the correct answer" in seen["msg"].lower()
+    assert seams.detect.call_args.args[2] == Rung.H6
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["wrong"] == 1 and entry["last_correct"] is False and entry["attempts"] == 1
+    assert entry["first_attempt_correct"] is False
+
+
+@pytest.mark.parametrize("payload", [{"idk": True}, {"answer": "I don't know"}])
+def test_check_answer_idk_writes_idk_evidence_and_releases(gate_on, seams, payload):
+    seams.grade.return_value = WRONG
+    agent_p, usage_p, _ = _feedback_agent("No problem. The base case returns 1 at n == 0. Try factorial(1)?")
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(**payload)).json()
+    assert seams.grade.call_args.args[1].idk is True
+    assert body["verdict"] == "idk" and body["answer_released"] is True
+    seams.flush.assert_called_once()
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["attempted_at"] == [] and entry["attempts"] == 0, "an idk is never a genuine attempt"
+
+
+def test_check_answer_non_attempt_is_a_hint_request_with_no_evidence(gate_on, seams):
+    agent_p, usage_p, seen = _feedback_agent("Look at the smallest input first. Which n needs no recursive call?")
+    with agent_p, usage_p:
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="just tell me")).json()
+    seams.grade.assert_not_awaited()
+    seams.flush.assert_not_called()
+    assert body["graded"] is False and body["phase"] == "hint" and body["verdict"] is None
+    assert seen["msg"].startswith("[LOOP PHASE: hint]") and "at most rung H1" in seen["msg"]
+    doc = seams.store["doc"]
+    assert doc["current"] == "qh-1" and "graded_at" not in doc["steps"]["qh-1"]
+
+
+def test_check_answer_unavailable_writes_nothing_and_keeps_the_item_open(gate_on, seams):
+    from routes.learn_loop import _GRADE_UNAVAILABLE_REPLY
+
+    seams.grade.return_value = UNAVAILABLE
+    never = MagicMock(side_effect=AssertionError("no feedback model turn without a verdict"))
+    with patch("routes.learn_loop.loop_tutor_agent", MagicMock(run=never)):
+        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0")).json()
+    assert body["graded"] is False and body["unavailable"] is True and body["reply"] == _GRADE_UNAVAILABLE_REPLY
+    assert body["tier"] == "none" and body["phase"] == "check"
+    seams.flush.assert_not_called()
+    seams.zpd.emit_zpd_step.assert_not_called()
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert seams.store["doc"]["current"] == "qh-1" and "graded_at" not in entry
+    assert entry["attempted_at"] == [NOW] and entry["attempts"] == 1, "only the attempt bookkeeping"
+
+
+def test_independent_time_gate_never_blocks_grading(gate_on, seams):
+    seams.store["doc"] = _state(first_shown_at=NOW - 1)  # answered too fast to count toward hint unlocking
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
+    seams.grade.assert_awaited_once()
+    assert seams.store["doc"]["steps"]["qh-1"]["attempted_at"] == []
+
+
+def test_check_answer_hard_budget_serves_template_feedback_not_429(gate_on, seams):
+    seams.grade.return_value = WRONG
+    seams.ai_budget.check.return_value = SimpleNamespace(**{**vars(HARD), "pause_novice": False})
+    never = MagicMock(side_effect=AssertionError("no model at the hard level"))
+    with patch("routes.learn_loop.loop_tutor_agent", MagicMock(run=never)):
+        r = client.post("/api/learn/loop/check/answer", json=_answer(answer="it calls factorial(-1)"))
+    assert r.status_code == 200
+    body = r.json()
+    assert ITEM.reference_answer in body["reply"] and body["tier"] == "none"
+    assert body["reply"].startswith("Not yet.")
+    assert body["budget"] == {"level": "hard", "reset_at": RESET_ISO}
+    seams.flush.assert_called_once()  # grading has its own cap; the evidence still lands
+    assert seams.zpd.emit_zpd_step.call_args.kwargs["tier"] == "none"
+
+
+def test_check_answer_stream_grades_before_streaming(gate_on, seams):
+    order = []
+    seams.grade.side_effect = lambda *a, **k: (order.append("grade"), CORRECT)[1]
+
+    def fake_factory():
+        inner = _fake_stream("Right. What would factorial(1) return?")
+
+        async def fake(**kwargs):
+            order.append("stream")
+            async for ev in inner(**kwargs):
+                yield ev
+
+        return fake
+
+    with patch("routes.learn_loop.stream_agent_turn", fake_factory()):
+        r = client.post("/api/learn/loop/check/answer/stream", json=_answer(answer="n == 0 returns 1"))
+    evs = _sse_events(r.text)
+    assert order == ["grade", "stream"]
+    assert [e["type"] for e in evs] == ["phase", "status", "token", "learner_state", "done"]
+    assert evs[0]["data"] == {"phase": "feedback"}
+    done = evs[-1]["data"]
+    assert done["verdict"] == "correct" and done["graded"] is True and done["unavailable"] is False
+
+
+@pytest.mark.parametrize("path", ["/api/learn/loop/check/answer", "/api/learn/loop/check/answer/stream"])
+def test_a_failed_flush_is_a_mapped_502_before_any_stream(gate_on, seams, path):
+    seams.flush.side_effect = RuntimeError("apply_graph_update failed")
+    never = MagicMock(side_effect=AssertionError("no stream after a failed flush"))
+    with patch("routes.learn_loop.stream_agent_turn", never):
+        r = client.post(path, json=_answer(answer="n == 0"))
+    assert r.status_code == 502
+    assert "graded_at" not in seams.store["doc"]["steps"]["qh-1"]
+
+
+def test_check_answer_unknown_or_inactive_item_is_404(gate_on, seams):
+    r = client.post("/api/learn/loop/check/answer", json=_answer(question_hash="nope", answer="x"))
+    assert r.status_code == 404
+    seams.store["doc"] = dict(_state(), current=None)
+    r = client.post("/api/learn/loop/check/answer", json=_answer(answer="x"))
+    assert r.status_code == 404
+    seams.grade.assert_not_awaited()
+
+
+def test_check_answer_on_a_withdrawn_item_is_409(gate_on, seams):
+    seams.item.return_value = None
+    r = client.post("/api/learn/loop/check/answer", json=_answer(answer="x"))
+    assert r.status_code == 409 and r.json()["detail"] == "check item withdrawn"
+    seams.grade.assert_not_awaited()
+
+
+def test_check_answer_with_no_graph_node_is_409(gate_on, seams):
+    seams.node.return_value = None
+    r = client.post("/api/learn/loop/check/answer", json=_answer(answer="x"))
+    assert r.status_code == 409 and r.json()["detail"] == "no graph node for this item"
+    seams.grade.assert_not_awaited()
+    seams.save.assert_not_called()
+
+
+def test_an_over_long_answer_is_a_422_before_anything_runs(gate_on, seams):
+    from learning.params import GRADER_ANSWER_MAX_CHARS
+
+    r = client.post("/api/learn/loop/check/answer", json=_answer(answer="x" * (GRADER_ANSWER_MAX_CHARS + 1)))
+    assert r.status_code == 422
+    gate_on.assert_not_called()
+    seams.grade.assert_not_awaited()
+
+
+def test_a_chat_message_in_the_check_phase_writes_no_evidence(gate_on, seams):
+    """Invariant 26's route half: only /check/answer grades."""
+    for path in ("/api/learn/loop/chat", "/api/learn/loop/chat/stream"):
+        client.post(path, json={"session_id": "s1", "user_id": "u1", "message": "the answer is n == 0"})
+    seams.grade.assert_not_awaited()
+    seams.flush.assert_not_called()
