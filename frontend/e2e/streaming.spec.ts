@@ -9,6 +9,10 @@
  *            Retry then completes the turn and persists exactly one pair.
  *   item 7 — switching sessions mid-stream aborts the stream and leaves no
  *            stale bubble in the other session's transcript.
+ *   #672 — a stream that reaches the server but fails before persisting,
+ *            retried through the client's JSON rung, is ONE persisted turn
+ *            and ONE tutor-router `decision.made` (the router fires at the
+ *            persist point, not at request entry).
  *
  * (Item 3 — the SERVER-side Rung-1 fallback — deliberately has no journey
  * here: since #151 (ADR 0024) it is a plain non-streaming run of the SAME
@@ -29,6 +33,7 @@
 import { expect, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
 import { decryptTexts } from "./support/decrypt";
+import { BACKEND_URL } from "./support/stack";
 
 /** Seeded by db/seed_local_rich.py for rich-user-active. */
 const SESSION_ID = "rich-sess-cs-recursion";
@@ -259,4 +264,99 @@ test("switching sessions mid-stream aborts the stream and leaves no stale bubble
   // …and the interrupted turn persisted nothing to either session.
   expect(await messageRows(SESSION_ID)).toHaveLength(SEEDED_MESSAGE_COUNT);
   expect(await messageRows(MATH_SESSION_ID)).toHaveLength(MATH_SEEDED_MESSAGE_COUNT);
+});
+
+test("a stream that dies before persisting, retried via the JSON rung, is one turn and one router decision (#672)", async ({
+  page,
+}) => {
+  // The double-routing regression. The stream request REALLY reaches the
+  // backend (so a router scheduled at request entry would fire) and starts
+  // streaming; the connection then drops mid-stream — the same server-side
+  // shape as the Stop journey above, so nothing persists — and the browser
+  // is served a retryable `error` event with no tokens, the "failed before
+  // the first token" shape the client retries through POST /api/learn/chat,
+  // which persists. One student turn: one persisted pair, one decision.
+  //
+  // Needs the decision seam ON: automatic under SAPLING_MODEL_MODE=function
+  // unless SAPLING_DECISIONS_BACKEND=off (scripts/e2e-up.sh keeps it on).
+  let streamReachedBackend = 0;
+  await page.route("**/api/learn/chat/stream", async route => {
+    const cookie = (await page.context().cookies())
+      .map(c => `${c.name}=${c.value}`)
+      .join("; ");
+    const abort = new AbortController();
+    const res = await fetch(`${BACKEND_URL}/api/learn/chat/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: route.request().postData() ?? "",
+      signal: abort.signal,
+    });
+    // Drop the connection once the slow deterministic reply is really
+    // streaming (the first token frame) — mid-stream, like Stop, so the run
+    // is cancelled cleanly long before on_complete could persist it.
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+    while (!seen.includes("event: token")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen += decoder.decode(value, { stream: true });
+    }
+    if (res.ok && seen.includes("event: token")) streamReachedBackend += 1;
+    abort.abort();
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/event-stream", "cache-control": "no-store, no-transform" },
+      body:
+        "event: error\n" +
+        `data: ${JSON.stringify({
+          type: "error",
+          step: "reply",
+          message: "The tutor is unavailable. Please retry.",
+          data: { retryable: true },
+        })}\n\n`,
+    });
+  });
+
+  await page.goto("/learn");
+  await openSeededSession(page, SESSION_ID);
+  await page.getByTestId("tutor-input").fill(STUDENT_SLOW_MESSAGE);
+  await page.getByTestId("tutor-send").click();
+
+  const log = page.getByTestId("tutor-messages");
+  await expect(log).toContainText(SLOW_REPLY_TAIL);
+  await expect(page.getByTestId("tutor-interrupted")).toHaveCount(0);
+  expect(streamReachedBackend).toBe(1);
+
+  // Exactly one persisted pair (the JSON rung's), and its chat.message_sent.
+  await expect
+    .poll(async () => (await messageRows(SESSION_ID)).length, { timeout: 5_000 })
+    .toBe(SEEDED_MESSAGE_COUNT + 2);
+  const turns = (await queryRaw(
+    `SELECT request_id FROM events
+      WHERE event_type = 'chat.message_sent' AND payload->>'session_id' = $1`,
+    [SESSION_ID],
+  )) as { request_id: string }[];
+  expect(turns).toHaveLength(1);
+
+  // The router is fire-and-forget and events flush in batches, so poll for
+  // the persisted turn's decision. Events drain FIFO, and the stream
+  // request (the one a request-entry router would have routed) came first —
+  // so once the JSON turn's decision is visible, any duplicate is too.
+  const decisions = async () =>
+    (await queryRaw(
+      `SELECT request_id, payload->>'backend' AS backend FROM events
+        WHERE event_type = 'decision.made'
+          AND payload->>'feature' = 'tutor_router'
+          AND payload->>'session_id' = $1`,
+      [SESSION_ID],
+    )) as { request_id: string; backend: string }[];
+  await expect
+    .poll(async () => (await decisions()).some(d => d.request_id === turns[0].request_id), {
+      timeout: 10_000,
+    })
+    .toBe(true);
+  const rows = await decisions();
+  expect(rows).toHaveLength(1);
+  expect(rows[0].backend).toBe("function");
 });
