@@ -795,3 +795,143 @@ def test_policy_never_imports_the_text_gate_but_gates_may_import_policy():
     policy = importlib.import_module("learning.policy")
     assert gates.StepState is policy.StepState
     assert not hasattr(policy, "matches_non_attempt") and not hasattr(policy, "gates")
+
+
+# ── leak detector (spec §3.4 LEAK_NGRAM; research "Guardrails") ───────────────
+
+REF_POWER = (
+    "The derivative of x squared is two x because the power rule brings "
+    "the exponent down and reduces it by one"
+)
+REF_EQ = "x + 3 = 10, so x = 7"
+REF_VEL = "The final velocity is 9.8 m/s"
+REF_SYM = "F = m a"
+
+LEAKS = [
+    (REF_POWER, "Remember: the power rule brings the exponent down, so try that.", "ngram"),
+    (REF_POWER, "It reduces it by one and the power rule brings the exponent down.", "ngram"),
+    (REF_EQ, "So x must be 7.", "final_answer"),
+    (REF_EQ, "Check whether 7 satisfies the equation.", "final_answer"),
+    (REF_VEL, "Plug in and you get 9.8 m/s.", "final_answer"),
+    (REF_SYM, "Force is just m a, multiply them.", "final_answer"),
+    (REF_POWER, "the derivative of x squared is two x", "ngram"),
+]
+
+SAFE = [
+    (REF_POWER, "What rule applies when a variable is raised to a power?"),
+    (REF_POWER, "Look at the exponent first. What happens to it?"),
+    (REF_EQ, "Subtract 3 from both sides, then look at what is left."),
+    (REF_EQ, "What operation undoes adding 3?"),
+    (REF_VEL, "Which kinematic equation links acceleration and time?"),
+    (REF_SYM, "What is force in terms of mass? Think about Newton's second law."),
+    (REF_POWER, "The power rule is in section 2.3 of your notes; read the first line."),
+]
+
+
+@pytest.mark.parametrize("reference,emitted,detector", LEAKS)
+def test_detect_leak_catches(reference, emitted, detector):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    v = detect_leak(reference, emitted, Rung.H3)
+    assert (v.leaked, v.detector) == (True, detector)
+
+
+@pytest.mark.parametrize("reference,emitted", SAFE)
+def test_detect_leak_zero_false_positives(reference, emitted):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, tokens
+
+    assert detect_leak(reference, emitted, Rung.H0) == (False, "none")
+    ref, em = tokens(reference), tokens(emitted)
+    n = params.LEAK_NGRAM
+    em_grams = {tuple(em[j : j + n]) for j in range(len(em) - n + 1)}
+    assert not any(tuple(ref[i : i + n]) in em_grams for i in range(len(ref) - n + 1))
+
+
+def test_h6_is_never_a_leak():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    assert detect_leak(REF_EQ, REF_EQ, Rung.H6).leaked is False
+    assert detect_leak(REF_EQ, REF_EQ, Rung.H5).leaked is True
+
+
+def test_final_answer_extraction():
+    from learning.leak import final_answer
+
+    assert final_answer(REF_EQ) == ("7",)
+    assert final_answer(REF_VEL) == ("9", "8")
+    assert final_answer(REF_SYM) == ("m", "a")
+    assert final_answer(REF_POWER) == ()
+    assert final_answer("y = 2x + 3") == ("2x", "3")
+
+
+def test_final_answer_clause_ends_at_a_sentence_break():
+    """The answer after the last '=' stops at a clause or sentence break, so a
+    trailing explanation does not dilute the run; a decimal point is not a break;
+    an empty right-hand side falls back to the last standalone number."""
+    from learning.leak import final_answer
+
+    assert final_answer("x = 7. Check it by substitution.") == ("7",)
+    assert final_answer("v = 9.8 AND nothing else") == ("9", "8")
+    assert final_answer("t = 4.5\nThen the ball lands.") == ("4", "5")
+    assert final_answer("After 12 steps the value is x =") == ("12",)
+    assert final_answer("") == ()
+
+
+@pytest.mark.parametrize("reference,emitted,_", LEAKS)
+def test_strip_leak_makes_text_safe_and_is_idempotent(reference, emitted, _):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    once = strip_leak(emitted, reference)
+    assert "[withheld]" in once
+    assert detect_leak(reference, once, Rung.H0).leaked is False
+    assert strip_leak(once, reference) == once
+
+
+@pytest.mark.parametrize("reference,emitted", SAFE)
+def test_strip_leak_leaves_safe_text_unchanged(reference, emitted):
+    from learning.leak import strip_leak
+
+    assert strip_leak(emitted, reference) == emitted
+
+
+def test_strip_leak_withholds_only_the_leaked_runs():
+    from learning.leak import strip_leak
+
+    assert strip_leak("So x must be 7.", REF_EQ) == "So x must be [withheld]."
+    assert (
+        strip_leak("Plug in and you get 9.8 m/s.", REF_VEL) == "Plug in and you get [withheld] m/s."
+    )
+    assert (
+        strip_leak("Remember: The Power Rule brings the exponent down, so try that.", REF_POWER)
+        == "Remember: [withheld], so try that."
+    )
+
+
+def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
+    """Property check: any text built from the reference's own words, in any
+    order, with any separators (unicode, newlines, case), comes out with no
+    n-gram or final-answer leak after ONE strip, and a second strip is a no-op."""
+    import random
+
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    rng = random.Random(606)
+    seps = [" ", ", ", "\n", " — ", "; ", " é ", "(", ") ", "/", " = "]
+    for reference in (REF_POWER, REF_EQ, REF_VEL, REF_SYM, "y = 2x + 3"):
+        words = reference.split()
+        for _ in range(200):
+            picked = [rng.choice(words) for _ in range(rng.randint(1, 30))]
+            if rng.random() < 0.5:  # splice in a verbatim stretch of the reference
+                start = rng.randrange(len(words))
+                picked[rng.randrange(len(picked)) :] = words[start:]
+            text = ""
+            for w in picked:
+                text += (w.upper() if rng.random() < 0.2 else w) + rng.choice(seps)
+            once = strip_leak(text, reference)
+            assert detect_leak(reference, once, Rung.H0).leaked is False, (reference, text, once)
+            assert strip_leak(once, reference) == once

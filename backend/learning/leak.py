@@ -1,4 +1,113 @@
-"""Learning loop stub — filled by PKG-06 (docs/superpowers/plans/learning-loop/PKG-06-*.md).
+"""Deterministic answer-leak detector + stripper (spec §3.4 LEAK_NGRAM). Pure.
 
-Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md. Inert until that package lands; nothing imports this module.
+Runs BEFORE any LLM judge on every tutor turn below H6 (research "Guardrails":
+the supervisor architecture's deterministic solution stripper). Two rules:
+
+- ngram: any LEAK_NGRAM consecutive tokens of the reference appear
+  consecutively in the emitted text;
+- final_answer: the reference's final answer (the clause after its last '=',
+  else its last standalone number) appears as a consecutive token run.
+
+Tokens are ASCII alphanumeric runs, lowercased (`[a-z0-9]+` over lowercase for
+ASCII text). The stripper tokenizes the same way over the original text, so
+whatever it leaves the detector cannot flag.
 """
+
+from __future__ import annotations
+
+import re
+from typing import Literal, NamedTuple
+
+from learning import params
+from learning.ladder import Rung
+
+Detector = Literal["none", "ngram", "final_answer"]
+WITHHELD = "[withheld]"
+
+_TOKEN = re.compile(r"[A-Za-z0-9]+")
+_STANDALONE_NUMBER = re.compile(r"(?<!\w)(?<!\d\.)(-?\d+(?:\.\d+)?(?:/\d+)?)(?!\w)(?!\.\d)")
+# The final answer ends at the next clause or sentence break: a comma, a
+# semicolon, "and"/"so", a newline, or sentence punctuation that is not a
+# decimal point.
+_CLAUSE_BREAK = re.compile(r"[,;\n]|\band\b|\bso\b|[.!?](?!\d)", re.I)
+
+
+class LeakVerdict(NamedTuple):
+    leaked: bool
+    detector: Detector
+
+
+def tokens(text: str) -> list[str]:
+    return [t.lower() for t in _TOKEN.findall(text)]
+
+
+def final_answer(reference: str) -> tuple[str, ...]:
+    """Token run of the reference's final answer: the clause after its last '=',
+    else its last standalone number; () when it has neither."""
+    if "=" in reference:
+        rhs = reference.rsplit("=", 1)[1]
+        answer = tuple(tokens(_CLAUSE_BREAK.split(rhs, maxsplit=1)[0]))
+        if answer:
+            return answer
+    numbers = _STANDALONE_NUMBER.findall(reference)
+    return tuple(tokens(numbers[-1])) if numbers else ()
+
+
+def _ngrams(seq: list[str], n: int) -> set[tuple[str, ...]]:
+    return {tuple(seq[i : i + n]) for i in range(len(seq) - n + 1)} if n > 0 else set()
+
+
+def _contains_run(haystack: list[str], run: tuple[str, ...]) -> bool:
+    return bool(run) and run in _ngrams(haystack, len(run))
+
+
+def detect_leak(reference_answer: str, emitted: str, rung: Rung) -> LeakVerdict:
+    """`rung` is the rung the text is served at; at H6 the reference is the
+    content (under gates.h6_allowed), so nothing is a leak."""
+    if Rung(rung) >= Rung.H6:
+        return LeakVerdict(False, "none")
+    ref, em = tokens(reference_answer), tokens(emitted)
+    if _ngrams(ref, params.LEAK_NGRAM) & _ngrams(em, params.LEAK_NGRAM):
+        return LeakVerdict(True, "ngram")
+    if _contains_run(em, final_answer(reference_answer)):
+        return LeakVerdict(True, "final_answer")
+    return LeakVerdict(False, "none")
+
+
+def _strip_segment(text: str, grams: set[tuple[str, ...]], answer: tuple[str, ...]) -> str:
+    spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
+    toks = [text[a:b].lower() for a, b in spans]
+    hit = [False] * len(toks)
+    for run_len, wanted in (
+        (params.LEAK_NGRAM, grams),
+        (len(answer), {answer} if answer else set()),
+    ):
+        for i in range(len(toks) - run_len + 1):
+            if tuple(toks[i : i + run_len]) in wanted:
+                hit[i : i + run_len] = [True] * run_len
+    out: list[str] = []
+    cursor = i = 0
+    while i < len(toks):
+        if not hit[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(toks) and hit[j + 1]:
+            j += 1
+        out.append(text[cursor : spans[i][0]])
+        out.append(WITHHELD)
+        cursor = spans[j][1]
+        i = j + 1
+    out.append(text[cursor:])
+    return "".join(out)
+
+
+def strip_leak(emitted: str, reference: str) -> str:
+    """Replace every maximal run of leaked tokens (an n-gram of the reference or
+    its final answer) with WITHHELD, the text between runs untouched. One pass
+    leaves nothing detect_leak(reference, ·, H0) flags (unless the reference
+    itself contains the word "withheld"), and a second pass is a no-op: existing
+    WITHHELD markers are never re-matched."""
+    grams = _ngrams(tokens(reference), params.LEAK_NGRAM)
+    answer = final_answer(reference)
+    return WITHHELD.join(_strip_segment(seg, grams, answer) for seg in emitted.split(WITHHELD))
