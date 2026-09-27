@@ -11,15 +11,21 @@
 const OPEN_MS = 620;
 const OPEN_EASE = 'cubic-bezier(0.22,1,0.36,1)';
 /*
- * The close is the open played backwards, which means it borrows the open's
- * duration and curve rather than keeping its own.
+ * The close plays the open backwards, on the open's curve, in about two
+ * thirds of its time.
  *
- * It used to run 460ms on `cubic-bezier(0.4,0,0.2,1)` — quicker, and eased
- * the other way round — so the panel left by a different route than it
- * arrived by. Matching them is what makes the two read as one gesture
- * reversed instead of as two animations that happen to share a rectangle.
+ * The curve is shared on purpose: it used to run `cubic-bezier(0.4,0,0.2,1)`
+ * against the open's `cubic-bezier(0.22,1,0.36,1)`, so the panel left by a
+ * different route than it arrived by, and the two read as unrelated
+ * animations that happened to share a rectangle.
+ *
+ * The duration is deliberately NOT shared. An entrance is doing work — it
+ * carries you somewhere and the demo has to arrive with it — while an exit is
+ * only getting out of the way, and one that takes as long as the entrance
+ * reads as the interface being slow to let go. Just over half keeps the
+ * gesture recognisably the same shape while giving the card back sooner.
  */
-const CLOSE_MS = OPEN_MS;
+const CLOSE_MS = Math.round(OPEN_MS * 0.55);
 const CLOSE_EASE = OPEN_EASE;
 /*
  * How long the panel's contents take to clear before the box collapses.
@@ -33,11 +39,12 @@ const CLOSE_EASE = OPEN_EASE;
  * shrinks into the card is the thing that grew out of it.
  *
  * Short and front-loaded on purpose: the contents are gone within the first
- * quarter of the collapse, so almost the whole flight is the white box.
+ * quarter of the collapse, so almost the whole flight is the white box. Kept
+ * as a fraction of the flight so it stays that quarter if CLOSE_MS is retuned.
  */
-const CONTENT_CLEAR_MS = 150;
+const CONTENT_CLEAR_MS = Math.round(CLOSE_MS * 0.26);
 /** Safety net in case `onfinish` never fires (tab backgrounded mid-close). */
-const CLOSE_FALLBACK_MS = OPEN_MS + 240;
+const CLOSE_FALLBACK_MS = CLOSE_MS + 240;
 /** How long to wait before finishing when there is no card to fly back to. */
 const NO_FLIP_MS = 200;
 
@@ -152,6 +159,20 @@ export function flipClose(
     setTimeout(finish, NO_FLIP_MS);
     return;
   }
+  // The flight is created FIRST, before either fade below.
+  //
+  // Ordering is not cosmetic here. Animating opacity across the panel's whole
+  // subtree — a full demo, canvases and all — costs enough style work that
+  // doing it first pushed the collapse's start time ~180ms past the click: a
+  // 409ms animation was reporting `finish` at 591ms, and the visitor was
+  // watching a still panel for the difference. Starting the transform first
+  // lets the compositor own it while the rest is set up.
+  const a = panel.animate([f[1], f[0]], {
+    duration: CLOSE_MS,
+    easing: CLOSE_EASE,
+    fill: 'both',
+  });
+
   // Empty the panel to its own white ground first. Every direct child is
   // faded rather than the panel itself: fading the panel would take its
   // background with it and the card would be flown back to by a transparent
@@ -179,11 +200,6 @@ export function flipClose(
     });
   }
 
-  const a = panel.animate([f[1], f[0]], {
-    duration: CLOSE_MS,
-    easing: CLOSE_EASE,
-    fill: 'both',
-  });
   a.onfinish = finish;
   setTimeout(finish, CLOSE_FALLBACK_MS);
 }
