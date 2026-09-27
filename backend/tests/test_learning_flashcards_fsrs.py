@@ -107,10 +107,23 @@ class TestMigration:
 
 # ── rate_card ────────────────────────────────────────────────────────────────
 
-# Real "now" at import: the route reads the clock itself, so due/elapsed
-# fixtures are relative to it (a run takes seconds; tolerances are minutes).
-NOW = datetime.now(timezone.utc)
+# One fixed instant for the whole module. Every route call below runs with
+# routes.flashcards' clock frozen at NOW (_frozen_clock), so fixture rows built
+# relative to NOW give exact elapsed days however long the suite has been
+# running since this module was imported.
+NOW = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
 TWO_DAYS_AGO = (NOW - timedelta(days=2)).isoformat()
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+
+
+def _frozen_clock():
+    """routes.flashcards reads `datetime.now(timezone.utc)`; pin it to NOW."""
+    return patch("routes.flashcards.datetime", _FrozenDatetime)
 
 
 def _rate_tables(row: dict):
@@ -146,6 +159,7 @@ def _rate(rating: int, *, gate: bool | None, row: dict, next_state=None, interva
     ns = next_state or MagicMock(return_value=(4.5, 9.0))
     iv = interval or MagicMock(return_value=8.0)
     with (
+        _frozen_clock(),
         patch("routes.flashcards.table", side_effect=side_effect),
         _gate_patch(gate),
         patch("routes.flashcards.next_state", new=ns),
@@ -224,7 +238,8 @@ class TestRateCard:
         assert retention == FSRS_RETENTION_DEFAULT and s == 9.0
         due = datetime.fromisoformat(payload["due_at"])
         written = datetime.fromisoformat(payload["last_reviewed_at"])
-        assert abs((due - written) - timedelta(days=8.0)) < timedelta(seconds=1)
+        assert written == NOW, "the rating is stamped with the route's clock"
+        assert due - written == timedelta(days=8.0)
         assert r.json()["due_at"] == payload["due_at"]
         assert r.json()["fsrs_rating"] == 3
 
@@ -232,7 +247,7 @@ class TestRateCard:
         _, _, ns, _ = _rate(2, gate=True, row=SEEN_ROW)
         d, s, rating, days_since = ns.call_args[0]
         assert (d, s, rating) == (5.2, 3.1, 2)
-        assert days_since == pytest.approx(2.0, abs=0.01)
+        assert days_since == pytest.approx(2.0, abs=1e-9)
         assert ns.call_args.kwargs == {"same_day": False}
 
     def test_gate_on_review_within_a_day_takes_the_same_day_branch(self):
@@ -240,7 +255,7 @@ class TestRateCard:
         graph_service._fsrs_after — less than one day since the last review."""
         row = {**SEEN_ROW, "last_reviewed_at": (NOW - timedelta(hours=2)).isoformat()}
         _, _, ns, _ = _rate(3, gate=True, row=row)
-        assert ns.call_args[0][3] == pytest.approx(2 / 24, abs=0.01)
+        assert ns.call_args[0][3] == pytest.approx(2 / 24, abs=1e-9)
         assert ns.call_args.kwargs == {"same_day": True}
 
     def test_gate_on_first_review_passes_none_state_and_zero_days(self):
@@ -423,6 +438,7 @@ def _list(*, gate, query: str = "", order_due=None, rows=None):
         else _gate_patch(gate)
     )
     with (
+        _frozen_clock(),
         patch("routes.flashcards.table", side_effect=side_effect),
         gate_cm,
         patch("routes.flashcards.order_due", new=od),
