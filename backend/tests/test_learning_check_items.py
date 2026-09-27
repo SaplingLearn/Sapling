@@ -1352,3 +1352,197 @@ class TestGenerate:
         draft.assert_not_called()
         ev.assert_not_called()
         assert "check_items" not in mocks, "a non-source document must not reach the item table"
+
+
+# ── routes/documents.py hook ───────────────────────────────────────────────
+
+
+def _documents_route_helpers():
+    import importlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))  # no tests/__init__.py
+    return importlib.import_module("test_documents_routes")  # its helpers, not copies
+
+
+def _upload_sync_with(monkeypatch, *, flag: bool, mode: str):
+    """Drive /upload/sync with the orchestrator mocked, returning
+    (index_document mock, generate_for_document mock)."""
+    import config
+
+    tdr = _documents_route_helpers()
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", flag)
+    result = tdr._make_orchestrator_result(category="lecture_notes", is_syllabus=False)
+    with (
+        tdr._mock_validate_user(),
+        patch("routes.documents.extract_text_from_file", return_value=tdr._doc_text("text")),
+        patch("routes.documents.process_document", return_value=result),
+        patch("routes.documents.apply_graph_update"),
+        patch("routes.documents.table") as t,
+        patch("routes.documents.model_mode", return_value=mode),
+        patch("routes.documents.index_document") as idx,
+        patch("routes.documents.generate_for_document") as gen,
+        patch("routes.documents.update_course_context"),
+        patch("routes.documents._check_upload_achievements"),
+    ):
+        t.return_value.select.return_value = []
+        t.return_value.insert.return_value = [{"id": "doc-1"}]
+        r = tdr._make_upload()
+        assert r.status_code == 200, r.text
+    return idx, gen
+
+
+def _fn_name(fn) -> str:
+    """A scheduled callable's name; a patched one is a MagicMock (no __name__)."""
+    return getattr(fn, "__name__", None) or fn._mock_name
+
+
+class TestUploadHook:
+    def test_flag_off_schedules_index_document_only(self, monkeypatch):
+        idx, gen = _upload_sync_with(monkeypatch, flag=False, mode="real")
+        idx.assert_called_once_with("doc-1")
+        gen.assert_not_called()
+
+    def test_flag_off_background_tasks_are_unchanged(self, monkeypatch):
+        """Byte-identical flag-off post-roll: the same four tasks as before."""
+        from fastapi import BackgroundTasks
+
+        added = []
+        monkeypatch.setattr(
+            BackgroundTasks, "add_task", lambda self, fn, *a, **k: added.append((_fn_name(fn), a))
+        )
+        _upload_sync_with(monkeypatch, flag=False, mode="function")
+        assert [name for name, _ in added] == [
+            "_invalidate_study_guide_cache",
+            "update_course_context",
+            "_check_upload_achievements",
+            "index_document",
+        ]
+        assert added[-1][1] == ("doc-1",)
+
+    def test_flag_on_real_mode_chains_index_then_generate_in_background(self, monkeypatch):
+        idx, gen = _upload_sync_with(monkeypatch, flag=True, mode="real")
+        # TestClient runs BackgroundTasks before returning, so both ran, in order.
+        idx.assert_called_once_with("doc-1")
+        gen.assert_called_once()
+        assert gen.call_args[0] == ("doc-1",)
+        kwargs = gen.call_args[1]
+        assert kwargs["user_id"] == "u1" and kwargs["course_id"] == "course-1"
+        assert kwargs["concept_names"] == ["Concept A"]
+        assert kwargs["flex"] is True, "ingest-time generation is background prefill (A23)"
+
+    def test_flag_on_function_mode_runs_synchronously(self, monkeypatch):
+        from fastapi import BackgroundTasks
+
+        added = []
+        monkeypatch.setattr(
+            BackgroundTasks, "add_task", lambda self, fn, *a, **k: added.append(_fn_name(fn))
+        )
+        idx, gen = _upload_sync_with(monkeypatch, flag=True, mode="function")
+        idx.assert_called_once_with("doc-1")
+        gen.assert_called_once()
+        assert "_index_then_check_items" not in added and "index_document" not in added
+
+    def test_index_then_check_items_orders_the_two(self):
+        from routes import documents as rd
+
+        calls = []
+        with (
+            patch(
+                "routes.documents.index_document", side_effect=lambda d: calls.append(("index", d))
+            ),
+            patch(
+                "routes.documents.generate_for_document",
+                side_effect=lambda d, **k: calls.append(("gen", d)),
+            ),
+        ):
+            rd._index_then_check_items("doc-1", "u1", "course-1", ["A"])
+        assert calls == [("index", "doc-1"), ("gen", "doc-1")]
+
+    def test_an_indexing_failure_still_drafts_and_a_drafting_failure_never_raises(self, caplog):
+        from routes import documents as rd
+
+        with (
+            patch("routes.documents.index_document", side_effect=RuntimeError("pg down")),
+            patch(
+                "routes.documents.generate_for_document", side_effect=RuntimeError("boom")
+            ) as gen,
+            caplog.at_level("ERROR"),
+        ):
+            rd._index_then_check_items("doc-1", "u1", "course-1", ["A"])
+        gen.assert_called_once()
+        assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 2
+
+
+def _sse_upload_with(monkeypatch, *, flag: bool, mode: str):
+    """Drive the streaming /upload with every agent mocked; return the
+    post-roll labels spawned and the generate_for_document mock."""
+    import config
+    from types import SimpleNamespace
+
+    tdr = _documents_route_helpers()
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", flag)
+    res = tdr._make_orchestrator_result(category="lecture_notes", is_syllabus=False)
+
+    def _run(output):
+        async def run(*a, **k):
+            return SimpleNamespace(output=output, usage=lambda: None)
+
+        return run
+
+    spawned = []
+    with (
+        tdr._mock_validate_user(),
+        patch("routes.documents.extract_text_from_file", return_value=tdr._doc_text("text")),
+        patch("routes.documents.classifier_agent.run", side_effect=_run(res.classification)),
+        patch("routes.documents.summary_agent.run", side_effect=_run(res.summary)),
+        patch("routes.documents.concept_extraction_agent.run", side_effect=_run(res.concepts)),
+        patch("routes.documents.apply_concepts_to_graph", return_value=1),
+        patch("routes.documents.record_agent_usage", side_effect=lambda r, **k: r),
+        patch("routes.documents.apply_graph_update"),
+        patch("routes.documents.table") as t,
+        patch("routes.documents.model_mode", return_value=mode),
+        patch("routes.documents.index_document") as idx,
+        patch("routes.documents.generate_for_document") as gen,
+        patch("routes.documents._spawn_post_roll", side_effect=lambda *ts: spawned.extend(ts)),
+    ):
+        t.return_value.select.return_value = []
+        t.return_value.insert.return_value = [{"id": "doc-1"}]
+        r = tdr.client.post(
+            "/api/documents/upload",
+            files={"file": ("notes.pdf", b"%PDF-1.4 sample", "application/pdf")},
+            data={"course_id": "course-1", "user_id": "u1"},
+        )
+        assert r.status_code == 200 and '"done"' in r.text, r.text
+    return spawned, idx, gen
+
+
+class TestSseUploadHook:
+    def test_flag_off_spawns_index_document_exactly_as_before(self, monkeypatch):
+        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=False, mode="real")
+        assert [s[0] for s in spawned] == [
+            "invalidate_study_guide_cache",
+            "update_course_context",
+            "check_upload_achievements",
+            "index_document",
+        ]
+        assert spawned[-1][2:] == ("doc-1",)
+        gen.assert_not_called()
+
+    def test_flag_on_real_mode_spawns_the_chain(self, monkeypatch):
+        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=True, mode="real")
+        assert spawned[-1][0] == "index_then_check_items"
+        assert spawned[-1][2:] == ("doc-1", "u1", "course-1", ["Concept A"])
+        assert "index_document" not in [s[0] for s in spawned]
+        gen.assert_not_called()  # spawned, not run, since _spawn_post_roll is spied
+
+    def test_flag_on_function_mode_runs_inline_before_the_post_roll(self, monkeypatch):
+        spawned, idx, gen = _sse_upload_with(monkeypatch, flag=True, mode="function")
+        idx.assert_called_once_with("doc-1")
+        gen.assert_called_once()
+        assert gen.call_args[1]["concept_names"] == ["Concept A"]
+        assert [s[0] for s in spawned] == [
+            "invalidate_study_guide_cache",
+            "update_course_context",
+            "check_upload_achievements",
+        ]

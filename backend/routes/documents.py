@@ -29,6 +29,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException,
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+import config
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
@@ -43,6 +44,7 @@ from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event
 from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.document_indexing import index_document
+from services.check_item_service import generate_for_document
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
@@ -53,6 +55,7 @@ from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
 from agents._run import run_agent_sync
+from agents._providers import model_mode
 from agents.concept_scan import concept_scan_agent
 from agents.usage import record_agent_usage
 
@@ -765,7 +768,23 @@ async def upload_document_sync(
     background_tasks.add_task(_check_upload_achievements, user_id)
     # #482: this route never indexed. Gradebook syllabus uploads come through
     # it, so none of them reached RAG. Same entry point as the streaming route.
-    background_tasks.add_task(index_document, doc_id)
+    if config.LEARNING_LOOP_ENABLED:
+        # Learning loop PKG-04: check items cite the chunks indexing writes, so
+        # indexing and drafting run in order as ONE task. Gated on the env flag
+        # at course level (items are course assets), never one student's gate.
+        concept_names = [c.name for c in result.concepts.concepts]
+        if model_mode() == "function":
+            # E2E lane: post-response handlers are unregistered by design, so
+            # run inline with the registered check_items handler (PKG-04).
+            await asyncio.to_thread(
+                _index_then_check_items, doc_id, user_id, course_id, concept_names
+            )
+        else:
+            background_tasks.add_task(
+                _index_then_check_items, doc_id, user_id, course_id, concept_names
+            )
+    else:
+        background_tasks.add_task(index_document, doc_id)
 
     response = dict(full_row)
     response["categories"] = _grading_categories_from(result)
@@ -1092,15 +1111,31 @@ async def upload_document(
             # the stream IS the response. _spawn_post_roll uses create_task
             # but attaches a done-callback so exceptions land in the log
             # instead of disappearing.
-            _spawn_post_roll(
+            post_roll = [
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
+            ]
+            if config.LEARNING_LOOP_ENABLED:
+                # Learning loop PKG-04: index, then draft check items from the
+                # chunks it wrote — one ordered task (see upload_document_sync).
+                if model_mode() == "function":
+                    # E2E lane: post-response handlers stay unregistered, so
+                    # the chain runs inline with the check_items handler.
+                    await asyncio.to_thread(
+                        _index_then_check_items, doc_id, user_id, course_id, concept_names
+                    )
+                else:
+                    post_roll.append((
+                        "index_then_check_items", _index_then_check_items,
+                        doc_id, user_id, course_id, concept_names,
+                    ))
+            else:
                 # #482: the id only. The indexer reads everything else off the
                 # stored row, which is what lets the sweeper re-drive this same
                 # work if the attempt below dies with the process.
-                ("index_document", index_document, doc_id),
-            )
+                post_roll.append(("index_document", index_document, doc_id))
+            _spawn_post_roll(*post_roll)
         except Exception:
             logger.exception(
                 "Post-result persistence failed for '%s' — result already "
@@ -1153,6 +1188,31 @@ def _check_upload_achievements(user_id: str) -> None:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
         pass
+
+
+def _index_then_check_items(
+    doc_id: str, user_id: str, course_id: str, concept_names: list[str]
+) -> None:
+    """PKG-04: check items cite the chunks indexing writes (and the A23 source
+    rule reads their visibility), so the two run in ORDER inside one post-roll
+    task. Only scheduled when LEARNING_LOOP_ENABLED; the flag-off path still
+    schedules index_document alone (byte-identical).
+
+    Each step is logged, never raised: an indexing failure leaves the document
+    unindexed (the sweeper re-drives it) and drafting then falls back to its
+    extracted text; a drafting failure must not fail the upload that runs this
+    inline in function mode."""
+    try:
+        index_document(doc_id)
+    except Exception:
+        logger.exception("Indexing doc %s before check items failed", doc_id)
+    try:
+        generate_for_document(
+            doc_id, user_id=user_id, course_id=course_id,
+            concept_names=concept_names, flex=True,
+        )
+    except Exception:
+        logger.exception("Check items for doc %s failed", doc_id)
 
 
 def _spawn_post_roll(*tasks: tuple) -> None:
