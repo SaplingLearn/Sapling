@@ -57,6 +57,8 @@ _RELATION = re.compile(r"(?:[^\W_]|[)\]])\s*[=<>≈≠≤≥]+\s*[-−(\[]*[^\W_
 # "minute", "start", "begin", "up", "yes", "no", "true", "false", "hard",
 # "right", "both", "none", "one", "bit", "lot", "lost", "solution", "id",
 # "us", "impossible", "forever"); it is set aside only inside a _PLEA n-gram.
+# The function words in _BARE_ANSWER are the exception: filler beside a help
+# word, an answer when a clause holds nothing else (_bare_answer).
 _NON_ANSWER = frozenset(
     """
     a am an and anyway are be can could confused help hey hi hm hmm honestly i im
@@ -81,9 +83,27 @@ _NON_ANSWER = frozenset(
     covered learned learnt taught differently write dumb stupid
     """.split()
 )
+# Function words that CAN answer an item alone: a yes/no-equivalent auxiliary
+# or modal ("it isn't", "it does", "cannot"), a connective ("or", "not"), the
+# imaginary unit "i", an article or a lettered option ("a", "an"). All are in
+# _NON_ANSWER, so "idk, can I get a hint" stays a plea; a clause made of them
+# and _ANSWER_FRAME words only ("it isn't", "I think it is") is an answer.
+_BARE_ANSWER = frozenset(
+    """
+    a an and or not if i is isnt are arent was wasnt were werent do does doesnt
+    did didnt dont can cant cannot could couldnt will wont would wouldnt should
+    shouldnt have has had havent hasnt might
+    """.split()
+)
+# A subject or a hedge around a bare answer: "it is", "I think it does".
+_ANSWER_FRAME = frozenset(
+    "it its itself that thats they them there theres im think guess maybe probably"
+    " perhaps possibly so um umm uh hm hmm well ok okay".split()
+)
 # Pleas, matched on normalized text: n-grams that hold a word able to answer
-# an item alone ("no", "up", "hard", "start", "hour", "much", "lost"), plus
-# the idk variants outside NON_ATTEMPT_PATTERNS ("dunno", "don't know").
+# an item alone ("no", "up", "hard", "start", "hour", "much", "lost", "can't
+# do it"), plus the idk variants outside NON_ATTEMPT_PATTERNS ("dunno",
+# "don't know").
 _PLEA = re.compile(
     r"\bno (?:idea|clue)\b|\b(?:give|gave|giving) up\b"
     r"|\bdunno\b|\b(?:dont|do not) know\b|\bnot sure\b"
@@ -94,6 +114,7 @@ _PLEA = re.compile(
     r"|\b(?:im|i am|so|totally|completely|really|kinda|a bit|a little) (?:lost|confused|stuck)\b"
     r"|\b(?:taking|takes|took|been|for) forever\b"
     r"|\b(?:makes? no|doesnt make|dont make) sense\b|\bmove on\b|\bwalk me through\b"
+    r"|\bi (?:cant|cannot|can not|couldnt) do (?:it|this)\b"
 )
 
 
@@ -113,6 +134,13 @@ def _phrase_spans(words: list[str]) -> list[tuple[str, int, int]]:
         for i in range(len(words) - len(pw) + 1)
         if tuple(words[i : i + len(pw)]) == pw
     ]
+
+
+def _bare_answer(words: list[str]) -> bool:
+    """A clause residue that answers the item with function words alone."""
+    return any(w in _BARE_ANSWER for w in words) and all(
+        w in _BARE_ANSWER or w in _ANSWER_FRAME for w in words
+    )
 
 
 def has_non_attempt_phrase(text: str) -> bool:
@@ -143,8 +171,11 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
       and is never graded ("just tell me, is it 7?" is graded: a digit).
     - An idk phrase ("idk", "i don't know") is returned only when the residue
       is empty: once the phrases, request objects, _PLEA pleas and _NON_ANSWER
-      filler are set aside, no word is left. "idk lmao" and "idk, where do I
-      start?" are idk; "even, idk" and "the mitochondria idk" are graded.
+      filler are set aside, no word is left, and no clause's residue is a
+      bare function-word answer (_BARE_ANSWER, with at most a subject or a
+      hedge: "it isn't", "or", "I think it is"). "idk lmao", "idk, can I get
+      a hint" and "idk, where do I start?" are idk; "even, idk", "the
+      mitochondria idk" and "it isn't, idk" are graded.
 
     A message holding both routes to idk when the idk phrase is returned (the
     route checks idk first, A16)."""
@@ -152,6 +183,7 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
         return ()
     found: set[str] = set()
     residue: list[str] = []
+    bare = False
     for clause in _CLAUSE.split(text):
         words = _norm(clause).split()
         keep = [True] * len(words)
@@ -160,8 +192,11 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
             if pattern in _REQUEST_PATTERNS:
                 end = len(words)
             keep[start:end] = [False] * (end - start)
-        residue += _PLEA.sub(" ", " ".join(w for w, k in zip(words, keep) if k)).split()
-    idk_holds = all(w in _NON_ANSWER for w in residue)
+        rest = " ".join(w for w, k in zip(words, keep) if k)
+        # a clause holding a plea ("I give up", "I can't do it") is no bare answer
+        bare = bare or (not _PLEA.search(rest) and _bare_answer(rest.split()))
+        residue += _PLEA.sub(" ", rest).split()
+    idk_holds = not bare and all(w in _NON_ANSWER for w in residue)
     return tuple(
         p for p in NON_ATTEMPT_PATTERNS if p in found and (p in _REQUEST_PATTERNS or idk_holds)
     )

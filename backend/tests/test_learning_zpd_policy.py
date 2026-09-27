@@ -873,6 +873,66 @@ def test_an_answer_capable_word_beside_an_idk_phrase_is_graded(word):
         assert non_attempt_phrases(text) == (), text
 
 
+# Function words that can answer an item alone: a yes/no-equivalent auxiliary
+# or modal ("it isn't", "it does", "cannot"), a connective ("or", "not"), the
+# imaginary unit "i", an article or a lettered option ("a", "an"). They are
+# filler beside a word asking for help, but a clause holding nothing else (a
+# subject or a hedge aside) is an answer, so it is graded (decision (B)).
+_BARE_ANSWER_WORDS = tuple(
+    """
+    a an and or not if i is isnt are arent was wasnt were werent do does doesnt
+    did didnt dont can cant cannot could couldnt will wont would wouldnt should
+    shouldnt have has had havent hasnt might
+    """.split()
+)
+
+
+@pytest.mark.parametrize("word", _BARE_ANSWER_WORDS)
+def test_a_bare_function_word_answer_beside_an_idk_phrase_is_graded(word):
+    from learning.gates import non_attempt_phrases
+
+    for text in (
+        f"{word}, idk",
+        f"{word}? I don't know",
+        f"it {word}, idk",
+        f"idk, it {word}",
+        f"I think it {word}, idk",
+        f"maybe {word}? idk",
+        f"idk, {word}. what do I do?",  # a plea in another clause does not hide it
+    ):
+        assert non_attempt_phrases(text) == (), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["it isn't, idk", "It is, idk", "cannot, idk", "or? idk", "not? idk", "i, idk", "an, idk",
+     "A? idk", "idk, it should", "I think it is, idk", "it isn't, idk, what do I do?",
+     "idk if it is"],
+)  # fmt: skip
+def test_a_hedged_yes_no_or_connective_answer_is_graded_but_no_attempt(text):
+    """For "Is |x| differentiable at 0?", "it isn't, idk" answers the item as
+    surely as "no, idk": it is graded (B), never idk evidence with the answer
+    released, and it still never counts toward hint unlocking (A)."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == ()
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["idk, can I get a hint", "I don't know, can you give me a hint?", "idk what to do",
+     "idk, I have no idea", "idk, can we move on?", "idk, what does that mean?",
+     "I can't do this, idk", "idk, I can't do it", "idk, I really don't know", "idk it",
+     "hmm... I don't know", "idk, is there a hint?", "idk, I don't remember", "i dunno, idk",
+     "idk! I give up"],
+)  # fmt: skip
+def test_function_words_beside_a_help_word_stay_an_idk_plea(text):
+    from learning.gates import non_attempt_phrases
+
+    assert "idk" in non_attempt_phrases(text) or "i don't know" in non_attempt_phrases(text)
+
+
 @pytest.mark.parametrize(
     "text,phrases",
     [
