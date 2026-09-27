@@ -184,7 +184,10 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
     found: set[str] = set()
     residue: list[str] = []
     bare = False
-    for clause in _CLAUSE.split(text):
+    # Apostrophes go before the split, as _norm deletes them over the whole
+    # message in has_non_attempt_phrase: "give but`idk" is one word there, so
+    # it must be one clause word here (non_attempt_phrases ⇒ has_non_attempt_phrase).
+    for clause in _CLAUSE.split(_APOSTROPHES.sub("", text)):
         words = _norm(clause).split()
         keep = [True] * len(words)
         for pattern, start, end in _phrase_spans(words):

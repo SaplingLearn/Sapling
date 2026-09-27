@@ -1212,6 +1212,30 @@ def test_every_routed_non_attempt_is_also_no_genuine_attempt():
     assert all(has_non_attempt_phrase(t) for t in routed)
 
 
+_FUZZ_PARTS = (
+    "idk", "i", "don't", "dont", "don’t", "know", "just", "tell", "me", "give", "the",
+    "answer", "what's", "whats", "but", "no", "idea", "it", "is", "isn't", "7", "x", "part",
+    "question", "to", "give up", "'", "`", "’", "´", " ", " ", " ", ",", ".", "?", "!", "=",
+    "(", ")", "-", "\n",
+)  # fmt: skip
+
+
+def test_a_routed_non_attempt_always_holds_a_non_attempt_phrase_property():
+    """non_attempt_phrases(t) != () implies has_non_attempt_phrase(t) for any
+    text: an apostrophe glued between a phrase and "but" ("give but`idk` the")
+    never makes the clause split see a phrase the whole-message view does not."""
+    import random
+
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    for text in ("give but`idk` the ", "i don’t know'but -? is ", "idk'but", "but'idk"):
+        assert not non_attempt_phrases(text) or has_non_attempt_phrase(text), text
+    rng = random.Random(606)
+    for _ in range(20_000):
+        text = "".join(rng.choice(_FUZZ_PARTS) for _ in range(rng.randint(1, 9)))
+        assert not non_attempt_phrases(text) or has_non_attempt_phrase(text), repr(text)
+
+
 def test_has_non_attempt_phrase_matches_whole_words_only():
     from learning.gates import has_non_attempt_phrase
 
