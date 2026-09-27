@@ -2,8 +2,10 @@
 counts, enums and bools only — never student or tutor text.
 
 Keyword-only thin wrappers over `services.events_service.log_event`. Like
-log_event they never raise into a request: a payload that cannot be built (a
-caller bug) is dropped with a log line. Emitted by nobody in PKG-06; PKG-07,
+log_event they never raise into a request: a payload that cannot be built, or
+that holds a string longer than PAYLOAD_STR_MAX or a value that is not
+None/bool/int/float/str/list/dict (a caller bug that could log student or
+tutor text into the plaintext events table), is dropped with a log line. Emitted by nobody in PKG-06; PKG-07,
 PKG-08 and PKG-10 call them.
 """
 
@@ -12,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Literal
 
+from learning.evidence import Channel
 from learning.ladder import Rung
 from learning.leak import Detector
 from learning.policy import Band, BandAction, CeilingReason, Tier
@@ -23,6 +26,21 @@ Phase = Literal["probe", "plan", "teach", "check", "feedback", "close", "posttes
 Rating = Literal["too_easy", "appropriate", "too_hard"]
 BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
 GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]  # spec §5 (A22/A24)
+PAYLOAD_STR_MAX = 64  # a sha256 question_hash is exactly this long; nothing longer is an id
+
+
+def _is_plain(value: object) -> bool:
+    """ids, counts, enums and bools only: short strings, numbers, None, and
+    lists / string-keyed dicts of them."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return True
+    if isinstance(value, str):
+        return len(value) <= PAYLOAD_STR_MAX
+    if isinstance(value, list):
+        return all(_is_plain(v) for v in value)
+    if isinstance(value, dict):
+        return all(isinstance(k, str) and _is_plain(k) and _is_plain(v) for k, v in value.items())
+    return False
 
 
 def _emit(
@@ -37,6 +55,9 @@ def _emit(
     except Exception:
         logger.warning("%s: payload could not be built; event dropped", event_type, exc_info=True)
         return
+    if not _is_plain(payload):
+        logger.warning("%s: payload is not ids/counts/enums/bools only; event dropped", event_type)
+        return
     log_event(
         event_type, category=category, user_id=user_id, request_id=request_id, payload=payload
     )
@@ -49,7 +70,7 @@ def emit_zpd_step(
     concept_id: str,
     question_hash: str,
     phase: Phase,
-    channel: str,
+    channel: Channel,
     band: Band,
     ceiling: Rung,
     ceiling_reason: CeilingReason,

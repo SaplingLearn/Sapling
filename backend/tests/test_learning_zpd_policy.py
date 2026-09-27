@@ -1685,6 +1685,30 @@ def test_emit_helper_drops_a_malformed_event_instead_of_raising(monkeypatch, cap
     assert any("zpd.step" in r.getMessage() for r in caplog.records)
 
 
+def test_emit_helpers_drop_a_payload_that_could_carry_text(monkeypatch, caplog):
+    """The ids/counts/enums/bools rule holds at runtime, not only for the test's
+    own fixtures: a payload string longer than PAYLOAD_STR_MAX (student or tutor
+    text; events.payload is plaintext) or a value that is not JSON-plain drops
+    the event with a WARNING. A 64-char id still passes."""
+    from learning import zpd_events
+    from learning.policy import BandAction
+
+    assert zpd_events.PAYLOAD_STR_MAX == PAYLOAD_STR_MAX
+    calls = _recorder(monkeypatch)
+    wheel = dict(user_id="u", request_id="r", opps=6, unassisted_next=0.2, htc_k=None)
+    band = dict(user_id="u", request_id="r", direction=BandAction.HOLD, trigger="high")
+    with caplog.at_level(logging.WARNING):
+        zpd_events.emit_zpd_band_adjust(**band, window_stats={"note": "I think " + "x" * 80})
+        zpd_events.emit_zpd_band_adjust(**band, window_stats={"obj": object()})
+        zpd_events.emit_zpd_wheelspin(**wheel, concept_id="n" * 65, prerequisite_ids=[])
+        zpd_events.emit_zpd_wheelspin(**wheel, concept_id="n", prerequisite_ids=["p" * 65])
+    assert calls == []
+    assert sum("event dropped" in r.getMessage() for r in caplog.records) == 4
+    zpd_events.emit_zpd_wheelspin(**wheel, concept_id="n" * 64, prerequisite_ids=["p" * 64])
+    zpd_events.emit_zpd_band_adjust(**band, window_stats={"rate": 0.95, "n": 8, "full": True})
+    assert [et for et, _ in calls] == ["zpd.wheelspin", "zpd.band_adjust"]
+
+
 def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
     """Through the real events_service: enqueue only, worker never runs here."""
     from learning import zpd_events
