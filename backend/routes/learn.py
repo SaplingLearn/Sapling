@@ -16,7 +16,7 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
-from services import decisions, events_service
+from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
@@ -85,27 +85,43 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
+def _pref_honoured(model_pref: str | None) -> bool:
+    """Whether `_resolve_model_pref` actually applies this pref: only in real
+    mode (#391 — every other mode runs the agent's own seam model) and only
+    for a pref the toggle map knows."""
+    from agents._providers import model_mode
+
+    return model_mode() == "real" and model_pref in _PREF_MODEL_NAMES
+
+
 def _served_tier(model_pref: str | None) -> str:
-    """The tier a chat turn ran on for this effective pref: `fast`/`smart`,
-    or `default` (no or unknown pref → the agent's own model_for slot)."""
-    return model_pref if model_pref in _PREF_MODEL_NAMES else "default"
+    """The tier a chat turn ACTUALLY ran on for this effective pref: `fast` /
+    `smart` when the pref was honoured, else `default` (the agent's own
+    model_for slot) — so the logged tier always agrees with `tutor_model`."""
+    return model_pref if _pref_honoured(model_pref) else "default"
 
 
 def _served_model_name(model_pref: str | None) -> str | None:
     """The model NAME a chat turn ran on for this effective pref — the same
-    resolution `_resolve_model_pref` + the agent default perform, as data.
+    resolution `_resolve_model_pref` + the agent default perform, as data,
+    from configuration only (no Model is built).
 
-    Real mode: the pref's Gemini model, else `model_name_for("chat_tutor")`.
-    Any other mode ignores the pref (#391 seam) and runs the agent's default,
-    whose name is read off `model_for` (a cheap FunctionModel there). Never
-    raises: this only labels an event.
+    Real mode: the honoured pref's Gemini model, else
+    `model_name_for("chat_tutor")`. Function mode: the seam's FunctionModel,
+    named `function:<task>` by agents/_providers.py. Never raises: this only
+    labels an event.
     """
     try:
-        from agents._providers import _model_mode, model_for, model_name_for
+        from agents._providers import model_mode, model_name_for
 
-        if _model_mode() == "real":
-            return _PREF_MODEL_NAMES.get(model_pref or "") or model_name_for("chat_tutor")
-        return str(model_for("chat_tutor").model_name)
+        mode = model_mode()
+        if mode == "real":
+            if _pref_honoured(model_pref):
+                return _PREF_MODEL_NAMES[model_pref]
+            return model_name_for("chat_tutor")
+        if mode == "function":
+            return "function:chat_tutor"
+        return None
     except Exception:
         return None
 
@@ -121,13 +137,12 @@ def _observe_persisted_turn(
     Routing at request entry instead double-routed a stream that failed
     before persisting and was retried through /chat (the client's JSON rung,
     or the student's own retry). Fire-and-forget: `observe_tutor_turn`
-    schedules and returns. Guarded here too: this runs AFTER the rows are
+    schedules and returns (and does nothing when the seam is off — that
+    check lives there, once). Guarded here too: this runs AFTER the rows are
     saved, and on the streamed path an exception would turn a persisted turn
     into an error event.
     """
     try:
-        if not decisions.enabled():
-            return  # the default: no labelling work at all
         observe_tutor_turn(
             user_id=body.user_id, session_id=body.session_id, message=body.message,
             history=history, mode=body.mode,
