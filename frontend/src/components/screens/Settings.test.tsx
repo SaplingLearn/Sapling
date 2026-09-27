@@ -31,11 +31,10 @@ vi.mock("@/context/UserContext", () => ({
 vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => ["sidebar", vi.fn()] }));
 vi.mock("@/lib/useScrollLock", () => ({ useScrollLock: () => {} }));
 
-vi.mock("../ToastProvider", () => ({
-  useToast: () => ({
-    error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn(), show: vi.fn(), dismiss: vi.fn(),
-  }),
+const toast = vi.hoisted(() => ({
+  error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn(), show: vi.fn(), dismiss: vi.fn(),
 }));
+vi.mock("../ToastProvider", () => ({ useToast: () => toast }));
 
 // Stub presentational children so this exercises the profile form only.
 vi.mock("../TopBar", () => ({ TopBar: () => null }));
@@ -175,8 +174,12 @@ describe("Settings → Data: product analytics opt-out", () => {
     vi.mocked(fetchSettings).mockResolvedValue(settings());
     vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
     vi.mocked(updateSettings).mockReset().mockResolvedValue(settings());
+    toast.error.mockClear();
   });
-  afterEach(() => __resetAnalyticsForTests());
+  afterEach(() => {
+    __resetAnalyticsForTests();
+    vi.restoreAllMocks();
+  });
 
   it("renders a disabled switch when analytics is not running in this build", async () => {
     render(<Settings />);
@@ -213,16 +216,47 @@ describe("Settings → Data: product analytics opt-out", () => {
     expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: false });
   });
 
-  it("applies an opt-out saved on another browser when the page loads", async () => {
+  it("does not apply the account preference itself — the UserProvider owns that", async () => {
     vi.mocked(fetchSettings).mockResolvedValue(settings({ analytics_opt_out: true }));
+    const ph = fakePosthog();
+    await startAnalytics(ph);
+    render(<Settings />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await act(async () => {});
+    expect(ph.opt_out_capturing).not.toHaveBeenCalled();
+  });
+
+  it("a failed opt-OUT save keeps this browser opted out and says so", async () => {
+    vi.mocked(updateSettings).mockRejectedValue(new Error("500"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const ph = fakePosthog();
     await startAnalytics(ph);
     render(<Settings />);
     fireEvent.click(screen.getByTestId("settings-tab-data"));
     const toggle = await screen.findByTestId("settings-analytics-toggle");
-    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/still applies in this browser/)));
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(ph.opt_in_capturing).not.toHaveBeenCalled();
+  });
+
+  it("a failed opt-IN save reverts to off and says it failed — never 'applies in this browser'", async () => {
+    vi.mocked(updateSettings).mockRejectedValue(new Error("500"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const ph = fakePosthog();
+    ph.opt_out_capturing(); // currently off
+    ph.opt_out_capturing.mockClear();
+    await startAnalytics(ph);
+    render(<Settings />);
+    fireEvent.click(screen.getByTestId("settings-tab-data"));
+    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    expect(ph.opt_in_capturing).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/Couldn't turn product analytics back on/)));
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringMatching(/applies in this browser/));
     expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
-    expect(updateSettings).not.toHaveBeenCalled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
   it("a backend without the field leaves this browser's own opt-out in force", async () => {

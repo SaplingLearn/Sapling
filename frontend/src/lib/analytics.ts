@@ -30,9 +30,23 @@
  *   `$geoip_disable` so ingestion skips GeoIP enrichment. The PostHog project
  *   setting "Discard client IP data" must stay ON — see
  *   docs/frontend-audit/07-integrations.md.
- * - **The opt-out follows the account.** `user_settings.analytics_opt_out` is
- *   applied on sign-in (`applyAccountAnalyticsPreference`) before `identify`,
- *   so an opt-out made on one browser holds on every other.
+ * - **Nothing is captured until we know whose page this is.** Every event
+ *   goes through a capture gate (`gatedBeforeSend`) that starts CLOSED on
+ *   page load. The UserProvider opens it once identity settles: straight away
+ *   for an anonymous visitor (`releaseAnonymousAnalytics`); for a signed-in
+ *   student only after their account preference (`user_settings.
+ *   analytics_opt_out`) has been read and applied (`resolveAccountAnalytics`),
+ *   so an opt-out made on one browser holds on every other — even on a new
+ *   device's first page. If that read fails the gate stays shut for the rest
+ *   of the page load (fail closed). The page's initial `$pageview`, dropped
+ *   while the gate was shut, is re-sent when it opens.
+ * - **Only chosen opt-outs persist.** Under Do Not Track / GPC every
+ *   posthog-js consent getter reports "opted out" (`respect_dnt`), even
+ *   `get_explicit_consent_status()`. So the opt-outs the student or their
+ *   account actually chose are recorded under our own key
+ *   (`OPT_OUT_STORAGE_KEY`), and that — never a posthog getter — decides what
+ *   is carried across `reset()`. A browser signal is never written down as
+ *   the student's own opt-out.
  * - **Same-origin transport.** `api_host` is `/ingest`, served by the route
  *   handler in `src/app/ingest/[...path]/route.ts`, which forwards to PostHog
  *   US without the user's cookies (see that file for why this is not a
@@ -200,7 +214,7 @@ export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
     custom_personal_data_properties: [...PERSONAL_DATA_QUERY_PARAMS],
     // Nothing here routes on the fragment; don't record it.
     disable_capture_url_hashes: true,
-    before_send: scrubEvent,
+    before_send: gatedBeforeSend,
   };
 }
 
@@ -218,6 +232,63 @@ let starting = false;
 let pendingIdentity: string | null | undefined;
 /** An account-level opt-out that arrived before the client finished loading. */
 let pendingAccountOptOut = false;
+
+/**
+ * The capture gate (see the header). Closed from page load until the
+ * UserProvider has settled who is here — and, for a signed-in student, what
+ * their account preference is. `droppedPageview` remembers that a
+ * `$pageview` was swallowed while closed, so it can be re-sent on opening.
+ */
+let gateOpen = false;
+let droppedPageview = false;
+
+/**
+ * `before_send`: drop everything while the gate is closed, otherwise scrub.
+ * Returning null is posthog-js's documented way to discard an event, and it
+ * runs before the event is queued, so a dropped event never reaches the wire.
+ */
+export function gatedBeforeSend(event: CaptureResult | null): CaptureResult | null {
+  if (!event) return event;
+  if (!gateOpen) {
+    if (event.event === "$pageview") droppedPageview = true;
+    return null;
+  }
+  return scrubEvent(event);
+}
+
+function openGate(): void {
+  gateOpen = true;
+  if (!client || !droppedPageview) return;
+  droppedPageview = false;
+  // A no-op when opted out (or under DNT/GPC): posthog-js checks consent.
+  client.capture("$pageview");
+}
+
+/**
+ * localStorage key recording an opt-out the student (Settings) or their
+ * account (`analytics_opt_out`) chose — "1" when set, absent otherwise.
+ * posthog-js cannot answer this under DNT/GPC: all of its consent getters
+ * fold the browser signal in. Storage failures (private mode, blocked site
+ * data) read as "not recorded"; posthog-js's own consent still applies.
+ */
+export const OPT_OUT_STORAGE_KEY = "sapling_analytics_opt_out";
+
+function chosenOptOut(): boolean {
+  try {
+    return window.localStorage.getItem(OPT_OUT_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function recordChosenOptOut(optedOut: boolean): void {
+  try {
+    if (optedOut) window.localStorage.setItem(OPT_OUT_STORAGE_KEY, "1");
+    else window.localStorage.removeItem(OPT_OUT_STORAGE_KEY);
+  } catch {
+    // best effort — see OPT_OUT_STORAGE_KEY
+  }
+}
 
 export type PosthogLoader = () => Promise<PostHog>;
 const defaultLoader: PosthogLoader = () => import("posthog-js").then((m) => m.default);
@@ -239,6 +310,9 @@ export async function initAnalytics(
     const ph = await load();
     ph.init((env.NEXT_PUBLIC_POSTHOG_KEY ?? "").trim(), buildPosthogConfig(env));
     client = ph;
+    // Our record of a chosen opt-out is authoritative: re-assert it in case
+    // posthog-js's own consent storage was cleared.
+    if (chosenOptOut()) ph.opt_out_capturing();
   } catch (err) {
     // An analytics failure (blocked chunk, extension) must never break the app.
     console.warn("[analytics] PostHog failed to initialise; continuing without it", err);
@@ -247,13 +321,18 @@ export async function initAnalytics(
     starting = false;
   }
   // The account's opt-out first, so a replayed identify never goes out for a
-  // student who opted out on another browser.
-  if (pendingAccountOptOut) applyAccountAnalyticsPreference(true);
-  pendingAccountOptOut = false;
+  // student who opted out on another browser; the gate stayed shut for it.
+  if (pendingAccountOptOut) {
+    pendingAccountOptOut = false;
+    optOutExplicitly();
+    gateOpen = true;
+    droppedPageview = false; // an opted-out student's pageview stays dropped
+  }
   const pending = pendingIdentity;
   pendingIdentity = undefined;
   if (pending === null) resetAnalytics();
   else if (pending) identifyUser(pending);
+  if (gateOpen) openGate(); // re-send a pageview swallowed during init, if any
   notify();
   return true;
 }
@@ -293,22 +372,55 @@ export function identifyUser(userId: string): void {
   client.identify(userId);
 }
 
+function optOutExplicitly(): void {
+  if (!client) return;
+  recordChosenOptOut(true);
+  client.opt_out_capturing();
+}
+
 /**
- * Apply the account-level preference (`user_settings.analytics_opt_out`) to
- * this browser. Only an opt-out is applied: `false` — or the field missing,
- * as it is on a backend that predates it — leaves this browser's own choice
- * alone, so a local opt-out always wins and the account can only ever turn
- * collection OFF, never silently back on.
+ * Close the capture gate: a signed-in student has appeared and their account
+ * preference is not known yet. Nothing is sent until resolveAccountAnalytics.
+ * If that never comes (the settings read failed), nothing is sent for the
+ * rest of this page load.
  */
-export function applyAccountAnalyticsPreference(optOut: unknown): void {
-  if (optOut !== true) return;
-  if (!client) {
-    if (starting) pendingAccountOptOut = true;
+export function holdAnalytics(): void {
+  gateOpen = false;
+}
+
+/** Open the gate for a visitor with no session: nothing to wait for. */
+export function releaseAnonymousAnalytics(): void {
+  openGate();
+}
+
+/**
+ * The signed-in student's account preference (`user_settings.
+ * analytics_opt_out`) has arrived. An opt-out is stored in this browser and
+ * the student is never identified; otherwise the gate opens and they are.
+ *
+ * Only an opt-out is applied: `false` — or the field missing, as it is on a
+ * backend that predates it — leaves this browser's own choice alone, so a
+ * local opt-out always wins and the account can only ever turn collection
+ * OFF, never silently back on.
+ */
+export function resolveAccountAnalytics(userId: string, optOut: unknown): void {
+  if (optOut === true) {
+    if (!client) {
+      // Keep the gate shut until initAnalytics has stored the opt-out.
+      if (starting) pendingAccountOptOut = true;
+      return;
+    }
+    optOutExplicitly();
+    gateOpen = true; // nothing passes consent now; keeps a later opt-in live
+    droppedPageview = false;
+    notify();
     return;
   }
-  if (client.has_opted_out_capturing()) return;
-  client.opt_out_capturing();
-  notify();
+  // Open BEFORE identifying: `$identify` is an event too, and a shut gate
+  // would swallow it.
+  gateOpen = true;
+  identifyUser(userId);
+  openGate(); // then re-send the pageview swallowed while waiting
 }
 
 /**
@@ -323,7 +435,7 @@ export function resetAnalytics(): void {
     if (starting) pendingIdentity = null;
     return;
   }
-  const optedOut = client.has_opted_out_capturing();
+  const optedOut = chosenOptOut(); // NOT has_opted_out_capturing(): DNT/GPC
   client.reset();
   if (optedOut) client.opt_out_capturing();
 }
@@ -373,10 +485,11 @@ export function getServerAnalyticsState(): AnalyticsState {
 /**
  * This browser's choice, persisted by posthog-js (its own consent storage).
  * Settings also PATCHes it to the account (`analytics_opt_out`) so it follows
- * the student to other browsers — see applyAccountAnalyticsPreference.
+ * the student to other browsers — see resolveAccountAnalytics.
  */
 export function setAnalyticsEnabled(enabled: boolean): void {
   if (!client) return;
+  recordChosenOptOut(!enabled);
   if (enabled) client.opt_in_capturing();
   else client.opt_out_capturing();
   notify();
@@ -388,5 +501,8 @@ export function __resetAnalyticsForTests(): void {
   starting = false;
   pendingIdentity = undefined;
   pendingAccountOptOut = false;
+  gateOpen = false;
+  droppedPageview = false;
   listeners.clear();
+  recordChosenOptOut(false);
 }

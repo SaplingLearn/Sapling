@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 /**
- * UserProvider ↔ product analytics: a known session user is identified by
- * UUID only — after the account's opt-out (user_settings.analytics_opt_out)
- * has been applied — and signing out (which account deletion also goes
- * through) resets the analytics identity. A build without analytics makes no
- * settings request at all.
+ * UserProvider ↔ product analytics. It is the ONE owner of the account
+ * preference: for a signed-in student it holds capture, reads
+ * user_settings.analytics_opt_out, and only then resolves (opt-out stored,
+ * or identified by UUID alone). A failed read leaves capture held — fail
+ * closed. An anonymous visitor releases capture at once. Signing out (which
+ * account deletion also goes through) resets the analytics identity. A build
+ * without analytics makes no settings request and calls nothing.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -17,14 +19,16 @@ vi.mock('@/lib/api', () => ({
   fetchSettings: (...a: unknown[]) => fetchSettings(...a),
 }));
 
-const identifyUser = vi.fn();
+const holdAnalytics = vi.fn();
+const releaseAnonymousAnalytics = vi.fn();
+const resolveAccountAnalytics = vi.fn();
 const resetAnalytics = vi.fn();
-const applyAccountAnalyticsPreference = vi.fn();
 const isAnalyticsConfigured = vi.fn(() => true);
 vi.mock('@/lib/analytics', () => ({
-  identifyUser: (...a: unknown[]) => identifyUser(...a),
+  holdAnalytics: () => holdAnalytics(),
+  releaseAnonymousAnalytics: () => releaseAnonymousAnalytics(),
+  resolveAccountAnalytics: (...a: unknown[]) => resolveAccountAnalytics(...a),
   resetAnalytics: (...a: unknown[]) => resetAnalytics(...a),
-  applyAccountAnalyticsPreference: (...a: unknown[]) => applyAccountAnalyticsPreference(...a),
   isAnalyticsConfigured: () => isAnalyticsConfigured(),
 }));
 
@@ -43,9 +47,7 @@ function Probe() {
 describe('UserProvider analytics identity', () => {
   beforeEach(() => {
     localStorage.clear();
-    identifyUser.mockClear();
-    resetAnalytics.mockClear();
-    applyAccountAnalyticsPreference.mockClear();
+    for (const m of [holdAnalytics, releaseAnonymousAnalytics, resolveAccountAnalytics, resetAnalytics]) m.mockClear();
     isAnalyticsConfigured.mockReset().mockReturnValue(true);
     fetchSettings.mockReset().mockResolvedValue({ analytics_opt_out: false });
     window.history.replaceState({}, '', '/dashboard');
@@ -64,92 +66,83 @@ describe('UserProvider analytics identity', () => {
     vi.unstubAllGlobals();
   });
 
-  it('identifies the hydrated user with the UUID alone', async () => {
+  function signedIn() {
     localStorage.setItem('sapling_user', JSON.stringify({ id: 'uuid-123', name: 'Ada Lovelace', avatar: '' }));
-    render(
+  }
+  function mount() {
+    return render(
       <UserProvider>
         <Probe />
       </UserProvider>,
     );
-    await waitFor(() => expect(identifyUser).toHaveBeenCalled());
-    for (const call of identifyUser.mock.calls) expect(call).toEqual(['uuid-123']);
-    expect(JSON.stringify(identifyUser.mock.calls)).not.toContain('Ada');
-  });
+  }
 
-  it("applies the account's opt-out BEFORE identifying", async () => {
-    fetchSettings.mockResolvedValue({ analytics_opt_out: true });
-    localStorage.setItem('sapling_user', JSON.stringify({ id: 'uuid-123', name: 'Ada', avatar: '' }));
-    render(
-      <UserProvider>
-        <Probe />
-      </UserProvider>,
-    );
-    await waitFor(() => expect(identifyUser).toHaveBeenCalled());
+  it('holds capture, reads the preference, then resolves with the UUID alone', async () => {
+    signedIn();
+    mount();
+    await waitFor(() => expect(resolveAccountAnalytics).toHaveBeenCalled());
+    expect(holdAnalytics).toHaveBeenCalled();
     expect(fetchSettings).toHaveBeenCalledWith('uuid-123');
-    expect(applyAccountAnalyticsPreference).toHaveBeenCalledWith(true);
-    expect(applyAccountAnalyticsPreference.mock.invocationCallOrder[0]).toBeLessThan(
-      identifyUser.mock.invocationCallOrder[0],
-    );
+    expect(holdAnalytics.mock.invocationCallOrder[0]).toBeLessThan(fetchSettings.mock.invocationCallOrder[0]);
+    for (const call of resolveAccountAnalytics.mock.calls) expect(call).toEqual(['uuid-123', false]);
+    expect(JSON.stringify(resolveAccountAnalytics.mock.calls)).not.toContain('Ada');
+    expect(releaseAnonymousAnalytics).not.toHaveBeenCalled();
   });
 
-  it('tolerates a backend without the field, or a failed settings read', async () => {
-    localStorage.setItem('sapling_user', JSON.stringify({ id: 'uuid-123', name: 'Ada', avatar: '' }));
-    fetchSettings.mockResolvedValue({ theme: 'light' }); // pre-#677: no analytics_opt_out
-    const first = render(
-      <UserProvider>
-        <Probe />
-      </UserProvider>,
-    );
-    await waitFor(() => expect(identifyUser).toHaveBeenCalledWith('uuid-123'));
-    expect(applyAccountAnalyticsPreference).toHaveBeenLastCalledWith(undefined);
-    first.unmount();
+  it("passes an account opt-out through", async () => {
+    fetchSettings.mockResolvedValue({ analytics_opt_out: true });
+    signedIn();
+    mount();
+    await waitFor(() => expect(resolveAccountAnalytics).toHaveBeenCalledWith('uuid-123', true));
+  });
 
-    identifyUser.mockClear();
+  it('tolerates a backend without the field (pre-#677)', async () => {
+    fetchSettings.mockResolvedValue({ theme: 'light' });
+    signedIn();
+    mount();
+    await waitFor(() => expect(resolveAccountAnalytics).toHaveBeenCalledWith('uuid-123', undefined));
+  });
+
+  it('fails closed: a failed settings read never resolves, so capture stays held', async () => {
     fetchSettings.mockRejectedValue(new Error('500'));
-    render(
-      <UserProvider>
-        <Probe />
-      </UserProvider>,
-    );
-    await waitFor(() => expect(identifyUser).toHaveBeenCalledWith('uuid-123'));
-    expect(applyAccountAnalyticsPreference).toHaveBeenLastCalledWith(undefined);
+    signedIn();
+    mount();
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(holdAnalytics).toHaveBeenCalled();
+    expect(resolveAccountAnalytics).not.toHaveBeenCalled();
+    expect(releaseAnonymousAnalytics).not.toHaveBeenCalled();
   });
 
-  it('makes no settings request when the build runs no analytics', async () => {
+  it('makes no settings request, and calls nothing, when the build runs no analytics', async () => {
     isAnalyticsConfigured.mockReturnValue(false);
-    localStorage.setItem('sapling_user', JSON.stringify({ id: 'uuid-123', name: 'Ada', avatar: '' }));
-    render(
-      <UserProvider>
-        <Probe />
-      </UserProvider>,
-    );
+    signedIn();
+    mount();
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('uuid-123'));
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchSettings).not.toHaveBeenCalled();
-    expect(identifyUser).not.toHaveBeenCalled();
+    expect(holdAnalytics).not.toHaveBeenCalled();
+    expect(resolveAccountAnalytics).not.toHaveBeenCalled();
+    expect(releaseAnonymousAnalytics).not.toHaveBeenCalled();
   });
 
-  it('does not identify an anonymous visitor', async () => {
-    render(
-      <UserProvider>
-        <Probe />
-      </UserProvider>,
-    );
-    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('out'));
-    expect(identifyUser).not.toHaveBeenCalled();
+  it('releases capture for an anonymous visitor, without a settings read', async () => {
+    mount();
+    await waitFor(() => expect(releaseAnonymousAnalytics).toHaveBeenCalled());
+    expect(screen.getByTestId('probe').textContent).toBe('out');
+    expect(fetchSettings).not.toHaveBeenCalled();
+    expect(holdAnalytics).not.toHaveBeenCalled();
+    expect(resolveAccountAnalytics).not.toHaveBeenCalled();
   });
 
-  it('resets analytics on sign-out', async () => {
-    localStorage.setItem('sapling_user', JSON.stringify({ id: 'uuid-123', name: 'Ada', avatar: '' }));
-    render(
-      <UserProvider>
-        <Probe />
-      </UserProvider>,
-    );
-    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('uuid-123'));
+  it('resets analytics on sign-out, then treats the visitor as anonymous', async () => {
+    signedIn();
+    mount();
+    await waitFor(() => expect(resolveAccountAnalytics).toHaveBeenCalled());
     expect(resetAnalytics).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('sign out'));
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('out'));
     expect(resetAnalytics).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(releaseAnonymousAnalytics).toHaveBeenCalled());
   });
 });

@@ -13,15 +13,18 @@ import type { CaptureResult, PostHog } from "posthog-js";
 import {
   __resetAnalyticsForTests,
   analyticsDisabledReason,
-  applyAccountAnalyticsPreference,
   buildPosthogConfig,
+  gatedBeforeSend,
   getAnalyticsState,
+  holdAnalytics,
   identifyUser,
   initAnalytics,
   isAnalyticsActive,
   isAnalyticsConfigured,
   readAnalyticsEnv,
+  releaseAnonymousAnalytics,
   resetAnalytics,
+  resolveAccountAnalytics,
   scrubEvent,
   scrubValue,
   setAnalyticsEnabled,
@@ -35,9 +38,13 @@ const KEY = "phc_test_public_key";
 function fakePosthog(initial: { distinctId?: string; identified?: boolean } = {}) {
   let distinctId = initial.distinctId ?? "anon-1";
   let identified = initial.identified ?? false;
+  // posthog-js keeps the STORED choice separately from what it reports:
+  // has_opted_out_capturing() is also true under DNT/GPC (respect_dnt).
   let optedOut = false;
+  const gpc = () => (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
   const ph = {
     init: vi.fn(),
+    capture: vi.fn(),
     identify: vi.fn((id: string) => {
       distinctId = id;
       identified = true;
@@ -52,7 +59,8 @@ function fakePosthog(initial: { distinctId?: string; identified?: boolean } = {}
     get_property: vi.fn((name: string) =>
       name === "$user_state" ? (identified ? "identified" : "anonymous") : undefined,
     ),
-    has_opted_out_capturing: vi.fn(() => optedOut),
+    has_opted_out_capturing: vi.fn(() => optedOut || gpc()),
+    get_explicit_consent_status: vi.fn(() => (optedOut ? "denied" : "pending")),
     opt_out_capturing: vi.fn(() => {
       optedOut = true;
     }),
@@ -136,7 +144,7 @@ describe("init gating", () => {
     expect(config.custom_personal_data_properties).toEqual(
       expect.arrayContaining(["auth_token", "user_id", "avatar", "popup_id"]),
     );
-    expect(config.before_send).toBe(scrubEvent);
+    expect(config.before_send).toBe(gatedBeforeSend);
     // Idempotent.
     expect(await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, load)).toBe(true);
     expect(ph.init).toHaveBeenCalledTimes(1);
@@ -251,6 +259,46 @@ describe("identify / reset", () => {
   });
 });
 
+describe("DNT / GPC is never persisted as the student's own opt-out", () => {
+  function setGpc(on: boolean) {
+    if (on) Object.defineProperty(navigator, "globalPrivacyControl", { value: true, configurable: true });
+    else delete (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl;
+  }
+  afterEach(() => setGpc(false));
+
+  it("GPC on → reset → GPC off: capture resumes and the switch follows", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    setGpc(true);
+    expect(ph.has_opted_out_capturing()).toBe(true); // the DNT-aware getter
+    expect(getAnalyticsState()).toBe("browser_blocked");
+    resetAnalytics();
+    expect(ph.reset).toHaveBeenCalledTimes(1);
+    expect(ph.opt_out_capturing).not.toHaveBeenCalled();
+    setGpc(false);
+    expect(ph.has_opted_out_capturing()).toBe(false);
+    expect(getAnalyticsState()).toBe("on");
+  });
+
+  it("the same holds for the reset before identifying a different user", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, fakePosthog({ distinctId: "u-A", identified: true }));
+    setGpc(true);
+    identifyUser("u-B");
+    expect(ph.reset).toHaveBeenCalledTimes(1);
+    expect(ph.opt_out_capturing).not.toHaveBeenCalled();
+    setGpc(false);
+    expect(getAnalyticsState()).toBe("on");
+  });
+
+  it("an account opt-out under GPC is still STORED, so it outlives the signal", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    setGpc(true);
+    resolveAccountAnalytics("u-1", true);
+    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    setGpc(false);
+    expect(getAnalyticsState()).toBe("off");
+  });
+});
+
 describe("opt-out store", () => {
   it("is unavailable when analytics is off", async () => {
     await start({});
@@ -286,42 +334,97 @@ describe("opt-out store", () => {
   });
 });
 
-describe("account-level preference (user_settings.analytics_opt_out)", () => {
-  it("an account opt-out turns this browser off and notifies", async () => {
+describe("capture gate + account preference (user_settings.analytics_opt_out)", () => {
+  const pageview = () => ({ event: "$pageview", uuid: "x", properties: {} }) as unknown as CaptureResult;
+  const click = () => ({ event: "$autocapture", uuid: "y", properties: {} }) as unknown as CaptureResult;
+
+  it("is CLOSED from page load: nothing passes before_send until identity settles", async () => {
+    await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    expect(gatedBeforeSend(pageview())).toBeNull();
+    expect(gatedBeforeSend(click())).toBeNull();
+  });
+
+  it("an anonymous visitor opens it, and the swallowed pageview is re-sent once", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    expect(gatedBeforeSend(pageview())).toBeNull();
+    releaseAnonymousAnalytics();
+    expect(ph.capture.mock.calls).toEqual([["$pageview"]]);
+    expect(gatedBeforeSend(click())).not.toBeNull();
+    releaseAnonymousAnalytics();
+    expect(ph.capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("the gate is already open when $identify is captured (it is an event too)", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    holdAnalytics();
+    let passed: CaptureResult | null = null;
+    ph.identify.mockImplementation(() => {
+      passed = gatedBeforeSend({ event: "$identify", uuid: "i", properties: {} } as unknown as CaptureResult);
+    });
+    resolveAccountAnalytics("u-1", false);
+    expect(passed).not.toBeNull();
+  });
+
+  it("a signed-in student: held until the preference arrives, then identified + pageview", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    holdAnalytics();
+    expect(gatedBeforeSend(pageview())).toBeNull();
+    expect(ph.identify).not.toHaveBeenCalled();
+    resolveAccountAnalytics("u-1", false);
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+    expect(ph.capture.mock.calls).toEqual([["$pageview"]]);
+    expect(ph.identify.mock.invocationCallOrder[0]).toBeLessThan(ph.capture.mock.invocationCallOrder[0]);
+    expect(gatedBeforeSend(click())).not.toBeNull();
+  });
+
+  it("an account opt-out is stored, never identified, and the swallowed pageview is not re-sent", async () => {
     const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
     const listener = vi.fn();
     subscribeAnalytics(listener);
-    applyAccountAnalyticsPreference(true);
+    holdAnalytics();
+    gatedBeforeSend(pageview());
+    resolveAccountAnalytics("u-1", true);
     expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(ph.identify).not.toHaveBeenCalled();
+    expect(ph.capture).not.toHaveBeenCalled();
     expect(getAnalyticsState()).toBe("off");
-    expect(listener).toHaveBeenCalledTimes(1);
-    // Idempotent.
-    applyAccountAnalyticsPreference(true);
-    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it("fails closed: no answer (the settings read failed) keeps the gate shut", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    releaseAnonymousAnalytics(); // was open for a public page…
+    holdAnalytics(); // …then a student signed in, and the read never resolves
+    expect(gatedBeforeSend(pageview())).toBeNull();
+    expect(gatedBeforeSend(click())).toBeNull();
+    expect(ph.identify).not.toHaveBeenCalled();
   });
 
   it("false or a missing field never overrides a local opt-out, and never opts in", async () => {
     const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
     setAnalyticsEnabled(false);
-    for (const value of [false, undefined, null, "true"]) applyAccountAnalyticsPreference(value);
+    for (const value of [false, undefined, null, "true"]) resolveAccountAnalytics("u-1", value);
     expect(ph.opt_in_capturing).not.toHaveBeenCalled();
     expect(getAnalyticsState()).toBe("off");
   });
 
-  it("a missing field leaves an opted-in browser on", async () => {
+  it("a missing field (pre-#677 backend) reads as not opted out", async () => {
     const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
-    applyAccountAnalyticsPreference(undefined);
+    holdAnalytics();
+    resolveAccountAnalytics("u-1", undefined);
     expect(ph.opt_out_capturing).not.toHaveBeenCalled();
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
     expect(getAnalyticsState()).toBe("on");
   });
 
   it("is a no-op while analytics is off", async () => {
     await start({});
-    expect(() => applyAccountAnalyticsPreference(true)).not.toThrow();
+    expect(() => resolveAccountAnalytics("u-1", true)).not.toThrow();
+    expect(() => releaseAnonymousAnalytics()).not.toThrow();
     expect(getAnalyticsState()).toBe("unavailable");
   });
 
-  it("an opt-out that arrives while posthog-js loads is applied before the replayed identify", async () => {
+  it("an opt-out that arrives while posthog-js loads is stored before anything opens", async () => {
     const ph = fakePosthog();
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
@@ -329,13 +432,32 @@ describe("account-level preference (user_settings.analytics_opt_out)", () => {
       await gate;
       return ph as unknown as PostHog;
     });
-    applyAccountAnalyticsPreference(true);
-    identifyUser("u-1");
+    holdAnalytics();
+    resolveAccountAnalytics("u-1", true);
+    // init's own pageview arrives while the gate is still shut
+    expect(gatedBeforeSend(pageview())).toBeNull();
     release();
     await pending;
     expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
-    expect(ph.opt_out_capturing.mock.invocationCallOrder[0]).toBeLessThan(ph.identify.mock.invocationCallOrder[0]);
+    expect(ph.identify).not.toHaveBeenCalled();
+    expect(ph.capture).not.toHaveBeenCalled();
     expect(getAnalyticsState()).toBe("off");
+  });
+
+  it("a not-opted-out answer while loading replays the identify after init", async () => {
+    const ph = fakePosthog();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const pending = initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, async () => {
+      await gate;
+      return ph as unknown as PostHog;
+    });
+    holdAnalytics();
+    resolveAccountAnalytics("u-1", false);
+    release();
+    await pending;
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+    expect(gatedBeforeSend(click())).not.toBeNull();
   });
 });
 

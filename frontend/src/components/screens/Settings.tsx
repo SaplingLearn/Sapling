@@ -28,7 +28,6 @@ import {
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
 import {
-  applyAccountAnalyticsPreference,
   getAnalyticsState,
   getServerAnalyticsState,
   setAnalyticsEnabled,
@@ -134,8 +133,6 @@ export function Settings() {
         };
         setSettings(seeded);
         setUsernameDraft(seeded.username || "");
-        // An opt-out saved on another browser takes effect here too.
-        applyAccountAnalyticsPreference(s.analytics_opt_out);
         if (seeded.accent_color) {
           document.documentElement.style.setProperty("--accent", seeded.accent_color);
         }
@@ -157,15 +154,21 @@ export function Settings() {
     }
   };
 
-  // Product analytics: this browser flips at once; the account copy is
-  // best-effort (the browser choice already holds if the save fails).
+  // Product analytics: this browser flips at once, then the account copy is
+  // saved (the UserProvider applies it on every sign-in).
   const setAnalyticsPreference = (enabled: boolean) => {
     setAnalyticsEnabled(enabled);
     if (!userId) return;
-    setSettings((prev) => (prev ? { ...prev, analytics_opt_out: !enabled } : prev));
     updateSettings(userId, { analytics_opt_out: !enabled }).catch((err) => {
       console.error("analytics preference save", err);
-      toast.error("Couldn't save that to your account. It still applies in this browser.");
+      if (enabled) {
+        // The account may still say "opted out", which the next sign-in would
+        // re-apply — so don't leave this browser claiming otherwise.
+        setAnalyticsEnabled(false);
+        toast.error("Couldn't turn product analytics back on. Please try again.");
+      } else {
+        toast.error("Couldn't save that to your account. It still applies in this browser.");
+      }
     });
   };
 
