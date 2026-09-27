@@ -72,7 +72,7 @@ Written by the session that executed `PKG-11-quiz-flashcards.md`. Read by every 
 
 - (a) Flashcards ignore `FSRS_RETENTION_EXAM` and `FSRS_RETENTION_LARGE_SET`: `due_at` always uses `FSRS_RETENTION_DEFAULT`. PKG-12 owns retention selection.
 - (b) A never-rated card is not "due" under `due_only`; its `due_at` is null. PKG-12 decides whether never-reviewed cards count (HANDOFF-02: they have R = 1.0 and sort last in `order_due`).
-- (c) `due_only` is silently ignored when the gate is false, which keeps the legacy path byte-identical.
+- (c) A boolean `due_only` is ignored when the gate is false, so the legacy path's queries and response stay byte-identical. It is a typed parameter (`due_only: bool = False`, plan Behaviour 1), so FastAPI validates it before the handler runs on both paths: `?due_only=<not a bool>` is now a 422 (`bool_parsing`, `loc ["query","due_only"]`) where the pre-series route ignored the unknown parameter and answered 200. No client sends it today. Pinned by `test_a_non_boolean_due_only_is_a_422_on_both_paths`.
 - (d) Flashcards have no successive-relearning state machine (`SR_*`, PKG-12).
 - (e) Same-session quiz re-checks are not weighted. `same_session_recheck` stays at its default, and PKG-03's in-call detection needs a `session_id`, which the quiz does not have.
 - (f) `Study.tsx` does not yet show `due_count` or rely on the due-first order (PKG-13); it renders the API's order, which is now due-first for beta users.

@@ -560,6 +560,16 @@ class TestListFlashcards:
         assert r.status_code == 200, r.text
         gate.assert_called_once_with(USER_ID)
 
+    @pytest.mark.parametrize("gate", [True, False])
+    def test_a_non_boolean_due_only_is_a_422_on_both_paths(self, gate):
+        """HANDOFF-11 Known gap (c): `due_only` is a typed query parameter
+        (plan Behaviour 1), so FastAPI rejects a non-boolean before the handler
+        runs, flag on or off. Before PKG-11 the legacy route ignored it (200)."""
+        r, calls, _ = _list(gate=gate, query="?due_only=banana")
+        assert r.status_code == 422
+        assert r.json()["detail"][0]["loc"] == ["query", "due_only"]
+        assert calls["tables"] == [], "rejected before the handler opens a table"
+
     def test_gate_off_topic_filter_unchanged(self):
         r, calls, _ = _list(gate=False, query="?topic=T")
         assert calls["select_kwargs"]["filters"] == {"user_id": f"eq.{USER_ID}", "topic": "eq.T"}
