@@ -891,6 +891,28 @@ def test_promotion_checks_pass_an_identical_candidate_and_catch_a_worse_one(ev):
     assert all(ev.promotion_checks(base, base, shadow=good)[n] is True for n in live)
 
 
+def _scored(ev, n_right: int, n: int = 200, decision: str = "judge_leak"):
+    """n gold cases of one decision, the first n_right answered right."""
+    gold, wrong = {"answer": "yes"}, {"answer": "no"}
+    return [
+        ev.CaseResult(
+            decision=decision, gold=gold, got=gold if i < n_right else wrong, confidence=1.0
+        )
+        for i in range(n)
+    ]
+
+
+@pytest.mark.parametrize("base_right", [150, 180, 186, 190, 196, 200])
+def test_acc_drop_gate_passes_an_exact_two_point_drop_at_every_count(ev, base_right):
+    """§3.6 "accuracy drop ≤ 0.02": 4 of 200 is exactly 2 points and passes; float
+    rounding must not make the boundary depend on the counts."""
+    base = _scored(ev, base_right)
+    assert ev.promotion_checks(_scored(ev, base_right - 4), base)["DECISION_PROMOTE_MAX_ACC_DROP"]
+    assert not ev.promotion_checks(_scored(ev, base_right - 5), base)[
+        "DECISION_PROMOTE_MAX_ACC_DROP"
+    ]
+
+
 def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
     """The E2E lane end to end (PKG-07's /check/answer will run exactly this): function
     mode serves the grader from the env module's handler THROUGH the seam — backend

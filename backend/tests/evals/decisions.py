@@ -51,6 +51,9 @@ DATASET, FIXTURES = "decisions", Path(__file__).parent / "fixtures" / "decisions
 ALLOWED_PROVENANCE = ("synthetic", "consented_deidentified")
 DECISION_EVAL_MAX_CASES = 8
 ECE_BINS = 10
+# Float rounding only: 0.75 - 0.73 is 0.020000000000000018, so an exact 2-point drop would
+# fail DECISION_PROMOTE_MAX_ACC_DROP at some gold counts and pass at others.
+GATE_TOLERANCE = 1e-9
 GRADING_CHANNEL = {"grade_rubric_items": "free_response", "reason_is_correct": "mc_reasoned"}
 _RECORD_RETRIES = 4  # transient provider errors while recording (the _replay posture)
 _RECORD_BACKOFF_S = 3.0
@@ -335,7 +338,7 @@ def promotion_checks(
     return {
         "DECISION_PROMOTE_MIN_GOLD": len(candidate) >= seam.DECISION_PROMOTE_MIN_GOLD,
         "DECISION_PROMOTE_MAX_ACC_DROP": accuracy(baseline) - accuracy(candidate)
-        <= seam.DECISION_PROMOTE_MAX_ACC_DROP,
+        <= seam.DECISION_PROMOTE_MAX_ACC_DROP + GATE_TOLERANCE,
         "GRADER_PROMOTE_MIN_KAPPA": cohen_kappa(candidate) >= seam.GRADER_PROMOTE_MIN_KAPPA
         if grading
         else None,
