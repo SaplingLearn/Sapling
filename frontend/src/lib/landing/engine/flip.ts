@@ -11,21 +11,23 @@
 const OPEN_MS = 620;
 const OPEN_EASE = 'cubic-bezier(0.22,1,0.36,1)';
 /*
- * The close plays the open backwards, on the open's curve, in about two
- * thirds of its time.
+ * The close is the open played backwards: same distance, same curve, same
+ * time, and therefore the same speed.
  *
- * The curve is shared on purpose: it used to run `cubic-bezier(0.4,0,0.2,1)`
- * against the open's `cubic-bezier(0.22,1,0.36,1)`, so the panel left by a
- * different route than it arrived by, and the two read as unrelated
- * animations that happened to share a rectangle.
+ * Both halves of that matter. The curve used to be
+ * `cubic-bezier(0.4,0,0.2,1)` against the open's
+ * `cubic-bezier(0.22,1,0.36,1)`, so the panel left by a different route than
+ * it arrived by. And the duration was briefly cut — on the theory that an
+ * exit is only getting out of the way and should not dawdle — but the panel
+ * covers the same ground either way, so a shorter close is literally a faster
+ * one, and the pair stopped reading as one gesture reversed.
  *
- * The duration is deliberately NOT shared. An entrance is doing work — it
- * carries you somewhere and the demo has to arrive with it — while an exit is
- * only getting out of the way, and one that takes as long as the entrance
- * reads as the interface being slow to let go. Just over half keeps the
- * gesture recognisably the same shape while giving the card back sooner.
+ * What made the close feel slow was never its duration: a full re-render of
+ * the landing tree sat between the click and the first frame, and it is gone
+ * (see the `modalAnim` removal). At the same 620ms the whole close now
+ * completes in about the time the shortened one used to take.
  */
-const CLOSE_MS = Math.round(OPEN_MS * 0.55);
+const CLOSE_MS = OPEN_MS;
 const CLOSE_EASE = OPEN_EASE;
 /*
  * How long the panel's contents take to clear, as the box collapses.
