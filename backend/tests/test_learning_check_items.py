@@ -1145,6 +1145,52 @@ class TestReadItems:
         assert svc.answerable_hook is None
 
 
+class TestMissingFinalAnswer:
+    """A34: rows drafted before check_items.final_answer existed are found and
+    retired by id so the backfill can redraft their concepts — never filled
+    in from their reference text."""
+
+    def test_finds_rows_whose_final_answer_is_null_grouped_by_concept(self):
+        from services import check_item_service as svc
+
+        rows = [
+            {"id": "i1", "concept_key": "recursion", "final_answer": None},
+            {"id": "i2", "concept_key": "recursion", "final_answer": "ciphertext"},
+            {"id": "i3", "concept_key": "base case", "final_answer": None},
+            {"id": "i4", "concept_key": "recursion", "final_answer": None},
+        ]
+        factory, mocks = _cached_tables({"check_items": rows})
+        with patch("services.check_item_service.table", side_effect=factory):
+            missing = svc.items_missing_final_answer("course-1")
+        assert missing == {"recursion": ["i1", "i4"], "base case": ["i3"]}
+        call = mocks["check_items"].select_with_count.call_args
+        assert call[0][0] == "id,concept_key,final_answer"  # no reference text is read
+        assert call[1]["filters"] == {"course_id": "eq.course-1"} and call[1]["order"] == "id"
+
+    def test_retires_items_by_id_in_bounded_batches(self, caplog):
+        from services import check_item_service as svc
+
+        ids = [f"i{n}" for n in range(svc._DOC_ID_BATCH + 3)]
+        factory, mocks = _cached_tables({})
+        mocks_delete = []
+
+        def delete(**kwargs):
+            mocks_delete.append(kwargs["filters"])
+            return [{"id": x} for x in kwargs["filters"]["id"][4:-1].split(",")]
+
+        factory("check_items").delete.side_effect = delete
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            caplog.at_level("INFO"),
+        ):
+            assert svc.retire_items_by_id(ids + ids[:2]) == len(ids)
+        assert [len(f["id"][4:-1].split(",")) for f in mocks_delete] == [svc._DOC_ID_BATCH, 3]
+        assert all(f["id"].startswith("in.(") and f["select"] == "id" for f in mocks_delete)
+        with patch("services.check_item_service.table") as t:
+            assert svc.retire_items_by_id([]) == 0
+        t.assert_not_called()
+
+
 class TestItemSources:
     def test_chunks_for_document_reads_by_doc_id_and_decrypts(self):
         from services import check_item_service as svc
@@ -2802,6 +2848,99 @@ class TestBackfill:
         draft.assert_not_called()
         create.assert_not_called()
         assert "unmatched 1" in capsys.readouterr().out
+
+
+class TestBackfillRegenerateMissingFinalAnswer:
+    """A34's explicit backfill mode: retire the rows that lack a final_answer,
+    then redraft their concepts through the normal path."""
+
+    def _wire(self, backfill, monkeypatch, missing):
+        nodes = [{"course_id": "course-1", "concept_name": "Learning Rate"}]
+        TestBackfill._wire(TestBackfill(), backfill, monkeypatch, nodes=nodes)
+        calls = []
+        monkeypatch.setattr(
+            backfill,
+            "items_missing_final_answer",
+            lambda course: calls.append(("find", course)) or dict(missing),
+        )
+        monkeypatch.setattr(
+            backfill,
+            "retire_items_by_id",
+            lambda ids: calls.append(("retire", sorted(ids))) or len(ids),
+        )
+        return calls
+
+    def test_the_default_run_never_looks_for_or_retires_them(self, backfill, monkeypatch):
+        from services.check_item_service import GenerationOutcome
+
+        calls = self._wire(backfill, monkeypatch, {"learning rate": ["i1"]})
+        monkeypatch.setattr(
+            backfill, "generate_for_concepts", lambda **k: GenerationOutcome(0, 0, 0, 1)
+        )
+        backfill.main(["--course", "course-1", "--project", "proj-a"])
+        assert calls == []
+
+    def test_retires_then_redrafts(self, backfill, monkeypatch, capsys):
+        from services.check_item_service import GenerationOutcome
+
+        calls = self._wire(backfill, monkeypatch, {"learning rate": ["i2", "i1"]})
+
+        def fake_generate(**k):
+            calls.append(("generate", k["course_id"]))
+            return GenerationOutcome(9, 1, 0, 0)
+
+        monkeypatch.setattr(backfill, "generate_for_concepts", fake_generate)
+        backfill.main(
+            ["--course", "course-1", "--project", "proj-a", "--regenerate-missing-final-answer"]
+        )
+        assert calls == [
+            ("find", "course-1"),
+            ("retire", ["i1", "i2"]),
+            ("generate", "course-1"),
+        ]
+        out = capsys.readouterr().out
+        assert "2 item(s) in 1 concept(s) lack a final_answer" in out
+        assert "retired 2" in out
+
+    def test_a_rerun_after_regeneration_retires_nothing(self, backfill, monkeypatch):
+        from services.check_item_service import GenerationOutcome
+
+        calls = self._wire(backfill, monkeypatch, {})
+        monkeypatch.setattr(
+            backfill, "generate_for_concepts", lambda **k: GenerationOutcome(0, 0, 0, 1)
+        )
+        backfill.main(
+            ["--course", "course-1", "--project", "proj-a", "--regenerate-missing-final-answer"]
+        )
+        assert calls == [("find", "course-1")]
+
+    def test_dry_run_counts_those_concepts_as_uncovered_and_changes_nothing(
+        self, backfill, monkeypatch, capsys
+    ):
+        from learning.params import CHECK_ITEM_INITIAL_PER_CONCEPT
+
+        legacy = [f"i{n}" for n in range(CHECK_ITEM_INITIAL_PER_CONCEPT)]
+        calls = self._wire(backfill, monkeypatch, {"learning rate": legacy})
+        full, _ = _cached_tables({"check_items": [{"id": i} for i in legacy]})
+        with (
+            patch("services.check_item_service.table", side_effect=full),
+            patch.object(backfill, "generate_for_concepts") as gen,
+        ):
+            backfill.main(
+                [
+                    "--course",
+                    "course-1",
+                    "--project",
+                    "proj-a",
+                    "--dry-run",
+                    "--regenerate-missing-final-answer",
+                ]
+            )
+        gen.assert_not_called()
+        assert calls == [("find", "course-1")]
+        out = capsys.readouterr().out
+        assert f"would retire {len(legacy)} item(s)" in out
+        assert "would draft 1 concept(s): learning rate" in out
 
 
 class TestProjectRef:

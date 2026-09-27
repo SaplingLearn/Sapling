@@ -442,6 +442,44 @@ def retire_items_for_documents(document_ids: Iterable[str]) -> int:
     return retired
 
 
+def items_missing_final_answer(course_id: str) -> dict[str, list[str]]:
+    """A34: the course's rows drafted before check_items.final_answer existed
+    (the column is NULL), as {concept_key: [item ids]} in id order. Reads ids
+    and keys, and final_answer only to see that it is NULL — never decrypted,
+    never filtered on (invariant 9), and no reference text is read: a final
+    answer is never derived from a reference, the concept is redrafted."""
+    missing: dict[str, list[str]] = {}
+    for row in page_all(
+        table(_TABLE),
+        "id,concept_key,final_answer",
+        filters={"course_id": f"eq.{course_id}"},
+        order="id",
+    ):
+        if row.get("final_answer") is None and row.get("id"):
+            missing.setdefault(row.get("concept_key"), []).append(row["id"])
+    return missing
+
+
+def retire_items_by_id(item_ids: Iterable[str]) -> int:
+    """DELETE the given items (_DOC_ID_BATCH ids per `in.(…)`); returns how
+    many went. The A34 backfill mode retires rows without a final_answer this
+    way before it redrafts their concepts; nothing serves them either way."""
+    ids = [i for i in dict.fromkeys(item_ids) if i]
+    retired = 0
+    for start in range(0, len(ids), _DOC_ID_BATCH):
+        batch = ids[start : start + _DOC_ID_BATCH]
+        rows = table(_TABLE).delete(
+            filters={
+                "id": "in.(" + ",".join(pg_quote_value(i) for i in batch) + ")",
+                "select": "id",
+            }
+        )
+        retired += len(rows or [])
+    if ids:
+        logger.info("check items retired by id: %d", retired)
+    return retired
+
+
 def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:
     """The ids among `document_ids` withdrawn since they were read as sources:
     deleted, or their uploader's stored `share_class_context` is now false —

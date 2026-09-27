@@ -12,7 +12,13 @@ already covered per `(course_id, concept_key)` are skipped (A2/A23). A re-run
 costs nothing.
 
 Run from backend/:
-    env LEARNING_LOOP_ENABLED=true python scripts/backfill_check_items.py (--course <id> | --all-courses) --project <ref> [--dry-run] [--function-mode]
+    env LEARNING_LOOP_ENABLED=true python scripts/backfill_check_items.py (--course <id> | --all-courses) --project <ref> [--dry-run] [--function-mode] [--regenerate-missing-final-answer]
+
+--regenerate-missing-final-answer (spec §13 A34, explicit): items drafted
+before check_items.final_answer existed have none, so selection never serves
+them. This mode retires them by id, per course, before the normal drafting
+pass, which then redrafts their concepts as under-covered. A final answer is
+never derived from reference text. With --dry-run it only reports.
 
 Prints `Project: <ref>` first and `coverage <course_id> <with_items>/<concepts>`
 per course. Exit 2 when --project is not the project SUPABASE_URL points at
@@ -60,6 +66,8 @@ from services.check_item_service import (  # noqa: E402
     count_items,
     coverage,
     generate_for_concepts,
+    items_missing_final_answer,
+    retire_items_by_id,
     source_chunks,
 )
 
@@ -124,12 +132,16 @@ def _source_documents(offerings: list[str]) -> list[dict]:
     )
 
 
-def _would_draft(course: str, names: list[str], chunks: list[dict]) -> list[str]:
-    """Dry run: the keys a real run would send to the agent (reads only)."""
+def _would_draft(
+    course: str, names: list[str], chunks: list[dict], retiring: dict[str, list[str]]
+) -> list[str]:
+    """Dry run: the keys a real run would send to the agent (reads only).
+    `retiring` = the rows the A34 mode would retire first (not counted)."""
     keys = []
     for name in names:
         key = concept_key(name)
-        if count_items(course, key) >= CHECK_ITEM_INITIAL_PER_CONCEPT:
+        kept = count_items(course, key) - len(retiring.get(key, ()))
+        if kept >= CHECK_ITEM_INITIAL_PER_CONCEPT:
             continue
         if rank_chunks_for_concept(
             name, chunks, limit=CHECK_ITEM_MAX_CHUNKS, min_score=CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE
@@ -157,6 +169,11 @@ def main(argv: list[str] | None = None) -> None:
         "--function-mode",
         action="store_true",
         help="Allow SAPLING_MODEL_MODE other than 'real' (deterministic local runs).",
+    )
+    parser.add_argument(
+        "--regenerate-missing-final-answer",
+        action="store_true",
+        help="Retire items with no final_answer (A34), then redraft their concepts.",
     )
     args = parser.parse_args(argv)
 
@@ -198,10 +215,21 @@ def main(argv: list[str] | None = None) -> None:
             f"  {course} — {len(names)} concept(s), {len(docs)} course_material "
             f"document(s), {len(chunks)} source chunk(s)"
         )
+        retiring: dict[str, list[str]] = {}
+        if args.regenerate_missing_final_answer:
+            retiring = items_missing_final_answer(course)
+            stale = [i for ids in retiring.values() for i in ids]
+            print(
+                f"    {len(stale)} item(s) in {len(retiring)} concept(s) lack a final_answer (A34)"
+            )
+            if stale and args.dry_run:
+                print(f"    would retire {len(stale)} item(s)")
+            elif stale:
+                print(f"    retired {retire_items_by_id(stale)} item(s) without a final_answer")
         if not chunks:
             print("    no shared course_material — no items (A23)")
         elif args.dry_run:
-            keys = _would_draft(course, names, chunks)
+            keys = _would_draft(course, names, chunks, retiring)
             print(f"    would draft {len(keys)} concept(s): {', '.join(keys) or '-'}")
         else:
             out = generate_for_concepts(
