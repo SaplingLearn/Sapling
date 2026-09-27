@@ -197,6 +197,20 @@ grep -qE '^APP_ENV=(local|test)$' backend/.env \
 if [ -z "${SAPLING_MODEL_MODE:-}" ] && ! grep -qE '^SAPLING_MODEL_MODE=' backend/.env; then
   echo "  ℹ SAPLING_MODEL_MODE is unset — agents will call the LIVE model; for deterministic E2E export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (what e2e.yml does)"
 fi
+# The deterministic lane exercises the typed decision seam (#640, ADR 0027):
+# under function mode it turns on by itself — UNLESS SAPLING_DECISIONS_BACKEND
+# is `off`, the operator kill switch a developer .env copied from prod-safe
+# defaults may well carry. CI's .env leaves it unset, so a local `off` would
+# silently skip the seam and fail the router journey only on this machine.
+# In function mode only an explicit `off` disables it (any other value, typos
+# included, runs the scripted `function` backend; Gemini/Jev are never
+# dialled), and an exported value beats backend/.env — so pin it on for the
+# lane, respecting a value the caller exported. Function mode is detected the
+# same way as the check above: the shell first, then backend/.env.
+MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
+if [ "$MODEL_MODE" = "function" ]; then
+  export SAPLING_DECISIONS_BACKEND="${SAPLING_DECISIONS_BACKEND:-function}"
+fi
 
 mkdir -p "$E2E_DIR"
 
@@ -248,6 +262,19 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# ADR 0028: this stack must never send to PostHog, whatever backend/.env
+# holds. The seam is also off under any non-real SAPLING_MODEL_MODE, but this
+# script does NOT force function mode (it only prints a notice when it is
+# unset) and runs APP_ENV=local — so say it explicitly rather than rely on
+# that inference. Unconditional: there is no reason to send from a local lane.
+export POSTHOG_DISABLED=1
+# The kill switch stops capture, not erasure (account deletion still calls
+# PostHog's bulk_delete when a personal key is configured), so blank the
+# personal key too: an E2E account-deletion journey must never reach a real
+# PostHog project. Exported empty, it beats backend/.env (python-dotenv never
+# overrides an existing variable).
+export POSTHOG_PERSONAL_API_KEY=
+echo "  ℹ POSTHOG_DISABLED=1, POSTHOG_PERSONAL_API_KEY blank for this stack (ADR 0028)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

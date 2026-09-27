@@ -39,9 +39,94 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9_\-]{8,128}$")
 _log = logging.getLogger("sapling.request")
 
 
+#: ADR 0028: the request carried a browser privacy signal — Global Privacy
+#: Control (`Sec-GPC: 1`) or Do Not Track (`DNT: 1`). Third-party analytics
+#: (the PostHog queue) sends nothing captured during such a request.
+#: Our own `events` table is first-party observability and is unaffected.
+#: False outside a request (the sweeper, scripts).
+_PRIVACY_SIGNAL_CTX: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "sapling_privacy_signal", default=False,
+)
+
+
 def current_request_id() -> str | None:
     """Return the current request's ID, or None if outside a request scope."""
     return _REQUEST_ID_CTX.get()
+
+
+def privacy_signal_in(headers) -> bool:
+    """Whether a header mapping carries `Sec-GPC: 1` or `DNT: 1`."""
+    return (
+        (headers.get("sec-gpc") or "").strip() == "1"
+        or (headers.get("dnt") or "").strip() == "1"
+    )
+
+
+def request_has_privacy_signal() -> bool:
+    """True when the current request sent `Sec-GPC: 1` or `DNT: 1`."""
+    return _PRIVACY_SIGNAL_CTX.get()
+
+
+class RequestView:
+    """The two things the PostHog seam needs from the current request, and
+    nothing else — NOT the ASGI scope (headers, cookies, query string).
+
+    * ``state`` — the request's ``scope["state"]`` dict. Starlette's
+      ``request.state`` is a view over it, so ``auth_guard``'s
+      ``request.state.user_id`` lands here, and the handler, a threadpool
+      ``Depends`` and the request's BackgroundTasks all share it.
+    * ``route_template()`` — the matched route template, read LAZILY
+      (routing stamps ``scope["route"]`` after this view is made).
+    """
+
+    __slots__ = ("state", "_route_of")
+
+    def __init__(self, scope: dict) -> None:
+        self.state: dict = scope.setdefault("state", {})
+
+        def _route_of() -> str | None:
+            return route_template_of(scope)
+
+        self._route_of = _route_of
+
+    def route_template(self) -> str | None:
+        return self._route_of()
+
+
+#: The current request's RequestView (ADR 0028). None outside a request.
+_REQUEST_CTX: contextvars.ContextVar[RequestView | None] = contextvars.ContextVar(
+    "sapling_request_view", default=None,
+)
+
+
+def route_template_of(scope: dict | None) -> str | None:
+    """The matched route template (`/api/profile/{user_id}`) for a scope."""
+    route = (scope or {}).get("route")
+    template = getattr(route, "path_format", None) or getattr(route, "path", None)
+    return template if isinstance(template, str) and template else None
+
+
+def current_route_template() -> str | None:
+    """The current request's matched route template, or None (no request, or
+    nothing matched yet)."""
+    view = _REQUEST_CTX.get()
+    return view.route_template() if view is not None else None
+
+
+def current_session_user() -> str | None:
+    """The current request's authenticated user, as auth_guard stamped it on
+    ``request.state.user_id``.
+
+    Read from the request's ``scope["state"]`` dict (Starlette's
+    ``request.state`` is a view over it), not from a contextvar a handler
+    sets: that dict is the one object every part of the request shares — the
+    handler, a threadpool ``Depends``, and the request's BackgroundTasks —
+    so a stamp made anywhere is visible everywhere. None outside a request.
+    """
+    view = _REQUEST_CTX.get()
+    state = view.state if view is not None else None
+    user = state.get("user_id") if isinstance(state, dict) else None
+    return user if isinstance(user, str) and user else None
 
 
 def new_request_id() -> str:
@@ -54,6 +139,22 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     response; emit one structured log line per request with duration."""
 
     async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        # ADR 0028: held for the WHOLE dispatch — including the error-event
+        # emission below, which runs after the request-id var is reset — so
+        # the error.5xx mirror honours the same DNT/GPC signal as everything
+        # the handler emitted. The downstream task copies both at call_next,
+        # so the handler, threadpool Depends and BackgroundTasks see them.
+        privacy_token = _PRIVACY_SIGNAL_CTX.set(privacy_signal_in(request.headers))
+        view_token = _REQUEST_CTX.set(RequestView(request.scope))
+        try:
+            return await self._dispatch(request, call_next)
+        finally:
+            _REQUEST_CTX.reset(view_token)
+            _PRIVACY_SIGNAL_CTX.reset(privacy_token)
+
+    async def _dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         incoming = request.headers.get("x-request-id", "").strip()
@@ -81,10 +182,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                 "status_code": 500,
                 "duration_ms": round((time.perf_counter() - start) * 1000, 1),
             }
-            crash_route = request.scope.get("route")
-            crash_template = getattr(crash_route, "path_format", None) or getattr(
-                crash_route, "path", None
-            )
+            crash_template = route_template_of(request.scope)
             if crash_template:
                 crash_payload["route"] = crash_template
             events_service.log_event(
@@ -140,8 +238,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                 "status_code": response.status_code,
                 "duration_ms": round(dur_ms, 1),
             }
-            route = request.scope.get("route")
-            template = getattr(route, "path_format", None) or getattr(route, "path", None)
+            template = route_template_of(request.scope)
             if template:
                 payload["route"] = template
             events_service.log_event(

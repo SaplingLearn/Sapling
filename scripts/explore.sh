@@ -397,6 +397,10 @@ do_up() {
   echo "▶ Booting the E2E stack (scripts/e2e-up.sh)…"
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
+  # ADR 0028: never send exploration traffic to PostHog. e2e-up.sh exports
+  # this too; set here as well so the explore lane does not depend on it.
+  export POSTHOG_DISABLED=1
+  export POSTHOG_PERSONAL_API_KEY=   # erasure is not gated by the kill switch
   # Unconditional (matches CI's unconditional dummy, #439): the below-seam RAG
   # path can still bill a real key even in function mode, and an ambient real
   # key routinely stays exported in dev shells. This only exports into this

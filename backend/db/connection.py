@@ -35,11 +35,16 @@ class SupabaseTable:
         order: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        timeout: Optional[float] = None,
     ) -> list:
         """Read rows. Pass `limit`/`offset` to page — PostgREST caps a
         response at `max_rows` (1000) and answers 206 Partial Content,
         which is a 2xx, so an unpaged read over that many rows truncates
-        silently."""
+        silently.
+
+        `timeout` (seconds) overrides the client-wide 30 s for this one read,
+        for a caller that would rather fail fast than wait (the PostHog
+        consent worker, ADR 0028)."""
         params: dict = {"select": columns}
         if filters:
             params.update(filters)
@@ -49,7 +54,10 @@ class SupabaseTable:
             params["limit"] = str(limit)
         if offset is not None:
             params["offset"] = str(offset)
-        r = _client.get(self.url, params=params)
+        if timeout is not None:
+            r = _client.get(self.url, params=params, timeout=timeout)
+        else:
+            r = _client.get(self.url, params=params)
         r.raise_for_status()
         return r.json()
 
@@ -105,8 +113,14 @@ class SupabaseTable:
             return []
         return r.json()
 
-    def upsert(self, data, on_conflict: str = "id") -> list:
-        headers = {"Prefer": "return=representation,resolution=merge-duplicates"}
+    def upsert(self, data, on_conflict: str = "id", *, ignore_duplicates: bool = False) -> list:
+        """INSERT … ON CONFLICT (on_conflict) DO UPDATE, or DO NOTHING when
+        `ignore_duplicates=True`. Use the latter to make sure a row EXISTS
+        (lazy get-or-create, #674): DO UPDATE on a race loser would still fire
+        BEFORE UPDATE triggers such as `updated_at`, which moves ETags. A
+        DO NOTHING conflict returns no representation for the skipped row."""
+        resolution = "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
+        headers = {"Prefer": f"return=representation,resolution={resolution}"}
         r = _client.post(self.url, headers=headers, params={"on_conflict": on_conflict}, json=data)
         r.raise_for_status()
         return r.json()

@@ -34,6 +34,10 @@ asgiref==3.11.1 \
     --hash=sha256:5f184dc43b7e763efe848065441eac62229c9f7b0475f41f80e207a114eda4ce \
     --hash=sha256:e8667a091e69529631969fd45dc268fa79b99c92c5fcdda727757e52146ec133
     # via opentelemetry-instrumentation-asgi
+backoff==2.2.1 \
+    --hash=sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba \
+    --hash=sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8
+    # via posthog
 beautifulsoup4==4.15.0 \
     --hash=sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7 \
     --hash=sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9
@@ -446,7 +450,9 @@ cryptography==45.0.7 \
 distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
     --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
-    # via google-genai
+    # via
+    #   google-genai
+    #   posthog
 dnspython==2.8.0 \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
     --hash=sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f
@@ -1127,6 +1133,10 @@ pluggy==1.6.0 \
     # via
     #   pytest
     #   pytest-cov
+posthog==7.60.1 \
+    --hash=sha256:67bc374907c3cafc1b378c4011d5e7cf6b249c240a98470cf908da2c44f76483 \
+    --hash=sha256:99436369a40b2f9e628145e997f1dcd98a5e5389da1605d4ab630d742cc1bd5d
+    # via -r /tmp/req.in
 proto-plus==1.28.0 \
     --hash=sha256:38e5696342835b08fc116f30a25665b29531cda9d5d5643e9b81fc312385abd9 \
     --hash=sha256:a630604310899e73c59ec302e5765c058d412b2f090b9c79c8822589f14955b8
@@ -1631,6 +1641,7 @@ requests==2.34.2 \
     #   google-genai
     #   gradescopeapi
     #   opentelemetry-exporter-otlp-proto-http
+    #   posthog
     #   requests-oauthlib
     #   requests-toolbelt
 requests-oauthlib==2.0.0 \
@@ -1711,6 +1722,7 @@ typing-extensions==4.15.0 \
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   posthog
     #   pydantic
     #   pydantic-core
     #   pyee
