@@ -972,9 +972,7 @@ opentelemetry-exporter-otlp-proto-common==1.42.1 \
 opentelemetry-exporter-otlp-proto-http==1.42.1 \
     --hash=sha256:00a16da1b312a1d6c7233d600d557c91df71125af73020f3b9a7765bd699d59d \
     --hash=sha256:bf142a21035d7571ac3a09cb2e5639f49886f243972883cfe777ed3bf02b734d
-    # via
-    #   logfire
-    #   posthog
+    # via logfire
 opentelemetry-instrumentation==0.63b1 \
     --hash=sha256:32368d6ae52c8de20aa790a6ad86b10a76f09956092337ae37d675773990e541 \
     --hash=sha256:f1986716d52cc316ea5f60189098726a9071d8ecc0eee96c9ed110be08bade9c
@@ -1000,10 +998,8 @@ opentelemetry-sdk==1.42.1 \
     --hash=sha256:083cd4bbfaa5aa7b5a9e552430d9951219967cfb27aa61feb13a77aba1fc839d \
     --hash=sha256:8c834e8f8c9ba4171d4ec843d0cb8a67e4c7394d3f9e9297e582cbd9456ddbf7
     # via
-    #   -r /tmp/req.in
     #   logfire
     #   opentelemetry-exporter-otlp-proto-http
-    #   posthog
 opentelemetry-semantic-conventions==0.63b1 \
     --hash=sha256:3daf963611334b365e98a57438183eb012d3bfb40b2d931a9af613476b8701a9 \
     --hash=sha256:dfe5ef4dee82586b746f522b818ceb298d00b3d59f660042bd79404bff8d0682

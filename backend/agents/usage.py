@@ -5,6 +5,12 @@ feature=..., task=...)``. The helper reads ``result.usage()`` and the model
 actually used, then hands them to ``events_service.log_llm_usage`` (which
 normalizes tokens, computes cost, and enqueues off the request thread).
 
+It is also PostHog's ONLY source of LLM analytics (ADR 0028): ``log_llm_usage``
+mirrors the same row as a privacy-mode ``$ai_generation`` (model, provider,
+tokens, cost, request id as trace id, feature/task — never prompt or output
+content) through the PostHog consent queue. There is no OTel span export to
+PostHog; a run that reports here is covered, whatever its call site.
+
 Two properties matter:
 
 * **One line per call site.** Because it returns ``result`` unchanged, a call

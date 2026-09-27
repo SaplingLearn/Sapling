@@ -17,14 +17,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.testclient import TestClient
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import Status, StatusCode
 
-from services import ai_observability, analytics_consent, events_service, posthog_client
-from services.ai_observability import AllowlistSpanProcessor, bind_ai_context
+from services import analytics_consent, events_service, posthog_client
 from services.analytics_consent import Consent
 
 # The shape production actually issues (routes/auth.py: f"user_{google_id}").
@@ -45,7 +41,13 @@ def fake_client():
     try:
         yield client
     finally:
+        posthog_client.flush_queue(timeout_seconds=5)
         posthog_client.set_client_for_tests(None)
+
+
+def _drain():
+    """Wait for the PostHog worker to deliver (or drop) everything queued."""
+    assert posthog_client.flush_queue(timeout_seconds=5), "PostHog queue did not drain"
 
 
 _REAL_LOOKUP = analytics_consent._lookup
@@ -79,20 +81,19 @@ def consent_db(monkeypatch):
 
     monkeypatch.setattr(analytics_consent, "_lookup", fake_lookup)
     analytics_consent.clear_analytics_consent_cache()
-    # Other suites call auth_guard.get_session_user_id directly on the test
-    # thread, which notes a session user in THAT context; start each test here
-    # from the request-free defaults, as the sweeper or a fresh request does.
-    from services.request_context import _PRIVACY_SIGNAL_CTX, _SESSION_USER_CTX
+    # Start from the request-free defaults (no request scope, no DNT/GPC),
+    # as the sweeper or a script does.
+    from services.request_context import _PRIVACY_SIGNAL_CTX, _REQUEST_SCOPE_CTX
 
-    user_token = _SESSION_USER_CTX.set(None)
+    scope_token = _REQUEST_SCOPE_CTX.set(None)
     signal_token = _PRIVACY_SIGNAL_CTX.set(False)
     try:
         yield SimpleNamespace(answers=answers, calls=calls)
     finally:
-        # Let background warm-ups finish against THIS test's fake lookup.
-        analytics_consent.drain_for_tests()
+        # Deliver anything still queued against THIS test's fake lookup.
+        posthog_client.flush_queue(timeout_seconds=5)
         _PRIVACY_SIGNAL_CTX.reset(signal_token)
-        _SESSION_USER_CTX.reset(user_token)
+        _REQUEST_SCOPE_CTX.reset(scope_token)
         analytics_consent.clear_analytics_consent_cache()
 
 
@@ -191,7 +192,6 @@ def test_disabled_means_no_client_no_processor_no_network(override, monkeypatch,
         assert posthog_client.initialize_posthog() is None
         ctor.assert_not_called()
     assert posthog_client.get_posthog_client() is None
-    assert list(ai_observability.posthog_ai_span_processors()) == []
 
     events_service.log_event("note.created", category="usage", user_id=USER_ID, payload={})
     posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id=None)
@@ -249,7 +249,9 @@ class TestMirror:
             payload={"note_id": "n1", "has_body": True},
             content=SECRET,
         )
+        _drain()
         fake_client.capture.assert_called_once()
+        _drain()
         call = fake_client.capture.call_args
         assert call.args == ("note.created",)
         assert call.kwargs["distinct_id"] == USER_ID
@@ -267,10 +269,12 @@ class TestMirror:
     def test_kill_switch_stops_the_mirror_too(self, fake_client, monkeypatch, sink):
         monkeypatch.setenv("EVENTS_LOGGING_ENABLED", "false")
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
         fake_client.capture.assert_not_called()
 
     def test_no_user_is_a_personless_event(self, fake_client, sink):
         events_service.log_event("rag.index_failed", category="error", payload={"doc_id": "d"})
+        _drain()
         assert fake_client.capture.call_args.kwargs["distinct_id"] is None
 
     def test_a_failing_client_never_raises_or_costs_the_db_row(self, fake_client, sink):
@@ -286,21 +290,32 @@ class TestMirror:
         assert len(sink) == 1
 
     def test_real_client_capture_is_non_blocking(self, monkeypatch, no_network):
-        """posthog-python's capture is an enqueue for a background consumer:
-        with every socket refused, capture still returns immediately."""
+        """The request thread only enqueues onto OUR queue; our worker hands
+        the event to posthog-python, whose own consumer uploads. With every
+        socket refused, log_event still returns immediately."""
         from posthog import Posthog
 
         client = Posthog(
             "phc_test", host="https://us.i.posthog.com", flush_interval=60, max_retries=0,
         )
         try:
+            import threading
+
+            threads: list[str] = []
+            real_capture = client.capture
+            monkeypatch.setattr(
+                client, "capture",
+                lambda *a, **k: threads.append(threading.current_thread().name)
+                or real_capture(*a, **k),
+            )
             posthog_client.set_client_for_tests(client)
             started = time.monotonic()
             events_service.log_event("note.created", category="usage", user_id=USER_ID)
             elapsed = time.monotonic() - started
-            # Queued for the consumer thread, not sent on this one.
-            assert client._analytics_lane.queue.qsize() == 1
             assert elapsed < 0.5
+            # Handed to the SDK by OUR worker, not on the request thread.
+            _drain()
+            assert threads == ["posthog-send"]
         finally:
             posthog_client.set_client_for_tests(None)
             # The consumer's one upload attempt hits the refused socket and
@@ -350,178 +365,6 @@ class TestFlashcardEvents:
 
 
 # ── 3. AI-span allowlist ────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def run_boundary():
-    """The Agent.iter wrapper that binds attribution per run (installed in
-    production by posthog_ai_span_processors when PostHog is on)."""
-    ai_observability.install_agent_run_boundary()
-    try:
-        yield
-    finally:
-        ai_observability.uninstall_agent_run_boundary()
-
-
-def _pipeline():
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(AllowlistSpanProcessor(SimpleSpanProcessor(exporter)))
-    return provider, exporter
-
-
-def _dump(span) -> str:
-    return span.to_json()
-
-
-class TestAiSpanAllowlist:
-    def test_content_is_stripped_and_metrics_survive(self):
-        provider, exporter = _pipeline()
-        tracer = provider.get_tracer("pydantic-ai")
-        messages = json.dumps([{"role": "user", "parts": [{"content": SECRET}]}])
-        with bind_ai_context(session_id="sess-1", distinct_id=USER_ID, request_id="req-1"), \
-             tracer.start_as_current_span("chat gemini-2.5-flash") as span:
-            span.set_attributes({
-                "gen_ai.operation.name": "chat",
-                "gen_ai.system": "google-gla",
-                "gen_ai.request.model": "gemini-2.5-flash",
-                "gen_ai.response.model": "gemini-2.5-flash",
-                "gen_ai.usage.input_tokens": 120,
-                "gen_ai.usage.output_tokens": 45,
-                "operation.cost": 0.0012,
-                "gen_ai.response.finish_reasons": ["stop"],
-                "gen_ai.input.messages": messages,
-                "gen_ai.output.messages": messages,
-                "gen_ai.system_instructions": SECRET,
-                "model_request_parameters": json.dumps({"x": SECRET}),
-                "logfire.msg": f"chat about {SECRET}",
-                "gen_ai.request.model_extra": SECRET,  # unknown key: dropped
-                "gen_ai.usage.details.bogus": SECRET,  # string under numeric prefix
-            })
-            span.add_event("gen_ai.user.message", {"content": SECRET})
-        with bind_ai_context(session_id="sess-1", distinct_id=USER_ID, request_id="req-1"), \
-             tracer.start_as_current_span("running tool") as span:
-            span.set_attributes({
-                "gen_ai.tool.name": "read_notes",
-                "gen_ai.tool.call.id": "call_1",
-                "gen_ai.tool.call.arguments": json.dumps({"q": SECRET}),
-                "gen_ai.tool.call.result": SECRET,
-                "tool_arguments": json.dumps({"q": SECRET}),
-                "tool_response": SECRET,
-            })
-            try:
-                raise ValueError(SECRET)
-            except ValueError as exc:
-                span.record_exception(exc)
-                span.set_status(Status(StatusCode.ERROR, SECRET))
-
-        spans = exporter.get_finished_spans()
-        assert len(spans) == 2
-        for s in spans:
-            assert SECRET not in _dump(s)
-            assert not s.events and not s.links
-            assert s.status.description is None
-
-        chat = next(s for s in spans if s.name.startswith("chat"))
-        assert dict(chat.attributes) == {
-            "gen_ai.operation.name": "chat",
-            "gen_ai.system": "google-gla",
-            "gen_ai.request.model": "gemini-2.5-flash",
-            "gen_ai.response.model": "gemini-2.5-flash",
-            "gen_ai.usage.input_tokens": 120,
-            "gen_ai.usage.output_tokens": 45,
-            "operation.cost": 0.0012,
-            "gen_ai.response.finish_reasons": ("stop",),
-            "posthog.distinct_id": USER_ID,
-            "$ai_session_id": "sess-1",
-        }
-        tool = next(s for s in spans if s.name == "running tool")
-        assert tool.attributes["gen_ai.tool.name"] == "read_notes"
-        assert tool.attributes["error.type"] == "ValueError"
-        assert tool.status.status_code == StatusCode.ERROR
-        assert "gen_ai.tool.call.arguments" not in tool.attributes
-        assert "tool_arguments" not in tool.attributes
-
-    def test_non_ai_spans_are_not_forwarded(self):
-        provider, exporter = _pipeline()
-        tracer = provider.get_tracer("fastapi")
-        with tracer.start_as_current_span("GET /api/notes") as span:
-            span.set_attribute("http.route", "/api/notes")
-        # Even a gen_ai-looking span from a non-Pydantic-AI tracer stays out.
-        with tracer.start_as_current_span("chat x") as span:
-            span.set_attribute("gen_ai.request.model", "m")
-        assert exporter.get_finished_spans() == ()
-
-    def test_the_live_span_is_not_mutated_for_logfire(self):
-        """Attribution is added to the COPY; Logfire's span keeps its own set."""
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        raw = InMemorySpanExporter()
-        provider.add_span_processor(AllowlistSpanProcessor(SimpleSpanProcessor(exporter)))
-        provider.add_span_processor(SimpleSpanProcessor(raw))
-        with bind_ai_context(session_id=None, distinct_id=USER_ID, request_id="r"), \
-             provider.get_tracer("pydantic-ai").start_as_current_span("chat m") as span:
-            span.set_attribute("gen_ai.request.model", "m")
-        assert "posthog.distinct_id" not in raw.get_finished_spans()[0].attributes
-        assert exporter.get_finished_spans()[0].attributes["posthog.distinct_id"] == USER_ID
-
-    def test_a_broken_delegate_never_raises_into_tracing(self):
-        delegate = MagicMock()
-        delegate.on_end.side_effect = RuntimeError("exporter down")
-        provider = TracerProvider()
-        provider.add_span_processor(AllowlistSpanProcessor(delegate))
-        with provider.get_tracer("pydantic-ai").start_as_current_span("chat m") as span:
-            span.set_attribute("gen_ai.request.model", "m")
-
-    @pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
-    def test_real_pydantic_ai_run_reaches_posthog_without_content(self, version, run_boundary):
-        """End to end against the INSTALLED pydantic-ai's own instrumentation,
-        every data-format version: a prompt, tool args, tool result and output
-        all carrying SECRET, and none of it survives — but model and token
-        usage do."""
-        from pydantic_ai import Agent
-        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-        from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.models.instrumented import InstrumentationSettings
-
-        def handler(messages, info):
-            if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart("lookup", {"q": SECRET})])
-            return ModelResponse(parts=[TextPart(f"answer {SECRET}")])
-
-        provider, exporter = _pipeline()
-        agent = Agent(
-            FunctionModel(handler),
-            name="sapling_tutor",
-            system_prompt=f"You tutor {SECRET}.",
-            instrument=InstrumentationSettings(tracer_provider=provider, version=version),
-        )
-
-        @agent.tool_plain
-        def lookup(q: str) -> str:
-            return f"notes for {SECRET}"
-
-        deps = SimpleNamespace(user_id=USER_ID, session_id=None, request_id="req-9")
-        analytics_consent.consent_for(USER_ID)  # warm, off-loop
-        result = asyncio.run(agent.run(f"hello {SECRET}", deps=deps))
-        assert SECRET in result.output  # the run really carried the content
-        # Bound for the run only: nothing is left behind in this context.
-        assert ai_observability._AI_ATTRIBUTION.get() is None
-
-        spans = exporter.get_finished_spans()
-        assert spans, "no AI spans reached the PostHog delegate"
-        for s in spans:
-            assert SECRET not in _dump(s), f"content leaked on span {s.name!r}"
-            assert s.attributes.get("posthog.distinct_id") == USER_ID
-            assert s.attributes.get("$ai_session_id") == "req-9"
-        chats = [s for s in spans if s.attributes.get("gen_ai.operation.name") == "chat"]
-        assert chats
-        for s in chats:
-            assert s.attributes.get("gen_ai.request.model") or s.attributes.get("gen_ai.response.model")
-            assert s.attributes.get("gen_ai.usage.input_tokens", 0) > 0
-            assert s.attributes.get("gen_ai.usage.output_tokens", 0) > 0
-        tool_spans = [s for s in spans if s.attributes.get("gen_ai.tool.name") == "lookup"]
-        assert tool_spans
 
 
 # ── 4. Exception capture ────────────────────────────────────────────────────
@@ -585,7 +428,6 @@ class TestExceptionCapture:
     def test_500_handler_captures_with_the_session_user(self, fake_client):
         from main import unhandled_exception_handler
 
-        analytics_consent.consent_for(USER_ID)  # warm (the handler is async)
 
         request = SimpleNamespace(
             state=SimpleNamespace(user_id=USER_ID, request_id="rid-1"),
@@ -594,6 +436,7 @@ class TestExceptionCapture:
         exc = RuntimeError("boom")
         resp = asyncio.run(unhandled_exception_handler(request, exc))
         assert resp.status_code == 500
+        _drain()
         fake_client.capture_exception.assert_called_once_with(
             exc, distinct_id=USER_ID, properties={"request_id": "rid-1"},
         )
@@ -800,6 +643,7 @@ class TestOptOut:
     ):
         consent_db.answers[USER_ID] = Consent.DENIED
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
         fake_client.capture.assert_not_called()
         events_service.flush_now()
         assert [r["event_type"] for r in sink] == ["note.created"]
@@ -807,30 +651,34 @@ class TestOptOut:
     def test_unreadable_consent_sends_nothing(self, fake_client, consent_db, sink):
         consent_db.answers[USER_ID] = RuntimeError("db down")
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
         fake_client.capture.assert_not_called()
 
     def test_per_event_reads_are_cached(self, fake_client, consent_db, sink):
         for _ in range(20):
             events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
         assert fake_client.capture.call_count == 20
         assert consent_db.calls == [USER_ID]
 
     def test_session_user_opt_out_covers_events_without_a_user(
         self, fake_client, consent_db, sink,
     ):
-        from services.request_context import _SESSION_USER_CTX
+        from services.request_context import _REQUEST_SCOPE_CTX
 
         consent_db.answers[USER_ID] = Consent.DENIED
-        token = _SESSION_USER_CTX.set(USER_ID)
+        token = _REQUEST_SCOPE_CTX.set({"state": {"user_id": USER_ID}})
         try:
             events_service.log_event("rag.index_failed", category="error", payload={})
         finally:
-            _SESSION_USER_CTX.reset(token)
+            _REQUEST_SCOPE_CTX.reset(token)
+        _drain()
         fake_client.capture.assert_not_called()
 
     def test_opted_out_exception_is_not_captured(self, fake_client, consent_db):
         consent_db.answers[USER_ID] = Consent.DENIED
         posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id="r")
+        _drain()
         fake_client.capture_exception.assert_not_called()
 
     @pytest.mark.parametrize("headers, signal", [
@@ -850,7 +698,6 @@ class TestOptOut:
 
         from services.request_context import RequestIDMiddleware
 
-        analytics_consent.consent_for(USER_ID)  # warm: the route below is async
         app = FastAPI()
         app.add_middleware(RequestIDMiddleware)
 
@@ -861,6 +708,7 @@ class TestOptOut:
 
         r = TestClient(app, raise_server_exceptions=False).get("/api/thing/abc", headers=headers)
         assert r.status_code == 500
+        _drain()
         sent = [c.args[0] for c in fake_client.capture.call_args_list]
         assert sent == ([] if signal else ["note.created", "error.5xx"])
         events_service.flush_now()
@@ -889,30 +737,8 @@ class TestOptOut:
 
         r = TestClient(app, raise_server_exceptions=False).get("/boom", headers=headers)
         assert r.status_code == 500
+        _drain()
         assert fake_client.capture_exception.called is captured
-
-    def test_opted_out_user_ai_spans_are_not_exported(self, consent_db, run_boundary):
-        consent_db.answers[USER_ID] = Consent.DENIED
-        spans = _run_tiny_agent(SimpleNamespace(user_id=USER_ID, session_id="s", request_id="r"))
-        assert spans == ()
-
-    def test_privacy_header_suppresses_ai_spans(self, run_boundary):
-        from services.request_context import _PRIVACY_SIGNAL_CTX
-
-        token = _PRIVACY_SIGNAL_CTX.set(True)
-        try:
-            spans = _run_tiny_agent(
-                SimpleNamespace(user_id=USER_ID, session_id=None, request_id="r"),
-            )
-        finally:
-            _PRIVACY_SIGNAL_CTX.reset(token)
-        assert spans == ()
-
-    def test_unreadable_consent_suppresses_ai_spans(self, consent_db, run_boundary):
-        consent_db.answers[USER_ID] = RuntimeError("db down")
-        spans = _run_tiny_agent(SimpleNamespace(user_id=USER_ID, session_id=None, request_id="r"))
-        assert spans == ()
-
 
 class TestSettingsContract:
     """The shared contract with the frontend (PR #675): PATCH accepts
@@ -1010,6 +836,7 @@ class TestCategoryKey:
             "document.processed", category="usage", user_id=USER_ID,
             payload={"category": "syllabus", "doc_id": "d1"},
         )
+        _drain()
         props = fake_client.capture.call_args.kwargs["properties"]
         assert props["category"] == "syllabus"
         assert props["event_category"] == "usage"
@@ -1021,6 +848,7 @@ class TestDeletedUsers:
     def test_deleted_user_is_skipped(self, fake_client, consent_db, sink):
         consent_db.answers[USER_ID] = Consent.DENIED  # deleted_at is set
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
         fake_client.capture.assert_not_called()
 
     def test_account_delete_invalidates_the_cached_yes(self, consent_db):
@@ -1046,14 +874,21 @@ class TestDeletedUsers:
         monkeypatch.setenv("POSTHOG_HOST", "https://us.i.posthog.com")
         monkeypatch.delenv("POSTHOG_API_HOST", raising=False)
         order: list[str] = []
-        fake_client.flush.side_effect = lambda **k: order.append("events")
-        processor = MagicMock()
-        processor.force_flush.side_effect = lambda t: order.append("spans")
-        monkeypatch.setattr(ai_observability, "_processor", processor)
-        with patch("httpx.post", side_effect=lambda *a, **k: order.append("delete")
+        gate = __import__("threading").Event()
+
+        def slow_lookup(uid):  # keeps the event in OUR queue when delete starts
+            gate.wait(2)
+            return Consent.ALLOWED
+
+        monkeypatch.setattr(analytics_consent, "_lookup", slow_lookup)
+        fake_client.capture.side_effect = lambda *a, **k: order.append("our-queue")
+        fake_client.flush.side_effect = lambda **k: order.append("sdk-flush")
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        __import__("threading").Timer(0.2, gate.set).start()
+        with patch("httpx.post", side_effect=lambda *a, **k: order.append("bulk_delete")
                    or MagicMock(status_code=202)):
             posthog_client.delete_person(USER_ID)
-        assert order == ["events", "spans", "delete"]
+        assert order == ["our-queue", "sdk-flush", "bulk_delete"]
         assert fake_client.flush.call_args.kwargs["timeout_seconds"] > 0
 
 
@@ -1063,23 +898,19 @@ class TestSentinelIds:
     @pytest.mark.parametrize("uid", ["anonymous", "backfill", None])
     def test_placeholder_mirrors_personless(self, uid, fake_client, consent_db, sink):
         events_service.log_event("note.created", category="usage", user_id=uid)
+        _drain()
         assert fake_client.capture.call_args.kwargs["distinct_id"] is None
         assert consent_db.calls == []
 
     def test_unknown_id_is_skipped(self, fake_client, consent_db, sink):
         events_service.log_event("note.created", category="usage", user_id="quizfix-user-0001")
+        _drain()
         fake_client.capture.assert_not_called()
 
     def test_real_non_uuid_id_is_attributed(self, fake_client, sink):
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
         assert fake_client.capture.call_args.kwargs["distinct_id"] == USER_ID
-
-    @pytest.mark.parametrize("uid", ["backfill", "anonymous"])
-    def test_placeholder_ai_run_is_unattributed(self, uid, run_boundary):
-        spans = _run_tiny_agent(SimpleNamespace(user_id=uid, session_id=None, request_id="r"))
-        assert spans
-        assert all("posthog.distinct_id" not in s.attributes for s in spans)
-
 
 class TestErrorEvents:
     """Finding 5: error.4xx stays home; error.5xx carries the route template."""
@@ -1089,6 +920,7 @@ class TestErrorEvents:
             "error.4xx", category="error", user_id=USER_ID,
             payload={"path": f"/api/profile/{USER_ID}", "status_code": 404},
         )
+        _drain()
         fake_client.capture.assert_not_called()
         events_service.flush_now()
         assert [r["event_type"] for r in sink] == ["error.4xx"]
@@ -1109,7 +941,9 @@ class TestErrorEvents:
 
         r = TestClient(app, raise_server_exceptions=False).get(f"/api/profile/{USER_ID}/thing")
         assert r.status_code == 500
+        _drain()
         props = fake_client.capture.call_args.kwargs["properties"]
+        _drain()
         assert fake_client.capture.call_args.args[0] == "error.5xx"
         assert props["path"] == props["route"] == "/api/profile/{user_id}/thing"
         assert USER_ID not in json.dumps(props)
@@ -1121,83 +955,9 @@ class TestErrorEvents:
             "error.5xx", category="error", user_id=USER_ID,
             payload={"path": f"/api/profile/{USER_ID}", "route": "/api/profile/{user_id}"},
         )
+        _drain()
         props = fake_client.capture.call_args.kwargs["properties"]
         assert props["path"] == props["route"] == "<unmatched>"
-
-
-class TestRunBoundary:
-    """Finding 6: attribution is bound for one run and reset — nothing leaks
-    from a SaplingDeps constructor into later runs or BackgroundTasks."""
-
-    def test_constructing_deps_binds_nothing(self):
-        from agents.deps import SaplingDeps
-
-        SaplingDeps(user_id=USER_ID, course_id=None, supabase=None, request_id="r")
-        assert ai_observability._AI_ATTRIBUTION.get() is None
-
-    def test_a_later_deps_less_run_does_not_inherit(self, run_boundary):
-        async def two_runs():
-            spans_a = await _run_tiny_agent_async(
-                SimpleNamespace(user_id=USER_ID, session_id="s1", request_id="r1"),
-            )
-            spans_b = await _run_tiny_agent_async(None)
-            return spans_a, spans_b
-
-        analytics_consent.consent_for(USER_ID)
-        spans_a, spans_b = asyncio.run(two_runs())
-        assert spans_a and all(
-            s.attributes.get("posthog.distinct_id") == USER_ID for s in spans_a
-        )
-        assert spans_b and all("posthog.distinct_id" not in s.attributes for s in spans_b)
-
-    def test_bind_resets_on_exit_and_on_error(self):
-        with bind_ai_context(session_id="s", distinct_id=USER_ID, request_id="r"):
-            assert ai_observability._AI_ATTRIBUTION.get().candidate == USER_ID
-        assert ai_observability._AI_ATTRIBUTION.get() is None
-        with pytest.raises(ValueError):
-            with bind_ai_context(session_id="s", distinct_id=USER_ID, request_id="r"):
-                raise ValueError
-        assert ai_observability._AI_ATTRIBUTION.get() is None
-
-    def test_install_is_idempotent_and_reversible(self):
-        from pydantic_ai import Agent
-
-        original = Agent.iter
-        ai_observability.install_agent_run_boundary()
-        try:
-            wrapped = Agent.iter
-            ai_observability.install_agent_run_boundary()
-            assert Agent.iter is wrapped and wrapped is not original
-        finally:
-            ai_observability.uninstall_agent_run_boundary()
-        assert Agent.iter is original
-
-    def test_processor_factory_installs_the_boundary(self, monkeypatch):
-        from pydantic_ai import Agent
-
-        monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
-        monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
-        original = Agent.iter
-        try:
-            with patch("posthog.ai.otel.PostHogSpanProcessor"):
-                procs = list(ai_observability.posthog_ai_span_processors())
-            assert len(procs) == 1 and ai_observability._processor is procs[0]
-            assert Agent.iter is not original
-        finally:
-            ai_observability.uninstall_agent_run_boundary()
-            monkeypatch.setattr(ai_observability, "_processor", None)
-        assert Agent.iter is original
-
-    def test_session_user_attributes_a_deps_less_run(self, run_boundary):
-        from services.request_context import _SESSION_USER_CTX
-
-        analytics_consent.consent_for(USER_ID)
-        token = _SESSION_USER_CTX.set(USER_ID)
-        try:
-            spans = _run_tiny_agent(None)
-        finally:
-            _SESSION_USER_CTX.reset(token)
-        assert spans and all(s.attributes.get("posthog.distinct_id") == USER_ID for s in spans)
 
 
 class TestApiHost:
@@ -1237,33 +997,6 @@ class TestApiHost:
         assert "POSTHOG_API_HOST" in caplog.text and "skipped" in caplog.text
 
 
-class TestSpanProcessorCost:
-    """Finding 8: is_ai_span resolved once; non-AI-scope spans do no work."""
-
-    def test_is_ai_span_resolved_at_construction(self):
-        from posthog.ai.otel import is_ai_span
-
-        proc = AllowlistSpanProcessor(MagicMock())
-        assert proc._is_ai_span is is_ai_span
-
-    def test_non_ai_scope_spans_skip_lock_and_bookkeeping(self):
-        delegate = MagicMock()
-        proc = AllowlistSpanProcessor(delegate)
-        proc._lock = MagicMock()  # any acquisition would be recorded
-        proc._is_ai_span = MagicMock(return_value=True)
-        provider = TracerProvider()
-        provider.add_span_processor(proc)
-        tracer = provider.get_tracer("opentelemetry.instrumentation.httpx")
-        with bind_ai_context(session_id="s", distinct_id=USER_ID, request_id="r"):
-            for _ in range(10):
-                with tracer.start_as_current_span("GET"):
-                    pass
-        proc._lock.__enter__.assert_not_called()
-        proc._is_ai_span.assert_not_called()
-        delegate.on_end.assert_not_called()
-        assert proc._pending == {}
-
-
 class TestRequestIdOnce:
     """Finding 10: log_event resolves the ambient request id once."""
 
@@ -1279,54 +1012,8 @@ class TestRequestIdOnce:
         assert len(calls) == 1
         events_service.flush_now()
         assert sink[0]["request_id"] == "rid-1"
+        _drain()
         assert fake_client.capture.call_args.kwargs["properties"]["request_id"] == "rid-1"
-
-
-class TestSpanLevelDistinctId:
-    """Finding 9: PostHog's OTLP capture resolves distinct_id per SPAN, span
-    attributes first (rust/capture/src/otel/identity.rs,
-    extract_distinct_id_for_span). So the id must be on each exported span —
-    and it is, on the sanitized copy, for every AI span of the run."""
-
-    def test_every_exported_span_carries_it_at_span_level(self, run_boundary):
-        spans = _run_tiny_agent(SimpleNamespace(user_id=USER_ID, session_id=None, request_id="r"))
-        assert spans
-        for s in spans:
-            assert s.attributes["posthog.distinct_id"] == USER_ID
-            # Never on the resource: that is per process, not per user.
-            assert "posthog.distinct_id" not in s.resource.attributes
-
-
-# ── helpers for section 6 ───────────────────────────────────────────────────
-
-
-def _prewarm(deps):
-    """Warm the consent cache off-loop, as a real request's earlier events or
-    the run boundary's warm-up would have. (A COLD answer at span end is a
-    fail-closed "no" — covered by TestNonBlockingConsent.)"""
-    for uid in (getattr(deps, "user_id", None),):
-        analytics_consent.consent_for(uid)
-
-
-async def _run_tiny_agent_async(deps):
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelResponse, TextPart
-    from pydantic_ai.models.function import FunctionModel
-    from pydantic_ai.models.instrumented import InstrumentationSettings
-
-    provider, exporter = _pipeline()
-    agent = Agent(
-        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart("ok")])),
-        instrument=InstrumentationSettings(tracer_provider=provider),
-    )
-    await agent.run("hi", deps=deps)
-    assert ai_observability._AI_ATTRIBUTION.get() is None  # reset at run end
-    return exporter.get_finished_spans()
-
-
-def _run_tiny_agent(deps):
-    _prewarm(deps)
-    return asyncio.run(_run_tiny_agent_async(deps))
 
 
 # ── 7. Second-round review fixes (PR #677) ──────────────────────────────────
@@ -1357,6 +1044,7 @@ class TestPathTemplating:
         client.cookies.set(SESSION_COOKIE_NAME, token)
         r = client.get(f"/api/profile/{OTHER_USER}/settings")
         assert r.status_code == 403
+        _drain()
         sent = [(c.args[0], c.kwargs) for c in fake_client.capture.call_args_list]
         denied = [kw for name, kw in sent if name == "auth.permission_denied"]
         assert len(denied) == 1
@@ -1373,81 +1061,10 @@ class TestPathTemplating:
             "note.created", category="usage", user_id=USER_ID,
             payload={"note_id": "n1", "user_id": OTHER_USER, "target_user_id": OTHER_USER},
         )
+        _drain()
         props = fake_client.capture.call_args.kwargs["properties"]
         assert OTHER_USER not in json.dumps(props)
         assert props["note_id"] == "n1"
-
-
-class TestNonBlockingConsent:
-    """R2: no thread running an event loop ever blocks on the consent read."""
-
-    def _recording_lookup(self, monkeypatch, answer=Consent.ALLOWED):
-        calls: list[bool] = []  # True = called with a running loop on this thread
-
-        def lookup(uid):
-            try:
-                asyncio.get_running_loop()
-                calls.append(True)
-            except RuntimeError:
-                calls.append(False)
-            return answer
-
-        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
-        return calls
-
-    def test_no_sync_read_on_a_running_loop(self, monkeypatch, fake_client, sink):
-        calls = self._recording_lookup(monkeypatch)
-
-        async def async_route_work():
-            events_service.log_event("note.created", category="usage", user_id=USER_ID)
-            posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id="r")
-            with bind_ai_context(session_id=None, distinct_id=USER_ID, request_id="r"):
-                pass
-
-        asyncio.run(async_route_work())
-        # Cold cache on the loop: fail closed (nothing sent), no inline read...
-        fake_client.capture.assert_not_called()
-        fake_client.capture_exception.assert_not_called()
-        analytics_consent.drain_for_tests()
-        # ...the read happened, but only on a worker thread,
-        assert calls and not any(calls)
-        # ...and the next event on the loop is answered from cache.
-        asyncio.run(async_route_work())
-        assert fake_client.capture.call_count == 1
-        assert not any(calls)
-
-    def test_off_loop_threads_still_read_inline(self, monkeypatch, fake_client, sink):
-        calls = self._recording_lookup(monkeypatch)
-        events_service.log_event("note.created", category="usage", user_id=USER_ID)
-        assert calls == [False]
-        fake_client.capture.assert_called_once()
-
-    def test_cold_span_end_on_the_loop_is_dropped_not_read(self, monkeypatch, run_boundary):
-        calls = self._recording_lookup(monkeypatch)
-        slow = __import__("threading").Event()
-
-        def lookup(uid):  # the warm-up cannot finish before the spans end
-            slow.wait(2)
-            calls.append(False)
-            return Consent.ALLOWED
-
-        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
-        spans = asyncio.run(
-            _run_tiny_agent_async(SimpleNamespace(user_id=USER_ID, session_id=None, request_id="r"))
-        )
-        slow.set()
-        analytics_consent.drain_for_tests()
-        assert spans == ()
-        assert calls == [False]  # read once, off-loop (the run boundary's warm-up)
-
-    def test_active_entries_refresh_in_the_background(self, consent_db, monkeypatch):
-        now = [1000.0]
-        monkeypatch.setattr(analytics_consent.time, "monotonic", lambda: now[0])
-        analytics_consent.consent_for(USER_ID)
-        now[0] += analytics_consent._TTL_S * 0.75
-        assert analytics_consent.consent_for(USER_ID) is Consent.ALLOWED  # still served
-        analytics_consent.drain_for_tests()
-        assert consent_db.calls == [USER_ID, USER_ID]  # refreshed ahead of expiry
 
 
 class TestInvalidationRace:
@@ -1465,9 +1082,18 @@ class TestInvalidationRace:
             return Consent.DENIED  # what the DB says now
 
         monkeypatch.setattr(analytics_consent, "_lookup", lookup)
-        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED  # fail closed
-        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED  # re-read, not cached ALLOWED
+        # The stale ALLOWED is neither stored nor returned: re-read -> DENIED.
+        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED
+        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED  # now cached
         assert calls == [USER_ID, USER_ID]
+
+    def test_a_read_that_keeps_racing_fails_closed(self, monkeypatch):
+        def lookup(uid):
+            analytics_consent.clear_analytics_consent_cache(uid)  # every time
+            return Consent.ALLOWED
+
+        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
+        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED
 
     def test_clear_all_during_lookup_is_not_overwritten(self, monkeypatch):
         calls: list[str] = []
@@ -1479,48 +1105,13 @@ class TestInvalidationRace:
             return Consent.ALLOWED
 
         monkeypatch.setattr(analytics_consent, "_lookup", lookup)
-        analytics_consent.consent_for(USER_ID)
-        analytics_consent.consent_for(USER_ID)
+        assert analytics_consent.consent_for(USER_ID) is Consent.ALLOWED  # re-read
+        assert analytics_consent.consent_for(USER_ID) is Consent.ALLOWED  # cached
         assert len(calls) == 2
 
 
 class TestNoRecreateAfterDelete:
     """R4: consent is re-checked at span END; a second bulk_delete follows."""
-
-    def test_deletion_mid_run_stops_the_runs_later_spans(self, consent_db, run_boundary):
-        from pydantic_ai import Agent
-        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-        from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.models.instrumented import InstrumentationSettings
-
-        def handler(messages, info):
-            if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart("delete_me", {})])
-            return ModelResponse(parts=[TextPart("done")])
-
-        provider, exporter = _pipeline()
-        agent = Agent(FunctionModel(handler), instrument=InstrumentationSettings(tracer_provider=provider))
-
-        @agent.tool_plain
-        def delete_me() -> str:
-            # The account is deleted while this run is in flight.
-            consent_db.answers[USER_ID] = Consent.DENIED
-            analytics_consent.clear_analytics_consent_cache(USER_ID)
-            return "ok"
-
-        analytics_consent.consent_for(USER_ID)  # warm ALLOWED
-        asyncio.run(agent.run("hi", deps=SimpleNamespace(
-            user_id=USER_ID, session_id=None, request_id="r",
-        )))
-        analytics_consent.drain_for_tests()
-        spans = exporter.get_finished_spans()
-        # The first model request ended before the deletion: exported.
-        assert any(s.attributes.get("gen_ai.operation.name") == "chat" for s in spans)
-        # Nothing that ended after it (the tool span, the second chat, the run
-        # span) was exported — attributed or otherwise.
-        assert len([s for s in spans if s.attributes.get("gen_ai.operation.name") == "chat"]) == 1
-        assert not any(s.attributes.get("gen_ai.tool.name") == "delete_me" for s in spans)
-        assert all(s.attributes.get("posthog.distinct_id") == USER_ID for s in spans)
 
     def _on(self, monkeypatch):
         monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
@@ -1548,7 +1139,7 @@ class TestNoRecreateAfterDelete:
             posthog_client.delete_person(USER_ID)
             assert post.call_count == 1
             assert len(timers) == 1 and timers[0].daemon is True
-            assert timers[0].delay >= analytics_consent.TTL_S + 1
+            assert timers[0].delay >= analytics_consent._TTL_S + 1
             # When it fires: a full second pass (flush + bulk_delete).
             timers[0].fn(*timers[0].args, **timers[0].kwargs)
             assert post.call_count == 2
@@ -1565,42 +1156,6 @@ class TestNoRecreateAfterDelete:
             posthog_client.delete_person(USER_ID)
         post.assert_not_called()
         scheduled.assert_not_called()
-
-
-class TestSuppressionAtTheCap:
-    """R5: eviction at _MAX_PENDING can never turn a suppressed (or any) span
-    into an exported one."""
-
-    def _open_and_close(self, proc, n, *, bind_suppressed):
-        from services.request_context import _PRIVACY_SIGNAL_CTX
-
-        provider = TracerProvider()
-        provider.add_span_processor(proc)
-        tracer = provider.get_tracer("pydantic-ai")
-        token = _PRIVACY_SIGNAL_CTX.set(bind_suppressed)
-        try:
-            spans = [tracer.start_span(f"chat m{i}") for i in range(n)]
-        finally:
-            _PRIVACY_SIGNAL_CTX.reset(token)
-        for sp in spans:
-            sp.set_attribute("gen_ai.request.model", "m")
-            sp.end()
-
-    def test_evicted_suppressed_spans_are_not_exported(self):
-        exporter = InMemorySpanExporter()
-        proc = AllowlistSpanProcessor(SimpleSpanProcessor(exporter))
-        proc._MAX_PENDING = 3
-        self._open_and_close(proc, 6, bind_suppressed=True)
-        assert exporter.get_finished_spans() == ()
-        assert proc._pending == {}
-
-    def test_evicted_unsuppressed_spans_fail_closed(self):
-        exporter = InMemorySpanExporter()
-        proc = AllowlistSpanProcessor(SimpleSpanProcessor(exporter))
-        proc._MAX_PENDING = 3
-        self._open_and_close(proc, 6, bind_suppressed=False)
-        # The three evicted entries are dropped; the three still tracked export.
-        assert len(exporter.get_finished_spans()) == 3
 
 
 class TestLaneSilence:
@@ -1636,3 +1191,257 @@ class TestGateUsesTheSeam:
         import inspect
 
         assert "SAPLING_MODEL_MODE\") or" not in inspect.getsource(posthog_client)
+
+
+# ── 8. Round 3: one queue, one worker; AI analytics from the usage chokepoint ─
+
+
+def _authed_app(consent_db):
+    """A small app behind the real RequestIDMiddleware whose handlers sign
+    the user in the way the real guard does (``request.state.user_id``)."""
+
+    from services.request_context import RequestIDMiddleware
+
+    app = FastAPI()
+    app.add_middleware(RequestIDMiddleware)
+
+    def signed_in(request: Request) -> str:  # a SYNC Depends -> threadpool
+        request.state.user_id = USER_ID  # what auth_guard.get_session_user_id does
+        return USER_ID
+
+    def background_work():
+        # No user_id of its own (like the sweeper-style events).
+        events_service.log_event("rag.index_failed", category="error", payload={"doc_id": "d"})
+
+    @app.post("/bg")
+    async def with_background(bt: BackgroundTasks, user: str = Depends(signed_in)):
+        bt.add_task(background_work)
+        return {"ok": True}
+
+    @app.post("/dep")
+    def with_sync_dep(user: str = Depends(signed_in)):
+        events_service.log_event("note.created", category="usage", user_id=None)
+        return {"ok": True}
+
+    return app
+
+
+class TestRequestScopedActor:
+    """An event that names no user belongs to the request's signed-in user —
+    read from scope["state"], which BackgroundTasks and sync Depends share."""
+
+    @pytest.mark.parametrize("path", ["/bg", "/dep"])
+    def test_opted_out_students_userless_event_is_dropped(
+        self, path, fake_client, consent_db, sink,
+    ):
+        consent_db.answers[USER_ID] = Consent.DENIED
+        r = TestClient(_authed_app(consent_db)).post(path)
+        assert r.status_code == 200
+        _drain()
+        fake_client.capture.assert_not_called()
+        events_service.flush_now()
+        assert sink  # our own table still has the row
+
+    @pytest.mark.parametrize("path", ["/bg", "/dep"])
+    def test_allowed_students_userless_event_is_attributed(
+        self, path, fake_client, consent_db, sink,
+    ):
+        r = TestClient(_authed_app(consent_db)).post(path)
+        assert r.status_code == 200
+        _drain()
+        fake_client.capture.assert_called_once()
+        assert fake_client.capture.call_args.kwargs["distinct_id"] == USER_ID
+
+
+class TestColdCacheDelivers:
+    """A cold consent cache DELAYS an event on the worker; it never drops it."""
+
+    def test_first_event_is_delivered(self, fake_client, consent_db, monkeypatch, sink):
+        import threading
+
+        release = threading.Event()
+        real = analytics_consent._lookup
+
+        def slow(uid):
+            release.wait(2)
+            return real(uid)
+
+        monkeypatch.setattr(analytics_consent, "_lookup", slow)
+
+        async def route():
+            events_service.log_event("note.created", category="usage", user_id=USER_ID)
+
+        asyncio.run(route())  # returns at once: nothing on the request path waits
+        fake_client.capture.assert_not_called()
+        release.set()
+        _drain()
+        fake_client.capture.assert_called_once()
+        assert fake_client.capture.call_args.kwargs["distinct_id"] == USER_ID
+
+
+class TestNoReadOnTheLoop:
+    """No thread running an event loop ever performs the consent read."""
+
+    def test_reads_happen_only_on_the_worker(self, fake_client, monkeypatch, sink):
+        import threading
+
+        seen: list[tuple[str, bool]] = []
+
+        def lookup(uid):
+            try:
+                asyncio.get_running_loop()
+                on_loop = True
+            except RuntimeError:
+                on_loop = False
+            seen.append((threading.current_thread().name, on_loop))
+            return Consent.ALLOWED
+
+        monkeypatch.setattr(analytics_consent, "_lookup", lookup)
+
+        async def async_paths():
+            events_service.log_event("note.created", category="usage", user_id=USER_ID)
+            posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id="r")
+            events_service.log_llm_usage(
+                feature="tutor", task="chat", model="gemini-2.5-flash",
+                usage={"input_tokens": 3, "output_tokens": 2}, user_id=USER_ID,
+            )
+
+        asyncio.run(async_paths())
+        _drain()
+        assert seen and all(name == "posthog-send" and not loop for name, loop in seen)
+        assert fake_client.capture.call_count == 2
+        fake_client.capture_exception.assert_called_once()
+
+
+class TestAiGeneration:
+    """$ai_generation comes from the usage chokepoint and carries no content."""
+
+    _ALLOWED_KEYS = {
+        "$ai_model", "$ai_provider", "$ai_input_tokens", "$ai_output_tokens",
+        "$ai_total_cost_usd", "$ai_latency", "$ai_trace_id", "$ai_span_name",
+        "feature", "task",
+    }
+
+    def _run(self):
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import ModelResponse, TextPart
+        from pydantic_ai.models.function import FunctionModel
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(f"out {SECRET}")])),
+            system_prompt=f"You tutor {SECRET}.",
+        )
+        return asyncio.run(agent.run(f"hello {SECRET}"))
+
+    def test_record_agent_usage_sends_a_content_free_generation(
+        self, fake_client, monkeypatch, sink,
+    ):
+        from agents.usage import record_agent_usage
+
+        monkeypatch.setattr(events_service, "current_request_id", lambda: "req-ai-1")
+        result = self._run()
+        assert SECRET in result.output
+        record_agent_usage(result, feature="tutor", task="chat", user_id=USER_ID)
+        _drain()
+        fake_client.capture.assert_called_once()
+        call = fake_client.capture.call_args
+        assert call.args == ("$ai_generation",)
+        assert call.kwargs["distinct_id"] == USER_ID
+        props = call.kwargs["properties"]
+        assert set(props) <= self._ALLOWED_KEYS
+        assert props["$ai_trace_id"] == "req-ai-1"
+        assert props["$ai_input_tokens"] > 0 and props["$ai_output_tokens"] > 0
+        assert props["feature"] == "tutor" and props["task"] == "chat"
+        assert "$ai_input" not in props and "$ai_output_choices" not in props
+        assert SECRET not in json.dumps(call.kwargs, default=str)
+
+    def test_priced_model_carries_cost_and_provider(self, fake_client, sink):
+        events_service.log_llm_usage(
+            feature="quiz", task="quiz", model="gemini-2.5-flash",
+            usage={"input_tokens": 1000, "output_tokens": 500}, user_id=USER_ID,
+        )
+        _drain()
+        props = fake_client.capture.call_args.kwargs["properties"]
+        assert props["$ai_provider"] == "gemini"
+        assert props["$ai_model"] == "gemini-2.5-flash"
+        assert props["$ai_total_cost_usd"] > 0
+
+    def test_opted_out_student_sends_no_generation(self, fake_client, consent_db, sink):
+        from agents.usage import record_agent_usage
+
+        consent_db.answers[USER_ID] = Consent.DENIED
+        record_agent_usage(self._run(), feature="tutor", task="chat", user_id=USER_ID)
+        _drain()
+        fake_client.capture.assert_not_called()
+        events_service.flush_now()
+        assert [r for r in sink if r.get("feature") == "tutor"]  # our llm_usage row
+
+    def test_kill_switch_stops_it(self, fake_client, monkeypatch, sink):
+        monkeypatch.setenv("EVENTS_LOGGING_ENABLED", "false")
+        events_service.log_llm_usage(
+            feature="quiz", task="quiz", model="m", usage={}, user_id=USER_ID,
+        )
+        _drain()
+        fake_client.capture.assert_not_called()
+
+    def test_no_otel_export_and_no_agent_monkeypatch(self):
+        """The OTel span export, its allowlist processor and the Agent.iter
+        wrapper are gone: importing the app leaves pydantic-ai untouched."""
+        import importlib.util
+
+        from pydantic_ai import Agent
+
+        import main  # noqa: F401
+
+        assert importlib.util.find_spec("services.ai_observability") is None
+        assert not getattr(Agent.iter, "__sapling_ai_attribution__", False)
+
+
+class TestPrivacySignalDrops:
+    """DNT/GPC captured at enqueue: nothing is queued at all."""
+
+    @pytest.mark.parametrize("header", [{"Sec-GPC": "1"}, {"DNT": "1"}])
+    def test_events_and_generations_are_dropped(self, header, fake_client, sink):
+        from fastapi import FastAPI
+
+        from services.request_context import RequestIDMiddleware
+
+        app = FastAPI()
+        app.add_middleware(RequestIDMiddleware)
+
+        @app.post("/work")
+        def work():
+            events_service.log_event("note.created", category="usage", user_id=USER_ID)
+            events_service.log_llm_usage(
+                feature="tutor", task="chat", model="gemini-2.5-flash",
+                usage={"input_tokens": 1, "output_tokens": 1}, user_id=USER_ID,
+            )
+            return {}
+
+        TestClient(app).post("/work", headers=header)
+        _drain()
+        fake_client.capture.assert_not_called()
+        assert posthog_client._queue.unfinished_tasks == 0
+
+
+class TestBoundedQueue:
+    """The queue is bounded and drops the OLDEST item when full."""
+
+    def test_drop_oldest_with_a_warning(self, fake_client, monkeypatch, caplog):
+        import queue as queue_mod
+
+        small: queue_mod.Queue = queue_mod.Queue(maxsize=3)
+        monkeypatch.setattr(posthog_client, "_queue", small)
+        monkeypatch.setattr(posthog_client, "_ensure_worker", lambda: None)  # nobody drains
+        monkeypatch.setattr(posthog_client, "_dropped", 0)
+        with caplog.at_level(logging.WARNING, "sapling.posthog"):
+            for i in range(5):
+                posthog_client.mirror_event(
+                    f"e{i}", category="usage", user_id=USER_ID, request_id=None, payload={},
+                )
+        names = [small.get_nowait().name for _ in range(small.qsize())]
+        assert names == ["e2", "e3", "e4"]
+        assert posthog_client.queue_dropped_count() == 2
+        assert caplog.text.count("PostHog queue full") == 1  # warn once, not per drop
+        for _ in names:
+            small.task_done()

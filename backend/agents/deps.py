@@ -68,8 +68,3 @@ class SaplingDeps:
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None
-    # PostHog LLM-analytics attribution (ADR 0028) is NOT set here: a
-    # constructor side effect has no end, so it leaked into every later run
-    # and BackgroundTask in the same context. It is bound around each agent
-    # run instead, from these same fields — see
-    # services/ai_observability.install_agent_run_boundary.
