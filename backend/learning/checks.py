@@ -34,11 +34,13 @@ from learning.params import (
 _SEP = "\x1f"  # unit separator: never appears in normalized text
 _STEP_LINE = re.compile(r"^\s*\d+[.)]", re.MULTILINE)  # a numbered step, A17/A22
 _WORD = re.compile(r"\w+")
-# Leak-comparison tokens: a decimal number whole, a word, or one math symbol.
-# Sentence punctuation (. , ; : ! ? quotes brackets dashes) is not a token, so
-# a reference ending in "." still matches mid-sentence; operators are, so
-# "x = 2" is not found inside "x + 2 = 4".
-_LEAK_TOKEN = re.compile(r"\d+(?:\.\d+)*|\w+|[+\-*/=<>^%×÷±≤≥≠≈√∑∏∫∂∞→←⇒⇔]")
+# Leak-comparison tokens: a word (a number's decimal points and the letters
+# after it included, so "2.5", "2x" and "2.5x" are one token each), or one
+# math symbol. Sentence punctuation (. , ; : ! ? quotes brackets dashes) is not
+# a token, so a reference ending in "." still matches mid-sentence; operators
+# are, so "x = 2" is not found inside "x + 2 = 4". Every token is a whole run
+# of the plain \w+ tokenizer's tokens, or a symbol it dropped.
+_LEAK_TOKEN = re.compile(r"\d+(?:\.\d+)*\w*|\w+|[+\-*/=<>^%×÷±≤≥≠≈√∑∏∫∂∞→←⇒⇔]")
 # Concept-name tokens shorter than this ("of", "to", "a") say nothing about
 # which passage discusses the concept, so rank_chunks_for_concept ignores them.
 # The one small literal the PKG-04 prompt allows here: a tokenizer floor, not a

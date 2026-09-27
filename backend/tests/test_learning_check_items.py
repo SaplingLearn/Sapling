@@ -348,6 +348,12 @@ class TestValidateDraft:
             ("Solve 3x - 6 = 0.", "x = 2", False),
             # a decimal is one token: "2" is not inside "2.5"
             ("What is 2.5 + 1?", "2", False),
+            # a coefficient term is one token: "2" is not inside "2x"
+            ("Solve 2x = 4 for x.", "2", False),
+            ("Solve 3x + 1 = 10.", "3", False),
+            ("Simplify 2.5x + x.", "2.5", False),
+            ("Simplify 2.5x + x.", "2", False),
+            ("Why is 2x the slope of x^2?", "2x", True),
             # true leaks still leak, symbols and sentence punctuation alike
             ("Given F = m a, find the force.", "F = m a", True),
             ("If x = 2, what is x + 1?", "x = 2.", True),
