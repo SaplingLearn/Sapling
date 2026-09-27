@@ -557,3 +557,86 @@ def test_inv_13_fsrs_weights_pinned():
         )
     }
     assert learning_modules == {"learning.params"}, learning_modules
+
+
+TOOLS_DIR = BACKEND / "agents" / "tools"
+
+
+def test_inv_14_tools_never_write_graph_tables():
+    """Series extension of spec §8.1, covering agents/tools/check.py::grade_answer:
+    evidence accumulates on deps; only a route persists it through
+    apply_graph_update. grade_answer is a route helper, not a tutor tool (A16).
+
+    Tool modules may READ graph tables (graph_read.py, chat_context.py select
+    graph_nodes/graph_edges), so the scan flags writes: a direct
+    `table("<graph table>").insert/update/upsert/delete(` chain (multi-line
+    tolerant) and, through inv_01's ast half, any graph-table handle that is
+    not a direct `.select`/`.select_with_count` read."""
+    offenders = []
+    for path in sorted(TOOLS_DIR.glob("*.py")):
+        rel = path.relative_to(BACKEND).as_posix()
+        text = path.read_text()
+        for m in _GRAPH_WRITE.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            offenders.append(f"{rel}:{line} writes {m.group(1)} via .{m.group(2)}(")
+        offenders += _graph_table_offenders(rel, text)
+    assert not offenders, offenders
+    check_path = TOOLS_DIR / "check.py"
+    check = check_path.read_text()
+    assert "apply_graph_update" not in check, "check.py must not persist evidence"
+    assert "from db.connection import" not in check, "check.py must not touch Supabase"
+    db_imports = [
+        m for m in _modules_imported_by(check_path, BACKEND) if m == "db" or m.startswith("db.")
+    ]
+    assert not db_imports, f"check.py imports {db_imports}"
+    assert "RunContext" not in check and "Tool(" not in check, "grade_answer is not a tutor tool (A16)"
+
+
+def test_inv_28_symmetric_missingness(monkeypatch):
+    """Spec §8.28 (A20/A22), outage half: with the grader unavailable, a correct
+    and a wrong mc_reason attempt both record nothing — missingness never
+    depends on the outcome. PKG-06b adds the STUDENT_DAILY_GRADES cap half."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import agents.tools.check as check
+    from agents.deps import SaplingDeps
+    from agents.grader import GradeResult
+
+    reason_checks = []
+
+    async def _unavailable(item, *, format, student_answer, deps):
+        reason_checks.append(student_answer)
+        return GradeResult(unavailable=True)
+
+    monkeypatch.setattr(check, "grade", _unavailable)
+    options = [
+        SimpleNamespace(letter="A", text="right", wrong_key=None),
+        SimpleNamespace(letter="B", text="wrong", wrong_key="w_1"),
+    ]
+    item = SimpleNamespace(
+        id="ci-28", format="mc_reason", options=options, correct_option="A",
+        answer_kind="free", canonical_verified=False, question_hash="qh-28",
+    )
+    for option in ("A", "B"):  # the correct option, then a wrong one
+        deps = SaplingDeps(user_id="u1", course_id="c1", supabase=None, request_id="r1",
+                           session_id="s1", feature="tutor", learning_loop=True)
+        answer = check.CheckAnswer(question_hash="qh-28", selected_option=option, reason="because")
+        out = asyncio.run(check.grade_answer(item, answer, deps=deps, node_id="n-28"))
+        assert out.unavailable is True and out.evidence is None, option
+        assert deps.pending_evidence == [], option
+    assert len(reason_checks) == 2, "the reason check must run for BOTH outcomes"
+    # A numeric item with a VERIFIED key: a clear mismatch and a match both record
+    # nothing (the A22 numeric gate runs only after the grader returned).
+    numeric = SimpleNamespace(
+        id="ci-28n", format="free", options=None, correct_option=None,
+        answer_kind="numeric", canonical_answer="9.81", tolerance=0.01,
+        canonical_verified=True, question_hash="qh-28n",
+    )
+    for text in ("12.5", "9.81"):
+        deps = SaplingDeps(user_id="u1", course_id="c1", supabase=None, request_id="r1",
+                           session_id="s1", feature="tutor", learning_loop=True)
+        answer = check.CheckAnswer(question_hash="qh-28n", answer_text=text)
+        out = asyncio.run(check.grade_answer(numeric, answer, deps=deps, node_id="n-28"))
+        assert out.unavailable is True and deps.pending_evidence == [], text
+    assert len(reason_checks) == 4, "the grader runs for both numeric outcomes too"
