@@ -139,7 +139,7 @@ grep -cE "^def (retrievability|interval|next_state|rating_for|order_due|budget_s
 cd backend && venv/bin/python -c "from learning.params import FSRS_W; assert len(FSRS_W)==21; print('ok')" → ok
 ```
 
-(Observed at hand-off: `89 passed`, `6`, `ok`. After the review fixes: `120 passed`, `6`, `ok`. After the second review round: `128 passed`, `6`, `ok`.)
+(Observed at hand-off: `89 passed`, `6`, `ok`. After the review fixes: `120 passed`, `6`, `ok`. After the second review round: `128 passed`, `6`, `ok`. After the CodeRabbit PR #673 round (5c9fa9f): `131 passed`, `6`, `ok`.)
 
 ## Open questions for the series owner
 
@@ -156,3 +156,4 @@ cd backend && venv/bin/python -c "from learning.params import FSRS_W; assert len
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+- CodeRabbit PR #673 review 2026-09-27: `_check_rating` now also catches `OverflowError`. `int(±inf)` raises `OverflowError`, and that escaped `initial_stability`, `initial_difficulty` and `next_state`, breaking the "every public function raises ValueError on out-of-domain input, NaN and ±inf included" contract. `test_bad_rating_rejected` gains `nan`, `inf` and `-inf` cases and now checks `next_state` (first and later rating), `initial_stability` and `initial_difficulty`. `tests/test_learning_fsrs.py` goes from 128 to 131 passed (Verify commands: `131 passed`, `6`, `ok`) — commit 5c9fa9f
