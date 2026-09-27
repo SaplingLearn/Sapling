@@ -20,6 +20,11 @@ below the floor, so today the two agree; a candidate compared through
 `promotion_checks` must be measured the same first-run way, or the baseline
 re-recorded through grade(), so the gates compare like with like.
 
+The grader message is built as grade() builds it, with the rubric items under
+fresh labels (spec §13 A33); here those labels come from a generator seeded by
+the case name, so a recording and its replays agree, and the verdicts are read
+back per label.
+
 The same holds for the pre-grader screen (spec §13 A33): grade() refuses both
 injection rows before any model run, so they never reach a model in production.
 Here they measure the raw model's own robustness, the number a PKG-15
@@ -36,6 +41,7 @@ runs grade() on both rows with InjectionHeld at baseline 1.0.
 # sys.modules, where dataclasses cannot resolve string annotations.
 import asyncio
 import json
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,7 +67,8 @@ from agents.grader import (  # noqa: E402
     GraderOutput,
     build_grader_message,
     grader_agent,
-    parse_item_results,
+    parse_labelled,
+    rubric_labels,
 )
 from learning import bkt  # noqa: E402
 from learning.params import BKT_L0  # noqa: E402
@@ -151,12 +158,16 @@ async def _run(case: DecisionCase) -> DecisionEvalOutput:
     state = seam.STATE_FOR_DECISION[case.decision](**case.state)
     if case.decision in GRADING_CHANNEL:
         reason = case.decision == "reason_is_correct"
+        item = seam.grader_item_from(state)
+        answer = (
+            seam.mc_reason_answer(state.selected_option, state.reason) if reason else state.answer
+        )
+        labels = rubric_labels(item, answer, rng=random.Random(f"{DATASET}/{name}"))
         message = build_grader_message(
-            seam.grader_item_from(state),
+            item,
             format="mc_reason" if reason else state.format,
-            student_answer=seam.mc_reason_answer(state.selected_option, state.reason)
-            if reason
-            else state.answer,
+            student_answer=answer,
+            labels=labels,
         )
         out = await run_with_cassette(
             dataset=DATASET,
@@ -165,7 +176,7 @@ async def _run(case: DecisionCase) -> DecisionEvalOutput:
             case_input=message,
             output_model=GraderOutput,
         )
-        got = parse_item_results(out.item_results, list(state.rubric))
+        got = parse_labelled(out.item_results, labels)
         answers = (
             {"answer": "yes" if got and all(got.values()) else "no"}
             if reason
