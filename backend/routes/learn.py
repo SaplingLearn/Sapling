@@ -14,7 +14,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
-from agents.usage import record_agent_usage
+from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
@@ -27,6 +27,7 @@ from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
+from services.tutor_router import observe_tutor_turn
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,62 @@ def _resolve_model_pref(model_pref: str | None):
     if not name:
         return None
     return google_model(name)
+
+
+def _ran_on(result, agent, run_kwargs: dict, model_pref: str | None) -> tuple[str, str | None]:
+    """(model_tier, tutor_model) for the run that ACTUALLY served a turn.
+
+    The tier is what `_prepare_chat_run` resolved: `fast`/`smart` when it put
+    a model override into `run_kwargs` for that pref, else `default` (no pref,
+    an unknown one, or a mode where the pref is not honoured, #391). The name
+    is the model the run result reports (`served_model_name`, the same
+    answer the llm_usage row records), falling back to the override's or the
+    agent's own model name when a result carries none. Never raises: this
+    only labels an event.
+    """
+    try:
+        override = run_kwargs.get("model")
+        tier = model_pref if (override is not None and model_pref) else "default"
+        name = served_model_name(result) if result is not None else "unknown"
+        if name == "unknown":
+            source = override if override is not None else getattr(agent, "model", None)
+            name = getattr(source, "model_name", None)
+        return tier, (name if isinstance(name, str) else None)
+    except Exception:
+        return "default", None
+
+
+def _observe_persisted_turn(
+    body: ChatBody,
+    *,
+    history: list,
+    ran_on: tuple[str, str | None],
+    request_id: str,
+) -> None:
+    """#640: schedule the observe-only tutor router for a turn that has JUST
+    been persisted. Called from both persist points — `_chat_turn_json` and
+    the stream's `_persist` — which are mutually exclusive per turn
+    (`stream_agent_turn` runs at most one of on_complete / the Rung-1
+    fallback), so there is exactly one decision per saved student message.
+    Routing at request entry instead double-routed a stream that failed
+    before persisting and was retried through /chat (the client's JSON rung,
+    or the student's own retry). Fire-and-forget: `observe_tutor_turn`
+    schedules and returns (and does nothing when the seam is off — that
+    check lives there, once). Guarded here too: this runs AFTER the rows are
+    saved, and on the streamed path an exception would turn a persisted turn
+    into an error event.
+    """
+    try:
+        observe_tutor_turn(
+            user_id=body.user_id, session_id=body.session_id, message=body.message,
+            history=history, mode=body.mode,
+            model_pref_requested=body.model_pref,
+            model_tier=ran_on[0],
+            tutor_model=ran_on[1],
+            request_id=request_id,
+        )
+    except Exception:
+        logger.debug("could not schedule the tutor router", exc_info=True)
 
 
 def _build_pro_model_settings():
@@ -742,10 +799,12 @@ async def _chat_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
-) -> dict:
+) -> tuple[dict, tuple[str, str | None]]:
     """Run chat_tutor_agent and return the wire response shape.
 
-    Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
+    Returns ``({"reply": str, "graph_update": dict, "mastery_changes": list},
+    (model_tier, tutor_model))`` — the wire dict, and what the run actually
+    ran on (see `_ran_on`), kept out of the dict so it can never leak.
     Graph changes are persisted in-band during the agent run by
     `apply_graph_update_tool` / `update_mastery_tool` (registered on
     chat_tutor); the tools also accumulate their payloads on `deps` so the
@@ -837,17 +896,23 @@ async def _chat_via_agent(
     # end_session can derive concepts_covered correctly.
     merged_graph_update = merge_graph_updates(deps.graph_updates)
 
-    return {
+    response = {
         "reply": reply,
         "graph_update": merged_graph_update,
         # Real before/after deltas accumulated by update_mastery_tool.
         # Empty when no mastery moved this turn.
         "mastery_changes": deps.mastery_changes,
     }
+    # Out of band, never in the wire dict: what this run actually ran on, for
+    # the #640 router's event.
+    return response, _ran_on(result, agent, run_kwargs, model_pref)
 
 
 async def _chat_turn_json(
-    body: ChatBody, request: Request, *, model_pref: str | None = None
+    body: ChatBody,
+    request: Request,
+    *,
+    model_pref: str | None = None,
 ) -> dict:
     """One full non-streaming chat turn: agent run, persistence, and the
     #117 `chat.message_sent` emission — the SINGLE emission site for
@@ -863,6 +928,9 @@ async def _chat_turn_json(
     Persist ordering preserved: prior turns load BEFORE the new user row is
     written; the user row and assistant row are written only after the agent
     run succeeds, so a failed turn persists nothing.
+
+    This is also one of the two points the observe-only tutor router (#640)
+    is scheduled from — see `_observe_persisted_turn`.
     """
     # Unify with the middleware-stamped request ID so agent traces and
     # any downstream error payloads share the same correlation key.
@@ -881,7 +949,7 @@ async def _chat_turn_json(
     # state up to (but not including) the current turn.
     message_history = _load_message_history(body.session_id)
 
-    response = await _chat_via_agent(
+    response, ran_on = await _chat_via_agent(
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,
@@ -909,6 +977,9 @@ async def _chat_turn_json(
         request_id=request_id,
         payload={"mode": body.mode, "session_id": body.session_id},
         content=body.message,
+    )
+    _observe_persisted_turn(
+        body, history=message_history, ran_on=ran_on, request_id=request_id,
     )
 
     return response
@@ -965,6 +1036,10 @@ async def chat_stream(body: ChatBody, request: Request):
     # SAPLING_MODEL_MODE=function — forcing a GoogleModel here would bypass
     # the e2e seam and re-create the cross-loop client problem #453 solved.
 
+    #: What the streamed run actually ran on — set by `_usage` (on_usage runs
+    #: before on_complete), read by `_persist` for the #640 router's event.
+    ran: dict = {}
+
     def _persist(reply: str, graph_update: dict, mastery_changes: list) -> dict:
         # Mirrors chat()'s ordering: user row, then assistant row. Runs only
         # after the agent run completes, so a disconnect mid-generation
@@ -983,6 +1058,13 @@ async def chat_stream(body: ChatBody, request: Request):
             payload={"mode": body.mode, "session_id": body.session_id},
             content=body.message,
         )
+        # #640: the streamed twin of `_chat_turn_json`'s router call, labelled
+        # with the run `_usage` saw (on_usage runs before on_complete).
+        _observe_persisted_turn(
+            body, history=message_history,
+            ran_on=ran.get("on") or _ran_on(None, agent, run_kwargs, body.model_pref),
+            request_id=request_id,
+        )
         return {}
 
     async def _fallback() -> dict:
@@ -1000,6 +1082,7 @@ async def chat_stream(body: ChatBody, request: Request):
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
         )
+        ran["on"] = _ran_on(run_result, agent, run_kwargs, body.model_pref)
 
     async def event_stream():
         async for ev in stream_agent_turn(

@@ -22,7 +22,7 @@ Design guarantees:
 Cost computation and token-field normalization live in
 ``services/llm_pricing.py``; this module just persists what it's given.
 
-Event taxonomy (issue #117) — the twelve event types the app emits, pinned in
+Event taxonomy (issue #117) — the event types the app emits, pinned in
 ``EVENT_TAXONOMY`` below. Payloads carry ids/counts/enums only: never raw
 text, titles, summaries, full URLs, or timestamps (``created_at`` is a DB
 default). Free-text that must be correlatable (chat messages, session topics)
@@ -65,6 +65,20 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+decision.made                 usage     feature, backend (who answered: jev | flash_lite |
+                                        function | none), requested, fallback_reason (an
+                                        enum-like reason, never a message), model, latency_ms,
+                                        floor, answers {key: value, raw ("<invalid>" for
+                                        an off-list answer), confidence, defaulted?},
+                                        optional shadow {backend, answers, agree {key:
+                                        bool|null} | null (null = shadow_same_as_served),
+                                        ...}, + caller extras. The tutor router adds
+                                        session_id, mode, history_messages, and the model
+                                        the turn ACTUALLY ran on: model_tier (fast | smart
+                                        | default — default whenever the pref was not
+                                        honoured), tutor_model (resolved model name) and
+                                        model_pref_requested (the raw request field).
+                                        ADR 0027 / #640 / #642.
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -164,6 +178,12 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # while their uploads stay in classmates' retrieval, with nothing saying
     # so. Rare and per-user, so category="error" is affordable on the feed.
     "rag.visibility_resync_failed",
+    # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
+    # backend that actually served them, and (in shadow mode) the second
+    # backend's answers plus per-key agreement. category="usage": the tutor
+    # router fires it on every chat turn once enabled, and it is the dataset
+    # the routing-accuracy and Jev-agreement reviews are run over.
+    "decision.made",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

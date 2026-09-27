@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
+from agents._decision_fixtures import DECISION_ANSWERS
 from agents._providers import (
     FunctionModelHandler,
     register_function_handler,
@@ -344,3 +345,34 @@ register_function_handler(
     "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
 )
 register_function_handler("note_chat", _note_chat_handler)
+
+
+# ── Typed decision seam / tutor router (#640, ADR 0027) ─────────────────────
+#
+# services/decisions.py runs the `decision` agent on the FunctionModel whenever
+# SAPLING_MODEL_MODE=function (the `function` backend is automatic there), and
+# the observe-only tutor router (services/tutor_router.py) calls it once per
+# student chat turn. Request-path (scheduled from the chat routes on the
+# request's own loop, not a post-response BackgroundTask), so it is registered
+# — unregistered, every tutor turn would log a handled
+# UnregisteredHandlerError and emit an all-defaults decision.
+#
+# Fixed answers for the router's five keys, every one ABOVE the default
+# confidence floor so the lane exercises the "answer applied" path rather than
+# the defaults path. They are deliberately the answers the router's safe
+# defaults would give anyway (retrieve, no rewrite, not graded, not an
+# injection) plus a complexity — and nothing acts on them (observe-only), so
+# no journey's visible behaviour depends on them. Emitted through the agent's
+# OUTPUT tool, validated by the real DecisionOutput schema. Pinned by
+# tests/test_e2e_function_handlers.py; keep in sync.
+
+# The constant lives in the side-effect-free agents/_decision_fixtures.py so
+# the showcase module can register the SAME answers without importing this one.
+# The E2E_* alias is kept on purpose: this module's constants are the names
+# specs and tests/test_e2e_function_handlers.py pin (the "byte-match to an
+# E2E_* constant" tell in CLAUDE.md).
+E2E_DECISION_ANSWERS = DECISION_ANSWERS
+
+register_function_handler(
+    "decision", _structured_output({"answers": E2E_DECISION_ANSWERS})
+)

@@ -10,6 +10,7 @@ via env vars without touching code:
     SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
     SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
     SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
+    SAPLING_MODEL_DECISION=gemini-2.5-flash-lite
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX, and
@@ -44,6 +45,7 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
     "ocr_vision",
+    "decision",
 ]
 
 
@@ -92,6 +94,11 @@ _DEFAULTS: dict[AgentTask, str] = {
     # vision-capable model, and transcription accuracy on handwritten
     # mathematics is exactly where the lite tier degrades → full Flash.
     "ocr_vision": "gemini-2.5-flash",
+    # The typed decision seam's LLM backend (services/decisions.py, ADR 0027):
+    # a handful of yes/no / choice / ordered-scale judgments per call, short
+    # structured output, latency-sensitive → the cheap lite tier. This is the
+    # `flash_lite` decision backend and the fallback when Jev is unavailable.
+    "decision": "gemini-2.5-flash-lite",
 }
 
 
