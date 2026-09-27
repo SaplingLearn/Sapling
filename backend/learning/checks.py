@@ -525,6 +525,41 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
     return reasons
 
 
+# The markers agents.check_items.build_prompt puts before each passage: "[chunk
+# <id>]" or "[passage]" (a leading space or tab goes with one). Never course
+# content — only an agent that copied one into its text writes it there.
+_CHUNK_MARKER = re.compile(r"[ \t]*\[(?:chunk[ \t]+[^\s\[\]]+|passage)\]", re.IGNORECASE)
+_TEXT_FIELDS = ("prompt", "reference_answer", "final_answer")
+_TEXT_LISTS = ("rubric", "wrong_texts")
+
+
+def _unmarked(text: str) -> str:
+    return _CHUNK_MARKER.sub("", text).strip() if _CHUNK_MARKER.search(text) else text
+
+
+def _remove_markers(draft: CheckItemDraft) -> list[str]:
+    """Remove the passage markers from every text `draft` stores, in place;
+    the names of the fields that carried one."""
+    marked = []
+    for name in _TEXT_FIELDS:
+        clean = _unmarked(getattr(draft, name))
+        if clean != getattr(draft, name):
+            setattr(draft, name, clean)
+            marked.append(name)
+    for name in _TEXT_LISTS:
+        clean = [_unmarked(t) for t in getattr(draft, name)]
+        if clean != getattr(draft, name):
+            setattr(draft, name, clean)
+            marked.append(name)
+    for option in draft.options:
+        clean = _unmarked(option.text)
+        if clean != option.text:
+            option.text = clean
+            if "options" not in marked:
+                marked.append("options")
+    return marked
+
+
 # A reference's closing sentence names its final answer (A34): "Final answer:".
 _FINAL_LABEL = re.compile(r"\bfinal\s+answer\b", re.IGNORECASE)
 _SENTENCE_END = (".", "!", "?")
@@ -559,6 +594,13 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     teachback reference, whose final answer has no second statement to agree
     with (A34's containment check is what ties it to the reference).
 
+    chunk_marker — a "[chunk <id>]" or "[passage]" marker the agent copied
+    from its prompt into any text the item stores (prompt, reference, final
+    answer, rubric, wrong texts, option texts) is removed, in every format:
+    it is the prompt builder's, never course content, and the reference
+    reaches the grader and the tutor's H4/H6 hint payloads. chunk_ids is
+    untouched. Runs first, so every other rule reads the clean text.
+
     stepwise — a draft that claims `stepwise` while its reference has fewer
     than CHECK_ITEM_STEPWISE_MIN_STEPS numbered lines drops the claim: code
     measures the reference, and an item that is not stepwise only stops being
@@ -569,6 +611,12 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     key is never guessed."""
     fixed = draft.model_copy(deep=True)
     repairs: list[str] = []
+    marked = _remove_markers(fixed)
+    if marked:
+        repairs.append(
+            f"chunk_marker: the {', '.join(marked)} carried a [chunk <id>] or [passage] "
+            "marker, which was removed (repaired)"
+        )
     correct = [o for o in fixed.options if o.is_correct]
     mc_one = fixed.format == _MC_REASON and len(correct) == 1
     if mc_one and correct[0].wrong_key is not None:

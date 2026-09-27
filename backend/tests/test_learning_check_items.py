@@ -866,6 +866,55 @@ class TestRepairAndOptions:
             assert repair_draft(draft) == (draft, [])
             assert any(r.startswith("final_answer") for r in validate_draft(draft))
 
+    _HEX = "478e3e6b2286146c89203db713bf476e7dbe61aaeb47ca86aab0db1dd99c11a5"
+
+    def test_repair_removes_passage_markers_the_agent_copied_into_its_text(self):
+        """build_prompt marks each passage "[chunk <id>]" or "[passage]"; a
+        reference that copies one (all 6 stored mc_reason references of the
+        review's stack pass 2) hands a raw internal id to the grader and to
+        the tutor's H4/H6 hint payloads. The marker is the prompt builder's,
+        not course content, so code removes it from every text the item
+        stores, in every format; chunk_ids is untouched (A37 review)."""
+        from learning.checks import repair_draft, validate_draft
+
+        mark = f"[chunk {self._HEX}]"
+        draft = _mc_draft(
+            prompt="Which quantity does the learning rate scale? [passage] Pick one.",
+            reference_answer=(
+                f"The rate scales each step {mark}. [CHUNK c2] Final answer: The update "
+                "step size."
+            ),
+            rubric=[f"Ties the rate to the step {mark}", "Names the gradient."],
+            wrong_texts=["Counts iterations [chunk c1].", "Treats the rate as the loss.", "x"],
+            chunk_ids=["c1"],
+        )
+        fixed, repairs = repair_draft(draft)
+        assert fixed.prompt == "Which quantity does the learning rate scale? Pick one."
+        assert fixed.reference_answer == (
+            "The rate scales each step. Final answer: The update step size."
+        )
+        assert fixed.rubric == ["Ties the rate to the step", "Names the gradient."]
+        assert fixed.wrong_texts[0] == "Counts iterations."
+        assert fixed.chunk_ids == ["c1"] and validate_draft(fixed) == []
+        (line,) = [r for r in repairs if r.startswith("chunk_marker:")]
+        assert "prompt" in line and "reference_answer" in line and "rubric" in line
+        assert "[chunk" in draft.reference_answer  # the input is never mutated
+        free = _draft(reference_answer=f"The size of each update step [chunk {self._HEX}].")
+        fixed, repairs = repair_draft(free)
+        assert fixed.reference_answer == "The size of each update step."
+        assert [r.split(":")[0] for r in repairs] == ["chunk_marker"]
+
+    def test_the_marker_repair_reads_only_the_prompt_builders_markers(self):
+        from learning.checks import repair_draft
+
+        for text in (
+            "The size of each update step [1].",  # a citation style, not our marker
+            "The size of each update step (chunk of the data).",
+            "The size of each update step [chunked].",
+        ):
+            draft = _draft(reference_answer=text)
+            assert repair_draft(draft) == (draft, [])
+
     def test_option_reasons_and_repairs_hold_no_semicolon(self):
         """create_items logs a draft's reasons (and its repairs) joined by
         "; ", so one reason must not contain it: the live check's parser read
