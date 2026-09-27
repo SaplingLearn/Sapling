@@ -59,6 +59,7 @@ Execution order and dependencies: spec §14. PKG-04 appends no `00 | reopened` r
 | 04 | check-items | verified | feat/learning-loop | 7359659 | — | Series 2026-09-27: merged; full suite 3520 passed, 138 skipped, 0 failed (ruff clean; invariants 10 passed, 3 skipped); E2E gate: PKG-04 E2E gate is green. Default lane (flag unset, fresh DB, full suite): 88 passed and 13 skipped. The one failure is e2e/gradebook.spec.ts:35, the known Landing term-chip flake. It passed once and failed once when re-run, it also fails on feat/learning-loop, and the branch changes no frontend files | HANDOFF-04.md |
 | 03 | evidence-state | reopened | feat/learning-loop-05-grader-check-tool | ee80ad1 | +5 (test_learning_grader_backend_migration.py 3, test_learning_evidence_apply.py 2) | PKG-05, 2026-09-27, tests/test_learning_evidence_apply.py tests/test_graph_service.py → 166 passed; full suite → 3525 passed, 138 skipped | HANDOFF-03.md |
 | 01 | bkt-core | reopened | feat/learning-loop-05-grader-check-tool | 56b5b06 | 0 (rename; tests/test_learning_bkt.py 307 passed) | PKG-05, 2026-09-27, tests/test_learning_bkt.py → 307 passed; params `NAME = ` grep → 94 (unchanged) | HANDOFF-01.md |
+| 03 | evidence-state | reopened | feat/learning-loop-05-grader-check-tool | 2eb3a26 | +13 (test_learning_check_tool.py flush section 5, test_learning_evidence_apply.py test_evidence_persister_detector 8) | PKG-05, 2026-09-27, tests/test_learning_evidence_apply.py → 115 passed; full suite → 3600 passed, 138 skipped | HANDOFF-03.md |
 
 ## Deviations
 
