@@ -132,6 +132,18 @@ def test_retention_target_rules():
     assert retention_target(10, exam_within_days=None) == FSRS_RETENTION_DEFAULT
 
 
+@pytest.mark.parametrize(
+    "args",
+    [(NAN,), (INF,), (-1,), (2.5,), ("10",), (10, NAN), (10, INF), (10, -1), (10, 2.5)],
+)
+def test_retention_target_rejects_bad_inputs(args):
+    # n_scheduled is a count and exam_within_days a whole-day count >= 0
+    # (exam_proximity.days_until_next_exam); NaN fell through every comparison
+    # to the default retention before.
+    with pytest.raises(ValueError):
+        retention_target(*args)
+
+
 # --- first rating -----------------------------------------------------------
 
 
@@ -344,6 +356,24 @@ def test_rating_for_rejects_unknown_channel_and_negative_rung():
         rating_for("mc", True, -1)
 
 
+@pytest.mark.parametrize("bad_rung", [NAN, INF, -INF, 2.5, "0", None])
+def test_rating_for_and_mc_cap_reject_a_non_integer_rung(bad_rung):
+    # NaN rated Again and 2.5 rated Hard before: a rung is a whole ladder step.
+    with pytest.raises(ValueError):
+        rating_for("mc", True, bad_rung)
+    with pytest.raises(ValueError):
+        mc_cap_applies("mc", True, bad_rung)
+
+
+@pytest.mark.parametrize("args", [("quiz", True, 0), ("idk", False, 0), ("mc", True, -1)])
+def test_mc_cap_applies_validates_like_rating_for(args):
+    # PKG-03 calls both with the same arguments; they must agree on the domain.
+    with pytest.raises(ValueError):
+        rating_for(*args)
+    with pytest.raises(ValueError):
+        mc_cap_applies(*args)
+
+
 def test_mc_cap_applies_only_to_unassisted_mc_correct():
     assert mc_cap_applies("mc", True, 0) is True
     assert mc_cap_applies("mc", True, 1) is False
@@ -552,3 +582,16 @@ def test_relearning_is_immutable_and_round_trips():
 def test_relearning_rejects_a_corrupt_stored_state(data):
     with pytest.raises(ValueError):
         SuccessiveRelearning.from_dict(data)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"correct_in_acquisition": NAN},
+        {"correct_in_acquisition": 1.5},
+        {"relearn_sessions_done": INF},
+    ],
+)
+def test_relearning_rejects_a_non_integer_counter(kwargs):
+    with pytest.raises(ValueError):
+        SuccessiveRelearning(**kwargs)

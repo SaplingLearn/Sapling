@@ -85,10 +85,28 @@ def interval(retention: float, stability: float) -> float:
     return (stability / FACTOR) * (retention ** (-1 / _DECAY) - 1)
 
 
+def _check_count(name: str, value: Any) -> int:
+    """``value`` as an int >= 0; NaN, ±inf, 2.5, "3" and None raise ValueError."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} must be an integer >= 0, got {value!r}") from None
+    if n != value or n < 0:
+        raise ValueError(f"{name} must be an integer >= 0, got {value!r}")
+    return n
+
+
 def retention_target(n_scheduled: int, exam_within_days: int | None = None) -> float:
-    """Desired retention: exam window wins, then large set, else default (spec §3.2)."""
-    if exam_within_days is not None and exam_within_days <= FSRS_EXAM_WINDOW_DAYS:
-        return FSRS_RETENTION_EXAM
+    """Desired retention: exam window wins, then large set, else default (spec §3.2).
+
+    Both arguments are whole counts >= 0 (``exam_within_days`` is
+    ``exam_proximity.days_until_next_exam``: 0 = today, None = no exam).
+    """
+    n_scheduled = _check_count("n_scheduled", n_scheduled)
+    if exam_within_days is not None:
+        exam_within_days = _check_count("exam_within_days", exam_within_days)
+        if exam_within_days <= FSRS_EXAM_WINDOW_DAYS:
+            return FSRS_RETENTION_EXAM
     if n_scheduled > FSRS_LARGE_SET_CONCEPTS:
         return FSRS_RETENTION_LARGE_SET
     return FSRS_RETENTION_DEFAULT
@@ -195,15 +213,20 @@ def next_state(
 # --- rating map -------------------------------------------------------------
 
 
+def _check_rating_inputs(channel: str, max_rung: int) -> int:
+    """Shared domain of ``rating_for`` and ``mc_cap_applies``: a known channel
+    and a whole rung >= 0. Returns the rung as an int."""
+    if not isinstance(channel, str) or channel not in RATING_CHANNELS:
+        raise ValueError(f"unknown channel {channel!r}")
+    return _check_count("max_rung", max_rung)
+
+
 def rating_for(channel: str, correct: bool, max_rung: int, *, idk: bool = False) -> int:
     """Spec §3.2 rating map. Wrong, or ``idk`` (§13 A1), → Again; unassisted
     correct → Good (chat_turn → Hard, §13 A7 †); correct after
     H1..H{RUNG_ASSISTED_MAX} → Hard; correct after a higher rung → Again.
     Never Easy."""
-    if channel not in RATING_CHANNELS:
-        raise ValueError(f"unknown channel {channel!r}")
-    if max_rung < 0:
-        raise ValueError(f"max_rung must be >= 0, got {max_rung}")
+    max_rung = _check_rating_inputs(channel, max_rung)
     if idk or not correct:
         return int(Rating.AGAIN)
     if max_rung == 0:
@@ -216,7 +239,9 @@ def rating_for(channel: str, correct: bool, max_rung: int, *, idk: bool = False)
 
 
 def mc_cap_applies(channel: str, correct: bool, max_rung: int, *, idk: bool = False) -> bool:
-    """True exactly when the rating came from an unassisted correct ``mc`` check."""
+    """True exactly when the rating came from an unassisted correct ``mc`` check.
+    Raises on the inputs ``rating_for`` raises on."""
+    max_rung = _check_rating_inputs(channel, max_rung)
     return channel == "mc" and bool(correct) and not idk and max_rung == 0
 
 
@@ -320,11 +345,8 @@ class SuccessiveRelearning:
     def __post_init__(self) -> None:
         if self.phase not in _SR_PHASES:
             raise ValueError(f"phase must be one of {_SR_PHASES}, got {self.phase!r}")
-        if self.correct_in_acquisition < 0 or self.relearn_sessions_done < 0:
-            raise ValueError(
-                "counters must be >= 0, got "
-                f"{self.correct_in_acquisition}, {self.relearn_sessions_done}"
-            )
+        _check_count("correct_in_acquisition", self.correct_in_acquisition)
+        _check_count("relearn_sessions_done", self.relearn_sessions_done)
 
     def advance(self, correct: bool, *, session_id: str) -> SuccessiveRelearning:
         if self.phase == SR_DONE:
