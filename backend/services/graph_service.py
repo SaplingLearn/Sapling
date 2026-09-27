@@ -815,6 +815,10 @@ def _apply_evidence(
     only). Propagated updates are derived from the journaled evidence, so
     they are not journaled themselves. `by_id` is the user- and
     course-scoped existing_rows; a node outside it is never read or written.
+
+    The journal rows of one call share `created_at` and have random ids, so
+    each carries `evidence_seq` = 0..n−1 in apply order (§13 A36): a replay
+    orders by (created_at, evidence_seq). A skipped evidence takes no number.
     """
     changes: list[dict] = []
     now_iso = now.isoformat()
@@ -826,6 +830,7 @@ def _apply_evidence(
     for node_id in owned:
         states.setdefault(node_id, LearnerState(user_id=user_id, node_id=node_id))
     seen_checks: set[tuple[str, str]] = set()
+    seq = 0  # next evidence_seq: counts journaled rows only
 
     for ev in evidences:
         row = by_id.get(ev.node_id)
@@ -901,7 +906,9 @@ def _apply_evidence(
             "question_hash": ev.question_hash,
             "confidence": ev.confidence,
             "grader_backend": ev.grader_backend,  # A22; null when no verdict (idk)
+            "evidence_seq": seq,  # A36: apply order within this call
         })
+        seq += 1
         changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
         if row.get("course_id"):
             touched_courses.add(row["course_id"])
