@@ -28,6 +28,7 @@ import {
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
 import {
+  applyAccountAnalyticsPreference,
   getAnalyticsState,
   getServerAnalyticsState,
   setAnalyticsEnabled,
@@ -36,21 +37,49 @@ import {
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+/**
+ * The settings on/off switch: a real `<button role="switch">`, so it is
+ * focusable, keyboard-operable and announces its state. Name it with
+ * `ariaLabelledBy` (the id of its visible label).
+ */
+function Toggle({
+  on,
+  onChange,
+  disabled = false,
+  ariaLabelledBy,
+  testId,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  ariaLabelledBy?: string;
+  testId?: string;
+}) {
   return (
-    <div
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-labelledby={ariaLabelledBy}
+      data-testid={testId}
+      disabled={disabled}
       onClick={() => onChange(!on)}
       style={{
+        flexShrink: 0,
         width: 36,
         height: 20,
+        padding: 0,
+        border: "none",
         borderRadius: "var(--r-full)",
         background: on ? "var(--accent)" : "var(--bg-soft)",
         position: "relative",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
         transition: "all var(--dur) var(--ease)",
       }}
     >
-      <div
+      <span
+        aria-hidden
         style={{
           position: "absolute",
           top: 2,
@@ -63,7 +92,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
           transition: "all var(--dur) var(--ease)",
         }}
       />
-    </div>
+    </button>
   );
 }
 
@@ -105,6 +134,8 @@ export function Settings() {
         };
         setSettings(seeded);
         setUsernameDraft(seeded.username || "");
+        // An opt-out saved on another browser takes effect here too.
+        applyAccountAnalyticsPreference(s.analytics_opt_out);
         if (seeded.accent_color) {
           document.documentElement.style.setProperty("--accent", seeded.accent_color);
         }
@@ -124,6 +155,18 @@ export function Settings() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Product analytics: this browser flips at once; the account copy is
+  // best-effort (the browser choice already holds if the save fails).
+  const setAnalyticsPreference = (enabled: boolean) => {
+    setAnalyticsEnabled(enabled);
+    if (!userId) return;
+    setSettings((prev) => (prev ? { ...prev, analytics_opt_out: !enabled } : prev));
+    updateSettings(userId, { analytics_opt_out: !enabled }).catch((err) => {
+      console.error("analytics preference save", err);
+      toast.error("Couldn't save that to your account. It still applies in this browser.");
+    });
   };
 
   const avatarFileRef = React.useRef<HTMLInputElement | null>(null);
@@ -539,8 +582,13 @@ export function Settings() {
                     borderBottom: "1px solid var(--border)",
                   }}
                 >
-                  <div style={{ fontSize: 13 }}>{label}</div>
-                  <Toggle on={Boolean(settings[key])} onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)} />
+                  <div style={{ fontSize: 13 }} id={`settings-toggle-${key}-label`}>{label}</div>
+                  <Toggle
+                    on={Boolean(settings[key])}
+                    onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
+                    ariaLabelledBy={`settings-toggle-${key}-label`}
+                    testId={`settings-toggle-${key}`}
+                  />
                 </div>
               ))}
             </div>
@@ -577,7 +625,7 @@ export function Settings() {
                 </button>
               </div>
 
-              <AnalyticsPreference />
+              <AnalyticsPreference onChange={setAnalyticsPreference} />
 
               <div
                 className="h-serif"
@@ -661,13 +709,15 @@ export function Settings() {
 }
 
 /**
- * Product-analytics opt-out (PostHog). The choice is stored per browser by
- * posthog-js and survives sign-out (src/lib/analytics.ts resetAnalytics). When
- * analytics is not running in this build — no key, local mode, the E2E/test
- * build — the switch renders disabled so the page never implies a choice it
- * cannot honour.
+ * Product-analytics opt-out (PostHog). Flipping it takes effect in this
+ * browser at once (posthog-js consent, which survives sign-out — see
+ * src/lib/analytics.ts resetAnalytics) and is saved to the account as
+ * `analytics_opt_out`, which every browser applies on sign-in. When analytics
+ * is not running in this build — no key, local mode, the E2E/test build — or
+ * the browser sends Do Not Track / GPC, the switch renders disabled so the
+ * page never implies a choice it cannot honour.
  */
-function AnalyticsPreference() {
+function AnalyticsPreference({ onChange }: { onChange: (enabled: boolean) => void }) {
   const state = React.useSyncExternalStore(
     subscribeAnalytics,
     getAnalyticsState,
@@ -680,7 +730,7 @@ function AnalyticsPreference() {
       ? "Analytics isn't running in this version of Sapling, so nothing is being collected."
       : state === "browser_blocked"
         ? "Your browser's Do Not Track or Global Privacy Control setting is on, so nothing is collected."
-        : "Applies to this browser.";
+        : "Turning this off is saved to your account and applies on every browser you sign in to.";
 
   return (
     <div className="card" data-testid="settings-analytics" style={{ padding: "var(--pad-lg)", marginTop: 16 }}>
@@ -698,43 +748,13 @@ function AnalyticsPreference() {
             {note}
           </div>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={on}
-          aria-labelledby="settings-analytics-label"
-          data-testid="settings-analytics-toggle"
+        <Toggle
+          on={on}
+          onChange={onChange}
           disabled={disabled}
-          onClick={() => setAnalyticsEnabled(!on)}
-          style={{
-            flexShrink: 0,
-            width: 36,
-            height: 20,
-            padding: 0,
-            border: "none",
-            borderRadius: "var(--r-full)",
-            background: on ? "var(--accent)" : "var(--bg-soft)",
-            position: "relative",
-            cursor: disabled ? "not-allowed" : "pointer",
-            opacity: disabled ? 0.5 : 1,
-            transition: "all var(--dur) var(--ease)",
-          }}
-        >
-          <span
-            aria-hidden
-            style={{
-              position: "absolute",
-              top: 2,
-              left: on ? 18 : 2,
-              width: 16,
-              height: 16,
-              borderRadius: "50%",
-              background: "#fff",
-              boxShadow: "var(--shadow-sm)",
-              transition: "all var(--dur) var(--ease)",
-            }}
-          />
-        </button>
+          ariaLabelledBy="settings-analytics-label"
+          testId="settings-analytics-toggle"
+        />
       </div>
     </div>
   );

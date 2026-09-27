@@ -16,9 +16,23 @@
  *   element said: `mask_all_text` + `mask_all_element_attributes` drop the text
  *   and attributes (notes, chat messages, document names, hrefs) the UI
  *   renders. Session recording, exception autocapture and copied-text capture
- *   are off. `before_send` strips query strings and fragments from every URL
- *   property, because `/auth/callback?auth_token=…&avatar=…` would otherwise
- *   ship the sign-in handoff token on the first pageview.
+ *   are off.
+ * - **No credentials in URLs.** `/auth/callback?auth_token=…&user_id=…&avatar=…`
+ *   is the sign-in handoff, so its parameters are masked AT THE SOURCE via
+ *   `custom_personal_data_properties`. That reaches what `before_send` never
+ *   sees (the `/flags` request body) and what it only sees nested (heatmap
+ *   URL keys, web-vitals metrics), as well as `$current_url` and
+ *   `$initial_current_url`. `before_send` then strips every query string and
+ *   fragment from every URL value, recursively, as defence in depth.
+ * - **No client IP, no geolocation.** The proxy never forwards the browser's
+ *   IP (PostHog only ever sees the Worker's), posthog-js has no IP switch of
+ *   its own (its `ip` option is a documented no-op), and every event carries
+ *   `$geoip_disable` so ingestion skips GeoIP enrichment. The PostHog project
+ *   setting "Discard client IP data" must stay ON — see
+ *   docs/frontend-audit/07-integrations.md.
+ * - **The opt-out follows the account.** `user_settings.analytics_opt_out` is
+ *   applied on sign-in (`applyAccountAnalyticsPreference`) before `identify`,
+ *   so an opt-out made on one browser holds on every other.
  * - **Same-origin transport.** `api_host` is `/ingest`, served by the route
  *   handler in `src/app/ingest/[...path]/route.ts`, which forwards to PostHog
  *   US without the user's cookies (see that file for why this is not a
@@ -68,6 +82,35 @@ export function analyticsDisabledReason(
 }
 
 /**
+ * URL query parameters posthog-js replaces with `<MASKED>` at the source, on
+ * top of its built-in ad-click ids — everything a frontend URL can carry that
+ * is a credential, an identity, or student-authored text:
+ * - the `/auth/callback` sign-in handoff (backend/routes/auth.py
+ *   `google_callback`): `auth_token`, `user_id`, `avatar`, `popup_id`,
+ *   `is_approved`;
+ * - generic OAuth / token names, should one ever land on a frontend URL:
+ *   `code`, `state`, `token`, `access_token`, `id_token`, `email`;
+ * - `topic`, which deep links (`/learn?topic=…`) fill with a concept label
+ *   taken from the student's own notes.
+ * Params that only name a row (`note`, `course`, `session`, …) are left
+ * alone; `before_send` drops every query string anyway.
+ */
+export const PERSONAL_DATA_QUERY_PARAMS = [
+  "auth_token",
+  "user_id",
+  "avatar",
+  "popup_id",
+  "is_approved",
+  "code",
+  "state",
+  "token",
+  "access_token",
+  "id_token",
+  "email",
+  "topic",
+] as const;
+
+/**
  * Strip `?query` and `#fragment` from an absolute URL; anything else is
  * returned unchanged. Query strings here can carry the OAuth handoff token
  * (`/auth/callback?auth_token=…`) and the Google avatar URL.
@@ -78,19 +121,56 @@ export function stripUrlQuery(value: unknown): unknown {
   return cut === -1 ? value : value.slice(0, cut);
 }
 
-function scrubProps(props: Record<string, unknown> | undefined): void {
-  if (!props) return;
-  for (const key of Object.keys(props)) {
-    props[key] = stripUrlQuery(props[key]);
-  }
+/** Deeper than any posthog-js payload; also the stop for a cyclic object. */
+const MAX_SCRUB_DEPTH = 8;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== "object") return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
-/** `before_send` hook: remove query strings/fragments from every URL value. */
+/**
+ * Strip URL queries from `value` and from everything nested in it — values
+ * AND object keys, because `$heatmap_data` is keyed by page URL. Mutates
+ * objects/arrays in place. When two keys collapse onto the same URL their
+ * array values are merged, so neither page's data is lost.
+ */
+export function scrubValue(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return stripUrlQuery(value);
+  if (depth >= MAX_SCRUB_DEPTH) return value;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) value[i] = scrubValue(value[i], depth + 1);
+    return value;
+  }
+  if (!isPlainObject(value)) return value;
+  for (const key of Object.keys(value)) {
+    const scrubbed = scrubValue(value[key], depth + 1);
+    const cleanKey = stripUrlQuery(key) as string;
+    if (cleanKey === key) {
+      value[key] = scrubbed;
+      continue;
+    }
+    delete value[key];
+    const existing = value[cleanKey];
+    value[cleanKey] =
+      Array.isArray(existing) && Array.isArray(scrubbed) ? [...existing, ...scrubbed] : scrubbed;
+  }
+  return value;
+}
+
+/**
+ * `before_send` hook: remove query strings/fragments from every URL value,
+ * however deeply nested, and opt the event out of GeoIP enrichment.
+ */
 export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event) return event;
-  scrubProps(event.properties as Record<string, unknown> | undefined);
-  scrubProps(event.$set as Record<string, unknown> | undefined);
-  scrubProps(event.$set_once as Record<string, unknown> | undefined);
+  if (event.properties) {
+    scrubValue(event.properties);
+    event.properties.$geoip_disable = true;
+  }
+  if (event.$set) scrubValue(event.$set);
+  if (event.$set_once) scrubValue(event.$set_once);
   return event;
 }
 
@@ -114,7 +194,12 @@ export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
     autocapture: { capture_copied_text: false },
     mask_all_text: true,
     mask_all_element_attributes: true,
+    // Mask the sign-in handoff (and friends) inside every URL posthog-js
+    // builds, including the ones before_send cannot reach — see the header.
     mask_personal_data_properties: true,
+    custom_personal_data_properties: [...PERSONAL_DATA_QUERY_PARAMS],
+    // Nothing here routes on the fragment; don't record it.
+    disable_capture_url_hashes: true,
     before_send: scrubEvent,
   };
 }
@@ -131,6 +216,8 @@ let starting = false;
  * chunk, so the latest request is replayed once the client is ready.
  */
 let pendingIdentity: string | null | undefined;
+/** An account-level opt-out that arrived before the client finished loading. */
+let pendingAccountOptOut = false;
 
 export type PosthogLoader = () => Promise<PostHog>;
 const defaultLoader: PosthogLoader = () => import("posthog-js").then((m) => m.default);
@@ -159,6 +246,10 @@ export async function initAnalytics(
   } finally {
     starting = false;
   }
+  // The account's opt-out first, so a replayed identify never goes out for a
+  // student who opted out on another browser.
+  if (pendingAccountOptOut) applyAccountAnalyticsPreference(true);
+  pendingAccountOptOut = false;
   const pending = pendingIdentity;
   pendingIdentity = undefined;
   if (pending === null) resetAnalytics();
@@ -171,7 +262,26 @@ export function isAnalyticsActive(): boolean {
   return client !== null;
 }
 
-/** Associate subsequent events with the user's UUID — and nothing else. */
+/**
+ * Whether this build runs analytics at all (a key, not local/test mode) —
+ * true before posthog-js has finished loading. Callers use it to skip work,
+ * like fetching the account preference, that only matters when it does.
+ */
+export function isAnalyticsConfigured(env: AnalyticsEnv = readAnalyticsEnv()): boolean {
+  return analyticsDisabledReason(env) === null;
+}
+
+/**
+ * Associate subsequent events with the user's UUID — and nothing else.
+ *
+ * posthog-js's `identify()` on a browser already identified as someone else
+ * does not switch people: it links the new id to the old one and MERGES the
+ * two students into a single person. That happens whenever one browser moves
+ * between accounts without `resetAnalytics()` in between (a stale
+ * localStorage identity replaced by a fresh sign-in, a session that expired
+ * server-side). So a different identified user is reset first — with the
+ * opt-out carried across, exactly as sign-out does.
+ */
 export function identifyUser(userId: string): void {
   if (!userId) return;
   if (!client) {
@@ -179,7 +289,26 @@ export function identifyUser(userId: string): void {
     return;
   }
   if (client.get_distinct_id() === userId) return;
+  if (client.get_property("$user_state") === "identified") resetAnalytics();
   client.identify(userId);
+}
+
+/**
+ * Apply the account-level preference (`user_settings.analytics_opt_out`) to
+ * this browser. Only an opt-out is applied: `false` — or the field missing,
+ * as it is on a backend that predates it — leaves this browser's own choice
+ * alone, so a local opt-out always wins and the account can only ever turn
+ * collection OFF, never silently back on.
+ */
+export function applyAccountAnalyticsPreference(optOut: unknown): void {
+  if (optOut !== true) return;
+  if (!client) {
+    if (starting) pendingAccountOptOut = true;
+    return;
+  }
+  if (client.has_opted_out_capturing()) return;
+  client.opt_out_capturing();
+  notify();
 }
 
 /**
@@ -241,7 +370,11 @@ export function getServerAnalyticsState(): AnalyticsState {
   return "unavailable";
 }
 
-/** Persisted per browser by posthog-js (its own consent cookie). */
+/**
+ * This browser's choice, persisted by posthog-js (its own consent storage).
+ * Settings also PATCHes it to the account (`analytics_opt_out`) so it follows
+ * the student to other browsers — see applyAccountAnalyticsPreference.
+ */
 export function setAnalyticsEnabled(enabled: boolean): void {
   if (!client) return;
   if (enabled) client.opt_in_capturing();
@@ -254,5 +387,6 @@ export function __resetAnalyticsForTests(): void {
   client = null;
   starting = false;
   pendingIdentity = undefined;
+  pendingAccountOptOut = false;
   listeners.clear();
 }

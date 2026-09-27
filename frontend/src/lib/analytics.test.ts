@@ -13,14 +13,17 @@ import type { CaptureResult, PostHog } from "posthog-js";
 import {
   __resetAnalyticsForTests,
   analyticsDisabledReason,
+  applyAccountAnalyticsPreference,
   buildPosthogConfig,
   getAnalyticsState,
   identifyUser,
   initAnalytics,
   isAnalyticsActive,
+  isAnalyticsConfigured,
   readAnalyticsEnv,
   resetAnalytics,
   scrubEvent,
+  scrubValue,
   setAnalyticsEnabled,
   stripUrlQuery,
   subscribeAnalytics,
@@ -29,20 +32,26 @@ import {
 
 const KEY = "phc_test_public_key";
 
-function fakePosthog() {
-  let distinctId = "anon-1";
+function fakePosthog(initial: { distinctId?: string; identified?: boolean } = {}) {
+  let distinctId = initial.distinctId ?? "anon-1";
+  let identified = initial.identified ?? false;
   let optedOut = false;
   const ph = {
     init: vi.fn(),
     identify: vi.fn((id: string) => {
       distinctId = id;
+      identified = true;
     }),
     reset: vi.fn(() => {
       distinctId = "anon-2";
+      identified = false;
       // posthog-js's reset() wipes stored consent too.
       optedOut = false;
     }),
     get_distinct_id: vi.fn(() => distinctId),
+    get_property: vi.fn((name: string) =>
+      name === "$user_state" ? (identified ? "identified" : "anonymous") : undefined,
+    ),
     has_opted_out_capturing: vi.fn(() => optedOut),
     opt_out_capturing: vi.fn(() => {
       optedOut = true;
@@ -120,7 +129,13 @@ describe("init gating", () => {
       mask_all_text: true,
       mask_all_element_attributes: true,
       autocapture: { capture_copied_text: false },
+      mask_personal_data_properties: true,
+      disable_capture_url_hashes: true,
     });
+    // The /auth/callback handoff params are masked by posthog-js at the source.
+    expect(config.custom_personal_data_properties).toEqual(
+      expect.arrayContaining(["auth_token", "user_id", "avatar", "popup_id"]),
+    );
     expect(config.before_send).toBe(scrubEvent);
     // Idempotent.
     expect(await initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, load)).toBe(true);
@@ -131,6 +146,12 @@ describe("init gating", () => {
     expect(buildPosthogConfig({ NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com" }).api_host).toBe(
       "https://us.i.posthog.com",
     );
+  });
+
+  it("isAnalyticsConfigured mirrors the gate", () => {
+    expect(isAnalyticsConfigured({ NEXT_PUBLIC_POSTHOG_KEY: KEY })).toBe(true);
+    expect(isAnalyticsConfigured({})).toBe(false);
+    expect(isAnalyticsConfigured({ NEXT_PUBLIC_POSTHOG_KEY: KEY, NEXT_PUBLIC_TEST_MODE: "1" })).toBe(false);
   });
 
   it("a loader failure leaves the app running with analytics off", async () => {
@@ -174,6 +195,45 @@ describe("identify / reset", () => {
     release();
     await pending;
     expect(ph.identify.mock.calls).toEqual([["early-user"]]);
+  });
+
+  it("identifying an anonymous browser does not reset it", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    identifyUser("u-1");
+    expect(ph.reset).not.toHaveBeenCalled();
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+  });
+
+  it("resets before identifying a DIFFERENT identified user, so the two are never merged", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, fakePosthog({ distinctId: "u-A", identified: true }));
+    identifyUser("u-B");
+    expect(ph.reset).toHaveBeenCalledTimes(1);
+    expect(ph.reset.mock.invocationCallOrder[0]).toBeLessThan(ph.identify.mock.invocationCallOrder[0]);
+    expect(ph.identify.mock.calls).toEqual([["u-B"]]);
+    expect(ph.get_distinct_id()).toBe("u-B");
+  });
+
+  it("carries an opt-out across that reset", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, fakePosthog({ distinctId: "u-A", identified: true }));
+    setAnalyticsEnabled(false);
+    identifyUser("u-B");
+    expect(ph.reset).toHaveBeenCalledTimes(1);
+    expect(ph.has_opted_out_capturing()).toBe(true);
+  });
+
+  it("the replayed identify after a slow load also resets a different identified user", async () => {
+    const ph = fakePosthog({ distinctId: "u-A", identified: true });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const pending = initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, async () => {
+      await gate;
+      return ph as unknown as PostHog;
+    });
+    identifyUser("u-B");
+    release();
+    await pending;
+    expect(ph.reset).toHaveBeenCalledTimes(1);
+    expect(ph.identify.mock.calls).toEqual([["u-B"]]);
   });
 
   it("reset() on sign-out, keeping an opt-out in force", async () => {
@@ -226,6 +286,59 @@ describe("opt-out store", () => {
   });
 });
 
+describe("account-level preference (user_settings.analytics_opt_out)", () => {
+  it("an account opt-out turns this browser off and notifies", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    const listener = vi.fn();
+    subscribeAnalytics(listener);
+    applyAccountAnalyticsPreference(true);
+    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(getAnalyticsState()).toBe("off");
+    expect(listener).toHaveBeenCalledTimes(1);
+    // Idempotent.
+    applyAccountAnalyticsPreference(true);
+    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+  });
+
+  it("false or a missing field never overrides a local opt-out, and never opts in", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    setAnalyticsEnabled(false);
+    for (const value of [false, undefined, null, "true"]) applyAccountAnalyticsPreference(value);
+    expect(ph.opt_in_capturing).not.toHaveBeenCalled();
+    expect(getAnalyticsState()).toBe("off");
+  });
+
+  it("a missing field leaves an opted-in browser on", async () => {
+    const { ph } = await start({ NEXT_PUBLIC_POSTHOG_KEY: KEY });
+    applyAccountAnalyticsPreference(undefined);
+    expect(ph.opt_out_capturing).not.toHaveBeenCalled();
+    expect(getAnalyticsState()).toBe("on");
+  });
+
+  it("is a no-op while analytics is off", async () => {
+    await start({});
+    expect(() => applyAccountAnalyticsPreference(true)).not.toThrow();
+    expect(getAnalyticsState()).toBe("unavailable");
+  });
+
+  it("an opt-out that arrives while posthog-js loads is applied before the replayed identify", async () => {
+    const ph = fakePosthog();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const pending = initAnalytics({ NEXT_PUBLIC_POSTHOG_KEY: KEY }, async () => {
+      await gate;
+      return ph as unknown as PostHog;
+    });
+    applyAccountAnalyticsPreference(true);
+    identifyUser("u-1");
+    release();
+    await pending;
+    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(ph.opt_out_capturing.mock.invocationCallOrder[0]).toBeLessThan(ph.identify.mock.invocationCallOrder[0]);
+    expect(getAnalyticsState()).toBe("off");
+  });
+});
+
 describe("before_send URL scrubbing", () => {
   it("strips query strings and fragments from absolute URLs only", () => {
     expect(stripUrlQuery("https://saplinglearn.com/auth/callback?user_id=u&auth_token=secret")).toBe(
@@ -256,5 +369,46 @@ describe("before_send URL scrubbing", () => {
     expect(out.$set_once?.$initial_current_url).toBe("https://saplinglearn.com/");
     expect(out.$set?.$current_url).toBe("https://saplinglearn.com/a");
     expect(scrubEvent(null)).toBeNull();
+  });
+
+  it("scrubs nested objects and arrays: web-vitals metrics and heatmap URL keys", () => {
+    const event = {
+      event: "$$heatmap",
+      uuid: "x",
+      properties: {
+        $web_vitals_LCP_event: {
+          name: "LCP",
+          $current_url: "https://saplinglearn.com/auth/callback?auth_token=secret-1",
+          attribution: { url: "https://saplinglearn.com/x?auth_token=secret-2" },
+        },
+        $heatmap_data: {
+          "https://saplinglearn.com/auth/callback?auth_token=secret-3": [{ x: 1 }],
+          "https://saplinglearn.com/auth/callback?user_id=secret-4": [{ x: 2 }],
+          "https://saplinglearn.com/learn": [{ x: 3 }],
+        },
+        $elements: [{ attr__href: "https://saplinglearn.com/a?token=secret-5" }],
+      },
+    } as unknown as CaptureResult;
+    const out = scrubEvent(event)!;
+    expect(JSON.stringify(out)).not.toMatch(/secret/);
+    const heatmap = out.properties.$heatmap_data as Record<string, unknown[]>;
+    // Two URLs that collapse onto one page keep both pages' points.
+    expect(heatmap["https://saplinglearn.com/auth/callback"]).toEqual([{ x: 1 }, { x: 2 }]);
+    expect(heatmap["https://saplinglearn.com/learn"]).toEqual([{ x: 3 }]);
+    expect(
+      (out.properties.$web_vitals_LCP_event as { $current_url: string }).$current_url,
+    ).toBe("https://saplinglearn.com/auth/callback");
+  });
+
+  it("opts every event out of GeoIP enrichment", () => {
+    const out = scrubEvent({ event: "$pageview", uuid: "x", properties: {} } as unknown as CaptureResult)!;
+    expect(out.properties.$geoip_disable).toBe(true);
+  });
+
+  it("stops at a depth limit instead of looping on a cycle", () => {
+    const cyclic: Record<string, unknown> = { url: "https://x.test/?a=1" };
+    cyclic.self = cyclic;
+    expect(() => scrubValue(cyclic)).not.toThrow();
+    expect(cyclic.url).toBe("https://x.test/");
   });
 });

@@ -89,13 +89,24 @@ No Sentry. No Datadog. No LogRocket. No analytics scripts detected (Plausible, M
 
 ---
 
+## 5a. Product analytics (PostHog US)
+
+- **Wiring.** `src/lib/analytics.ts` is the only module that talks to posthog-js; `src/instrumentation-client.ts` starts it. It is inert (posthog-js never even loads) without `NEXT_PUBLIC_POSTHOG_KEY`, in local UI mode, and in the E2E/test build (`npm run build:test`); `e2e/analytics.spec.ts` proves the last one in a real browser.
+- **Transport.** Same-origin through the `/ingest/*` route handler (`src/app/ingest/[...path]/route.ts` + `src/lib/ingestProxy.ts`), not a `next.config` rewrite — OpenNext's rewrite proxy forwards every request header, the `sapling_session` cookie included. The handler builds the upstream request from a header allowlist, streams the body through, refuses any path with an encoded dot/slash/backslash or a dot segment, and marks versioned SDK bundles (`/ingest/static/*.js?v=…`) `immutable`.
+- **Content.** Masked autocapture (`mask_all_text`, `mask_all_element_attributes`), no session replay, no exception capture, no copied text. `identify` carries the user UUID only; `person_profiles: 'identified_only'`. Signing in as a different student on the same browser resets first, so two students are never merged into one person.
+- **URLs.** The `/auth/callback` handoff params (`auth_token`, `user_id`, `avatar`, `popup_id`, …) are masked by posthog-js at the source (`custom_personal_data_properties`) — that covers the `/flags` request body and heatmap/web-vitals URLs, which `before_send` cannot fully reach — and `before_send` additionally strips every query string and fragment, recursively.
+- **Client IP — deliberately not forwarded.** The proxy never passes the browser's IP upstream (no `X-Forwarded-For`, never `cf-connecting-ip`), so PostHog only sees the Cloudflare Worker's egress address; geolocation of that address would be fiction, and forwarding the real one would be personal data we don't need. posthog-js has no IP switch of its own (its `ip` option is a documented no-op), so every event carries `$geoip_disable: true` instead. **The PostHog project setting "Discard client IP data" (project settings, "IP data capture") must be ON** so the Worker address isn't stored as `$ip` either — check it whenever the project is recreated or the key rotated.
+- **Opt-out.** Settings → Data → "Product analytics" flips posthog-js consent in this browser at once and PATCHes `analytics_opt_out` to `/api/profile/{user_id}/settings` (the `user_settings.analytics_opt_out` column, backend PR #677). On sign-in the UserProvider reads the account value and applies an opt-out *before* `identify`, so it follows the student to every browser. Only an opt-out is ever applied from the account — `false` or a missing field (a backend that predates the column) leaves this browser's own choice alone, so a local opt-out always wins. Do Not Track / Global Privacy Control show the switch as off and disabled (`respect_dnt`).
+
+---
+
 ## 6. External services NOT used
 
 Worth being explicit: no evidence of any of these in the frontend. If the rebuild adds them, they're greenfield.
 
 - Stripe / Paddle / billing.
 - Intercom / Crisp / in-app chat widgets.
-- Mixpanel / Segment / Heap / analytics.
+- Mixpanel / Segment / Heap (analytics is PostHog — §5a).
 - Sentry / Rollbar / error-tracking SDKs.
 - TipTap / Monaco / ProseMirror / rich-text editors.
 - Chart.js / Recharts / Victory — the only data viz is the d3 `KnowledgeGraph`.
@@ -136,6 +147,6 @@ Collected from every `process.env.*` reference in `src/`:
 ## 9. Things to rework / decide
 
 - **`framer-motion` appears unused** — check if the rebuild needs it; otherwise drop.
-- ~~**Decide on analytics**~~ — decided: PostHog (US). Wired in `src/lib/analytics.ts` + `src/instrumentation-client.ts`, proxied same-origin through `src/app/ingest/[...path]/route.ts`; masked autocapture, no session replay, opt-out in Settings → Data.
+- ~~**Decide on analytics**~~ — decided: PostHog (US). Wired in `src/lib/analytics.ts` + `src/instrumentation-client.ts`, proxied same-origin through `src/app/ingest/[...path]/route.ts`; masked autocapture, no session replay, account-wide opt-out in Settings → Data. Details and the required "Discard client IP data" project setting in §5a.
 - **Add Sentry (or equivalent)**: the rebuild will have new bugs; client error tracking is cheap insurance.
 - **Replace `SpaceBackground.tsx` dead import (if later added)** — currently unused.
