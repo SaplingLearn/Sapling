@@ -129,4 +129,3 @@ def flush_pending(deps, course_id: str | None) -> list:
     changes = apply_graph_update(deps.user_id, {"evidence": list(deps.pending_evidence)}, course_id)
     deps.pending_evidence.clear()
     return changes
-

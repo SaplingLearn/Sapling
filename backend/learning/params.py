@@ -155,8 +155,10 @@ LEARNER_BRIEF_MAX_MISCONCEPTIONS = 5
 LOOP_LIMITS = {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000}
 GRADER_LIMITS = {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000}
 GRADER_LOW_CONFIDENCE = 0.6
-GRADER_SECOND_OPINION_CONFIDENCE = 0.4  # spec §3.4 / §13 A6 — below this, ONE second grader call on slot grader_second (A22)
-GRADER_SECOND_OPINION_SLOT = "grader_second"  # spec §3.5, A22 — the second opinion's model slot (PKG-05)
+# Spec §3.4 / §13 A6: below GRADER_SECOND_OPINION_CONFIDENCE, ONE second grader
+# call runs on the GRADER_SECOND_OPINION_SLOT model slot (spec §3.5, A22; PKG-05).
+GRADER_SECOND_OPINION_CONFIDENCE = 0.4
+GRADER_SECOND_OPINION_SLOT = "grader_second"
 FEEDBACK_HINT_MAX_SENTENCES = 2  # † PKG-05 grader brief: the hint is short; not a spec value
 GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guard; not a spec value
 LEAK_NGRAM = 6

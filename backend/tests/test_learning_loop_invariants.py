@@ -589,7 +589,9 @@ def test_inv_14_tools_never_write_graph_tables():
         m for m in _modules_imported_by(check_path, BACKEND) if m == "db" or m.startswith("db.")
     ]
     assert not db_imports, f"check.py imports {db_imports}"
-    assert "RunContext" not in check and "Tool(" not in check, "grade_answer is not a tutor tool (A16)"
+    assert "RunContext" not in check and "Tool(" not in check, (
+        "grade_answer is not a tutor tool (A16)"
+    )
 
 
 def test_inv_28_symmetric_missingness(monkeypatch):
@@ -615,12 +617,24 @@ def test_inv_28_symmetric_missingness(monkeypatch):
         SimpleNamespace(letter="B", text="wrong", wrong_key="w_1"),
     ]
     item = SimpleNamespace(
-        id="ci-28", format="mc_reason", options=options, correct_option="A",
-        answer_kind="free", canonical_verified=False, question_hash="qh-28",
+        id="ci-28",
+        format="mc_reason",
+        options=options,
+        correct_option="A",
+        answer_kind="free",
+        canonical_verified=False,
+        question_hash="qh-28",
     )
     for option in ("A", "B"):  # the correct option, then a wrong one
-        deps = SaplingDeps(user_id="u1", course_id="c1", supabase=None, request_id="r1",
-                           session_id="s1", feature="tutor", learning_loop=True)
+        deps = SaplingDeps(
+            user_id="u1",
+            course_id="c1",
+            supabase=None,
+            request_id="r1",
+            session_id="s1",
+            feature="tutor",
+            learning_loop=True,
+        )
         answer = check.CheckAnswer(question_hash="qh-28", selected_option=option, reason="because")
         out = asyncio.run(check.grade_answer(item, answer, deps=deps, node_id="n-28"))
         assert out.unavailable is True and out.evidence is None, option
@@ -629,13 +643,26 @@ def test_inv_28_symmetric_missingness(monkeypatch):
     # A numeric item with a VERIFIED key: a clear mismatch and a match both record
     # nothing (the A22 numeric gate runs only after the grader returned).
     numeric = SimpleNamespace(
-        id="ci-28n", format="free", options=None, correct_option=None,
-        answer_kind="numeric", canonical_answer="9.81", tolerance=0.01,
-        canonical_verified=True, question_hash="qh-28n",
+        id="ci-28n",
+        format="free",
+        options=None,
+        correct_option=None,
+        answer_kind="numeric",
+        canonical_answer="9.81",
+        tolerance=0.01,
+        canonical_verified=True,
+        question_hash="qh-28n",
     )
     for text in ("12.5", "9.81"):
-        deps = SaplingDeps(user_id="u1", course_id="c1", supabase=None, request_id="r1",
-                           session_id="s1", feature="tutor", learning_loop=True)
+        deps = SaplingDeps(
+            user_id="u1",
+            course_id="c1",
+            supabase=None,
+            request_id="r1",
+            session_id="s1",
+            feature="tutor",
+            learning_loop=True,
+        )
         answer = check.CheckAnswer(question_hash="qh-28n", answer_text=text)
         out = asyncio.run(check.grade_answer(numeric, answer, deps=deps, node_id="n-28"))
         assert out.unavailable is True and deps.pending_evidence == [], text

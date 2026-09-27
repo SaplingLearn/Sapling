@@ -1531,7 +1531,10 @@ def flush_pending(deps, course_id):
     [
         (_FLUSH, ["flush_pending"]),
         (_FLUSH.replace("def flush_pending", "def persist_more"), ["persist_more"]),
-        (_FLUSH.replace("apply_graph_update(deps", "gs.apply_graph_update(deps"), ["flush_pending"]),
+        (
+            _FLUSH.replace("apply_graph_update(deps", "gs.apply_graph_update(deps"),
+            ["flush_pending"],
+        ),
         (_FLUSH.replace('{"evidence": list(', '{"updated_nodes": [], "evidence": list('), []),
         (_FLUSH.replace('{"evidence": list(deps.pending_evidence)}', "payload"), []),
         (_FLUSH.replace('{"evidence": ', '{"new_nodes": '), []),
@@ -1741,10 +1744,20 @@ class TestGraderBackend:
             _ev(grader_backend="gpt")
 
     def test_evidence_row_journals_grader_backend_null_when_absent(self):
-        _, mocks, _ = _apply({"evidence": [
-            {"node_id": "n1", "channel": "free_response", "correct": True, "grader_backend": "gemini"},
-            {"node_id": "n1", "channel": "mc", "correct": False},
-        ]}, edges=[])
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {
+                        "node_id": "n1",
+                        "channel": "free_response",
+                        "correct": True,
+                        "grader_backend": "gemini",
+                    },
+                    {"node_id": "n1", "channel": "mc", "correct": False},
+                ]
+            },
+            edges=[],
+        )
         first, second = _event_rows(mocks)
         assert first["grader_backend"] == "gemini"
         assert "grader_backend" in second and second["grader_backend"] is None

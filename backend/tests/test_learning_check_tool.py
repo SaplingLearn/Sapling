@@ -5,6 +5,7 @@ Hermetic: the grader agent runs on a FunctionModel; grade_answer's one seam
 here may touch table() for a graph table. Items are real, decrypted
 `learning.checks.CheckItem`s (HANDOFF-04: rubric / common_wrong are models,
 and the correct option's `wrong_key` is None)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -46,8 +47,10 @@ def _item(**over) -> CheckItem:
         difficulty=1,
         prompt="Why does every recursive function need a base case?",
         reference_answer=REFERENCE,
-        rubric=[RubricItem(id="r1", text="names the base case"),
-                RubricItem(id="r2", text="explains unbounded growth")],
+        rubric=[
+            RubricItem(id="r1", text="names the base case"),
+            RubricItem(id="r2", text="explains unbounded growth"),
+        ],
         common_wrong=[WrongReason(key="w_loop", text="confuses recursion with a loop")],
         options=None,
         correct_option=None,
@@ -64,27 +67,45 @@ def _item(**over) -> CheckItem:
 
 
 def _mc_item(**over) -> CheckItem:
-    options = [Option(letter=letter, text=text, wrong_key=key) for letter, text, key in (
-        ("A", "It stops the recursion", None),
-        ("B", "It makes recursion faster", "w_speed"),
-        ("C", "Recursion is a loop that ends on its own", "w_loop"),
-    )]
-    base = dict(format="mc_reason", options=options, correct_option="A",
-                common_wrong=[WrongReason(key="w_loop", text="confuses recursion with a loop"),
-                              WrongReason(key="w_speed", text="says the base case is only for speed")])
+    options = [
+        Option(letter=letter, text=text, wrong_key=key)
+        for letter, text, key in (
+            ("A", "It stops the recursion", None),
+            ("B", "It makes recursion faster", "w_speed"),
+            ("C", "Recursion is a loop that ends on its own", "w_loop"),
+        )
+    ]
+    base = dict(
+        format="mc_reason",
+        options=options,
+        correct_option="A",
+        common_wrong=[
+            WrongReason(key="w_loop", text="confuses recursion with a loop"),
+            WrongReason(key="w_speed", text="says the base case is only for speed"),
+        ],
+    )
     base.update(over)
     return _item(**base)
 
 
 def _numeric_item(**over) -> CheckItem:
-    base = dict(answer_kind="numeric", canonical_answer="9.81", tolerance=0.01, canonical_verified=True)
+    base = dict(
+        answer_kind="numeric", canonical_answer="9.81", tolerance=0.01, canonical_verified=True
+    )
     base.update(over)
     return _item(**base)
 
 
 def _deps(**over) -> SaplingDeps:
-    kw = dict(user_id="u1", course_id="c1", supabase=None, request_id="r1",
-              session_id="s1", feature="tutor", learning_loop=True)
+    kw = dict(
+        user_id="u1",
+        course_id="c1",
+        supabase=None,
+        request_id="r1",
+        session_id="s1",
+        feature="tutor",
+        learning_loop=True,
+    )
     kw.update(over)
     return SaplingDeps(**kw)
 
@@ -96,14 +117,20 @@ def _scripted_grader(outputs: list[dict]):
     def handler(messages, info):
         payload = outputs[min(calls["n"], len(outputs) - 1)]
         calls["n"] += 1
-        return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=payload)])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=payload)]
+        )
 
     return FunctionModel(handler), calls
 
 
 def _good(conf: float = 0.9) -> dict:
-    return {"item_results": ["r1:yes", "r2:yes"], "confidence": conf,
-            "matched_wrong_key": "", "feedback_hint": "Think about what stops the calls."}
+    return {
+        "item_results": ["r1:yes", "r2:yes"],
+        "confidence": conf,
+        "matched_wrong_key": "",
+        "feedback_hint": "Think about what stops the calls.",
+    }
 
 
 def _partial(conf: float = 0.9) -> dict:
@@ -119,7 +146,9 @@ def test_build_grader_message_has_every_section():
     text = build_grader_message(_item(), format="free", student_answer="It stops the calls.")
     assert "QUESTION:" in text and REFERENCE in text and "FORMAT: free" in text
     assert re.search(r"^RUBRIC ITEM r1:", text, re.M) and re.search(r"^RUBRIC ITEM r2:", text, re.M)
-    assert re.search(r"^COMMON WRONG REASON w_loop:", text, re.M) and text.rstrip().endswith("It stops the calls.")
+    assert re.search(r"^COMMON WRONG REASON w_loop:", text, re.M) and text.rstrip().endswith(
+        "It stops the calls."
+    )
     assert GRADER_LIMITS.tool_calls_limit == 0
 
 
@@ -142,7 +171,10 @@ def test_parse_item_results_a_contradicted_id_is_no():
     """Strictness is the safer bias: an id judged both yes and no counts as no."""
     from agents.grader import parse_item_results
 
-    assert parse_item_results(["r1:yes", "r1:no", " r2 : Yes "], ["r1", "r2"]) == {"r1": False, "r2": True}
+    assert parse_item_results(["r1:yes", "r1:no", " r2 : Yes "], ["r1", "r2"]) == {
+        "r1": False,
+        "r2": True,
+    }
     assert parse_item_results(["r1:no", "r1:yes"], ["r1"]) == {"r1": False}
 
 
@@ -230,11 +262,14 @@ def test_second_opinion_settings_pin_thinking_off():
     assert g._SECOND_OPINION_SETTINGS["google_thinking_config"].thinking_budget == 0
 
 
-@pytest.mark.parametrize("exc", [
-    UsageLimitExceeded("budget"),
-    UnexpectedModelBehavior("garbage"),
-    ModelHTTPError(status_code=503, model_name="gemini-2.5-flash-lite", body="UNAVAILABLE"),
-])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        UsageLimitExceeded("budget"),
+        UnexpectedModelBehavior("garbage"),
+        ModelHTTPError(status_code=503, model_name="gemini-2.5-flash-lite", body="UNAVAILABLE"),
+    ],
+)
 def test_grade_degrades_honestly(monkeypatch, caplog, exc):
     import agents.grader as g
 
@@ -256,7 +291,9 @@ def test_grade_degrades_when_the_second_opinion_fails(monkeypatch, caplog):
     async def _run(message, **kw):
         calls.append(kw)
         if len(calls) == 1:
-            return SimpleNamespace(output=g.GraderOutput(**_good(GRADER_SECOND_OPINION_CONFIDENCE / 2)))
+            return SimpleNamespace(
+                output=g.GraderOutput(**_good(GRADER_SECOND_OPINION_CONFIDENCE / 2))
+            )
         raise UnexpectedModelBehavior("garbage")
 
     monkeypatch.setattr(g.grader_agent, "run", _run)
@@ -296,8 +333,14 @@ def test_e2e_grader_handler_all_yes_on_token(_clean_registry, monkeypatch):
     with g.grader_agent.override(model=model_for("grader")):
         from agents.function_handlers_e2e import E2E_GRADER_CORRECT_TOKEN, E2E_GRADER_HINT
 
-        yes = asyncio.run(g.grade(_item(), format="free",
-                                  student_answer=f"answer {E2E_GRADER_CORRECT_TOKEN}", deps=_deps()))
+        yes = asyncio.run(
+            g.grade(
+                _item(),
+                format="free",
+                student_answer=f"answer {E2E_GRADER_CORRECT_TOKEN}",
+                deps=_deps(),
+            )
+        )
         no = asyncio.run(g.grade(_item(), format="free", student_answer="a loop", deps=_deps()))
     assert yes.all_yes is True and yes.item_results == {"r1": True, "r2": True}
     assert yes.feedback_hint == E2E_GRADER_HINT and yes.low_confidence is False
@@ -315,8 +358,14 @@ def test_e2e_grader_handler_serves_both_slots(_clean_registry, monkeypatch):
         with g.grader_agent.override(model=model_for(slot)):
             from agents.function_handlers_e2e import E2E_GRADER_CORRECT_TOKEN
 
-            res = asyncio.run(g.grade(_item(), format="free",
-                                      student_answer=f"x {E2E_GRADER_CORRECT_TOKEN}", deps=_deps()))
+            res = asyncio.run(
+                g.grade(
+                    _item(),
+                    format="free",
+                    student_answer=f"x {E2E_GRADER_CORRECT_TOKEN}",
+                    deps=_deps(),
+                )
+            )
         assert res.unavailable is False and res.all_yes is True, slot
 
 
@@ -332,8 +381,9 @@ def test_e2e_grader_handler_reads_rubric_ids_off_the_message(_clean_registry, mo
     with g.grader_agent.override(model=model_for("grader")):
         from agents.function_handlers_e2e import E2E_GRADER_CONFIDENCE, E2E_GRADER_CORRECT_TOKEN
 
-        res = asyncio.run(g.grade(item, format="teachback",
-                                  student_answer=E2E_GRADER_CORRECT_TOKEN, deps=_deps()))
+        res = asyncio.run(
+            g.grade(item, format="teachback", student_answer=E2E_GRADER_CORRECT_TOKEN, deps=_deps())
+        )
     assert res.item_results == {"rubric_0": True, "rubric_1": True, "rubric_2": True}
     assert res.confidence == E2E_GRADER_CONFIDENCE >= GRADER_LOW_CONFIDENCE
 
@@ -344,8 +394,13 @@ def test_e2e_grader_handler_reads_rubric_ids_off_the_message(_clean_registry, mo
 def _result(**over):
     from agents.grader import GradeResult
 
-    base = dict(item_results={"r1": True, "r2": True}, all_yes=True, confidence=0.9,
-                feedback_hint="Think about what stops the calls.", backend="gemini")
+    base = dict(
+        item_results={"r1": True, "r2": True},
+        all_yes=True,
+        confidence=0.9,
+        feedback_hint="Think about what stops the calls.",
+        backend="gemini",
+    )
     base.update(over)
     return GradeResult(**base)
 
@@ -401,7 +456,10 @@ def test_idk_is_incorrect_on_the_items_channel_without_grader(check):
     assert out.grader_backend is None and out.confidence is None and out.wrong_key is None
 
 
-@pytest.mark.parametrize("fmt,channel", [("free", "free_response"), ("teachback", "teachback_llm"), ("mc_reason", "mc_reasoned")])
+@pytest.mark.parametrize(
+    "fmt,channel",
+    [("free", "free_response"), ("teachback", "teachback_llm"), ("mc_reason", "mc_reasoned")],
+)
 def test_channel_mapping(check, fmt, channel):
     _, state = check
     state["item"] = _mc_item() if fmt == "mc_reason" else _item(format=fmt)
@@ -455,7 +513,10 @@ def test_mc_reason_right_option_with_failed_reason_is_incorrect(check):
 def test_mc_reason_option_is_compared_case_and_whitespace_insensitively(check):
     _, state = check
     state["item"] = _mc_item()
-    assert _run(check, _deps(), _answer(selected_option="  a ", reason="because it stops")).correct is True
+    assert (
+        _run(check, _deps(), _answer(selected_option="  a ", reason="because it stops")).correct
+        is True
+    )
 
 
 def test_mc_reason_without_an_option_is_incorrect_but_still_graded(check):
@@ -470,13 +531,21 @@ def test_mc_reason_without_an_option_is_incorrect_but_still_graded(check):
 def test_wrong_key_only_when_the_reason_matches_the_chosen_option(check):
     _, state = check
     state["item"] = _mc_item()
-    state["result"] = _result(item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
-    matched = _run(check, _deps(), _answer(selected_option="C", reason="it loops until done"))    # C → w_loop
-    unmatched = _run(check, _deps(), _answer(selected_option="B", reason="it loops until done"))  # B → w_speed
+    state["result"] = _result(
+        item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
+    )
+    matched = _run(
+        check, _deps(), _answer(selected_option="C", reason="it loops until done")
+    )  # C → w_loop
+    unmatched = _run(
+        check, _deps(), _answer(selected_option="B", reason="it loops until done")
+    )  # B → w_speed
     right_option = _run(check, _deps(), _answer(selected_option="A", reason="it loops until done"))
     assert matched.wrong_key == "w_loop" and matched.matched_wrong_key == "w_loop"
     assert unmatched.wrong_key is None and unmatched.matched_wrong_key == "w_loop"
-    assert right_option.correct is False and right_option.wrong_key == "w_loop"  # the reason matched (§3.3)
+    assert (
+        right_option.correct is False and right_option.wrong_key == "w_loop"
+    )  # the reason matched (§3.3)
 
 
 def test_no_wrong_key_when_correct_or_nothing_matched(check):
@@ -517,7 +586,9 @@ def test_numeric_clear_mismatch_is_deterministic_incorrect(check):
 def test_numeric_mismatch_keeps_the_graders_matched_key(check):
     _, state = check
     state["item"] = _numeric_item()
-    state["result"] = _result(item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
+    state["result"] = _result(
+        item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
+    )
     out = _run(check, _deps(), _answer(answer_text="12.5"))
     assert out.grader_backend == "deterministic" and out.wrong_key == "w_loop"
 
@@ -533,15 +604,18 @@ def test_numeric_item_under_grader_outage_records_neither_outcome(check, answer_
     assert out.unavailable is True and out.evidence is None and deps.pending_evidence == []
 
 
-@pytest.mark.parametrize("answer_text,over", [
-    ("9.815", {}),                              # within tolerance → the rubric grader decides
-    ("9.81", {"tolerance": None}),              # exact match, no tolerance → the rubric grader
-    ("about nine point eight", {}),             # parse failure → the rubric grader
-    ("inf", {}),                                # not finite → the rubric grader
-    ("12.5", {"canonical_verified": False}),    # unverified key → the rubric grader
-    ("12.5", {"canonical_answer": "g"}),        # unparseable key → the rubric grader
-    ("12.5", {"answer_kind": "free"}),          # not a numeric item → the rubric grader
-])
+@pytest.mark.parametrize(
+    "answer_text,over",
+    [
+        ("9.815", {}),  # within tolerance → the rubric grader decides
+        ("9.81", {"tolerance": None}),  # exact match, no tolerance → the rubric grader
+        ("about nine point eight", {}),  # parse failure → the rubric grader
+        ("inf", {}),  # not finite → the rubric grader
+        ("12.5", {"canonical_verified": False}),  # unverified key → the rubric grader
+        ("12.5", {"canonical_answer": "g"}),  # unparseable key → the rubric grader
+        ("12.5", {"answer_kind": "free"}),  # not a numeric item → the rubric grader
+    ],
+)
 def test_numeric_gate_never_issues_correct(check, answer_text, over):
     _, state = check
     state["item"] = _numeric_item(**over)
@@ -566,14 +640,23 @@ def test_grader_backend_values(check):
     state["result"] = _result(backend="gemini_second")
     _run(check, deps, _answer())
     _run(check, deps, _answer(idk=True))
-    assert [ev["grader_backend"] for ev in deps.pending_evidence] == ["gemini", "gemini_second", None]
+    assert [ev["grader_backend"] for ev in deps.pending_evidence] == [
+        "gemini",
+        "gemini_second",
+        None,
+    ]
 
 
 def test_unassisted_correct_is_full_weight(check):
     deps = _deps()
     _run(check, deps, _answer())
     [ev] = deps.pending_evidence
-    assert ev["correct"] is True and ev["assisted"] is False and ev["weight"] == 1.0 and ev["max_rung"] == 0
+    assert (
+        ev["correct"] is True
+        and ev["assisted"] is False
+        and ev["weight"] == 1.0
+        and ev["max_rung"] == 0
+    )
     assert ev["confidence"] == 0.9
 
 
@@ -590,7 +673,9 @@ def test_recheck_and_low_confidence_multiply(check):
     deps = _deps()
     _run(check, deps, _answer(), max_rung=RUNG_ASSISTED_MAX, same_session_recheck=True)
     [ev] = deps.pending_evidence
-    assert ev["weight"] == pytest.approx(WEIGHT_ASSISTED * WEIGHT_SAME_SESSION_RECHECK * WEIGHT_LOW_CONFIDENCE)
+    assert ev["weight"] == pytest.approx(
+        WEIGHT_ASSISTED * WEIGHT_SAME_SESSION_RECHECK * WEIGHT_LOW_CONFIDENCE
+    )
     assert ev["same_session_recheck"] is True
 
 
@@ -617,7 +702,9 @@ def test_correct_after_h4_plus_has_zero_weight_but_is_appended(check):
 
 def test_wrong_after_h4_plus_keeps_standard_weight(check):
     _, state = check
-    state["result"] = _result(item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
+    state["result"] = _result(
+        item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
+    )
     deps = _deps()
     out = _run(check, deps, _answer(), max_rung=RUNG_NO_CREDIT_MIN + 1)
     [ev] = deps.pending_evidence
@@ -665,7 +752,9 @@ def test_grade_answer_never_touches_db_tables(check, monkeypatch):
     import db.connection as dbconn
 
     names = []
-    monkeypatch.setattr(dbconn, "table", lambda name, *a, **k: names.append(name) or SimpleNamespace())
+    monkeypatch.setattr(
+        dbconn, "table", lambda name, *a, **k: names.append(name) or SimpleNamespace()
+    )
     _run(check, _deps(), _answer())
     _run(check, _deps(), _answer(idk=True))
     assert names == []
@@ -679,10 +768,18 @@ def test_flush_pending_calls_apply_graph_update_once_and_clears(monkeypatch):
     from learning import evidence as ev
 
     calls = []
-    monkeypatch.setattr(gs, "apply_graph_update", lambda uid, gu, cid=None: calls.append((uid, gu, cid)) or [{"concept": "x"}])
+    monkeypatch.setattr(
+        gs,
+        "apply_graph_update",
+        lambda uid, gu, cid=None: calls.append((uid, gu, cid)) or [{"concept": "x"}],
+    )
     deps = _deps()
-    deps.pending_evidence.extend([{"node_id": "n1", "channel": "free_response", "correct": True},
-                                  {"node_id": "n1", "channel": "free_response", "idk": True, "correct": False}])
+    deps.pending_evidence.extend(
+        [
+            {"node_id": "n1", "channel": "free_response", "correct": True},
+            {"node_id": "n1", "channel": "free_response", "idk": True, "correct": False},
+        ]
+    )
     out = ev.flush_pending(deps, "c1")
     assert out == [{"concept": "x"}]
     assert len(calls) == 1
@@ -720,7 +817,9 @@ def test_flush_pending_sends_a_snapshot_not_the_live_list(monkeypatch):
     from learning import evidence as ev
 
     sent = []
-    monkeypatch.setattr(gs, "apply_graph_update", lambda uid, gu, cid=None: sent.append(gu["evidence"]) or [])
+    monkeypatch.setattr(
+        gs, "apply_graph_update", lambda uid, gu, cid=None: sent.append(gu["evidence"]) or []
+    )
     deps = _deps()
     deps.pending_evidence.append({"node_id": "n1", "channel": "mc", "correct": True})
     ev.flush_pending(deps, "c1")
@@ -734,12 +833,17 @@ def test_grade_answer_then_flush_pending_reaches_the_single_writer(check, monkey
     from learning import evidence as ev
 
     payloads = []
-    monkeypatch.setattr(gs, "apply_graph_update", lambda uid, gu, cid=None: payloads.append(gu) or [])
+    monkeypatch.setattr(
+        gs, "apply_graph_update", lambda uid, gu, cid=None: payloads.append(gu) or []
+    )
     deps = _deps()
     _run(check, deps, _answer())
     _run(check, deps, _answer(idk=True))
     assert ev.flush_pending(deps, "c1") == []
     [payload] = payloads
     rows = [ev.Evidence.model_validate(row) for row in payload["evidence"]]
-    assert [(r.correct, r.idk, r.grader_backend) for r in rows] == [(True, False, "gemini"), (False, True, None)]
+    assert [(r.correct, r.idk, r.grader_backend) for r in rows] == [
+        (True, False, "gemini"),
+        (False, True, None),
+    ]
     assert deps.pending_evidence == []

@@ -95,7 +95,9 @@ def _wrong_key(item, answer: CheckAnswer, *, correct: bool, matched: str | None)
         return None
     if item.format != _MC_REASON or _option_matches(answer.selected_option, item.correct_option):
         return matched
-    chosen = next((o for o in item.options or [] if _norm(o.letter) == _norm(answer.selected_option)), None)
+    chosen = next(
+        (o for o in item.options or [] if _norm(o.letter) == _norm(answer.selected_option)), None
+    )
     return matched if chosen is not None and chosen.wrong_key == matched else None
 
 
@@ -148,7 +150,9 @@ async def grade_answer(
 
     student_answer = answer.answer_text
     if item.format == _MC_REASON:  # the reason check runs for BOTH option outcomes (A22)
-        student_answer = f"Selected option: {answer.selected_option or ''}\nReason: {answer.reason or ''}"
+        student_answer = (
+            f"Selected option: {answer.selected_option or ''}\nReason: {answer.reason or ''}"
+        )
     result = await grade(item, format=item.format, student_answer=student_answer, deps=deps)
     if result.unavailable:  # A22 / invariant 28: nothing for EITHER outcome
         return GradeOutcome(unavailable=True)

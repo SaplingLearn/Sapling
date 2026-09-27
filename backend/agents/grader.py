@@ -57,7 +57,9 @@ class GraderOutput(BaseModel):
     item_results: list[str] = Field(
         description='One entry per rubric item, exactly "<rubric_id>:yes" or "<rubric_id>:no".'
     )
-    confidence: float = Field(ge=0.0, le=1.0, description="Your confidence in the whole judgment, 0 to 1.")
+    confidence: float = Field(
+        ge=0.0, le=1.0, description="Your confidence in the whole judgment, 0 to 1."
+    )
     matched_wrong_key: str = Field(
         default="",
         description="The COMMON WRONG REASON key the student's reasoning matches, or an empty string.",
@@ -121,7 +123,14 @@ def build_grader_message(item, *, format: str, student_answer: str) -> str:
     """The single user message. Line shapes are load-bearing: the function-mode
     handler regexes `^RUBRIC ITEM <id>:` to script per-item results. `item` is a
     decrypted `learning.checks.CheckItem` (rubric / common_wrong are models)."""
-    lines = ["QUESTION:", item.prompt, "", "REFERENCE ANSWER (never reveal):", item.reference_answer, ""]
+    lines = [
+        "QUESTION:",
+        item.prompt,
+        "",
+        "REFERENCE ANSWER (never reveal):",
+        item.reference_answer,
+        "",
+    ]
     for r in item.rubric:
         lines.append(f"RUBRIC ITEM {r.id}: {r.text}")
     lines.append("")
@@ -144,7 +153,9 @@ def parse_item_results(entries: list[str], rubric_ids: list[str]) -> dict[str, b
     return {rid: seen.get(rid, False) for rid in rubric_ids}
 
 
-async def _run_once(message: str, deps: SaplingDeps, *, second_opinion: bool = False) -> GraderOutput:
+async def _run_once(
+    message: str, deps: SaplingDeps, *, second_opinion: bool = False
+) -> GraderOutput:
     if second_opinion:  # A22: another model, same agent and prompt, own limits and usage row
         result = await grader_agent.run(
             message,
@@ -170,10 +181,13 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     try:
         out = await _run_once(message, deps)
         if out.confidence < GRADER_SECOND_OPINION_CONFIDENCE:
-            out = await _run_once(message, deps, second_opinion=True)  # spec §3.4: ONE second opinion
+            # spec §3.4: ONE second opinion, on the grader_second slot (A22)
+            out = await _run_once(message, deps, second_opinion=True)
             backend = "gemini_second"
             if out.confidence < GRADER_SECOND_OPINION_CONFIDENCE:
-                logger.warning("grader unavailable for item %s: confidence below floor twice", item.id)
+                logger.warning(
+                    "grader unavailable for item %s: confidence below floor twice", item.id
+                )
                 return GradeResult(unavailable=True)
     except _GRADER_FAILURES as exc:
         logger.warning("grader unavailable for item %s: %s", item.id, exc)
