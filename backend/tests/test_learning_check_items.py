@@ -3507,6 +3507,87 @@ class TestFinalAnswerEval:
         assert score(_draft(final_answer="")) == 0.0
 
 
+class TestMcReasonEval:
+    """Spec §13 A37: the recorded check_items dataset requires every
+    mc_reason draft to be stored — valid once repair_draft made the repairs
+    that need no guess, exactly as create_items stores it."""
+
+    @staticmethod
+    def _score(*drafts):
+        import importlib.util
+        import sys
+        from types import SimpleNamespace
+
+        path = pathlib.Path(__file__).parent / "evals" / "check_items.py"
+        spec = importlib.util.spec_from_file_location("_eval_check_items_mc", path)
+        mod = importlib.util.module_from_spec(spec)
+        saved = list(sys.path)  # the eval module prepends tests/evals to sys.path
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path[:] = saved
+        ctx = SimpleNamespace(output=SimpleNamespace(items=list(drafts)))
+        return mod.McReasonValidEvaluator().evaluate(ctx)
+
+    @staticmethod
+    def _options_score(*drafts):
+        import importlib.util
+        import sys
+        from types import SimpleNamespace
+
+        path = pathlib.Path(__file__).parent / "evals" / "check_items.py"
+        spec = importlib.util.spec_from_file_location("_eval_check_items_opts", path)
+        mod = importlib.util.module_from_spec(spec)
+        saved = list(sys.path)
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path[:] = saved
+        ctx = SimpleNamespace(output=SimpleNamespace(items=list(drafts)))
+        return mod.McOptionsValidEvaluator().evaluate(ctx)
+
+    def test_the_baselines_pin_the_option_contract_and_the_recorded_yield(self):
+        """McOptionsValid — every recorded mc_reason draft passes every A37
+        option rule — is required at 1.0. McReasonValid is the recorded share
+        of mc_reason drafts stored (16/18: the two drops are A34 final_answer
+        rules — the answer printed in the stem, the concept's own name — that
+        every format meets); a re-record changes it here consciously."""
+        baselines = pathlib.Path(__file__).parent / "evals" / "baselines.json"
+        scores = json.loads(baselines.read_text())["check_items"]
+        assert scores["McOptionsValidEvaluator"] == 1.0
+        assert scores["McReasonValidEvaluator"] == round(16 / 18, 6)
+
+    def test_options_valid_reads_only_the_a37_option_rules(self):
+        from learning.checks import MC_OPTION_RULES
+
+        assert MC_OPTION_RULES == (
+            "option_count",
+            "one_correct",
+            "correct_key",
+            "distractor_key",
+            "option_text",
+            "letter",
+        )
+        a34_only = _mc_draft(final_answer="The loss value")  # not the correct option's text
+        shared = _mc_draft(options=_opts(_CORRECT, _ITER, (_LOSS[0], False, _ITER[2]), _SIGN))
+        repairable = _mc_draft(
+            options=_opts((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN)
+        )
+        assert self._options_score(a34_only, repairable, _draft(rubric=[])) == 1.0
+        assert self._options_score(_mc_draft(), shared) == 0.5
+        assert self._options_score(_draft()) == 0.0  # no mc_reason draft at all is a miss
+
+    def test_it_scores_the_share_of_mc_reason_drafts_that_would_be_stored(self):
+        repairable = _mc_draft(
+            options=_opts((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN)
+        )
+        broken = _mc_draft(options=_opts(_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN))
+        assert self._score(_mc_draft(), _draft(rubric=[])) == 1.0  # other formats aside
+        assert self._score(repairable) == 1.0  # the service repairs it, then stores it
+        assert self._score(_mc_draft(), broken) == 0.5
+        assert self._score(_draft()) == 0.0  # no mc_reason draft at all is a miss
+
+
 class TestProjectRef:
     @pytest.mark.parametrize(
         "url,ref",

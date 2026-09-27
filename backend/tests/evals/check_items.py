@@ -14,8 +14,15 @@ Evaluators score the contracts the service enforces in code
 (learning/checks.py::validate_draft) plus grounding: every item has a
 reference answer, >= CHECK_ITEM_MIN_RUBRIC rubric items and >=
 CHECK_ITEM_MIN_WRONG paired, unique wrong reasons, cites only input chunk ids,
-never leaks its reference into the prompt, and passes validate_draft (the A22
-option / numeric / stepwise rules and the A34 final_answer rules included).
+never leaks its reference into the prompt, and is stored — valid under
+validate_draft once repair_draft has made the repairs that need no guess,
+exactly as check_item_service.create_items stores it (the A22 / A37 option,
+numeric and stepwise rules and the A34 final_answer rules included).
+McOptionsValid (spec §13 A37) is required at 1.0: every mc_reason draft's
+options pass every A37 option rule, and a case with no mc_reason draft scores
+0.0 — the live sequence test of 2026-09-27 stored 0 of 12 when the options were
+parallel arrays. McReasonValid is the share of mc_reason drafts stored (the A34
+final_answer rules included), gated at its recorded rate.
 FinalAnswerValid (spec §13 A34) is required at 1.0: every accepted draft states
 a final_answer copied character for character from its reference_answer (a
 substring, surrounding whitespace and a closing period aside) that is not in
@@ -40,7 +47,13 @@ from pydantic_evals import Case, Dataset  # noqa: E402
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext  # noqa: E402
 
 from agents.check_items import CheckItemsOutput, build_prompt, check_items_agent  # noqa: E402
-from learning.checks import answer_in, leak_in_prompt, validate_draft  # noqa: E402
+from learning.checks import (  # noqa: E402
+    MC_OPTION_RULES,
+    answer_in,
+    leak_in_prompt,
+    repair_draft,
+    validate_draft,
+)
 from learning.params import CHECK_ITEM_MIN_RUBRIC, CHECK_ITEM_MIN_WRONG  # noqa: E402
 from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     MODE,
@@ -138,14 +151,48 @@ class NoLeakInPromptEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return _every(ctx, lambda i: not leak_in_prompt(i.prompt, i.reference_answer))
 
 
+def _stored(draft) -> bool:
+    """Whether create_items would store `draft`: valid once repaired (A37)."""
+    return validate_draft(repair_draft(draft)[0]) == []
+
+
 @dataclass
 class DraftValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
-    """Share of items passing validate_draft — the A22 option / numeric /
-    stepwise rules included (partial credit)."""
+    """Share of items that would be stored — the A22 / A37 option, numeric
+    and stepwise rules included, after repair_draft (partial credit)."""
 
     def evaluate(self, ctx: _Ctx) -> float:
         items = ctx.output.items
-        return sum(validate_draft(i) == [] for i in items) / len(items) if items else 0.0
+        return sum(_stored(i) for i in items) / len(items) if items else 0.0
+
+
+def _mc_share(ctx: _Ctx, pred) -> float:
+    """The share of the case's mc_reason drafts satisfying pred; 0.0 when it
+    has none (the mc_reasoned channel would have no items)."""
+    mc = [i for i in ctx.output.items if i.format == "mc_reason"]
+    return sum(pred(i) for i in mc) / len(mc) if mc else 0.0
+
+
+@dataclass
+class McReasonValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37: the share of the case's mc_reason drafts that would be stored."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        return _mc_share(ctx, _stored)
+
+
+@dataclass
+class McOptionsValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37, required 1.0: the share of the case's mc_reason drafts whose
+    options pass every A37 option rule (MC_OPTION_RULES) once repaired — the
+    structure the parallel arrays broke; the A34 rules are McReasonValid's."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        def options_ok(draft) -> bool:
+            reasons = validate_draft(repair_draft(draft)[0])
+            return not any(r.startswith(f"{rule}:") for r in reasons for rule in MC_OPTION_RULES)
+
+        return _mc_share(ctx, options_ok)
 
 
 def _copied(final_answer: str, text: str) -> bool:
@@ -157,12 +204,12 @@ def _copied(final_answer: str, text: str) -> bool:
 
 @dataclass
 class FinalAnswerValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
-    """A34, required 1.0: every accepted draft (validate_draft == []) states a
-    final_answer copied verbatim from its reference_answer and not in its
-    prompt; 0.0 when no draft is accepted."""
+    """A34, required 1.0: every accepted draft (one create_items would
+    store) states a final_answer copied verbatim from its reference_answer and
+    not in its prompt; 0.0 when no draft is accepted."""
 
     def evaluate(self, ctx: _Ctx) -> float:
-        accepted = [i for i in ctx.output.items if validate_draft(i) == []]
+        accepted = [i for i in ctx.output.items if _stored(i)]
         ok = all(
             _copied(i.final_answer, i.reference_answer) and not answer_in(i.prompt, i.final_answer)
             for i in accepted
@@ -200,6 +247,8 @@ def make_dataset() -> Dataset[CheckItemsInput, CheckItemsOutput]:
             CitesChunkEvaluator(),
             NoLeakInPromptEvaluator(),
             DraftValidEvaluator(),
+            McReasonValidEvaluator(),
+            McOptionsValidEvaluator(),
             FinalAnswerValidEvaluator(),
         ],
     )
