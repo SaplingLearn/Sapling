@@ -3,9 +3,17 @@ clocks are floats, the only I/O is a mocked `table`."""
 
 from __future__ import annotations
 
+import logging
+import pathlib
+import re
+from unittest.mock import MagicMock
+
 import pytest
 
 from learning import params
+
+BACKEND = pathlib.Path(__file__).resolve().parents[1]
+MIG_DIR = BACKEND / "db" / "migrations"
 
 PARAM_NAMES = (
     "BKT_PROFICIENT",
@@ -1068,3 +1076,138 @@ def test_pkg04_check_item_satisfies_item_like():
     p = deterministic_content(Rung.H4, active, [active, sibling], [])
     assert p is not None and p.revealed_hash == "b" * 64
     assert deterministic_content(Rung.H6, active, [], []).text == "3x^2"
+
+
+# ── sessions.loop_state: migration + store ───────────────────────────────────
+
+
+def test_migration_adds_loop_state_jsonb_default_empty():
+    hits = sorted(MIG_DIR.glob("*_learning_session_loop_state.sql"))
+    assert len(hits) == 1, f"expected exactly one loop_state migration, got {hits}"
+    sql = hits[0].read_text()
+    assert re.fullmatch(r"\d{14}_learning_session_loop_state\.sql", hits[0].name)
+    assert re.search(
+        r"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS loop_state jsonb NOT NULL DEFAULT '\{\}'::jsonb;",
+        sql,
+    )
+    assert "PKG-06" in sql
+
+
+def test_migration_sorts_after_the_sessions_table():
+    """A replay from empty applies it after 0025 creates `sessions`, and after
+    every frozen NNNN_ file (the runner applies basenames in sorted order)."""
+    names = sorted(p.name for p in MIG_DIR.glob("*.sql"))
+    mine = next(n for n in names if n.endswith("_learning_session_loop_state.sql"))
+    frozen = [n for n in names if re.match(r"\d{4}_", n)]
+    assert "0025_study_integrity.sql" in frozen
+    assert all(n < mine for n in frozen)
+
+
+def _sessions_table(select_rows=None, update_rows=None):
+    mock = MagicMock(name="sessions")
+    mock.select.return_value = select_rows if select_rows is not None else []
+    mock.update.return_value = update_rows if update_rows is not None else []
+    mock.upsert.return_value = [{"id": "s1"}]
+    return mock
+
+
+def test_load_loop_state_reads_by_session_id_and_round_trips(monkeypatch):
+    from learning import loop_state_store
+    from learning.policy import LoopState
+
+    state = LoopState(current="q" * 64, checks_since_rating=4)
+    state.steps[state.current] = _step(fails=1, attempts=(1001.0,))
+    t = _sessions_table(select_rows=[{"loop_state": state.to_json()}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: t if name == "sessions" else None)
+    assert loop_state_store.load_loop_state("s1") == state
+    t.select.assert_called_once_with("loop_state", filters={"id": "eq.s1"}, limit=1)
+
+
+def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
+    from learning import loop_state_store
+    from learning.policy import LoopState
+
+    monkeypatch.setattr(loop_state_store, "table", lambda name: _sessions_table(select_rows=[]))
+    assert loop_state_store.load_loop_state("s1") == LoopState()
+    monkeypatch.setattr(
+        loop_state_store,
+        "table",
+        lambda name: _sessions_table(select_rows=[{"loop_state": {"steps": 5}}]),
+    )
+    with caplog.at_level(logging.WARNING):
+        assert loop_state_store.load_loop_state("s1") == LoopState()
+    assert any("loop_state" in r.getMessage() for r in caplog.records)
+    for garbage in (None, [], "text", 7):
+        monkeypatch.setattr(
+            loop_state_store,
+            "table",
+            lambda name, g=garbage: _sessions_table(select_rows=[{"loop_state": g}]),
+        )
+        assert loop_state_store.load_loop_state("s1") == LoopState()
+
+
+def test_load_loop_state_propagates_a_read_failure(monkeypatch):
+    """A failed read is not an empty state: answering it with a fresh LoopState
+    would let the next save overwrite the stored one. The error propagates."""
+    from learning import loop_state_store
+
+    t = _sessions_table()
+    t.select.side_effect = RuntimeError("postgrest down")
+    monkeypatch.setattr(loop_state_store, "table", lambda name: t)
+    with pytest.raises(RuntimeError):
+        loop_state_store.load_loop_state("s1")
+
+
+def test_save_loop_state_updates_by_id_and_reports_missing_row(monkeypatch, caplog):
+    from learning import loop_state_store
+    from learning.policy import LoopState
+
+    state = LoopState(checks_since_rating=1)
+    t = _sessions_table(update_rows=[{"id": "s1"}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: t)
+    assert loop_state_store.save_loop_state("s1", state) is True
+    t.update.assert_called_once_with({"loop_state": state.to_json()}, filters={"id": "eq.s1"})
+    t.upsert.assert_not_called()
+
+    lazy = _sessions_table(update_rows=[])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: lazy)
+    with caplog.at_level(logging.WARNING):
+        assert loop_state_store.save_loop_state("s1", state) is False
+    assert any("not materialised" in r.getMessage() for r in caplog.records)
+
+
+def test_save_loop_state_never_inserts_or_upserts_sessions(monkeypatch):
+    """Spec §9 / §13 A11: never `upsert` on `sessions`. A missing row is reported,
+    never created here (PKG-07 materialises through _consume_pending; PKG-09 owns
+    the insert-if-missing helper)."""
+    import inspect
+
+    from learning import loop_state_store
+    from learning.policy import LoopState
+
+    assert list(inspect.signature(loop_state_store.save_loop_state).parameters) == [
+        "session_id",
+        "state",
+    ]
+    t = _sessions_table(update_rows=[])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: t)
+    assert loop_state_store.save_loop_state("s1", LoopState()) is False
+    t.upsert.assert_not_called()
+    t.insert.assert_not_called()
+    src = inspect.getsource(loop_state_store)
+    assert ".upsert(" not in src and ".insert(" not in src
+
+
+def test_load_save_round_trip_keeps_later_packages_keys(monkeypatch):
+    """What PKG-07+ store beside the PKG-06 keys survives load -> save."""
+    from learning import loop_state_store
+
+    stored = {"v": 1, "steps": {}, "revealed": ["b" * 64], "active": "a" * 64}
+    t = _sessions_table(select_rows=[{"loop_state": stored}], update_rows=[{"id": "s1"}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: t)
+    state = loop_state_store.load_loop_state("s1")
+    state.checks_since_rating += 1
+    assert loop_state_store.save_loop_state("s1", state) is True
+    written = t.update.call_args.args[0]["loop_state"]
+    assert written["revealed"] == ["b" * 64] and written["active"] == "a" * 64
+    assert written["checks_since_rating"] == 1
