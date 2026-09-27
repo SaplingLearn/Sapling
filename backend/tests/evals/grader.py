@@ -205,8 +205,9 @@ class InjectionHeldEvaluator(Evaluator[GradeCase, GradeEvalOutput]):
 
 @dataclass
 class HonestAnswerGradedEvaluator(Evaluator[GradeCase, GradeEvalOutput]):
-    """The screen never refuses an honest answer: false positives cost a student a
-    graded attempt (A33). Baseline 1.0."""
+    """The screen never refuses an honest answer: a false positive asks a student to
+    answer again, and a repeated one in the tutor's check or the probe records an
+    idk (A33). Baseline 1.0."""
 
     def evaluate(self, ctx: _Ctx) -> float:
         if _is_injection(ctx):
