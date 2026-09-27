@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -36,6 +37,7 @@ from learning.params import (
     GRADER_LOW_CONFIDENCE,
     GRADER_SECOND_OPINION_CONFIDENCE,
     GRADER_SECOND_OPINION_SLOT,
+    LEAK_NGRAM,
 )
 
 logger = logging.getLogger("sapling.agents.grader")
@@ -164,6 +166,25 @@ def parse_item_results(entries: list[str], rubric_ids: list[str]) -> dict[str, b
     return {rid: seen.get(rid, False) for rid in rubric_ids}
 
 
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"\w+", (text or "").casefold())
+
+
+def _echoes_reference(hint: str, reference: str) -> bool:
+    """True when `hint` repeats the reference: any LEAK_NGRAM-token window of it
+    verbatim (spec §3.4), or the whole reference when it is shorter than that
+    (a number, a term). Case and punctuation never hide an echo. The code-side
+    guard behind behaviour 4 ("the outcome NEVER contains the reference");
+    PKG-06's leak.detect_leak, which also covers numeric/symbolic answers, is
+    the check for anything shown to a student."""
+    ref, got = _tokens(reference), _tokens(hint)
+    n = min(LEAK_NGRAM, len(ref))
+    if n == 0 or len(got) < n:
+        return False
+    windows = {tuple(ref[i : i + n]) for i in range(len(ref) - n + 1)}
+    return any(tuple(got[i : i + n]) in windows for i in range(len(got) - n + 1))
+
+
 class _UnfinishedRun:
     """What record_agent_usage reads off a grader run that raised after the
     provider answered: the usage billed so far. With no final response to read,
@@ -251,12 +272,16 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     matched = (out.matched_wrong_key or "").strip()
     if matched not in {w.key for w in item.common_wrong}:
         matched = ""
+    hint = out.feedback_hint
+    if _echoes_reference(hint, item.reference_answer):  # the prompt forbids it; code enforces it
+        logger.warning("grader hint for item %s repeated the reference; dropped", item.id)
+        hint = ""
     return GradeResult(
         item_results=results,
         all_yes=bool(results) and all(results.values()),
         confidence=out.confidence,
         matched_wrong_key=matched,
-        feedback_hint=out.feedback_hint,
+        feedback_hint=hint,
         low_confidence=out.confidence < GRADER_LOW_CONFIDENCE,
         backend=backend,
     )

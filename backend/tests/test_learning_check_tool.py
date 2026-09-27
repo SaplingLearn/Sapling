@@ -29,6 +29,7 @@ from learning.params import (
     GRADER_SECOND_OPINION_CONFIDENCE,
     GRADER_SECOND_OPINION_SLOT,
     LADDER_MAX_RUNG,
+    LEAK_NGRAM,
     RUNG_ASSISTED_MAX,
     RUNG_NO_CREDIT_MIN,
     WEIGHT_ASSISTED,
@@ -937,6 +938,65 @@ def test_outcome_never_carries_the_reference(check):
     for answer in (_answer(), _answer(idk=True)):
         out = _run(check, _deps(), answer)
         assert REFERENCE not in repr(dataclasses.asdict(out))
+
+
+_REF_WORDS = REFERENCE.rstrip(".").split()
+
+
+@pytest.mark.parametrize(
+    "hint",
+    [
+        REFERENCE,  # the whole key
+        REFERENCE.upper(),  # case never hides it
+        f"Hint: {' '.join(_REF_WORDS[3 : 3 + LEAK_NGRAM])}, look again.",  # one LEAK_NGRAM window
+    ],
+)
+def test_a_hint_that_echoes_the_reference_never_reaches_the_outcome(monkeypatch, hint):
+    """Behaviour 4: the outcome NEVER contains item.reference_answer. The only
+    realistic path is the grader's own hint, so drive a grader that echoes it:
+    grade() drops a hint sharing a LEAK_NGRAM-token window with the reference."""
+    import dataclasses
+
+    import agents.grader as g
+    import agents.tools.check as c
+
+    model, _ = _billed_grader([{**_good(), "feedback_hint": hint}])
+    deps = _deps()
+    with g.grader_agent.override(model=model):
+        out = asyncio.run(c.grade_answer(_item(), _answer(), deps=deps, node_id=NODE))
+    assert out.unavailable is False and out.correct is True and deps.pending_evidence
+    assert out.feedback_hint == ""
+    assert REFERENCE.lower() not in repr(dataclasses.asdict(out)).lower()
+
+
+@pytest.mark.parametrize(
+    "hint",
+    [
+        "Think about what stops the calls.",
+        # five consecutive reference words: under the LEAK_NGRAM window
+        f"Ask what {' '.join(_REF_WORDS[: LEAK_NGRAM - 1])} means here.",
+    ],
+)
+def test_a_hint_below_the_leak_window_is_kept(monkeypatch, hint):
+    import agents.grader as g
+
+    model, _ = _billed_grader([{**_good(), "feedback_hint": hint}])
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
+    assert res.feedback_hint == hint
+
+
+def test_a_short_reference_echoed_whole_is_dropped(monkeypatch):
+    """A key shorter than LEAK_NGRAM tokens (a number, a term) leaks when it
+    appears whole."""
+    import agents.grader as g
+
+    model, _ = _billed_grader([{**_good(), "feedback_hint": "Is it 9.81 or not?"}])
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(
+            g.grade(_item(reference_answer="9.81"), format="free", student_answer="x", deps=_deps())
+        )
+    assert res.feedback_hint == ""
 
 
 def test_grade_answer_never_touches_db_tables(check, monkeypatch):
