@@ -1393,6 +1393,32 @@ def test_i_cannot_do_it_alone_is_a_plea():
         assert has_non_attempt_phrase(text) is True, text
 
 
+@pytest.mark.parametrize(
+    "text", ["just tell me, is it CH4?", "just tell me if it is CH3OH", "give me the answer, CH2O?"]
+)
+def test_a_chemical_formula_is_no_question_label(text):
+    """An all-caps "CH" glued to a digit is a formula, not "chapter N": the
+    digit is an answer, so the message is graded."""
+    from learning.gates import non_attempt_phrases
+
+    assert non_attempt_phrases(text) == ()
+
+
+@pytest.mark.parametrize(
+    "text,phrases",
+    [
+        ("whats the answer to ch3", ("what's the answer",)),
+        ("just tell me the answer to Ch4", ("just tell me",)),
+        ("just tell me the answer to CH 4", ("just tell me",)),
+        ("give me the answer to ch. 3", ("give me the answer",)),
+    ],
+)
+def test_a_chapter_label_is_still_a_question_label(text, phrases):
+    from learning.gates import non_attempt_phrases
+
+    assert non_attempt_phrases(text) == phrases
+
+
 def test_has_non_attempt_phrase_matches_whole_words_only():
     from learning.gates import has_non_attempt_phrase
 

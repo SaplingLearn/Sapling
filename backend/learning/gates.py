@@ -56,9 +56,10 @@ _DIGIT = re.compile(r"\d")
 # Every whitespace run is followed by a REQUIRED token or ends the optional
 # group it opens, so no two runs can share the same spaces: a long run with
 # no digit after it costs one linear scan, never a cubic backtrack (the text
-# is a raw student submission).
+# is a raw student submission). An all-caps "CH" glued to a digit ("CH4",
+# "CH3OH") is a chemical formula, never "chapter N".
 _QUESTION_REF = re.compile(
-    r"(?:\b(?:questions?|qs?|parts?|problems?|probs?|numbers?|num|exercises?|ex|items?"
+    r"(?:\b(?-i:(?!CH\d))(?:questions?|qs?|parts?|problems?|probs?|numbers?|num|exercises?|ex|items?"
     r"|tasks?|steps?|sections?|sec|pages?|pg|chapters?|ch|hw|homework|labs?|quiz(?:zes)?)"
     r"(?:\s*[.#])?|\bno\s*\.|#|\banswers?\s+(?:to|for|of|on))\s*(?:#\s*)?"
     r"\d+[a-z]?(?:\.\d+[a-z]?)*(?:\s*[-–]\s*\d+[a-z]?)?(?:\s*\(\s*[a-z0-9]{1,4}\s*\))?",
