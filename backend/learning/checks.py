@@ -48,16 +48,28 @@ _MIN_TOKEN_LEN = 3
 # passage, so a match on one says nothing about the concept: without this,
 # "Causes of the French Revolution" met the backfill's relevance floor (A23)
 # against a CS passage through "the" and was drafted from unrelated text.
+# Every NLTK English stopword of that length (its contractions split by the
+# \w+ tokenizer: "don't" -> "don"), plus the determiners, quantifiers,
+# conjunctions and adverbs it leaves out ("every", "one", "since", "however").
+# Content words stay, however common ("use", "force", "case").
 _STOPWORDS = frozenset(
     """
-    about above across after against along also among and any are because been
-    before being below between both but can could did does doing down during each
-    either few for from had has have having her here hers him his how into its
-    just may might more most must nor not off onto only other our ours out over
-    own per same shall she should some such than that the their theirs them then
-    there these they this those through too under until upon very via was were
-    what when where which while who whom whose why will with within without would
-    yet you your yours
+    about above across after again against ain all almost along already also
+    although always among amongst and another any anyone anything are aren
+    because been before being below between beyond both but can cannot could
+    couldn despite did didn does doesn doing don down during each either else
+    even ever every everyone everything few for from further hadn has hasn have
+    had haven having hence her here hers herself him himself his how however indeed
+    instead into isn its itself just like many may might mightn more most much
+    must mustn myself needn neither never none nor not nothing now off often once
+    one only onto other our ours ourselves out over own per perhaps quite rather
+    same several shall shan she should shouldn since some someone something still
+    such than that the their theirs them themselves then there therefore these
+    they this those though through throughout thus too toward towards under
+    unless until upon very via was wasn were weren what whatever when whenever
+    where whereas wherever whether which whichever while who whoever whom whose
+    why will with within without won would wouldn yet you your yours yourself
+    yourselves
     """.split()
 )
 _MC_REASON = "mc_reason"

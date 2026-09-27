@@ -432,6 +432,52 @@ class TestRankChunks:
             c["id"] for c in rank_chunks_for_concept("The Base Case", cs, limit=8, min_score=1)
         ] == ["a"]
 
+    def test_determiners_conjunctions_and_pronouns_are_function_words_too(self):
+        """Review round 2: "all", "every", "one", "since" … met the floor."""
+        from learning.checks import _STOPWORDS, rank_chunks_for_concept
+
+        cs = [
+            {
+                "id": "a",
+                "chunk_index": 0,
+                "chunk_text": "The base case stops the recursion; each call shrinks the "
+                "input by one, so all calls end. Again and again, once more, now.",
+            },
+            {
+                "id": "b",
+                "chunk_index": 1,
+                "chunk_text": "Every recursive function needs a base case. Since each call "
+                "is smaller, it terminates by itself, though many like it, however much.",
+            },
+        ]
+        for name in (
+            "Causes of World War One",
+            "All Quiet on the Western Front",
+            "All-or-none law",
+            "Every Man for Himself",
+            "Since 1945",
+            "Once and Future Kings",
+            "Now and Then Theory",
+            "Again Further Onward",
+            "Though Many Like Much However Thus Whether",
+        ):
+            assert rank_chunks_for_concept(name, cs, limit=8, min_score=1) == [], name
+        # the list covers NLTK's English stopwords of the tokenizer floor's length
+        nltk_3plus = """myself our ours ourselves you your yours yourself yourselves him
+            his himself she her hers herself its itself they them their theirs themselves
+            what which who whom this that these those are was were been being have has had
+            having does did doing the and but because until while for with about against
+            between into through during before after above below from down out off over
+            under again further then once here there when where why how all any both each
+            few more most other some such nor not only own same than too very can will just
+            don should now ain aren couldn didn doesn hadn hasn haven isn mightn mustn needn
+            shan shouldn wasn weren won wouldn""".split()
+        assert set(nltk_3plus) <= _STOPWORDS
+        # content words still count, however common
+        assert [
+            c["id"] for c in rank_chunks_for_concept("Recursive Calls", cs, limit=8, min_score=1)
+        ] == ["a", "b"]
+
     def test_a_name_of_only_function_words_matches_as_a_whole_phrase(self):
         from learning.checks import rank_chunks_for_concept
 
