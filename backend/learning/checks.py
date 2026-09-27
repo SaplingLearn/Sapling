@@ -460,16 +460,17 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
     reasons = []
     if len(options) != CHECK_ITEM_MC_OPTIONS:
         reasons.append(
-            f"option_count: {len(options)} options; mc_reason needs exactly {CHECK_ITEM_MC_OPTIONS}"
+            f"option_count: {len(options)} options, but mc_reason needs exactly "
+            f"{CHECK_ITEM_MC_OPTIONS}"
         )
     correct = [n for n, o in enumerate(options, start=1) if o.is_correct]
     if len(correct) != 1:
-        reasons.append(f"one_correct: {len(correct)} options marked is_correct; exactly 1 must be")
+        reasons.append(f"one_correct: {len(correct)} options marked is_correct, not exactly 1")
     for n in correct:
         if not _blank(options[n - 1].wrong_key):
             reasons.append(
                 f"correct_key: option {n} is marked correct and carries wrong_key "
-                f"{options[n - 1].wrong_key!r}; the correct option has none"
+                f"{options[n - 1].wrong_key!r} (the correct option has none)"
             )
     listed = set(draft.wrong_keys)
     keyed: dict[str, int] = {}
@@ -486,7 +487,7 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
         if option.wrong_key in keyed:
             reasons.append(
                 f"distractor_key: options {keyed[option.wrong_key]} and {n} share wrong_key "
-                f"{option.wrong_key!r}; each distractor names its own misconception"
+                f"{option.wrong_key!r} (each distractor names its own misconception)"
             )
         keyed.setdefault(option.wrong_key, n)
     seen: dict[str, int] = {}
@@ -502,8 +503,8 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
         hit = _LETTER_REF.search(getattr(draft, field))
         if hit:
             reasons.append(
-                f"letter: the {field} names an option by its letter ({hit.group(0)!r}); "
-                "code letters the options"
+                f"letter: the {field} names an option by its letter ({hit.group(0)!r}), "
+                "but code letters the options"
             )
     return reasons
 
@@ -539,7 +540,7 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
         key, options[i] = options[i].wrong_key, options[i].model_copy(update={"wrong_key": None})
         update["options"] = options
         repairs.append(
-            f"correct_key: option {i + 1} is marked correct; its wrong_key {key!r} "
+            f"correct_key: option {i + 1} is marked correct, so its wrong_key {key!r} "
             "was cleared (repaired)"
         )
     if draft.stepwise:
@@ -548,7 +549,7 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
             update["stepwise"] = False
             repairs.append(
                 f"stepwise: the reference has {steps} numbered step(s), fewer than "
-                f"{CHECK_ITEM_STEPWISE_MIN_STEPS}; the stepwise claim was dropped (repaired)"
+                f"{CHECK_ITEM_STEPWISE_MIN_STEPS}, so the stepwise claim was dropped (repaired)"
             )
     if not update:
         return draft, []

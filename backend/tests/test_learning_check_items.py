@@ -767,6 +767,32 @@ class TestRepairAndOptions:
         )
         assert repair_draft(kept) == (kept, [])
 
+    def test_option_reasons_and_repairs_hold_no_semicolon(self):
+        """create_items logs a draft's reasons (and its repairs) joined by
+        "; ", so one reason must not contain it: the live check's parser read
+        "…share wrong_key 'k'; each distractor…" as two reasons."""
+        from learning.checks import MC_OPTION_RULES, repair_draft, validate_draft
+
+        broken = _mc_draft(
+            prompt="Is option C right? Give your reason.",
+            options=_opts(
+                (_CORRECT[0], True, "rate_is_loss"),
+                (_ITER[0], True, None),
+                ("...", False, "not_listed"),
+                (_SIGN[0], False, "not_listed"),
+                (_SIGN[0], False, None),
+            ),
+        )
+        reasons = validate_draft(broken)
+        words = {r.split(":")[0] for r in reasons}
+        assert set(MC_OPTION_RULES) <= words, words
+        fixed = _mc_draft(
+            stepwise=True, options=_opts((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN)
+        )
+        _, repairs = repair_draft(fixed)
+        assert len(repairs) == 2
+        assert not [r for r in reasons + repairs if "; " in r]
+
     def test_code_letters_the_options_and_places_the_correct_one(self):
         from learning.checks import lettered_options
 
