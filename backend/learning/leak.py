@@ -8,7 +8,8 @@ the supervisor architecture's deterministic solution stripper). Two rules:
   tokens: its whole token run, as PKG-04's checks.leak_in_prompt compares);
 - final_answer: the reference's final answer (the clause after its last '=',
   else its last standalone number that is not a numbered-step label) appears
-  as a consecutive token run.
+  as a consecutive token run, or with every number compared by value ("1,250"
+  = "1250", "2.50" = "2.5"), so a reformatted answer still leaks.
 
 Tokens are ASCII alphanumeric runs, lowercased (`[a-z0-9]+` over lowercase for
 ASCII text). The stripper tokenizes the same way over the original text, so
@@ -17,6 +18,7 @@ whatever it leaves the detector cannot flag.
 
 from __future__ import annotations
 
+import bisect
 import re
 from typing import Literal, NamedTuple
 
@@ -42,6 +44,15 @@ _STEP_LABEL = re.compile(r"^[ \t]*(?:step[ \t]*)?\d+[.):](?!\d)(?=[ \t]*\S)", re
 _CLAUSE_BREAK = re.compile(r"(?<!\d),|,(?!\d{3}(?!\d))|[;\n]|\band\b|\bso\b|[.!?](?!\d)", re.I)
 
 
+# By-value tokens for the final-answer rule: an ASCII number (thousands
+# separators and a decimal part included) is one token, compared by value; a
+# word is itself. ASCII only, like _TOKEN, so every by-value token lies inside
+# the tokens the stripper masks.
+_VALUE_TOKEN = re.compile(
+    r"([0-9]{1,3}(?:,[0-9]{3})+(?![0-9])(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)|[A-Za-z0-9]+"
+)
+
+
 class LeakVerdict(NamedTuple):
     leaked: bool
     detector: Detector
@@ -51,17 +62,47 @@ def tokens(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN.findall(text)]
 
 
+def _final_answer_text(reference: str) -> str:
+    if "=" in reference:
+        clause = _CLAUSE_BREAK.split(reference.rsplit("=", 1)[1], maxsplit=1)[0]
+        if tokens(clause):
+            return clause
+    numbers = _STANDALONE_NUMBER.findall(_STEP_LABEL.sub(" ", reference))
+    return numbers[-1] if numbers else ""
+
+
 def final_answer(reference: str) -> tuple[str, ...]:
     """Token run of the reference's final answer: the clause after its last '=',
     else its last standalone number that is not a numbered-step label; () when
     it has neither."""
-    if "=" in reference:
-        rhs = reference.rsplit("=", 1)[1]
-        answer = tuple(tokens(_CLAUSE_BREAK.split(rhs, maxsplit=1)[0]))
-        if answer:
-            return answer
-    numbers = _STANDALONE_NUMBER.findall(_STEP_LABEL.sub(" ", reference))
-    return tuple(tokens(numbers[-1])) if numbers else ()
+    return tuple(tokens(_final_answer_text(reference)))
+
+
+def _number_value(text: str) -> str:
+    """A number's canonical spelling: no separators, leading or trailing zeros."""
+    whole, _, frac = text.replace(",", "").partition(".")
+    whole, frac = whole.lstrip("0") or "0", frac.rstrip("0")
+    return f"{whole}.{frac}" if frac else whole
+
+
+class _ValueToken(NamedTuple):
+    value: str
+    start: int
+    end: int
+    number: bool
+
+
+def _value_tokens(text: str) -> list[_ValueToken]:
+    out = []
+    for m in _VALUE_TOKEN.finditer(text):
+        number = m.group(1)
+        value = _number_value(number) if number else m.group().lower()
+        out.append(_ValueToken(value, m.start(), m.end(), bool(number)))
+    return out
+
+
+def _value_run(reference: str) -> tuple[str, ...]:
+    return tuple(t.value for t in _value_tokens(_final_answer_text(reference)))
 
 
 def _ngrams(seq: list[str], n: int) -> set[tuple[str, ...]]:
@@ -89,13 +130,22 @@ def detect_leak(reference_answer: str, emitted: str, rung: Rung) -> LeakVerdict:
     em = tokens(emitted)
     if grams & _ngrams(em, n):
         return LeakVerdict(True, "ngram")
-    if _contains_run(em, final_answer(reference_answer)):
+    if _contains_run(em, final_answer(reference_answer)) or _contains_run(
+        [t.value for t in _value_tokens(emitted)], _value_run(reference_answer)
+    ):
         return LeakVerdict(True, "final_answer")
     return LeakVerdict(False, "none")
 
 
-def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: tuple[str, ...]) -> str:
+def _strip_segment(
+    text: str,
+    n: int,
+    grams: set[tuple[str, ...]],
+    answer: tuple[str, ...],
+    value_run: tuple[str, ...],
+) -> str:
     spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
+    starts = [a for a, _ in spans]
     toks = [text[a:b].lower() for a, b in spans]
     hit = [False] * len(toks)
     for run_len, wanted in (
@@ -105,6 +155,25 @@ def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: tuple
         for i in range(len(toks) - run_len + 1):
             if tuple(toks[i : i + run_len]) in wanted:
                 hit[i : i + run_len] = [True] * run_len
+
+    def covering(a: int, b: int) -> list[int]:  # the tokens overlapping text[a:b]
+        lo = max(bisect.bisect_right(starts, a) - 1, 0)
+        return [t for t in range(lo, bisect.bisect_left(starts, b)) if spans[t][1] > a]
+
+    vals = _value_tokens(text)
+    k = len(value_run)
+    for i in range(len(vals) - k + 1) if k else ():
+        run = vals[i : i + k]
+        if tuple(t.value for t in run) == value_run:
+            for t in covering(run[0].start, run[-1].end):
+                hit[t] = True
+    # A number is withheld whole or not at all ("1,250" never becomes "1,[withheld]"),
+    # so no number is cut in two and nothing left can match by value.
+    for v in vals:
+        cover = covering(v.start, v.end)
+        if v.number and any(hit[t] for t in cover):
+            for t in cover:
+                hit[t] = True
     out: list[str] = []
     cursor = i = 0
     while i < len(toks):
@@ -124,10 +193,13 @@ def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: tuple
 
 def strip_leak(emitted: str, reference: str) -> str:
     """Replace every maximal run of leaked tokens (an n-gram of the reference or
-    its final answer) with WITHHELD, the text between runs untouched. One pass
+    its final answer, a number matched by value) with WITHHELD, the text between
+    runs untouched; a number touched by a run is withheld whole. One pass
     leaves nothing detect_leak(reference, ·, H0) flags (unless the reference
     itself contains the word "withheld"), and a second pass is a no-op: existing
     WITHHELD markers are never re-matched."""
     n, grams = _reference_grams(reference)
-    answer = final_answer(reference)
-    return WITHHELD.join(_strip_segment(seg, n, grams, answer) for seg in emitted.split(WITHHELD))
+    answer, value_run = final_answer(reference), _value_run(reference)
+    return WITHHELD.join(
+        _strip_segment(seg, n, grams, answer, value_run) for seg in emitted.split(WITHHELD)
+    )

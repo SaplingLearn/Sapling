@@ -1207,6 +1207,52 @@ def test_final_answer_keeps_a_thousands_separator():
     assert detect_leak("The work done = 1,250 J", "It comes to 1,250 J.", Rung.H1).leaked is True
 
 
+REF_WORK = "The work done = 1,250 J"
+REF_SPEED = "v = 2.50 m/s"
+
+
+@pytest.mark.parametrize(
+    "reference,emitted,stripped",
+    [
+        (REF_WORK, "It is 1250 J.", "It is [withheld]."),
+        (REF_WORK, "It is 1250.0 J here.", "It is [withheld] here."),
+        (REF_WORK, "It comes to 01,250 J", "It comes to [withheld]"),
+        (REF_SPEED, "So v is 2.5 m/s here.", "So v is [withheld] here."),
+        (REF_SPEED, "So v is 2.500 m/s.", "So v is [withheld]."),
+        ("x = 7", "Is it 7.0?", "Is it [withheld]?"),
+        (REF_WORK, "٣٤ then 1250 J", "٣٤ then [withheld]"),  # a non-ASCII digit is no token
+    ],
+)
+def test_final_answer_matches_a_number_by_value(reference, emitted, stripped):
+    """The final-answer rule compares numbers by value on both sides: a hint
+    that writes the answer without the reference's thousands separator, or
+    with different trailing zeros, still leaks it, and the stripper withholds
+    the whole number (never half of "1,250")."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    assert detect_leak(reference, emitted, Rung.H1) == (True, "final_answer")
+    assert strip_leak(emitted, reference) == stripped
+    assert detect_leak(reference, stripped, Rung.H0) == (False, "none")
+    assert strip_leak(stripped, reference) == stripped
+
+
+def test_final_answer_by_value_is_not_a_prefix_match():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    for safe in ("It is 12,500 J.", "Use 1.25 kJ as a check?", "2.05 m/s is too slow", "250 J"):
+        assert detect_leak(REF_WORK, safe, Rung.H1) == (False, "none"), safe
+        assert detect_leak(REF_SPEED, safe, Rung.H1) == (False, "none"), safe
+    # a number the plain rule half-matches is withheld whole
+    assert strip_leak("Add 1,250 to it", "x = 250") == "Add [withheld] to it"
+    # non-ASCII digits are never tokens, so stripping stays detect-clean
+    for reference, emitted in (("x = ٣", "x٣ is it"), ("x = 7", "x٣7 or ٣ 7")):
+        once = strip_leak(emitted, reference)
+        assert detect_leak(reference, once, Rung.H0) == (False, "none"), once
+        assert strip_leak(once, reference) == once
+
+
 @pytest.mark.parametrize("reference,emitted,_", LEAKS)
 def test_strip_leak_makes_text_safe_and_is_idempotent(reference, emitted, _):
     from learning.ladder import Rung
@@ -1249,8 +1295,20 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
 
     rng = random.Random(606)
     seps = [" ", ", ", "\n", " — ", "; ", " é ", "(", ") ", "/", " = "]
-    for reference in (REF_POWER, REF_EQ, REF_VEL, REF_SYM, "y = 2x + 3", REF_SHORT, REF_LAW):
-        words = reference.split()
+    numbers = ["1250", "1,250", "01250.0", "12,500", "2.5", "2.500", "25", "7.0", "250"]
+    for reference in (
+        REF_POWER,
+        REF_EQ,
+        REF_VEL,
+        REF_SYM,
+        "y = 2x + 3",
+        REF_SHORT,
+        REF_LAW,
+        REF_WORK,
+        REF_SPEED,
+        "x = 250",
+    ):
+        words = reference.split() + numbers
         for _ in range(200):
             picked = [rng.choice(words) for _ in range(rng.randint(1, 30))]
             if rng.random() < 0.5:  # splice in a verbatim stretch of the reference
