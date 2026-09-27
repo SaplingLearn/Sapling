@@ -1,5 +1,7 @@
-"""PKG-03 migration invariants. Live schema is proven by migration replay in
-the E2E lane; this guards the properties graph_service depends on."""
+"""PKG-03 migration invariants, read from the SQL file only: they guard the
+properties graph_service depends on and do NOT prove the live schema. That
+needs `python -m db.migrate` / a replay on PG15 (the E2E lane's
+`make e2e-up`), whose status is recorded in HANDOFF-03 Known gaps."""
 
 import pathlib
 import re
