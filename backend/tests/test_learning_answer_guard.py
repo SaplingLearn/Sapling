@@ -316,6 +316,23 @@ def test_refusal_reasons_are_one_closed_vocabulary():
     )
 
 
+def test_the_guard_is_pure_code():
+    """Spec §13 A33 (the invariant-2 rule for learning/): no LLM, no I/O — the
+    guard imports only the standard library's text and typing modules."""
+    import ast
+
+    tree = ast.parse(Path(guard.__file__).read_text())
+    imported = {
+        name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for name in (
+            [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+        )
+    }
+    assert imported <= {"__future__", "re", "unicodedata", "collections", "dataclasses", "typing"}
+
+
 # ── neutralising verdict tokens (defence in depth for the message builder) ───
 
 
