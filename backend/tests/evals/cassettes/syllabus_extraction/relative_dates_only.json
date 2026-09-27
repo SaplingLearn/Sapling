@@ -1,25 +1,25 @@
 {
   "assignments": [
     {
-      "description": "First course quiz.",
+      "description": null,
       "due_date": null,
       "title": "Quiz 1",
-      "weight_pct": null
+      "weight_pct": 10.0
     },
     {
-      "description": "Second course quiz.",
+      "description": null,
       "due_date": null,
       "title": "Quiz 2",
-      "weight_pct": null
+      "weight_pct": 10.0
     },
     {
-      "description": "Midterm examination held before Spring break.",
+      "description": null,
       "due_date": null,
       "title": "Midterm",
       "weight_pct": 30.0
     },
     {
-      "description": "Final examination held at the end of the term.",
+      "description": null,
       "due_date": null,
       "title": "Final",
       "weight_pct": 50.0
