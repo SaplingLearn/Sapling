@@ -163,8 +163,12 @@ FEEDBACK_HINT_MAX_SENTENCES = 2  # † PKG-05 grader brief: the hint is short; n
 GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guard; not a spec value
 # † PKG-05: the student answer is the one unbounded part of a grader message;
 # past this many characters grade() degrades to unavailable before any call, so
-# an oversized answer is never sent or billed. Sized so that even at one token
-# per character both requests a run may make fit GRADER_LIMITS' token cap.
+# an oversized answer is never sent or billed. A size guard on the RAW answer,
+# not a token guarantee: at roughly one token per character the answer alone,
+# on both requests a run may make, stays under GRADER_LIMITS' token cap, but
+# the "> " quote on every answer line (up to 3x for a newline-heavy answer), the
+# system prompt, the item fields and multi-token characters ride on top. A run
+# that still trips the cap is metered (llm_usage) and comes back unavailable.
 GRADER_ANSWER_MAX_CHARS = 4_000
 # † PKG-05 numeric gate (A22): float noise at the tolerance edge. An answer
 # exactly `tolerance` away in decimal lands a hair either side in binary

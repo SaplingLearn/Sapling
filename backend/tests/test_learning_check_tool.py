@@ -509,10 +509,20 @@ def test_grade_answer_records_nothing_for_an_item_without_a_rubric(monkeypatch):
     assert out.unavailable is True and deps.pending_evidence == []
 
 
-def test_the_answer_bound_keeps_both_grader_runs_inside_the_token_cap():
-    """GRADER_ANSWER_MAX_CHARS is sized so that even at one token per character
-    the answer, sent on both requests a run may make, fits GRADER_LIMITS."""
+def test_the_answer_bound_leaves_token_headroom_for_both_requests():
+    """GRADER_ANSWER_MAX_CHARS bounds the RAW answer, so this is headroom
+    arithmetic at roughly one token per character, not a token guarantee: the
+    built message quotes every answer line with "> " (a newline-heavy answer up
+    to triples, pinned below), carries the item fields, and a character can
+    cost more than one token. A run that trips the cap anyway is metered and
+    unavailable (test_a_run_over_the_token_cap_still_records_what_it_billed)."""
+    import agents.grader as g
+
     assert GRADER_ANSWER_MAX_CHARS * GRADER_LIMITS.request_limit < GRADER_LIMITS.total_tokens_limit
+    quoted = g.build_grader_message(
+        _item(), format="free", student_answer="\n" * GRADER_ANSWER_MAX_CHARS
+    )
+    assert len(quoted) > 3 * GRADER_ANSWER_MAX_CHARS  # the bound is not a message bound
 
 
 # ── function-mode handler ─────────────────────────────────────────────────
