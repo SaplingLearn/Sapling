@@ -18,6 +18,15 @@ Design guarantees:
   fingerprint (``content_fp``); the raw string is never enqueued or persisted.
 * **Kill switch.** ``EVENTS_LOGGING_ENABLED=false`` turns both helpers into
   no-ops.
+* **PostHog mirror (ADR 0028).** ``log_event`` is also the ONE place events
+  reach PostHog (``services/posthog_client.mirror_event``): same event name,
+  same payload, ``distinct_id`` = the user id, behind the same kill switch,
+  and only for users who have not opted out (``analytics_consent``).
+  Routes never call PostHog themselves, so there is exactly one taxonomy —
+  this one. The mirror is a non-blocking enqueue onto the PostHog seam's own
+  queue (consent is decided on its worker, never here) and is inert when
+  PostHog is off (tests, E2E, no token). ``log_llm_usage`` likewise mirrors
+  each usage row as a content-free ``$ai_generation``.
 
 Cost computation and token-field normalization live in
 ``services/llm_pricing.py``; this module just persists what it's given.
@@ -50,6 +59,8 @@ quiz.answer_key_served        usage     quiz_id
 quiz.answer_key_flag_omitted  usage     quiz_id
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
+flashcard.generated           usage     card_count, documents_used, weak_concepts_used
+flashcard.reviewed            usage     card_id, rating (1 forgot | 2 hard | 3 easy)
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
@@ -99,7 +110,7 @@ import threading
 from typing import Any, Optional
 
 from db.connection import table
-from services import llm_pricing
+from services import llm_pricing, posthog_client
 from services.fingerprint import fingerprint_text
 from services.request_context import current_request_id
 
@@ -161,6 +172,11 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "quiz.answer_key_flag_omitted",
     "chat.message_sent",
     "note.created",
+    # ADR 0028: flashcard generation (an LLM feature) and review had no event
+    # at all — the PostHog wizard's ad-hoc captures surfaced the gap. Added
+    # here so BOTH pipelines get them from the one taxonomy.
+    "flashcard.generated",
+    "flashcard.reviewed",
     "session.started",
     "session.ended",
     "rag.retrieval_failed",
@@ -232,18 +248,33 @@ def log_event(
     """
     if not _logging_enabled():
         return
+    # Resolved ONCE: the row and the PostHog mirror must carry the same id.
+    if request_id is None:
+        request_id = current_request_id()
     try:
         row = {
             "event_type": event_type,
             "category": category,
             "user_id": user_id,
-            "request_id": request_id if request_id is not None else current_request_id(),
+            "request_id": request_id,
             "payload": payload or {},
             "content_fp": fingerprint_text(content, length=16) if content else None,
         }
         _enqueue("events", row)
     except Exception:  # pragma: no cover - defensive; enqueue is already guarded
         logger.exception("log_event failed; event dropped")
+    # Mirror AFTER the DB enqueue and outside its try, so a PostHog slip can
+    # never cost the row in our own table. mirror_event never raises either.
+    try:
+        posthog_client.mirror_event(
+            event_type,
+            category=category,
+            user_id=user_id,
+            request_id=request_id,
+            payload=payload,
+        )
+    except Exception:  # pragma: no cover - defensive; mirror_event is guarded
+        logger.debug("PostHog mirror failed; event not mirrored", exc_info=True)
 
 
 def log_llm_usage(
@@ -264,11 +295,13 @@ def log_llm_usage(
     """
     if not _logging_enabled():
         return
+    if request_id is None:
+        request_id = current_request_id()
     try:
         tokens = llm_pricing.normalize_usage(usage)
         row = {
             "user_id": user_id,
-            "request_id": request_id if request_id is not None else current_request_id(),
+            "request_id": request_id,
             "feature": feature,
             "task": task,
             "model": model,
@@ -283,6 +316,24 @@ def log_llm_usage(
         _enqueue("llm_usage", row)
     except Exception:  # pragma: no cover - defensive
         logger.exception("log_llm_usage failed; row dropped")
+        return
+    # ADR 0028: the PostHog LLM-analytics mirror of the same row — a
+    # privacy-mode $ai_generation (model, tokens, cost, trace id; never
+    # content), behind the same kill switch, queued for the consent worker.
+    try:
+        posthog_client.capture_ai_generation(
+            user_id=user_id,
+            model=model,
+            provider=provider,
+            input_tokens=row["prompt_tokens"],
+            output_tokens=row["completion_tokens"],
+            cost_usd=row["cost_usd"],
+            request_id=request_id,
+            feature=feature,
+            task=task,
+        )
+    except Exception:  # pragma: no cover - defensive; the capture is guarded
+        logger.debug("PostHog $ai_generation mirror failed", exc_info=True)
 
 
 # ── Enqueue + drop accounting ───────────────────────────────────────────────

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from config import is_weak
 from db.connection import table
+from services import events_service
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
@@ -268,6 +269,19 @@ def generate(body: GenerateFlashcardsBody, request: Request):
             detail=f"Failed to save flashcards. Has the flashcards table been created in Supabase? Error: {e}"
         )
 
+    # #117 taxonomy (+ the ADR 0028 PostHog mirror). Counts only — never the
+    # topic or card text.
+    events_service.log_event(
+        "flashcard.generated",
+        category="usage",
+        user_id=body.user_id,
+        payload={
+            "card_count": len(rows_to_insert),
+            "documents_used": len(documents),
+            "weak_concepts_used": len(weak_concepts),
+        },
+    )
+
     # Check for achievements after flashcard generation
     try:
         from services.achievement_service import check_achievements
@@ -366,6 +380,12 @@ def rate_card(body: FlashcardRatingBody, request: Request):
             "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
         },
         filters={"id": f"eq.{body.card_id}"},
+    )
+    events_service.log_event(
+        "flashcard.reviewed",
+        category="usage",
+        user_id=body.user_id,
+        payload={"card_id": body.card_id, "rating": body.rating},
     )
 
     # The review counter is the only thing that advances `flashcards_reviewed`

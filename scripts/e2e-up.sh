@@ -262,6 +262,19 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# ADR 0028: this stack must never send to PostHog, whatever backend/.env
+# holds. The seam is also off under any non-real SAPLING_MODEL_MODE, but this
+# script does NOT force function mode (it only prints a notice when it is
+# unset) and runs APP_ENV=local — so say it explicitly rather than rely on
+# that inference. Unconditional: there is no reason to send from a local lane.
+export POSTHOG_DISABLED=1
+# The kill switch stops capture, not erasure (account deletion still calls
+# PostHog's bulk_delete when a personal key is configured), so blank the
+# personal key too: an E2E account-deletion journey must never reach a real
+# PostHog project. Exported empty, it beats backend/.env (python-dotenv never
+# overrides an existing variable).
+export POSTHOG_PERSONAL_API_KEY=
+echo "  ℹ POSTHOG_DISABLED=1, POSTHOG_PERSONAL_API_KEY blank for this stack (ADR 0028)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

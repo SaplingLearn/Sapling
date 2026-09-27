@@ -108,6 +108,11 @@ def test_event_taxonomy_is_pinned():
         "quiz.answer_key_flag_omitted",
         "chat.message_sent",
         "note.created",
+        # ADR 0028: flashcard generation/review had no event; added so both
+        # the events table and the PostHog mirror get them. Emit coverage
+        # lives in test_posthog_seam.py::TestFlashcardEvents.
+        "flashcard.generated",
+        "flashcard.reviewed",
         "session.started",
         "session.ended",
         "rag.retrieval_failed",

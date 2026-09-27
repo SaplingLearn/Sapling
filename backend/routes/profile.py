@@ -25,8 +25,10 @@ from models import (
     DeleteAccountBody,
 )
 from services.academics import school_peer_user_ids
+from services.analytics_consent import clear_analytics_consent_cache, missing_opt_out_column
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
+from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
 from services.achievement_service import LOWER_IS_BETTER, get_user_stat
 
@@ -81,14 +83,36 @@ _SETTINGS_COLS = (
     "user_id,"
     "profile_visibility,activity_status_visible,"
     "notification_email,notification_push,notification_in_app,"
-    "theme,font_size,accent_color,share_class_context,"
+    "theme,font_size,accent_color,share_class_context,analytics_opt_out,"
     "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
     "featured_role_id,featured_achievement_ids,updated_at"
 )
 
 
+#: Folded into the GET /settings ETag; bump when _SETTINGS_COLS changes.
+_SETTINGS_ETAG_VERSION = "2"
+
+#: The same list minus the ADR 0028 opt-out, for the deploy-order window in
+#: which this code is live but migration 20260927220057 has not run yet.
+_SETTINGS_COLS_WITHOUT_OPT_OUT = _SETTINGS_COLS.replace("analytics_opt_out,", "")
+
+
+def _select_settings(user_id: str) -> list:
+    """Read the settings row, tolerating a not-yet-migrated
+    ``analytics_opt_out`` (PostgREST 400 naming it): retry without the column,
+    so every settings/profile read keeps working and the field is simply
+    absent. The PostHog consent check treats that same state as "no"."""
+    filters = {"user_id": f"eq.{user_id}"}
+    try:
+        return table("user_settings").select(_SETTINGS_COLS, filters=filters)
+    except Exception as exc:
+        if not missing_opt_out_column(exc):
+            raise
+        return table("user_settings").select(_SETTINGS_COLS_WITHOUT_OPT_OUT, filters=filters)
+
+
 def _get_or_create_settings(user_id: str) -> dict:
-    rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
+    rows = _select_settings(user_id)
     if not rows:
         # Race-safe create (#674): Settings.tsx loads /settings and the public
         # profile in parallel, both land here for a first-time user, and a blind
@@ -96,7 +120,7 @@ def _get_or_create_settings(user_id: str) -> dict:
         # merge, whose DO UPDATE would fire the updated_at trigger and move the
         # winner's ETag.
         table("user_settings").upsert({"user_id": user_id}, on_conflict="user_id", ignore_duplicates=True)
-        rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
+        rows = _select_settings(user_id)
     if not rows:
         return {"user_id": user_id}
     return rows[0]
@@ -415,7 +439,14 @@ def get_settings(user_id: str, request: Request):
     settings = _get_or_create_settings(user_id)
     # user_settings.updated_at is bumped on every patch → a clean single-source
     # ETag. A matching If-None-Match returns 304 without re-serializing.
-    etag = make_etag("settings", user_id, settings.get("updated_at"))
+    # The body's SHAPE is part of the tag too: a schema version (bump it when
+    # the selected columns change) and whether analytics_opt_out came back —
+    # so a body cached before this deploy, or before its migration ran, can
+    # never be served as current once the field exists (same updated_at).
+    etag = make_etag(
+        "settings", _SETTINGS_ETAG_VERSION, user_id, settings.get("updated_at"),
+        "analytics_opt_out" in settings,
+    )
     not_modified = conditional(request, etag)
     if not_modified is not None:
         return not_modified
@@ -443,6 +474,9 @@ def update_settings(
         # (course_context_service.update_course_context) can honor it; the
         # SharedContextToggle PATCHes it best-effort (migration 0037).
         "share_class_context",
+        # ADR 0028: PostHog opt-out. Read per event through the cached
+        # analytics_consent lookup, which is invalidated below.
+        "analytics_opt_out",
     }
     incoming = body.model_dump(exclude_none=True)
     updates = {k: v for k, v in incoming.items() if k in ALLOWED}
@@ -459,7 +493,25 @@ def update_settings(
 
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
+        try:
+            table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
+        except Exception as exc:
+            # Deploy-order window (ADR 0028): the column is not migrated yet.
+            # A clear, retryable 503 — never a 500 — and nothing was written
+            # (the PATCH is one statement). Consent treats the missing column
+            # as "no" meanwhile, so the student is not tracked either way.
+            if "analytics_opt_out" in updates and missing_opt_out_column(exc):
+                raise HTTPException(
+                    status_code=503,
+                    detail="The analytics opt-out setting is not available yet. "
+                    "Please try again shortly.",
+                ) from exc
+            raise
+
+    # The consent cache's invalidation hook: an opt-out stops this process's
+    # mirroring from the very next event (other processes: within the TTL).
+    if "analytics_opt_out" in updates:
+        clear_analytics_consent_cache(user_id)
 
     # #72 (PR #464 review): flipping the Class Intel opt-out must take effect
     # NOW, not whenever some classmate's activity next fires the aggregation.
@@ -764,7 +816,12 @@ def get_roles(user_id: str):
 # ── Delete Account ───────────────────────────────────────────────────────────
 
 @router.delete("/{user_id}/account")
-def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
+def delete_account(
+    user_id: str,
+    body: DeleteAccountBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     require_self(user_id, request)
 
     if body.confirmation != "DELETE":
@@ -774,6 +831,16 @@ def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{user_id}"},
     )
+    # ADR 0028: from here on the PostHog worker's consent check reads
+    # deleted_at, so nothing — not even items already queued — names this user
+    # (which would re-create the person the delete below removes). Drop the
+    # cached "allowed" answer now.
+    clear_analytics_consent_cache(user_id)
+    # Best-effort PostHog person + event delete, AFTER the response so it adds
+    # no latency and cannot fail the deletion (it never raises; unconfigured
+    # -> WARN + skip). It drains our queue and the SDK's first, and repeats
+    # after the consent TTL. Only reached once the soft delete landed.
+    background_tasks.add_task(delete_posthog_person, user_id)
     return {"deleted": True}
 
 

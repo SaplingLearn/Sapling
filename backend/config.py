@@ -180,3 +180,65 @@ def build_commit() -> str:
     generic = (os.getenv("GIT_COMMIT_SHA") or "").strip()
     raw = railway or generic
     return raw[:7].lower() or "unknown"
+
+
+# ── PostHog (optional product analytics, ADR 0028) ──────────────────────────
+#
+# All of these are OPTIONAL and deliberately absent from `validate_config`: unset
+# means the PostHog seam (services/posthog_client.py) is fully inert — no
+# client, no threads, no network. Whether a set token is actually USED is
+# decided there (`disabled_reason`), not here: it is also forced off under
+# pytest, APP_ENV=test, any non-"real" SAPLING_MODEL_MODE, and POSTHOG_DISABLED.
+# Read at call time, not import time (like `canopy_metrics_token`), so tests
+# and the kill switch need no reload.
+
+POSTHOG_DEFAULT_HOST = "https://us.i.posthog.com"  # US cloud ingestion
+
+
+def posthog_project_token() -> str:
+    """The project (public, write-only) token events are captured with."""
+    return (os.getenv("POSTHOG_PROJECT_TOKEN") or "").strip()
+
+
+def posthog_host() -> str:
+    """Ingestion host. Defaults to US cloud."""
+    return (os.getenv("POSTHOG_HOST") or POSTHOG_DEFAULT_HOST).strip().rstrip("/")
+
+
+def posthog_personal_api_key() -> str:
+    """Personal API key (scope `person:write`) — used ONLY by the account-
+    deletion person delete, never handed to the capture client (a personal key
+    there would start feature-flag polling, i.e. background network)."""
+    return (os.getenv("POSTHOG_PERSONAL_API_KEY") or "").strip()
+
+
+def posthog_project_id() -> str:
+    """Numeric project id for the private REST API (person deletion)."""
+    return (os.getenv("POSTHOG_PROJECT_ID") or "").strip()
+
+
+#: The ONLY ingestion hosts an API host is ever derived from. The personal API
+#: key (`person:write`) is sent to whatever posthog_api_host() returns, so a
+#: derivation must never be able to point it at a host that is not PostHog's
+#: own app: a string rewrite of an arbitrary POSTHOG_HOST (a reverse proxy, a
+#: typo, a self-hosted ingest) would hand the key to that host.
+_POSTHOG_INGEST_TO_API_HOST = {
+    "https://us.i.posthog.com": "https://us.posthog.com",
+    "https://eu.i.posthog.com": "https://eu.posthog.com",
+}
+
+
+def posthog_api_host() -> str | None:
+    """Private REST API host for the personal-key calls (person deletion), or
+    None when it cannot be determined safely.
+
+    The ingestion host (`us.i.posthog.com`) does not serve `/api/projects/...`;
+    the app host does. POSTHOG_API_HOST, when set, is used as-is (self-hosted
+    or proxied setups must name their API host explicitly). Otherwise it is
+    derived ONLY from the two PostHog-cloud ingestion hosts; any other
+    POSTHOG_HOST returns None and the caller WARNs and skips rather than
+    guessing where to send the key."""
+    explicit = (os.getenv("POSTHOG_API_HOST") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    return _POSTHOG_INGEST_TO_API_HOST.get(posthog_host().lower())
