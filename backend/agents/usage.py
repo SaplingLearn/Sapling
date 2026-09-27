@@ -30,6 +30,25 @@ from services import events_service
 logger = logging.getLogger("sapling.agents.usage")
 
 
+class UnfinishedRun:
+    """What ``record_agent_usage`` reads off a run that raised after the
+    provider answered: the usage billed so far. Pass ``usage=RunUsage()``
+    into ``agent.run`` so a run that raises (output validation exhausted, a
+    token cap checked after a response) still says what it cost. With no
+    final response to read, the model name falls back to the task slot's
+    configured model. (agents/grader.py keeps its own copy, _UnfinishedRun.)
+    """
+
+    def __init__(self, usage: Any) -> None:
+        self._usage = usage
+
+    def usage(self) -> Any:
+        return self._usage
+
+    def all_messages(self) -> list:
+        return []
+
+
 def served_model_name(result: Any, task: AgentTask | None = None) -> str:
     """Best-effort model id for the run, resilient to Pydantic AI churn.
 

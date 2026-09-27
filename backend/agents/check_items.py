@@ -24,10 +24,11 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RunUsage
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
-from agents.usage import record_agent_usage
+from agents.usage import UnfinishedRun, record_agent_usage
 from learning.checks import CheckItemDraft
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
@@ -209,6 +210,20 @@ def build_prompt(concept_names: list[str], passages: list[dict]) -> str:
     )
 
 
+def _record_unfinished(usage: RunUsage, deps: SaplingDeps) -> None:
+    """A run that raised still lands in llm_usage when the provider billed it
+    (the A20 caps and the admin cost analytics read nothing else): an output
+    that failed validation on every retry was billed for every request. A run
+    that failed before any response billed nothing and records nothing."""
+    if usage.requests or usage.total_tokens:
+        record_agent_usage(
+            UnfinishedRun(usage),
+            feature="check_items",
+            task="check_items",
+            user_id=deps.user_id or None,
+        )
+
+
 async def draft_items(
     concept_names: list[str],
     passages: list[dict],
@@ -219,14 +234,19 @@ async def draft_items(
     """One run for up to CHECK_ITEM_CONCEPTS_PER_CALL concepts. `flex=True`
     (background prefill) runs on the Flex tier and repeats the SAME run on a
     429/503, up to CHECK_ITEM_FLEX_RETRIES times; `flex=False` runs once on the
-    standard tier. Any failure returns CheckItemsUnavailable — never raises."""
+    standard tier. Any failure returns CheckItemsUnavailable — never raises —
+    and records in llm_usage whatever the provider billed before it."""
     settings = _flex_settings() if flex else None
     attempts = CHECK_ITEM_FLEX_RETRIES + 1 if flex else 1
     prompt = build_prompt(concept_names, passages)
     for attempt in range(1, attempts + 1):
+        usage = RunUsage()  # passed in, so a run that raises still says what it cost
         try:
-            result = await check_items_agent.run(prompt, deps=deps, model_settings=settings)
+            result = await check_items_agent.run(
+                prompt, deps=deps, model_settings=settings, usage=usage
+            )
         except ModelHTTPError as exc:
+            _record_unfinished(usage, deps)
             if exc.status_code in _FLEX_RETRY_STATUS and attempt < attempts:
                 logger.info(
                     "check_items: HTTP %s under Flex, retrying the same run (%d/%d)",
@@ -241,6 +261,7 @@ async def draft_items(
             )
             return CheckItemsUnavailable(reason=type(exc).__name__)
         except Exception as exc:  # honest degrade (ADR 0024): no second prompt
+            _record_unfinished(usage, deps)
             logger.warning("check_items unavailable: %s", type(exc).__name__)
             return CheckItemsUnavailable(reason=type(exc).__name__)
         record_agent_usage(

@@ -2085,6 +2085,91 @@ class TestDraftItems:
             {"feature": "check_items", "task": "check_items", "user_id": None},
         ]
 
+    def test_a_run_that_fails_after_billing_still_records_its_usage(self):
+        """An empty draft list is an output error (items min_length=1, A37):
+        pydantic-ai retries it CHECK_ITEM_OUTPUT_RETRIES times and then
+        raises. Every one of those requests was billed, so the run lands in
+        llm_usage anyway — the A20 caps and the admin cost analytics read
+        nothing else (the grader records its _UnfinishedRun the same way). A
+        run that failed before any response (a 429) billed nothing and
+        records nothing, and a Flex retry records only the run that answered."""
+        import asyncio
+
+        from agents import check_items as ci
+        from learning.params import CHECK_ITEM_OUTPUT_RETRIES
+        from pydantic_ai.exceptions import ModelHTTPError
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+        from pydantic_ai.models.function import FunctionModel
+
+        def empty(messages, info):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"items": []})]
+            )
+
+        with (
+            ci.check_items_agent.override(model=FunctionModel(empty)),
+            patch("agents.check_items.record_agent_usage") as rec,
+        ):
+            out = asyncio.run(ci.draft_items(["A"], [], deps=_agent_deps(), flex=False))
+        assert isinstance(out, ci.CheckItemsUnavailable)
+        (call,) = rec.call_args_list
+        assert call.kwargs == {"feature": "check_items", "task": "check_items", "user_id": "u1"}
+        billed = call.args[0].usage()
+        assert billed.requests == CHECK_ITEM_OUTPUT_RETRIES + 1 and billed.total_tokens > 0
+
+        async def no_wait(attempt):
+            return None
+
+        calls = []
+
+        def busy_then_ok(messages, info):
+            calls.append(1)
+            if len(calls) == 1:
+                raise ModelHTTPError(status_code=429, model_name="flex")
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=_ONE_ITEM)]
+            )
+
+        with (
+            patch.object(ci, "_backoff", no_wait),
+            ci.check_items_agent.override(model=FunctionModel(busy_then_ok)),
+            patch("agents.check_items.record_agent_usage") as rec,
+        ):
+            ok = asyncio.run(ci.draft_items(["A"], [], deps=_agent_deps(), flex=True))
+        assert not isinstance(ok, ci.CheckItemsUnavailable)
+        (call,) = rec.call_args_list  # the 429 billed nothing
+        assert call.args[0].usage().requests == 1
+
+        def always_busy(messages, info):
+            raise ModelHTTPError(status_code=429, model_name="flex")
+
+        with (
+            ci.check_items_agent.override(model=FunctionModel(always_busy)),
+            patch("agents.check_items.record_agent_usage") as rec,
+        ):
+            out = asyncio.run(ci.draft_items(["A"], [], deps=_agent_deps(), flex=False))
+        assert isinstance(out, ci.CheckItemsUnavailable) and rec.call_count == 0
+
+    def test_record_unfinished_usage_reads_a_run_that_raised(self):
+        """agents.usage.UnfinishedRun is what record_agent_usage reads off a
+        run that raised: the usage so far and no messages, so the model name
+        falls back to the task slot's configured model."""
+        from agents.usage import UnfinishedRun
+        from pydantic_ai.usage import RunUsage
+
+        usage = RunUsage(requests=2, input_tokens=10, output_tokens=5)
+        run = UnfinishedRun(usage)
+        assert run.usage() is usage and run.all_messages() == []
+        with patch("agents.usage.events_service.log_llm_usage") as log:
+            from agents.usage import record_agent_usage
+
+            record_agent_usage(run, feature="check_items", task="check_items", user_id="u1")
+        from agents._providers import model_for
+
+        (call,) = log.call_args_list
+        assert call.kwargs["usage"] is usage
+        assert call.kwargs["model"] == str(model_for("check_items").model_name)
+
 
 def _drafts_for(*concepts):
     from agents.check_items import CheckItemsOutput
