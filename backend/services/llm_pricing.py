@@ -27,7 +27,7 @@ logger = logging.getLogger("sapling.llm_pricing")
 
 
 # Per-1,000-token USD prices as ``(input_rate, output_rate)``. Sourced from
-# Google Gemini API list pricing; kept deliberately small and editable. A model
+# Google Gemini API list pricing (and TypeSafe's, for Jev); kept deliberately small and editable. A model
 # missing here is not an error — its usage is still recorded, just with
 # ``cost_usd = NULL``. Update this map (not the call sites) when prices change
 # or a new model ships.
@@ -35,9 +35,37 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-pro": (0.00125, 0.010),
     "gemini-2.5-flash": (0.0003, 0.0025),
     "gemini-2.5-flash-lite": (0.0001, 0.0004),
+    "gemini-3.1-flash-lite": (0.00025, 0.0015),
     "gemini-2.0-flash": (0.0001, 0.0004),
     "gemini-2.0-flash-lite": (0.000075, 0.0003),
+    # TypeSafe Jev (#642, ADR 0027; provider="typesafe" on the llm_usage row).
+    # docs.typesafe.ai/models: $0.042 per 1M input tokens, output tokens free.
+    # The response reports the versioned id; the aliases are priced too so a
+    # row is never NULL-costed because an operator set SAPLING_JEV_MODEL to
+    # one. Pricing may be launch-subsidised — see the ADR's vendor-risk note.
+    "jev-1.13.0": (0.000042, 0.0),
+    "jev-latest": (0.000042, 0.0),
+    "jev-preview": (0.000042, 0.0),
 }
+
+#: Model FAMILIES priced by prefix, consulted only when a served id has no
+#: exact entry above. Jev responses report the versioned id that actually
+#: served (`jev-1.14.0` the day the vendor ships it, whatever alias was
+#: requested), and an exact-id-only map would NULL-cost every call from then
+#: on — silently, as a warning in the logs — until someone noticed. TypeSafe
+#: prices the family, not the build; a new rate gets its own exact entry.
+MODEL_FAMILY_PRICING: tuple[tuple[str, tuple[float, float]], ...] = (
+    ("jev-", (0.000042, 0.0)),
+)
+
+#: Fractional digits of a stored cost — llm_usage.cost_usd is NUMERIC(18,10)
+#: (migration 20260927043405). Six (the old NUMERIC(12,6)) rounded the
+#: decision seam's micro-dollar calls: one Jev token is $0.000000042, so a
+#: 653-token call ($0.000027426) was stored as 0.000027 and a sub-12-token call
+#: as $0. cost_usd() quantizes to this scale and the admin rollups round to
+#: it, so a real call's cost is stored and displayed as computed.
+COST_SCALE = 10
+_COST_QUANTUM = Decimal(1).scaleb(-COST_SCALE)
 
 # Models we've already warned about — so an un-priced model logs once, not
 # once per call. Module-level (per-process); tests reset entries as needed.
@@ -100,13 +128,29 @@ def _canonical_model(model: str) -> str:
     return model.rsplit(":", 1)[-1].strip() if model else model
 
 
+def _rates_for(model: str) -> tuple[float, float] | None:
+    """Exact price entry first (raw, then provider-stripped), then the
+    model's family prefix."""
+    if not model:
+        return None
+    canonical = _canonical_model(model)
+    rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(canonical)
+    if rates is not None:
+        return rates
+    for prefix, family_rates in MODEL_FAMILY_PRICING:
+        if canonical.startswith(prefix):
+            return family_rates
+    return None
+
+
 def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Compute USD cost for a call, or ``None`` if the model isn't priced.
 
-    Rounds to 6 decimal places (half-up) to fit ``llm_usage.cost_usd
-    numeric(12,6)``. An unknown model returns ``None`` and warns once.
+    Rounds to ``COST_SCALE`` (10) decimal places, half-up, to match
+    ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
+    and warns once.
     """
-    rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(_canonical_model(model))
+    rates = _rates_for(model)
     if rates is None:
         # SAPLING_MODEL_MODE=function runs (the e2e/CI seam) report the model
         # as 'function:<task>' — a deliberate free stand-in, not an unpriced
@@ -129,4 +173,4 @@ def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | 
         Decimal(str(in_rate)) * Decimal(int(prompt_tokens))
         + Decimal(str(out_rate)) * Decimal(int(completion_tokens))
     ) / Decimal(1000)
-    return float(cost.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
+    return float(cost.quantize(_COST_QUANTUM, rounding=ROUND_HALF_UP))

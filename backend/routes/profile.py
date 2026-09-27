@@ -50,7 +50,8 @@ def _get_or_create_profile(user_id: str) -> dict:
     """Return the decrypted user_profiles row, creating it if missing."""
     rows = table("user_profiles").select(_PROFILE_COLS, filters={"user_id": f"eq.{user_id}"})
     if not rows:
-        table("user_profiles").insert({"user_id": user_id})
+        # Race-safe create (#674): see _get_or_create_settings.
+        table("user_profiles").upsert({"user_id": user_id}, on_conflict="user_id", ignore_duplicates=True)
         rows = table("user_profiles").select(_PROFILE_COLS, filters={"user_id": f"eq.{user_id}"})
     if not rows:
         return {"user_id": user_id}
@@ -113,7 +114,12 @@ def _select_settings(user_id: str) -> list:
 def _get_or_create_settings(user_id: str) -> dict:
     rows = _select_settings(user_id)
     if not rows:
-        table("user_settings").insert({"user_id": user_id})
+        # Race-safe create (#674): Settings.tsx loads /settings and the public
+        # profile in parallel, both land here for a first-time user, and a blind
+        # INSERT from the loser 409s into a 500. ON CONFLICT DO NOTHING — not a
+        # merge, whose DO UPDATE would fire the updated_at trigger and move the
+        # winner's ETag.
+        table("user_settings").upsert({"user_id": user_id}, on_conflict="user_id", ignore_duplicates=True)
         rows = _select_settings(user_id)
     if not rows:
         return {"user_id": user_id}

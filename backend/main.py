@@ -45,6 +45,7 @@ from services.storage_service import (
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
 from services import posthog_client
+from services import typesafe_client
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -126,6 +127,8 @@ async def _lifespan(_app: FastAPI):
     start_sweeper()
     yield
     await stop_sweeper()
+    # The decision seam's pooled Jev client (#642) for this loop.
+    await typesafe_client.aclose_clients()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()

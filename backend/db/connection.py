@@ -113,8 +113,14 @@ class SupabaseTable:
             return []
         return r.json()
 
-    def upsert(self, data, on_conflict: str = "id") -> list:
-        headers = {"Prefer": "return=representation,resolution=merge-duplicates"}
+    def upsert(self, data, on_conflict: str = "id", *, ignore_duplicates: bool = False) -> list:
+        """INSERT … ON CONFLICT (on_conflict) DO UPDATE, or DO NOTHING when
+        `ignore_duplicates=True`. Use the latter to make sure a row EXISTS
+        (lazy get-or-create, #674): DO UPDATE on a race loser would still fire
+        BEFORE UPDATE triggers such as `updated_at`, which moves ETags. A
+        DO NOTHING conflict returns no representation for the skipped row."""
+        resolution = "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
+        headers = {"Prefer": f"return=representation,resolution={resolution}"}
         r = _client.post(self.url, headers=headers, params={"on_conflict": on_conflict}, json=data)
         r.raise_for_status()
         return r.json()

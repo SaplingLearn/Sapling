@@ -114,12 +114,16 @@ def record_agent_usage(
     feature: str,
     task: AgentTask | None = None,
     user_id: str | None = None,
+    request_id: str | None = None,
 ) -> Any:
     """Record token usage for an agent run and return ``result`` unchanged.
 
     ``user_id`` is optional: pass it where the actor is in scope (routes with a
     ``deps.user_id`` / request body) for per-user rollups; omit it and the
-    request_id from the contextvar still attributes the row.
+    request_id from the contextvar still attributes the row. Pass
+    ``request_id`` explicitly from code that runs OUTSIDE the request
+    contextvar (a detached task, an SSE generator), where the implicit lookup
+    finds nothing.
 
     Also warns when the run only succeeded after validation retries (#153) —
     same guarded, never-raises contract.
@@ -131,6 +135,7 @@ def record_agent_usage(
             model=served_model_name(result, task),
             usage=result.usage(),
             user_id=user_id,
+            request_id=request_id,
         )
     except Exception:
         logger.debug("record_agent_usage: could not capture usage", exc_info=True)
