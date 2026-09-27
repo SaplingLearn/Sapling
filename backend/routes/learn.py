@@ -35,6 +35,7 @@ from services.tutor_sessions import (
     require_session_owner,
     session_owned_by,
 )
+from services.tutor_router import observe_tutor_turn
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
@@ -961,7 +962,11 @@ async def _chat_via_agent(
 
 
 async def _chat_turn_json(
-    body: ChatBody, request: Request, *, model_pref: str | None = None
+    body: ChatBody,
+    request: Request,
+    *,
+    model_pref: str | None = None,
+    observe_route: bool = False,
 ) -> dict:
     """One full non-streaming chat turn: agent run, persistence, and the
     #117 `chat.message_sent` emission — the SINGLE emission site for
@@ -977,6 +982,10 @@ async def _chat_turn_json(
     Persist ordering preserved: prior turns load BEFORE the new user row is
     written; the user row and assistant row are written only after the agent
     run succeeds, so a failed turn persists nothing.
+
+    `observe_route`: schedule the observe-only tutor router (#640) for this
+    turn. Only the JSON /chat route sets it; the streamed route schedules its
+    own, so its Rung-1 fallback through here must not route the turn twice.
     """
     # Unify with the middleware-stamped request ID so agent traces and
     # any downstream error payloads share the same correlation key.
@@ -994,6 +1003,15 @@ async def _chat_turn_json(
     # message_history we hand the agent contains only the conversation
     # state up to (but not including) the current turn.
     message_history = _load_message_history(body.session_id)
+
+    if observe_route:
+        # #640: observe-only, fire-and-forget — logs a decision, changes
+        # nothing about this turn, adds no latency.
+        observe_tutor_turn(
+            user_id=body.user_id, session_id=body.session_id, message=body.message,
+            history=message_history, mode=body.mode, model_pref=body.model_pref,
+            request_id=request_id,
+        )
 
     response = await _chat_via_agent(
         user_id=body.user_id,
@@ -1034,7 +1052,7 @@ async def chat(body: ChatBody, request: Request):
     require_session_owner(body.session_id, body.user_id)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
-        _chat_turn_json(body, request), what="chat agent"
+        _chat_turn_json(body, request, observe_route=True), what="chat agent"
     )
 
 
@@ -1063,6 +1081,15 @@ async def chat_stream(body: ChatBody, request: Request):
     # Load prior turns BEFORE the new user row is written, so history is
     # conversation state up to (not including) this turn.
     message_history = _load_message_history(body.session_id)
+
+    # #640: observe-only, fire-and-forget — logs a decision, changes nothing
+    # about this turn, adds no latency. Scheduled once here; the Rung-1
+    # fallback (`_chat_turn_json`, observe_route=False) does not re-route it.
+    observe_tutor_turn(
+        user_id=body.user_id, session_id=body.session_id, message=body.message,
+        history=message_history, mode=body.mode, model_pref=body.model_pref,
+        request_id=request_id,
+    )
 
     agent, assembled, run_kwargs, deps = _prepare_chat_run(
         user_id=body.user_id,
