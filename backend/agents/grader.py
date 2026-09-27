@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
+import httpx
 from google.genai.types import ThinkingConfig
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -46,9 +47,17 @@ _SECOND_OPINION_SETTINGS = GoogleModelSettings(
 # The ways one grader call can fail that are a grader failure, not a bug in
 # the caller: the request budget (GRADER_LIMITS), output that never validated
 # within retries=2, and the provider itself (a 503/429 outage or any other
-# API error, ModelAPIError ⊃ ModelHTTPError). Each one degrades to the same
-# `unavailable` (ADR 0024; spec §13 A22 "outage" → nothing for either outcome).
-_GRADER_FAILURES = (UsageLimitExceeded, UnexpectedModelBehavior, ModelAPIError)
+# API error, ModelAPIError ⊃ ModelHTTPError), including the network under it:
+# google-genai re-raises httpx timeouts/connect errors raw after its own
+# retries and pydantic-ai wraps only genai's APIError, so httpx.TransportError
+# is listed too. Each one degrades to the same `unavailable` (ADR 0024; spec
+# §13 A22 "outage" → nothing for either outcome).
+_GRADER_FAILURES = (
+    UsageLimitExceeded,
+    UnexpectedModelBehavior,
+    ModelAPIError,
+    httpx.TransportError,
+)
 
 
 class GraderOutput(BaseModel):

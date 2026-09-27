@@ -12,6 +12,7 @@ import asyncio
 import re
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -268,6 +269,10 @@ def test_second_opinion_settings_pin_thinking_off():
         UsageLimitExceeded("budget"),
         UnexpectedModelBehavior("garbage"),
         ModelHTTPError(status_code=503, model_name="gemini-2.5-flash-lite", body="UNAVAILABLE"),
+        # google-genai re-raises transport failures raw (pydantic-ai wraps only
+        # genai APIError), so a network blip must degrade like a 503 does.
+        httpx.ReadTimeout("read timed out"),
+        httpx.ConnectError("connection refused"),
     ],
 )
 def test_grade_degrades_honestly(monkeypatch, caplog, exc):
