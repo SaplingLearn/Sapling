@@ -348,6 +348,21 @@ async def _run_once(
     return result.output
 
 
+def _needs_confirmation(first: GraderOutput, rubric_ids, student_answer: str, terms) -> bool:
+    """A33: an unreported all-yes verdict on an answer that talks about grading
+    (answer_guard.grading_talk) is not credited on the first run's own report —
+    the second opinion runs, and its report and verdict decide. Live, the first
+    slot credited a pre-filled grading result without reporting it; the second
+    slot reported it every time it ran (CodeRabbit PR #673 round 3)."""
+    results = parse_item_results(first.item_results, rubric_ids)
+    return (
+        not first.addresses_grader
+        and bool(results)
+        and all(results.values())
+        and answer_guard.grading_talk(student_answer, **terms)
+    )
+
+
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
@@ -355,7 +370,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     An answer that addresses the grader is refused (A33) — before any model call
     when the screen catches it, after the run when either run reports
     `addresses_grader` — as GradeResult(unavailable=True, refused=<reason>) with
-    one refusal event."""
+    one refusal event. An unreported all-yes verdict on an answer that talks
+    about grading is confirmed by the second opinion before it is credited."""
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
         # come back a full-weight "incorrect" (check_item_service falls back to
@@ -386,7 +402,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     backend: Literal["gemini", "gemini_second"] = "gemini"
     try:
         runs = [await _run_once(message, deps)]
-        if runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE:
+        if runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE or _needs_confirmation(
+            runs[0], rubric_ids, student_answer, terms
+        ):
             # spec §3.4: ONE second opinion, on the grader_second slot (A22)
             runs.append(await _run_once(message, deps, second_opinion=True))
             backend = "gemini_second"

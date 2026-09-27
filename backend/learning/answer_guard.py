@@ -889,3 +889,35 @@ def _verdict_share(folded_text: str, rubric_ids: tuple[str, ...], vocab: _Vocabu
     ):
         return 0.0
     return sum(is_id(w) or w in _VERDICT_TOKENS for w in words) / len(words)
+
+
+# ── grading talk: when an all-yes verdict needs a second look ────────────────
+# Not a refusal: a signal that the first run's own report is not enough. An
+# answer that names rubric ids (not course entities), carries key-value, table
+# or tag structure, or talks about grading or authority gets grade()'s second
+# opinion before an all-yes verdict is credited (spec §13 A33). Honest answers
+# that match cost one more model run, never a refusal.
+_GRADING_TALK = re.compile(
+    r"\b(?:rubrics?|criteri(?:a|on)|credit|marks|grad(?:e[ds]?|ers?|ing)|regrad\w*"
+    r"|scor(?:e[ds]?|ing)|confidence|approv\w*|verif\w*|accepted|pre-?filled|official"
+    r"|answer\s+key|instructors?|professors?|teachers?|tas?|tutors?|staff|examiners?"
+    r"|evaluators?|markers?|assessors?|reviewers?|platform)\b"
+)
+_STRUCTURE = re.compile(
+    r"[{}]|^[ \t]*\|.*\|[ \t]*$|<\s*/?\s*[a-z][\w-]{0,32}\s*>|^[ \t]*-[ \t]+[\w\"']{1,32}\s*:",
+    re.M,
+)
+
+
+def grading_talk(text: str, *, rubric_ids: Iterable[str] = (), context: str = "") -> bool:
+    """True when `text` names a rubric id that is not a course entity, carries
+    key-value, table or tag structure, or uses grading or authority words. Read
+    on the fold that drops invisible characters only: "_" stays part of a word,
+    so an identifier such as `E2E_GRADER_CORRECT` or `grade_book` is no talk."""
+    ids = tuple(rubric_ids)
+    vocab = _vocabulary(context, ids)
+    folded = _fold(text).text
+    if _GRADING_TALK.search(folded) or _STRUCTURE.search(folded):
+        return True
+    id_pattern = re.compile(rf"(?<!\w)(?:{_id_alternation(ids)})(?!\w)")
+    return any(_spelling(m.group()) not in vocab.entities for m in id_pattern.finditer(folded))
