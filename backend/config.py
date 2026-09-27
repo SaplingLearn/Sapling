@@ -18,11 +18,6 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 # visible through config.py.
 LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN", "")
 
-# PostHog product analytics is optional in production. The client is initialized
-# by main.py's lifespan only when both values are configured.
-POSTHOG_PROJECT_TOKEN = os.getenv("POSTHOG_PROJECT_TOKEN")
-POSTHOG_HOST = os.getenv("POSTHOG_HOST")
-
 PORT = int(os.getenv("PORT", "5000"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
@@ -89,17 +84,6 @@ def validate_config() -> None:
         missing.append("GEMINI_API_KEY")
     if not IS_LOCAL and len((SESSION_SECRET or "").strip().encode("utf-8")) < 32:
         missing.append("SESSION_SECRET (must be set and >= 32 bytes)")
-    if APP_ENV in {"local", "development", "dev"}:
-        for name, value in (
-            ("POSTHOG_PROJECT_TOKEN", POSTHOG_PROJECT_TOKEN),
-            ("POSTHOG_HOST", POSTHOG_HOST),
-        ):
-            if not value or not value.strip():
-                raise RuntimeError(
-                    f"{name} variable required by PostHog is missing or un-configured, "
-                    f"this causes events to be silently missed. This error stops appearing "
-                    f"once {name} is configured"
-                )
     if missing:
         raise RuntimeError(
             "Missing required configuration: "
@@ -196,3 +180,48 @@ def build_commit() -> str:
     generic = (os.getenv("GIT_COMMIT_SHA") or "").strip()
     raw = railway or generic
     return raw[:7].lower() or "unknown"
+
+
+# ── PostHog (optional product analytics, ADR 0028) ──────────────────────────
+#
+# All of these are OPTIONAL and deliberately absent from `validate_config`: unset
+# means the PostHog seam (services/posthog_client.py) is fully inert — no
+# client, no threads, no network. Whether a set token is actually USED is
+# decided there (`disabled_reason`), not here: it is also forced off under
+# pytest, APP_ENV=test, any non-"real" SAPLING_MODEL_MODE, and POSTHOG_DISABLED.
+# Read at call time, not import time (like `canopy_metrics_token`), so tests
+# and the kill switch need no reload.
+
+POSTHOG_DEFAULT_HOST = "https://us.i.posthog.com"  # US cloud ingestion
+
+
+def posthog_project_token() -> str:
+    """The project (public, write-only) token events are captured with."""
+    return (os.getenv("POSTHOG_PROJECT_TOKEN") or "").strip()
+
+
+def posthog_host() -> str:
+    """Ingestion host. Defaults to US cloud."""
+    return (os.getenv("POSTHOG_HOST") or POSTHOG_DEFAULT_HOST).strip().rstrip("/")
+
+
+def posthog_personal_api_key() -> str:
+    """Personal API key (scope `person:write`) — used ONLY by the account-
+    deletion person delete, never handed to the capture client (a personal key
+    there would start feature-flag polling, i.e. background network)."""
+    return (os.getenv("POSTHOG_PERSONAL_API_KEY") or "").strip()
+
+
+def posthog_project_id() -> str:
+    """Numeric project id for the private REST API (person deletion)."""
+    return (os.getenv("POSTHOG_PROJECT_ID") or "").strip()
+
+
+def posthog_api_host() -> str:
+    """Private REST API host. The ingestion host (`us.i.posthog.com`) does not
+    serve `/api/projects/...`; the app host does. POSTHOG_API_HOST overrides;
+    otherwise it is derived from POSTHOG_HOST's `<region>.i.posthog.com`."""
+    explicit = (os.getenv("POSTHOG_API_HOST") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    return posthog_host().replace(".i.posthog.com", ".posthog.com")

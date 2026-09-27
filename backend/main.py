@@ -33,11 +33,7 @@ from services import quiz_config, quiz_errors
 from services.ai_observability import posthog_ai_span_processors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
-from services.request_context import (
-    PostHogContextMiddleware,
-    RequestIDMiddleware,
-    current_request_id,
-)
+from services.request_context import RequestIDMiddleware, current_request_id
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -45,12 +41,7 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
-from services.posthog_client import get_posthog_client, initialize_posthog
-from services.posthog_logs import (
-    initialize_posthog_log_capture,
-    log_backend_ready,
-    shutdown_posthog_log_capture,
-)
+from services import posthog_client
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -80,10 +71,11 @@ logfire.configure(
         callback=scrub_value,
         extra_patterns=list(EXTRA_PATTERNS),
     ),
+    # ADR 0028: PostHog LLM analytics rides the same Pydantic AI spans through
+    # an ALLOWLIST processor (model/tokens/cost/names only — never prompts,
+    # completions or tool args). [] when PostHog is off (tests, E2E, no token).
     additional_span_processors=posthog_ai_span_processors(),
 )
-# Reuse the established Pydantic AI instrumentation so the PostHog processor
-# receives the same agent, tool, and generation spans without a duplicate hook.
 logfire.instrument_pydantic_ai()
 
 # ── App lifespan: self-bootstrap external resources ─────────────────────────
@@ -106,8 +98,9 @@ async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
-    initialize_posthog()
-    initialize_posthog_log_capture()
+    # ADR 0028: optional; builds nothing (no threads, no network) when the
+    # token is unset, under pytest/APP_ENV=test, or in function mode.
+    posthog_client.initialize_posthog()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -132,16 +125,13 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
-    log_backend_ready()
     yield
-    shutdown_posthog_log_capture()
     await stop_sweeper()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
-    posthog_client = get_posthog_client()
-    if posthog_client is not None:
-        posthog_client.flush()
+    # After events_service: flush the PostHog mirror's queue last.
+    posthog_client.shutdown_posthog()
     shutdown_dbos()
 
 
@@ -213,13 +203,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request IDs run outside CORS so every response is tagged and logged.
+# Add LAST so it's the outermost middleware (runs first on the way in,
+# last on the way out — exactly what we want for stamping every request,
+# tagging every response, and emitting one structured log line per
+# request, including ones that fail inside CORS.
 app.add_middleware(RequestIDMiddleware)
-
-# Add LAST so the verified session user's PostHog context surrounds every
-# downstream request handler and exception capture. It is a no-op when
-# PostHog is not configured or the request has no valid session.
-app.add_middleware(PostHogContextMiddleware)
 
 
 # #540 A3: on /api/quiz/* paths, quiz_errors.error_content wraps errors in
@@ -284,10 +272,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
-    posthog_client = get_posthog_client()
-    if posthog_client is not None:
-        posthog_client.capture_exception(exc)
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    # ADR 0028: PostHog error tracking. No-op when PostHog is off; message
+    # redacted and no frame locals (posthog_client._scrub_event). The user is
+    # whatever auth_guard stamped on request.state (#117 1b) — a UUID or None.
+    posthog_client.capture_exception(
+        exc, user_id=getattr(request.state, "user_id", None), request_id=rid,
+    )
     content = quiz_errors.error_content(
         request.url.path, 500, "Internal server error.", rid,
     )
