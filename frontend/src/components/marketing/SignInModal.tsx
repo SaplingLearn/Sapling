@@ -173,8 +173,17 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         confirmApproved();
         if (data.onboardingCompleted) {
           router.replace("/dashboard");
+        } else if (window.location.pathname === "/") {
+          // Signup runs in place on the landing page. It is already mounted
+          // here and `isAuthenticated` may not change (a signed-in visitor
+          // re-signing in), so a sessionStorage flag plus a mount effect can't
+          // re-trigger the choreography — signal the page directly instead.
+          window.dispatchEvent(new CustomEvent("sapling:start-onboarding"));
         } else {
-          router.replace("/onboarding");
+          // Signed in from some other marketing page: there is no landing page
+          // listening, so arm the flag and let its resume effect pick it up.
+          sessionStorage.setItem("sapling_onboarding_pending", "1");
+          router.replace("/");
         }
         onClose();
       } else {

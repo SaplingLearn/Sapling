@@ -103,7 +103,11 @@ function CallbackInner() {
       if (onboardingCompleted) {
         router.replace('/dashboard');
       } else {
-        router.replace('/onboarding');
+        // Same-tab Google redirect: signup runs in place on the landing page,
+        // whose resume effect replays the intro off this flag. /onboarding is
+        // still mounted as the standalone fallback.
+        sessionStorage.setItem('sapling_onboarding_pending', '1');
+        router.replace('/');
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps

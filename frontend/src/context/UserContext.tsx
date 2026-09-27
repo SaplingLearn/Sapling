@@ -186,6 +186,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setFeaturedRole(null);
     setIsAdmin(false);
     localStorage.removeItem('sapling_user');
+    // The landing page resumes the onboarding choreography off this flag after
+    // a same-tab Google redirect. A dead identity must not leave it armed, or
+    // the next visitor to this browser drops straight into onboarding.
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('sapling_onboarding_pending');
+    }
   }, []);
 
   const fetchProfileData = useCallback(async (uid: string) => {

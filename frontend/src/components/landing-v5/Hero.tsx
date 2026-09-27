@@ -31,6 +31,9 @@ import { useEffect, useRef } from 'react';
 import { PenSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { IS_TEST_MODE, now, random } from '@/lib/testMode';
+import {
+  drawObGraph, setObCanvasAnimating, stepObGraph, type ObPhase, type ObRefs,
+} from './onboardingChoreography';
 
 // Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
 // fillStyle where CSS var() doesn't resolve. #3e6f8a mirrors --info in
@@ -57,6 +60,8 @@ export function Hero({
   heroText1,
   heroText2,
   onBeta,
+  ob = null,
+  obPhase = 'idle',
 }: {
   /** True once the intro overlay has cleared and the hero may rise. */
   heroMounted: boolean;
@@ -65,6 +70,14 @@ export function Hero({
   /** The tagline under it, likewise. */
   heroText2: string;
   onBeta: () => void;
+  /**
+   * The onboarding choreography's ref bundle, when the page runs signup in
+   * place. Omitted, the hero is exactly the hero it was: `stepObGraph`
+   * returns zoom 1 / no cluster fade, and `drawObGraph` is a no-op.
+   */
+  ob?: ObRefs | null;
+  /** Drives the CSS half — the hero's copy and cards dim out of the way. */
+  obPhase?: ObPhase;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heroContentRef = useRef<HTMLDivElement>(null);
@@ -87,6 +100,9 @@ export function Hero({
     // Test mode parks the loop on its single deterministic frame, same
     // as prefers-reduced-motion.
     let animating = !IS_TEST_MODE && !reduceMotion.matches;
+    // Published so the page knows whether there is a zoom to watch, or whether
+    // it should skip the choreography and open the form directly.
+    if (ob) setObCanvasAnimating(ob, animating);
 
     // #3e6f8a mirrors --info (globals.css); literal because canvas can't resolve var().
     const palette = [
@@ -151,6 +167,12 @@ export function Hero({
       rotAngle += 0.0008;
       const fl = 1000, cx = width / 2, cy = height / 2, t = now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
+      const nowMs = now();
+
+      // Spawn/retire this frame's onboarding nodes and advance the dive. The
+      // ambient field shares the zoom and dims as `clusterProgress` rises, so
+      // this has to run before the projection below.
+      const { zoom, clusterProgress, linkFade } = stepObGraph(ob, nowMs);
 
       const proj = nodes.map(n => {
         const ny = n.oy + Math.sin(t * 0.4 + n.seed) * 15;
@@ -159,7 +181,7 @@ export function Hero({
         x -= mx * (z + fl) * 0.02;
         const y2 = ny - my * (z + fl) * 0.02;
         const sc = fl / (fl + z);
-        return { x: x * sc + cx, y: y2 * sc + cy - parallaxYRef.current, z, sc, n };
+        return { x: x * sc * zoom + cx, y: y2 * sc * zoom + cy - parallaxYRef.current, z, sc: sc * zoom, n };
       }).sort((a, b) => b.z - a.z);
 
       ctx.globalCompositeOperation = 'source-over';
@@ -170,11 +192,13 @@ export function Hero({
       // out of the inner loop, reject on |dx|/|dy| before multiplying, and
       // compare squared distances so the sqrt only runs for pairs that
       // actually draw a link.
-      for (let i = 0; i < proj.length; i++) {
+      // Fully clustered (mid-onboarding) every link alpha is 0, so the whole
+      // pair walk is dead work — skip it rather than compute invisible lines.
+      for (let i = 0; linkFade > 0 && i < proj.length; i++) {
         const p1 = proj[i];
         const maxD = 70 * p1.sc;
         const maxD2 = maxD * maxD;
-        const aScale = 0.15 * Math.min(1, p1.sc);
+        const aScale = 0.15 * Math.min(1, p1.sc) * linkFade;
         for (let j = i + 1; j < proj.length; j++) {
           const p2 = proj[j];
           const dx = p1.x - p2.x;
@@ -195,7 +219,8 @@ export function Hero({
       proj.forEach(p => {
         if (p.z > -fl) {
           const breathe = 0.92 + 0.08 * Math.sin(t * 0.6 + p.n.seed);
-          const fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
+          let fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
+          if (clusterProgress > 0) fogA *= Math.max(0.12, 1 - clusterProgress * 0.82);
           const r = p.n.radius * p.sc * breathe;
           if (r > 0.1) {
             ctx.globalAlpha = fogA;
@@ -204,6 +229,10 @@ export function Hero({
         }
       });
       ctx.globalAlpha = 1;
+
+      drawObGraph(ctx, ob, {
+        nowMs, t, rotAngle, fl, cx, cy, zoom, parallaxY: parallaxYRef.current,
+      });
 
       if (animating) animId = requestAnimationFrame(draw);
     }
@@ -214,6 +243,7 @@ export function Hero({
       const next = !IS_TEST_MODE && !reduceMotion.matches;
       if (next === animating) return;
       animating = next;
+      if (ob) setObCanvasAnimating(ob, next);
       cancelAnimationFrame(animId);
       draw();
     };
@@ -225,7 +255,9 @@ export function Hero({
       reduceMotion.removeEventListener('change', onMotionPrefChange);
       cancelAnimationFrame(animId);
     };
-  }, []);
+    // `ob` is the only dependency, and `useObRefs` builds it once per mount —
+    // so this still runs exactly once and never re-seeds the 226 ambient nodes.
+  }, [ob]);
 
   // Mouse + scroll. On main this handler also drove the navbar's auto-hide
   // and the page-wide ambient glow; both are the v5 page's business now
@@ -322,8 +354,12 @@ export function Hero({
       </div>
       <canvas ref={canvasRef} className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
 
-      {/* Floating Glass Accent Cards */}
-      <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
+      {/* Floating Glass Accent Cards — dim with the rest of the hero once the
+          onboarding choreography takes over, or they hang over the form.
+          NB: no `transform` here; the parallax tick owns that per-card. */}
+      <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none"
+        style={{ opacity: obPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
+      >
         <div
           className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
           style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
@@ -375,8 +411,13 @@ export function Hero({
         }}
       />
 
-      {/* Hero Content */}
-      <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6">
+      {/* Hero Content — dims out of the way for the onboarding choreography.
+          NB: no `transform` in this style object; the scroll handler owns that
+          property imperatively (heroContentRef), and React only diffs the keys
+          it is given. */}
+      <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6"
+        style={{ opacity: obPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
+      >
         {/* Legibility veil. The point cloud runs straight through the copy and
             was breaking the letterforms, so the copy sits on a slight blur of
             whatever is behind it plus a wash of the page colour. Both are
@@ -458,8 +499,9 @@ export function Hero({
         </div>
       </div>
 
-      {/* Scroll Indicator */}
-      <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 z-20 landing-animate-float-indicator flex flex-col items-center">
+      {/* Scroll Indicator — goes with the rest of the hero during onboarding;
+          there is nothing below to scroll to while the flow owns the screen. */}
+      <div style={{ opacity: obPhase !== 'idle' ? 0 : heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 z-20 landing-animate-float-indicator flex flex-col items-center">
         <div className="w-px h-14 landing-divider-v" />
         <span className="font-jetbrains text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
       </div>
