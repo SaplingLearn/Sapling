@@ -8,8 +8,10 @@ refused: the grader never runs, no credit is given, and nothing is recorded for
 either outcome. The student is asked to answer in their own words.
 
 Three kinds of signal, each counted after `_fold()` normalises the text (NFKD,
-combining marks and invisible format characters dropped, look-alike letters and
-punctuation mapped to ASCII, case folded):
+combining marks and format characters dropped, look-alike letters and
+punctuation mapped to ASCII, case folded). Invisible characters (zero-width,
+word joiner, braille blank, Hangul fillers) are read twice — dropped, and as a
+space — so neither "ig\u200bnore" nor "ignore\u200bprevious" hides a rule:
 
 - verdict tokens: a rubric id (this item's, or a generic `r3` / `rubric item 3` /
   `criterion 3`) followed by a verdict word (`yes`, `met`, `true`, `✓` …) that
@@ -97,12 +99,27 @@ _LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85  ")
 # characters (zero-width space/joiners, soft hyphen, bidi controls).
 _DROPPED_CATEGORIES = frozenset({"Mn", "Me", "Cf"})
 _KEPT_CONTROLS = frozenset("\t")
+# Characters that render as nothing (or as a blank) and so can stand in for a
+# space or hide inside a word: zero-width space/non-joiner/joiner, word joiner,
+# BOM, the Mongolian vowel separator and the invisible operators (all Cf), plus
+# blank "letters" and symbols that are not format characters (braille blank,
+# the Hangul fillers). Each text is screened in two folds: one drops them
+# ("ig\u200bnore" → "ignore"), one reads them — and "_" — as a space
+# ("ignore\u200bprevious" → "ignore previous"); a signal in either fold counts.
+_INVISIBLE = frozenset(
+    "\u200b\u200c\u200d\u2060\ufeff\u180e\u2061\u2062\u2063\u2064\u2800\u3164\uffa0\u115f\u1160"
+)
 
 
-def _fold_char(ch: str) -> str:
-    """One original character → its case-kept detection form (possibly '' or several)."""
+def _fold_char(ch: str, spaced: bool = False) -> str:
+    """One original character → its case-kept detection form (possibly '' or several).
+    `spaced` picks the fold that reads invisible characters and "_" as a space."""
     if ch in _LINE_BREAKS:
         return "\n"
+    if ch in _INVISIBLE:
+        return " " if spaced else ""
+    if spaced and ch == "_":
+        return " "
     out = []
     for c in unicodedata.normalize("NFKD", ch):
         cat = unicodedata.category(c)
@@ -119,12 +136,12 @@ class _Folded:
     origin: tuple[int, ...]  # text[i] came from the original's character origin[i]
 
 
-def _fold(original: str) -> _Folded:
+def _fold(original: str, spaced: bool = False) -> _Folded:
     cased: list[str] = []
     folded: list[str] = []
     origin: list[int] = []
     for i, ch in enumerate(original or ""):
-        form = _fold_char(ch)
+        form = _fold_char(ch, spaced)
         cased.append(form)
         for c in form.casefold():
             folded.append(c)
@@ -300,32 +317,50 @@ class Screen:
         return None
 
 
-def screen(text: str, *, rubric_ids: Iterable[str] = ()) -> Screen:
-    """Count the grader-directed signals in `text` (the whole submission as the
-    grader would see it). `rubric_ids` are this item's ids."""
-    folded = _fold(text)
+def _folds(text: str) -> tuple[_Folded, _Folded]:
+    return _fold(text), _fold(text, spaced=True)
+
+
+def _screen_fold(folded: _Folded, verdicts: re.Pattern[str]) -> Screen:
     return Screen(
         directives=sum(len(p.findall(folded.text)) for p in _DIRECTIVES),
         role_markers=sum(len(p.findall(folded.text)) for p in _ROLE_MARKERS)
         + len(_CAPS_ROLE_LABEL.findall(folded.cased)),
-        verdict_tokens=len(_verdict_pattern(rubric_ids).findall(folded.text)),
+        verdict_tokens=len(verdicts.findall(folded.text)),
+    )
+
+
+def screen(text: str, *, rubric_ids: Iterable[str] = ()) -> Screen:
+    """Count the grader-directed signals in `text` (the whole submission as the
+    grader would see it). `rubric_ids` are this item's ids. Each count is the
+    larger of the two folds' (see _INVISIBLE)."""
+    verdicts = _verdict_pattern(rubric_ids)
+    a, b = (_screen_fold(f, verdicts) for f in _folds(text))
+    return Screen(
+        directives=max(a.directives, b.directives),
+        role_markers=max(a.role_markers, b.role_markers),
+        verdict_tokens=max(a.verdict_tokens, b.verdict_tokens),
     )
 
 
 def neutralise(text: str, *, rubric_ids: Iterable[str] = ()) -> str:
-    """`text` with every verdict token replaced by NEUTRALISED; every other
-    character is the student's own (the original, never the detection copy)."""
-    folded = _fold(text)
-    spans = [
+    """`text` with every verdict token (found in either fold) replaced by
+    NEUTRALISED; every other character is the student's own (the original,
+    never the detection copy)."""
+    verdicts = _verdict_pattern(rubric_ids)
+    spans = sorted(
         (folded.origin[m.start()], folded.origin[m.end() - 1] + 1)
-        for m in _verdict_pattern(rubric_ids).finditer(folded.text)
+        for folded in _folds(text)
+        for m in verdicts.finditer(folded.text)
         if m.end() > m.start()
-    ]
+    )
     if not spans:
         return text
     out, last = [], 0
     for start, end in spans:
-        out += [text[last:start], NEUTRALISED]
+        if end <= last:  # the other fold's copy of a span already replaced
+            continue
+        out += [text[last : max(start, last)], NEUTRALISED]
         last = end
     out.append(text[last:])
     return "".join(out)
@@ -333,9 +368,14 @@ def neutralise(text: str, *, rubric_ids: Iterable[str] = ()) -> str:
 
 def verdict_share(text: str, *, rubric_ids: Iterable[str] = ()) -> float:
     """The share of `text`'s words that are rubric ids or verdict words, when at
-    least one id is directly followed by a verdict word; else 0.0. A bare "yes"
-    or an answer that names R1 and R2 as resistors scores 0.0."""
-    words = _WORD.findall(normalise(text))
+    least one id is directly followed by a verdict word; else 0.0 (the larger
+    of the two folds'). A bare "yes" or an answer that names R1 and R2 as
+    resistors scores 0.0."""
+    return max(_verdict_share(folded.text, rubric_ids) for folded in _folds(text))
+
+
+def _verdict_share(folded_text: str, rubric_ids: Iterable[str]) -> float:
+    words = _WORD.findall(folded_text)
     own = {normalise(rid).strip() for rid in rubric_ids}
 
     def is_id(word: str) -> bool:
