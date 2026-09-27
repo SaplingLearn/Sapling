@@ -2,6 +2,8 @@
 
 Rules: read this file first. The table is append-only, so one package can have many rows: the LATEST row for a package (the row with that `pkg` number furthest down the table) is its current status, and older rows are history. Refuse to start if the latest row of any earlier package is `blocked` or `in-progress`; check only each package's latest row, never older ones. A package marks itself `done`; only the next package that depends on it marks it `verified` after running its State-of-the-world rows. Never rewrite an earlier row — a change of state is a new row. Status enum: `planned | in-progress | done | verified | blocked | reopened`.
 
+Execution order and dependencies: spec §14. PKG-04 appends `00 | reopened` (Task 0); PKG-05 appends `03 | reopened` and `01 | reopened` (Task 0b rename); PKG-05b and PKG-06b append `05`/`05b` reopened rows. A package's state is its LATEST row (README "Ledger reading").
+
 | pkg | slug | status | branch | head SHA | tests added | verified-by (pkg, date, command → output) | handoff |
 |---|---|---|---|---|---|---|---|
 | 00 | foundation | planned | | | | | |
@@ -48,6 +50,8 @@ Rules: read this file first. The table is append-only, so one package can have m
 | 00 | foundation | verified | feat/learning-loop | 1370354 | — | Series 2026-09-27 (local stack: colima + supabase CLI 2.116.0, PG15): migration 20260926231744_learning_loop_beta.sql applied from an empty DB by `make e2e-up` (69 migrations); `user_settings.learning_loop_beta` readable through `table()` | HANDOFF-00.md |
 | 03 | evidence-state | verified | feat/learning-loop | 1370354 | — | Series 2026-09-27: acceptance 11 / self-check 5 met — migration 20260927024349_learning_learner_state.sql applied from an empty PG15 DB (`learner_state` and the new `node_mastery_events` columns readable through `table()`); one flock'd E2E cycle: Playwright 88 passed, 1 failed, 13 skipped (opt-in gallery/screenshot specs); oracles exit 0, 0 findings. The one failure, `e2e/gradebook.spec.ts:35`, is pre-existing and outside the series: a Landing.tsx term-chip race (the terms load resets a demo-chip click) that this machine's timing exposes 2/2; it passes in CI | HANDOFF-03.md |
 | 11 | quiz-flashcards | verified | feat/learning-loop | d6db9ab | — | Series 2026-09-27: acceptance 11 / self-check 5 met on the merged PR branch — fresh-DB E2E cycle (`E2E_FRESH_DB=1`): all 70 migrations replayed from an empty PG15 volume, including 20260927035346_learning_flashcards_fsrs.sql; Playwright 89 passed, 0 failed, 13 skipped (opt-in), covering quiz.spec.ts (+0.09 legacy assertion), quiz-journeys, quiz-errors, quiz-integration and the study specs; oracles exit 0, 0 findings. Full suite on d6db9ab → 3355 passed, 141 skipped | HANDOFF-11.md |
+| 05b | decision-seam | planned | | | | | |
+| 06b | ai-budget-and-usage | planned | | | | | |
 
 ## Deviations
 
