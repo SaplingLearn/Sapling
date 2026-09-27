@@ -2349,6 +2349,44 @@ input[type="reset"]:disabled {
      stylesheet rule without it. */
   .landing-dc .ld-handnote { display: none !important; }
 }
+
+/* ── Wiki contents rail ────────────────────────────────────────────
+   The rail is a fixed 190px column beside the article. That holds until the
+   window is narrow enough for 190px to be most of it: at 390px wide the
+   rail took 190 and left the reference itself 112px, so the page whose job
+   is showing you exact definitions had them wrapping two words to a line.
+
+   Under 900px the grid collapses to one column and the rail stops being a
+   sidebar: static rather than sticky, unbounded rather than capped, and its
+   five groups flow as a wrapping row above the article. Nothing scrolls
+   inside it at any width — on a short window the page scrolls, which is what
+   a reader expects; a scrollbar inside a sticky box is one most people never
+   find. `!important` throughout because every one of these properties is set
+   inline on the element (see WikiRail.tsx).
+
+   The `max-height` half of the query matters as much as the width half. The
+   rail's height is set by its eighteen entries, not by the window's width,
+   so a wide-but-short window — 960x560, a half-height window on a laptop —
+   keeps the sidebar and cannot fit it however far the clamps in WikiRail.tsx
+   squeeze. Below 580px tall the same collapse applies at any width: measured,
+   600px tall is the shortest window the column still fits. */
+@media (max-width: 899px), (max-height: 580px) {
+  .wiki-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .wiki-rail {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    gap: 18px 28px !important;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(42, 39, 31, 0.12);
+  }
+  /* Each group keeps its own label-over-links stack; the groups are what
+     wrap, so the contents still read as five named sets rather than one
+     undifferentiated run of eighteen links. */
+  .wiki-rail > div { min-width: 132px; }
+}
 /* The grove's cards keep one size at every viewport height.
    Two `max-height` rules used to tighten them in steps — the demo pane to
    124px under 1020px of viewport, 110px under 880px — so the header and both

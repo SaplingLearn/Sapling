@@ -30,7 +30,27 @@ import { useWikiSearch } from './WikiSearch';
  */
 const SPY_LINE = 100;
 
-const LINK: React.CSSProperties = { fontSize: 13.5, padding: '4px 0', transition: 'color 120ms ease' };
+/**
+ * A contents link.
+ *
+ * Sized in `vh` between a floor and the size it had, so eighteen links and
+ * five group labels fit the viewport instead of scrolling inside the rail.
+ * The rail was a flat 781px, which fits a 900px-tall window and nothing
+ * shorter — it scrolled on 1366x768 and 1280x720, two of the commonest
+ * laptop screens there are, and the scroll was inside a sticky box most
+ * people never think to scroll.
+ *
+ * `lineHeight` is pinned rather than left at `normal`: the leading is most of
+ * a row's height at these sizes, and an unpinned one varies by font and
+ * platform, so the fit would have been measured on one machine and wrong on
+ * the next.
+ */
+const LINK: React.CSSProperties = {
+  fontSize: 'clamp(10.5px, 1.5vh, 13.5px)',
+  padding: 'clamp(1px, 0.4vh, 4px) 0',
+  lineHeight: 1.25,
+  transition: 'color 120ms ease',
+};
 
 /**
  * The group label — "Learn", "Capture", "Semester".
@@ -42,8 +62,9 @@ const LINK: React.CSSProperties = { fontSize: 13.5, padding: '4px 0', transition
  * label into a line wide enough to wrap inside a 190px rail.
  */
 const GROUP: React.CSSProperties = {
-  fontFamily: MONO, fontSize: 12.5, letterSpacing: '0.1em', textTransform: 'uppercase',
-  color: '#4a4436', fontWeight: 600, marginBottom: 8,
+  fontFamily: MONO, fontSize: 'clamp(9px, 1.35vh, 12.5px)', letterSpacing: '0.1em',
+  textTransform: 'uppercase', color: '#4a4436', fontWeight: 600,
+  marginBottom: 'clamp(2px, 0.85vh, 8px)', lineHeight: 1.2,
 };
 
 export function WikiRail() {
@@ -104,10 +125,19 @@ export function WikiRail() {
   })).filter((section) => section.items.length > 0);
 
   return (
-    /* Eighteen entries plus their group labels outgrow a short viewport, and
-       a sticky element taller than the screen puts its last items out of
-       reach. Bounded and scrollable so every section stays clickable. */
-    <aside style={{ position: 'sticky', top: 84, maxHeight: 'calc(100vh - 104px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+    /* Sized to fit rather than bounded and scrolled. `overflowY: auto`
+       survives only as a last resort for a window too short for even the
+       clamp floors (under ~460px tall); at every ordinary size the content
+       is smaller than the box and the scrollbar never appears.
+       `.wiki-rail` carries the narrow-width collapse — see globals.css. */
+    <aside
+      className="wiki-rail"
+      style={{
+        position: 'sticky', top: 84, maxHeight: 'calc(100vh - 100px)',
+        overflowY: 'auto', display: 'flex', flexDirection: 'column',
+        gap: 'clamp(5px, 1.9vh, 18px)',
+      }}
+    >
       {groups.length === 0 && (
         <span style={{ fontSize: 13, color: '#8d866f', lineHeight: 1.5 }}>
           Nothing matches “{query.trim()}”.
