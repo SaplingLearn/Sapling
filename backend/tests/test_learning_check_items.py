@@ -1240,6 +1240,76 @@ class TestRepairAndOptions:
             )
 
 
+class TestDeliberation:
+    """Third review of A37: two stored mc_reason references were the model's
+    own working ("Let's assume 'Appeal to Fear' is an option.", "I must
+    generate options."), not a model answer, and still ended with a
+    "Final answer:" sentence equal to the correct option. The reference is
+    the grader's gold standard and reaches the H4/H6 hint payloads, so such
+    a draft is dropped under the rule word "deliberation"."""
+
+    _CLOSE = " Final answer: The update step size."
+
+    @pytest.mark.parametrize(
+        "working",
+        [
+            # the review's two live references (ENG150, pass 2), abridged
+            "The passages specifically discuss post hoc. The prompt doesn't give options. "
+            "I must generate options. Let's assume 'Appeal to Authority' is a relevant, "
+            "unlisted fallacy type.",
+            "Without explicit options given in the prompt, I will generate common fallacy "
+            "types. Let's assume 'Appeal to Fear' is an option.",
+            # the fixer's direct runs (BIO110): three references re-evaluated this way
+            "It doesn't explicitly state immediate cessation of oxygen use. Let's re-evaluate.",
+            # the other forms of the same working
+            "So I think the rate is what scales the step.",
+            "Let me check the passage again: the rate scales each step.",
+            "The rate scales each step, and I'll go with the step size.",
+        ],
+    )
+    def test_a_reference_that_is_the_models_working_is_dropped(self, working):
+        from learning.checks import validate_draft
+
+        reasons = validate_draft(_mc_draft(reference_answer=working + self._CLOSE))
+        assert [r.split(":")[0] for r in reasons] == ["deliberation"], reasons
+        assert "; " not in reasons[0]
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "DNA polymerase I can remove the primers, so ligase alone joins the fragments.",
+            "Type I and type II errors trade off, and the rate scales each step.",
+            "We must have det(A - lambda I) = 0, so the rate scales each step.",
+            "Let x be the step size: the rate scales x along the negative gradient.",
+            "Let us write the step as the rate times the gradient.",
+            "World War I will be remembered, but the rate scales each step.",
+        ],
+    )
+    def test_first_person_words_that_are_not_the_models_working_stay(self, reason):
+        from learning.checks import validate_draft
+
+        assert validate_draft(_mc_draft(reference_answer=reason + self._CLOSE)) == []
+
+    def test_the_rule_reads_only_an_mc_reason_reference(self):
+        """A teachback reference may teach in the first person ("Let's
+        picture a stack of plates"); a free or teachback final answer is
+        tied to its reference by A34's containment check, and neither format
+        was seen deliberating (0 of 114 recorded references)."""
+        from learning.checks import validate_draft
+
+        for fmt in ("free", "teachback"):
+            draft = _draft(
+                format=fmt,
+                reference_answer=(
+                    "Let's picture a ramp: the size of each update step is how far you move."
+                ),
+                final_answer="the size of each update step",
+            )
+            assert validate_draft(draft) == []
+        stem = _mc_draft(prompt="Let's say the rate doubles. Which quantity doubles? Why?")
+        assert validate_draft(stem) == []
+
+
 class TestFinalAnswerRules:
     """A34: every draft states the final answer its reference concludes with;
     validate_draft names each broken rule with the word "final_answer"."""

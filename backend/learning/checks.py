@@ -443,6 +443,23 @@ _LETTER_REF = re.compile(
 )
 
 
+# The model's own working, written into an mc_reason reference instead of a
+# model answer (third review of A37): "Let's assume 'Appeal to Fear' is an
+# option.", "I must generate options." — the planning "let's"/"let me", or
+# the pronoun "I" (at the start of a sentence or clause, so "DNA polymerase I
+# can" and "World War I will" are not it) with a verb of planning or doubt.
+# The reference is the grader's gold standard and reaches the H4/H6 hint
+# payloads, so such a draft is dropped. Measured on the 877 references the
+# A37 runs recorded: 5 of 763 mc_reason references match, every one of them
+# deliberation, and 0 of 114 free or teachback ones. "Let us write …" and
+# "Let x be …" are a derivation's idiom and do not count.
+_DELIBERATION = re.compile(
+    r"\b(?i:let['’]s|let\s+me)\b"
+    r"|(?:^|[.!?:;,]\s+|\b(?i:so|and|but|then|now|here|first|next)\s+)"
+    r"I(?:['’](?:ll|m\s+going)|\s+(?:will|must|need|think|should|have\s+to))\b"
+)
+
+
 # Closing punctuation an option's text may carry or not ("The loss value." is
 # "The loss value").
 _OPTION_END = ".,;:!?"
@@ -964,7 +981,8 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
     names the rule it is about (format, difficulty, prompt, reference, rubric,
     wrong, leak, answer_kind, canonical, tolerance, stepwise, final_answer; an
     mc_reason draft's A37 option rules lead with option_count, one_correct,
-    correct_key, distractor_key, option_text or letter). Run repair_draft
+    correct_key, distractor_key, option_text or letter, and its reference is
+    checked for the model's own working under deliberation). Run repair_draft
     first to store what it can repair."""
     reasons: list[str] = []
     if draft.format not in CHECK_ITEM_FORMATS:
@@ -995,6 +1013,12 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
         reasons.append(f"answer_kind {draft.answer_kind!r} is not one of {CHECK_ITEM_ANSWER_KINDS}")
     if draft.format == _MC_REASON:
         reasons.extend(_option_reasons(draft))
+        working = _DELIBERATION.search(draft.reference_answer)
+        if working:
+            reasons.append(
+                f"deliberation: the reference_answer is the model's own working "
+                f"({working.group(0).strip(' .!?:;,')!r}), not a model answer"
+            )
     if draft.answer_kind == _NUMERIC:
         if _finite_float(draft.canonical_answer) is None:
             reasons.append(f"canonical_answer {draft.canonical_answer!r} is not a number")
