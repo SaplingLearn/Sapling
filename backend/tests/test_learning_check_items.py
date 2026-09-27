@@ -177,6 +177,8 @@ _MC_OPTIONS = (
     ("The gradient sign", False, "rate_is_sign"),
 )
 _CORRECT, _ITER, _LOSS, _SIGN = _MC_OPTIONS
+# A test server secret for the correct option's slot (checks.lettered_options).
+_SLOT_KEY = b"test option-slot key, 32 bytes!!"
 
 
 def _opts(*rows):
@@ -796,7 +798,7 @@ class TestRepairAndOptions:
     def test_code_letters_the_options_and_places_the_correct_one(self):
         from learning.checks import lettered_options
 
-        options, correct = lettered_options(_mc_draft())
+        options, correct = lettered_options(_mc_draft(), slot_key=_SLOT_KEY)
         assert [o.letter for o in options] == ["A", "B", "C", "D"]
         (right,) = [o for o in options if o.wrong_key is None]
         assert right.letter == correct and right.text == _CORRECT[0]
@@ -804,12 +806,13 @@ class TestRepairAndOptions:
         assert [(o.text, o.wrong_key) for o in options if o is not right] == [
             (t, k) for t, _, k in _MC_OPTIONS[1:]
         ]
-        assert lettered_options(_mc_draft()) == (options, correct)  # stable per prompt
+        # stable per prompt and secret: a re-run upserts the same letters
+        assert lettered_options(_mc_draft(), slot_key=_SLOT_KEY) == (options, correct)
 
     def test_the_correct_position_is_codes_not_the_agents(self):
         """The agent writes the correct option first; code moves it to a slot
-        drawn from the item's question_hash, so every slot is used about
-        equally and the model cannot bias the key."""
+        drawn from a keyed hash of the item's question_hash, so every slot is
+        used about equally and the model cannot bias the key."""
         from collections import Counter
 
         from learning.checks import lettered_options
@@ -817,19 +820,50 @@ class TestRepairAndOptions:
 
         n = 400
         slots = Counter(
-            lettered_options(_mc_draft(prompt=f"Which quantity does rate {i} scale?"))[1]
+            lettered_options(
+                _mc_draft(prompt=f"Which quantity does rate {i} scale?"), slot_key=_SLOT_KEY
+            )[1]
             for i in range(n)
         )
         assert set(slots) == set("ABCD"[:CHECK_ITEM_MC_OPTIONS])
         expected = n / CHECK_ITEM_MC_OPTIONS
         assert all(abs(c - expected) < expected / 3 for c in slots.values()), slots
 
+    def test_the_correct_slot_cannot_be_computed_from_public_data(self):
+        """The client is sent the question_hash (PKG-08's /probe/next, the §8
+        `check` event) and the repository is public, so a slot computed from
+        the question_hash alone would give the correct letter away: it must
+        agree with int(question_hash, 16) % 4 only by chance, and move with
+        the server secret (review of A37, 2026-09-27)."""
+        from learning.checks import lettered_options, question_hash
+        from learning.params import CHECK_ITEM_MC_OPTIONS
+
+        letters = "ABCD"[:CHECK_ITEM_MC_OPTIONS]
+        drafts = [_mc_draft(prompt=f"Which quantity does rate {i} scale?") for i in range(400)]
+        mine = [lettered_options(d, slot_key=_SLOT_KEY)[1] for d in drafts]
+        public = [letters[int(question_hash(d.prompt), 16) % len(letters)] for d in drafts]
+        other = [lettered_options(d, slot_key=b"another server" * 2)[1] for d in drafts]
+        chance = len(drafts) / len(letters)
+        for guess in (public, other):
+            hits = sum(a == b for a, b in zip(mine, guess))
+            assert abs(hits - chance) < chance / 3, hits
+
+    def test_lettering_needs_the_server_secret(self):
+        from learning.checks import lettered_options
+
+        with pytest.raises(TypeError):
+            lettered_options(_mc_draft())  # no public default slot
+        for key in (b"", "text"):
+            with pytest.raises(ValueError):
+                lettered_options(_mc_draft(), slot_key=key)
+
     def test_lettering_refuses_a_draft_without_exactly_one_correct_option(self):
         from learning.checks import lettered_options
 
         with pytest.raises(ValueError):
             lettered_options(
-                _mc_draft(options=_opts(_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN))
+                _mc_draft(options=_opts(_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN)),
+                slot_key=_SLOT_KEY,
             )
 
 
@@ -1371,6 +1405,7 @@ class TestCreateItems:
     def test_mc_reason_options_and_numeric_key_are_encrypted(self):
         from learning.checks import lettered_options
         from services import check_item_service as svc
+        from services.encryption import derive_key
         from services.encryption import decrypt_if_present, decrypt_json
 
         numeric = _draft(
@@ -1386,8 +1421,11 @@ class TestCreateItems:
             svc.create_items("course-1", "learning rate", "doc-1", [_mc_draft(), numeric])
         mc, num = mocks["check_items"].upsert.call_args[0][0]
         # The stored shape the grader and the routes read is unchanged by A37:
-        # [{letter, text, wrong_key}] + the correct letter — lettered by code.
-        options, letter = lettered_options(_mc_draft())
+        # [{letter, text, wrong_key}] + the correct letter — lettered by code,
+        # the slot keyed by the server secret derived from ENCRYPTION_KEY.
+        options, letter = lettered_options(
+            _mc_draft(), slot_key=derive_key(svc.OPTION_SLOT_PURPOSE)
+        )
         assert decrypt_json(mc["options_json"]) == [o.model_dump() for o in options]
         assert [o["letter"] for o in decrypt_json(mc["options_json"])] == ["A", "B", "C", "D"]
         assert mc["correct_option"] != letter and decrypt_if_present(mc["correct_option"]) == letter

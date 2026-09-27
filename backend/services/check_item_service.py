@@ -56,7 +56,12 @@ from learning.params import (
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
-from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json
+from services.encryption import (
+    decrypt_if_present,
+    derive_key,
+    encrypt_if_present,
+    encrypt_json,
+)
 from services.events_service import log_event
 from services.graph_service import _normalize_concept
 from services.request_context import current_request_id
@@ -73,6 +78,11 @@ _COLUMNS = (
     "canonical_answer,tolerance,canonical_verified,stepwise,source_chunk_ids,"
     "source_document_ids,question_hash,graded,created_at,final_answer"
 )
+
+#: What derive_key names the secret the correct mc_reason option's slot is
+#: keyed with (A37): the client is sent each item's question_hash, so the slot
+#: must not be computable from it alone.
+OPTION_SLOT_PURPOSE = "check_items.option_slot.v1"
 
 #: A24 stub for services/decisions.py::item_answerable (PKG-05b): "is this item
 #: answerable from these passages?". Nothing in the series sets it and nothing
@@ -106,10 +116,10 @@ def _build_row(
     options = None
     correct_option = None
     if draft.format == _MC_REASON:
-        # A37: code letters the options and places the correct one; the stored
-        # shape ([{letter, text, wrong_key}] + the letter) is what the grader
-        # and the routes read.
-        lettered, letter = lettered_options(draft)
+        # A37: code letters the options and places the correct one at a slot
+        # keyed by the server secret; the stored shape ([{letter, text,
+        # wrong_key}] + the letter) is what the grader and the routes read.
+        lettered, letter = lettered_options(draft, slot_key=derive_key(OPTION_SLOT_PURPOSE))
         options = encrypt_json([o.model_dump() for o in lettered])
         correct_option = encrypt_if_present(letter)
     numeric = draft.answer_kind == _NUMERIC

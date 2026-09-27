@@ -23,13 +23,15 @@ whether it is the correct one, and — on a distractor — the wrong key naming 
 misconception that makes it tempting. It carries no letters. `repair_draft`
 makes the repairs that need no guess, `validate_draft` names every remaining
 fault by its rule, and `lettered_options` letters the valid options and places
-the correct one, so the model can neither drift a key off its option nor bias
-the answer's position.
+the correct one at a slot keyed by a server secret, so the model can neither
+drift a key off its option nor bias the answer's position, and a client that
+knows the question_hash cannot compute it.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import math
 import re
 import string
@@ -556,19 +558,25 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     return draft.model_copy(update=update), repairs
 
 
-def lettered_options(draft: CheckItemDraft) -> tuple[list[Option], str]:
+def lettered_options(draft: CheckItemDraft, *, slot_key: bytes) -> tuple[list[Option], str]:
     """The stored options of a valid mc_reason draft and the correct letter
     (§13 A37): the distractors in the order the agent wrote them, the correct
-    option inserted at a slot drawn from the item's question_hash — uniform
-    over the slots, stable for a prompt (a re-run upserts the same letters),
-    and never the agent's choice — then lettered A, B, C, … in that order.
+    option inserted at a slot drawn from HMAC-SHA256(slot_key, question_hash)
+    — uniform over the slots, stable for a prompt (a re-run upserts the same
+    letters), never the agent's choice, and secret: the client is sent the
+    question_hash, so a slot computed from it alone would give the answer
+    away — then lettered A, B, C, … in that order. `slot_key` is the server's
+    secret (the service derives it from ENCRYPTION_KEY); there is no default.
     The correct option stores no wrong_key. Raises ValueError unless exactly
-    one option is marked correct (validate_draft first)."""
+    one option is marked correct (validate_draft first) or on an empty key."""
+    if not isinstance(slot_key, bytes) or not slot_key:
+        raise ValueError("slot_key must be the non-empty server secret (bytes)")
     correct = [o for o in draft.options if o.is_correct]
     if len(correct) != 1:
-        raise ValueError(f"{len(correct)} options marked is_correct; exactly 1 must be")
+        raise ValueError(f"{len(correct)} options marked is_correct: exactly 1 must be")
     distractors = [o for o in draft.options if not o.is_correct]
-    slot = int(question_hash(draft.prompt), 16) % len(draft.options)
+    digest = hmac.new(slot_key, question_hash(draft.prompt).encode("ascii"), hashlib.sha256)
+    slot = int(digest.hexdigest(), 16) % len(draft.options)
     ordered = distractors[:slot] + correct + distractors[slot:]
     options = [
         Option(letter=letter, text=o.text, wrong_key=None if o.is_correct else o.wrong_key)

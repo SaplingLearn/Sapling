@@ -626,7 +626,7 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
         (correct,) = [o for o in i.options if o.is_correct]
         assert correct.text == E2E_CHECK_ITEM_FINAL_ANSWER and correct.wrong_key is None
         assert [o.wrong_key for o in i.options if not o.is_correct] == E2E_CHECK_ITEM_MC_WRONG_KEYS
-        stored, letter = lettered_options(i)
+        stored, letter = lettered_options(i, slot_key=b"any server secret")
         assert [o.letter for o in stored if o.wrong_key is None] == [letter]
     for i in (i for i in items if i.format != "mc_reason"):
         assert i.options == []

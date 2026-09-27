@@ -380,8 +380,9 @@ E2E_CHECK_ITEM_WRONG_TEXT = "Confuses the learning rate with the number of itera
 # mc_reason (A22, A37): four option OBJECTS — the correct one first, flagged
 # is_correct with no wrong_key, then three distractors, each keyed to a different
 # one of the item's own wrong_keys. No letters: code letters the options and
-# places the correct one from the question_hash (checks.lettered_options), so
-# the stored letter of each concept's item is fixed by its prompt.
+# places the correct one at a slot keyed by the server secret over the
+# question_hash (checks.lettered_options), so the stored letter of each
+# concept's item is fixed by its prompt and the stack's ENCRYPTION_KEY.
 E2E_CHECK_ITEM_MC_WRONG_KEYS = [
     E2E_CHECK_ITEM_WRONG_KEY,
     "rate_is_loss_value",
