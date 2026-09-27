@@ -292,3 +292,10 @@ LOOP_PRO_THINKING_BUDGET = 1024
 LOOP_FLASH_THINKING_BUDGET = 0  # standard slot
 # † per-run max_tokens = the slot's thinking budget + this (Gemini's max_output_tokens includes thinking)
 LOOP_MAX_VISIBLE_TOKENS = 400
+# ── Item activation and the current concept (PKG-07; spec §3.4, §9, A27) ───
+# † served teach turns on the current concept before its next check item is activated
+LOOP_TEACH_TURNS_BEFORE_CHECK = 2
+# † graded in-session checks per plan concept before the cursor advances
+LOOP_CHECKS_PER_CONCEPT = 2
+# † target difficulty of an activated check item; select_item falls back to the nearest
+LOOP_CHECK_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}

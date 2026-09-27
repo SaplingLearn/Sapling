@@ -22,8 +22,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agents import LOOP_LIMITS
-from learning import leak, policy
-from learning.checks import CheckItem, RubricItem, WrongReason
+from learning import checks, leak, policy
+from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.ladder import Rung, intent
 from learning.learner_state import LearnerState
 from learning.params import (
@@ -60,11 +60,15 @@ ITEM = CheckItem(
 )
 RESET = datetime(2026, 9, 27, tzinfo=timezone.utc)
 RESET_ISO = RESET.isoformat()
-NORMAL = SimpleNamespace(level="normal", reset_at=None, pause_novice=False, tier_ceiling="deep", scope=None)
+NORMAL = SimpleNamespace(
+    level="normal", reset_at=None, pause_novice=False, tier_ceiling="deep", scope=None
+)
 SOFT = SimpleNamespace(
     level="soft", reset_at=RESET, pause_novice=False, tier_ceiling="standard", scope="daily_usd"
 )
-HARD = SimpleNamespace(level="hard", reset_at=RESET, pause_novice=True, tier_ceiling="none", scope="daily_usd")
+HARD = SimpleNamespace(
+    level="hard", reset_at=RESET, pause_novice=True, tier_ceiling="none", scope="daily_usd"
+)
 CORRECT = SimpleNamespace(
     correct=True,
     confidence=0.9,
@@ -79,10 +83,17 @@ WRONG = SimpleNamespace(
     **{
         **vars(CORRECT),
         "correct": False,
-        "evidence": {"node_id": "node-1", "channel": "free_response", "correct": False, "assisted": False},
+        "evidence": {
+            "node_id": "node-1",
+            "channel": "free_response",
+            "correct": False,
+            "assisted": False,
+        },
     }
 )
-UNAVAILABLE = SimpleNamespace(**{**vars(CORRECT), "correct": None, "unavailable": True, "evidence": None})
+UNAVAILABLE = SimpleNamespace(
+    **{**vars(CORRECT), "correct": None, "unavailable": True, "evidence": None}
+)
 # Tasks 6-7b extend these as their endpoints land.
 MODEL_ROUTES = [
     "/chat",
@@ -93,7 +104,7 @@ MODEL_ROUTES = [
     "/start-session/stream",
     "/action",
 ]
-NO_MODEL_ROUTES = ["/status", "/step/attempt", "/hint"]
+NO_MODEL_ROUTES = ["/status", "/step/attempt", "/hint", "/check/next"]
 
 
 def _sse_events(text: str) -> list[dict]:
@@ -231,6 +242,11 @@ def seams():
         )
         p("_now_s", return_value=NOW)
         ns.grade = p("grade_answer", new_callable=AsyncMock, return_value=CORRECT)
+        ns.seen_hashes = p("seen_hashes", return_value=set())
+        ns.revealed_hashes = p("revealed_hashes", return_value=set())
+        ns.select_item = p("select_item", wraps=checks.select_item)
+        ns.reserve = p("posttest_reserve_hash", return_value="qh-reserve")
+        ns.concept_key = p("_concept_key_for_node", return_value="recursion")
         ns.flush = p("flush_pending", return_value=[{"node_id": "node-1"}])
         ns.ai_budget.check.return_value = NORMAL
         yield ns
@@ -244,13 +260,22 @@ _EVERY_ENDPOINT = [
     ("POST", "/api/learn/loop/chat/stream", {"session_id": "s1", "user_id": "u1", "message": "hi"}),
     ("POST", "/api/learn/loop/start-session", {"user_id": "u1", "topic": "Recursion"}),
     ("POST", "/api/learn/loop/start-session/stream", {"user_id": "u1", "topic": "Recursion"}),
-    ("POST", "/api/learn/loop/action", {"session_id": "s1", "user_id": "u1", "action_type": "hint"}),
+    (
+        "POST",
+        "/api/learn/loop/action",
+        {"session_id": "s1", "user_id": "u1", "action_type": "hint"},
+    ),
     (
         "POST",
         "/api/learn/loop/step/attempt",
         {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "attempt_text": "n == 0"},
     ),
-    ("POST", "/api/learn/loop/hint", {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1"}),
+    (
+        "POST",
+        "/api/learn/loop/hint",
+        {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1"},
+    ),
+    ("POST", "/api/learn/loop/check/next", {"session_id": "s1", "user_id": "u1"}),
     (
         "POST",
         "/api/learn/loop/check/answer",
@@ -267,8 +292,10 @@ _EVERY_ENDPOINT = [
 @pytest.mark.parametrize("method,path,body", _EVERY_ENDPOINT)
 def test_every_loop_endpoint_404s_when_gate_false(method, path, body):
     # The gate's own body tells this 404 from FastAPI's default for an unmounted path.
-    with patch("routes.learn_loop.learning_loop_active", return_value=False) as gate, \
-         patch("routes.learn_loop._consume_pending") as consume:
+    with (
+        patch("routes.learn_loop.learning_loop_active", return_value=False) as gate,
+        patch("routes.learn_loop._consume_pending") as consume,
+    ):
         r = client.get(path) if method == "GET" else client.post(path, json=body)
     assert r.status_code == 404
     # spec §7 body; the house error envelope adds its request_id
@@ -320,7 +347,9 @@ def test_rate_limited_model_route_answers_429(gate_on, seams):
         raise HTTPException(status_code=429, detail="ai budget reached")
 
     app.dependency_overrides[ai_budget.enforce_rate_limit] = _limited
-    r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+    r = client.post(
+        "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+    )
     assert r.status_code == 429
     seams.ai_budget.check.assert_not_called()
 
@@ -329,7 +358,9 @@ def test_a_session_of_another_user_is_refused(gate_on, seams):
     """HANDOFF-06: the store keys on the session id alone — the route checks
     that the session is the requesting student's before it reads or writes."""
     seams.scope.side_effect = HTTPException(status_code=403, detail="Session user mismatch")
-    r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+    r = client.post(
+        "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+    )
     assert r.status_code == 403
     seams.save.assert_not_called()
     seams.ai_budget.check.assert_not_called()
@@ -340,15 +371,20 @@ def test_session_scope_reads_the_owner_and_the_course():
 
     handle = MagicMock()
     handle.select.return_value = [{"user_id": "u1", "offering_id": "off-1"}]
-    with patch("routes.learn_loop.table", return_value=handle) as tbl, \
-         patch("routes.learn_loop.offering_course_id", return_value="c1"):
+    with (
+        patch("routes.learn_loop.table", return_value=handle) as tbl,
+        patch("routes.learn_loop.offering_course_id", return_value="c1"),
+    ):
         assert _session_scope("s1", "u1") == ("off-1", "c1")
         with pytest.raises(HTTPException) as other:
             _session_scope("s1", "u2")
     assert other.value.status_code == 403
     tbl.assert_called_with("sessions")
     handle.select.return_value = []
-    with patch("routes.learn_loop.table", return_value=handle), pytest.raises(HTTPException) as gone:
+    with (
+        patch("routes.learn_loop.table", return_value=handle),
+        pytest.raises(HTTPException) as gone,
+    ):
         _session_scope("s1", "u1")
     assert gone.value.status_code == 404
 
@@ -364,7 +400,9 @@ def test_phase_for():
     assert _phase_for({"current": "q", "steps": {"q": {"rung": 0}}}) == "check"
     assert _phase_for({"current": "q", "steps": {"q": {"rung": 0, "graded_at": 1.0}}}) == "feedback"
     assert (
-        _phase_for({"current": "q", "steps": {"q": {"rung": 0, "graded_at": 1.0, "feedback_given": True}}})
+        _phase_for(
+            {"current": "q", "steps": {"q": {"rung": 0, "graded_at": 1.0, "feedback_given": True}}}
+        )
         == "teach"
     )
 
@@ -378,18 +416,24 @@ def test_ceiling_for_passes_typed_state_only():
 
     step = _step_state(_state(attempts=1), "qh-1")
     learner = _learner_view(None, band="develop", prereq_proficient=True)
-    with patch("routes.learn_loop.policy.ceiling_with_reason", wraps=policy.ceiling_with_reason) as spy:
+    with patch(
+        "routes.learn_loop.policy.ceiling_with_reason", wraps=policy.ceiling_with_reason
+    ) as spy:
         ceiling, reason = _ceiling_for(
             step=step, learner=learner, message="here is my work: 3*2", independent_s=50.0
         )
-    assert ceiling == Rung.H4 and reason == policy.CeilingReason.DEVELOP  # H3 + 1 failed genuine attempt
+    assert (
+        ceiling == Rung.H4 and reason == policy.CeilingReason.DEVELOP
+    )  # H3 + 1 failed genuine attempt
     (lv, st), kwargs = spy.call_args
     assert kwargs == {} and isinstance(lv, policy.LearnerView) and isinstance(st, policy.StepState)
     assert lv.band == "develop" and lv.prereq_proficient is True
     assert st.genuine_attempts == 1 and st.showed_work is True and st.exam_mode is False
     assert not any(isinstance(v, str) and "work" in v for v in vars(st).values()), "no message text"
     # a plea is never shown work (has_non_attempt_phrase vetoes it)
-    with patch("routes.learn_loop.policy.ceiling_with_reason", wraps=policy.ceiling_with_reason) as spy:
+    with patch(
+        "routes.learn_loop.policy.ceiling_with_reason", wraps=policy.ceiling_with_reason
+    ) as spy:
         _ceiling_for(step=step, learner=learner, message="idk man", independent_s=500.0)
     assert spy.call_args.args[1].showed_work is False
 
@@ -400,9 +444,13 @@ def test_ceiling_for_the_profic_floor_needs_genuine_work():
     step = _step_state(_state(), "qh-1")
     learner = _learner_view(None, band="profic", prereq_proficient=True)
     assert _ceiling_for(step=step, learner=learner, message="", independent_s=500.0)[0] == Rung.H1
-    shown = _ceiling_for(step=step, learner=learner, message="I tried n = 0 first", independent_s=500.0)
+    shown = _ceiling_for(
+        step=step, learner=learner, message="I tried n = 0 first", independent_s=500.0
+    )
     assert shown == (Rung.H3, policy.CeilingReason.SHOWED_WORK_FLOOR)
-    too_fast = _ceiling_for(step=step, learner=learner, message="I tried n = 0 first", independent_s=1.0)
+    too_fast = _ceiling_for(
+        step=step, learner=learner, message="I tried n = 0 first", independent_s=1.0
+    )
     assert too_fast[0] == Rung.H1  # the independent-time gate (GATE_INDEPENDENT_MIN_S)
 
 
@@ -438,8 +486,10 @@ def test_loop_state_adapters_round_trip_through_the_typed_store():
 
     doc = _state(wrong=1, custom=["x"])
     doc["tutor_requests"] = 2
-    with patch("routes.learn_loop.load_loop_state", return_value=LoopState.from_json(doc)), \
-         patch("routes.learn_loop.save_loop_state", return_value=True) as save:
+    with (
+        patch("routes.learn_loop.load_loop_state", return_value=LoopState.from_json(doc)),
+        patch("routes.learn_loop.save_loop_state", return_value=True) as save,
+    ):
         got = _load_loop_state("s1")
         assert got["current"] == "qh-1" and got["steps"]["qh-1"]["wrong"] == 1
         assert got["tutor_requests"] == 2 and got["steps"]["qh-1"]["custom"] == ["x"]
@@ -453,15 +503,17 @@ def test_loop_state_adapters_round_trip_through_the_typed_store():
 def test_context_blocks_follow_the_policy():
     from routes.learn_loop import _context_blocks
 
-    with patch("routes.learn_loop._get_course_info", return_value={"course_code": "CS111"}), \
-         patch("routes.learn_loop._get_catalog_chunk", return_value="CATALOG") as cat, \
-         patch("routes.learn_loop.retrieve_chunks", return_value=[{"chunk_text": "r"}]) as rag, \
-         patch("routes.learn_loop.format_rag_context", return_value="RAG"), \
-         patch(
-             "routes.learn_loop.chunks_for_ids",
-             return_value=[{"id": "ch-1", "course_id": "c1", "chunk_text": "SRC"}],
-         ) as by_id, \
-         patch("routes.learn_loop.build_graph_context_block", return_value="GRAPH"):
+    with (
+        patch("routes.learn_loop._get_course_info", return_value={"course_code": "CS111"}),
+        patch("routes.learn_loop._get_catalog_chunk", return_value="CATALOG") as cat,
+        patch("routes.learn_loop.retrieve_chunks", return_value=[{"chunk_text": "r"}]) as rag,
+        patch("routes.learn_loop.format_rag_context", return_value="RAG"),
+        patch(
+            "routes.learn_loop.chunks_for_ids",
+            return_value=[{"id": "ch-1", "course_id": "c1", "chunk_text": "SRC"}],
+        ) as by_id,
+        patch("routes.learn_loop.build_graph_context_block", return_value="GRAPH"),
+    ):
         teach = _context_blocks(
             user_id="u1",
             course_id="c1",
@@ -481,7 +533,9 @@ def test_context_blocks_follow_the_policy():
             context=policy.ContextPolicy(0, False, 2, False, "none"),
         )
         assert len(hint) == 1 and "SRC" in hint[0] and "UNTRUSTED" in hint[0].upper()
-        assert by_id.call_args.args[0] == ["ch-1", "ch-2"] and by_id.call_args.kwargs == {"user_id": "u1"}
+        assert by_id.call_args.args[0] == ["ch-1", "ch-2"] and by_id.call_args.kwargs == {
+            "user_id": "u1"
+        }
         opener = _context_blocks(
             user_id="u1",
             course_id="c1",
@@ -491,7 +545,10 @@ def test_context_blocks_follow_the_policy():
         )
         assert opener[0].startswith("COURSE CATALOG INFO (official BU course data):")
         nothing = _context_blocks(
-            user_id="u1", course_id="", user_message="hi", item=None,
+            user_id="u1",
+            course_id="",
+            user_message="hi",
+            item=None,
             context=policy.ContextPolicy(5, True, 0, True, "auto"),
         )
         assert nothing == []  # no course: no catalog, no RAG, no graph block
@@ -519,13 +576,26 @@ def test_prepare_loop_run_uses_the_tier_slot_and_loop_limits():
     assert assembled == "[LOOP PHASE: teach]\nrule\n\nCTX\n\n[STUDENT QUESTION]\nhi"
     assert run_kwargs["usage_limits"] is LOOP_LIMITS
     assert run_kwargs["model_settings"]["tool_choice"] == "none"
-    assert run_kwargs["model_settings"]["max_tokens"] == LOOP_PRO_THINKING_BUDGET + LOOP_MAX_VISIBLE_TOKENS
-    assert deps.learning_loop is True and deps.loop_state == {"x": 1} and deps.feature == "loop_tutor"
+    assert (
+        run_kwargs["model_settings"]["max_tokens"]
+        == LOOP_PRO_THINKING_BUDGET + LOOP_MAX_VISIBLE_TOKENS
+    )
+    assert (
+        deps.learning_loop is True and deps.loop_state == {"x": 1} and deps.feature == "loop_tutor"
+    )
     assert deps.course_id == "c1" and deps.session_id == "s1"
     with patch("routes.learn_loop._context_blocks", return_value=[]):
         _, bare, _, _ = _prepare_loop_run(
-            user_id="u1", session_id="s1", course_id="", user_message="hi", message_history=[],
-            request_id="r1", prefix="P", state={}, tier="lite", item=None,
+            user_id="u1",
+            session_id="s1",
+            course_id="",
+            user_message="hi",
+            message_history=[],
+            request_id="r1",
+            prefix="P",
+            state={},
+            tier="lite",
+            item=None,
             context=policy.ContextPolicy(5, True, 0, False, "auto"),
         )
     assert bare == "P\n\nhi"
@@ -551,7 +621,9 @@ def test_status_payload(gate_on, seams):
     assert body["phase"] == "check" and body["active_question_hash"] == "qh-1"
     assert body["ceiling"] == int(Rung.H3) and body["band"] == "develop"
     assert body["items"] == 1 and body["rung"] == 1
-    assert "reference_answer" not in json.dumps(body) and ITEM.reference_answer not in json.dumps(body)
+    assert "reference_answer" not in json.dumps(body) and ITEM.reference_answer not in json.dumps(
+        body
+    )
     seams.ai_budget.check.assert_not_called()
 
 
@@ -598,16 +670,28 @@ def test_teach_stream_checks_budget_routes_the_tier_and_counts_the_request(gate_
     assert [e["type"] for e in evs][:2] == ["phase", "status"] and evs[-1]["type"] == "done"
     assert evs[0]["data"] == {"phase": "teach"}
     done = evs[-1]["data"]
-    assert done["tier"] == "standard" and done["phase"] == "teach" and done["leak_redacted"] is False
+    assert (
+        done["tier"] == "standard" and done["phase"] == "teach" and done["leak_redacted"] is False
+    )
     # no concept yet: the opener-less teach band comes from BKT_L0 (develop)
     seams.ai_budget.check.assert_called_once_with(
-        "u1", "tutor", "develop", session_tutor_requests=0, session_deep_requests=0, arm_session=False
+        "u1",
+        "tutor",
+        "develop",
+        session_tutor_requests=0,
+        session_deep_requests=0,
+        arm_session=False,
     )
     assert seams.model_tier.call_args.kwargs["budget_level"] == "normal"
-    seams.tier_run_kwargs.assert_called_once_with("standard", tool_choice="auto")  # no fast/smart knob
+    seams.tier_run_kwargs.assert_called_once_with(
+        "standard", tool_choice="auto"
+    )  # no fast/smart knob
     assert seams.model_tier.call_args.args[0] == "teach"
     assert [c.args[1] for c in seams.save_msg.call_args_list] == ["user", "assistant"]
-    assert seams.store["doc"]["tutor_requests"] == 1 and seams.store["doc"].get("deep_requests", 0) == 0
+    assert (
+        seams.store["doc"]["tutor_requests"] == 1
+        and seams.store["doc"].get("deep_requests", 0) == 0
+    )
     assert seams.store["doc"]["phase_served"] == "teach"
     seams.events.log_event.assert_called_once()
     assert seams.events.log_event.call_args.args[0] == "chat.message_sent"
@@ -617,7 +701,8 @@ def test_check_phase_chat_serves_the_pose_without_a_model(gate_on, seams):
     never = MagicMock(side_effect=AssertionError("the check pose never reaches the model"))
     with patch("routes.learn_loop.stream_agent_turn", never):
         r = client.post(
-            "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "is it n == 0?"}
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "is it n == 0?"},
         )
     evs = _sse_events(r.text)
     assert [e["type"] for e in evs] == ["phase", "check", "learner_state", "done"]
@@ -627,7 +712,9 @@ def test_check_phase_chat_serves_the_pose_without_a_model(gate_on, seams):
     assert done["reply"] == ITEM.prompt and done["tier"] == "none" and done["phase"] == "check"
     seams.model_tier.assert_not_called()
     assert seams.store["doc"].get("tutor_requests", 0) == 0
-    assert seams.store["doc"]["current"] == "qh-1", "a message typed in the check phase closes nothing"
+    assert seams.store["doc"]["current"] == "qh-1", (
+        "a message typed in the check phase closes nothing"
+    )
 
 
 def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
@@ -635,7 +722,10 @@ def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
     seams.ai_budget.check.return_value = HARD
     never = MagicMock(side_effect=AssertionError("no model at the hard level"))
     with patch("routes.learn_loop.stream_agent_turn", never):
-        r = client.post("/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "hi"},
+        )
     evs = _sse_events(r.text)
     assert [e["type"] for e in evs] == ["phase", "budget"]
     assert evs[1]["data"] == {"level": "hard", "reset_at": RESET_ISO}
@@ -646,7 +736,9 @@ def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
 def test_hard_budget_json_chat_is_429_with_reset_at(gate_on, seams):
     seams.store["doc"] = {}
     seams.ai_budget.check.return_value = HARD
-    r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+    r = client.post(
+        "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+    )
     assert r.status_code == 429  # AIBudgetExceeded → PKG-06b's registered handler
     assert r.json()["detail"] == "ai budget reached" and r.json()["reset_at"] == RESET_ISO
     seams.save.assert_not_called()
@@ -656,16 +748,25 @@ def test_novice_check_pose_pauses_at_the_hard_level(gate_on, seams):
     """§3.5: novice-band concepts pause (no check is served for them)."""
     seams.p_known["node-1"] = 0.1
     seams.ai_budget.check.return_value = HARD
-    r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "?"})
+    r = client.post(
+        "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "?"}
+    )
     assert r.status_code == 429
     seams.ai_budget.check.assert_called_once_with(
-        "u1", "tutor", "novice", session_tutor_requests=0, session_deep_requests=0, arm_session=False
+        "u1",
+        "tutor",
+        "novice",
+        session_tutor_requests=0,
+        session_deep_requests=0,
+        arm_session=False,
     )
 
 
 def test_develop_check_pose_is_served_at_the_hard_level_with_the_notice(gate_on, seams):
     seams.ai_budget.check.return_value = SimpleNamespace(**{**vars(HARD), "pause_novice": False})
-    r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "?"})
+    r = client.post(
+        "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "?"}
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["reply"] == ITEM.prompt and body["tier"] == "none"
@@ -676,7 +777,10 @@ def test_soft_level_reaches_tier_and_context_policy(gate_on, seams):
     seams.store["doc"] = {}
     seams.ai_budget.check.return_value = SOFT
     with patch("routes.learn_loop.stream_agent_turn", _fake_stream()):
-        client.post("/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+        client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "hi"},
+        )
     assert seams.model_tier.call_args.kwargs["budget_level"] == "soft"
     seams.context_policy.assert_called_once_with("teach", opener=False, budget_level="soft")
     seams.tier_run_kwargs.assert_called_once_with("standard", tool_choice="none")
@@ -686,16 +790,35 @@ def test_leak_path_on_a_model_turn_redacts_persists_stripped_and_emits(gate_on, 
     seams.store["doc"] = _graded("correct")
     leaky = "The base case returns 1 when n equals 0 without a recursive call. Done?"
     with patch("routes.learn_loop.stream_agent_turn", _fake_stream(leaky)):
-        r = client.post("/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "ok"})
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "ok"},
+        )
     done = _sse_events(r.text)[-1]["data"]
-    assert done["reply"] == "STRIPPED" and done["leak_redacted"] is True and done["phase"] == "feedback"
+    assert (
+        done["reply"] == "STRIPPED"
+        and done["leak_redacted"] is True
+        and done["phase"] == "feedback"
+    )
     assert seams.detect.call_args.args[0] == ITEM.reference_answer
-    assert seams.detect.call_args.kwargs == {"final_answer": ITEM.final_answer, "canonical_answer": None}
-    assert seams.strip.call_args.kwargs == {"final_answer": ITEM.final_answer, "canonical_answer": None}
-    assert seams.detect.call_args.args[2] == Rung.H3, "a correct verdict does not release the answer"
+    assert seams.detect.call_args.kwargs == {
+        "final_answer": ITEM.final_answer,
+        "canonical_answer": None,
+    }
+    assert seams.strip.call_args.kwargs == {
+        "final_answer": ITEM.final_answer,
+        "canonical_answer": None,
+    }
+    assert seams.detect.call_args.args[2] == Rung.H3, (
+        "a correct verdict does not release the answer"
+    )
     seams.zpd.emit_zpd_leak.assert_called_once()
     leak_kw = seams.zpd.emit_zpd_leak.call_args.kwargs
-    assert leak_kw["ceiling"] == Rung.H3 and leak_kw["detector"] == "ngram" and leak_kw["user_id"] == "u1"
+    assert (
+        leak_kw["ceiling"] == Rung.H3
+        and leak_kw["detector"] == "ngram"
+        and leak_kw["user_id"] == "u1"
+    )
     assistant_row = [c for c in seams.save_msg.call_args_list if c.args[1] == "assistant"][0]
     assert assistant_row.args[2] == "STRIPPED", "the stripped text is what persists"
     assert ITEM.reference_answer not in json.dumps(seams.zpd.emit_zpd_leak.call_args.kwargs)
@@ -706,24 +829,46 @@ def test_feedback_recovery_after_wrong_releases_answer_emits_step_and_clears_act
 
     seams.store["doc"] = _graded("not_yet", rungs=[{"rung": 1, "at": T0 + 100}])
     reply = "You wrote 1. The base case is n == 0. Try factorial(1) next?"
-    with patch("routes.learn_loop.stream_agent_turn", _fake_stream(reply)), \
-         patch("routes.learn_loop.phase_prefix", wraps=ll.phase_prefix) as prefix:
-        r = client.post("/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "ok"})
+    with (
+        patch("routes.learn_loop.stream_agent_turn", _fake_stream(reply)),
+        patch("routes.learn_loop.phase_prefix", wraps=ll.phase_prefix) as prefix,
+    ):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "ok"},
+        )
     evs = _sse_events(r.text)
     assert evs[0]["data"] == {"phase": "feedback"}
-    assert prefix.call_args.kwargs["verdict"] == "not_yet" and prefix.call_args.kwargs["answer_released"] is True
+    assert (
+        prefix.call_args.kwargs["verdict"] == "not_yet"
+        and prefix.call_args.kwargs["answer_released"] is True
+    )
     assert seams.model_tier.call_args.args[0] == "feedback_wrong"
-    assert seams.detect.call_args.args[2] == Rung.H6, "a wrong graded attempt releases the answer (spec §3.3)"
+    assert seams.detect.call_args.args[2] == Rung.H6, (
+        "a wrong graded attempt releases the answer (spec §3.3)"
+    )
     doc = seams.store["doc"]
     assert doc["current"] is None and doc["steps"]["qh-1"]["feedback_given"] is True
     seams.zpd.emit_zpd_step.assert_called_once()
     step = seams.zpd.emit_zpd_step.call_args.kwargs
-    assert step["tier"] == "standard" and step["grader_backend"] == "gemini" and step["question_hash"] == "qh-1"
-    assert step["phase"] == "check" and step["channel"] == "free_response" and step["concept_id"] == "node-1"
+    assert (
+        step["tier"] == "standard"
+        and step["grader_backend"] == "gemini"
+        and step["question_hash"] == "qh-1"
+    )
+    assert (
+        step["phase"] == "check"
+        and step["channel"] == "free_response"
+        and step["concept_id"] == "node-1"
+    )
     assert step["first_attempt_correct"] is False and step["n_attempts"] == 1
-    assert step["max_rung_used"] == Rung.H1 and step["assisted"] is True and step["fsrs_rating"] == 1
+    assert (
+        step["max_rung_used"] == Rung.H1 and step["assisted"] is True and step["fsrs_rating"] == 1
+    )
     assert step["p_known_before"] == 0.5 and step["p_known_after"] == 0.5, "honest: the re-read p"
-    assert step["rungs"] == [{"rung": 1, "dwell_ms": 495_000}], "H1 shown at T0+100, graded at NOW-5"
+    assert step["rungs"] == [{"rung": 1, "dwell_ms": 495_000}], (
+        "H1 shown at T0+100, graded at NOW-5"
+    )
     assert step["time_to_correct_ms"] is None and step["independent_time_ms"] == 100_000
     assert step["r_before"] is None, "unknown to the route: null, never zero"
     assert ITEM.reference_answer not in json.dumps(step, default=str)
@@ -732,7 +877,10 @@ def test_feedback_recovery_after_wrong_releases_answer_emits_step_and_clears_act
 def test_feedback_after_correct_runs_lite(gate_on, seams):
     seams.store["doc"] = _graded("correct")
     with patch("routes.learn_loop.stream_agent_turn", _fake_stream("Right. Next?")):
-        r = client.post("/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "ok"})
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "ok"},
+        )
     assert _sse_events(r.text)[-1]["data"]["tier"] == "lite"
     assert seams.model_tier.call_args.args[0] == "feedback_correct"
 
@@ -745,12 +893,19 @@ def test_rung1_fallback_is_the_json_turn_on_the_same_tier(gate_on, seams):
         yield SaplingEvent(type="done", step="reply", message="Complete.", data=result)
 
     agent, seen = _json_agent("fb")
-    with patch("routes.learn_loop.stream_agent_turn", fake), \
-         patch("routes.learn_loop.loop_tutor_agent", agent), \
-         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r) as usage:
-        r = client.post("/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+    with (
+        patch("routes.learn_loop.stream_agent_turn", fake),
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r) as usage,
+    ):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "hi"},
+        )
     assert "fb" in r.text
-    assert seen["kw"]["model"] == "MODEL:standard" and usage.call_args.kwargs["task"] == "loop_tutor"
+    assert (
+        seen["kw"]["model"] == "MODEL:standard" and usage.call_args.kwargs["task"] == "loop_tutor"
+    )
     assert seams.ai_budget.check.call_count == 2, "every run site checks the budget (invariant 23)"
     assert seams.store["doc"]["tutor_requests"] == 1, "the re-run is the same turn"
 
@@ -759,18 +914,25 @@ def test_chat_json_runs_once_on_the_policy_slot_and_counts_deep(gate_on, seams):
     seams.store["doc"] = {}
     seams.model_tier.return_value = "deep"
     agent, seen = _json_agent()
-    with patch("routes.learn_loop.loop_tutor_agent", agent), \
-         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r) as usage:
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r) as usage,
+    ):
         r = client.post(
             "/api/learn/loop/chat",
             json={"session_id": "s1", "user_id": "u1", "message": "hi", "model_pref": "fast"},
         )
     assert r.status_code == 200
     body = r.json()
-    assert body["reply"].startswith("Key idea") and body["tier"] == "deep" and body["phase"] == "teach"
+    assert (
+        body["reply"].startswith("Key idea") and body["tier"] == "deep" and body["phase"] == "teach"
+    )
     assert seen["kw"]["model"] == "MODEL:deep" and seen["kw"]["usage_limits"] is LOOP_LIMITS
     assert seen["msg"].startswith("[LOOP PHASE: teach]")
-    assert usage.call_args.kwargs["task"] == "loop_tutor_deep" and usage.call_args.kwargs["feature"] == "loop_tutor"
+    assert (
+        usage.call_args.kwargs["task"] == "loop_tutor_deep"
+        and usage.call_args.kwargs["feature"] == "loop_tutor"
+    )
     assert seams.store["doc"]["tutor_requests"] == 1 and seams.store["doc"]["deep_requests"] == 1
 
 
@@ -779,15 +941,23 @@ def test_deep_caps_reach_the_tier_router(gate_on, seams):
 
     seams.store["doc"] = {"tutor_requests": 9, "deep_requests": LOOP_SESSION_MAX_DEEP_REQUESTS}
     agent, _ = _json_agent()
-    with patch("routes.learn_loop.loop_tutor_agent", agent), \
-         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r):
-        client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+        )
     kw = seams.model_tier.call_args.kwargs
     assert kw["deep_cap_reached"] is True and kw["novice_deep_cap_reached"] is False
     assert kw["arm_session"] is False and kw["deterministic_payload"] is False
     seams.ai_budget.check.assert_called_once_with(
-        "u1", "tutor", "develop", session_tutor_requests=9,
-        session_deep_requests=LOOP_SESSION_MAX_DEEP_REQUESTS, arm_session=False,
+        "u1",
+        "tutor",
+        "develop",
+        session_tutor_requests=9,
+        session_deep_requests=LOOP_SESSION_MAX_DEEP_REQUESTS,
+        arm_session=False,
     )
 
 
@@ -801,18 +971,26 @@ def test_a_textless_json_turn_is_rescued_by_the_continuation(gate_on, seams):
         return textless_run_result("stale")
 
     agent.run = _run
-    with patch("routes.learn_loop.loop_tutor_agent", agent), \
-         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r), \
-         patch("routes.learn_loop._loop_continuation_text", AsyncMock(return_value="rescued")) as cont:
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch(
+            "routes.learn_loop._loop_continuation_text", AsyncMock(return_value="rescued")
+        ) as cont,
+    ):
         body = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
         ).json()
     assert body["reply"] == "rescued"
     cont.assert_awaited_once()
-    with patch("routes.learn_loop.loop_tutor_agent", agent), \
-         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r), \
-         patch("routes.learn_loop._loop_continuation_text", AsyncMock(return_value=None)):
-        r = client.post("/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"})
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch("routes.learn_loop._loop_continuation_text", AsyncMock(return_value=None)),
+    ):
+        r = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+        )
     assert r.status_code == 502
 
 
@@ -848,20 +1026,29 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
         slot="loop_tutor",
         agent=agent,
         run_kwargs={"deps": SimpleNamespace(user_id="u1"), "model": "M", "model_settings": {}},
-        budget_counters=lambda: {"session_tutor_requests": 0, "session_deep_requests": 0, "arm_session": False},
+        budget_counters=lambda: {
+            "session_tutor_requests": 0,
+            "session_deep_requests": 0,
+            "arm_session": False,
+        },
     )
-    with patch("routes.learn_loop.ai_budget") as budget, \
-         patch(
-             "routes.learn_loop.record_agent_usage",
-             side_effect=lambda r, **k: (seen.__setitem__("usage", k), r)[1],
-         ):
+    with (
+        patch("routes.learn_loop.ai_budget") as budget,
+        patch(
+            "routes.learn_loop.record_agent_usage",
+            side_effect=lambda r, **k: (seen.__setitem__("usage", k), r)[1],
+        ),
+    ):
         budget.check.side_effect = lambda *a, **k: (order.append("check"), NORMAL)[1]
         assert asyncio.run(_loop_continuation_text(turn, run_result("x"))) == "finished reply"
         assert order == ["check", "run"]
         assert seen["override"] == {"tools": [], "toolsets": []}
         assert seen["run"]["usage_limits"] is CONTINUATION_LIMITS and seen["run"]["model"] == "M"
         assert "message_history" in seen["run"] and "usage" not in seen["run"]
-        assert seen["usage"]["task"] == "loop_tutor" and seen["usage"]["feature"] == "loop_tutor_continuation"
+        assert (
+            seen["usage"]["task"] == "loop_tutor"
+            and seen["usage"]["feature"] == "loop_tutor_continuation"
+        )
         budget.check.side_effect = None
         budget.check.return_value = HARD
         order.clear()
@@ -872,8 +1059,10 @@ def test_a_withdrawn_active_item_is_dropped_and_the_turn_teaches(gate_on, seams)
     """A23 withdrawal: the item is gone, so the turn drops it and runs as teach."""
     seams.item.return_value = None
     agent, seen = _json_agent()
-    with patch("routes.learn_loop.loop_tutor_agent", agent), \
-         patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r):
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
         body = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
         ).json()
@@ -944,7 +1133,9 @@ def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams)
         r = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
     assert r.status_code == 200
     body = r.json()
-    assert body["graded"] is True and body["verdict"] == "correct" and body["answer_released"] is False
+    assert (
+        body["graded"] is True and body["verdict"] == "correct" and body["answer_released"] is False
+    )
     assert body["phase"] == "feedback" and body["tier"] == "lite" and body["unavailable"] is False
     seams.grade.assert_awaited_once()
     item, answer = seams.grade.call_args.args
@@ -959,7 +1150,11 @@ def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams)
     assert seams.model_tier.call_args.args[0] == "feedback_correct"
     assert usage.call_args.kwargs["task"] == "loop_tutor_lite"
     step = seams.zpd.emit_zpd_step.call_args.kwargs
-    assert step["tier"] == "lite" and step["grader_backend"] == "gemini" and step["question_hash"] == "qh-1"
+    assert (
+        step["tier"] == "lite"
+        and step["grader_backend"] == "gemini"
+        and step["question_hash"] == "qh-1"
+    )
     assert step["first_attempt_correct"] is True and step["n_attempts"] == 1
     assert step["time_to_correct_ms"] == 600_000 and step["confidence"] == 0.9
     entry = seams.store["doc"]["steps"]["qh-1"]
@@ -967,7 +1162,10 @@ def test_check_answer_grades_flushes_once_then_one_feedback_turn(gate_on, seams)
     assert entry["graded"] == 1 and entry["last_verdict"] == "correct" and entry["graded_at"] == NOW
     assert entry["attempted_at"] == [NOW], "a genuine attempt counts toward hint unlocking"
     assert entry["attempts"] == 0, "a correct attempt closes the step: it is no failed attempt"
-    assert entry["p_before"] == 0.5 and entry["fsrs_rating"] == policy.evidence_for_rung(True, Rung.H1).fsrs_rating
+    assert (
+        entry["p_before"] == 0.5
+        and entry["fsrs_rating"] == policy.evidence_for_rung(True, Rung.H1).fsrs_rating
+    )
     assert [c.args[1] for c in seams.save_msg.call_args_list] == ["user", "assistant"]
     assert seams.save_msg.call_args_list[0].args[2] == "n == 0 returns 1"
 
@@ -978,8 +1176,14 @@ def test_check_answer_wrong_releases_the_answer_in_the_feedback_turn(gate_on, se
         "Not quite: factorial(0) returns 1 at the base case. Try factorial(1) next?"
     )
     with agent_p, usage_p:
-        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="it calls factorial(-1)")).json()
-    assert body["verdict"] == "not_yet" and body["answer_released"] is True and body["tier"] == "standard"
+        body = client.post(
+            "/api/learn/loop/check/answer", json=_answer(answer="it calls factorial(-1)")
+        ).json()
+    assert (
+        body["verdict"] == "not_yet"
+        and body["answer_released"] is True
+        and body["tier"] == "standard"
+    )
     assert "[VERDICT: not_yet]" in seen["msg"] and "state the correct answer" in seen["msg"].lower()
     assert seams.detect.call_args.args[2] == Rung.H6
     entry = seams.store["doc"]["steps"]["qh-1"]
@@ -990,20 +1194,28 @@ def test_check_answer_wrong_releases_the_answer_in_the_feedback_turn(gate_on, se
 @pytest.mark.parametrize("payload", [{"idk": True}, {"answer": "I don't know"}])
 def test_check_answer_idk_writes_idk_evidence_and_releases(gate_on, seams, payload):
     seams.grade.return_value = WRONG
-    agent_p, usage_p, _ = _feedback_agent("No problem. The base case returns 1 at n == 0. Try factorial(1)?")
+    agent_p, usage_p, _ = _feedback_agent(
+        "No problem. The base case returns 1 at n == 0. Try factorial(1)?"
+    )
     with agent_p, usage_p:
         body = client.post("/api/learn/loop/check/answer", json=_answer(**payload)).json()
     assert seams.grade.call_args.args[1].idk is True
     assert body["verdict"] == "idk" and body["answer_released"] is True
     seams.flush.assert_called_once()
     entry = seams.store["doc"]["steps"]["qh-1"]
-    assert entry["attempted_at"] == [] and entry["attempts"] == 0, "an idk is never a genuine attempt"
+    assert entry["attempted_at"] == [] and entry["attempts"] == 0, (
+        "an idk is never a genuine attempt"
+    )
 
 
 def test_check_answer_non_attempt_is_a_hint_request_with_no_evidence(gate_on, seams):
-    agent_p, usage_p, seen = _feedback_agent("Look at the smallest input first. Which n needs no recursive call?")
+    agent_p, usage_p, seen = _feedback_agent(
+        "Look at the smallest input first. Which n needs no recursive call?"
+    )
     with agent_p, usage_p:
-        body = client.post("/api/learn/loop/check/answer", json=_answer(answer="just tell me")).json()
+        body = client.post(
+            "/api/learn/loop/check/answer", json=_answer(answer="just tell me")
+        ).json()
     seams.grade.assert_not_awaited()
     seams.flush.assert_not_called()
     assert body["graded"] is False and body["phase"] == "hint" and body["verdict"] is None
@@ -1019,7 +1231,11 @@ def test_check_answer_unavailable_writes_nothing_and_keeps_the_item_open(gate_on
     never = MagicMock(side_effect=AssertionError("no feedback model turn without a verdict"))
     with patch("routes.learn_loop.loop_tutor_agent", MagicMock(run=never)):
         body = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0")).json()
-    assert body["graded"] is False and body["unavailable"] is True and body["reply"] == _GRADE_UNAVAILABLE_REPLY
+    assert (
+        body["graded"] is False
+        and body["unavailable"] is True
+        and body["reply"] == _GRADE_UNAVAILABLE_REPLY
+    )
     assert body["tier"] == "none" and body["phase"] == "check"
     seams.flush.assert_not_called()
     seams.zpd.emit_zpd_step.assert_not_called()
@@ -1029,7 +1245,9 @@ def test_check_answer_unavailable_writes_nothing_and_keeps_the_item_open(gate_on
 
 
 def test_independent_time_gate_never_blocks_grading(gate_on, seams):
-    seams.store["doc"] = _state(first_shown_at=NOW - 1)  # answered too fast to count toward hint unlocking
+    seams.store["doc"] = _state(
+        first_shown_at=NOW - 1
+    )  # answered too fast to count toward hint unlocking
     agent_p, usage_p, _ = _feedback_agent()
     with agent_p, usage_p:
         client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
@@ -1042,7 +1260,9 @@ def test_check_answer_hard_budget_serves_template_feedback_not_429(gate_on, seam
     seams.ai_budget.check.return_value = SimpleNamespace(**{**vars(HARD), "pause_novice": False})
     never = MagicMock(side_effect=AssertionError("no model at the hard level"))
     with patch("routes.learn_loop.loop_tutor_agent", MagicMock(run=never)):
-        r = client.post("/api/learn/loop/check/answer", json=_answer(answer="it calls factorial(-1)"))
+        r = client.post(
+            "/api/learn/loop/check/answer", json=_answer(answer="it calls factorial(-1)")
+        )
     assert r.status_code == 200
     body = r.json()
     assert ITEM.reference_answer in body["reply"] and body["tier"] == "none"
@@ -1067,7 +1287,9 @@ def test_check_answer_stream_grades_before_streaming(gate_on, seams):
         return fake
 
     with patch("routes.learn_loop.stream_agent_turn", fake_factory()):
-        r = client.post("/api/learn/loop/check/answer/stream", json=_answer(answer="n == 0 returns 1"))
+        r = client.post(
+            "/api/learn/loop/check/answer/stream", json=_answer(answer="n == 0 returns 1")
+        )
     evs = _sse_events(r.text)
     assert order == ["grade", "stream"]
     assert [e["type"] for e in evs] == ["phase", "status", "token", "learner_state", "done"]
@@ -1076,7 +1298,9 @@ def test_check_answer_stream_grades_before_streaming(gate_on, seams):
     assert done["verdict"] == "correct" and done["graded"] is True and done["unavailable"] is False
 
 
-@pytest.mark.parametrize("path", ["/api/learn/loop/check/answer", "/api/learn/loop/check/answer/stream"])
+@pytest.mark.parametrize(
+    "path", ["/api/learn/loop/check/answer", "/api/learn/loop/check/answer/stream"]
+)
 def test_a_failed_flush_is_a_mapped_502_before_any_stream(gate_on, seams, path):
     seams.flush.side_effect = RuntimeError("apply_graph_update failed")
     never = MagicMock(side_effect=AssertionError("no stream after a failed flush"))
@@ -1113,7 +1337,9 @@ def test_check_answer_with_no_graph_node_is_409(gate_on, seams):
 def test_an_over_long_answer_is_a_422_before_anything_runs(gate_on, seams):
     from learning.params import GRADER_ANSWER_MAX_CHARS
 
-    r = client.post("/api/learn/loop/check/answer", json=_answer(answer="x" * (GRADER_ANSWER_MAX_CHARS + 1)))
+    r = client.post(
+        "/api/learn/loop/check/answer", json=_answer(answer="x" * (GRADER_ANSWER_MAX_CHARS + 1))
+    )
     assert r.status_code == 422
     gate_on.assert_not_called()
     seams.grade.assert_not_awaited()
@@ -1122,7 +1348,9 @@ def test_an_over_long_answer_is_a_422_before_anything_runs(gate_on, seams):
 def test_a_chat_message_in_the_check_phase_writes_no_evidence(gate_on, seams):
     """Invariant 26's route half: only /check/answer grades."""
     for path in ("/api/learn/loop/chat", "/api/learn/loop/chat/stream"):
-        client.post(path, json={"session_id": "s1", "user_id": "u1", "message": "the answer is n == 0"})
+        client.post(
+            path, json={"session_id": "s1", "user_id": "u1", "message": "the answer is n == 0"}
+        )
     seams.grade.assert_not_awaited()
     seams.flush.assert_not_called()
 
@@ -1143,13 +1371,23 @@ _SIBLING_KW = dict(
 
 def _sibling(qh: str, prompt: str, reference: str, final: str) -> CheckItem:
     return CheckItem(
-        id=f"item-{qh}", question_hash=qh, prompt=prompt, reference_answer=reference, final_answer=final,
+        id=f"item-{qh}",
+        question_hash=qh,
+        prompt=prompt,
+        reference_answer=reference,
+        final_answer=final,
         **_SIBLING_KW,
     )
 
 
 def _attempt(**kw) -> dict:
-    return {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "attempt_text": "n == 0", **kw}
+    return {
+        "session_id": "s1",
+        "user_id": "u1",
+        "question_hash": "qh-1",
+        "attempt_text": "n == 0",
+        **kw,
+    }
 
 
 def _hint() -> dict:
@@ -1164,7 +1402,9 @@ def test_step_attempt_records_a_genuine_attempt(gate_on, seams):
     assert r.status_code == 200
     assert r.json() == {"genuine": True, "attempts": 1, "independent_s": 600.0}
     entry = seams.store["doc"]["steps"]["qh-1"]
-    assert entry["attempted_at"] == [NOW] and entry["attempts"] == 1, "a failed genuine attempt while open"
+    assert entry["attempted_at"] == [NOW] and entry["attempts"] == 1, (
+        "a failed genuine attempt while open"
+    )
     assert "n == 0" not in json.dumps(seams.store["doc"]), "attempt text is never stored"
     length, shown, plea, independent_s, band = gen.call_args.args
     assert (length, shown, plea, independent_s, band) == (6, False, False, 600.0, "develop")
@@ -1206,7 +1446,9 @@ def test_hint_denied_by_ceiling(gate_on, seams):
 def test_hint_denied_h6_gate(gate_on, seams):
     seams.store["doc"] = _state(rung=5, attempts=2, attempted_at=[T0 + 10], taught=False)
     r = client.post("/api/learn/loop/hint", json=_hint())
-    assert r.json() == {"denied": "h6_gate"}  # develop with 2 failed attempts reaches H6; untaught fails closed
+    assert r.json() == {
+        "denied": "h6_gate"
+    }  # develop with 2 failed attempts reaches H6; untaught fails closed
 
 
 def test_hint_h6_gate_gets_taught_practice_and_graded(gate_on, seams):
@@ -1219,7 +1461,11 @@ def test_hint_h6_gate_gets_taught_practice_and_graded(gate_on, seams):
     with patch("routes.learn_loop.gates.h6_allowed", wraps=gates.h6_allowed) as gate:
         r = client.post("/api/learn/loop/hint", json=_hint())
     assert r.json() == {"rung": int(Rung.H6), "intent": intent(Rung.H6)}
-    assert gate.call_args.kwargs == {"item_taught": True, "item_practice": True, "item_graded": False}
+    assert gate.call_args.kwargs == {
+        "item_taught": True,
+        "item_practice": True,
+        "item_graded": False,
+    }
     assert gate.call_args.args[0].genuine_attempts == 2
 
 
@@ -1244,13 +1490,28 @@ def test_hint_no_active_item(gate_on, seams):
 
 def test_action_in_check_phase_is_a_hint_turn_with_no_evidence(gate_on, seams):
     agent, seen = _json_agent("A nudge. Which case is smallest?")
-    with patch("routes.learn_loop.loop_tutor_agent", agent),          patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r):
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
         r = client.post(
             "/api/learn/loop/action",
-            json={"session_id": "s1", "user_id": "u1", "action_type": "hint", "model_pref": "smart"},
+            json={
+                "session_id": "s1",
+                "user_id": "u1",
+                "action_type": "hint",
+                "model_pref": "smart",
+            },
         )
-    assert r.status_code == 200 and r.json()["reply"].startswith("A nudge") and r.json()["phase"] == "hint"
-    assert seen["msg"].startswith("[LOOP PHASE: hint]") and "[ACTION: The student asked for a hint." in seen["msg"]
+    assert (
+        r.status_code == 200
+        and r.json()["reply"].startswith("A nudge")
+        and r.json()["phase"] == "hint"
+    )
+    assert (
+        seen["msg"].startswith("[LOOP PHASE: hint]")
+        and "[ACTION: The student asked for a hint." in seen["msg"]
+    )
     assert "at most rung H1" in seen["msg"], "a hint turn is bounded by the item's current rung"
     assert [c.args[1] for c in seams.save_msg.call_args_list] == ["assistant"]
     seams.events.log_event.assert_not_called()
@@ -1262,9 +1523,18 @@ def test_action_in_check_phase_is_a_hint_turn_with_no_evidence(gate_on, seams):
 def test_action_outside_the_check_phase_is_a_teach_turn(gate_on, seams):
     seams.store["doc"] = {}
     agent, seen = _json_agent()
-    with patch("routes.learn_loop.loop_tutor_agent", agent),          patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r):
-        r = client.post("/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "confused"})
-    assert r.json()["phase"] == "teach" and "[ACTION: The student said they are confused." in seen["msg"]
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        r = client.post(
+            "/api/learn/loop/action",
+            json={"session_id": "s1", "user_id": "u1", "action_type": "confused"},
+        )
+    assert (
+        r.json()["phase"] == "teach"
+        and "[ACTION: The student said they are confused." in seen["msg"]
+    )
 
 
 def test_action_hint_serves_a_leak_clean_h2_passage_without_a_model(gate_on, seams):
@@ -1275,23 +1545,35 @@ def test_action_hint_serves_a_leak_clean_h2_passage_without_a_model(gate_on, sea
     seams.by_id.return_value = [{"id": "ch-1", "course_id": "c1", "chunk_text": passage}]
     never = MagicMock(side_effect=AssertionError("a leak-clean payload needs no model"))
     with patch("routes.learn_loop.loop_tutor_agent", MagicMock(run=never)):
-        r = client.post("/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "hint"})
+        r = client.post(
+            "/api/learn/loop/action",
+            json={"session_id": "s1", "user_id": "u1", "action_type": "hint"},
+        )
     assert r.json()["reply"] == passage and r.json()["tier"] == "none"
     assert seams.by_id.call_args.args[0] == ITEM.source_chunk_ids[:LOOP_SOURCE_CHUNKS_MAX]
     assert seams.by_id.call_args.kwargs == {"user_id": "u1"}
     assert seams.detect.call_args.args == (ITEM.reference_answer, passage, Rung.H2)
-    assert seams.detect.call_args.kwargs == {"final_answer": ITEM.final_answer, "canonical_answer": None}
+    assert seams.detect.call_args.kwargs == {
+        "final_answer": ITEM.final_answer,
+        "canonical_answer": None,
+    }
     assert seams.model_tier.call_args.kwargs["deterministic_payload"] is True
     assert seams.store["doc"].get("tutor_requests", 0) == 0
 
 
 def test_action_hint_leaking_h2_passage_falls_back_to_the_llm(gate_on, seams):
     seams.store["doc"] = _state(rung=2)
-    seams.by_id.return_value = [{"id": "ch-1", "course_id": "c1", "chunk_text": ITEM.reference_answer}]
+    seams.by_id.return_value = [
+        {"id": "ch-1", "course_id": "c1", "chunk_text": ITEM.reference_answer}
+    ]
     agent, _ = _json_agent("Your notes cover the stopping case in 2.3. What does it say?")
-    with patch("routes.learn_loop.loop_tutor_agent", agent),          patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r):
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
         body = client.post(
-            "/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "hint"}
+            "/api/learn/loop/action",
+            json={"session_id": "s1", "user_id": "u1", "action_type": "hint"},
         ).json()
     assert body["reply"].startswith("Your notes") and ITEM.reference_answer not in body["reply"]
     assert seams.model_tier.call_args.kwargs["deterministic_payload"] is False
@@ -1301,14 +1583,21 @@ def test_action_hint_leaking_h2_passage_falls_back_to_the_llm(gate_on, seams):
 def test_action_hint_h4_sibling_is_revealed_and_never_the_reserve(gate_on, seams):
     seams.store["doc"] = _state(rung=4)
     reserve = _sibling("qh-0", "Reserve: what is fib(0)?", "fib(0) is 0 by definition here.", "0")
-    shown = _sibling("qh-9", "What does sum(0) return?", "An empty sum is 0, the identity for addition.", "0")
+    shown = _sibling(
+        "qh-9", "What does sum(0) return?", "An empty sum is 0, the identity for addition.", "0"
+    )
     seams.list_items.return_value = [ITEM, reserve, shown]
+    seams.reserve.side_effect = checks.posttest_reserve_hash  # the real A23 rule: qh-0 here
     with patch("routes.learn_loop.loop_tutor_agent", MagicMock()):
         body = client.post(
-            "/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "hint"}
+            "/api/learn/loop/action",
+            json={"session_id": "s1", "user_id": "u1", "action_type": "hint"},
         ).json()
     assert body["tier"] == "none" and body["reply"].startswith("What does sum(0) return?")
     assert seams.list_items.call_args.args == ("c1", "recursion")
+    assert seams.reserve.call_args.args[0] == [ITEM, reserve, shown], (
+        "the reserve is over the whole concept"
+    )
     assert seams.store["doc"]["revealed"] == ["qh-9"], "the H4 sibling shown is revealed (A23)"
 
 
@@ -1316,11 +1605,17 @@ def test_action_hint_h4_sibling_is_revealed_and_never_the_reserve(gate_on, seams
 def test_hard_level_leaking_payload_is_served_only_as_h6(gate_on, seams, h6_ok, status):
     seams.store["doc"] = _state(rung=2, attempts=2 if h6_ok else 0)
     seams.ai_budget.check.return_value = SimpleNamespace(**{**vars(HARD), "pause_novice": False})
-    seams.by_id.return_value = [{"id": "ch-1", "course_id": "c1", "chunk_text": ITEM.reference_answer}]
-    r = client.post("/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "hint"})
+    seams.by_id.return_value = [
+        {"id": "ch-1", "course_id": "c1", "chunk_text": ITEM.reference_answer}
+    ]
+    r = client.post(
+        "/api/learn/loop/action", json={"session_id": "s1", "user_id": "u1", "action_type": "hint"}
+    )
     assert r.status_code == status
     if h6_ok:
-        assert seams.store["doc"]["steps"]["qh-1"]["rung"] == int(Rung.H6), "served anyway → H6 (§3.3)"
+        assert seams.store["doc"]["steps"]["qh-1"]["rung"] == int(Rung.H6), (
+            "served anyway → H6 (§3.3)"
+        )
         assert r.json()["budget"]["level"] == "hard"
     else:
         seams.save.assert_not_called()
@@ -1339,9 +1634,16 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
 
     agent, seen = _json_agent("Welcome. Key idea: base case. Ready to start?")
     topic_p, offering_p, graph_p = _opener_patches()
-    with patch("routes.learn_loop.loop_tutor_agent", agent),          patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),          topic_p, offering_p, graph_p:
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        topic_p,
+        offering_p,
+        graph_p,
+    ):
         r = client.post(
-            "/api/learn/loop/start-session", json={"user_id": "u1", "topic": "Recursion", "model_pref": "smart"}
+            "/api/learn/loop/start-session",
+            json={"user_id": "u1", "topic": "Recursion", "model_pref": "smart"},
         )
     assert r.status_code == 200
     body = r.json()
@@ -1349,14 +1651,29 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
     pending = PENDING_SESSIONS.pop(body["session_id"])
     assert pending["loop"] is True and pending["assistant_reply"] == body["initial_message"]
     assert {
-        "user_id", "mode", "topic", "course_id", "offering_id", "use_shared_context", "assistant_reply", "graph_update",
+        "user_id",
+        "mode",
+        "topic",
+        "course_id",
+        "offering_id",
+        "use_shared_context",
+        "assistant_reply",
+        "graph_update",
     } <= set(pending)
     assert pending["course_id"] == "c1" and pending["offering_id"] == "off-1"
     assert seams.context_policy.call_args.kwargs["opener"] is True
     assert seams.model_tier.call_args.args[0] == "opener"
-    assert seen["kw"]["message_history"] == [] and "Student wants to learn about: Recursion" in seen["msg"]
+    assert (
+        seen["kw"]["message_history"] == []
+        and "Student wants to learn about: Recursion" in seen["msg"]
+    )
     seams.ai_budget.check.assert_called_once_with(
-        "u1", "tutor", "develop", session_tutor_requests=0, session_deep_requests=0, arm_session=False
+        "u1",
+        "tutor",
+        "develop",
+        session_tutor_requests=0,
+        session_deep_requests=0,
+        arm_session=False,
     )
     seams.save_msg.assert_not_called()  # the opener persists nothing (lazy session)
     seams.save.assert_not_called()
@@ -1367,8 +1684,15 @@ def test_start_session_stream_done_carries_session_and_graph_state(gate_on, seam
     from routes.learn_loop import PENDING_SESSIONS
 
     topic_p, offering_p, graph_p = _opener_patches()
-    with patch("routes.learn_loop.stream_agent_turn", _fake_stream("Welcome. Ready?")), topic_p, offering_p, graph_p:
-        r = client.post("/api/learn/loop/start-session/stream", json={"user_id": "u1", "topic": "Recursion"})
+    with (
+        patch("routes.learn_loop.stream_agent_turn", _fake_stream("Welcome. Ready?")),
+        topic_p,
+        offering_p,
+        graph_p,
+    ):
+        r = client.post(
+            "/api/learn/loop/start-session/stream", json={"user_id": "u1", "topic": "Recursion"}
+        )
     evs = _sse_events(r.text)
     done = evs[-1]["data"]
     assert done["graph_state"] == {"nodes": []} and done["session_id"] in PENDING_SESSIONS
@@ -1381,3 +1705,304 @@ def test_end_session_is_a_pass_through_in_this_package():
     from routes.learn_loop import end_session
 
     assert end_session(EndSessionBody(session_id="s1", user_id="u1"), MagicMock()) is None
+
+
+# ── Task 7b: item activation + current concept (A27) ─────────────────────
+
+PLAN_STATE = {
+    "plan": {"approved": ["node-1", "node-2"], "cursor": 0},
+    "concept": "node-1",
+    "teach_turns": 0,
+    "concept_checks": 0,
+}
+
+
+def _plan_state(**over) -> dict:
+    st = json.loads(json.dumps(PLAN_STATE))
+    st.update(over)
+    return st
+
+
+def test_activation_excludes_seen_revealed_reserve_and_session_hashes(seams):
+    from routes.learn_loop import _activate_next_item
+
+    seams.seen_hashes.return_value = {"qh-seen"}
+    seams.revealed_hashes.return_value = {"qh-rev"}
+    seams.list_items.return_value = [ITEM]
+    st = _plan_state(steps={"qh-old": _step(check_item_id="item-old")})
+    qh = _activate_next_item("u1", "c1", st, now=NOW)
+    assert qh == ITEM.question_hash and st["current"] == qh
+    entry = st["steps"][qh]
+    assert entry["node_id"] == "node-1" and entry["check_item_id"] == ITEM.id and entry["rung"] == 0
+    assert entry["attempts"] == 0 and entry["wrong"] == 0 and entry["feedback_given"] is False
+    assert entry["first_shown_at"] == NOW
+    assert (
+        entry["taught"] is False
+    )  # no teach turn and no check on node-1 yet → no H6 (spec §3.3, A32)
+    kw = seams.select_item.call_args.kwargs
+    assert kw["exclude_hashes"] >= {"qh-seen", "qh-rev", "qh-reserve", "qh-old"}
+    assert (
+        kw["difficulty"] == 2 and kw["format"] == "free"
+    )  # develop (p 0.5) → 2; rotation 0 → first format
+    seams.list_items.assert_called_once_with("c1", "recursion")
+    seams.concept_key.assert_called_once_with("u1", "node-1")
+    LoopState.from_json(st)  # the document stays valid for PKG-06's store
+
+
+def test_activation_rotates_formats_by_the_concepts_checks(seams):
+    from routes.learn_loop import _activate_next_item
+
+    seams.list_items.return_value = [ITEM]
+    seams.select_item.side_effect = None
+    seams.select_item.return_value = None
+    st = _plan_state(concept_checks=1, plan={"approved": ["node-1"], "cursor": 0})
+    assert _activate_next_item("u1", "c1", st, now=NOW) is None
+    formats = [c.kwargs["format"] for c in seams.select_item.call_args_list]
+    assert formats == ["teachback", "mc_reason", "free"]
+
+
+def test_activation_advances_the_cursor_when_a_concept_has_nothing_left(seams):
+    from routes.learn_loop import _activate_next_item
+
+    seams.list_items.return_value = [ITEM]
+    seams.select_item.side_effect = [None, None, None, ITEM]  # three formats miss on node-1
+    st = _plan_state(teach_turns=2, concept_checks=1)
+    assert _activate_next_item("u1", "c1", st, now=NOW) == ITEM.question_hash
+    assert st["plan"]["cursor"] == 1 and st["concept"] == "node-2" and st["concept_checks"] == 0
+    assert st["teach_turns"] == 0 and st["steps"][ITEM.question_hash]["node_id"] == "node-2"
+    assert st["steps"][ITEM.question_hash]["taught"] is False, (
+        "reached by advancing: not taught yet"
+    )
+
+
+def test_activation_without_a_plan_or_past_its_end_returns_none(seams):
+    from routes.learn_loop import _activate_next_item
+
+    assert _activate_next_item("u1", "c1", {}, now=NOW) is None
+    seams.list_items.assert_not_called()
+    seams.select_item.side_effect = None
+    seams.select_item.return_value = None
+    st = _plan_state()
+    assert _activate_next_item("u1", "c1", st, now=NOW) is None
+    assert st["plan"]["done"] is True and "concept" not in st and not st.get("current")
+
+
+def test_teach_turn_activates_after_the_threshold_and_returns_the_pose(gate_on, seams):
+    from learning.params import LOOP_TEACH_TURNS_BEFORE_CHECK
+
+    seams.store["doc"] = _plan_state(teach_turns=LOOP_TEACH_TURNS_BEFORE_CHECK - 1)
+    seams.list_items.return_value = [ITEM]
+    agent, _ = _json_agent()
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        r = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "go on"}
+        )
+    body = r.json()
+    assert body["check"] == {
+        "question_hash": ITEM.question_hash,
+        "format": "free",
+        "difficulty": 2,
+        "prompt": ITEM.prompt,  # ladder.check_pose: the prompt verbatim, no model call
+        "options": None,
+    }
+    assert ITEM.reference_answer not in json.dumps(body["check"])
+    doc = seams.store["doc"]
+    assert doc["current"] == ITEM.question_hash
+    assert (
+        doc["steps"][ITEM.question_hash]["taught"] is True
+    )  # activated after served teach turns (A32)
+    rows = [c.args for c in seams.save_msg.call_args_list]
+    assert [r[1] for r in rows] == ["user", "assistant", "assistant"] and rows[-1][2] == ITEM.prompt
+    seams.grade.assert_not_awaited()
+    seams.flush.assert_not_called()
+
+
+def test_teach_stream_activation_yields_a_check_event_before_done(gate_on, seams):
+    from learning.params import LOOP_TEACH_TURNS_BEFORE_CHECK
+
+    seams.store["doc"] = _plan_state(teach_turns=LOOP_TEACH_TURNS_BEFORE_CHECK - 1)
+    seams.list_items.return_value = [ITEM]
+    with patch("routes.learn_loop.stream_agent_turn", _fake_stream()):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "go on"},
+        )
+    evs = _sse_events(r.text)
+    assert [e["type"] for e in evs][-2:] == ["check", "done"]
+    assert evs[-2]["data"] == {
+        "question_hash": ITEM.question_hash,
+        "format": "free",
+        "difficulty": 2,
+    }
+    assert evs[-1]["data"]["check"]["prompt"] == ITEM.prompt
+
+
+def test_teach_turn_below_the_threshold_activates_nothing(gate_on, seams):
+    seams.store["doc"] = _plan_state(teach_turns=0)
+    agent, _ = _json_agent()
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        r = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "go on"}
+        )
+    assert r.json().get("check") is None and not seams.store["doc"].get("current")
+    assert seams.store["doc"]["teach_turns"] == 1
+
+
+def test_mc_reason_pose_serves_the_stored_options_unmarked(seams):
+    from routes.learn_loop import _pose_payload
+
+    mc = ITEM.model_copy(
+        update={
+            "format": "mc_reason",
+            "options": [
+                Option(letter="A", text="it stops", wrong_key=None),
+                Option(letter="B", text="it loops", wrong_key="no_base"),
+            ],
+            "correct_option": "A",
+        }
+    )
+    pose = _pose_payload(mc)
+    assert pose["options"] == [
+        {"letter": "A", "text": "it stops"},
+        {"letter": "B", "text": "it loops"},
+    ]
+    assert "correct_option" not in json.dumps(pose) and "wrong_key" not in json.dumps(pose)
+
+
+def test_check_next_activates_and_is_idempotent(gate_on, seams):
+    seams.store["doc"] = _plan_state()
+    seams.list_items.return_value = [ITEM]
+    r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r.status_code == 200 and r.json()["phase"] == "check"
+    assert r.json()["check"]["question_hash"] == ITEM.question_hash
+    assert [c.args[2] for c in seams.save_msg.call_args_list] == [ITEM.prompt]
+    seams.select_item.reset_mock()
+    r2 = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r2.json()["check"]["question_hash"] == ITEM.question_hash
+    seams.select_item.assert_not_called()
+    seams.ai_budget.check.assert_not_called()  # the budget is read only for a novice concept
+
+
+def test_check_next_with_nothing_to_activate_reports_the_plan(gate_on, seams):
+    seams.store["doc"] = _plan_state(plan={"approved": ["node-1"], "cursor": 0})
+    seams.select_item.side_effect = None
+    seams.select_item.return_value = None
+    r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r.json() == {"phase": "teach", "plan_done": True, "check": None}
+    assert seams.store["doc"]["plan"]["done"] is True
+
+
+def test_check_next_pauses_a_novice_concept_at_the_hard_level(gate_on, seams):
+    seams.store["doc"] = _plan_state()
+    seams.p_known["node-1"] = 0.1
+    seams.list_items.return_value = [ITEM]
+    seams.ai_budget.check.return_value = HARD
+    r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r.status_code == 429 and r.json()["detail"] == "ai budget reached"
+    assert not seams.store["doc"].get("current")
+    seams.save.assert_not_called()
+    assert seams.ai_budget.check.call_args.args == ("u1", "tutor", "novice")
+
+
+def test_check_next_is_not_rate_limited_and_404s_when_gate_false():
+    declared = _declared()
+    assert ai_budget.enforce_rate_limit not in declared["/api/learn/loop/check/next"]
+    with patch("routes.learn_loop.learning_loop_active", return_value=False):
+        r = client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r.status_code == 404
+
+
+def test_feedback_counts_the_check_and_advances_after_the_per_concept_cap(gate_on, seams):
+    from learning.params import LOOP_CHECKS_PER_CONCEPT
+
+    st = _plan_state(concept_checks=LOOP_CHECKS_PER_CONCEPT - 1, teach_turns=2)
+    st.update(_state())
+    seams.store["doc"] = st
+    agent, _ = _json_agent()
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        client.post(
+            "/api/learn/loop/check/answer",
+            json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "answer": "n == 0"},
+        )
+    doc = seams.store["doc"]
+    assert doc["teach_turns"] == 0 and doc["concept_checks"] == 0
+    assert doc["plan"]["cursor"] == 1 and doc["concept"] == "node-2"
+    assert not doc.get("current")
+
+
+def test_feedback_below_the_cap_counts_the_check_and_stays(gate_on, seams):
+    st = _plan_state(teach_turns=2)
+    st.update(_state())
+    seams.store["doc"] = st
+    agent, _ = _json_agent()
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        client.post(
+            "/api/learn/loop/check/answer",
+            json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "answer": "n == 0"},
+        )
+    doc = seams.store["doc"]
+    assert doc["concept_checks"] == 1 and doc["teach_turns"] == 0 and doc["concept"] == "node-1"
+
+
+def test_teach_turn_band_comes_from_the_current_concept(gate_on, seams):
+    """A27 / F23: no item is active in teach, yet a novice-band concept must route
+    deep and be budgeted at the novice allowance."""
+    seams.store["doc"] = _plan_state()
+    seams.p_known["node-1"] = 0.1
+    agent, _ = _json_agent()
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        body = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "explain"}
+        ).json()
+    assert seams.ai_budget.check.call_args.args[:3] == ("u1", "tutor", "novice")
+    tier_args = seams.model_tier.call_args.args
+    assert tier_args[0] == "teach" and tier_args[1] == "novice"
+    assert seams.ceiling.call_args.args[0].band == "novice"
+    assert body["tier"] == "deep", "novice teach routes to deep (§3.5 LOOP_MODEL_TIER)"
+
+
+def test_opener_at_the_hard_level_serves_the_template_not_a_429(gate_on, seams):
+    from routes.learn_loop import _LOOP_OPENER_TEMPLATE, PENDING_SESSIONS
+
+    seams.ai_budget.check.return_value = HARD
+    topic_p, offering_p, graph_p = _opener_patches()
+    with patch("routes.learn_loop.loop_tutor_agent") as agent, topic_p, offering_p, graph_p:
+        r = client.post(
+            "/api/learn/loop/start-session", json={"user_id": "u1", "topic": "Recursion"}
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["initial_message"] == _LOOP_OPENER_TEMPLATE and body["budget"]["level"] == "hard"
+    agent.run.assert_not_called()
+    assert PENDING_SESSIONS.pop(body["session_id"])["assistant_reply"] == _LOOP_OPENER_TEMPLATE
+
+
+def test_opener_stream_at_the_hard_level_carries_the_budget_event(gate_on, seams):
+    from routes.learn_loop import _LOOP_OPENER_TEMPLATE, PENDING_SESSIONS
+
+    seams.ai_budget.check.return_value = HARD
+    topic_p, offering_p, graph_p = _opener_patches()
+    never = MagicMock(side_effect=AssertionError("no model at the hard level"))
+    with patch("routes.learn_loop.stream_agent_turn", never), topic_p, offering_p, graph_p:
+        r = client.post(
+            "/api/learn/loop/start-session/stream", json={"user_id": "u1", "topic": "Recursion"}
+        )
+    evs = _sse_events(r.text)
+    assert [e["type"] for e in evs] == ["phase", "budget", "done"]
+    assert evs[-1]["data"]["reply"] == _LOOP_OPENER_TEMPLATE
+    PENDING_SESSIONS.pop(evs[-1]["data"]["session_id"])

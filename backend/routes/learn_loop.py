@@ -53,21 +53,30 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from learning import gates, ladder, policy, zpd_events
 from learning.bkt import band as bkt_band
-from learning.checks import CheckItem, posttest_reserve_hash
+from learning.checks import CheckItem, posttest_reserve_hash, select_item
 from learning.evidence import flush_pending
 from learning.gate import learning_loop_active
 from learning.ladder import Rung
 from learning.leak import detect_leak, strip_leak
 from learning.learner_state import LearnerState, read_states
-from learning.loop_state_store import load_loop_state, save_loop_state
+from learning.loop_state_store import (
+    load_loop_state,
+    revealed_hashes,
+    save_loop_state,
+    seen_hashes,
+)
 from learning.params import (
     BAND_DEVELOP_MAX,
     BKT_L0,
+    CHECK_ITEM_FORMATS,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
+    LOOP_CHECK_DIFFICULTY_BY_BAND,
+    LOOP_CHECKS_PER_CONCEPT,
     LOOP_HISTORY_MAX_MESSAGES,
     LOOP_SESSION_MAX_DEEP_REQUESTS,
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     LOOP_SOURCE_CHUNKS_MAX,
+    LOOP_TEACH_TURNS_BEFORE_CHECK,
 )
 from learning.policy import LearnerView, LoopState, StepState
 from models import (
@@ -76,6 +85,7 @@ from models import (
     EndSessionBody,
     LoopAttemptBody,
     LoopCheckAnswerBody,
+    LoopCheckNextBody,
     LoopHintBody,
     StartSessionBody,
 )
@@ -135,6 +145,9 @@ _GRADE_UNAVAILABLE_REPLY = (
 _IDK_RENDERED = "I don't know"
 _SUBMISSION_KINDS = ("feedback", "hint_request", "unavailable")
 _DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
+#: The session opener served at the hard budget level (A27): no model call, so
+#: a capped student can still start a session and reach the probe (§3.5).
+_LOOP_OPENER_TEMPLATE = "Let's start with a few quick questions to see where you are."
 
 #: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
 #: (:1406–1411), where they are a local dict.
@@ -267,10 +280,13 @@ def _node_for_item(user_id: str, item) -> str | None:
     """The student's graph node for a course-asset item (A2): the user's
     `graph_nodes` row in the item's course whose normalised concept name is the
     item's `concept_key`. None when the student has never met the concept."""
-    rows = table("graph_nodes").select(
-        "id,concept_name",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{item.course_id}"},
-    ) or []
+    rows = (
+        table("graph_nodes").select(
+            "id,concept_name",
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{item.course_id}"},
+        )
+        or []
+    )
     for row in rows:
         if _normalize_concept(row.get("concept_name") or "") == item.concept_key:
             return row.get("id")
@@ -306,14 +322,10 @@ def _prereq_proficient(user_id: str, node_id: str) -> bool:
     if not parents:
         return True
     states = read_states(user_id, parents)
-    return all(
-        (states[p].p_known if p in states else BKT_L0) >= BAND_DEVELOP_MAX for p in parents
-    )
+    return all((states[p].p_known if p in states else BKT_L0) >= BAND_DEVELOP_MAX for p in parents)
 
 
-def _learner_view(
-    state: LearnerState | None, *, band: str, prereq_proficient: bool
-) -> LearnerView:
+def _learner_view(state: LearnerState | None, *, band: str, prereq_proficient: bool) -> LearnerView:
     """PKG-06's typed learner input; LearnerState's own defaults stand in for a
     node with no row (the BKT prior, no opportunities)."""
     st = state or LearnerState(user_id="", node_id="")
@@ -527,7 +539,9 @@ class _LoopTurn:
         self.concept_node = self.node_id or self.state.get("concept")
         learner = _learner_state(self.user_id, self.concept_node)
         self.band, self.p_known = _band_of(learner)
-        self.verdict = verdict or (self.entry.get("last_verdict") if self.phase == "feedback" else None)
+        self.verdict = verdict or (
+            self.entry.get("last_verdict") if self.phase == "feedback" else None
+        )
         self.answer_released = self.phase == "feedback" and self.verdict != "correct"
         self.rung = self.step.rung if self.phase == "hint" else Rung.H0
         prereq = _prereq_proficient(self.user_id, self.concept_node) if self.concept_node else True
@@ -630,7 +644,10 @@ class _LoopTurn:
             return ladder.check_pose(self.item.prompt)
         if self.phase == "hint" and self.item is not None and self.rung in _DETERMINISTIC_RUNGS:
             payload, leaked = _leak_checked_payload(
-                user_id=self.user_id, item=self.item, rung=self.rung, reference=self.item.reference_answer
+                user_id=self.user_id,
+                item=self.item,
+                rung=self.rung,
+                reference=self.item.reference_answer,
             )
             if payload is None:
                 return None
@@ -651,7 +668,10 @@ class _LoopTurn:
     def pre_events(self) -> list[SaplingEvent]:
         evs = [
             SaplingEvent(
-                type="phase", step="loop", message=f"Phase: {self.phase}.", data={"phase": self.phase}
+                type="phase",
+                step="loop",
+                message=f"Phase: {self.phase}.",
+                data={"phase": self.phase},
             )
         ]
         if self.item is not None and self.active and self.phase in ("check", "hint"):
@@ -678,7 +698,11 @@ class _LoopTurn:
         turn, else the ceiling (A34: the item's structured final answer)."""
         if self.tier == "none" or self.item is None:
             return reply, False
-        leak_rung = Rung.H6 if self.answer_released else (self.rung if self.phase == "hint" else self.ceiling)
+        leak_rung = (
+            Rung.H6
+            if self.answer_released
+            else (self.rung if self.phase == "hint" else self.ceiling)
+        )
         verdict = detect_leak(
             self.item.reference_answer,
             reply,
@@ -713,7 +737,8 @@ class _LoopTurn:
             log = [r for r in entry.get("rungs") or [] if isinstance(r, dict)]
             ats = [float(r["at"]) for r in log] + [graded]
             rungs = [
-                {"rung": int(r["rung"]), "dwell_ms": _ms(ats[i + 1] - ats[i])} for i, r in enumerate(log)
+                {"rung": int(r["rung"]), "dwell_ms": _ms(ats[i + 1] - ats[i])}
+                for i, r in enumerate(log)
             ]
             first_attempt = min([float(t) for t in entry.get("attempted_at") or []] + [graded])
             zpd_events.emit_zpd_step(
@@ -731,7 +756,9 @@ class _LoopTurn:
                 max_rung_used=Rung(int(entry.get("max_rung") or 0)),
                 rungs=rungs,
                 time_to_first_attempt_ms=_ms(first_attempt - shown) if shown else None,
-                time_to_correct_ms=_ms(graded - shown) if (shown and entry.get("last_correct")) else None,
+                time_to_correct_ms=_ms(graded - shown)
+                if (shown and entry.get("last_correct"))
+                else None,
                 independent_time_ms=_ms(ats[0] - shown) if shown else None,
                 assisted=bool(entry.get("assisted")),
                 confidence=entry.get("confidence"),
@@ -764,6 +791,11 @@ class _LoopTurn:
             entry["feedback_given"] = True
             if state.get("current") == self.active:
                 state["current"] = None
+            # A27: one more graded check on the concept; the cursor advances at the cap
+            state["concept_checks"] = int(state.get("concept_checks") or 0) + 1
+            state["teach_turns"] = 0
+            if state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
+                _advance_cursor(state)
         state["phase_served"] = self.phase
         if self.tier != "none":
             state["tutor_requests"] = int(state.get("tutor_requests") or 0) + 1
@@ -777,9 +809,18 @@ class _LoopTurn:
             steps[self.active]["rung"] = int(Rung.H6)
         if self.withdrawn and state.get("current") == self.withdrawn:
             state["current"] = None
+        check = None
+        if self.phase == "teach" and not state.get("current"):
+            # A27 trigger 1: a served teach turn on the current concept; the
+            # LOOP_TEACH_TURNS_BEFORE_CHECK-th activates its next check item
+            state["teach_turns"] = int(state.get("teach_turns") or 0) + 1
+            if state["teach_turns"] >= LOOP_TEACH_TURNS_BEFORE_CHECK:
+                check = _activated_pose(self.user_id, self.course_id, state)
         if self.persist_user_row:
             save_message(self.session_id, "user", self.message)
         save_message(self.session_id, "assistant", reply, merged or None)
+        if check is not None:
+            save_message(self.session_id, "assistant", check["prompt"])
         if self.persist_user_row:
             events_service.log_event(
                 "chat.message_sent",
@@ -805,8 +846,8 @@ class _LoopTurn:
             ),
             "hint_offer": {"rung": offer_rung} if offer_rung is not None else None,
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
+            "check": check,
         }
-
 
     def _submission_extra(self) -> dict:
         """The check-answer response keys (A16) — only on a submission's turn."""
@@ -844,6 +885,10 @@ class _LoopOpener(_LoopTurn):
 
     def history(self) -> list:
         return []
+
+    def _deterministic_text(self, *, hard: bool) -> str | None:
+        # the opener is never paused: at the hard level it is the template (A27)
+        return _LOOP_OPENER_TEMPLATE if hard else None
 
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
         PENDING_SESSIONS[self.session_id] = {
@@ -918,6 +963,116 @@ def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | No
     return payload, verdict.leaked
 
 
+# ── Item activation and the current concept (spec §9, §13 A27) ─────────────
+
+
+def _concept_key_for_node(user_id: str, node_id: str) -> str | None:
+    """The A2 course key of the student's node — the inverse of _node_for_item.
+    One `graph_nodes` read by id, scoped to the student."""
+    rows = (
+        table("graph_nodes").select(
+            "concept_name", filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"}, limit=1
+        )
+        or []
+    )
+    return _normalize_concept(rows[0].get("concept_name") or "") if rows else None
+
+
+def _advance_cursor(state: dict) -> bool:
+    """Move the plan (PKG-08's `plan = {approved, cursor}`) to its next concept,
+    resetting the concept's counters; past the end the plan is done and there is
+    no current concept. False when there is no next concept (or no plan)."""
+    plan = state.get("plan")
+    if not isinstance(plan, dict):
+        return False
+    approved = list(plan.get("approved") or [])
+    plan["cursor"] = int(plan.get("cursor") or 0) + 1
+    if plan["cursor"] >= len(approved):
+        plan["done"] = True
+        state.pop("concept", None)
+        return False
+    state["concept"] = approved[plan["cursor"]]
+    state["teach_turns"] = 0
+    state["concept_checks"] = 0
+    return True
+
+
+def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float) -> str | None:
+    """The ONLY code that SETS the document's `current` (the spec's `active`;
+    feedback and withdrawal only clear it). For the current plan concept: its
+    items, minus everything the student has seen or had revealed, every hash
+    already keyed in this session and the concept's post-test reserve (A23);
+    the band's target difficulty; the formats rotated by the concept's checks
+    so far. A concept with nothing servable advances the cursor and tries the
+    next (at most once per remaining concept). No plan → None (teaching only).
+    Writes no evidence and runs no model."""
+    concept = state.get("concept")
+    if not concept:
+        return None
+    excluded = seen_hashes(user_id) | revealed_hashes(user_id) | set(state.get("steps") or {})
+    while True:
+        item = None
+        key = _concept_key_for_node(user_id, concept)
+        if key:
+            items = list_items(course_id, key)
+            reserve = posttest_reserve_hash(items)
+            exclude = excluded | ({reserve} if reserve else set())
+            band, _ = _band_for(user_id, concept)
+            rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
+            formats = CHECK_ITEM_FORMATS[rotation:] + CHECK_ITEM_FORMATS[:rotation]
+            for fmt in formats:
+                item = select_item(
+                    items,
+                    format=fmt,
+                    difficulty=LOOP_CHECK_DIFFICULTY_BY_BAND[band],
+                    exclude_hashes=exclude,
+                )
+                if item is not None:
+                    break
+        if item is not None:
+            qh = item.question_hash
+            state["current"] = qh
+            _steps(state)[qh] = {
+                "rung": int(Rung.H0),
+                "attempts": 0,
+                "wrong": 0,
+                "first_shown_at": now,
+                "check_item_id": item.id,
+                "node_id": concept,
+                "feedback_given": False,
+                # the H6 predicate (spec §3.3, A32): taught earlier in this session
+                "taught": bool(state.get("teach_turns") or state.get("concept_checks")),
+            }
+            return qh
+        if not _advance_cursor(state):
+            return None
+        concept = state["concept"]
+
+
+def _pose_payload(item) -> dict:
+    """The check pose the client renders (A17: the prompt verbatim; A22: an
+    mc_reason item's stored options, never rebuilt, never marked correct, no
+    wrong_key). Never the reference."""
+    options = None
+    if item.format == "mc_reason" and item.options:
+        options = [{"letter": o.letter, "text": o.text} for o in item.options]
+    return {
+        "question_hash": item.question_hash,
+        "format": item.format,
+        "difficulty": item.difficulty,
+        "prompt": ladder.check_pose(item.prompt),
+        "options": options,
+    }
+
+
+def _activated_pose(user_id: str, course_id: str, state: dict) -> dict | None:
+    qh = _activate_next_item(user_id, course_id, state, now=_now_s())
+    if qh is None:
+        return None
+    item = get_check_item(state["steps"][qh]["check_item_id"])
+    return _pose_payload(item) if item is not None else None
+
+
 def _ms(seconds: float) -> int:
     """Whole milliseconds, never negative (zpd.step's *_ms keys)."""
     return max(0, round(timedelta(seconds=seconds) / timedelta(milliseconds=1)))
@@ -961,7 +1116,19 @@ def _pre_done_events(data: dict) -> list[SaplingEvent]:
     ]
     if data.get("hint_offer"):
         evs.append(
-            SaplingEvent(type="hint_offer", step="loop", message="Hint available.", data=data["hint_offer"])
+            SaplingEvent(
+                type="hint_offer", step="loop", message="Hint available.", data=data["hint_offer"]
+            )
+        )
+    if data.get("check"):  # a check item activated by this turn (A27 trigger 1)
+        pose = data["check"]
+        evs.append(
+            SaplingEvent(
+                type="check",
+                step="loop",
+                message="Check item.",
+                data={k: pose[k] for k in ("question_hash", "format", "difficulty")},
+            )
         )
     return evs
 
@@ -977,13 +1144,17 @@ async def _stream_turn(turn: _LoopTurn):
         yield sapling_event_to_sse(_budget_event(decision))
         return
     if decision.level == "hard":
-        yield sapling_event_to_sse(_budget_event(decision))  # a deterministic turn at the hard level
+        yield sapling_event_to_sse(
+            _budget_event(decision)
+        )  # a deterministic turn at the hard level
     if turn.tier == "none":
         extra = turn.complete(turn.text, {}, [])
         data = {"graph_update": {}, "mastery_changes": [], **extra}
         for ev in _pre_done_events(data):
             yield sapling_event_to_sse(ev)
-        yield sapling_event_to_sse(SaplingEvent(type="done", step="reply", message="Complete.", data=data))
+        yield sapling_event_to_sse(
+            SaplingEvent(type="done", step="reply", message="Complete.", data=data)
+        )
         return
     async for ev in stream_agent_turn(
         agent=turn.agent,
@@ -1044,7 +1215,11 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
             state = {}  # no session yet: a fresh loop (never the gate's 404)
     active = state.get("current")
     entry = (state.get("steps") or {}).get(active) if active else None
-    item = get_check_item(entry["check_item_id"]) if isinstance(entry, dict) and entry.get("check_item_id") else None
+    item = (
+        get_check_item(entry["check_item_id"])
+        if isinstance(entry, dict) and entry.get("check_item_id")
+        else None
+    )
     node_id = (_node_for_item(user_id, item) if item is not None else None) or state.get("concept")
     learner = _learner_state(user_id, node_id)
     band, p_known = _band_of(learner)
@@ -1354,6 +1529,48 @@ async def start_session(body: StartSessionBody, request: Request):
 async def start_session_stream(body: StartSessionBody, request: Request):
     _gate(body.user_id, request)
     return _sse(_LoopOpener(body=body, request=request))
+
+
+@router.post("/check/next")
+def check_next(body: LoopCheckNextBody, request: Request) -> dict:
+    """ "Check me" (spec §9, A27): the current concept's next check item and its
+    pose. No model call, so no rate limit and no invariant-23 run site; the
+    budget is read only for the novice pause (§3.5): a novice-band concept is
+    not activated at the hard level."""
+    _gate(body.user_id, request)
+    _consume_pending(body.session_id, body.user_id)
+    _, course_id = _session_scope(body.session_id, body.user_id)
+    state = _load_loop_state(body.session_id)
+    active = state.get("current")
+    entry = (state.get("steps") or {}).get(active) if active else None
+    if isinstance(entry, dict) and entry.get("graded_at") is None:
+        item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
+        if item is not None:
+            return {"phase": "check", "check": _pose_payload(item)}  # idempotent
+        state["current"] = None  # withdrawn (A23): drop it; the entry stays
+    qh = _activate_next_item(body.user_id, course_id, state, now=_now_s())
+    if qh is None:
+        _save_loop_state(body.session_id, state)  # the cursor may have moved
+        plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
+        return {"phase": "teach", "plan_done": bool(plan.get("done")), "check": None}
+    new_entry = state["steps"][qh]
+    band, _ = _band_for(body.user_id, new_entry["node_id"])
+    if band == "novice":
+        decision = ai_budget.check(
+            body.user_id,
+            "tutor",
+            "novice",
+            session_tutor_requests=int(state.get("tutor_requests") or 0),
+            session_deep_requests=int(state.get("deep_requests") or 0),
+            arm_session=False,
+        )
+        if decision.pause_novice:
+            raise AIBudgetExceeded(decision)  # nothing activated, nothing saved
+    item = get_check_item(new_entry["check_item_id"])
+    pose = _pose_payload(item)
+    save_message(body.session_id, "assistant", pose["prompt"])
+    _save_loop_state(body.session_id, state)
+    return {"phase": "check", "check": pose}
 
 
 def end_session(body: EndSessionBody, request: Request) -> dict | None:

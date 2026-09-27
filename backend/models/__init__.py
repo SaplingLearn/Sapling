@@ -80,6 +80,13 @@ class LoopCheckAnswerBody(BaseModel):
     idk: bool = False
 
 
+class LoopCheckNextBody(BaseModel):
+    """PKG-07 /api/learn/loop/check/next ("Check me", spec §9, A27): activates
+    the current concept's next check item and returns its pose; no model call."""
+    session_id: str
+    user_id: str
+
+
 # ── Quiz ──────────────────────────────────────────────────────────────────────
 
 class GenerateQuizBody(BaseModel):
