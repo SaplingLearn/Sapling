@@ -741,13 +741,33 @@ def test_matches_non_attempt(text, expected):
         "idk. I tried dividing both sides by two",
         "Energy is conserved; I don't know why friction matters though",
         "v = 9.8 m/s just tell me if that's right",
+        # a hedge with no clause break: the answer shares the idk phrase's clause
+        "idk maybe 7",
+        "i dont know if its 12 N",
+        "idk is it 12N",
+        "idk 7?",
+        "i think 7 idk",
+        "idk if the answer is photosynthesis",
+        "i dont know maybe mitochondria",
+        "42 idk",
+        "I think its 42 idk",
+        "the mitochondria idk",
+        "idk is it the mitochondria",
+        "42 i dont know",
+        "i dont know maybe the mitochondria",
+        "7? idk",
+        "idk... 7",
+        "idk, 42",
+        "is it 7 just tell me",  # before a request phrase is not its object
+        "no, idk",  # "no" answers a yes/no item, so it is graded, never idk
     ],
 )
 def test_a_hedged_answer_is_not_a_non_attempt(text):
     """Spec §3.3: a genuine attempt is "a submitted answer or shown work, not
     idk/just tell me". A16 routes a matched message away from grading (idk
     evidence or a hint request), so a submitted answer that also carries a
-    hedge must not match: another clause that says something, or a relation
+    hedge must not match, whether or not punctuation separates the two: a
+    number or a content word outside a request phrase's object, or a relation
     symbol anywhere, is an answer."""
     from learning.gates import matches_non_attempt, non_attempt_phrases
 
@@ -768,14 +788,76 @@ def test_a_hedged_answer_is_not_a_non_attempt(text):
     ],
 )
 def test_a_non_attempt_may_carry_filler_and_names_its_phrases(text, phrases):
-    """The phrase's own clause may say anything ("just tell me the steps");
-    other clauses may only be filler. non_attempt_phrases names every pattern
-    found (NON_ATTEMPT_PATTERNS order), so the route can tell idk from a hint
-    request (A16) with the same rule."""
+    """A request phrase's object may say anything ("just tell me the steps");
+    everything else may only be filler. non_attempt_phrases names every
+    pattern found (NON_ATTEMPT_PATTERNS order), so the route can tell idk from
+    a hint request (A16) with the same rule."""
     from learning.gates import matches_non_attempt, non_attempt_phrases
 
     assert matches_non_attempt(text) is True
     assert non_attempt_phrases(text) == phrases
+
+
+_PLEAS = (
+    ("I don't know. Where do I start?", ("i don't know",)),
+    ("idk, no idea", ("idk",)),
+    ("no idea, just tell me", ("just tell me",)),
+    ("give me the answer, I give up", ("give me the answer",)),
+    ("What's the answer? I have no clue", ("what's the answer",)),
+    ("Can you just tell me? I really don't get it", ("just tell me",)),
+    ("Just tell me. This is too hard", ("just tell me",)),
+    ("I don't get it, just tell me", ("just tell me",)),
+    ("I give up. What's the answer?", ("what's the answer",)),
+    ("this is too hard, give me the answer", ("give me the answer",)),
+    ("I have no idea what to do, idk", ("idk",)),
+    ("I'm tired, just tell me", ("just tell me",)),
+    ("no clue, just tell me the answer", ("just tell me",)),
+    ("Just tell me. I've spent an hour on this", ("just tell me",)),
+    ("i dunno, idk", ("idk",)),
+    ("idk, what do I do?", ("idk",)),
+    ("I don't know, can you give me a hint?", ("i don't know",)),
+    ("idk. where do I start?", ("idk",)),
+    ("idk, give me a hint", ("idk",)),
+    ("idk! I give up", ("idk",)),
+    ("I don't know. Can you show me?", ("i don't know",)),
+    ("idk, this is hard", ("idk",)),
+    ("idk, no clue", ("idk",)),
+    ("what's the answer? I've been trying for ages", ("what's the answer",)),
+    ("idk what to do", ("idk",)),
+    ("i dont know how to start", ("i don't know",)),
+    ("I don't know the answer", ("i don't know",)),
+)
+
+
+@pytest.mark.parametrize("text,phrases", _PLEAS)
+def test_a_plea_beside_a_non_attempt_phrase_is_still_a_non_attempt(text, phrases):
+    """Spec §3.3: "not idk/just tell me". A clause asking for help, giving up
+    or complaining holds no answer, so it never turns a non-attempt into a
+    graded submission (A16) — only a number, a content word or a relation
+    does."""
+    from learning.gates import matches_non_attempt, non_attempt_phrases
+
+    assert matches_non_attempt(text) is True
+    assert non_attempt_phrases(text) == phrases
+
+
+def test_pleas_never_count_toward_hint_unlocking_or_h6():
+    """A plea is never a genuine attempt, so two of them in the develop band,
+    each past the independent gate, unlock no rung and never reach H6."""
+    from learning.gates import h6_allowed, is_genuine_attempt, matches_non_attempt, rung_unlock
+    from learning.policy import ceiling
+
+    step = _step(first=0.0)
+    now = 0.0
+    for text in ("Just tell me. This is too hard", "give me the answer, I give up"):
+        now += IND * 10
+        if is_genuine_attempt(len(text), False, matches_non_attempt(text), IND * 10, "develop"):
+            step.attempted_at.append(now)
+            step.genuine_attempts += 1
+    assert step.genuine_attempts == 0 and step.attempted_at == []
+    assert rung_unlock(step, now) is False
+    assert ceiling(_learner("develop"), step) < ceiling(_learner("develop"), _step(fails=2))
+    assert h6_allowed(step, item_taught=True, item_practice=True, item_graded=False) is False
 
 
 def test_non_attempt_patterns_are_exactly_the_spec_list():
