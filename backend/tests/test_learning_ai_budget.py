@@ -587,12 +587,20 @@ def _must_not_run(runs: list):
     return fn
 
 
-def test_grade_is_unavailable_at_the_grader_cap_without_a_model_call(usage):
+def test_grade_is_unavailable_at_the_grader_cap_without_a_model_call(usage, monkeypatch, caplog):
     from pydantic_ai.exceptions import UsageLimitExceeded
     from pydantic_ai.models.function import FunctionModel
     from agents import grader
     from learning.checks import RubricItem
 
+    def _no_message(*args, **kwargs):
+        raise AssertionError("grade() built a grader message under the grader cap")
+
+    # Behaviour 9: the cap check is grade()'s FIRST statement — before the message is built,
+    # and with no log line of its own (the event is the record; spec Error semantics). Without
+    # it, _run_once's check would still degrade the grade, but only after both.
+    monkeypatch.setattr(grader, "build_grader_message", _no_message)
+    caplog.set_level("WARNING", logger="sapling.agents.grader")
     usage([_row(task="grader") for _ in range(config.STUDENT_DAILY_GRADES)])
     runs: list = []
     item = SimpleNamespace(
@@ -610,6 +618,8 @@ def test_grade_is_unavailable_at_the_grader_cap_without_a_model_call(usage):
         with pytest.raises(UsageLimitExceeded):  # the second-opinion run site is guarded too
             asyncio.run(grader._run_once("m", _deps(), second_opinion=True))
     assert result.unavailable is True and runs == []
+    grader_logs = [r.getMessage() for r in caplog.records if r.name == "sapling.agents.grader"]
+    assert grader_logs == [], "a capped grade is recorded by ai.budget_capped, not a log line"
 
 
 def test_decision_run_is_skipped_at_the_grader_cap(usage):
