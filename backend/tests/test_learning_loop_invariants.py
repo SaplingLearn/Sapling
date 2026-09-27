@@ -684,7 +684,8 @@ def test_inv_14_tools_never_write_graph_tables():
 def test_inv_28_symmetric_missingness(monkeypatch):
     """Spec §8.28 (A20/A22), outage half: with the grader unavailable, a correct
     and a wrong mc_reason attempt both record nothing — missingness never
-    depends on the outcome. PKG-06b adds the STUDENT_DAILY_GRADES cap half."""
+    depends on the outcome. Then the cap half (PKG-06b): at STUDENT_DAILY_GRADES the
+    same attempts record nothing either, and the grader never runs."""
     import asyncio
     from types import SimpleNamespace
 
@@ -693,6 +694,7 @@ def test_inv_28_symmetric_missingness(monkeypatch):
     from agents.deps import SaplingDeps
     from agents.grader import GradeResult
 
+    real_grade = agents.grader.grade  # PKG-06b: the cap half puts the real grade() back
     reason_checks = []
 
     async def _unavailable(item, *, format, student_answer, deps):
@@ -762,6 +764,67 @@ def test_inv_28_symmetric_missingness(monkeypatch):
         assert out.unavailable is True and deps.pending_evidence == [], text
     assert len(reason_checks) == 4, "the grader runs for both numeric outcomes too"
 
+    # ── cap half (PKG-06b; spec §3.5 grader cap, §8.28) ──
+    import config
+    from pydantic_ai.models.function import FunctionModel
+
+    from agents import grader
+    from learning.checks import RubricItem, WrongReason
+    from services import ai_budget
+
+    # Put the real grade() back on the SAME target the outage half stubbed (never monkeypatch.undo():
+    # it would also drop conftest's hermetic Supabase/LLM guards, which share this monkeypatch).
+    monkeypatch.setattr(grader, "grade", real_grade)
+    stamp = ai_budget._utcnow().isoformat()
+    capped = [
+        {"id": f"g{i}", "cost_usd": 0, "total_tokens": 0, "task": "grader", "created_at": stamp}
+        for i in range(config.STUDENT_DAILY_GRADES)
+    ]
+    monkeypatch.setattr(ai_budget, "_load_rows", lambda user_id, since: capped)
+    runs: list[int] = []
+
+    def _grader_must_not_run(messages, info):
+        runs.append(1)
+        raise AssertionError("the grader ran under the grader cap")
+
+    # A real rubric and wrong reason (learning.checks models: the grading State reads them
+    # by attribute), so the cap — not an empty rubric — is what makes the grade unavailable.
+    gradable = dict(
+        prompt="Q?",
+        reference_answer="right",
+        rubric=[RubricItem(id="r1", text="t")],
+        common_wrong=[WrongReason(key="w_1", text="wrong")],
+        stepwise=False,
+        source_chunk_ids=[],
+    )
+    full = SimpleNamespace(
+        **{**vars(item), **gradable, "canonical_answer": None, "tolerance": None}
+    )
+    full_numeric = SimpleNamespace(**{**vars(numeric), **gradable})
+    attempts = [
+        (full, check.CheckAnswer(question_hash="qh-28", selected_option=o, reason="because"))
+        for o in ("A", "B")  # the same correct and wrong attempts as the outage half
+    ] + [
+        (full_numeric, check.CheckAnswer(question_hash="qh-28n", answer_text=t))
+        for t in ("12.5", "9.81")  # spec §8.28: a clear mismatch and a match to a verified key
+    ]
+    with grader.grader_agent.override(model=FunctionModel(_grader_must_not_run)):
+        for capped_item, answer in attempts:
+            deps = SaplingDeps(
+                user_id="u1",
+                course_id="c1",
+                supabase=None,
+                request_id="r1",
+                session_id="s1",
+                feature="tutor",
+                learning_loop=True,
+            )
+            label = answer.selected_option or answer.answer_text
+            out = asyncio.run(check.grade_answer(capped_item, answer, deps=deps, node_id="n-28"))
+            assert out.unavailable is True and out.evidence is None, label
+            assert deps.pending_evidence == [], f"evidence written for {label} under the grader cap"
+    assert runs == []
+
 
 # ── PKG-05b: decision seam (spec §8.24–25, §13 A24) ─────────────────────────
 TYPESAFE_IMPORT = re.compile(r"^\s*(?:import|from)\s+typesafe\b", re.M)
@@ -820,3 +883,121 @@ def test_inv_25_decision_states_carry_no_identifiers():
     assert A24_STATES <= set(states), f"missing: {sorted(A24_STATES - set(states))}"
     for name, model in states.items():
         assert not IDENTIFIER_FIELDS & set(model.model_fields), f"{name} carries identifier fields"
+
+
+# ── invariant 23 (PKG-06b; spec §8.23, §13 A20) ──────────────────────────────
+BUDGETED_AGENT_MODULES = ("grader", "decision", "loop_tutor", "session_close")
+AGENT_RUN_METHODS = frozenset({"run", "run_stream", "iter", "run_sync"})
+_SCAN_SKIP_DIRS = frozenset({"venv", ".venv", "tests", "__pycache__", "node_modules"})
+
+
+def _is_agent_ctor(func: ast.expr) -> bool:
+    func = func.value if isinstance(func, ast.Subscript) else func  # Agent[Deps, Out](...)
+    return _last_name(func) == "Agent"
+
+
+def _budgeted_agent_names() -> set[str]:
+    """Module-level ``NAME = Agent(...)`` in the modules whose slots spec §8.23
+    budgets. A stub module adds nothing and starts counting once it defines its agent."""
+    names: set[str] = set()
+    for mod in BUDGETED_AGENT_MODULES:
+        path = BACKEND / "agents" / f"{mod}.py"
+        if not path.exists():
+            continue
+        for node in ast.parse(path.read_text()).body:
+            value = getattr(node, "value", None)
+            if (
+                isinstance(node, (ast.Assign, ast.AnnAssign))
+                and isinstance(value, ast.Call)
+                and _is_agent_ctor(value.func)
+            ):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names |= {t.id for t in targets if isinstance(t, ast.Name)}
+    return names
+
+
+def _last_name(expr: ast.expr) -> str | None:
+    return (
+        expr.id
+        if isinstance(expr, ast.Name)
+        else expr.attr
+        if isinstance(expr, ast.Attribute)
+        else None
+    )
+
+
+def _own_nodes(fn: ast.AST):
+    """The function's own body; nested defs, lambdas and classes are their own scope."""
+    stack = list(getattr(fn, "body", []))
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(
+            c
+            for c in ast.iter_child_nodes(node)
+            if not isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
+        )
+
+
+def _budget_scan(source: str, agents: set[str], label: str) -> tuple[int, list[str]]:
+    """(run sites found, run sites with no earlier ``ai_budget.check(`` in the same function)."""
+    found, bad = 0, []
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        runs, checks = [], []
+        for node in _own_nodes(fn):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if (
+                isinstance(f, ast.Attribute)
+                and f.attr in AGENT_RUN_METHODS
+                and _last_name(f.value) in agents
+            ):
+                runs.append(node.lineno)
+            elif _last_name(f) == "stream_agent_turn" and any(
+                _last_name(a) in agents for a in [*node.args, *(k.value for k in node.keywords)]
+            ):
+                runs.append(node.lineno)
+            elif (
+                isinstance(f, ast.Attribute)
+                and f.attr == "check"
+                and _last_name(f.value) == "ai_budget"
+            ):
+                checks.append(node.lineno)
+        found += len(runs)
+        bad += [f"{label}:{fn.name}:{line}" for line in runs if not any(c < line for c in checks)]
+    return found, bad
+
+
+def _backend_sources():
+    for root, dirs, files in os.walk(BACKEND):
+        dirs[:] = [d for d in dirs if d not in _SCAN_SKIP_DIRS and not d.startswith(".")]
+        for name in files:
+            if name.endswith(".py"):
+                yield pathlib.Path(root) / name
+
+
+def test_inv_23_ai_budget_checked_before_every_run():
+    agents = {"grader_agent"}
+    good = "async def f(deps):\n    ai_budget.check(deps.user_id, 'grader')\n    return await grader_agent.run('m')\n"
+    late = "async def f(deps):\n    r = await grader_agent.run('m')\n    ai_budget.check(deps.user_id, 'grader')\n    return r\n"
+    nested = (
+        "async def f(deps):\n    ai_budget.check(deps.user_id, 'grader')\n"
+        "    async def g():\n        return await grader_agent.run('m')\n    return await g()\n"
+    )
+    assert _budget_scan(good, agents, "good") == (1, [])
+    assert _budget_scan(late, agents, "late")[1] == ["late:f:2"]
+    assert _budget_scan(nested, agents, "nested")[1] == ["nested:g:4"]
+
+    names = _budgeted_agent_names()
+    assert names, (
+        "no module-level Agent( in agents/grader.py or agents/decision.py: the scan would be vacuous"
+    )
+    found, bad = 0, []
+    for path in _backend_sources():
+        n, b = _budget_scan(path.read_text(), names, str(path.relative_to(BACKEND)))
+        found, bad = found + n, bad + b
+    assert found >= 2, f"expected at least the grader and decision run sites, found {found}"
+    assert bad == [], f"agent run with no earlier ai_budget.check( in the same function: {bad}"
