@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
+from routes import graph, learn, learn_loop, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
@@ -276,6 +276,8 @@ app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_
 
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(learn.router,       prefix="/api/learn")
+# Learning loop (PKG-07): 404 unless learning_loop_active (build phase: env + staff/QA toggle, spec §7).
+app.include_router(learn_loop.router, prefix="/api/learn/loop")
 app.include_router(quiz.router,        prefix="/api/quiz")
 app.include_router(calendar.router,    prefix="/api/calendar")
 app.include_router(social.router,      prefix="/api/social")

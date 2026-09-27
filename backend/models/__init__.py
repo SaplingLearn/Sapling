@@ -2,6 +2,7 @@ from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+from learning.params import GRADER_ANSWER_MAX_CHARS
 
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
@@ -41,6 +42,42 @@ class ActionBody(BaseModel):
     mode: str = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+
+
+# ── Learning loop (PKG-07; spec §9, A16) ──────────────────────────────────────
+# No loop body carries model_pref: the loop picks its tier in code (spec A15).
+# Free text is bounded by the grader's own answer bound, so an over-long
+# submission is a 422 before anything is scanned or graded (HANDOFF-05/06).
+
+
+class LoopAttemptBody(BaseModel):
+    """PKG-07 /api/learn/loop/step/attempt. `attempt_text` is judged by
+    learning.gates.is_genuine_attempt for hint unlocking only; never stored,
+    never graded."""
+    session_id: str
+    user_id: str
+    question_hash: str
+    attempt_text: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+
+
+class LoopHintBody(BaseModel):
+    """PKG-07 /api/learn/loop/hint — moves rung state only; the hint text
+    comes from the next tutor turn."""
+    session_id: str
+    user_id: str
+    question_hash: str
+
+
+class LoopCheckAnswerBody(BaseModel):
+    """PKG-07 /api/learn/loop/check/answer(/stream) — an explicit answer
+    submission, the ONLY loop-chat evidence path (spec A16)."""
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    idk: bool = False
 
 
 # ── Quiz ──────────────────────────────────────────────────────────────────────
