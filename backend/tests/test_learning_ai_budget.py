@@ -532,6 +532,45 @@ def test_rate_limit_beside_another_hard_trigger_still_pauses_novice_concepts(usa
     assert (d.level, d.scope, d.pause_novice) == ("hard", "daily_usd", True)
 
 
+def test_every_triggered_scope_emits_its_own_event(usage, events):
+    """spec §3.5: "Every cap hit emits ai.budget_capped" (once per user/scope/level/UTC day).
+    The decision reports one scope, but the §10 cap_hits report (PKG-14, keyed scope/level)
+    must see every cap that was hit, not only the one the banner names."""
+
+    def hits() -> set[tuple[str, str]]:
+        return {(kw["payload"]["scope"], kw["payload"]["level"]) for _, kw in events}
+
+    usage(
+        [_row(cost=config.STUDENT_MONTHLY_BUDGET_USD, ago_s=5)]
+        + [_row(ago_s=5) for _ in range(config.LEARN_RATE_LIMIT_PER_MIN)]
+    )
+    d = ai_budget.check(
+        UID, "tutor", "develop", session_tutor_requests=params.LOOP_SESSION_MAX_TUTOR_REQUESTS
+    )
+    assert (d.level, d.scope) == ("hard", "monthly_usd")
+    assert hits() == {
+        ("daily_usd", "hard"),
+        ("monthly_usd", "hard"),
+        ("session_requests", "hard"),
+        ("rate_limit", "hard"),
+    }
+    by_scope = {kw["payload"]["scope"]: kw["payload"] for _, kw in events}
+    assert by_scope["daily_usd"]["cap_usd"] == pytest.approx(_develop_cap())
+    assert by_scope["monthly_usd"]["cap_usd"] == pytest.approx(config.STUDENT_MONTHLY_BUDGET_USD)
+    events.clear()
+    # a novice turn at the $-soft level AND the novice deep cap: the deep cap is what drops the
+    # ceiling to standard, so its event must not be masked by the scope the decision reports
+    usage([_row(cost=_novice_cap() * config.STUDENT_SOFT_FRACTION)])
+    d = ai_budget.check(
+        UID,
+        "tutor",
+        "novice",
+        session_deep_requests=params.LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
+    )
+    assert (d.level, d.tier_ceiling) == ("soft", "standard")
+    assert hits() == {("daily_usd", "soft"), ("session_deep", "soft")}
+
+
 def test_unknown_band_is_a_programming_error(usage):
     usage([])
     with pytest.raises(ValueError):

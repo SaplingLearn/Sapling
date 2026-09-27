@@ -321,6 +321,20 @@ def _grade_decision(user_id: str, usage: _Usage | None, now: datetime) -> Budget
     )
 
 
+def _emit_each(
+    user_id: str,
+    scopes: list[Scope],
+    level: EventLevel,
+    band: Band | None,
+    usage: _Usage | None,
+    cap: Decimal,
+) -> None:
+    """spec §3.5: EVERY cap hit emits ai.budget_capped, not only the scope the decision reports,
+    so the §10 cap_hits counts (keyed scope/level) see every cap that was reached."""
+    for scope in scopes:
+        _emit_capped(user_id, scope, level, band=band, **_spend_fields(scope, usage, cap))
+
+
 def _spend_decision(
     user_id: str,
     kind: Kind,
@@ -347,7 +361,7 @@ def _spend_decision(
         hard["session_requests"] = None
     if hard:
         scope = _binding(hard)
-        _emit_capped(user_id, scope, "hard", band=band, **_spend_fields(scope, usage, cap))
+        _emit_each(user_id, [s for s in _HARD_ORDER if s in hard], "hard", band, usage, cap)
         # A 60-second burst pauses tutor turns but never drops novice-band concepts from review
         # or the check surfaces (spec §3.5 hard row): pause_novice needs a trigger besides it.
         return BudgetDecision(
@@ -375,7 +389,7 @@ def _spend_decision(
     if not soft:
         return _NORMAL
     scope = soft[0]
-    _emit_capped(user_id, scope, "soft", band=band, **_spend_fields(scope, usage, cap))
+    _emit_each(user_id, soft, "soft", band, usage, cap)
     if arm_session:
         return _NORMAL  # arms are exempt from downgrades; they pause at hard (spec §3.5)
     # The $- and token-based soft level never downgrades novice deep turns; only the novice
