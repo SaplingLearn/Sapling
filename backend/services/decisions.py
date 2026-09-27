@@ -23,10 +23,12 @@ Selection (`select_backend`): function mode → `function`; else env
 → gemini + WARNING), and `JEV_ENABLED` false (the default) overrides every one of
 them to gemini.
 
-A refused answer (agents.grader.grade() screened it as addressed to the grader,
-spec §13 A33) comes back as a `Refused` verdict from the `deterministic` backend:
-no model answered, nothing may be recorded for either outcome, and grade_answer
-turns it into GradeOutcome.refused.
+A refused answer (agents.grader.grade() refused it, spec §13 A33: addressed to
+the grader — caught by the screen before any model run, or reported by the
+grader itself after one — or longer than GRADER_ANSWER_MAX_CHARS) comes back as
+a `Refused` verdict from the `deterministic` backend: no model verdict is used,
+nothing may be recorded for either outcome, and grade_answer turns it into
+GradeOutcome.refused.
 
 The seam reads no learning-loop gate: its only caller, grade_answer, returns
 before any seam call when `deps.learning_loop` is False. Nothing under
@@ -152,10 +154,11 @@ class ReasonVerdict(YesNo):
 
 
 class Refused(Verdict):
-    """A grading decision the pre-grader guard refused (spec §13 A33): the answer
-    addressed the grader, so no model judged it. `result` is the delegate's
-    GradeResult (`unavailable` and `refused` set); nothing is recorded for either
-    outcome. Served by `deterministic` (code decided); `reason` is the refusal enum."""
+    """A grading decision grade() refused (spec §13 A33): the answer addressed the
+    grader or was longer than GRADER_ANSWER_MAX_CHARS, so no model verdict is
+    used. `result` is the delegate's GradeResult (`unavailable` and `refused`
+    set); nothing is recorded for either outcome. Served by `deterministic` (code
+    decided); `reason` is the refusal enum."""
 
     reason: Refusal
     result: GradeResult
