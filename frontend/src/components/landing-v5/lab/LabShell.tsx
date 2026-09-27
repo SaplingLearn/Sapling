@@ -35,9 +35,18 @@ export function LabShell({ route, children }: { route: string; children: React.R
   );
 }
 
-/** Shared button styles the demos reuse. */
+/**
+ * Shared button styles the demos reuse.
+ *
+ * The primary sits on the brand green at rest. It used to be near-black ink
+ * (#12201A) and turn green only on hover, which is the reverse of every other
+ * primary in the lab — the flashcard "Flip", the quiz's own "Retake", the room
+ * "Send" are all #0C5638 from the start. Assessment's "Submit answer" is the
+ * one button that runs through this shared style, so it was the one reading as
+ * a different, darker control than the ones beside it.
+ */
 export const PRIMARY_BTN: React.CSSProperties = {
-  padding: '11px 24px', borderRadius: 10, border: 'none', background: '#12201A',
+  padding: '11px 24px', borderRadius: 10, border: 'none', background: '#0C5638',
   color: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5,
   fontWeight: 600, cursor: 'pointer', transition: 'background 200ms',
 };
