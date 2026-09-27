@@ -197,6 +197,17 @@ grep -qE '^APP_ENV=(local|test)$' backend/.env \
 if [ -z "${SAPLING_MODEL_MODE:-}" ] && ! grep -qE '^SAPLING_MODEL_MODE=' backend/.env; then
   echo "  ℹ SAPLING_MODEL_MODE is unset — agents will call the LIVE model; for deterministic E2E export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (what e2e.yml does)"
 fi
+# The deterministic lane exercises the typed decision seam (#640, ADR 0027):
+# under function mode it turns on by itself — UNLESS SAPLING_DECISIONS_BACKEND
+# is `off`, the operator kill switch a developer .env copied from prod-safe
+# defaults may well carry. CI's .env leaves it unset, so a local `off` would
+# silently skip the seam and fail the router journey only on this machine.
+# In function mode any non-off value maps to the scripted `function` backend
+# (Gemini/Jev are never dialled), and an exported value beats backend/.env —
+# so pin it on for the lane, respecting a value the caller exported.
+if [ "${SAPLING_MODEL_MODE:-}" = "function" ]; then
+  export SAPLING_DECISIONS_BACKEND="${SAPLING_DECISIONS_BACKEND:-flash_lite}"
+fi
 
 mkdir -p "$E2E_DIR"
 
