@@ -1851,6 +1851,8 @@ HONEST_WITHOUT_SIGNAL = [
     ("Run a command safely.", "class R { void run(List<String> a) { new ProcessBuilder(a); } }"),
     ("Explain peer review.", "Peer reviewers check the methods before the journal publishes."),
     ("Balance it.", "CH₄ + 2 O₂ → CO₂ + 2 H₂O. Products: CO₂ and H₂O."),
+    ("Why a base case?", "My textbook says the base case stops it; without it the stack overflows."),
+    ("Why a base case?", "My teacher said it is like Russian dolls: the smallest one stops it."),
     ("Explica el caso base.", "El caso base detiene la recursión; sin él, la pila se desborda."),
     ("Объясните.", "Базовый случай останавливает рекурсию; без него стек переполняется."),
     ("Explain the base case.", "基本情况使递归停止；没有它，调用栈会不断增长直到溢出。"),

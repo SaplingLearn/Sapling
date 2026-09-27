@@ -806,7 +806,7 @@ def _vocabulary(context: str, rubric_ids: tuple[str, ...]) -> _Vocabulary:
     # suspicion shapes the item's own text has: key-value/table/tag structure, a
     # rejection frame ("Some say X. Are they right?")
     exempt |= {"structure"} if _STRUCTURE.search(folded.text) else set()
-    exempt |= {"rejection_frame"} if _REJECTION_FRAME.search(folded.text) else set()
+    exempt |= {"rejection_frame"} if _rejection_frame(folded.text) else set()
     return _Vocabulary(
         frozenset(_spelling(m.group()) for m in ids.finditer(folded.text)),
         frozenset(exempt),
@@ -1209,15 +1209,21 @@ def _hidden_text(text: str) -> bool:
 # "My textbook says …; I think the textbook is wrong", "although it looks like
 # …, really …". Not an injection: a grading-accuracy miss (the first slot
 # credited the rejected claim, the second opinion did not). Honest answers use
-# the same frames to reject a misconception; they pay the second run only.
-_REJECTION_FRAME = re.compile(
+# the same frames to reject a misconception; they pay the second run only. A
+# source cited without a contrast ("my teacher said …") is no frame.
+# A claim attributed to someone else ("people say", "my textbook says") counts
+# only with a contrast in the answer; a rejection counts alone.
+_ATTRIBUTION = re.compile(
     r"\b(?:(?:some|many|most|other)\s+(?:people|students|sources|books|textbooks|teachers"
     r"|websites)|people|others|everyone|they|(?:my|the|a|our|this)\s+(?:textbook|book|teacher"
     r"|professor|notes|friend|lecture|slides|source|website|tutor|ta))\s+(?:(?:often|usually"
     r"|sometimes|commonly|might|may|will|would)\s+)?(?:say|says|said|claims?|claimed|think|thinks"
     r"|thought|believe|believes|argue|argues|write|writes|wrote|states?|stated|teach|teaches"
     r"|taught|tell|tells|told|suggests?)\b"
-    r"|\bbut\s+(?:really|actually|in\s+(?:fact|reality|truth))\b"
+)
+_CONTRAST = re.compile(r"\b(?:but|however|yet|whereas|instead|actually|really|in\s+fact)\b")
+_REJECTION = re.compile(
+    r"\bbut\s+(?:really|actually|in\s+(?:fact|reality|truth))\b"
     r"|\b(?:that|this|which|it|they|those|the\s+\w+)\s+(?:is|are|was|were|'s)\s+(?:simply\s+"
     r"|just\s+|actually\s+)?(?:wrong|false|incorrect|mistaken|a\s+myth|not\s+(?:true|right"
     r"|correct|the\s+case))\b"
@@ -1225,6 +1231,10 @@ _REJECTION_FRAME = re.compile(
     r"|\b(?:although|though|while|even\s+though|even\s+if)\s+it\s+(?:(?:may|might|can|could)\s+)?"
     r"(?:looks?|seems?|appears?|sounds?)\b"
 )
+
+
+def _rejection_frame(text: str) -> bool:
+    return bool(_REJECTION.search(text) or (_ATTRIBUTION.search(text) and _CONTRAST.search(text)))
 
 
 def suspicion(
@@ -1246,6 +1256,6 @@ def suspicion(
         "language_switch": lambda: _language_switch(text, context),
         "hidden_text": lambda: _hidden_text(text),
         "rejection_frame": lambda: "rejection_frame" not in vocab.exempt
-        and bool(_REJECTION_FRAME.search(folds[0].text)),
+        and _rejection_frame(folds[0].text),
     }
     return tuple(name for name in SUSPICIONS if checks[name]())
