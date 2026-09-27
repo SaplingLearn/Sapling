@@ -464,9 +464,11 @@ def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
                 f"not canonical_answer {draft.canonical_answer!r}"
             )
     if draft.format == _MC_REASON:
+        # Equal, not merely containing it: the leak check matches the WHOLE
+        # final answer, so "A: <text>" would let a hint quote <text> unflagged.
         option = _correct_option_text(draft)
-        if option is not None and not contains_run(run, answer_run(option)):
-            reasons.append("final_answer does not contain the correct option's text")
+        if option is not None and run != answer_run(option):
+            reasons.append("final_answer is not the correct option's text")
     return reasons
 
 

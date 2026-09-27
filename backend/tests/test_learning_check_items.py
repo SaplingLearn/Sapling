@@ -664,11 +664,35 @@ class TestFinalAnswerRules:
         assert any(r.startswith("canonical_answer") for r in reasons)
         assert not any("final_answer" in r for r in reasons), reasons
 
-    def test_mc_reason_final_answer_is_or_contains_the_correct_options_text(self):
+    def test_mc_reason_final_answer_is_the_correct_options_text(self):
+        """A34: an mc_reason final answer IS the correct option's text (under
+        answer_tokens): the leak check matches the whole final answer, so one
+        that merely contains the text ("A: <text>", "<text>, because …")
+        would let a hint quote the option's text unflagged."""
         from learning.checks import validate_draft
 
         assert validate_draft(_mc_draft()) == []  # equal
-        assert validate_draft(_mc_draft(final_answer="A: The update step size")) == []  # contains
+        # equal after the normalisation (case, surrounding punctuation)
+        assert validate_draft(_mc_draft(final_answer="the update step size.")) == []
+        for longer in (
+            "A: The update step size",
+            "A) The update step size",
+            "The update step size, not the loss value",
+        ):
+            reasons = [
+                r
+                for r in validate_draft(
+                    _mc_draft(
+                        reference_answer=(
+                            "A: The update step size, not the loss value. "
+                            f"Final answer: {longer}."
+                        ),
+                        final_answer=longer,
+                    )
+                )
+                if "final_answer" in r
+            ]
+            assert any("option" in r for r in reasons), (longer, reasons)
         wrong = _mc_draft(
             reference_answer="A: The update step size, not the loss value.",
             final_answer="the loss value",
