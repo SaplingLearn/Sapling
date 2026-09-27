@@ -17,11 +17,13 @@ import pytest
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 from agents import GRADER_LIMITS
 from agents.deps import SaplingDeps
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.params import (
+    GRADER_ANSWER_MAX_CHARS,
     GRADER_LIMITS as GRADER_LIMITS_SPEC,
     GRADER_LOW_CONFIDENCE,
     GRADER_SECOND_OPINION_CONFIDENCE,
@@ -308,6 +310,128 @@ def test_grade_degrades_when_the_second_opinion_fails(monkeypatch, caplog):
         res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
     assert len(calls) == 2 and res.unavailable is True
     assert any("grader unavailable" in r.getMessage() for r in caplog.records)
+
+
+def _billed_grader(payloads: list[dict], usages: list[RequestUsage | None] | None = None):
+    """A FunctionModel that emits each payload in turn through the output tool;
+    response i is billed usages[i] (None or missing: the FunctionModel estimate)."""
+    calls = {"n": 0}
+
+    def handler(messages, info):
+        i = calls["n"]
+        calls["n"] += 1
+        response = ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=info.output_tools[0].name, args=payloads[min(i, len(payloads) - 1)]
+                )
+            ]
+        )
+        if usages and i < len(usages) and usages[i] is not None:
+            response.usage = usages[i]
+        return response
+
+    return FunctionModel(handler), calls
+
+
+def _llm_usage_rows(monkeypatch) -> list[dict]:
+    """Spy one level BELOW record_agent_usage: what reaches the llm_usage writer."""
+    from services import events_service
+
+    rows: list[dict] = []
+    monkeypatch.setattr(events_service, "log_llm_usage", lambda **kw: rows.append(kw))
+    return rows
+
+
+def test_a_run_over_the_token_cap_still_records_what_it_billed(monkeypatch):
+    """GRADER_LIMITS' token cap is checked AFTER the response (pydantic-ai), so
+    the provider has billed the request by then. That row must reach llm_usage:
+    the §3.5 caps (STUDENT_DAILY_GRADES, daily $/tokens, the rate limit) and the
+    admin cost analytics read nothing else."""
+    import agents.grader as g
+
+    over = RequestUsage(input_tokens=GRADER_LIMITS.total_tokens_limit + 1, output_tokens=7)
+    model, calls = _billed_grader([_good()], [over])
+    rows = _llm_usage_rows(monkeypatch)
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
+    assert res.unavailable is True and calls["n"] == 1
+    [row] = rows
+    assert (row["task"], row["feature"], row["user_id"]) == ("grader", "tutor", "u1")
+    assert row["usage"].requests == 1 and row["usage"].input_tokens == over.input_tokens
+    assert row["usage"].output_tokens == 7
+
+
+def test_exhausted_validation_retries_record_every_billed_request(monkeypatch):
+    import agents.grader as g
+
+    model, calls = _billed_grader([{"item_results": ["r1:yes"], "confidence": 7.0}])
+    rows = _llm_usage_rows(monkeypatch)
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
+    assert res.unavailable is True and calls["n"] == GRADER_LIMITS.request_limit
+    [row] = rows
+    assert row["task"] == "grader" and row["usage"].requests == calls["n"]
+    assert row["usage"].total_tokens > 0
+
+
+def test_a_failed_second_opinion_records_its_own_row(monkeypatch):
+    import agents.grader as g
+
+    over = RequestUsage(input_tokens=GRADER_LIMITS.total_tokens_limit + 1)
+    model, calls = _billed_grader([_good(GRADER_SECOND_OPINION_CONFIDENCE / 2)], [None, over])
+    rows = _llm_usage_rows(monkeypatch)
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
+    assert res.unavailable is True and calls["n"] == 2
+    assert [row["task"] for row in rows] == ["grader", GRADER_SECOND_OPINION_SLOT]
+    assert rows[1]["usage"].input_tokens == over.input_tokens
+
+
+def test_a_run_that_never_got_a_response_records_nothing(monkeypatch):
+    """No response, no bill: a transport failure adds no llm_usage row."""
+    import agents.grader as g
+
+    async def _boom(*a, **k):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(g.grader_agent, "run", _boom)
+    rows = _llm_usage_rows(monkeypatch)
+    res = asyncio.run(g.grade(_item(), format="free", student_answer="x", deps=_deps()))
+    assert res.unavailable is True and rows == []
+
+
+def test_an_oversized_answer_is_unavailable_before_any_model_call(monkeypatch, caplog):
+    """The answer is the one unbounded part of the message: one past
+    GRADER_ANSWER_MAX_CHARS degrades before anything is sent or billed. Length
+    never depends on the outcome, so both outcomes go missing alike (inv 28)."""
+    import agents.grader as g
+
+    model, calls = _billed_grader([_good()])
+    rows = _llm_usage_rows(monkeypatch)
+    with g.grader_agent.override(model=model), caplog.at_level("WARNING"):
+        at_limit = asyncio.run(
+            g.grade(
+                _item(), format="free", student_answer="a" * GRADER_ANSWER_MAX_CHARS, deps=_deps()
+            )
+        )
+        over = asyncio.run(
+            g.grade(
+                _item(),
+                format="free",
+                student_answer="a" * (GRADER_ANSWER_MAX_CHARS + 1),
+                deps=_deps(),
+            )
+        )
+    assert at_limit.unavailable is False and over.unavailable is True
+    assert calls["n"] == 1 and [row["task"] for row in rows] == ["grader"]
+    assert any("grader unavailable" in r.getMessage() for r in caplog.records)
+
+
+def test_the_answer_bound_keeps_both_grader_runs_inside_the_token_cap():
+    """GRADER_ANSWER_MAX_CHARS is sized so that even at one token per character
+    the answer, sent on both requests a run may make, fits GRADER_LIMITS."""
+    assert GRADER_ANSWER_MAX_CHARS * GRADER_LIMITS.request_limit < GRADER_LIMITS.total_tokens_limit
 
 
 # ── function-mode handler ─────────────────────────────────────────────────

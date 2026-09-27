@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.models.google import GoogleModelSettings
+from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS
 from agents._providers import model_for
@@ -30,6 +31,7 @@ from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from learning.params import (
     FEEDBACK_HINT_MAX_SENTENCES,
+    GRADER_ANSWER_MAX_CHARS,
     GRADER_HINT_MAX_CHARS,
     GRADER_LOW_CONFIDENCE,
     GRADER_SECOND_OPINION_CONFIDENCE,
@@ -162,20 +164,48 @@ def parse_item_results(entries: list[str], rubric_ids: list[str]) -> dict[str, b
     return {rid: seen.get(rid, False) for rid in rubric_ids}
 
 
+class _UnfinishedRun:
+    """What record_agent_usage reads off a grader run that raised after the
+    provider answered: the usage billed so far. With no final response to read,
+    the model name falls back to the slot's configured model."""
+
+    def __init__(self, usage: RunUsage) -> None:
+        self._usage = usage
+
+    def usage(self) -> RunUsage:
+        return self._usage
+
+    def all_messages(self) -> list:
+        return []
+
+
 async def _run_once(
     message: str, deps: SaplingDeps, *, second_opinion: bool = False
 ) -> GraderOutput:
-    if second_opinion:  # A22: another model, same agent and prompt, own limits and usage row
-        result = await grader_agent.run(
-            message,
-            deps=deps,
-            usage_limits=GRADER_LIMITS,
-            model=model_for(GRADER_SECOND_OPINION_SLOT),
-            model_settings=_SECOND_OPINION_SETTINGS,
-        )
-    else:
-        result = await grader_agent.run(message, deps=deps, usage_limits=GRADER_LIMITS)
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
+    # Passed in, so a run that raises still says what the provider billed: the
+    # token cap is checked AFTER a response (pydantic-ai), and a validation
+    # failure can follow a billed request. The §3.5 caps and the admin cost
+    # analytics read llm_usage only, so a failed run must land there too.
+    usage = RunUsage()
+    per_run = (
+        {  # A22: another model, same agent and prompt, own limits and usage row
+            "model": model_for(GRADER_SECOND_OPINION_SLOT),
+            "model_settings": _SECOND_OPINION_SETTINGS,
+        }
+        if second_opinion
+        else {}
+    )
+    try:
+        result = await grader_agent.run(
+            message, deps=deps, usage_limits=GRADER_LIMITS, usage=usage, **per_run
+        )
+    except Exception:
+        if usage.requests or usage.total_tokens:  # no response → nothing was billed
+            record_agent_usage(
+                _UnfinishedRun(usage), feature=deps.feature, task=task, user_id=deps.user_id
+            )
+        raise
     record_agent_usage(result, feature=deps.feature, task=task, user_id=deps.user_id)
     return result.output
 
@@ -184,6 +214,13 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
     stack. The single Gemini grader: PKG-05b wraps it without changing the prompt."""
+    if len(student_answer) > GRADER_ANSWER_MAX_CHARS:  # never sent, never billed
+        logger.warning(
+            "grader unavailable for item %s: answer longer than %d characters",
+            item.id,
+            GRADER_ANSWER_MAX_CHARS,
+        )
+        return GradeResult(unavailable=True)
     message = build_grader_message(item, format=format, student_answer=student_answer)
     rubric_ids = [r.id for r in item.rubric]
     backend: Literal["gemini", "gemini_second"] = "gemini"

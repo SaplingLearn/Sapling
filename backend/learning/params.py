@@ -161,6 +161,11 @@ GRADER_SECOND_OPINION_CONFIDENCE = 0.4
 GRADER_SECOND_OPINION_SLOT = "grader_second"
 FEEDBACK_HINT_MAX_SENTENCES = 2  # † PKG-05 grader brief: the hint is short; not a spec value
 GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guard; not a spec value
+# † PKG-05: the student answer is the one unbounded part of a grader message;
+# past this many characters grade() degrades to unavailable before any call, so
+# an oversized answer is never sent or billed. Sized so that even at one token
+# per character both requests a run may make fit GRADER_LIMITS' token cap.
+GRADER_ANSWER_MAX_CHARS = 4_000
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
