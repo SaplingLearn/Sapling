@@ -31,6 +31,10 @@ LEGACY_LIST_COLS = (
 )
 LEGACY_RATE_COLS = "id,times_reviewed"
 LEGACY_RATE_KEYS = {"times_reviewed", "last_rating", "last_reviewed_at"}
+# rate_card's select and update filters, identical on both paths: the select is
+# owner-scoped, the update targets the one card by id.
+RATE_SELECT_KWARGS = {"filters": {"id": "eq.card-1", "user_id": f"eq.{USER_ID}"}, "limit": 1}
+RATE_UPDATE_KWARGS = {"filters": {"id": "eq.card-1"}}
 FSRS_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
 FSRS_KEYS = {"fsrs_d", "fsrs_s", "due_at", "reps", "lapses"}
 
@@ -86,15 +90,17 @@ TWO_DAYS_AGO = (NOW - timedelta(days=2)).isoformat()
 
 def _rate_tables(row: dict):
     """table() stand-in for rate_card: one select hit, an update that records
-    its payload on `calls`."""
+    its payload and its filters on `calls`."""
     calls: dict = {}
 
     def _select(cols, **kw):
         calls["select_cols"] = cols
+        calls["select_kwargs"] = kw
         return [dict(row)]
 
     def _update(payload, **kw):
         calls["update"] = payload
+        calls["update_kwargs"] = kw
         return [{"id": row["id"]}]
 
     def side_effect(name):
@@ -180,6 +186,8 @@ class TestRateCard:
         r, calls, ns, iv = _rate(3, gate=True, row=SEEN_ROW)
         payload = calls["update"]
         assert set(payload) == LEGACY_RATE_KEYS | FSRS_KEYS
+        assert calls["select_kwargs"] == RATE_SELECT_KWARGS
+        assert calls["update_kwargs"] == RATE_UPDATE_KWARGS, "one update, scoped to the card"
         assert payload["times_reviewed"] == 4 and payload["last_rating"] == 3
         assert payload["fsrs_d"] == 4.5 and payload["fsrs_s"] == 9.0
         assert payload["reps"] == 4 and payload["lapses"] == 1
@@ -268,7 +276,9 @@ class TestRateCard:
         assert r.status_code == 200
         assert r.json() == {"ok": True}
         assert calls["select_cols"] == LEGACY_RATE_COLS
+        assert calls["select_kwargs"] == RATE_SELECT_KWARGS
         assert set(calls["update"]) == LEGACY_RATE_KEYS
+        assert calls["update_kwargs"] == RATE_UPDATE_KWARGS
         assert calls["update"]["times_reviewed"] == 4 and calls["update"]["last_rating"] == 5
         ns.assert_not_called()
         iv.assert_not_called()
