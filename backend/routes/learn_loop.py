@@ -53,7 +53,7 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from learning import gates, ladder, policy, zpd_events
 from learning.bkt import band as bkt_band
-from learning.checks import CheckItem
+from learning.checks import CheckItem, posttest_reserve_hash
 from learning.evidence import flush_pending
 from learning.gate import learning_loop_active
 from learning.ladder import Rung
@@ -67,9 +67,18 @@ from learning.params import (
     LOOP_HISTORY_MAX_MESSAGES,
     LOOP_SESSION_MAX_DEEP_REQUESTS,
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
+    LOOP_SOURCE_CHUNKS_MAX,
 )
 from learning.policy import LearnerView, LoopState, StepState
-from models import ChatBody, LoopCheckAnswerBody
+from models import (
+    ActionBody,
+    ChatBody,
+    EndSessionBody,
+    LoopAttemptBody,
+    LoopCheckAnswerBody,
+    LoopHintBody,
+    StartSessionBody,
+)
 from routes.learn import (  # legacy helpers, reused verbatim — never copied
     PENDING_SESSIONS,
     _CONTINUATION_NUDGE,
@@ -77,20 +86,21 @@ from routes.learn import (  # legacy helpers, reused verbatim — never copied
     _agent_turn_or_http_error,
     _consume_pending,
     _get_catalog_chunk,
+    _get_course_id_for_topic,
     _get_course_info,
     _load_message_history,
     _new_run_text,
     save_message,
 )
 from services import ai_budget, events_service
-from services.academics import offering_course_id
+from services.academics import offering_course_id, resolve_offering
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import require_self
 from services.chat_stream import stream_agent_turn
-from services.check_item_service import get_check_item, list_items  # noqa: F401  (list_items: Task 7)
+from services.check_item_service import get_check_item, list_items
 from services.graph_context import build_graph_context_block
-from services.graph_service import _normalize_concept, _prerequisite_edges
+from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
 from services.prompt_safety import wrap_untrusted
 from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks
 from services.request_context import current_request_id
@@ -124,6 +134,15 @@ _GRADE_UNAVAILABLE_REPLY = (
 )
 _IDK_RENDERED = "I don't know"
 _SUBMISSION_KINDS = ("feedback", "hint_request", "unavailable")
+_DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
+
+#: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
+#: (:1406–1411), where they are a local dict.
+_ACTION_PROMPTS = {
+    "hint": "The student asked for a hint. Give a small scaffold or clue without giving away the answer.",
+    "confused": "The student said they are confused. Identify the likely point of confusion and re-explain with a different analogy.",
+    "skip": "The student wants to skip this concept. Acknowledge and transition to the next recommended concept.",
+}
 
 
 def _gate(user_id: str, request: Request) -> None:
@@ -609,6 +628,21 @@ class _LoopTurn:
             return _GRADE_UNAVAILABLE_REPLY
         if self.phase == "check" and self.item is not None:
             return ladder.check_pose(self.item.prompt)
+        if self.phase == "hint" and self.item is not None and self.rung in _DETERMINISTIC_RUNGS:
+            payload, leaked = _leak_checked_payload(
+                user_id=self.user_id, item=self.item, rung=self.rung, reference=self.item.reference_answer
+            )
+            if payload is None:
+                return None
+            if leaked:
+                # Fall back to the LLM rung; only when no model may run (hard) is a
+                # leaking payload served — and then only where H6 is allowed, and
+                # recorded as H6 (no upward BKT credit, §3.3).
+                if not (hard and _h6_ok(self.state, self.active, self.entry, self.item)):
+                    return None
+                self.served_as_h6 = True
+            self.revealed_hash = payload.revealed_hash
+            return payload.text
         if self.phase == "feedback" and hard and self.item is not None:
             reference = self.item.reference_answer if self.answer_released else None
             return _template_feedback(self.verdict, reference)
@@ -735,6 +769,12 @@ class _LoopTurn:
             state["tutor_requests"] = int(state.get("tutor_requests") or 0) + 1
             if self.tier == "deep":
                 state["deep_requests"] = int(state.get("deep_requests") or 0) + 1
+        if self.revealed_hash:  # an H4 sibling shown: never a future check (A23)
+            revealed = list(state.get("revealed") or [])
+            if self.revealed_hash not in revealed:
+                state["revealed"] = [*revealed, self.revealed_hash]
+        if self.served_as_h6 and self.active in steps:
+            steps[self.active]["rung"] = int(Rung.H6)
         if self.withdrawn and state.get("current") == self.withdrawn:
             state["current"] = None
         if self.persist_user_row:
@@ -778,6 +818,104 @@ class _LoopTurn:
             "unavailable": self.kind == "unavailable",
             "answer_released": self.answer_released,
         }
+
+
+class _LoopOpener(_LoopTurn):
+    """The session opener (spec Behaviour 15): a fresh session, `teach` with no
+    item and the BKT_L0 band, the catalog context (the opener only), and the
+    legacy lazy-session contract — `complete` stashes PENDING_SESSIONS and
+    persists and counts nothing (no sessions row exists yet)."""
+
+    def __init__(self, *, body: StartSessionBody, request: Request, session_id: str | None = None):
+        self.start = body
+        self.user_id, self.session_id = body.user_id, session_id or str(uuid.uuid4())
+        self.mode = body.mode
+        self.kind, self.persist_user_row = "opener", False
+        self.request_id = _request_id(request)
+        self.course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
+        self.offering_id = resolve_offering(self.course_id, create=True) if self.course_id else ""
+        # routes/learn.py::_start_session_agent (:540–543), verbatim
+        self.message = (
+            f"Student wants to learn about: {body.topic}\n\n"
+            "Begin the session with a warm greeting and your first question or explanation."
+        )
+        self.state = {}
+        self._derive(None)
+
+    def history(self) -> list:
+        return []
+
+    def complete(self, reply: str, merged: dict, mastery: list) -> dict:
+        PENDING_SESSIONS[self.session_id] = {
+            "user_id": self.user_id,
+            "mode": self.mode,
+            "topic": self.start.topic,
+            "course_id": self.course_id,  # abstract — graph + shared-context key
+            "offering_id": self.offering_id,  # term-scoped — the session-row key
+            "use_shared_context": self.start.use_shared_context,
+            "assistant_reply": reply,
+            "graph_update": merged or {},
+            "loop": True,
+        }
+        return {
+            "reply": reply,
+            "session_id": self.session_id,
+            "graph_state": get_graph(self.user_id),
+            "tier": self.tier,
+            "phase": self.phase,
+            "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
+        }
+
+
+def _h6_ok(state: dict, qh: str | None, item_state: dict, check) -> bool:
+    """Spec §3.3 H6 item predicates (§13 A32), for the one gate PKG-06 owns:
+    taught (recorded at activation), practice (the ACTIVE in-session check;
+    activation never selects the post-test reserve), not graded coursework (a
+    missing item fails closed). Ungraded alone never admits H6."""
+    return gates.h6_allowed(
+        _step_state(state, qh),
+        item_taught=bool((item_state or {}).get("taught")),
+        item_practice=qh is not None and state.get("current") == qh,
+        item_graded=check is None or bool(check.graded),
+    )
+
+
+def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | None) -> tuple:
+    """A17: the deterministic H2/H4/H6 payload for `rung`, leak-checked HERE,
+    in the same function, before anything can emit it (invariant 27; A34: the
+    active item's structured final answer). Returns (payload | None, leaked).
+    H2 passages are resolved for the requesting student through the
+    visibility-aware reader; H4 never shows the concept's post-test reserve
+    (A23, HANDOFF-06), so the concept's items are read whole — the reserve is
+    defined over all of them — and ladder.deterministic_content keeps the
+    siblings of the item's format and difficulty."""
+    passages: list[str] = []
+    if rung == Rung.H2:
+        ids = list(item.source_chunk_ids or [])[:LOOP_SOURCE_CHUNKS_MAX]
+        passages = [r["chunk_text"] for r in chunks_for_ids(ids, user_id=user_id)] if ids else []
+    siblings: list = []
+    reserve = None
+    if rung == Rung.H4:
+        concept_items = list_items(item.course_id, item.concept_key)
+        reserve = posttest_reserve_hash(concept_items)
+        siblings = [s for s in concept_items if s.question_hash != item.question_hash]
+    payload = ladder.deterministic_content(
+        rung,
+        _item_like(item),
+        [_item_like(s) for s in siblings],
+        passages,
+        exclude_hashes={reserve} if reserve else (),
+    )
+    if payload is None:
+        return None, False
+    verdict = detect_leak(
+        reference or "",
+        payload.text,
+        rung,
+        final_answer=item.final_answer,
+        canonical_answer=item.canonical_answer,
+    )
+    return payload, verdict.leaked
 
 
 def _ms(seconds: float) -> int:
@@ -1096,3 +1234,129 @@ async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     _consume_pending(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(_grade_submission(body, request), what="loop grader")
     return _sse(_submission_turn(sub, body, request))
+
+
+# ── Attempt / hint / action / openers / end-session ───────────────────────
+
+
+@router.post("/step/attempt")
+def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
+    """Records a genuine attempt for hint unlocking only (spec §3.3). The text
+    is judged by gates.is_genuine_attempt and never stored, never graded."""
+    _gate(body.user_id, request)
+    _session_scope(body.session_id, body.user_id)
+    state = _load_loop_state(body.session_id)
+    entry = _steps(state).get(body.question_hash)
+    if not isinstance(entry, dict):
+        raise HTTPException(status_code=404, detail="No such check item in this session")
+    check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
+    band, _ = _band_for(body.user_id, _node_for_item(body.user_id, check) if check else None)
+    now = _now_s()
+    independent_s = _seconds_since(entry.get("first_shown_at"), now)
+    genuine = bool(_genuine(body.attempt_text, independent_s, band))
+    if genuine:
+        _record_attempt(entry, now, failed=True)  # the step stays open: a failed genuine attempt
+        _save_loop_state(body.session_id, state)
+    return {
+        "genuine": genuine,
+        "attempts": len(entry.get("attempted_at") or []),
+        "independent_s": independent_s,
+    }
+
+
+@router.post("/hint")
+def hint(body: LoopHintBody, request: Request) -> dict:
+    """Moves the active item's rung up one, behind the dwell / attempt gate, the
+    ceiling and — at H6 — the item predicates (A32). The hint TEXT is the next
+    `[ACTION: hint]` turn's (PKG-13), deterministic when a leak-clean payload
+    exists. No model call."""
+    _gate(body.user_id, request)
+    _session_scope(body.session_id, body.user_id)
+    state = _load_loop_state(body.session_id)
+    entry = _steps(state).get(body.question_hash)
+    if not isinstance(entry, dict) or state.get("current") != body.question_hash:
+        return {"denied": "no_active_item"}
+    step = _step_state(state, body.question_hash)
+    now = _now_s()
+    if not gates.rung_unlock(step, now, time_scale=config.LEARNING_GATE_TIME_SCALE):
+        anchor = step.last_rung_at if step.last_rung_at is not None else step.first_shown_at
+        attempted = any(t > anchor for t in step.attempted_at)
+        return {"denied": "dwell" if attempted else "no_genuine_attempt"}
+    check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
+    node_id = _node_for_item(body.user_id, check) if check else None
+    learner = _learner_state(body.user_id, node_id)
+    band, _ = _band_of(learner)
+    prereq = _prereq_proficient(body.user_id, node_id) if node_id else True
+    # an empty message: showed_work comes from the step alone — the floor-at-H3 rule
+    # is applied by the turn that carried the work, never by a hint request
+    ceiling, _ = _ceiling_for(
+        step=step,
+        learner=_learner_view(learner, band=band, prereq_proficient=prereq),
+        message="",
+        independent_s=0.0,
+    )
+    next_rung = int(step.rung) + 1
+    if next_rung > int(ceiling):
+        return {"denied": "ceiling"}
+    if next_rung == int(Rung.H6) and not _h6_ok(state, body.question_hash, entry, check):
+        return {"denied": "h6_gate"}
+    entry["rung"], entry["last_rung_at"] = next_rung, now
+    entry["rungs"] = [*(entry.get("rungs") or []), {"rung": next_rung, "at": now}]
+    if entry.get("offered"):
+        entry["offered"] = False
+        zpd_events.emit_zpd_offer(
+            user_id=body.user_id, request_id=_request_id(request), accepted=True, band=band
+        )
+    _save_loop_state(body.session_id, state)
+    return {"rung": next_rung, "intent": ladder.intent(Rung(next_rung))}
+
+
+@router.post("/action", dependencies=_RATE_LIMITED)
+async def action(body: ActionBody, request: Request):
+    """An "[ACTION: ...]" turn: in the check phase a hint at the item's current
+    rung, otherwise the current phase. Assistant-only persistence; never graded
+    (invariant 26)."""
+    _gate(body.user_id, request)
+    _consume_pending(body.session_id, body.user_id)
+    message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
+    chat_body = ChatBody(
+        session_id=body.session_id,
+        user_id=body.user_id,
+        message=message,
+        mode=body.mode,
+        use_shared_context=body.use_shared_context,
+    )
+    return await _json_turn(
+        lambda: _LoopTurn(
+            body=chat_body, request=request, message=message, kind="action", persist_user_row=False
+        ),
+        "loop action agent",
+    )
+
+
+@router.post("/start-session", dependencies=_RATE_LIMITED)
+async def start_session(body: StartSessionBody, request: Request):
+    _gate(body.user_id, request)
+    result = await _json_turn(
+        lambda: _LoopOpener(body=body, request=request), "loop start-session agent"
+    )
+    out = {
+        "session_id": result["session_id"],
+        "initial_message": result["reply"],
+        "graph_state": result["graph_state"],
+    }
+    if result.get("budget"):
+        out["budget"] = result["budget"]
+    return out
+
+
+@router.post("/start-session/stream", dependencies=_RATE_LIMITED)
+async def start_session_stream(body: StartSessionBody, request: Request):
+    _gate(body.user_id, request)
+    return _sse(_LoopOpener(body=body, request=request))
+
+
+def end_session(body: EndSessionBody, request: Request) -> dict | None:
+    """PKG-07 pass-through: the legacy end_session body runs unchanged.
+    PKG-09 returns the close payload (summary + brief) from here."""
+    return None
