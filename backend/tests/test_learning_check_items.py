@@ -983,6 +983,15 @@ class TestRepairAndOptions:
             ("(the trace [chunk a1]) is 7.", "(the trace) is 7."),
             ('He wrote "the trace [chunk a1]".', 'He wrote "the trace".'),
             ("See [chunk a1]. The trace is 7.", "The trace is 7."),
+            # live 2026-09-27 (HIST200, the A37 review round 2 check): one
+            # bracket listing several ids, in 8 stored texts of one pass
+            (
+                f"It spans the Americas and Afro-Eurasia. [chunk {_HEX}, chunk 6f50727e]",
+                "It spans the Americas and Afro-Eurasia.",
+            ),
+            ("The trace is 7 [chunks a1, b2 and c3].", "The trace is 7."),
+            ("The trace is 7 [chunk a1; chunk b2].", "The trace is 7."),
+            ("The trace is 7 ([chunk a1, b2]).", "The trace is 7."),
         ],
     )
     def test_the_marker_repair_leaves_no_separator_behind(self, text, clean):
@@ -1011,6 +1020,13 @@ class TestRepairAndOptions:
         fixed, _ = repair_draft(_draft(reference_answer=text))
         assert time.perf_counter() - start < 1.0
         assert fixed.reference_answer.startswith("x(")
+        # a listed marker that never closes: each "chunk" is an id or a prefix,
+        # and that choice must not be tried in every combination
+        text = "[chunk " + "chunk, " * 5_000 + "chunk chunk x"
+        start = time.perf_counter()
+        fixed, repairs = repair_draft(_draft(reference_answer=text))
+        assert time.perf_counter() - start < 1.0
+        assert repairs == [] and fixed.reference_answer == text
 
     def test_the_marker_repair_reads_only_the_prompt_builders_markers(self):
         from learning.checks import repair_draft
@@ -1019,6 +1035,8 @@ class TestRepairAndOptions:
             "The size of each update step [1].",  # a citation style, not our marker
             "The size of each update step (chunk of the data).",
             "The size of each update step [chunked].",
+            "The size of each update step [chunk of the data].",
+            "The size of each update step [chunk a1 b2].",
         ):
             draft = _draft(reference_answer=text)
             assert repair_draft(draft) == (draft, [])

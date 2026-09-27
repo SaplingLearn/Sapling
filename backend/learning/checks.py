@@ -531,14 +531,23 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
 
 # The markers agents.check_items.build_prompt puts before each passage: "[chunk
 # <id>]" or "[passage]". Never course content — only an agent that copied one
-# into its text writes it there. Copied markers come in runs ("[chunk a],
+# into its text writes it there, alone or as one bracket listing several ids
+# ("[chunk a, chunk b]", "[chunks a and b]"; the live check of the A37 review
+# round 2 stored 8 such texts). Copied markers come in runs ("[chunk a],
 # [chunk b]", "(see [chunk a] and [chunk b])"), so a run goes as one: markers
 # joined by a comma, semicolon, slash, "&", "and", "or" or nothing, with a
 # "see"/"cf." before it, and the brackets around it when they hold nothing
 # else. No quantifier precedes the first bracket or lead word, so a long
 # whitespace run is scanned once per bracket (the whitespace before a run is
-# trimmed by _seam, not matched).
-_MARKER = r"\[(?:chunk[ \t]+[^\s\[\]]+|passage)\]"
+# trimmed by _seam, not matched); inside a bracket, ids are parted by a
+# separator, never by whitespace alone, so "chunk" as an id or as a prefix is
+# decided at once.
+_MARKER_ID = r"[^\s\[\],;]+"
+_MARKER_ID_SEP = r"[ \t]*(?:[,;/&]|and\b|or\b)[ \t]*"
+_MARKER = (
+    rf"\[(?:chunks?[ \t]+{_MARKER_ID}(?:{_MARKER_ID_SEP}(?:chunks?[ \t]+)?{_MARKER_ID})*"
+    r"|passage)\]"
+)
 _MARKER_RUN = rf"(?:\b(?:see|cf\.?)[ \t]+)?{_MARKER}(?:\s*(?:[,;/&]\s*|(?:and|or)\s+)?{_MARKER})*"
 _CHUNK_MARKER = re.compile(rf"[(\[]\s*{_MARKER_RUN}\s*[)\]]|{_MARKER_RUN}", re.IGNORECASE)
 # Punctuation that can meet across a removed run, and the marks that end a
