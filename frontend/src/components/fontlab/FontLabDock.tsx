@@ -96,7 +96,12 @@ export function FontLabDock() {
         title="Font Lab"
         style={{
           position: "fixed",
-          left: 16,
+          // Bottom-RIGHT, not left: the sidebar owns the entire left edge —
+          // its own collapse button, Settings, and avatar footer all live
+          // there — and a fixed left-16/bottom-16 dock sat directly on top
+          // of them. The dock's "Full lab" link was literally intercepting
+          // clicks meant for the real Collapse button.
+          right: 16,
           bottom: 16,
           zIndex: 9999,
           width: 40,
@@ -121,7 +126,7 @@ export function FontLabDock() {
     <div
       style={{
         position: "fixed",
-        left: 16,
+        right: 16,
         bottom: 16,
         zIndex: 9999,
         width: 300,
