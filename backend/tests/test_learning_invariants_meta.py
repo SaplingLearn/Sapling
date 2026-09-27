@@ -79,3 +79,68 @@ def test_inv_11_restores_the_flag_afterwards(monkeypatch):
     with pytest.MonkeyPatch.context() as mp:
         inv.test_inv_11_gate_false_when_env_unset(mp)
     assert config.LEARNING_LOOP_ENABLED is True, "inv_11 left the flag OFF"
+
+
+def _learning_pkg(tmp_path, **files):
+    pkg = tmp_path / "learning"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    for name, src in files.items():
+        (pkg / f"{name}.py").write_text(src)
+    return pkg
+
+
+def test_imports_of_sees_every_alias(tmp_path):
+    pkg = _learning_pkg(tmp_path, bkt="import math, db.connection\n")
+    assert "db" in inv._imports_of(pkg / "bkt.py")
+
+
+def test_imports_of_sees_imports_inside_functions(tmp_path):
+    pkg = _learning_pkg(
+        tmp_path, bkt="def f():\n    from agents.deps import SaplingDeps\n    return SaplingDeps\n"
+    )
+    assert "agents" in inv._imports_of(pkg / "bkt.py")
+
+
+def test_imports_of_follows_learning_modules_to_their_imports(tmp_path):
+    pkg = _learning_pkg(
+        tmp_path,
+        gate="from db.connection import table\n",
+        state="import pydantic_ai\n",
+        helper="from google import genai\n",
+        policy=(
+            "from learning.gate import learning_loop_active\n"
+            "from .state import read_state\n"
+            "from . import helper\n"
+        ),
+    )
+    roots = set(inv._imports_of(pkg / "policy.py"))
+    assert {"db", "pydantic_ai", "google"} <= roots, roots
+
+
+def test_imports_of_follows_the_package_init(tmp_path):
+    pkg = _learning_pkg(tmp_path, params="X = 1\n", bkt="from learning.params import X\n")
+    (pkg / "__init__.py").write_text("from learning.gate import learning_loop_active\n")
+    (pkg / "gate.py").write_text("from db.connection import table\n")
+    assert "db" in inv._imports_of(pkg / "bkt.py")
+
+
+def test_imports_of_survives_an_import_cycle(tmp_path):
+    pkg = _learning_pkg(tmp_path, a="from learning import b\n", b="from learning import a\n")
+    assert "db" not in inv._imports_of(pkg / "a.py")
+
+
+def test_imports_of_passes_a_clean_pure_module(tmp_path):
+    pkg = _learning_pkg(
+        tmp_path,
+        params="import config\nX = 1\n",
+        ladder="from enum import IntEnum\n",
+        policy=(
+            "from __future__ import annotations\n"
+            "import math\n"
+            "from learning import params\n"
+            "from learning.ladder import IntEnum\n"
+        ),
+    )
+    roots = inv._imports_of(pkg / "policy.py")
+    assert not [r for r in roots if r in inv.FORBIDDEN_IMPORT_ROOTS], roots

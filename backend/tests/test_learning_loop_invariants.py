@@ -5,6 +5,7 @@ here; never mark one xfail."""
 
 from __future__ import annotations
 
+import ast
 import importlib
 import pathlib
 import re
@@ -61,12 +62,57 @@ def db_client_calls() -> list:
 
 
 def _imports_of(path: pathlib.Path) -> list[str]:
-    roots = []
-    for line in path.read_text().splitlines():
-        m = re.match(r"\s*(?:from|import)\s+([A-Za-z_][\w.]*)", line)
-        if m:
-            roots.append(m.group(1).split(".")[0])
-    return roots
+    """Top-level names of every module `path` imports, plus everything the
+    `learning` modules it imports pull in, transitively. It parses with ast, so
+    comma lists (`import math, db.connection`), relative imports, and imports
+    inside functions all count. A pure module therefore cannot reach `db`
+    through `learning.gate` or `learning.learner_state`. `path` lives in the
+    `learning` package, so its parent's parent is the import root."""
+    root = path.parent.parent
+    roots: list[str] = []
+    seen: set[pathlib.Path] = set()
+    todo = [path]
+    while todo:
+        current = todo.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for module in _modules_imported_by(current, root):
+            roots.append(module.split(".")[0])
+            todo.extend(_learning_files(module, root))
+    return list(dict.fromkeys(roots))
+
+
+def _modules_imported_by(path: pathlib.Path, root: pathlib.Path) -> list[str]:
+    """Absolute dotted names `path` imports. `from X import name` yields both
+    X and X.name, because `name` may be a submodule."""
+    modules: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            modules += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = path.parent
+                for _ in range(node.level - 1):
+                    base = base.parent
+                package = ".".join(base.relative_to(root).parts)
+                module = ".".join(part for part in (package, node.module) if part)
+            else:
+                module = node.module or ""
+            modules.append(module)
+            modules += [f"{module}.{alias.name}" for alias in node.names]
+    return modules
+
+
+def _learning_files(module: str, root: pathlib.Path) -> list[pathlib.Path]:
+    """Source files importing `module` executes, if it is in the `learning`
+    package: each package `__init__.py` on the way down, then the module."""
+    parts = module.split(".")
+    if parts[0] != "learning":
+        return []
+    files = [root.joinpath(*parts[:i], "__init__.py") for i in range(1, len(parts) + 1)]
+    files.append(root.joinpath(*parts).with_suffix(".py"))
+    return [f for f in files if f.is_file()]
 
 
 def test_inv_01_single_graph_writer():
