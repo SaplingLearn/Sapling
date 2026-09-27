@@ -42,6 +42,7 @@ from learning.params import (
     FSRS_RETENTION_EXAM,
     FSRS_RETENTION_LARGE_SET,
     FSRS_S0_GOOD,
+    FSRS_STABILITY_MIN,
     FSRS_W,
     MC_STABILITY_GAIN_CAP,
     REVIEW_DAILY_BUDGET_MIN,
@@ -304,6 +305,43 @@ def test_mean_reversion_targets_the_unclamped_d0_easy():
         assert fsrs._next_difficulty(d, Rating.GOOD) == A(
             FSRS_W[7] * raw_d0_easy + (1 - FSRS_W[7]) * d, abs=1e-12
         )
+
+
+def test_stability_is_floored_at_the_fsrs6_minimum():
+    # FSRS-6 floors every new S at STABILITY_MIN = 0.001 d (py-fsrs 6.3.2).
+    # Without it, repeated same-day Agains drove S toward ~1.5e-7 d: a first
+    # Again plus 12 same-day Agains ended at 7.7e-5 d, and every later Good
+    # grew from there, so recovery took more reviews than the reference.
+    assert FSRS_STABILITY_MIN == 0.001
+    d, s = next_state(None, None, Rating.AGAIN, 0.0)
+    for _ in range(30):
+        d, s = next_state(d, s, Rating.AGAIN, 0.0, same_day=True)
+        assert s >= FSRS_STABILITY_MIN
+    assert s == FSRS_STABILITY_MIN
+    _, s_next_day = next_state(d, s, Rating.GOOD, 1.0)
+    assert s_next_day == _approx(0.0154)  # py-fsrs 6.3.2; unfloored S gave 0.0003
+    # a lapse and a same-day Again at a tiny S land on the floor, not under it
+    assert next_state(10.0, 0.0005, Rating.AGAIN, 0.0)[1] == FSRS_STABILITY_MIN
+    assert next_state(10.0, 0.0005, Rating.AGAIN, 0.0, same_day=True)[1] == FSRS_STABILITY_MIN
+
+
+def test_stability_floor_holds_on_every_path():
+    # Every rating, both paths, with and without the MC cap: the floor is the
+    # last step, so even a stored S under FSRS_STABILITY_MIN / 2 (where
+    # S·MC_STABILITY_GAIN_CAP is below the floor) comes back at the floor.
+    rng = random.Random(23)
+    for _ in range(3000):
+        d = rng.uniform(1.0, 10.0)
+        s = 10 ** rng.uniform(-6.0, -1.0)
+        g = rng.choice(list(Rating))
+        same_day = rng.random() < 0.5
+        days = 0.0 if same_day else rng.uniform(0.0, 30.0)
+        mc = rng.random() < 0.5
+        _, ns = next_state(d, s, g, days, same_day=same_day, mc_unassisted=mc)
+        assert ns >= FSRS_STABILITY_MIN, (d, s, g, days, same_day, mc)
+    assert next_state(5.0, 0.0002, Rating.GOOD, 0.0, same_day=True, mc_unassisted=True)[1] == (
+        FSRS_STABILITY_MIN
+    )
 
 
 def test_mc_cap_limits_stability_gain():

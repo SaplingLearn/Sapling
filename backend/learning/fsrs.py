@@ -24,6 +24,7 @@ from learning.params import (
     FSRS_RETENTION_DEFAULT,
     FSRS_RETENTION_EXAM,
     FSRS_RETENTION_LARGE_SET,
+    FSRS_STABILITY_MIN,
     FSRS_W,
     MC_STABILITY_GAIN_CAP,
     REVIEW_DAILY_BUDGET_MIN,
@@ -221,6 +222,11 @@ def next_state(
     ``same_day`` selects S_same_day; otherwise Again selects S_lapse and
     Hard/Good/Easy select S_recall, all at R = retrievability(days_since, s).
     ``mc_unassisted`` caps S' at S·MC_STABILITY_GAIN_CAP (spec §3.2 rating map).
+    Last, S' is floored at FSRS_STABILITY_MIN (FSRS-6, py-fsrs 6.3.2
+    ``_clamp_stability``; the spec's transcription omits it, HANDOFF-02
+    Deviations). py-fsrs floors inside each stability function and has no MC
+    cap; flooring after the cap is identical whenever S >= FSRS_STABILITY_MIN/2
+    (the cap only binds above 2·S) and keeps S' >= the floor unconditionally.
     The difficulty update runs for every non-first rating. Nothing is scheduled
     here: the caller turns S' into a due date with ``interval``.
     """
@@ -238,7 +244,7 @@ def next_state(
         new_s = _stability_recall(d, s, r, g)
     if mc_unassisted:
         new_s = min(new_s, s * MC_STABILITY_GAIN_CAP)
-    return new_d, new_s
+    return new_d, max(new_s, FSRS_STABILITY_MIN)
 
 
 # --- rating map -------------------------------------------------------------
