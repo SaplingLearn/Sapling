@@ -660,15 +660,50 @@ class TestJevBackend:
         decisions._fit_state(big, ("history",), 0)
         assert len(calls) <= 1, f"state re-serialized {len(calls)} times"
 
-    def test_oversized_untruncatable_state_degrades_without_a_call(self, monkeypatch):
+    def test_oversized_untruncatable_state_goes_straight_to_defaults(self, monkeypatch):
+        """#672 review: a state too big for Jev is too big for the decision
+        agent's WORKER_LIMITS too — falling back would only bill a
+        UsageLimitExceeded. Neither backend is called."""
         seen: list = []
+        calls: list = []
         _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
+        state = {"message": "y" * 150_000}
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS, calls=calls)):
+            result = asyncio.run(decisions.decide(state, QUESTIONS, feature="test"))
+        assert seen == [] and calls == []
+        assert result.backend == "none"
+        assert result.fallback_reason == "jev_state_over_budget"
+        assert all(a.default_reason == "no_backend" for a in result.answers.values())
+
+    def test_over_jev_budget_still_falls_back_when_the_agent_can_fit_it(self, monkeypatch):
+        _use_jev(monkeypatch, _jev_transport(JEV_OK))
+        monkeypatch.setattr(decisions, "_agent_budget_fits", lambda state, qs: True)
         state = {"message": "y" * 150_000}
         with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)):
             result = asyncio.run(decisions.decide(state, QUESTIONS, feature="test"))
-        assert seen == []
         assert result.backend == "flash_lite"
         assert result.fallback_reason == "jev_state_over_budget"
+
+    def test_agent_budget_threshold(self):
+        from agents import WORKER_LIMITS
+
+        per_request = WORKER_LIMITS.total_tokens_limit // WORKER_LIMITS.request_limit
+        small = {"message": "hi"}
+        # ~3 chars/token: a prompt of this many chars is past one request's share.
+        big = {"message": "y" * (per_request * 3)}
+        assert decisions._agent_budget_fits(small, QUESTIONS) is True
+        assert decisions._agent_budget_fits(big, QUESTIONS) is False
+
+    def test_fit_state_estimates_from_lengths_without_building_strings(self, monkeypatch):
+        """#672 review: fits() built a throwaway "x" * chars string per check."""
+        def no_strings(text):
+            raise AssertionError("_fit_state must use tokens_for_chars, not estimate_tokens")
+
+        monkeypatch.setattr(typesafe_client, "estimate_tokens", no_strings)
+        state = {"message": "m", "history": ["x" * 3000 for _ in range(40)]}
+        trimmed = decisions._fit_state(state, ("history",), 0)
+        assert 0 < len(trimmed["history"]) < 40
+        assert typesafe_client.tokens_for_chars(len("abcdefg")) == 7 // 3 + 1
 
 
 # ── Shadow mode + the event ───────────────────────────────────────────────
@@ -752,6 +787,24 @@ class TestShadowAndEvent:
         (event,) = _decision_events(sink)
         assert event["payload"]["shadow"]["backend"] == "none"
         assert event["payload"]["shadow"]["fallback_reason"] == "jev_http_503"
+
+    def test_caller_extras_cannot_override_core_fields(self, monkeypatch, sink, caplog):
+        """#672 review: extras were applied AFTER the core fields, so a caller
+        extra could rewrite who answered and what."""
+        _use_jev(monkeypatch, _jev_transport(JEV_OK))
+        forged = {"backend": "forged", "model": "forged", "answers": {},
+                  "fallback_reason": "forged", "requested": "forged",
+                  "session_id": "s1"}
+        with caplog.at_level("WARNING", logger="sapling.decisions"):
+            asyncio.run(decisions.decide(STATE, QUESTIONS, feature="test",
+                                         event_extra=forged))
+        (event,) = _decision_events(sink)
+        p = event["payload"]
+        assert (p["backend"], p["model"], p["requested"]) == ("jev", "jev-1.13.0", "jev")
+        assert p["fallback_reason"] is None
+        assert set(p["answers"]) == {"urgent", "team", "mood"}
+        assert p["session_id"] == "s1", "non-colliding extras still ride along"
+        assert any("collides with a core field" in r.getMessage() for r in caplog.records)
 
     def test_event_payload_is_enum_only_and_never_carries_state(self, monkeypatch, sink):
         _use_jev(monkeypatch, _jev_transport(JEV_OK))
