@@ -8,6 +8,9 @@ import { describe, it, expect } from "vitest";
 import {
   IMMUTABLE_CACHE_CONTROL,
   downstreamResponseHeaders,
+  capStream,
+  hasSessionCookie,
+  isAllowedIngestRequest,
   isImmutableAsset,
   normalisedIngestPath,
   upstreamRequestHeaders,
@@ -87,9 +90,9 @@ describe("immutable asset caching", () => {
   });
 
   it("shares one mount point with posthog-js's api_host", async () => {
-    const { DEFAULT_API_HOST } = await import("./analytics");
+    const { buildPosthogConfig } = await import("./analytics");
     const { INGEST_PREFIX } = await import("./ingestProxy");
-    expect(DEFAULT_API_HOST).toBe(INGEST_PREFIX);
+    expect(buildPosthogConfig({ NEXT_PUBLIC_POSTHOG_KEY: "phc_x" }).api_host).toBe(INGEST_PREFIX);
   });
 
   it("upstreamTarget validates once and hands back the normalised path", () => {
@@ -149,5 +152,43 @@ describe("header allowlists", () => {
     expect(down.get("content-length")).toBeNull();
     expect(down.get("content-type")).toBe("application/json");
     expect(down.get("cache-control")).toBe("public, max-age=300");
+  });
+});
+
+describe("relay guards", () => {
+  it("allows exactly the SDK's event endpoints (POST) and static bundles (GET/HEAD)", () => {
+    for (const p of ["/e/", "/i/v0/e/", "/batch/"]) {
+      expect(isAllowedIngestRequest("POST", p), p).toBe(true);
+      expect(isAllowedIngestRequest("GET", p), p).toBe(false);
+    }
+    for (const p of ["/static/surveys.js", "/static/1.434.15/recorder.js"]) {
+      expect(isAllowedIngestRequest("GET", p), p).toBe(true);
+      expect(isAllowedIngestRequest("HEAD", p), p).toBe(true);
+      expect(isAllowedIngestRequest("POST", p), p).toBe(false);
+    }
+    for (const p of ["/flags/", "/decide/", "/array/phc_x/config.js", "/array/phc_x/config", "/s/", "/e", "/static/x.css", "/static/a/b/c.js"]) {
+      expect(isAllowedIngestRequest("POST", p), p).toBe(false);
+      expect(isAllowedIngestRequest("GET", p), p).toBe(false);
+    }
+  });
+
+  it("hasSessionCookie wants a non-empty sapling_session, by exact name", () => {
+    const h = (cookie?: string) => new Headers(cookie ? { cookie } : {});
+    expect(hasSessionCookie(h("sapling_session=abc"))).toBe(true);
+    expect(hasSessionCookie(h("a=1; sapling_session=abc.def=; b=2"))).toBe(true);
+    expect(hasSessionCookie(h())).toBe(false);
+    expect(hasSessionCookie(h("sapling_session="))).toBe(false);
+    expect(hasSessionCookie(h("xsapling_session=abc"))).toBe(false);
+    expect(hasSessionCookie(h("sapling_session_old=abc"))).toBe(false);
+  });
+
+  it("capStream passes a body under the cap and errors one over it", async () => {
+    const body = (n: number) => new Response(new Uint8Array(n)).body!;
+    let over = false;
+    const ok = await new Response(capStream(body(100), 100, () => (over = true))).arrayBuffer();
+    expect(ok.byteLength).toBe(100);
+    expect(over).toBe(false);
+    await expect(new Response(capStream(body(101), 100, () => (over = true))).arrayBuffer()).rejects.toThrow();
+    expect(over).toBe(true);
   });
 });
