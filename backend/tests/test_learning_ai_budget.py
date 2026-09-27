@@ -3,6 +3,7 @@ come from a fake table and the clock is fixed: no DB, no LLM, no network."""
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import pathlib
 import re
@@ -565,3 +566,47 @@ def test_main_registers_the_budget_handler():
     assert (
         app.exception_handlers.get(ai_budget.AIBudgetExceeded) is ai_budget.budget_exceeded_handler
     )
+
+
+# ── reopens: grader and decision run sites check the grade cap first (A20, A22) ──
+
+
+def _deps():
+    from agents.deps import SaplingDeps
+
+    return SaplingDeps(
+        user_id=UID, course_id="course-1", supabase=None, request_id="req-1", learning_loop=True
+    )
+
+
+def _must_not_run(runs: list):
+    def fn(messages, info):
+        runs.append(1)
+        raise AssertionError("an agent ran under the grader cap")
+
+    return fn
+
+
+def test_grade_is_unavailable_at_the_grader_cap_without_a_model_call(usage):
+    from pydantic_ai.exceptions import UsageLimitExceeded
+    from pydantic_ai.models.function import FunctionModel
+    from agents import grader
+    from learning.checks import RubricItem
+
+    usage([_row(task="grader") for _ in range(config.STUDENT_DAILY_GRADES)])
+    runs: list = []
+    item = SimpleNamespace(
+        id="item-1",
+        prompt="Q?",
+        reference_answer="REF",
+        rubric=[RubricItem(id="r1", text="t")],
+        common_wrong=[],
+        format="free",
+    )
+    with grader.grader_agent.override(model=FunctionModel(_must_not_run(runs))):
+        result = asyncio.run(
+            grader.grade(item, format="free", student_answer="an answer", deps=_deps())
+        )
+        with pytest.raises(UsageLimitExceeded):  # the second-opinion run site is guarded too
+            asyncio.run(grader._run_once("m", _deps(), second_opinion=True))
+    assert result.unavailable is True and runs == []

@@ -39,6 +39,7 @@ from learning.params import (
     GRADER_SECOND_OPINION_SLOT,
     LEAK_NGRAM,
 )
+from services import ai_budget
 
 logger = logging.getLogger("sapling.agents.grader")
 
@@ -215,6 +216,8 @@ class _UnfinishedRun:
 async def _run_once(
     message: str, deps: SaplingDeps, *, second_opinion: bool = False
 ) -> GraderOutput:
+    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps this to unavailable
+        raise UsageLimitExceeded("ai budget: grader cap reached")
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
     # Passed in, so a run that raises still says what the provider billed: the
     # token cap is checked AFTER a response (pydantic-ai), and a validation
@@ -246,7 +249,13 @@ async def _run_once(
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
-    stack. The single Gemini grader: PKG-05b wraps it without changing the prompt."""
+    stack. The single Gemini grader: PKG-05b wraps it without changing the prompt.
+
+    PKG-06b: the grader cap is checked first, before the message is built and before any
+    run, so a capped attempt is unavailable whatever its outcome (spec §3.5, A22, inv 28)."""
+    # spec §3.5 grader cap (PKG-06b), invariant 28
+    if ai_budget.check(deps.user_id, "grader").level == "hard":
+        return GradeResult(unavailable=True)
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
         # come back a full-weight "incorrect" (check_item_service falls back to
