@@ -133,6 +133,7 @@ def test_event_taxonomy_is_pinned():
         "decision.made",
         "decision.shadow",
         "decision.fallback",
+        "ai.budget_capped",           # PKG-06b: a per-student AI cap was hit
     })
 
 

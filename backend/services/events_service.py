@@ -88,6 +88,7 @@ decision.shadow               usage     decision, request_id, primary_value, sha
                                         PKG-15 plumbing, never fired in the series; enums only
 decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
                                         / both_failed; PKG-15 adds the Jev error enums), request_id
+ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -214,6 +215,10 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "decision.made",
     "decision.shadow",
     "decision.fallback",
+    # PKG-06b (spec §6, §13 A20): a per-student AI cap was hit. category="usage": it fires at
+    # most once per user/scope/level/day, but for many students at once near a price change;
+    # the /errors feed must not drown in it.
+    "ai.budget_capped",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
@@ -285,12 +290,17 @@ def log_llm_usage(
     provider: str = "gemini",
     user_id: str | None = None,
     request_id: str | None = None,
+    cached_tokens: int | None = None,
+    thinking_tokens: int | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
     ``usage`` is any Pydantic AI / Gemini usage object (or dict); it is
     normalized here and the cost computed from ``llm_pricing.MODEL_PRICING``
     (``cost_usd = NULL`` for unpriced models).
+
+    ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
+    ``None`` when unmeasured, and cached input is billed at the cached rate.
     """
     if not _logging_enabled():
         return
@@ -306,8 +316,13 @@ def log_llm_usage(
             "prompt_tokens": tokens["prompt_tokens"],
             "completion_tokens": tokens["completion_tokens"],
             "total_tokens": tokens["total_tokens"],
+            # Both keys on EVERY row: PostgREST rejects a bulk insert whose
+            # objects' keys differ (PGRST102), and the worker batches rows.
+            "cached_tokens": cached_tokens,
+            "thinking_tokens": thinking_tokens,
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                cached_tokens=cached_tokens,
             ),
         }
         _enqueue("llm_usage", row)

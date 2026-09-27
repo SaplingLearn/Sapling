@@ -277,3 +277,11 @@ def validate_channels(channels: Mapping[str, Mapping[str, float | bool]], t: flo
 
 
 validate_channels(CHANNELS, BKT_T)
+
+
+# PKG-06b (spec §3.5, §13 A20): per-session loop request caps. The counters live in
+# sessions.loop_state as ints tutor_requests / deep_requests (PKG-07 maintains them).
+LOOP_SESSION_MAX_TUTOR_REQUESTS = 40  # † reaching it = hard (an optimized 10-turn session uses ≈ 7)
+LOOP_SESSION_MAX_DEEP_REQUESTS = 6  # † develop/profic: reaching it = soft (deep → standard)
+# † novice: reaching it turns novice deep turns into standard (a trailing comment would wrap the name)
+LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE = 12
