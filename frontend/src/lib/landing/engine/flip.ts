@@ -55,6 +55,8 @@ const CONTENT_CLEAR_MS = Math.round(CLOSE_MS * 0.74);
 const CLOSE_FALLBACK_MS = CLOSE_MS + 240;
 /** How long to wait before finishing when there is no card to fly back to. */
 const NO_FLIP_MS = 200;
+/** Used only if the card's own radius cannot be read; mirrors `CARD` in Gallery.tsx. */
+const FALLBACK_CARD_RADIUS = 20;
 
 export interface FlipState {
   /** The originating card's rect, captured before the overlay mounts. */
@@ -109,12 +111,34 @@ export function flipFrames(st: FlipState, panel: HTMLElement): Keyframe[] | null
   if (!p.width || !p.height) return null;
   const sx = Math.max(0.05, r.width / p.width);
   const sy = Math.max(0.05, r.height / p.height);
+
+  /*
+   * The corner radius has to be divided by the scale, not stated flat.
+   *
+   * A transform scales an element's border-radius along with everything else,
+   * so the panel's declared 20px arrived at card size rendering as 5.2 x 7.0px
+   * — near enough square against a card with genuinely round 20px corners, and
+   * the reason the expansion did not look like it came out of the card. The
+   * panel has to declare 20/scale so that what lands on screen is 20.
+   *
+   * Elliptical, using the `horizontal / vertical` form, because the scale is
+   * not uniform: a card is 372x314 against a 1440x900 viewport, so x and y
+   * shrink by quite different factors (0.258 against 0.349 there). One flat
+   * value compensated for both would come out visibly oval on one axis.
+   *
+   * The radius is read off the card itself rather than restated here, so it
+   * cannot drift from `CARD` in Gallery.tsx.
+   */
+  const cardRadius = st.el
+    ? parseFloat(getComputedStyle(st.el).borderTopLeftRadius) || FALLBACK_CARD_RADIUS
+    : FALLBACK_CARD_RADIUS;
+
   return [
     {
       transformOrigin: 'top left',
       transform:
         'translate(' + (r.left - p.left) + 'px,' + (r.top - p.top) + 'px) scale(' + sx + ',' + sy + ')',
-      borderRadius: '20px',
+      borderRadius: (cardRadius / sx).toFixed(1) + 'px / ' + (cardRadius / sy).toFixed(1) + 'px',
     },
     { transformOrigin: 'top left', transform: 'none', borderRadius: '0px' },
   ];
