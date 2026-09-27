@@ -111,3 +111,199 @@ def test_e2e_loop_handler_is_registered_for_every_slot(slot):
     finally:
         providers.clear_function_handlers()
         sys.modules.pop("agents.function_handlers_e2e", None)
+
+
+# ── Task 3: agent + prefix + tier settings ───────────────────────────────
+
+
+def test_loop_agent_is_one_prompt_stack_with_two_read_tools():
+    from agents.chat_tutor import _ACADEMIC_INTEGRITY
+    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT, loop_tutor_agent
+    from services.prompt_safety import INJECTION_GUARD_PROMPT
+
+    assert loop_tutor_agent.output_type is str
+    assert INJECTION_GUARD_PROMPT in _LOOP_SYSTEM_PROMPT
+    assert _ACADEMIC_INTEGRITY in _LOOP_SYSTEM_PROMPT
+    for absent in (
+        "update_mastery_tool",
+        "apply_graph_update_tool",
+        "graded_check_tool",
+        "read_session_history_tool",
+        "read_user_progress_tool",
+        "read_concepts_for_user",
+    ):
+        assert absent not in _LOOP_SYSTEM_PROMPT, absent
+    assert "search_course_materials" in _LOOP_SYSTEM_PROMPT
+    assert "read_graph_neighborhood" in _LOOP_SYSTEM_PROMPT
+    assert "never grade the student yourself" in _LOOP_SYSTEM_PROMPT.lower()
+    assert set(loop_tutor_agent._function_toolset.tools.keys()) == {
+        "search_course_materials",
+        "read_graph_neighborhood",
+    }
+    # pydantic-ai 1.107 keeps the constructor metadata on `_metadata`
+    assert loop_tutor_agent._metadata["agent"] == "loop_tutor"
+
+
+def test_system_prompt_is_the_only_prompt_and_is_stable():
+    """A18: one system prompt, identical in every phase and tier, so the cached
+    prefix is stable; the per-turn instructions ride the user message."""
+    import agents.loop_tutor as lt
+
+    assert lt.loop_tutor_agent._system_prompts == (lt._LOOP_SYSTEM_PROMPT,)
+    assert lt._PROMPT_HASH == lt.loop_tutor_agent._metadata["prompt_version"]
+    assert "[LOOP PHASE" in lt._LOOP_SYSTEM_PROMPT  # names the prefix it will receive
+
+
+_ITEM_PROMPT = "What stops factorial(0) from recursing?"
+
+
+def _prefix_kwargs(phase):
+    kw = {}
+    if phase in ("hint", "feedback"):
+        kw.update(item_prompt=_ITEM_PROMPT, item_format="free")
+    if phase == "feedback":
+        kw.update(verdict="correct")
+    return kw
+
+
+@pytest.mark.parametrize("phase", ["teach", "hint", "feedback"])
+@pytest.mark.parametrize("band", ["novice", "develop", "profic"])
+def test_phase_prefix_shape(phase, band):
+    from agents.loop_tutor import phase_prefix
+    from learning.ladder import Rung, intent
+
+    text = phase_prefix(phase=phase, band=band, ceiling=Rung.H3, **_prefix_kwargs(phase))
+    assert text.startswith(f"[LOOP PHASE: {phase}]")
+    assert "at most rung H3" in text and intent(Rung.H3) in text
+    assert "Anything above H3 is forbidden this turn" in text
+    assert f"{STEP_MAX_SENTENCES} sentences" in text
+    assert f"exactly {STEP_QUESTIONS_PER_TURN} question" in text
+    assert "Key idea:" in text
+    assert "graded_check_tool" not in text
+    if phase in ("hint", "feedback"):
+        assert f"[CHECK ITEM] (format: free)\n{_ITEM_PROMPT}" in text
+    else:
+        assert "[CHECK ITEM]" not in text
+    if phase == "feedback":
+        assert "[VERDICT: correct]" in text
+        assert "never end" in text.lower() and "answer" in text.lower()
+    else:
+        assert "[VERDICT" not in text
+
+
+def test_phase_prefix_has_no_reference_parameter():
+    """The prefix cannot leak a reference answer: it has no way to receive one."""
+    import inspect
+
+    from agents.loop_tutor import phase_prefix
+
+    params = inspect.signature(phase_prefix).parameters
+    assert set(params) == {
+        "phase",
+        "band",
+        "ceiling",
+        "item_prompt",
+        "item_format",
+        "answer_released",
+        "verdict",
+    }
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+def test_phase_prefix_verdict_and_release_only_in_feedback():
+    from agents.loop_tutor import phase_prefix
+    from learning.ladder import Rung
+
+    released = phase_prefix(
+        phase="feedback",
+        band="develop",
+        ceiling=Rung.H3,
+        item_prompt=_ITEM_PROMPT,
+        verdict="not_yet",
+        answer_released=True,
+    )
+    held = phase_prefix(
+        phase="feedback",
+        band="develop",
+        ceiling=Rung.H3,
+        item_prompt=_ITEM_PROMPT,
+        verdict="correct",
+    )
+    assert "[VERDICT: not_yet]" in released and "state the correct answer" in released.lower()
+    assert "state the correct answer" not in held.lower()
+    with pytest.raises(ValueError):
+        phase_prefix(phase="teach", band="develop", ceiling=Rung.H3, answer_released=True)
+    with pytest.raises(ValueError):
+        phase_prefix(phase="teach", band="develop", ceiling=Rung.H3, verdict="correct")
+    with pytest.raises(ValueError):  # no verdict
+        phase_prefix(phase="feedback", band="develop", ceiling=Rung.H3, item_prompt=_ITEM_PROMPT)
+    with pytest.raises(ValueError):  # no item
+        phase_prefix(phase="hint", band="develop", ceiling=Rung.H2)
+    with pytest.raises(ValueError):
+        phase_prefix(
+            phase="feedback",
+            band="develop",
+            ceiling=Rung.H3,
+            item_prompt=_ITEM_PROMPT,
+            verdict="maybe",
+        )
+
+
+def test_phase_prefix_rejects_unknown_phase_or_band():
+    from agents.loop_tutor import phase_prefix
+    from learning.ladder import Rung
+
+    for phase in ("probe", "check"):  # check is a template (ladder.check_pose), never a prompt
+        with pytest.raises(ValueError):
+            phase_prefix(phase=phase, band="novice", ceiling=Rung.H1)
+    with pytest.raises(ValueError):
+        phase_prefix(phase="teach", band="expert", ceiling=Rung.H1)
+
+
+def test_tier_run_kwargs_per_slot():
+    from agents.loop_tutor import LOOP_TIER_SLOTS, tier_run_kwargs
+    from learning.params import (
+        LOOP_FLASH_THINKING_BUDGET,
+        LOOP_MAX_VISIBLE_TOKENS,
+        LOOP_PRO_THINKING_BUDGET,
+    )
+
+    assert LOOP_TIER_SLOTS == {
+        "lite": "loop_tutor_lite",
+        "standard": "loop_tutor",
+        "deep": "loop_tutor_deep",
+    }
+    lite = tier_run_kwargs("lite")["model_settings"]
+    assert lite["max_tokens"] == LOOP_MAX_VISIBLE_TOKENS and "google_thinking_config" not in lite
+    std = tier_run_kwargs("standard")["model_settings"]
+    assert std["google_thinking_config"].thinking_budget == LOOP_FLASH_THINKING_BUDGET
+    assert std["max_tokens"] == LOOP_FLASH_THINKING_BUDGET + LOOP_MAX_VISIBLE_TOKENS
+    deep = tier_run_kwargs("deep", tool_choice="none")["model_settings"]
+    assert deep["google_thinking_config"].thinking_budget == LOOP_PRO_THINKING_BUDGET > 0
+    assert deep["max_tokens"] == LOOP_PRO_THINKING_BUDGET + LOOP_MAX_VISIBLE_TOKENS
+    assert deep["tool_choice"] == "none" and "tool_choice" not in std
+
+
+def test_tier_run_kwargs_models_are_the_slot_models():
+    from agents._providers import model_name_for
+    from agents.loop_tutor import LOOP_TIER_SLOTS, tier_run_kwargs
+
+    for tier, slot in LOOP_TIER_SLOTS.items():
+        assert tier_run_kwargs(tier)["model"].model_name == model_name_for(slot)
+    with pytest.raises(KeyError):
+        tier_run_kwargs("none")  # a template turn has no model
+
+
+def test_routable_tier_walks_up_then_down(monkeypatch):
+    import agents.loop_tutor as lt
+
+    assert lt.routable_tier("none") == "none"
+    monkeypatch.setattr(lt, "LOOP_ROUTABLE_TIERS", frozenset({"standard", "deep"}))
+    assert lt.routable_tier("lite") == "standard"
+    monkeypatch.setattr(lt, "LOOP_ROUTABLE_TIERS", frozenset({"lite", "standard"}))
+    assert lt.routable_tier("deep") == "standard"
+    monkeypatch.setattr(lt, "LOOP_ROUTABLE_TIERS", frozenset({"lite"}))
+    assert lt.routable_tier("deep") == "lite"
+    monkeypatch.setattr(lt, "LOOP_ROUTABLE_TIERS", frozenset())
+    with pytest.raises(RuntimeError):
+        lt.routable_tier("standard")

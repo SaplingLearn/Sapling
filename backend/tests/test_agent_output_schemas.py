@@ -93,6 +93,7 @@ EXPECTED_STRUCTURED_AGENTS = {
 EXPECTED_TEXT_AGENTS = {
     "expository_agent",
     "health_probe_agent",
+    "loop_tutor_agent",  # learning loop PKG-07 (plain-text turns; three tier slots per run)
     "note_chat_agent",
     "ocr_vision_agent",
     "socratic_agent",
