@@ -1143,6 +1143,16 @@ def test_final_answer_skips_numbered_step_labels():
     hint = "What should step 2 of your plan be?"
     assert detect_leak(REF_STEPS, hint, Rung.H3) == (False, "none")
     assert strip_leak(hint, REF_STEPS) == hint
+    # "Step N:" labels and a label with no space after it are labels too
+    worded = "Step 1: find F.\nStep 2: divide by m."
+    assert final_answer(worded) == ()
+    assert final_answer("STEP 1) find F\n  step 2. divide by m") == ()
+    assert final_answer("1.Convert to moles.\n2.Divide by the ratio.") == ()
+    assert detect_leak(worded, "What is step 2 of your plan?", Rung.H3) == (False, "none")
+    assert strip_leak("What is step 2 of your plan?", worded) == "What is step 2 of your plan?"
+    assert final_answer("Step 1: find F.\nStep 2: F/m gives 4") == ("4",)
+    assert final_answer("1.5 m/s is the speed") == ("1", "5")  # a decimal is no label
+    assert final_answer("Time: 12:30") == ("30",)  # a clock time is no label
 
 
 def test_final_answer_keeps_a_thousands_separator():

@@ -31,10 +31,11 @@ _TOKEN = re.compile(r"[A-Za-z0-9]+")
 _STANDALONE_NUMBER = re.compile(
     r"(?<!\w)(?<!\d\.)(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:/\d+)?)(?!\w)(?!\.\d)"
 )
-# A numbered-step label at the start of a line ("2. Use it", "  3) Solve"; the
-# stepwise shape of checks._STEP_LINE) is not an answer. A number alone on its
-# line ("42.") is.
-_STEP_LABEL = re.compile(r"^[ \t]*\d+[.)](?=[ \t]+\S)", re.M)
+# A numbered-step label at the start of a line ("2. Use it", "  3) Solve" — the
+# stepwise shape of checks._STEP_LINE — "Step 2: divide", "1.Convert") is not
+# an answer. A number alone on its line ("42."), a decimal ("1.5 m") and a
+# clock time ("12:30") are.
+_STEP_LABEL = re.compile(r"^[ \t]*(?:step[ \t]*)?\d+[.):](?!\d)(?=[ \t]*\S)", re.M | re.I)
 # The final answer ends at the next clause or sentence break: a comma (not a
 # thousands separator), a semicolon, "and"/"so", a newline, or sentence
 # punctuation that is not a decimal point.
