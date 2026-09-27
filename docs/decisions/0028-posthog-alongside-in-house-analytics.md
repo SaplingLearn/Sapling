@@ -68,6 +68,24 @@ Anything that forwards spans or exception state is on the student-data path.
      `SaplingDeps` constructor with no reset, which leaked the attribution into
      every later run and BackgroundTask in the same context. A deps-less run
      binds the request's authenticated user (noted by `auth_guard`), if any.
+     The binding records only WHO the run is for and warms that user's consent
+     answer in the background; it does no I/O on the event loop.
+   - **Consent is re-checked when each span ENDS**, against the cached answer,
+     so a deletion or opt-out that lands mid-run stops that run's later spans.
+     A span whose bookkeeping entry is missing at end (evicted at the
+     `_MAX_PENDING` cap, or never seen) is dropped, never exported
+     unattributed — suppression cannot fail open.
+   - **Why a class-level wrapper and not a helper at the call sites.** The run
+     helpers (`agents/_run.py::run_agent_sync`, `services/chat_stream.py`)
+     cover a minority of runs: ~20 sites `await agent.run(...)` directly
+     (documents, learn, notes, quiz, graph, calendar, ...). A `with` at each
+     would be forgettable — a new call site would silently lose the binding —
+     while `Agent.iter` is the public entry every run mode already passes
+     through. The wrapper only adds a context around the original call
+     (arguments and the yielded run untouched), is idempotent, is installed
+     only when PostHog is on, and is pinned by tests against the installed
+     pydantic-ai (`<2` in requirements). If pydantic-ai grows a global
+     run-lifecycle hook that runs before the agent-run span starts, move to it.
 6. **Exceptions without state.** One capture site (the 500 handler), with the
    session user from `request.state`. `capture_exception_code_variables` and
    autocapture are off, and a `before_send` redacts the exception message and
@@ -75,9 +93,13 @@ Anything that forwards spans or exception state is on the student-data path.
    their input.
 7. **Off in tests and E2E.** No client, no span processor, no network when:
    the token is unset, `POSTHOG_DISABLED` is truthy, under pytest,
-   `APP_ENV=test`, or `SAPLING_MODEL_MODE` is anything but `real`. Function
-   mode is what keeps the E2E stack silent even though it reads a
-   `backend/.env` that may hold a real token. Local dev with a token sends.
+   `APP_ENV=test`, or the seam's mode (`agents._providers.model_mode()` — the
+   one normalisation, not a second parser) is anything but `real`. The local
+   E2E and explore stacks do not rely on that inference — `make e2e-up` does
+   not force function mode and runs `APP_ENV=local` against a `backend/.env`
+   that may hold a real token — so `scripts/e2e-up.sh` and
+   `scripts/explore.sh` export `POSTHOG_DISABLED=1` explicitly. Local dev with
+   a token sends.
 8. **Account deletion deletes the PostHog person** (`bulk_delete` with
    `delete_events`) as a post-response BackgroundTask. Needs
    `POSTHOG_PERSONAL_API_KEY` (scope `person:write`) + `POSTHOG_PROJECT_ID`;
@@ -102,24 +124,47 @@ Anything that forwards spans or exception state is on the student-data path.
     The decision lives in `services/analytics_consent.consent_for`, which
     **fails closed**: an unreadable answer is a "no". It is one PostgREST read
     (`users` + embedded `user_settings`) cached per process for 60 s, keyed on
-    the user id, so the mirror costs at most one read per active user per
-    minute, never one per event. Not `lru_cache`: an lru entry never expires,
-    and a toggle flipped through another replica must still take effect in
-    bounded time. The settings PATCH and account deletion clear the entry in
-    their own process. Our own `events` table is first-party observability and
-    is unaffected by the opt-out or the headers.
+    the user id and refreshed in the background once past half its life, so
+    the mirror costs at most one read per active user per ~30 s, never one per
+    event. Not `lru_cache`: an lru entry never expires, and a toggle flipped
+    through another replica must still take effect in bounded time. The
+    settings PATCH and account deletion clear the entry in their own process;
+    each clear bumps a per-user generation, and a read that was in flight
+    across the clear neither stores nor returns its possibly-stale answer
+    (it returns "no").
+
+    **No event-loop thread ever blocks on it.** The read is a synchronous
+    PostgREST call; a slow Supabase must not freeze a worker. On a thread
+    running an asyncio loop (async routes, the async 500 handler,
+    RequestIDMiddleware's `error.5xx`, agent runs and their span ends) a cache
+    miss answers "no" immediately and warms the entry on a 2-thread pool; only
+    loop-free threads (sync handlers in the threadpool, the sweeper) read
+    inline. Cost: the first event(s) of a user whose answer is cold in this
+    process, emitted from async code, are not mirrored (the run boundary warms
+    ahead, so AI spans rarely hit this). Our own `events` table is first-party
+    observability and is unaffected by any of this.
 11. **`error.4xx` is not mirrored.** Every expired-cookie 401, 404 probe and
     422 is high-volume, carries no product signal, and each row has a raw
-    path. It stays in our table (the admin error rollups). `error.5xx` is
-    mirrored with `path` replaced by the matched route template
-    (`/api/profile/{user_id}`), or `<unmatched>` — never the raw path, whose
-    segments are user/document/session ids. Our own row keeps the raw path.
+    path. It stays in our table (the admin error rollups).
+    **No raw path reaches PostHog from any event.** Every mirrored `path` /
+    `route` payload key is replaced by the current request's matched route
+    template (`/api/profile/{user_id}`, from the ASGI scope `RequestIDMiddleware`
+    records) or `<unmatched>`: raw segments are user/document/session ids —
+    `auth.permission_denied`'s raw `route` put ANOTHER user's id into the
+    acting user's event. Payload keys that name a second user (`user_id`,
+    `target_user_id`, ...) are dropped from mirrored properties; an audit of
+    today's taxonomy found none (the admin role/achievement `user_id`s go to
+    `admin_audit_log`, not `log_event`), so this is a guard for future
+    payloads. Our own rows keep the raw values.
 12. **Deleted users are not re-created.** PostHog creates a person for any
     unseen `distinct_id`, so an event for a deleted account would undo the
     delete. The consent check reads `users.deleted_at` (the account-deletion
-    route clears the cached answer), and `delete_person` drains both SDK
-    queues (events, bounded 10 s; AI spans, bounded 10 s) before it issues
-    `bulk_delete`.
+    route clears the cached answer) and runs at ENQUEUE for every event and at
+    END for every AI span. `delete_person` drains both SDK queues (events,
+    bounded 10 s; AI spans, bounded 10 s) and issues `bulk_delete`, then
+    schedules a **second** flush + `bulk_delete` after the consent TTL + 30 s
+    (a daemon timer), by which time every process's cached "allowed" has
+    expired and its queues have delivered.
 
 ## Consequences
 
@@ -127,26 +172,26 @@ Anything that forwards spans or exception state is on the student-data path.
   content fingerprint and the 4xx rows — reviewing one reviews the other.
 - A PostHog outage or misconfiguration costs analytics, never a request: every
   entry point swallows its failures, and capture is an enqueue for posthog's
-  own consumer thread. A consent-cache miss is one synchronous PostgREST read
-  on the calling thread, like the other `table()` reads in async routes.
+  own consumer thread. A consent-cache miss never blocks an event loop (it
+  answers "no" and warms in the background).
 - LLM analytics in PostHog has no prompt/response bodies. Debugging a bad
   generation still goes through Logfire.
 - Exception grouping in PostHog works on type + frames; the message is only in
   our logs.
-- **Remaining window after an account deletion.** Three paths can still
-  deliver an event under a deleted user's id after `bulk_delete`, re-creating
-  an (empty) person:
-  1. another process (a second replica/worker) holding a cached "allowed"
-     answer — bounded by the 60 s TTL. The Dockerfile runs one uvicorn
-     process, so today this is only a multi-replica concern;
-  2. a request of that user already past its consent check when the deletion
-     committed, whose capture lands after the flush;
-  3. a flush that hits its 10 s budget (PostHog unreachable), leaving events
-     queued that the SDK delivers later.
+- **Remaining window after an account deletion.** The second `bulk_delete`
+  (TTL + 30 s later) removes anything re-created by another process's stale
+  cached "allowed" or by a run in flight at deletion time. What can still
+  re-create an (empty, ids/counts-only) person after the second pass:
+  1. the process that ran the deletion exits before its daemon timer fires
+     (deploy/restart within ~90 s) — the second pass is lost; the scheduling
+     log line says so;
+  2. an SDK queue that could not deliver within that window (PostHog
+     unreachable, retries still pending) and delivers later;
+  3. an in-flight request whose event was enqueued before its process's
+     answer expired but delivered after the second pass — needs a > 30 s
+     delivery delay.
 
-  All three are narrow and carry only ids/counts. Closing them fully needs a
-  delayed second `bulk_delete` (or PostHog-side suppression); if we see
-  re-created persons in practice, add a delayed retry of the delete. An
-  opt-out has the same shape of window (another process: ≤ 60 s) but does not
-  delete what was already sent; deleting past data on opt-out is not part of
-  this decision.
+  If re-created persons show up in practice, move the second pass to a durable
+  job (DBOS is already in the stack). An opt-out has the same shape of window
+  (another process: ≤ 60 s) but does not delete what was already sent;
+  deleting past data on opt-out is not part of this decision.
