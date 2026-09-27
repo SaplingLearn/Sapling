@@ -284,6 +284,18 @@ def list_items(
     return _to_items(rows)
 
 
+
+def get_check_item(item_id: str) -> CheckItem | None:
+    """One item by its plaintext `id` (PKG-07: the loop route's ACTIVE item),
+    decoded by the same `_row_to_item` decrypt boundary, so `final_answer` and
+    `canonical_answer` come back decrypted like every other column. A missing
+    id, no row, or a row that cannot be read → None (never raised)."""
+    if not item_id:
+        return None
+    rows = table(_TABLE).select(_COLUMNS, filters={"id": f"eq.{item_id}"}, limit=1)
+    items = _to_items(rows)
+    return items[0] if items else None
+
 def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str, list[CheckItem]]:
     """Every item for the given keys, in ONE `in.(...)` select, grouped by key
     (every requested key present, [] when it has none)."""

@@ -1232,6 +1232,34 @@ class TestReadItems:
         assert item.canonical_answer == "3" and item.tolerance == 0.5
         assert item.canonical_verified is False and item.graded is False
 
+    def test_get_check_item_reads_one_row_by_id_and_decrypts(self):
+        """PKG-07 reopen (HANDOFF-06 Known gaps): the by-id reader the loop route
+        uses for the ACTIVE item — one select on the plaintext `id`, decoded by
+        the same `_row_to_item` boundary, so final_answer is decrypted too."""
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({"check_items": [self._stored_row()]})
+        with patch("services.check_item_service.table", side_effect=factory):
+            item = svc.get_check_item("i1")
+        assert item.id == "i1" and item.prompt == "What is a base case?"
+        assert item.final_answer == "The stopping condition"
+        assert item.reference_answer == "The stopping condition."
+        call = mocks["check_items"].select.call_args
+        assert call[1]["filters"] == {"id": "eq.i1"} and call[1]["limit"] == 1
+        assert set(call[0][0].split(",")) == set(svc._COLUMNS.split(","))
+
+    def test_get_check_item_missing_or_unreadable_is_none(self):
+        from services import check_item_service as svc
+
+        factory, _ = _cached_tables({"check_items": []})
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert svc.get_check_item("gone") is None
+            assert svc.get_check_item("") is None
+        bad = dict(self._stored_row(), difficulty="not-an-int")
+        factory, _ = _cached_tables({"check_items": [bad]})
+        with patch("services.check_item_service.table", side_effect=factory):
+            assert svc.get_check_item("i1") is None  # a row that cannot be read is skipped, never raised
+
     def test_items_for_concepts_groups_by_concept_key(self):
         from services import check_item_service as svc
 
