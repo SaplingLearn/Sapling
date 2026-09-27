@@ -30,7 +30,7 @@ import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
 import {
   getAnalyticsState,
   getServerAnalyticsState,
-  setAnalyticsEnabled,
+  chooseAnalytics,
   subscribeAnalytics,
 } from "@/lib/analytics";
 
@@ -154,22 +154,26 @@ export function Settings() {
     }
   };
 
-  // Product analytics: this browser flips at once, then the account copy is
-  // saved (the UserProvider applies it on every sign-in).
-  const setAnalyticsPreference = (enabled: boolean) => {
-    setAnalyticsEnabled(enabled);
-    if (!userId) return;
-    updateSettings(userId, { analytics_opt_out: !enabled }).catch((err) => {
-      console.error("analytics preference save", err);
-      if (enabled) {
-        // The account may still say "opted out", which the next sign-in would
-        // re-apply — so don't leave this browser claiming otherwise.
-        setAnalyticsEnabled(false);
-        toast.error("Couldn't turn product analytics back on. Please try again.");
-      } else {
+  // Product analytics. Opting out stops this browser at once, then saves to
+  // the account; opting in saves to the account FIRST and only then resumes
+  // capture, so the two never disagree. The switch is disabled while a save
+  // is in flight, so toggles cannot overlap (chooseAnalytics also refuses).
+  const [analyticsSaving, setAnalyticsSaving] = React.useState(false);
+  const setAnalyticsPreference = async (enabled: boolean) => {
+    if (!userId || analyticsSaving) return;
+    setAnalyticsSaving(true);
+    try {
+      const result = await chooseAnalytics(userId, enabled, (optOut) =>
+        updateSettings(userId, { analytics_opt_out: optOut }),
+      );
+      if (result === "local_only") {
         toast.error("Couldn't save that to your account. It still applies in this browser.");
+      } else if (result === "failed" && enabled) {
+        toast.error("Couldn't turn product analytics back on. Please try again.");
       }
-    });
+    } finally {
+      setAnalyticsSaving(false);
+    }
   };
 
   const avatarFileRef = React.useRef<HTMLInputElement | null>(null);
@@ -628,7 +632,10 @@ export function Settings() {
                 </button>
               </div>
 
-              <AnalyticsPreference onChange={setAnalyticsPreference} />
+              <AnalyticsPreference
+                onChange={(enabled) => void setAnalyticsPreference(enabled)}
+                saving={analyticsSaving}
+              />
 
               <div
                 className="h-serif"
@@ -720,7 +727,13 @@ export function Settings() {
  * the browser sends Do Not Track / GPC, the switch renders disabled so the
  * page never implies a choice it cannot honour.
  */
-function AnalyticsPreference({ onChange }: { onChange: (enabled: boolean) => void }) {
+function AnalyticsPreference({
+  onChange,
+  saving,
+}: {
+  onChange: (enabled: boolean) => void;
+  saving: boolean;
+}) {
   const state = React.useSyncExternalStore(
     subscribeAnalytics,
     getAnalyticsState,
@@ -754,7 +767,7 @@ function AnalyticsPreference({ onChange }: { onChange: (enabled: boolean) => voi
         <Toggle
           on={on}
           onChange={onChange}
-          disabled={disabled}
+          disabled={disabled || saving}
           ariaLabelledBy="settings-analytics-label"
           testId="settings-analytics-toggle"
         />

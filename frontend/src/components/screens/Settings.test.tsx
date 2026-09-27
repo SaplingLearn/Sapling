@@ -154,8 +154,14 @@ describe("Settings profile form prefill (F8)", () => {
 
 function fakePosthog() {
   let optedOut = false;
+  let distinctId = "anon";
   return {
     init: vi.fn(),
+    capture: vi.fn(),
+    identify: vi.fn((id: string) => void (distinctId = id)),
+    get_distinct_id: () => distinctId,
+    get_property: () => undefined,
+    get_explicit_consent_status: () => (optedOut ? "denied" : "pending"),
     has_opted_out_capturing: () => optedOut,
     opt_out_capturing: vi.fn(() => void (optedOut = true)),
     opt_in_capturing: vi.fn(() => void (optedOut = false)),
@@ -168,9 +174,21 @@ async function startAnalytics(ph: ReturnType<typeof fakePosthog>) {
   });
 }
 
+/** A PATCH the test resolves or rejects by hand. */
+function deferredPatch() {
+  let resolve!: () => void;
+  let reject!: (e: Error) => void;
+  const promise = new Promise<UserSettings>((res, rej) => {
+    resolve = () => res(settings());
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("Settings → Data: product analytics opt-out", () => {
   beforeEach(() => {
     __resetAnalyticsForTests();
+    localStorage.clear();
     vi.mocked(fetchSettings).mockResolvedValue(settings());
     vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
     vi.mocked(updateSettings).mockReset().mockResolvedValue(settings());
@@ -181,10 +199,15 @@ describe("Settings → Data: product analytics opt-out", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders a disabled switch when analytics is not running in this build", async () => {
+  async function openDataTab() {
     render(<Settings />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
     fireEvent.click(screen.getByTestId("settings-tab-data"));
-    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    return screen.findByTestId("settings-analytics-toggle");
+  }
+
+  it("renders a disabled switch when analytics is not running in this build", async () => {
+    const toggle = await openDataTab();
     expect(toggle).toBeDisabled();
     expect(toggle).toHaveAttribute("role", "switch");
     expect(toggle).toHaveAttribute("aria-checked", "false");
@@ -194,26 +217,58 @@ describe("Settings → Data: product analytics opt-out", () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it("opts out and back in through posthog-js, saving each choice to the account", async () => {
+  it("opt-OUT stops this browser at once, then saves to the account", async () => {
     const ph = fakePosthog();
     await startAnalytics(ph);
-    render(<Settings />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId("settings-tab-data"));
-    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    const toggle = await openDataTab();
     expect(toggle).toBeEnabled();
     expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/every browser/);
-
+    const patch = deferredPatch();
+    vi.mocked(updateSettings).mockReturnValueOnce(patch.promise);
     fireEvent.click(toggle);
-    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1); // before the save resolved
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: true });
+    await act(async () => patch.resolve());
+    await waitFor(() => expect(toggle).toBeEnabled());
+  });
 
+  it("opt-IN saves to the account FIRST and only then resumes capture", async () => {
+    const ph = fakePosthog();
+    ph.opt_out_capturing();
+    ph.opt_out_capturing.mockClear();
+    await startAnalytics(ph);
+    const toggle = await openDataTab();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    const patch = deferredPatch();
+    vi.mocked(updateSettings).mockReturnValueOnce(patch.promise);
     fireEvent.click(toggle);
-    expect(ph.opt_in_capturing).toHaveBeenCalledTimes(1);
-    expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: false });
+    expect(ph.opt_in_capturing).not.toHaveBeenCalled(); // not before the save
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await act(async () => patch.resolve());
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    expect(ph.opt_in_capturing).toHaveBeenCalledTimes(1);
+  });
+
+  it("rapid toggles never overlap: the switch is disabled while a save is in flight", async () => {
+    const ph = fakePosthog();
+    await startAnalytics(ph);
+    const toggle = await openDataTab();
+    const patch = deferredPatch();
+    vi.mocked(updateSettings).mockReturnValueOnce(patch.promise);
+    fireEvent.click(toggle);
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    await act(async () => patch.resolve());
+    await waitFor(() => expect(toggle).toBeEnabled());
+    // Account (opt_out: true) and browser (off) agree.
+    expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: true });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(ph.opt_in_capturing).not.toHaveBeenCalled();
   });
 
   it("does not apply the account preference itself — the UserProvider owns that", async () => {
@@ -228,34 +283,26 @@ describe("Settings → Data: product analytics opt-out", () => {
 
   it("a failed opt-OUT save keeps this browser opted out and says so", async () => {
     vi.mocked(updateSettings).mockRejectedValue(new Error("500"));
-    vi.spyOn(console, "error").mockImplementation(() => {});
     const ph = fakePosthog();
     await startAnalytics(ph);
-    render(<Settings />);
-    fireEvent.click(screen.getByTestId("settings-tab-data"));
-    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    const toggle = await openDataTab();
     fireEvent.click(toggle);
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/still applies in this browser/)));
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(ph.opt_in_capturing).not.toHaveBeenCalled();
   });
 
-  it("a failed opt-IN save reverts to off and says it failed — never 'applies in this browser'", async () => {
+  it("a failed opt-IN save changes nothing and says it failed — never 'applies in this browser'", async () => {
     vi.mocked(updateSettings).mockRejectedValue(new Error("500"));
-    vi.spyOn(console, "error").mockImplementation(() => {});
     const ph = fakePosthog();
     ph.opt_out_capturing(); // currently off
-    ph.opt_out_capturing.mockClear();
     await startAnalytics(ph);
-    render(<Settings />);
-    fireEvent.click(screen.getByTestId("settings-tab-data"));
-    const toggle = await screen.findByTestId("settings-analytics-toggle");
+    const toggle = await openDataTab();
     expect(toggle).toHaveAttribute("aria-checked", "false");
     fireEvent.click(toggle);
-    expect(ph.opt_in_capturing).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/Couldn't turn product analytics back on/)));
     expect(toast.error).not.toHaveBeenCalledWith(expect.stringMatching(/applies in this browser/));
-    expect(ph.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(ph.opt_in_capturing).not.toHaveBeenCalled();
     expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
