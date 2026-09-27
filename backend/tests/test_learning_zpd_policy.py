@@ -3007,7 +3007,16 @@ _PKG06_MODULES = ("policy", "gates", "leak", "ladder", "loop_state_store", "zpd_
 # PKG-06 name there (model_tier, a gates helper) are still offenders.
 _PKG06_SANCTIONED_IMPORTS = {
     "services/ai_budget.py": ("learning.policy", frozenset({"Band", "BudgetLevel", "Tier"})),
+    # PKG-07 (spec §3.3/§3.5): the loop tutor renders the rung ceiling line from the
+    # ladder — `Rung` and its intent text — and nothing else of the layer.
+    "agents/loop_tutor.py": ("learning.ladder", frozenset({"Rung", "intent"})),
 }
+# PKG-07 (spec §7, §9): the loop route WIRES the layer — gates, ladder, policy, leak,
+# the loop_state store and the zpd_events emitters — so every PKG-06 import in it is
+# sanctioned. It is reached only through the /api/learn/loop router, which 404s unless
+# learning_loop_active, and through routes/learn.py's lazy `_loop_delegate`, which runs
+# only after that gate returned True.
+_PKG06_SANCTIONED_IMPORTERS = frozenset({"routes/learn_loop.py"})
 
 
 # What the real app may load from the PKG-06 layer at boot (PKG-06b): the one sanctioned import
@@ -3142,6 +3151,8 @@ def _inertness_offenders(root) -> list[str]:
         if rel[0] == "learning" and len(rel) == 2 and rel[1][:-3] in _PKG06_MODULES:
             continue
         package, name = ".".join(rel[:-1]), "/".join(rel)
+        if name in _PKG06_SANCTIONED_IMPORTERS:
+            continue
         text = path.read_text(errors="ignore")
         if _pkg06_imports(text, package=package, skip=_sanctioned_import(name)):
             offenders.append(name)
@@ -3178,9 +3189,39 @@ def test_inertness_scan_sanctions_only_the_budget_alias_import(tmp_path):
         )
 
 
+def test_inertness_scan_sanctions_the_loop_wiring(tmp_path):
+    """PKG-07: the loop route may import any PKG-06 module; the loop tutor exactly
+    `Rung` and `intent` from the ladder; every other importer is still flagged."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "routes" / "learn_loop.py").write_text(
+        "from learning import gates, ladder, policy, zpd_events\n"
+        "from learning.leak import detect_leak\nimport learning.loop_state_store\n"
+    )
+    (tmp_path / "agents" / "loop_tutor.py").write_text("from learning.ladder import Rung, intent\n")
+    (tmp_path / "routes" / "learn.py").write_text(
+        "def _loop_delegate(name):\n    from routes import learn_loop\n    return learn_loop\n"
+    )
+    assert _inertness_offenders(tmp_path) == []
+    for extra in (
+        "from learning.ladder import Rung, deterministic_content\n",
+        "from learning import ladder\n",
+        "from learning.policy import model_tier\n",
+        "import learning.leak\n",
+    ):
+        (tmp_path / "agents" / "loop_tutor.py").write_text(extra)
+        assert _inertness_offenders(tmp_path) == ["agents/loop_tutor.py"], extra
+    (tmp_path / "agents" / "loop_tutor.py").write_text("from learning.ladder import Rung\n")
+    (tmp_path / "routes" / "learn.py").write_text("from learning import gates\n")
+    assert _inertness_offenders(tmp_path) == ["routes/learn.py"]
+
+
 def test_zpd_layer_is_inert_nothing_imports_it():
     offenders = _inertness_offenders(BACKEND)
-    assert offenders == [], f"PKG-06 modules must stay unreferenced until PKG-07: {offenders}"
+    assert offenders == [], (
+        "PKG-06 modules are reached only through the loop route (routes/learn_loop.py), "
+        f"the loop tutor's ladder import and the AI budget's aliases: {offenders}"
+    )
 
 
 def test_importing_the_app_loads_no_pkg06_module():
@@ -3197,7 +3238,15 @@ def test_importing_the_app_loads_no_pkg06_module():
     Rung`, learning.ladder — pure definitions, no behaviour. The loaded set
     must be EXACTLY that sanctioned pair: any further PKG-06 module — through
     ai_budget, through policy or ladder themselves (the ast scan exempts the
-    PKG-06 modules from each other), or through any other loader — fails."""
+    PKG-06 modules from each other), or through any other loader — fails.
+
+    PKG-07: main.py mounts routes/learn_loop.py, the loop route that wires the
+    whole layer (sanctioned in the ast scan), and it is the one loader of
+    agents/loop_tutor.py. The probe stubs exactly that module before
+    `import main`, so it still proves that NOTHING ELSE loads a PKG-06 module:
+    the loaded set with the loop route stubbed stays the ai_budget pair. The
+    loop route itself is dark behind the gate (every endpoint 404s unless
+    learning_loop_active; tests/test_learn_loop_routes.py)."""
     import os
     import subprocess
     import sys
@@ -3217,8 +3266,13 @@ def test_importing_the_app_loads_no_pkg06_module():
     wanted = tuple(f"learning.{m}" for m in _PKG06_MODULES)
     program = (
         "import dotenv; dotenv.load_dotenv = lambda *a, **k: False\n"
-        "import sys\n"
+        "import sys, types\n"
+        "from fastapi import APIRouter\n"
+        "stub = types.ModuleType('routes.learn_loop'); stub.router = APIRouter()\n"
+        "sys.modules['routes.learn_loop'] = stub\n"
         "import main\n"
+        "assert sys.modules['routes.learn_loop'] is stub\n"
+        "assert 'agents.loop_tutor' not in sys.modules, 'agents.loop_tutor loaded outside the loop route'\n"
         f"loaded = [m for m in {wanted!r} if m in sys.modules]\n"
         "print('LEARNING_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('learning.'))))\n"
         "print('PKG06_LOADED=' + ','.join(loaded))\n"
