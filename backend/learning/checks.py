@@ -85,6 +85,9 @@ _STOPWORDS = frozenset(
     yourselves
     """.split()
 )
+# Articles and determiners the concept-name rule looks past (A34): they add
+# nothing a hint naming the concept would not also say.
+_DETERMINERS = frozenset({"the", "a", "an", "its", "this", "that"})
 _MC_REASON = "mc_reason"
 _NUMERIC = "numeric"
 
@@ -438,6 +441,16 @@ def _correct_option_text(draft: CheckItemDraft) -> str | None:
     return texts[hits[0]]
 
 
+def _names_the_concept(run: tuple[str, ...], concept: tuple[str, ...]) -> bool:
+    """Whether a final answer is (part of) the concept name, a determiner
+    aside: "The base case." names "Base Case" as surely as "base case" does,
+    and would block every hint that says "the base case"."""
+    if contains_run(concept, run):
+        return True
+    core = tuple(t for t in run if t not in _DETERMINERS)
+    return bool(core) and contains_run(tuple(t for t in concept if t not in _DETERMINERS), core)
+
+
 def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
     """A34: the final answer the reference concludes with, stated verbatim."""
     run = answer_run(draft.final_answer)
@@ -454,7 +467,7 @@ def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
         reasons.append(
             "final_answer occurs in the prompt: an answer the question prints is no secret"
         )
-    if contains_run(answer_run(draft.concept), run):
+    if _names_the_concept(run, answer_run(draft.concept)):
         reasons.append("final_answer is (part of) the concept name: it would block every hint")
     if draft.answer_kind == _NUMERIC and _finite_float(draft.canonical_answer) is not None:
         stated = _stated_value(answer_tokens(draft.final_answer))
