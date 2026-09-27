@@ -115,14 +115,15 @@ const nextConfig: NextConfig = {
     return [
       { source: "/auth", destination: "/", permanent: false },
       // Stand-in for the trailing-slash redirect `skipTrailingSlashRedirect`
-      // turns off (see above): `/about/` → `/about` as before, except under
-      // `/ingest/` (PostHog needs the slash) and `/api/` (OpenNext never
-      // redirected those, so production behaviour there is unchanged).
+      // turns off (see above): `/about/` → `/about` and `/api/foo/` →
+      // `/api/foo`, exactly as Next's built-in redirect did, for every path
+      // except `/ingest/*` (PostHog's endpoints need the slash).
       // Split into a first segment + `:rest*` on purpose: OpenNext compiles the
       // destination with path-to-regexp, which rejects a single param whose
       // value contains a "/" (a `/:path(.*)/` form 500s on /news/<slug>/).
+      // Verified under `next start` AND the OpenNext worker (`wrangler dev`).
       {
-        source: "/:first((?!(?:ingest|api)/)[^/]+)/:rest*/",
+        source: "/:first((?!ingest/)[^/]+)/:rest*/",
         destination: "/:first/:rest*",
         permanent: true,
       },
