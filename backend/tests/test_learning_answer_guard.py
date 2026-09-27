@@ -289,6 +289,32 @@ def test_the_screen_stays_linear_at_the_longest_answer(unit):
     assert time.perf_counter() - t0 < 0.1
 
 
+@pytest.mark.parametrize(
+    "head,run",
+    [
+        ("r1", " "),
+        ("r1", "\n"),
+        ("r1", "　"),  # ideographic space: NFKD folds it to a space
+        ("The base case stops it, see r1", " "),
+        ('{"r2":', " "),
+    ],
+)
+def test_the_screen_stays_linear_after_an_id_and_a_whitespace_run(head, run):
+    """A rubric id followed by a long whitespace run: the separator between an id
+    and its verdict must have one way to consume that run, not one per split
+    point (CodeRabbit PR #673 follow-up: 'r1' + 3998 spaces took 0.6 s)."""
+    import time
+
+    from learning.params import GRADER_ANSWER_MAX_CHARS
+
+    text = head + run * (GRADER_ANSWER_MAX_CHARS - len(head))
+    t0 = time.perf_counter()
+    guard.screen(text, rubric_ids=IDS)
+    guard.neutralise(text, rubric_ids=IDS)
+    guard.verdict_share(text, rubric_ids=IDS)
+    assert time.perf_counter() - t0 < 0.1
+
+
 def test_the_items_own_rubric_ids_count_whatever_they_are_named():
     assert guard.screen("base_case: yes", rubric_ids=("base_case",)).refusal == "verdict_tokens"
     assert guard.screen("base_case: yes", rubric_ids=IDS).refusal is None

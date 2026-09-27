@@ -145,7 +145,10 @@ _VERDICT_WORD = (
     r"yes|no|true|false|met|unmet|not\s+met|pass(?:ed)?|fail(?:ed)?|correct|incorrect"
     r"|satisfied|unsatisfied|not\s+satisfied|full\s+(?:credit|marks)|[✓✔✅☑✗✘❌]"
 )
-_SEPARATOR = r"\s*(?:=>|->|→|[:=-])?\s*"
+# One way to consume the whitespace between an id and its verdict: a separator
+# with a \s* on each side of an OPTIONAL operator would let the engine try every
+# split of a long whitespace run after an id (quadratic at GRADER_ANSWER_MAX_CHARS).
+_SEPARATOR = r"\s*(?:(?:=>|->|→|[:=-])\s*)?"
 # Single-token verdict words, for verdict_share()'s word count.
 _VERDICT_TOKENS = frozenset(
     "yes no true false met unmet pass passed fail failed correct incorrect satisfied "
