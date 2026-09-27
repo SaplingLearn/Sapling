@@ -1160,3 +1160,91 @@ def test_grade_answer_then_flush_pending_reaches_the_single_writer(check, monkey
         (False, True, None),
     ]
     assert deps.pending_evidence == []
+
+
+# ── dark launch (behaviour 9): no production caller yet ───────────────────
+
+# Behaviour 9: nothing registers or calls grade, grade_answer or flush_pending
+# until PKG-07's /check/answer. Each package that adds a real caller (PKG-07's
+# routes/learn_loop.py, then PKG-08 probe, PKG-12 review, PKG-14 post-test)
+# adds its module here; agents/tools/check.py is the one sanctioned importer of
+# agents.grader (grade_answer calls grade).
+GRADING_MODULES = ("agents.grader", "agents.tools.check")
+GRADING_HELPER_CALLS = frozenset({"grade_answer", "flush_pending"})
+SANCTIONED_GRADING_CALLERS = frozenset({"agents/tools/check.py"})
+
+
+def _grading_refs(source: str) -> list[tuple[int, str]]:
+    """(line, what) for each import of agents.grader / agents.tools.check (any
+    spelling, incl. a dynamic import by name), each import of flush_pending,
+    and each call named grade_answer / flush_pending, bare or as an attribute.
+    Comments and prose in docstrings never count."""
+    import ast
+
+    refs: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            refs += [
+                (node.lineno, f"import {a.name}")
+                for a in node.names
+                if a.name in GRADING_MODULES or a.name.startswith(GRADING_MODULES[1] + ".")
+            ]
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names = {a.name for a in node.names}
+            targets = {node.module} | {f"{node.module}.{n}" for n in names}
+            if targets & set(GRADING_MODULES) or names & GRADING_HELPER_CALLS:
+                refs.append((node.lineno, f"from {node.module} import {sorted(names)}"))
+        elif isinstance(node, ast.Constant) and node.value in GRADING_MODULES:
+            refs.append((node.lineno, f"names {node.value!r}"))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name in GRADING_HELPER_CALLS:
+                refs.append((node.lineno, f"calls {name}"))
+    return refs
+
+
+@pytest.mark.parametrize(
+    ("source", "hits"),
+    [
+        ("from agents.grader import grade", 1),
+        ("import agents.grader as g", 1),
+        ("from agents import grader", 1),
+        ("from agents.tools import check", 1),
+        ("from agents.tools.check import grade_answer, CheckAnswer", 1),
+        ("from learning.evidence import flush_pending", 1),
+        ("import importlib\nimportlib.import_module('agents.grader')", 1),
+        ("async def r(d):\n    await grade_answer(i, a, deps=d, node_id=n)", 1),
+        ("def r(d):\n    return evidence.flush_pending(d, 'c1')", 1),
+        ("# the route calls grade_answer, then flush_pending", 0),
+        ('"""Read agents/tools/check.py::grade_answer (A16)."""', 0),
+        ("from agents.graph import x\nfrom learning.evidence import Evidence", 0),
+    ],
+)
+def test_grading_ref_detector(source, hits):
+    """Mutation cases for the dark-launch scan below."""
+    assert len(_grading_refs(source)) == hits, _grading_refs(source)
+
+
+def test_nothing_calls_the_grading_helpers_yet():
+    """Behaviour 9 (flag inertness), pinned: no application module outside
+    SANCTIONED_GRADING_CALLERS imports the grader or the check helper, or calls
+    grade_answer / flush_pending. grade_answer's `deps.learning_loop` early
+    return is the runtime half; this is the static half, so an ungated caller
+    cannot land while the suite stays green."""
+    import test_learning_loop_invariants as inv
+
+    found, scanned = [], set()
+    for rel, path in inv._application_py_files():
+        scanned.add(rel)
+        if rel in SANCTIONED_GRADING_CALLERS:
+            continue
+        found += [f"{rel}:{line} {what}" for line, what in _grading_refs(path.read_text())]
+    assert found == [], "\n".join(found)
+    # Non-vacuous: the scan reached the modules it guards and the likely callers.
+    assert {
+        "agents/tools/check.py",
+        "learning/evidence.py",
+        "routes/learn.py",
+        "main.py",
+    } <= scanned
