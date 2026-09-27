@@ -692,7 +692,7 @@ class TestFinalAnswerRules:
             CheckItemDraft(**fields)
 
     def test_the_prompt_asks_for_the_final_answer_verbatim(self):
-        from agents.check_items import _PROMPT
+        from agents.check_items import _PROMPT, CheckItemsOutput
         from learning.params import CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS
 
         assert "`final_answer`" in _PROMPT and "verbatim" in _PROMPT
@@ -702,6 +702,17 @@ class TestFinalAnswerRules:
         # an mc_reason reference quotes the correct option's text, so the
         # final answer can be copied from it
         assert "quotes the correct option's text" in _PROMPT
+        # the copy mechanism: every reference closes with "Final answer: <x>."
+        # and final_answer is <x> — in the prompt and in the schema the model
+        # fills (flash-lite followed the schema descriptions, not the prompt
+        # alone, in the A34 recordings)
+        assert "Final answer:" in _PROMPT
+        props = CheckItemsOutput.model_json_schema()["$defs"]["CheckItemDraft"]["properties"]
+        assert "Final answer:" in props["reference_answer"]["description"]
+        assert "Final answer:" in props["final_answer"]["description"]
+        assert (
+            f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens" in props["final_answer"]["description"]
+        )
 
 
 class TestRankChunks:

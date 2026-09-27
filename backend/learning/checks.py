@@ -145,9 +145,15 @@ class CheckItemDraft(BaseModel):
     format: str = Field(description="one of free | teachback | mc_reason")
     difficulty: int = Field(description="1 recall, 2 application, 3 transfer")
     prompt: str
-    reference_answer: str
+    reference_answer: str = Field(
+        description="complete model answer; its LAST sentence is 'Final answer: <final_answer>.'"
+    )
     final_answer: str = Field(
-        description="the final answer reference_answer concludes with, copied verbatim from it"
+        description=(
+            "the final answer reference_answer concludes with, copied word for word from "
+            "its closing 'Final answer:' sentence without the label; at most "
+            f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens"
+        )
     )
     rubric: list[str] = Field(default_factory=list)
     wrong_keys: list[str] = Field(
