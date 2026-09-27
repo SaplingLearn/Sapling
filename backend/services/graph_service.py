@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from config import get_mastery_tier
@@ -15,7 +16,12 @@ from learning.evidence import (
     is_strong_channel,
 )
 from learning.learner_state import LearnerState, read_states, write_state
-from learning.params import EDGE_PREREQ_SOURCE_IS_PREREQ, FSRS_RETENTION_DEFAULT
+from learning.params import (
+    BKT_L0,
+    EDGE_PREREQ_SOURCE_IS_PREREQ,
+    FSRS_RETENTION_DEFAULT,
+    FSRS_S0_GOOD,
+)
 from services.streak_service import touch_streak_safe
 
 logger = logging.getLogger(__name__)
@@ -764,6 +770,36 @@ def _fsrs_after(st: LearnerState, ev: Evidence, now: datetime) -> None:
     st.fsrs_due_at = now + timedelta(days=fsrs.interval(FSRS_RETENTION_DEFAULT, new_s))
 
 
+def _keep_decay_anchor(st: LearnerState, p_now: float, now: datetime) -> tuple[float, datetime]:
+    """ADAPTER over fsrs.retrievability / fsrs.interval (the R that
+    bkt.decayed_p reads with). Returns `(p_stored, anchor)` for a write
+    that is NOT a check on st's concept (one-hop propagation): read_state
+    at `now` gives `p_now` back, but the concept's forgetting curve is not
+    restarted. Spec §1/§3.1: belief decays "between checks" along
+    R(Δt, S_c); restarting a power-law curve at every propagation made a
+    correct observation lower a later read (R(a)·R(b) < R(a+b)).
+
+    Keeps `st.last_evidence_at` and stores `L0 + (p_now − L0) / R(Δt, S_c)`.
+    Where that leaves [0, 1] (p_now is outside what the old anchor can
+    represent), it stores the bound and moves the anchor forward only as
+    far as needed, so R(now − anchor') = (p_now − L0) / (bound − L0). A
+    concept with no anchor (no row yet) is anchored at `now`.
+    """
+    anchor = st.last_evidence_at
+    if anchor is None:
+        return p_now, now
+    if anchor >= now:  # read_states decays nothing before the anchor
+        return p_now, anchor
+    s_c = FSRS_S0_GOOD if st.fsrs_s is None else st.fsrs_s
+    r = fsrs.retrievability((now - anchor) / _ONE_DAY, s_c)
+    p_stored = BKT_L0 + (p_now - BKT_L0) / r
+    if 0.0 <= p_stored <= 1.0:
+        return p_stored, anchor
+    bound = 1.0 if p_stored > 1.0 else 0.0
+    needed = (p_now - BKT_L0) / (bound - BKT_L0)  # in (r, 1]
+    return bound, now - timedelta(days=fsrs.interval(min(1.0, needed), s_c))
+
+
 def _apply_evidence(
     user_id: str,
     evidences: list[Evidence],
@@ -884,9 +920,11 @@ def _apply_evidence(
                     user_id=user_id, node_id=target_id
                 )
                 states[target_id] = tst
+            # tst.p_known stays the belief AT now (a later evidence in this
+            # call reads it); the row is stored against the kept anchor.
             tst.p_known = bkt.update(tst.p_known, channel, target_correct, weight=weight * w)
-            tst.last_evidence_at = now
-            write_state(tst, now=now)
+            p_stored, tst.last_evidence_at = _keep_decay_anchor(tst, tst.p_known, now)
+            write_state(replace(tst, p_known=p_stored), now=now)
             tst.exists = True
             table("graph_nodes").update(
                 {"mastery_score": tst.p_known, "mastery_tier": bkt.tier_for(tst.p_known)},

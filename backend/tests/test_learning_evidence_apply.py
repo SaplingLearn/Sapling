@@ -610,6 +610,16 @@ def _node_updates(mocks):
     ]
 
 
+def _read_back(row, write, when):
+    """p_known that learner_state.read_state returns at `when` for `row` after
+    the upsert `write` merged onto it (PostgREST merge-duplicates)."""
+    from learning import learner_state as ls
+
+    merged = {**row, **write}
+    with patch("learning.learner_state.table", return_value=_ls_table([merged])):
+        return ls.read_state("u1", merged["node_id"], now=when).p_known
+
+
 class TestApplyEvidence:
     def test_one_event_row_per_evidence_with_every_column(self):
         from learning.evidence import EVIDENCE_EVENT_TYPE
@@ -1005,13 +1015,88 @@ class TestApplyEvidence:
         )
         writes = {w["node_id"]: w for w in _state_writes(mocks)}
         decayed = bkt.decayed_p(0.9, 3.0, 10.0)
-        assert writes["n0"]["p_known"] == pytest.approx(
-            bkt.update(decayed, PROPAGATION_CHANNEL, True, weight=WEIGHT_PROPAGATION)
-        )
+        posterior = bkt.update(decayed, PROPAGATION_CHANNEL, True, weight=WEIGHT_PROPAGATION)
+        # The row is stored against the target's own decay anchor, so it is
+        # the READ at NOW that equals the posterior; the mirror shows it too.
+        assert _read_back(states[0], writes["n0"], NOW) == pytest.approx(posterior)
+        assert dict(_node_updates(mocks))["eq.n0"]["mastery_score"] == pytest.approx(posterior)
         assert (writes["n0"]["opps"], writes["n0"]["streak_unassisted"]) == (7, 3)
         assert writes["n0"]["fsrs_s"] == 10.0, "propagation never touches FSRS"
         # n0 was not an evidence node, so its state was one extra read.
         assert mocks["learner_state"].select.call_count == 2
+
+    def test_propagation_keeps_the_targets_decay_anchor(self):
+        """A propagated observation is not a check on the target (spec §1:
+        belief decays "between checks"), so it does not restart the target's
+        forgetting curve: last_evidence_at is kept and p_known is stored
+        against it."""
+        from learning import bkt
+        from learning.evidence import PROPAGATION_CHANNEL
+
+        anchor = NOW - timedelta(days=3)
+        row = _state_row(node_id="n0", p_known=0.6, last_evidence_at=anchor.isoformat())
+        _, mocks, _ = _apply(
+            {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": True}]},
+            states=[row],
+        )
+        write = {w["node_id"]: w for w in _state_writes(mocks)}["n0"]
+        assert write["last_evidence_at"] == anchor.isoformat()
+        posterior = bkt.update(
+            bkt.decayed_p(0.6, 3.0, 10.0), PROPAGATION_CHANNEL, True, weight=WEIGHT_PROPAGATION
+        )
+        assert _read_back(row, write, NOW) == pytest.approx(posterior)
+        later = NOW + timedelta(days=30)
+        assert _read_back(row, write, later) > _read_back(row, {}, later)
+
+    def test_propagation_never_moves_a_later_read_the_wrong_way(self):
+        """A correct propagated observation never leaves a parent's belief
+        LOWER at a later read than no observation would have, and an incorrect
+        one never leaves a child's HIGHER — including where the stored value
+        would leave [0, 1] against the old anchor (then the anchor moves
+        forward only as far as it must)."""
+        from learning import bkt
+        from learning.evidence import PROPAGATION_CHANNEL
+
+        cases = 0
+        for correct, target in ((True, "n0"), (False, "n2")):
+            payload = {
+                "evidence": [{"node_id": "n1", "channel": "free_response", "correct": correct}]
+            }
+            for p in (0.01, 0.2, 0.5, 0.8, 0.99, 1.0):
+                for stability in (None, 0.5, 30.0):
+                    for gap in (0.0, 2.0, 10.0, 200.0):
+                        anchor = NOW - timedelta(days=gap)
+                        row = _state_row(
+                            node_id=target,
+                            p_known=p,
+                            fsrs_s=stability,
+                            fsrs_d=None if stability is None else 5.0,
+                            fsrs_last_review_at=None if stability is None else anchor.isoformat(),
+                            last_evidence_at=anchor.isoformat(),
+                        )
+                        _, mocks, _ = _apply(payload, states=[row])
+                        write = {w["node_id"]: w for w in _state_writes(mocks)}[target]
+                        at = (p, stability, gap, correct)
+                        assert 0.0 <= write["p_known"] <= 1.0, at
+                        kept = datetime.fromisoformat(write["last_evidence_at"])
+                        assert anchor <= kept <= NOW, at
+                        posterior = bkt.update(
+                            bkt.decayed_p(p, gap, stability),
+                            PROPAGATION_CHANNEL,
+                            correct,
+                            weight=WEIGHT_PROPAGATION,
+                        )
+                        assert _read_back(row, write, NOW) == pytest.approx(posterior, abs=1e-9), at
+                        for later_days in (1.0, 30.0, 365.0):
+                            later = NOW + timedelta(days=later_days)
+                            moved = _read_back(row, write, later)
+                            untouched = _read_back(row, {}, later)
+                            if correct:
+                                assert moved >= untouched - 1e-9, (at, later_days)
+                            else:
+                                assert moved <= untouched + 1e-9, (at, later_days)
+                        cases += 1
+        assert cases == 144
 
     def test_propagation_target_outside_the_course_is_skipped(self):
         edges = [{"source_node_id": "elsewhere", "target_node_id": "n1"}]
