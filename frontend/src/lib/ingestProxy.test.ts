@@ -11,6 +11,7 @@ import {
   isImmutableAsset,
   normalisedIngestPath,
   upstreamRequestHeaders,
+  upstreamTarget,
   upstreamUrl,
 } from "./ingestProxy";
 
@@ -73,11 +74,18 @@ describe("upstreamUrl", () => {
 
 describe("immutable asset caching", () => {
   it("only versioned /static/ bundles are immutable", () => {
-    expect(isImmutableAsset("/ingest/static/surveys.js", "?v=1.434.15")).toBe(true);
-    expect(isImmutableAsset("/ingest/static/array.js", "")).toBe(false);
-    expect(isImmutableAsset("/ingest/array/phc_x/config.js", "?v=1")).toBe(false);
-    expect(isImmutableAsset("/ingest/e/", "?v=1")).toBe(false);
-    expect(isImmutableAsset("/ingest/static/%2e%2e/e/", "?v=1")).toBe(false);
+    expect(isImmutableAsset("/static/surveys.js", "?v=1.434.15")).toBe(true);
+    expect(isImmutableAsset("/static/array.js", "")).toBe(false);
+    expect(isImmutableAsset("/array/phc_x/config.js", "?v=1")).toBe(false);
+    expect(isImmutableAsset("/e/", "?v=1")).toBe(false);
+  });
+
+  it("upstreamTarget validates once and hands back the normalised path", () => {
+    expect(upstreamTarget("/ingest/%73tatic/surveys.js", "?v=1")).toEqual({
+      url: "https://us-assets.i.posthog.com/static/surveys.js?v=1",
+      path: "/static/surveys.js",
+    });
+    expect(upstreamTarget("/ingest/static/%2e%2e/e/", "?v=1")).toBeNull();
   });
 
   it("overrides PostHog's short max-age for them", () => {
@@ -98,8 +106,13 @@ describe("header allowlists", () => {
         "cf-connecting-ip": "203.0.113.9",
         "content-type": "text/plain",
         "user-agent": "UA/1.0",
+        "if-none-match": '"etag-1"',
+        "if-modified-since": "Sat, 26 Sep 2026 16:47:13 GMT",
       }),
     );
+    // Conditional headers pass, so revalidation can come back 304.
+    expect(up.get("if-none-match")).toBe('"etag-1"');
+    expect(up.get("if-modified-since")).toBe("Sat, 26 Sep 2026 16:47:13 GMT");
     expect(up.get("cookie")).toBeNull();
     expect(up.get("authorization")).toBeNull();
     expect(up.get("host")).toBeNull();

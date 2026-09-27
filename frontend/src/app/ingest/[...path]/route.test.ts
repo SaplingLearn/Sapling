@@ -84,6 +84,21 @@ describe("GET /ingest/*", () => {
     expect(await res.text()).toBe("/* js */");
   });
 
+  it("forwards revalidation headers and passes a 304 back, still immutable", async () => {
+    const calls = stubUpstream(() => new Response(null, { status: 304, headers: { etag: '"e1"' } }));
+    const res = await GET(
+      new Request("https://saplinglearn.com/ingest/static/surveys.js?v=1.434.15", {
+        headers: { "if-none-match": '"e1"', cookie: "sapling_session=secret" },
+      }),
+    );
+    const sent = calls[0].init.headers as Headers;
+    expect(sent.get("if-none-match")).toBe('"e1"');
+    expect(sent.get("cookie")).toBeNull();
+    expect(res.status).toBe(304);
+    expect(res.headers.get("etag")).toBe('"e1"');
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+  });
+
   it("does not mark an error response immutable", async () => {
     stubUpstream(() => new Response("nope", { status: 404, headers: { "cache-control": "no-store" } }));
     const res = await GET(new Request("https://saplinglearn.com/ingest/static/surveys.js?v=9"));
