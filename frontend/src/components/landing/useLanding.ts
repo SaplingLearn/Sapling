@@ -559,16 +559,19 @@ export function useLanding(props: LandingProps) {
     setGalIdx(i);
     setModalAnim(true);
 
-    if (switching) {
-      // The panel div carries no key, so changing the index re-renders the
-      // same DOM node and `registerPanel` is never called again. Nothing
-      // would replay the expansion, and a switch would simply cut to the new
-      // demo — so play it here, from the card that was clicked.
-      const panel = refs.panel.current;
-      if (panel) flipOpen(engine.flip, panel);
-    } else {
-      flipRan.current = false;
-    }
+    // A switch deliberately plays NO opening animation. The expansion is the
+    // gesture of arriving in the lab from the rail; replaying it to change
+    // which demo you are looking at re-enacts an arrival that already
+    // happened, and reads as the lab closing and reopening rather than as
+    // the panel changing its mind. The panel div carries no key, so the
+    // index change re-renders the same DOM node and nothing restarts on its
+    // own — leaving this alone is what gives a straight swap.
+    //
+    // The flip source is still carried across, for two reasons that have
+    // nothing to do with the opening: the card stays owned so `flipClose`
+    // can un-hide it, and its rect is re-measured so the eventual close
+    // flies back to where that card has drifted to.
+    if (!switching) flipRan.current = false;
   }, []);
 
   const closeGal = useCallback(() => {
