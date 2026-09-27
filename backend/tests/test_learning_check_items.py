@@ -1564,7 +1564,12 @@ class TestWithdrawalDuringDrafting:
     it runs must not reach the class pool — delete_document / the opt-out
     retire only the rows that exist when they run, so the write re-checks."""
 
-    def _run(self, monkeypatch, *, doc_reads, visibility=("shared",)):
+    def _run(self, monkeypatch, *, doc_reads, settings_reads=None):
+        """generate_for_document over the REAL visibility rule: the documents
+        and user_settings reads (chunk_visibility's too) come from one mocked
+        `table`. `settings_reads` feeds user_settings in order — the source
+        read's consent, then the pre-write re-check's, then the post-write
+        one's; None = no rows every time (opted in, 0037's default)."""
         import config
         from services import check_item_service as svc
 
@@ -1572,21 +1577,14 @@ class TestWithdrawalDuringDrafting:
         # unindexed: the one extracted-text passage, doc_id doc-1
         factory, mocks = _cached_tables({"course_chunks": [], "check_items": []})
         factory("documents").select.side_effect = list(doc_reads)
+        if settings_reads is not None:
+            factory("user_settings").select.side_effect = list(settings_reads)
 
         async def fake_draft(concepts, passages, *, deps, flex):
             return _drafts_for(*concepts)
 
-        vis = list(visibility)
         t, d, e = _gen_patches(factory, fake_draft)
-        with (
-            t,
-            d,
-            e as ev,
-            patch(
-                "services.check_item_service.decide_visibility",
-                side_effect=lambda *a, **k: vis.pop(0) if len(vis) > 1 else vis[0],
-            ),
-        ):
+        with t, d, e as ev, patch("services.chunk_visibility.table", side_effect=factory):
             out = svc.generate_for_document(
                 "doc-1",
                 user_id="u1",
@@ -1596,6 +1594,8 @@ class TestWithdrawalDuringDrafting:
             )
         return out, mocks, ev
 
+    _OPTED_OUT = [{"user_id": "u1", "share_class_context": False}]
+
     def test_a_source_deleted_mid_call_is_never_written(self, monkeypatch):
         out, mocks, _ = self._run(monkeypatch, doc_reads=[[_doc()], []])
         mocks["check_items"].upsert.assert_not_called()
@@ -1604,11 +1604,55 @@ class TestWithdrawalDuringDrafting:
         assert recheck == {"id": 'in.("doc-1")', "deleted_at": "is.null"}
 
     def test_a_source_opted_out_mid_call_is_never_written(self, monkeypatch):
-        out, mocks, _ = self._run(
-            monkeypatch, doc_reads=[[_doc()], [_doc()]], visibility=("shared", "private")
+        out, mocks, ev = self._run(
+            monkeypatch, doc_reads=[[_doc()], [_doc()]], settings_reads=[[], self._OPTED_OUT]
         )
         mocks["check_items"].upsert.assert_not_called()
         assert out.items_created == 0
+        ev.assert_not_called()  # a withdrawal is policy, not a failure
+
+    def test_an_opt_out_landing_during_the_write_is_retired_right_after(self, monkeypatch):
+        out, mocks, ev = self._run(
+            monkeypatch,
+            doc_reads=[[_doc()], [_doc()], [_doc()]],
+            settings_reads=[[], [], self._OPTED_OUT],
+        )
+        mocks["check_items"].upsert.assert_called_once()
+        filters = mocks["check_items"].delete.call_args.kwargs["filters"]
+        assert filters["source_document_ids"] == 'ov.{"doc-1"}'
+        ev.assert_not_called()
+
+    def test_a_consent_read_failure_before_the_write_fails_closed_and_is_reported(
+        self, monkeypatch
+    ):
+        """chunk_visibility.shares_class_context answers a failed read with
+        "opted out" (#629). The re-check must not: a blip is a StorageError,
+        not a withdrawal."""
+        out, mocks, ev = self._run(
+            monkeypatch,
+            doc_reads=[[_doc()], [_doc()]],
+            settings_reads=[[], RuntimeError("pg blip")],
+        )
+        mocks["check_items"].upsert.assert_not_called()
+        assert out.items_created == 0
+        assert ev.call_args[1]["payload"]["reason"] == "StorageError"
+
+    def test_a_consent_read_failure_after_the_write_is_reported_never_answered_by_deleting(
+        self, monkeypatch
+    ):
+        out, mocks, ev = self._run(
+            monkeypatch,
+            doc_reads=[[_doc()], [_doc()], [_doc()]],
+            settings_reads=[[], [], RuntimeError("pg blip")],
+        )
+        mocks["check_items"].upsert.assert_called_once()
+        mocks["check_items"].delete.assert_not_called()
+        assert ev.call_args[1]["payload"]["reason"] == "StorageError"
+
+    def test_the_recheck_reads_consent_once_per_batch_of_uploaders(self, monkeypatch):
+        _, mocks, _ = self._run(monkeypatch, doc_reads=[[_doc()], [_doc()], [_doc()]])
+        reads = [c[1]["filters"] for c in mocks["user_settings"].select.call_args_list]
+        assert reads[1:] == [{"user_id": 'in.("u1")'}] * 2
 
     def test_a_withdrawal_landing_during_the_write_is_retired_right_after(self, monkeypatch):
         out, mocks, _ = self._run(monkeypatch, doc_reads=[[_doc()], [_doc()], []])

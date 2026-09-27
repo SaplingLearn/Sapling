@@ -52,7 +52,7 @@ from learning.params import (
     CHECK_ITEM_MAX_CHUNKS,
     CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
 )
-from services.chunk_visibility import COURSE_MATERIAL, SHARED, decide_visibility
+from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
 from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json
 from services.events_service import log_event
@@ -439,23 +439,36 @@ def retire_items_for_documents(document_ids: Iterable[str]) -> int:
 
 
 def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:
-    """The ids among `document_ids` that are no longer item sources: deleted,
-    or no longer shared course material (the uploader opted out, #629). One
-    `in.(…)` read per _DOC_ID_BATCH ids; raises on a PostgREST failure."""
+    """The ids among `document_ids` withdrawn since they were read as sources:
+    deleted, or their uploader's stored `share_class_context` is now false —
+    A23's two withdrawal triggers. Raises on ANY failed read.
+
+    Consent is read through chunk_visibility's raising batch read
+    (`_share_flags`: no row = opted in, only an explicit false opts out), not
+    through `document_is_item_source`: its consent read
+    (`shares_class_context`) answers a PostgREST failure with "opted out"
+    (#629's fail-closed indexing rule), which here would turn a blip into a
+    withdrawal — and a post-write withdrawal DELETES every item citing the
+    document, older ones included. The rest of the source rule is not re-read:
+    `shareability` and its confidence are written once (the upload's persist,
+    or the NULL-only shareability backfill), so a document `decide_visibility`
+    passed stays past that gate. One `in.(…)` documents read per
+    _DOC_ID_BATCH ids, then one user_settings read per 50 uploaders."""
     ids = sorted({d for d in document_ids if d})
-    live: dict[str, dict] = {}
+    live: dict[str, str] = {}
     for start in range(0, len(ids), _DOC_ID_BATCH):
         batch = ids[start : start + _DOC_ID_BATCH]
         rows = table("documents").select(
-            "id,user_id,shareability,shareability_confidence",
+            "id,user_id",
             filters={
                 "id": "in.(" + ",".join(pg_quote_value(d) for d in batch) + ")",
                 "deleted_at": "is.null",
             },
         )
         for row in rows or []:
-            live[row["id"]] = row
-    return [d for d in ids if d not in live or not document_is_item_source(live[d])]
+            live[row["id"]] = row.get("user_id")
+    consent = _share_flags(u for u in live.values() if u)
+    return [d for d in ids if d not in live or not consent.get(live[d], True)]
 
 
 def retire_items_for_uploader(user_id: str) -> int:
