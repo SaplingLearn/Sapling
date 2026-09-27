@@ -541,8 +541,12 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
 # whitespace run is scanned once per bracket (the whitespace before a run is
 # trimmed by _seam, not matched); inside a bracket, ids are parted by a
 # separator, never by whitespace alone, so "chunk" as an id or as a prefix is
-# decided at once.
-_MARKER_ID = r"[^\s\[\],;]+"
+# decided at once. An id holds no separator character and is taken whole
+# (possessive: it never gives back the "and" of "x.and.y"), so where one id
+# ends is decided once — when an id could hold "/" or "&", each one after an
+# unclosed "[chunk " was read both ways, and 27 slashes took 29 s (third
+# review of A37). _unmarked resumes each search near the gap (_resume_at).
+_MARKER_ID = r"[^\s\[\],;/&]++"
 _MARKER_ID_SEP = r"[ \t]*(?:[,;/&]|and\b|or\b)[ \t]*"
 _MARKER = (
     rf"\[(?:chunks?[ \t]+{_MARKER_ID}(?:{_MARKER_ID_SEP}(?:chunks?[ \t]+)?{_MARKER_ID})*"
@@ -579,11 +583,44 @@ def _seam(left: str, right: str) -> str:
     return left + body[len(mark) :]
 
 
+_LEAD_WORDS = ("see", "cf.", "cf")
+
+
+def _resume_at(text: str, pos: int) -> int:
+    """Where the next marker search starts once a run ending at `pos` is
+    gone: before the whitespace, the "see"/"cf." and the bracket that
+    `text[:pos]` ends with, since each can now open a run with the text after
+    the gap ("([chunk a] cf. [chunk b])" -> "(cf. [chunk b])" is one bracket
+    that holds nothing else). No run started any earlier, so the removals of
+    one text read it about once, not once each (8,000 markers took 2 s when
+    each removal searched from the start). A marker that removing another
+    would complete inside an unclosed bracket ("[chunk x[chunk a]]") is not
+    read: the text never held it."""
+
+    def before_space(i: int) -> int:
+        while i and text[i - 1].isspace():
+            i -= 1
+        return i
+
+    pos = before_space(pos)
+    for word in _LEAD_WORDS:
+        start = pos - len(word)
+        if start >= 0 and text[start:pos].casefold() == word:
+            if not start or not text[start - 1].isalnum():
+                pos = before_space(start)
+            break
+    return pos - 1 if pos and text[pos - 1] in "([" else pos
+
+
 def _unmarked(text: str) -> str:
     if not _CHUNK_MARKER.search(text):
         return text
-    while (hit := _CHUNK_MARKER.search(text)) is not None:
-        text = _seam(text[: hit.start()], text[hit.end() :])
+    pos = 0
+    while (hit := _CHUNK_MARKER.search(text, pos)) is not None:
+        left = text[: hit.start()]
+        text = _seam(left, text[hit.end() :])
+        # _seam keeps `left` up to its trailing spaces and marks.
+        pos = _resume_at(text, len(left.rstrip(" \t").rstrip(_SEAM)))
     return text.strip()
 
 

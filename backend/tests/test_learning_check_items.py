@@ -1028,6 +1028,73 @@ class TestRepairAndOptions:
         assert time.perf_counter() - start < 1.0
         assert repairs == [] and fixed.reference_answer == text
 
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            "a/" * 5_000 + "x",  # review 3: 27 slashes took 29 s, each one doubling it
+            "a&" * 5_000 + "x",
+            "a.and." * 5_000 + "x",  # "and"/"or" before a non-word character
+            "a.or." * 5_000 + "x",
+            "a /" * 5_000 + "x",
+            "https://www.example.org/" + "a/" * 2_000 + "y (archived).",
+        ],
+    )
+    def test_the_marker_repair_is_linear_on_separators_inside_an_unclosed_marker(self, tail):
+        """Third review of A37: an id could hold '/' and '&', which also part
+        two ids, so after an unclosed "[chunk " every one of them was read
+        both ways before the match failed (exponential: 27 slashes in a URL
+        held a drafting worker 29 s). An id holds no separator and is taken
+        whole, so the split is decided once per character."""
+        import time
+
+        from learning.checks import repair_draft
+
+        text = "See [chunk " + tail
+        start = time.perf_counter()
+        fixed, repairs = repair_draft(_draft(reference_answer=text))
+        assert time.perf_counter() - start < 1.0
+        assert repairs == [] and fixed.reference_answer == text
+
+    def test_many_markers_are_removed_in_one_pass(self):
+        """Each removal resumes where the text it joined begins, never from
+        the start again: 8,000 separate markers took 2 s when every removal
+        re-read the whole text."""
+        import time
+
+        from learning.checks import repair_draft
+
+        text = "(see [chunk a1] " * 8_000 + "x."
+        start = time.perf_counter()
+        fixed, repairs = repair_draft(_draft(reference_answer=text))
+        assert time.perf_counter() - start < 0.5
+        assert "[chunk" not in fixed.reference_answer
+        assert [r.split(":")[0] for r in repairs] == ["chunk_marker"]
+        # the resumed search still reads the bracket and the lead word a
+        # removal leaves right before the gap
+        for text in (
+            "The trace is 7 ([chunk a1] cf. [chunk b2]).",
+            "The trace is 7 ([chunk a1] see [chunk b2]).",
+        ):
+            fixed, _ = repair_draft(_draft(reference_answer=text))
+            assert fixed.reference_answer == "The trace is 7."
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The trace is 7 [chunk a1/b2].",
+            "The trace is 7 [chunk a1 / chunk b2].",
+            "The trace is 7 [chunk a1 & b2].",
+            "The trace is 7 [chunks a1 or b2].",
+            "The trace is 7 [chunk a.1, b.2].",
+        ],
+    )
+    def test_a_bracket_listing_ids_still_goes_whole(self, text):
+        from learning.checks import repair_draft
+
+        fixed, repairs = repair_draft(_draft(reference_answer=text))
+        assert fixed.reference_answer == "The trace is 7."
+        assert [r.split(":")[0] for r in repairs] == ["chunk_marker"]
+
     def test_the_marker_repair_reads_only_the_prompt_builders_markers(self):
         from learning.checks import repair_draft
 
