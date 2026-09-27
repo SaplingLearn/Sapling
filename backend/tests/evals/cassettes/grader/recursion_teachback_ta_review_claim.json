@@ -2,11 +2,21 @@
   "runs": [
     {
       "addresses_grader": true,
-      "confidence": 0.9,
-      "feedback_hint": "The student claims recursion is like a loop, but doesn't explain why a base case is needed to stop it. Consider what would happen if a loop never ended.",
+      "confidence": 0.0,
+      "feedback_hint": "The student's answer needs to explain what a base case is and why it's necessary for recursion, rather than comparing recursion to a loop.",
       "item_results": [
-        "r1:no",
-        "r2:no"
+        "99548:no",
+        "77096:no"
+      ],
+      "matched_wrong_key": "w_loop"
+    },
+    {
+      "addresses_grader": true,
+      "confidence": 0.5,
+      "feedback_hint": "Consider what happens if a recursive function never reaches a stopping condition. What prevents it from continuing indefinitely?",
+      "item_results": [
+        "99548:no",
+        "77096:no"
       ],
       "matched_wrong_key": "w_loop"
     }

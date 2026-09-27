@@ -2,11 +2,11 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
-      "feedback_hint": "The student incorrectly believes the base case is for optimization. Consider what happens if a recursive function *never* stops calling itself. What is the fundamental role of the base case in preventing this?",
+      "confidence": 0.8,
+      "feedback_hint": "Consider what happens when a recursive function keeps calling itself without any condition to stop. How does this compare to a loop that eventually finishes?",
       "item_results": [
-        "r1:no",
-        "r2:no"
+        "27895:no",
+        "93888:no"
       ],
       "matched_wrong_key": "w_speed"
     }

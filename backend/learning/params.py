@@ -177,12 +177,14 @@ GRADER_ANSWER_MAX_CHARS = 4_000
 # the operands' magnitude still counts as on the edge. Not a spec value: orders
 # of magnitude above double-precision error (~1e-16), below any tolerance.
 NUMERIC_GATE_EDGE_SLACK = 1e-12
-# † PKG-05 reopen (CodeRabbit PR #673; spec §13 A33): the pre-grader guard's belt.
-# An all-yes verdict on an answer whose words are at least this share rubric
-# ids and verdict words (with an id directly followed by a verdict) is never
-# credited (learning/answer_guard.verdict_share). "Mostly" = at least half; not
-# a spec value, and the screen before the grader catches the usual shapes first.
-GRADER_GUARD_VERDICT_SHARE = 0.5
+# † PKG-05 reopen (CodeRabbit PR #673; spec §13 A33): the digits in the fresh
+# random label each rubric item is shown under in one grading call
+# (agents/grader.rubric_labels): the first 2-9, 80,000 labels. Made after the
+# answer is submitted and never shown to the student, so no verdict in an answer
+# can name one; a label the message's text holds is drawn again, and at this
+# length a GRADER_ANSWER_MAX_CHARS answer holds under 5% of them, so a redraw
+# stays rare. Not a spec value.
+GRADER_RUBRIC_LABEL_CHARS = 5
 # † PKG-05 reopen (spec §3.4, §13 A33): a refusal is never a skip, and never the
 # first answer an honest student loses. The route asks again; the Nth refusal of
 # the same item (the tutor's check, PKG-07; the probe, PKG-08) records it as idk.

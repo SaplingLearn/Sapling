@@ -2,13 +2,13 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.8,
-      "feedback_hint": "You mentioned that the base case stops the recursion, but could you also explain what would happen if the function never stopped recursing?",
+      "confidence": 1.0,
+      "feedback_hint": "Consider what happens if the function never stops calling itself. What are the implications for the computer's memory or call stack?",
       "item_results": [
-        "r1:yes",
-        "r2:no"
+        "89638:yes",
+        "46868:no"
       ],
-      "matched_wrong_key": ""
+      "matched_wrong_key": "w_loop"
     }
   ]
 }

@@ -249,9 +249,10 @@ def test_grade_rubric_items_sends_the_grader_the_identical_message(seam, grader_
     v = asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps(), item_id="ci-1"))
     [(passed, fmt, answer)] = grader_spy["calls"]
     assert (fmt, answer, passed.id) == ("free", "It stops the calls.", "ci-1")
-    assert build_grader_message(passed, format=fmt, student_answer=answer) == build_grader_message(
-        item, format="free", student_answer="It stops the calls."
-    )
+    labels = {"r1": "48213", "r2": "73920"}  # grade() draws fresh ones per call (A33)
+    assert build_grader_message(
+        passed, format=fmt, student_answer=answer, labels=labels
+    ) == build_grader_message(item, format="free", student_answer="It stops the calls.", labels=labels)
     assert v.items["r1"].value is True and v.items["r1"].p_yes == pytest.approx(0.9)
     assert v.result.all_yes is True and v.backend == "gemini"
     assert recorded == [], "grade() writes the llm_usage rows; the seam adds none"
@@ -670,9 +671,14 @@ def test_grade_answer_sends_the_grader_the_same_messages(seam, monkeypatch):
     import agents.tools.check as c
 
     seen = []
+    labels = {"r1": "48213", "r2": "73920"}  # grade() draws fresh ones per call (A33)
 
     async def _grade(item, *, format, student_answer, deps):
-        seen.append(g.build_grader_message(item, format=format, student_answer=student_answer))
+        seen.append(
+            g.build_grader_message(
+                item, format=format, student_answer=student_answer, labels=labels
+            )
+        )
         return _grade_result(True, backend="gemini")
 
     monkeypatch.setattr(g, "grade", _grade)
@@ -688,11 +694,14 @@ def test_grade_answer_sends_the_grader_the_same_messages(seam, monkeypatch):
         )
     )
     assert seen == [
-        g.build_grader_message(free_item, format="free", student_answer=free_answer.answer_text),
+        g.build_grader_message(
+            free_item, format="free", student_answer=free_answer.answer_text, labels=labels
+        ),
         g.build_grader_message(
             mc_item,
             format="mc_reason",
             student_answer="Selected option: B\nReason: because it stops",
+            labels=labels,
         ),
     ]
 

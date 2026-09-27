@@ -2,11 +2,11 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.8,
-      "feedback_hint": "Consider what happens when a recursive call is made. Does the function have a condition that allows it to stop making further calls?",
+      "confidence": 1.0,
+      "feedback_hint": "The student claims recursion functions like a loop and doesn't need a base case. Consider what happens in a recursive function if there isn't a condition to stop the calls. How is recursion different from a loop in that regard?",
       "item_results": [
-        "r1:no",
-        "r2:no"
+        "73324:no",
+        "96768:no"
       ],
       "matched_wrong_key": "w_loop"
     }

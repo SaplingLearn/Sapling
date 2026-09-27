@@ -15,9 +15,9 @@ byte-identical — and the numeric clear-mismatch via
 `deterministic_yes_no("numeric_gate", False)`. `grader_backend` comes from the
 verdict's provenance (`decisions.evidence_backend`).
 
-Spec §13 A33 (CodeRabbit PR #673): an answer that addresses the grader (verdict
-tokens, grading directives, role or format markers — before any model call, or
-on the grader's own report after it) or is longer than GRADER_ANSWER_MAX_CHARS
+Spec §13 A33 (CodeRabbit PR #673): an answer that addresses the grader (grading
+directives, role or format markers — before any model call, or on the grader's
+own report after it) or is longer than GRADER_ANSWER_MAX_CHARS
 is refused by agents.grader.grade(), and the seam hands it back as a `Refused`
 verdict. grade_answer then returns GradeOutcome(unavailable=True,
 refused=<reason>) and appends nothing: this attempt counts neither for nor

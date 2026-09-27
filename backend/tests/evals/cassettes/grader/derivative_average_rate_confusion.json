@@ -3,10 +3,10 @@
     {
       "addresses_grader": false,
       "confidence": 0.8,
-      "feedback_hint": "The answer describes a change over an interval, but the derivative is about what happens at a single, specific point.",
+      "feedback_hint": "The student describes the slope between two points, which represents an average rate of change. Consider how the derivative is defined at a single point to represent an instantaneous rate of change.",
       "item_results": [
-        "r1:no",
-        "r2:no"
+        "93687:no",
+        "43272:no"
       ],
       "matched_wrong_key": "w_avg"
     }
