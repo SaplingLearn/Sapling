@@ -26,7 +26,7 @@ The trade-off has five dials — measurement information, motivation and dose, a
 | Lomas et al. 2013, Battleship Numberline ([online randomized; 10,478 sessions Exp 1, 69,642 Exp 2; BrainPOP grades 4–8](http://web.archive.org/web/20150614021537/http://pact.cs.cmu.edu/pubs/Lomas,%20Forlizzi%20%26%20Koedinger%202013.pdf)) | Target size 3 / 5 / 10% (+ time limits, sequencing) | Success 29.2 / 43.3 / 62.8%; trials 12.6 / 14.6 / 17.0; time 60.9 / 66.5 / 71.6 s (all p < .001); engagement linear in ease, quadratic n.s. (p = 0.8); "larger targets result in a slower rate of learning" (interaction p = 0.02); low-ability players learned faster (p = .002); easiest condition still < 70% success | Below ~70% success, every unit of difficulty is an engagement tax with no observed lower bound; per-item learning is the only counterweight, and it is small relative to dose. |
 | Lomas et al. 2017 ([online; > 20,000 sessions](https://research.tudelft.nl/en/publications/is-difficulty-overrated-the-effects-of-choice-novelty-and-suspens)) | Choice, novelty, suspense | "Moderately difficult levels were most motivating when self-selected; yet, when difficulty was blindly assigned, the easiest games were most motivating" | Difficulty is motivating only when chosen. |
 | Wilson et al. 2019 "85% rule" ([model only](https://pmc.ncbi.nlm.nih.gov/articles/PMC6831579/)) | Gradient-descent binary classifiers | Optimal error 15.87% (accuracy 84.13%) under Gaussian noise; 82% Laplacian; 75% Cauchy; "a Bayesian learner (with perfect memory)" has no sweet spot; humans untested | Not a human result. |
-| Al-Fawakhiri, Kayani & McDougle 2023 ([lab preprint; N = 192–194 adults 18–35; Pong-like motor task](https://www.biorxiv.org/content/10.1101/2023.07.19.549705v1.full)) | Target error 15 / 30 / 50 / 65% | Learning highest at 30% error; vs 15%: t(89) = 3.11, p = .003, d = 0.65; vs 50% p = .32; vs 65% p = .12 | The one arm at 85% success was the **worst** of four. |
+| Al-Fawakhiri, Kayani & McDougle 2023 ([lab preprint; N = 194 adults 18–35, 184 after outlier exclusion; Pong-like motor task](https://www.biorxiv.org/content/10.1101/2023.07.19.549705v1.full)) | Target error 15 / 30 / 50 / 65% | Learning highest at 30% error; vs 15%: t(89) = 3.11, p = .003, d = 0.65; vs 50% p = .32; vs 65% p = .12 | The one arm at 85% success was the **worst** of four. |
 | van der Kooij et al. 2026 ([lab; N = 267, ages 7–58, circle drawing](https://www.nature.com/articles/s41598-026-39639-5)) | Target success 50 vs 80% (achieved 49 vs 72%) | Learning 0.52 ± 0.05 vs 0.40 ± 0.05 (p = .02) favouring moderate; motivation 3.8 vs 3.8 (p = .84); free-phase participation 60 vs 59% | Enforcing high success hurt reward-based motor learning without buying motivation. |
 | Golf putting, RQES 2025 ([lab; N = 150 adults](https://doi.org/10.1080/02701367.2025.2587799)) | Success 60–70 / 20–30 / < 10% | "the pattern and magnitude of learning did not differ" | Null; no 85% arm. |
 | Akizuki & Ohashi 2015 ([lab; adults; postural task](https://doi.org/10.1016/j.humov.2015.07.007)) | Four difficulty levels | Inverted-U on retention; second-highest difficulty best | Challenge-point framework holds in motor learning only; never tested academically. |
@@ -173,13 +173,15 @@ CEILING (max rung this turn), from state only
   band = develop                         → H3; +1 rung per failed genuine attempt; H6 after ≥ 2
   band = novice, prerequisite proficient → attempt-first, ceiling H5
   band = novice, prerequisite not known  → worked example FIRST (H4), then H5, then near-transfer
-  student shows own work / buggy step    → floor at H3 (never below), so debugging help is allowed
+  student shows own work / buggy step    → floor at H3 (never below), so debugging help is allowed;
+                                           outside exam mode only (the exam_mode H0–H1 cap takes precedence)
 
 GATES
   genuine attempt   = a submitted answer or shown work, not "idk"/"just tell me", after
                       ≥ 45 s† (novice ≥ 90 s†) of independent time on the step
   next rung         requires a genuine attempt since the last rung AND dwell ≥ 8 s† on it
-  H6                requires ≥ 2 genuine attempts, item.taught = true, item.graded = false
+  H6                requires ≥ 2 genuine attempts, item.taught = true, item.graded = false,
+                    item.practice = true (ungraded ≠ practice: ungraded coursework never gets H6)
   offer (not push)  after a wrong genuine attempt for novice band only: "want a hint?"
   student choice    may opt into "harder" (raises item difficulty one step); may not lower
                     the ceiling floor or skip attempts

@@ -222,10 +222,10 @@ Two RCT-grade results converge: unrestricted ChatGPT-style help raises in-task p
 - "The Effortless Trap: Productive Struggle, AI, and the Illusion of Learning" (arXiv 2606.26181, preprint). — [arXiv](https://arxiv.org/pdf/2606.26181)
 
 ### Inferences
-- Hard rule: never emit the final answer to a graded/assigned problem on first request; give the next hint and require an attempt. This is the single design difference between −0.19 SD and −0.01 SD in Bastani.
+- Hard rule: never emit the final answer to a graded/assigned problem on first request; give the next hint and require an attempt. In Bastani, answer withholding was one part of the GPT Tutor guardrail bundle (teacher-provided solutions and common mistakes in the prompt, hints rather than answers); the bundle as a whole went with −0.01 SD vs −0.19 SD for GPT Base, and the study does not isolate withholding's share.
 - Build metacognitive prompts into the loop (the transitions human tutors trigger): before a step, ask for a plan/prediction; after, ask for self-evaluation ("which step were you least sure of?"). Fan's data show the AI condition lacked these orientation↔evaluation transitions.
 - Instrument reliance: count hint requests per attempt, answer-request frequency, and copy-paste-like turns; use as a signal for the gaming/help-abuse detector in KQ1.
-- Periodic unassisted checks (closed-book mini-quizzes) are the only honest measure of learning; in-session performance with the tutor is inflated by 48–127%.
+- Add periodic unassisted checks (closed-book mini-quizzes) and keep them separate from in-session performance with the tutor. In Bastani, AI-assisted practice scores were 48% (Base) and 127% (Tutor) above control, while the unassisted exam fell 17% (Base) or did not move (Tutor), so assisted scores alone did not show what the unassisted exam showed. The 48–127% are practice gains, not a measured inflation factor.
 - Add "productive struggle" framing so the student tolerates delayed answers (Deslauriers-style explanation of why it feels worse).
 
 ### Gaps

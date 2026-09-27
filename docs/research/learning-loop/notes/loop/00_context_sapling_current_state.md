@@ -22,16 +22,16 @@ Sapling Learning Engine
  3 · Who reads what 
  The tutor, the quiz and note chat each see a different slice of what Sapling knows about the student. The gaps are the clearest places to start a redesign. 
 
- Signal Tutor Quiz agent Note chat 
-
- course_chunks (vector RAG) Yes injected, top 5 Yes No 
- documents (keyword search) Yes tool No Yes tool 
- Graph concepts + mastery Yes injected + tools Yes tool No writes only 
- Class misconceptions No excluded on purpose, ADR 0023 §5 Yes tool No 
- quiz_context (per-student weak areas) No Yes No 
- Past session summaries No No No only flashcards read them 
- Note content No send-to-tutor sends topic only No Yes active note 
- Recently asked questions No Yes do-not-repeat block + re-serve misses No 
+| Signal | Tutor | Quiz agent | Note chat |
+|---|---|---|---|
+| course_chunks (vector RAG) | Yes — injected, top 5 | Yes | No |
+| documents (keyword search) | Yes — tool | No | Yes — tool |
+| Graph concepts + mastery | Yes — injected + tools | Yes — tool | No — writes only |
+| Class misconceptions | No — excluded on purpose, ADR 0023 §5 | Yes — tool | No |
+| quiz_context (per-student weak areas) | No | Yes | No |
+| Past session summaries | No | No | No — only flashcards read them |
+| Note content | No — send-to-tutor sends topic only | No | Yes — active note |
+| Recently asked questions | No | Yes — do-not-repeat block + re-serve misses | No |
 
  How mastery moves 
 
