@@ -89,7 +89,11 @@ _SETTINGS_COLS = (
 def _get_or_create_settings(user_id: str) -> dict:
     rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
     if not rows:
-        table("user_settings").insert({"user_id": user_id})
+        # Upsert, not insert (#674): Settings.tsx loads /settings and the public
+        # profile in parallel, both land here for a first-time user, and a blind
+        # INSERT from the loser 409s into a 500. Merging only `user_id` onto an
+        # existing row is a no-op, so the race winner's row is left untouched.
+        table("user_settings").upsert({"user_id": user_id}, on_conflict="user_id")
         rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
     if not rows:
         return {"user_id": user_id}
