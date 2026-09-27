@@ -13,11 +13,11 @@ from pydantic import BaseModel
 
 from config import is_weak
 from db.connection import table
+from services import events_service
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
-from services.posthog_client import get_posthog_client
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -269,6 +269,19 @@ def generate(body: GenerateFlashcardsBody, request: Request):
             detail=f"Failed to save flashcards. Has the flashcards table been created in Supabase? Error: {e}"
         )
 
+    # #117 taxonomy (+ the ADR 0028 PostHog mirror). Counts only — never the
+    # topic or card text.
+    events_service.log_event(
+        "flashcard.generated",
+        category="usage",
+        user_id=body.user_id,
+        payload={
+            "card_count": len(rows_to_insert),
+            "documents_used": len(documents),
+            "weak_concepts_used": len(weak_concepts),
+        },
+    )
+
     # Check for achievements after flashcard generation
     try:
         from services.achievement_service import check_achievements
@@ -283,16 +296,6 @@ def generate(body: GenerateFlashcardsBody, request: Request):
         {**row, "front": decrypt_if_present(row["front"]), "back": decrypt_if_present(row["back"])}
         for row in rows_to_insert
     ]
-    posthog_client = get_posthog_client()
-    if posthog_client is not None:
-        posthog_client.capture(
-            "flashcards_generated",
-            properties={
-                "card_count": len(rows_to_insert),
-                "documents_used": len(documents),
-                "weak_concepts_used": len(weak_concepts),
-            },
-        )
 
     return {
         "flashcards": response_cards,
@@ -378,6 +381,12 @@ def rate_card(body: FlashcardRatingBody, request: Request):
         },
         filters={"id": f"eq.{body.card_id}"},
     )
+    events_service.log_event(
+        "flashcard.reviewed",
+        category="usage",
+        user_id=body.user_id,
+        payload={"card_id": body.card_id, "rating": body.rating},
+    )
 
     # The review counter is the only thing that advances `flashcards_reviewed`
     # (Quick Draw: review 100 cards), so this is its only possible dispatch
@@ -391,12 +400,6 @@ def rate_card(body: FlashcardRatingBody, request: Request):
             body.user_id, body.card_id,
         )
 
-    posthog_client = get_posthog_client()
-    if posthog_client is not None:
-        posthog_client.capture(
-            "flashcard_reviewed",
-            properties={"rating": body.rating},
-        )
     return {"ok": True}
 
 

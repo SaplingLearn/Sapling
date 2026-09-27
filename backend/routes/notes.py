@@ -35,7 +35,6 @@ from services.notes_service import (
 )
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
-from services.posthog_client import get_posthog_client
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
@@ -218,15 +217,6 @@ async def create(body: CreateNoteBody, request: Request):
             "has_body": bool(body.body),
         },
     )
-    posthog_client = get_posthog_client()
-    if posthog_client is not None:
-        posthog_client.capture(
-            "note_created",
-            properties={
-                "has_body": bool(body.body),
-                "tag_count": len(body.tags),
-            },
-        )
     return note
 
 
