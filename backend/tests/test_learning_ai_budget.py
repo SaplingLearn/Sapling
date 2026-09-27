@@ -773,9 +773,11 @@ def test_decision_run_is_skipped_at_the_grader_cap(usage):
     assert runs == []
 
 
-def test_a_reused_request_id_never_serves_a_stale_summary(usage, monkeypatch):
+def test_a_reused_request_id_serves_a_summary_at_most_ttl_stale(usage, monkeypatch):
     """RequestIDMiddleware trusts a caller-supplied X-Request-ID, so a client could send one id on
-    every request; the cached summary serves that id for _REQUEST_CACHE_TTL_S only."""
+    every request. Within _REQUEST_CACHE_TTL_S a later request re-sending the id IS served the
+    earlier summary (the cache cannot tell it from the same request); after it, a fresh read.
+    So the bound is "at most TTL-stale", not "never stale" (HANDOFF-06b Known gaps)."""
     from services import request_context
 
     clock = [1000.0]
