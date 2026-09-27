@@ -292,13 +292,13 @@ describe("SideNav — /font-lab override", () => {
   it("applies a stored pick to the real rail once /font-lab has written one", () => {
     window.localStorage.setItem(
       FONT_LAB_KEY,
-      JSON.stringify({ heading: "Fraunces", body: "DM Sans", label: "Space Grotesk", subtitle: "DM Sans" }),
+      JSON.stringify({ heading: "Besley", body: "DM Sans", label: "Fragment Mono", subtitle: "DM Sans" }),
     );
     const rail = renderRail();
     const logo = screen.getByText("Sapling");
-    expect(logo.style.fontFamily).toBe('"Fraunces", serif');
+    expect(logo.style.fontFamily).toBe('"Besley", serif');
     const group = rail.querySelector<HTMLElement>(".label-micro")!;
-    expect(group.style.fontFamily).toBe('"Space Grotesk", sans-serif');
+    expect(group.style.fontFamily).toBe('"Fragment Mono", monospace');
     // body and subtitle both matched the shipped default, so neither role
     // is treated as "overridden" and the rail keeps inheriting its normal stack.
     expect(rail.style.fontFamily).toBe("");

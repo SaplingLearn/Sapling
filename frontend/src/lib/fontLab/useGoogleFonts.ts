@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CANDIDATES, type FontCandidate, type FontRole } from "./candidates";
+import { CANDIDATES, type FontCandidate } from "./candidates";
 
 /**
  * This tool only. Every other route self-hosts its four faces (see
@@ -74,20 +74,13 @@ export function allFontCandidates(): FontCandidate[] {
   return Array.from(seen.values());
 }
 
-/** Sans-shaped label candidates that aren't actually monospaced. */
-const LABEL_SANS_FAMILIES = new Set(["Space Grotesk", "Archivo", "Archivo Narrow"]);
-/** Subtitle candidates that are upright sans-italics rather than serif-italics. */
-const SUBTITLE_SANS_FAMILIES = new Set(["DM Sans", "Karla", "Work Sans"]);
-
-/** The right last-resort keyword for a candidate's stack, given its role. */
-export function genericFor(role: FontRole, family: string): "serif" | "sans-serif" | "monospace" {
-  if (role === "heading") return "serif";
-  if (role === "body") return "sans-serif";
-  if (role === "label") return LABEL_SANS_FAMILIES.has(family) ? "sans-serif" : "monospace";
-  return SUBTITLE_SANS_FAMILIES.has(family) ? "sans-serif" : "serif";
-}
-
-/** CSS `font-family` value for a candidate, with a sane generic fallback. */
-export function stackFor(c: FontCandidate, generic: "serif" | "sans-serif" | "monospace"): string {
-  return `'${c.family}', ${generic}`;
+/**
+ * CSS `font-family` value for a candidate. The fallback comes from the
+ * candidate's own declared shape (`generic`), not a per-role assumption —
+ * the label role in particular mixes real monospace faces with at least one
+ * deliberate non-mono wild card, so "label roles fall back to monospace"
+ * would be wrong for that entry.
+ */
+export function stackFor(c: FontCandidate): string {
+  return `'${c.family}', ${c.generic}`;
 }

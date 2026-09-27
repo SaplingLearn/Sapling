@@ -8,6 +8,7 @@ import { FeedbackFlow } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
 import { AtmosphericBackdrop } from "./AtmosphericBackdrop";
 import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
+import { FontLabDock } from "./fontlab/FontLabDock";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useIsMobile } from "@/lib/useIsMobile";
 
@@ -66,6 +67,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           <SessionFeedbackGlobal />
         </Suspense>
         <AchievementUnlockWatcher />
+        <FontLabDock />
       </div>
     );
   }
@@ -105,6 +107,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
         <FeedbackFlow />
         <SessionFeedbackGlobal />
       </Suspense>
+      <FontLabDock />
     </div>
   );
 }

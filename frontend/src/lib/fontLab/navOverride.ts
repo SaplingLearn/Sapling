@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CANDIDATES, DEFAULT_SELECTION, type FontCandidate, type FontRole } from "./candidates";
-import { genericFor, stackFor } from "./useGoogleFonts";
+import { stackFor } from "./useGoogleFonts";
 
 /**
  * Lets the real dashboard sidebar preview whatever `/font-lab` last had
@@ -83,7 +83,7 @@ export function useNavFontOverride(): NavFontOverride | null {
     if (selection[role] === DEFAULT_SELECTION[role]) return null;
     const candidate = CANDIDATES[role].find((c) => c.family === selection[role]);
     if (!candidate) return null;
-    return stackFor(candidate, genericFor(role, candidate.family));
+    return stackFor(candidate);
   };
 
   return {

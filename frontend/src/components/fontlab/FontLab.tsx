@@ -10,7 +10,7 @@ import {
   type FontRole,
   type FontCandidate,
 } from "@/lib/fontLab/candidates";
-import { allFontCandidates, genericFor, stackFor, useGoogleFonts } from "@/lib/fontLab/useGoogleFonts";
+import { allFontCandidates, stackFor, useGoogleFonts } from "@/lib/fontLab/useGoogleFonts";
 import { FONT_LAB_EVENT, FONT_LAB_STORAGE_KEY, readFontLabSelection } from "@/lib/fontLab/navOverride";
 
 type Selection = Record<FontRole, string>;
@@ -90,10 +90,10 @@ export function FontLab() {
 
   const stacks = React.useMemo(
     () => ({
-      heading: stackFor(active.heading, genericFor("heading", active.heading.family)),
-      body: stackFor(active.body, genericFor("body", active.body.family)),
-      label: stackFor(active.label, genericFor("label", active.label.family)),
-      subtitle: stackFor(active.subtitle, genericFor("subtitle", active.subtitle.family)),
+      heading: stackFor(active.heading),
+      body: stackFor(active.body),
+      label: stackFor(active.label),
+      subtitle: stackFor(active.subtitle),
     }),
     [active]
   );
@@ -108,10 +108,10 @@ export function FontLab() {
 
   function copyCss() {
     const lines = [
-      `--font-heading: '${active.heading.family}', ${genericFor("heading", active.heading.family)};`,
-      `--font-body: '${active.body.family}', ${genericFor("body", active.body.family)};`,
-      `--font-label: '${active.label.family}', ${genericFor("label", active.label.family)};`,
-      `--font-subtitle: '${active.subtitle.family}', ${genericFor("subtitle", active.subtitle.family)};`,
+      `--font-heading: ${stacks.heading};`,
+      `--font-body: ${stacks.body};`,
+      `--font-label: ${stacks.label};`,
+      `--font-subtitle: ${stacks.subtitle};`,
     ];
     const text = lines.join("\n");
     navigator.clipboard?.writeText(text).then(
@@ -249,7 +249,7 @@ export function FontLab() {
         >
           {CANDIDATES[activeRole].map((c) => {
             const isActive = selection[activeRole] === c.family;
-            const stack = stackFor(c, genericFor(activeRole, c.family));
+            const stack = stackFor(c);
             return (
               <button
                 key={c.family + c.axes}
