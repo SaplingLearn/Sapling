@@ -16,7 +16,7 @@ from google import genai
 from google.genai import types as genai_types
 
 from agents._providers import model_mode
-from db.connection import rpc, table
+from db.connection import pg_quote_value, rpc, table
 from services.chunk_visibility import PRIVATE, SHARED, record_contributors
 from services.encryption import decrypt_if_present, encrypt_if_present
 from services.events_service import log_event
@@ -273,6 +273,54 @@ def retrieve_chunks_detailed(
             payload={"course_id": course_id, "error_type": type(e).__name__},
         )
         return Retrieval(chunks=[], failed=True)
+
+
+def chunks_for_ids(chunk_ids: list[str], *, user_id: str) -> list[dict]:
+    """Resolve check-item `source_chunk_ids` for ONE named reader (spec
+    A17/A18, invariant 29) — the by-id twin of `match_course_chunks`' #629
+    visibility rule: a row comes back only when it is shared, or `user_id`
+    uploaded it, or `user_id` is a recorded contributor. A chunk an opt-out
+    has since made private to someone else is simply absent, so a stale id
+    can never leak a classmate's text. `user_id` is required: every caller
+    serves one student (no shared-only default, unlike retrieve_chunks).
+
+    Returns [{"id", "course_id", "chunk_text"}] in `chunk_ids` order,
+    de-duplicated, `chunk_text` decrypted here (the decrypt boundary). Ids are
+    quoted with `pg_quote_value` (the `chunk_visibility._in_list` rule).
+    """
+    ids = [c for c in dict.fromkeys(chunk_ids) if c]
+    if not ids:
+        return []
+    in_ids = f"in.({','.join(pg_quote_value(c) for c in ids)})"
+    rows = (
+        table("course_chunks").select(
+            "id,course_id,chunk_text,visibility,uploader_id", filters={"id": in_ids}
+        )
+        or []
+    )
+    closed = [
+        r["id"] for r in rows if r.get("visibility") != SHARED and r.get("uploader_id") != user_id
+    ]
+    contributed: set[str] = set()
+    if closed:
+        in_closed = f"in.({','.join(pg_quote_value(c) for c in closed)})"
+        contributed = {
+            r["chunk_id"]
+            for r in table("course_chunk_contributors").select(
+                "chunk_id", filters={"chunk_id": in_closed, "user_id": f"eq.{user_id}"}
+            )
+            or []
+        }
+    visible = {
+        r["id"]: {
+            "id": r["id"],
+            "course_id": r.get("course_id"),
+            "chunk_text": decrypt_if_present(r.get("chunk_text")),
+        }
+        for r in rows
+        if r.get("visibility") == SHARED or r.get("uploader_id") == user_id or r["id"] in contributed
+    }
+    return [visible[c] for c in ids if c in visible]
 
 
 def chunk_id(
