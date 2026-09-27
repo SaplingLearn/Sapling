@@ -537,6 +537,23 @@ def test_json_turn_labels_the_model_the_run_reports(router_on, monkeypatch):
         "fast", "fast", "gemini-2.5-flash-lite-preview-09")
 
 
+def test_chat_via_agent_returns_the_label_out_of_band(monkeypatch):
+    """#672 review: the label rode inside the wire dict under a private key
+    (popped later); it is now returned beside it, so it cannot leak."""
+    from routes import learn
+
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=_served_by("reply", "gemini-2.5-pro"))
+    with patch("routes.learn.agent_for_mode", return_value=agent):
+        response, ran_on = asyncio.run(learn._chat_via_agent(
+            user_id="u1", session_id="s1", course_id="", mode="socratic",
+            user_message="m", message_history=[], use_shared_context=True,
+            request_id="r1", model_pref=None,
+        ))
+    assert set(response) == {"reply", "graph_update", "mastery_changes"}
+    assert ran_on == ("default", "gemini-2.5-pro")
+
+
 def test_stream_labels_the_model_its_run_reports(router_on):
     from services.agent_events import SaplingEvent
 

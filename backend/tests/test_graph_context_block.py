@@ -240,7 +240,7 @@ def test_chat_route_saves_raw_body_message():
     saved: list[tuple] = []
 
     async def fake_chat_via_agent(**kwargs):
-        return {"reply": "ok!", "graph_update": {}, "mastery_changes": []}
+        return {"reply": "ok!", "graph_update": {}, "mastery_changes": []}, ("default", None)
 
     with (
         patch("routes.learn._chat_via_agent", side_effect=fake_chat_via_agent),

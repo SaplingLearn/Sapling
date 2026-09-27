@@ -368,6 +368,9 @@ register_function_handler("note_chat", _note_chat_handler)
 
 # The constant lives in the side-effect-free agents/_decision_fixtures.py so
 # the showcase module can register the SAME answers without importing this one.
+# The E2E_* alias is kept on purpose: this module's constants are the names
+# specs and tests/test_e2e_function_handlers.py pin (the "byte-match to an
+# E2E_* constant" tell in CLAUDE.md).
 E2E_DECISION_ANSWERS = DECISION_ANSWERS
 
 register_function_handler(

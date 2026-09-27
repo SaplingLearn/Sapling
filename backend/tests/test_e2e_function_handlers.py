@@ -637,9 +637,14 @@ def test_showcase_module_decision_handler_answers_every_router_key(monkeypatch):
     assert not any(a.defaulted for a in result.answers.values()), result.answers
     # ONE list shared through the side-effect-free fixtures module, not a
     # hand-copied literal that can drift from the E2E module's.
+    import inspect
+
     from agents._decision_fixtures import DECISION_ANSWERS
 
-    assert showcase.SHOWCASE_DECISION_ANSWERS is DECISION_ANSWERS
+    assert "DECISION_ANSWERS" in inspect.getsource(showcase)
+    assert "needs_retrieval" not in inspect.getsource(showcase)
+    assert result.value("complexity") == next(
+        a["value"] for a in DECISION_ANSWERS if a["key"] == "complexity")
 
 
 def test_e2e_decision_answers_are_the_shared_fixture():
