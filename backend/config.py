@@ -44,6 +44,21 @@ ALLOWED_EMAIL_DOMAINS = [
 # Only "true" (any case) enables; everything else, including unset, is off.
 LEARNING_LOOP_ENABLED = os.getenv("LEARNING_LOOP_ENABLED", "false").strip().lower() == "true"
 
+# AI budget (spec §3.5, §13 A20): owner-approved caps (†), env-overridable so a deploy or a
+# paid tier can move them without a code change. services/ai_budget.py reads them at call time.
+STUDENT_DAILY_BUDGET_USD = float(os.getenv("STUDENT_DAILY_BUDGET_USD", "0.20"))
+BUDGET_NOVICE_MULTIPLIER = float(os.getenv("BUDGET_NOVICE_MULTIPLIER", "2.5"))
+STUDENT_SOFT_FRACTION = float(os.getenv("STUDENT_SOFT_FRACTION", "0.8"))
+STUDENT_MONTHLY_BUDGET_USD = float(os.getenv("STUDENT_MONTHLY_BUDGET_USD", "2.00"))
+STUDENT_DAILY_TOKENS = int(os.getenv("STUDENT_DAILY_TOKENS", "400000"))
+STUDENT_DAILY_GRADES = int(os.getenv("STUDENT_DAILY_GRADES", "300"))
+LEARN_RATE_LIMIT_PER_MIN = int(os.getenv("LEARN_RATE_LIMIT_PER_MIN", "20"))
+# Platform spend alert: alert-only, never blocks a request. Unset = no alert (the owner sets it).
+_platform_budget = os.getenv("PLATFORM_DAILY_BUDGET_USD", "").strip()
+PLATFORM_DAILY_BUDGET_USD: float | None = float(_platform_budget) if _platform_budget else None
+PLATFORM_ALERT_FRACTION = float(os.getenv("PLATFORM_ALERT_FRACTION", "0.8"))
+PLATFORM_CHECK_INTERVAL_S = int(os.getenv("PLATFORM_CHECK_INTERVAL_S", "300"))
+
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",

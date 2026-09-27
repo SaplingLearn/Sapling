@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import config
+from learning import params
 from services import events_service, llm_pricing
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -119,3 +121,44 @@ def test_every_llm_usage_row_carries_both_token_keys(monkeypatch):
         None,
         None,
     )  # no such fields at all
+
+
+# ── constants (spec §3.5) ────────────────────────────────────────────────────
+
+_CONFIG_DEFAULTS = {
+    "STUDENT_DAILY_BUDGET_USD": "0.20",
+    "BUDGET_NOVICE_MULTIPLIER": "2.5",
+    "STUDENT_SOFT_FRACTION": "0.8",
+    "STUDENT_MONTHLY_BUDGET_USD": "2.00",
+    "STUDENT_DAILY_TOKENS": "400000",
+    "STUDENT_DAILY_GRADES": "300",
+    "LEARN_RATE_LIMIT_PER_MIN": "20",
+    "PLATFORM_ALERT_FRACTION": "0.8",
+    "PLATFORM_CHECK_INTERVAL_S": "300",
+}
+
+
+def test_budget_defaults_in_config_match_spec():
+    # Parsed from source: a developer's .env may override the live values, never the defaults.
+    src = (BACKEND / "config.py").read_text()
+    for name, default in _CONFIG_DEFAULTS.items():
+        assert re.search(
+            rf'^{name}\b.*os\.getenv\("{name}", "{re.escape(default)}"\)', src, re.M
+        ), name
+    assert re.search(r'os\.getenv\("PLATFORM_DAILY_BUDGET_USD", ""\)', src), (
+        "platform budget is owner-set"
+    )
+    assert isinstance(config.STUDENT_DAILY_TOKENS, int) and isinstance(
+        config.STUDENT_DAILY_GRADES, int
+    )
+    assert config.PLATFORM_DAILY_BUDGET_USD is None or isinstance(
+        config.PLATFORM_DAILY_BUDGET_USD, float
+    )
+
+
+def test_session_caps_in_params_match_spec():
+    assert (
+        params.LOOP_SESSION_MAX_TUTOR_REQUESTS,
+        params.LOOP_SESSION_MAX_DEEP_REQUESTS,
+        params.LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
+    ) == (40, 6, 12)
