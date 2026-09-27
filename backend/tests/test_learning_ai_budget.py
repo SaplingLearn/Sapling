@@ -622,3 +622,24 @@ def test_decision_run_is_skipped_at_the_grader_cap(usage):
     with decision_agent.override(model=FunctionModel(_must_not_run(runs))):
         assert asyncio.run(decisions._run_decision("judge_leak", None, _deps())) is None
     assert runs == []
+
+
+def test_a_reused_request_id_never_serves_a_stale_summary(usage, monkeypatch):
+    """RequestIDMiddleware trusts a caller-supplied X-Request-ID, so a client could send one id on
+    every request; the cached summary serves that id for _REQUEST_CACHE_TTL_S only."""
+    from services import request_context
+
+    clock = [1000.0]
+    monkeypatch.setattr(ai_budget, "_clock", lambda: clock[0])
+    fake = usage([])
+    token = request_context._REQUEST_ID_CTX.set("client-fixed-id")
+    try:
+        assert ai_budget.check(UID, "grader").level == "normal"
+        fake.rows += [_row(task="grader") for _ in range(config.STUDENT_DAILY_GRADES)]
+        assert ai_budget.check(UID, "grader").level == "normal"  # the same request: its one read
+        assert fake.reads == 1
+        clock[0] += ai_budget._REQUEST_CACHE_TTL_S  # a later request re-sending the id
+        assert ai_budget.check(UID, "grader").level == "hard"
+        assert fake.reads == 2
+    finally:
+        request_context._REQUEST_ID_CTX.reset(token)

@@ -47,6 +47,10 @@ BUDGET_REACHED_DETAIL = "ai budget reached"  # spec §3.5 / A20 429 body
 GRADE_TASKS = frozenset({"grader", "grader_second", "decision"})  # spec §3.5 STUDENT_DAILY_GRADES
 RATE_LIMIT_WINDOW_S = 60  # spec §3.5: LEARN_RATE_LIMIT_PER_MIN counts rows in the last 60 s
 _REQUEST_CACHE_MAX = 512  # entries; a memory bound, not a policy threshold
+# † How long one cached summary may serve its request id. RequestIDMiddleware trusts a
+# caller-supplied X-Request-ID, so a client re-sending one id on every request would otherwise
+# be judged forever on its first summary; a real request makes its checks within seconds.
+_REQUEST_CACHE_TTL_S = 5.0
 _DECEMBER = 12
 _USAGE_COLUMNS = "id,cost_usd,total_tokens,task,created_at"
 _PLATFORM_COLUMNS = "id,cost_usd,created_at"
@@ -96,13 +100,18 @@ class _EmitKey(NamedTuple):
 
 _lock = threading.Lock()
 _emitted: set[_EmitKey] = set()
-_request_cache: dict[tuple[str, str], _Usage] = {}
+_request_cache: dict[tuple[str, str], tuple[float, _Usage]] = {}  # key → (stamped at, summary)
 _platform_checked_at: float | None = None
 
 
 def _utcnow() -> datetime:
     """The module clock; tests monkeypatch it."""
     return datetime.now(timezone.utc)
+
+
+def _clock() -> float:
+    """Monotonic seconds for the request cache and the platform interval; tests monkeypatch it."""
+    return time.monotonic()
 
 
 def _emit_capped(
@@ -258,8 +267,8 @@ def _usage(user_id: str) -> _Usage | None:
     if key is not None:
         with _lock:
             hit = _request_cache.get(key)
-        if hit is not None:
-            return hit
+        if hit is not None and _clock() - hit[0] < _REQUEST_CACHE_TTL_S:
+            return hit[1]
     now = _utcnow()
     try:
         rows = _load_rows(user_id, _month_start(now))
@@ -269,9 +278,10 @@ def _usage(user_id: str) -> _Usage | None:
     summary = _summarise(rows, now)
     if key is not None:
         with _lock:
+            _request_cache.pop(key, None)  # a refreshed key moves to the back of the FIFO
             if len(_request_cache) >= _REQUEST_CACHE_MAX:
                 _request_cache.pop(next(iter(_request_cache)))
-            _request_cache[key] = summary
+            _request_cache[key] = (_clock(), summary)
     return summary
 
 
@@ -472,7 +482,7 @@ def _maybe_check_platform() -> None:
     global _platform_checked_at
     if config.PLATFORM_DAILY_BUDGET_USD is None:
         return
-    now = time.monotonic()
+    now = _clock()
     with _lock:
         last = _platform_checked_at
         if last is not None and now - last < config.PLATFORM_CHECK_INTERVAL_S:
