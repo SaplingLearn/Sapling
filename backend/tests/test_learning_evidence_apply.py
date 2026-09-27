@@ -1149,20 +1149,178 @@ class TestApplyEvidence:
         assert [r["channel"] for r in _event_rows(mocks)] == ["mc"]
 
 
-def test_no_production_caller_passes_evidence_yet():
-    """PKG-03 adds the path and no caller. PKG-05 deletes this test when it
-    wires graded_check_tool → apply_graph_update(..., {"evidence": ...})."""
-    import pathlib
+LEGACY_GRAPH_KEYS = frozenset({"new_nodes", "updated_nodes", "new_edges"})
+_READ_ONLY_DICT_METHODS = frozenset({"get", "items", "keys", "values"})
 
-    backend = pathlib.Path(__file__).resolve().parents[1]
-    hits = []
-    for sub in ("routes", "agents", "services"):
-        for path in (backend / sub).rglob("*.py"):
-            if path.name == "graph_service.py":
+
+def _graph_update_payloads(source: str) -> list[tuple[int, str | None]]:
+    """(line, problem) for every apply_graph_update reference in `source`;
+    problem is None when the payload provably carries only LEGACY_GRAPH_KEYS.
+
+    A payload passes when it is a dict literal whose keys are all string
+    constants in LEGACY_GRAPH_KEYS, or a local name that is bound only to
+    such literals, extended only by `name["<legacy key>"] = …`, never
+    mutated through a method and never handed to another call. The function
+    may be called directly (`apply_graph_update(u, payload)`, by alias or as
+    `module.apply_graph_update`) or passed positionally to a runner
+    (`asyncio.to_thread(apply_graph_update, u, payload)`). Anything the scan
+    cannot resolve is a problem, so the check fails closed."""
+    import ast
+
+    tree = ast.parse(source)
+    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+    aliases = {"apply_graph_update"} | {
+        a.asname
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom)
+        for a in n.names
+        if a.name == "apply_graph_update" and a.asname
+    }
+
+    def is_agu(n):
+        return (isinstance(n, ast.Name) and n.id in aliases) or (
+            isinstance(n, ast.Attribute) and n.attr == "apply_graph_update"
+        )
+
+    def legacy_dict(n):
+        return isinstance(n, ast.Dict) and all(
+            isinstance(k, ast.Constant) and k.value in LEGACY_GRAPH_KEYS for k in n.keys
+        )
+
+    def scope_of(n):
+        while n in parents:
+            n = parents[n]
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return n
+        return tree
+
+    def name_problem(name, scope, call):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = scope.args
+            params = a.posonlyargs + a.args + a.kwonlyargs + [x for x in (a.vararg, a.kwarg) if x]
+            if name in {p.arg for p in params}:
+                return f"payload {name!r} is a parameter: built elsewhere"
+        bound = False
+        for n in ast.walk(scope):
+            if not (isinstance(n, ast.Name) and n.id == name):
                 continue
-            if re.search(r'["\']evidence["\']\s*:', path.read_text()):
-                hits.append(str(path.relative_to(backend)))
-    assert hits == [], hits
+            up = parents.get(n)
+            if isinstance(n.ctx, ast.Store):
+                if isinstance(up, (ast.Assign, ast.AnnAssign)) and legacy_dict(up.value):
+                    bound = True
+                    continue
+                return f"payload {name!r} is bound to something other than a legacy dict"
+            if isinstance(up, ast.Subscript) and up.value is n:
+                if isinstance(up.ctx, ast.Load):
+                    continue
+                key = up.slice
+                if isinstance(key, ast.Constant) and key.value in LEGACY_GRAPH_KEYS:
+                    continue
+                return f"payload {name!r} gains a key that is not a legacy constant"
+            if isinstance(up, ast.Attribute) and up.value is n:
+                if up.attr in _READ_ONLY_DICT_METHODS:
+                    continue
+                return f"payload {name!r} is mutated via .{up.attr}()"
+            if isinstance(up, ast.Call) and n in up.args and up is not call:
+                return f"payload {name!r} is handed to another call"
+            if isinstance(up, ast.keyword) and parents.get(up) is not call:
+                return f"payload {name!r} is handed to another call"
+        return None if bound else f"payload {name!r} is never bound in scope"
+
+    results = []
+    for node in ast.walk(tree):
+        if not is_agu(node):
+            continue
+        call = parents.get(node)
+        if isinstance(call, ast.Call) and call.func is node:
+            index = 1
+        elif isinstance(call, ast.Call) and any(a is node for a in call.args):
+            index = next(i for i, a in enumerate(call.args) if a is node) + 2
+        else:
+            results.append((node.lineno, "apply_graph_update is referenced, not called"))
+            continue
+        payload = call.args[index] if len(call.args) > index else None
+        if payload is None:
+            payload = next((k.value for k in call.keywords if k.arg == "graph_update"), None)
+        if legacy_dict(payload):
+            problem = None
+        elif isinstance(payload, ast.Name):
+            problem = name_problem(payload.id, scope_of(call), call)
+        else:
+            problem = "payload is not a legacy-keyed dict literal or a checkable local"
+        results.append((node.lineno, problem))
+    return results
+
+
+def test_no_production_caller_passes_evidence_yet():
+    """PKG-03 adds the path and no caller: every apply_graph_update call in
+    application code passes a payload that provably carries only the legacy
+    keys. PKG-05 deletes this test (and its detector) when it wires
+    graded_check_tool → apply_graph_update(..., {"evidence": ...})."""
+    import test_learning_loop_invariants as inv
+
+    problems, callers = [], set()
+    for rel, path in inv._application_py_files():
+        text = path.read_text()
+        if "apply_graph_update" not in text:
+            continue
+        for line, problem in _graph_update_payloads(text):
+            callers.add(rel)
+            if problem:
+                problems.append(f"{rel}:{line} {problem}")
+    assert problems == [], "\n".join(problems)
+    # Non-vacuous: the scan reached the known legacy callers.
+    assert callers >= {
+        "routes/quiz.py",
+        "routes/documents.py",
+        "agents/tools/graph.py",
+        "services/graph_service.py",
+    }, callers
+
+
+_ADD_NODE_SHAPE = """
+def add_node(u, c, anchor):
+    update: dict = {"new_nodes": [{"concept_name": "X"}]}
+    if anchor:
+        update["new_edges"] = []
+    apply_graph_update(u, update, course_id=c)
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "offends"),
+    [
+        ('apply_graph_update(u, {"new_nodes": nodes}, course_id=c)', False),
+        ('asyncio.to_thread(apply_graph_update, u, {"updated_nodes": ups}, c)', False),
+        (_ADD_NODE_SHAPE, False),
+        ("from services.graph_service import apply_graph_update", False),
+        ('verdict = {"evidence": "JUDGE ERROR"}', False),
+        ('apply_graph_update(u, {"evidence": evs}, c)', True),
+        ('apply_graph_update(u, graph_update={"evidence": evs})', True),
+        ('upd = {"new_nodes": []}\nupd["evidence"] = evs\napply_graph_update(u, upd)', True),
+        ("apply_graph_update(u, dict(evidence=evs))", True),
+        ('upd = {}\nupd.setdefault("evidence", evs)\napply_graph_update(u, upd)', True),
+        ('upd = {"new_nodes": []}\nupd.update(evidence=evs)\napply_graph_update(u, upd)', True),
+        ('K = "evidence"\napply_graph_update(u, {K: evs})', True),
+        ('apply_graph_update(u, {**base, "new_nodes": []})', True),
+        ('upd = {"new_nodes": []}\nfill(upd)\napply_graph_update(u, upd)', True),
+        ("def persist(u, payload):\n    return apply_graph_update(u, payload)", True),
+        ('asyncio.to_thread(apply_graph_update, u, {"evidence": evs}, c)', True),
+        (
+            "from services.graph_service import apply_graph_update as agu\n"
+            'agu(u, {"evidence": evs})',
+            True,
+        ),
+        ('import services.graph_service as gs\ngs.apply_graph_update(u, {"evidence": e})', True),
+        ("f = functools.partial(apply_graph_update, u)", True),
+    ],
+)
+def test_legacy_payload_detector(source, offends):
+    """Mutation cases for test_no_production_caller_passes_evidence_yet: its
+    first form matched only a quoted `"evidence":` dict key, and only under
+    routes/, agents/ and services/."""
+    problems = [p for _, p in _graph_update_payloads(source) if p]
+    assert bool(problems) is offends, problems
 
 
 def test_fsrs_importers_are_sanctioned():
