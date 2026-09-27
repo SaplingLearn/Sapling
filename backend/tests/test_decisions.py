@@ -177,6 +177,18 @@ class TestConfiguration:
         assert decisions.configured_backend() == "function"
         assert decisions.enabled() is True
 
+    def test_a_typo_does_not_switch_function_mode_off(self, monkeypatch):
+        """#672 review: in function mode only an explicit `off` disables the
+        seam; a typo warned and returned `off`, silently killing the router
+        in the one lane that checks it."""
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        for value in ("flsh_lite", "Function ", "jevv"):
+            monkeypatch.setenv(decisions.BACKEND_ENV, value)
+            assert decisions.configured_backend() == "function", value
+        for value in ("off", "OFF", "disabled", "false", "0", "none"):
+            monkeypatch.setenv(decisions.BACKEND_ENV, value)
+            assert decisions.configured_backend() == "off", value
+
     def test_function_outside_function_mode_is_off_never_a_live_model(self, monkeypatch):
         monkeypatch.setenv(decisions.BACKEND_ENV, "function")
         assert decisions.configured_backend() == "off"
@@ -291,6 +303,22 @@ class TestFlashLiteBackend:
         assert usage[0]["task"] == "decision"
         assert usage[0]["feature"] == "test"
         assert usage[0]["provider"] == "gemini"
+
+    def test_one_out_of_range_confidence_does_not_sink_the_output(self):
+        """#672 review: ge/le on the schema made a single 1.02 fail validation
+        for the WHOLE output. Now each key is clamped on its own."""
+        from tests.test_tutor_router import DISRUPTIVE
+        from services import tutor_router
+
+        answers = [dict(a) for a in DISRUPTIVE]
+        answers[2]["confidence"] = 1.02
+        with decision_agent.override(model=_agent_model(answers)):
+            result = asyncio.run(decisions.decide(
+                {"m": "x"}, tutor_router.QUESTIONS, feature="test"))
+        assert result.backend == "flash_lite", result.fallback_reason
+        assert not any(a.defaulted for a in result.answers.values())
+        assert result.answers["complexity"].confidence == 1.0
+        assert len([a for a in result.answers.values() if a.confidence < 1.0]) == 4
 
     def test_usage_row_carries_the_callers_request_id(self, sink):
         """#672 review: outside a request (the router's detached task — no
@@ -581,6 +609,56 @@ class TestJevBackend:
         assert result.value("mood") == expected
         assert result.answers["mood"].defaulted is False
 
+    def test_non_json_values_in_the_state_are_sent_as_strings(self, monkeypatch):
+        """#672 review: httpx's json= has no default=str, so a datetime or
+        UUID in a caller's state raised TypeError before the call left."""
+        import datetime
+        import uuid
+
+        seen: list[httpx.Request] = []
+        _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
+        when = datetime.datetime(2026, 9, 27, 5, 0, tzinfo=datetime.timezone.utc)
+        ident = uuid.UUID("12345678-1234-5678-1234-567812345678")
+        result = asyncio.run(decisions.decide(
+            {"message": "m", "at": when, "id": ident}, QUESTIONS, feature="test"))
+        assert result.backend == "jev" and result.fallback_reason is None
+        assert seen[0].headers["content-type"] == "application/json"
+        sent = json.loads(seen[0].content)["state"]
+        assert sent == {"message": "m", "at": str(when), "id": str(ident)}
+
+    def test_client_cache_releases_closed_loops_and_closes_on_shutdown(self, monkeypatch):
+        """#672 review: a WeakKeyDictionary keyed on the loop can't expire an
+        entry whose client points back at its loop. Closed loops are pruned
+        on access; aclose_clients() closes the live loop's client."""
+        import gc
+        import weakref
+
+        monkeypatch.setattr(typesafe_client, "_transport_override", None)
+        monkeypatch.setattr(typesafe_client, "_clients", {})
+
+        async def get():
+            return typesafe_client._client()
+
+        old = asyncio.new_event_loop()
+        old_client = old.run_until_complete(get())
+        old.close()
+        old_ref = weakref.ref(old)
+        new = asyncio.new_event_loop()
+        try:
+            new_client = new.run_until_complete(get())
+            assert new_client is not old_client
+            assert new.run_until_complete(get()) is new_client, "reused per loop"
+            live_loops = [ref() for ref, _ in typesafe_client._clients.values()]
+            assert live_loops == [new], "the closed loop's entry was pruned"
+            del old, old_client
+            gc.collect()
+            assert old_ref() is None, "nothing pins the closed loop"
+            new.run_until_complete(typesafe_client.aclose_clients())
+            assert new_client.is_closed
+            assert typesafe_client._clients == {}
+        finally:
+            new.close()
+
     def test_uncertain_noul_falls_under_the_floor(self, monkeypatch):
         body = json.loads(json.dumps(JEV_OK))
         body["answers"]["urgent"] = {"type": "noul", "noul": 0.6}  # |2p-1| = 0.2
@@ -772,6 +850,25 @@ class TestShadowAndEvent:
         assert result.backend == "none"
         assert result.fallback_reason == "jev_http_503+agent_RuntimeError"
         assert result.value("urgent") is False
+
+    def test_a_doomed_flash_lite_shadow_is_skipped(self, monkeypatch, sink):
+        """#672 review: with the primary over Jev's budget, the flash_lite
+        shadow can't fit WORKER_LIMITS either — running it only bills a
+        UsageLimitExceeded. Skipped, recorded, no agreement."""
+        seen: list = []
+        calls: list = []
+        _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
+        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        state = {"message": "y" * 150_000}
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS, calls=calls)):
+            result = asyncio.run(decisions.decide(state, QUESTIONS, feature="test"))
+        assert seen == [] and calls == [], "neither Jev nor the agent was called"
+        assert result.fallback_reason == "jev_state_over_budget"
+        (event,) = _decision_events(sink)
+        shadow = event["payload"]["shadow"]
+        assert shadow["fallback_reason"] == "shadow_over_budget"
+        assert shadow["agree"] is None
+        assert _usage_rows(sink) == []
 
     def test_shadow_never_falls_back(self, monkeypatch, sink):
         """A failing Jev SHADOW must not quietly run flash_lite a second time."""

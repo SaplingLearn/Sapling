@@ -42,9 +42,11 @@ class DecisionAnswerItem(BaseModel):
             "question: exactly one of the listed level keys."
         ),
     )
+    # Deliberately unbounded in the schema: a ge/le here makes ONE stray
+    # value (1.02) fail validation for the WHOLE output — every key lost, a
+    # retry billed. services/decisions.py clamps each key into [0, 1] and
+    # drops non-finite values instead.
     confidence: float = Field(
-        ge=0.0,
-        le=1.0,
         description=(
             "How certain the answer is: 0 means no idea (a coin flip between "
             "the options), 1 means certain."

@@ -44,6 +44,7 @@ HTTP API, like the OAuth exchange in ``routes/auth.py``.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import weakref
@@ -117,12 +118,19 @@ def tokens_for_chars(chars: int) -> int:
 # uses it. The app has one long-lived loop, but `run_agent_sync` and tests
 # spin up throwaway loops; sharing one client across them is the "Event loop
 # is closed" bug `_providers._LoopSafeGoogleModel` exists to prevent. Same
-# shape of fix: one client per running loop, looked up at the moment of use,
-# held weakly so a closed throwaway loop's client is collected with it. The
-# app loop keeps its pooled TLS connection — which matters here, because a
+# shape of fix: one client per running loop, looked up at the moment of use.
+# The app loop keeps its pooled TLS connection — which matters here, because a
 # fresh handshake per call would eat a real share of Jev's sub-second budget.
+#
+# Keyed on id(loop) with only a WEAK reference to the loop, and every access
+# prunes entries whose loop is closed or gone. (A WeakKeyDictionary keyed on
+# the loop is not enough: a client whose pool touched the loop holds a strong
+# path back to it, so its entry could never expire, pinning every throwaway
+# loop and its client for the life of the process.) A pruned client belongs
+# to a loop that can no longer run its aclose(); dropping it is all that is
+# left to do. The app loop's client is closed by aclose_clients() on shutdown.
 
-_clients: "weakref.WeakKeyDictionary[Any, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
+_clients: dict[int, tuple["weakref.ref[Any]", httpx.AsyncClient]] = {}
 _clients_lock = threading.Lock()
 
 #: Test seam: when set, every call uses a client built on this transport
@@ -130,18 +138,46 @@ _clients_lock = threading.Lock()
 _transport_override: httpx.AsyncBaseTransport | None = None
 
 
+def _prune_locked() -> None:
+    for key, (loop_ref, _client_) in list(_clients.items()):
+        loop = loop_ref()
+        if loop is None or loop.is_closed():
+            del _clients[key]
+
+
 def _client() -> httpx.AsyncClient:
     if _transport_override is not None:
         return httpx.AsyncClient(transport=_transport_override)
     loop = asyncio.get_running_loop()
     with _clients_lock:
-        client = _clients.get(loop)
-        if client is None or client.is_closed:
-            client = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-            )
-            _clients[loop] = client
+        _prune_locked()
+        entry = _clients.get(id(loop))
+        if entry is not None and entry[0]() is loop and not entry[1].is_closed:
+            return entry[1]
+        client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+        _clients[id(loop)] = (weakref.ref(loop), client)
         return client
+
+
+async def aclose_clients() -> None:
+    """Close the clients this module holds (app shutdown). The running loop's
+    client is closed properly; clients of other loops cannot be awaited from
+    here and are dropped. Never raises."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    with _clients_lock:
+        entries = list(_clients.values())
+        _clients.clear()
+    for loop_ref, client in entries:
+        if loop is not None and loop_ref() is loop and not client.is_closed:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
 
 async def evaluate(
@@ -163,6 +199,11 @@ async def evaluate(
     if not key:
         raise JevError("no_key")
     body = {"state": state, "model": model or model_name(), "questions": questions}
+    # Serialized exactly as the budget estimate and the agent prompt are
+    # (decisions._fit_state / _agent_prompt): default=str, so a datetime or
+    # UUID in a caller's state is sent as its string, not a TypeError that
+    # would fail the call before it leaves.
+    payload = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")
     client = _client()
     try:
         # Two layers: httpx's per-phase timeout (connect/read/write each), and
@@ -171,8 +212,9 @@ async def evaluate(
         resp = await asyncio.wait_for(
             client.post(
                 base_url() + EVALUATE_PATH,
-                json=body,
-                headers={"Authorization": f"Bearer {key}"},
+                content=payload,
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json"},
                 timeout=httpx.Timeout(timeout_s),
             ),
             timeout=timeout_s,
