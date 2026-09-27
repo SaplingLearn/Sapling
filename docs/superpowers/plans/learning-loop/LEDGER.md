@@ -40,6 +40,7 @@ Rules: read this file first; refuse to start if any earlier package is `blocked`
 | 03 | evidence-state | reopened | feat/learning-loop-11-quiz-flashcards | 2eed297 | +0 (inv_01 widened) | PKG-11, 2026-09-27, pytest -k inv_01 → 1 passed | HANDOFF-03.md (Post-hoc) |
 | 03 | evidence-state | reopened | feat/learning-loop-11-quiz-flashcards | 4c51f62 | +10 (test_gated_evidence_call_detector; the evidence-caller scan sanctions the gated submit_quiz call, the fsrs importer pin admits routes/flashcards.py) | PKG-11, 2026-09-27, tests/test_learning_evidence_apply.py → 101 passed | HANDOFF-03.md (Post-hoc) |
 | 11 | quiz-flashcards | done | feat/learning-loop-11-quiz-flashcards | fb708a2 | 50 (32 flashcards_fsrs + 8 scoring_e + 10 PKG-03 detector); full suite 3312 passed, 141 skipped | — | HANDOFF-11.md |
+| 11 | quiz-flashcards | done | feat/learning-loop-11-quiz-flashcards | c76a7b2 | 56 (37 flashcards_fsrs + 9 scoring_e + 10 PKG-03 detector; review fixes 57c7150..c76a7b2, tests only); full suite 3318 passed, 141 skipped | — | HANDOFF-11.md |
 
 ## Deviations
 
@@ -138,6 +139,18 @@ Format: `PKG-NN: <spec said> → <did instead> → <why> → <† if an A/B flag
 - PKG-11: acceptance 1 `55 (26 + 29)` → 62 (32 + 30): +same-day, +failure not swallowed, +achievement dispatch on the loop path, +gate once per rating, +map values == fsrs.Rating, +real order_due through the adapter, +route dicts validate as PKG-03 Evidence; ledger "tests added" 50, not 33.
 - PKG-11: acceptance 9 / self-check 6 `git diff --stat main...HEAD` → measured as `git diff --stat a1a416b..HEAD` → stacked run; paths are the prompt's list plus backend/tests/test_learning_evidence_apply.py (the second PKG-03 reopen).
 - PKG-11: acceptance 11 / self-check 5 (E2E cycle under the lock) → not run; needs local Supabase stack (supabase start): apply 20260927035346_learning_flashcards_fsrs.sql via `python -m db.migrate` (replay from empty on PG15), then quiz/quiz-journeys/quiz-errors/quiz-integration/study-semester/study-recent-guides + `python -m e2e_oracles` under the lock → no supabase CLI / podman / docker on the executing machine. The seed, e2e-up.sh and e2e.yml never enable the loop (grep → no hits), and the legacy payload is pinned by gate_off tests and the unchanged TestSubmitQuizMasteryWrite.
+- PKG-11: Task 2 test-module imports → imports arrive with the task that first uses them (`datetime`/`MagicMock`/`patch` in Task 4); `test_prefix_is_a_utc_timestamp` asserts the glob is non-empty before indexing → ruff F401 fails a module that imports them unused in Task 2, and the red run should read "no migration" rather than `IndexError`.
+- PKG-11: Task 5 Step 2 expected every `test_gate_on_*` list test to fail before the implementation → `test_gate_on_response_rows_carry_the_fsrs_columns` already passed and was kept as written → the list stub returned every fixture key whatever the select string was. Review fix 9ebda83 makes the stub project rows onto the selected columns, so the test now fails without the FSRS select.
+- PKG-11: spec §7 "when true the handler delegates to `routes/learn_loop.py`" → the loop branch is inline in `routes/quiz.py::submit_quiz` and `routes/flashcards.py::rate_card`/`get_flashcards` (`_quiz_evidence`, `_mastery_span`, `_fsrs_advance`, `_order_due_rows`, `_loop_order`) → the PKG-11 prompt specifies it (Behaviour and Files name only those two modules), and `learn_loop.py` is a docstring-only stub until PKG-07. PKG-12 Task 4 Step 3b may move `_fsrs_advance` to `services/flashcard_fsrs.py`; PKG-14 Task B3 makes the branches unconditional in place.
+- PKG-11 (review fixes): the verifier findings were fixed in tests and docs only, and no route code changed (57c7150..c76a7b2):
+  - rate_card's select and update filters are pinned.
+  - The `_list` stub returns only the selected columns.
+  - Each `gate_off` test pins the ordered `table()` names its handler opens. The submit_quiz sequence was recorded against the a1a416b route, and a scratch probe found the flag-off queries identical apart from AES-GCM nonces and clocks.
+  - Each route has a real-gate flag-off test (`learning.gate.table` is never opened), and `get_flashcards` has a gate-once test.
+  - The flashcard route tests freeze the route clock. Before, a run that reached them about 15 min after import failed two correct tests.
+  - A non-boolean `due_only` is pinned as a 422 on both paths (HANDOFF-11 Known gap (c)).
+  - HANDOFF-11 is corrected: before the migration, the loop-path list is a 500, not an empty deck. "What changed" is cut to 8 sentences, and the spec §7 line is added.
+- PKG-11 (review fixes): full suite (same ignore set) → 3318 passed, 141 skipped (+6 tests; the two modules now hold 37 flashcards_fsrs + 31 scoring_e; zero failures, no new skips). PKG-03 is now at c0fc0d9, three commits past the a1a416b base. `git merge-tree --write-tree HEAD c0fc0d9` conflicts only in LEDGER.md (keep both sets). The rebase or merge and a `03 | verified` row against PKG-03's tip are left to the pre-PR merge step, because this round may not rebase or merge (HANDOFF-11 Known gaps).
 
 ## Blocked notes
 

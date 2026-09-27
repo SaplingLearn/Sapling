@@ -47,8 +47,8 @@ LEGACY_RATE_TABLES = ["flashcards", "flashcards"]
 
 
 def _gate_patch(gate: bool | None):
-    """`gate=None` runs the REAL learning.gate with LEARNING_LOOP_ENABLED off
-    (see _real_gate_off); a bool patches the route's gate symbol."""
+    """`gate=None` leaves the REAL learning.gate in place (the test sets the
+    flag, e.g. via _real_gate_off); a bool patches the route's gate symbol."""
     if gate is None:
         return contextlib.nullcontext()
     return patch("routes.flashcards.learning_loop_active", return_value=gate)
