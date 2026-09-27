@@ -2,7 +2,9 @@
 
 Stability ``S`` is in days (the time for retrievability to fall to 0.9),
 difficulty ``D`` is in [1, 10], retrievability ``R`` is in (0, 1]. Every
-formula below is the spec's, verbatim, over the weights ``params.FSRS_W``.
+formula below is the spec's over the weights ``params.FSRS_W``, plus the
+FSRS-6 reference guards (py-fsrs 6.3.2, same weights) that the spec's
+transcription omits; each is marked where it applies (HANDOFF-02 Deviations).
 Ratings are the FSRS grades 1 Again / 2 Hard / 3 Good / 4 Easy; v1 never
 emits Easy (``rating_for`` returns at most Good).
 """
@@ -37,6 +39,7 @@ _DECAY = W[20]
 _STABILITY_R = 0.9  # R(t = S) by the definition of stability (spec §3.2)
 FACTOR = _STABILITY_R ** (-1 / _DECAY) - 1
 _D_MIN, _D_MAX = 1.0, 10.0
+_SAME_DAY_PASS_SINC_MIN = 1.0  # FSRS-6: a same-day Hard/Good/Easy never shrinks S
 _SECONDS_PER_DAY = 86_400.0
 _SECONDS_PER_MINUTE = 60
 
@@ -173,7 +176,17 @@ def _stability_lapse(d: float, s: float, r: float) -> float:
 
 
 def _stability_same_day(s: float, g: int) -> float:
-    return s * math.exp(W[17] * (g - Rating.GOOD + W[18])) * s ** (-W[19])
+    """S·SInc, SInc = e^(w17·(G−3+w18))·S^(−w19), floored at 1 for G ≥ Hard.
+
+    The floor is FSRS-6's (py-fsrs 6.3.2 ``_short_term_stability``, same
+    weights); spec §3.2's transcription omits it, and without it a correct
+    same-day answer lowers S for any S above ~2.1 days (Good) or at every
+    realistic S (Hard). HANDOFF-02 Deviations.
+    """
+    sinc = math.exp(W[17] * (g - Rating.GOOD + W[18])) * s ** (-W[19])
+    if g >= Rating.HARD:
+        sinc = max(sinc, _SAME_DAY_PASS_SINC_MIN)
+    return s * sinc
 
 
 def next_state(

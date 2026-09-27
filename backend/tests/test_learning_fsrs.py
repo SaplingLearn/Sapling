@@ -1,7 +1,9 @@
 """learning.fsrs — FSRS-6 scheduler (spec §3.2). Pure maths, no DB, no LLM.
 
-Reference values were computed from the spec §3.2 formulas over FSRS_W and
-are stated to four decimals; ``pytest.approx(abs=5e-5)`` throughout.
+Reference values were computed from the spec §3.2 formulas over FSRS_W, plus
+the FSRS-6 reference guards the spec's transcription omits (py-fsrs 6.3.2,
+same default weights; HANDOFF-02 Deviations), and are stated to four
+decimals; ``pytest.approx(abs=5e-5)`` throughout.
 """
 
 from __future__ import annotations
@@ -203,10 +205,38 @@ def test_again_after_three_days_reference():
 
 def test_same_day_reference():
     d, s = _after_first_good()
+    # FSRS-6 floors the same-day increase at 1 for Hard/Good/Easy: the raw
+    # spec §3.2 value here is 2.2938 < S, i.e. a correct answer shrank S.
     nd, ns = next_state(d, s, Rating.GOOD, 0.0, same_day=True)
-    assert (nd, ns) == (_approx(2.1170), _approx(2.2938))
+    assert (nd, ns) == (_approx(2.1170), _approx(2.3065))
+    nd, ns = next_state(d, s, Rating.HARD, 0.0, same_day=True)
+    assert ns == _approx(2.3065)  # raw 1.3334
     nd, ns = next_state(d, s, Rating.AGAIN, 0.0, same_day=True)
-    assert (nd, ns) == (_approx(7.4003), _approx(0.7751))
+    assert (nd, ns) == (_approx(7.4003), _approx(0.7751))  # Again is not floored
+    # where the raw increase is already >= 1 the floor changes nothing
+    _, ns = next_state(d, 0.5, Rating.GOOD, 0.0, same_day=True)
+    assert ns == _approx(0.5499)
+
+
+def test_same_day_pass_never_lowers_stability():
+    for s in (0.05, 0.5, FSRS_S0_GOOD, 10.0, 50.0, 500.0):
+        for d in (1.0, 2.1181, 5.0, 10.0):
+            for g in (Rating.HARD, Rating.GOOD, Rating.EASY):
+                _, ns = next_state(d, s, g, 0.0, same_day=True)
+                assert ns >= s, (s, d, g)
+            _, ns_again = next_state(d, s, Rating.AGAIN, 0.0, same_day=True)
+            assert ns_again < s
+
+
+def test_same_session_correct_recalls_do_not_undo_the_first():
+    # SR acquisition: a first Good then SR_INITIAL_CRITERION − 1 more correct
+    # recalls in the same session; and a first Good then two assisted (Hard)
+    # correct answers. Neither may end below a single Good's S0.
+    for g in (Rating.GOOD, Rating.HARD):
+        d, s = _after_first_good()
+        for _ in range(SR_INITIAL_CRITERION - 1):
+            d, s = next_state(d, s, g, 0.0, same_day=True)
+        assert s >= FSRS_S0_GOOD
 
 
 def test_ratings_order_stability_and_difficulty():
