@@ -1,0 +1,14 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "feedback_hint": "Your answer correctly identifies that R2 carries current and R1 does not. Well done!",
+      "item_results": [
+        "criterion_1:yes",
+        "criterion_2:yes"
+      ],
+      "matched_wrong_key": ""
+    }
+  ]
+}

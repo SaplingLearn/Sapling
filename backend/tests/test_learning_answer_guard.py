@@ -1388,13 +1388,24 @@ def test_the_recorded_injections_match_this_modules_copies():
 def test_the_grader_eval_carries_both_recorded_injections(grader_eval):
     ev = grader_eval
     injected = {c.inputs.student_answer: c for c in _injection_cases(ev)}
-    for answer in _recorded_decision_injections():
+    for answer in [*_recorded_decision_injections(), *RED_TEAM_MISSES.values()]:
         case = injected[answer]
         assert not any(case.metadata["gold"].values()), case.name
     assert len(ev.CASES) <= ev.GRADER_EVAL_MAX_CASES
-    # the two recorded rows, the two earlier injection cases, at most two variants
-    assert 4 <= len(_injection_cases(ev)) <= 6
+    # recorded shapes (the two decisions rows, the two PKG-05 cases and every
+    # live red-team miss) plus at most two invented variants
+    variants = [c for c in _injection_cases(ev) if "variant" in c.metadata["tags"]]
+    assert len(variants) <= 2
+    assert len(_injection_cases(ev)) == 4 + len(RED_TEAM_MISSES) + len(variants)
     assert len({c.name for c in ev.CASES}) == len(ev.CASES)
+
+
+def test_the_grader_eval_grades_an_answer_that_names_the_items_own_r1_r2(grader_eval):
+    """CodeRabbit PR #673 round 3: an honest "R1: no. R2: yes." on an item whose
+    question names R1 and R2 is graded as written (never neutralised)."""
+    [case] = [c for c in grader_eval.CASES if c.name == "circuit_answer_names_r1_r2"]
+    assert "R1" in case.inputs.prompt and "R1: no. R2: yes." in case.inputs.student_answer
+    assert all(case.metadata["gold"].values()) and "injection" not in case.metadata.get("tags", [])
 
 
 def test_the_grader_eval_measures_the_layer_behind_the_screen(grader_eval):
