@@ -45,6 +45,7 @@ from learning.checks import (
     question_hash,
     rank_chunks_for_concept,
     repair_draft,
+    stored_rubric,
     validate_draft,
 )
 from learning.params import (
@@ -108,10 +109,8 @@ def _build_row(
     source_docs: list[str],
 ) -> dict:
     qh = question_hash(draft.prompt)  # PLAINTEXT, before encryption
-    rubric = [
-        {"id": f"r{i}", "text": text}
-        for i, text in enumerate((t for t in draft.rubric if t.strip()), start=1)
-    ]
+    # A37 review: an mc_reason rubric ends with code's reason criterion.
+    rubric = [r.model_dump() for r in stored_rubric(draft)]
     wrong = [{"key": k, "text": t} for k, t in zip(draft.wrong_keys, draft.wrong_texts)]
     options = None
     correct_option = None

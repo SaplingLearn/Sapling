@@ -25,7 +25,9 @@ makes the repairs that need no guess, `validate_draft` names every remaining
 fault by its rule, and `lettered_options` letters the valid options and places
 the correct one at a slot keyed by a server secret, so the model can neither
 drift a key off its option nor bias the answer's position, and a client that
-knows the question_hash cannot compute it.
+knows the question_hash cannot compute it. `stored_rubric` appends code's own
+criterion to an mc_reason rubric, so a reason that only restates the chosen
+option never passes the grader.
 """
 
 from __future__ import annotations
@@ -696,6 +698,34 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
                 f"{CHECK_ITEM_STEPWISE_MIN_STEPS}, so the stepwise claim was dropped (repaired)"
             )
     return (fixed, repairs) if repairs else (draft, [])
+
+
+#: The criterion code appends to every stored mc_reason rubric (§13 A37,
+#: review): the grader checks each criterion strictly, and this one fails a
+#: reason that only restates the chosen option. Without it a correct pick plus
+#: "Because the answer is <option text>" passed 5 of 6 live items (the review)
+#: and 21 of 28 stored items the fixer graded directly, since a correct option
+#: often carries its own justification and the model's criteria can be met by
+#: the pick; with it, 2 of 28, while the reference's own reason still passed 27
+#: of 28. Its wording is measured: a version asking for a fact "the final
+#: answer's own words do not already state" failed 9 of 12 reference reasons.
+MC_REASON_CRITERION = (
+    "The reason supports the choice with at least one fact, cause, mechanism or piece of "
+    "evidence. A reason that only repeats or rewords the chosen answer earns no."
+)
+
+
+def stored_rubric(draft: CheckItemDraft) -> list[RubricItem]:
+    """The rubric an item is stored with: the draft's non-blank criteria as
+    r1..rn, then — on an mc_reason item — MC_REASON_CRITERION as r(n+1). It is
+    not the model's, so it never counts toward CHECK_ITEM_MIN_RUBRIC."""
+    rubric = [
+        RubricItem(id=f"r{i}", text=text)
+        for i, text in enumerate((t for t in draft.rubric if t.strip()), start=1)
+    ]
+    if draft.format == _MC_REASON:
+        rubric.append(RubricItem(id=f"r{len(rubric) + 1}", text=MC_REASON_CRITERION))
+    return rubric
 
 
 def lettered_options(draft: CheckItemDraft, *, slot_key: bytes) -> tuple[list[Option], str]:

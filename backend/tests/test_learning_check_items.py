@@ -658,6 +658,29 @@ class TestValidateDraft:
         reasons = validate_draft(_mc_draft(rubric=["Names the step size."]))
         assert any(r.startswith("rubric") for r in reasons), reasons
 
+    def test_the_stored_rubric_is_the_models_criteria_plus_the_codes_for_mc_reason(self):
+        """Review of A37: the code's reason criterion follows the model's
+        non-blank criteria (r1..rn keep their ids) on an mc_reason item only.
+        It does not count toward the model's CHECK_ITEM_MIN_RUBRIC: an
+        mc_reason draft still writes two criteria of its own."""
+        from learning.checks import MC_REASON_CRITERION, RubricItem, stored_rubric, validate_draft
+
+        mc = _mc_draft(rubric=["Names the step size.", "  ", "Ties it to the gradient."])
+        assert stored_rubric(mc) == [
+            RubricItem(id="r1", text="Names the step size."),
+            RubricItem(id="r2", text="Ties it to the gradient."),
+            RubricItem(id="r3", text=MC_REASON_CRITERION),
+        ]
+        for fmt in ("free", "teachback"):
+            assert stored_rubric(_draft(format=fmt)) == [
+                RubricItem(id="r1", text="Names the step size."),
+                RubricItem(id="r2", text="Ties it to the gradient direction."),
+            ]
+        assert any(r.startswith("rubric") for r in validate_draft(_mc_draft(rubric=["One."])))
+        # the criterion is one binary check that names what a restatement lacks
+        assert "repeats or rewords the chosen answer" in MC_REASON_CRITERION
+        assert "; " not in MC_REASON_CRITERION
+
     def test_the_live_run_1_shape_is_named_rule_by_rule(self):
         """Live sequence test 2026-09-27, run 1: the correct option carried a
         wrong_key, two distractors shared a key, a one-item rubric. Each fault
@@ -1703,6 +1726,28 @@ class TestCreateItems:
             and decrypt_if_present(num["canonical_answer"]) == "0.01"
         )
         assert num["canonical_verified"] is False and num["options_json"] is None
+
+    def test_an_mc_reason_rubric_is_stored_with_the_codes_reason_criterion(self):
+        """Review of A37: a correct pick plus a restatement of the option was
+        graded correct on 5 of 6 live items, because the correct option
+        carries its own justification and the model's criteria can be met by
+        the pick. Code appends one criterion to every mc_reason rubric, after
+        the model's (their ids unchanged), so no item can be passed without a
+        supporting fact. Free and teachback rubrics are stored as written."""
+        from learning.checks import MC_REASON_CRITERION
+        from services import check_item_service as svc
+        from services.encryption import decrypt_if_present
+
+        factory, mocks = _cached_tables({})
+        with patch("services.check_item_service.table", side_effect=factory):
+            svc.create_items("course-1", "learning rate", "doc-1", [_mc_draft(), _draft()])
+        mc, free = mocks["check_items"].upsert.call_args[0][0]
+        assert json.loads(decrypt_if_present(mc["rubric_json"])) == [
+            {"id": "r1", "text": "Names the step size."},
+            {"id": "r2", "text": "Ties it to the gradient direction."},
+            {"id": "r3", "text": MC_REASON_CRITERION},
+        ]
+        assert len(json.loads(decrypt_if_present(free["rubric_json"]))) == 2
 
     def test_invalid_drafts_are_dropped_not_stored(self, caplog):
         from services import check_item_service as svc
