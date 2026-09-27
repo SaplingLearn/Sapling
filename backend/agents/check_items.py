@@ -56,31 +56,46 @@ class CheckItemsUnavailable(BaseModel):
 
 _PAIRS = len(CHECK_ITEM_FORMATS) * len(CHECK_ITEM_DIFFICULTIES)
 _EASY, _MID, _HARD = CHECK_ITEM_DIFFICULTIES
+_ORDER = ", ".join(f"{f} {d}" for f in CHECK_ITEM_FORMATS for d in CHECK_ITEM_DIFFICULTIES)
 
 _PROMPT = (
     "You write assessment items (check items) that a tutor will pose to "
     "students, for EACH course concept listed in the request, at most "
     f"{CHECK_ITEM_CONCEPTS_PER_CALL} concepts per request. Write ONLY from the "
     "course passages provided.\n\n"
-    f"For every listed concept produce exactly {_PAIRS} items: one for every "
-    f"(format, difficulty) pair over formats {', '.join(CHECK_ITEM_FORMATS)} and "
-    f"difficulties {', '.join(str(d) for d in CHECK_ITEM_DIFFICULTIES)}. Set "
-    "`concept` to that concept's name exactly as listed.\n\n"
+    f"For EVERY listed concept produce exactly {_PAIRS} items, one for each "
+    f"(format, difficulty) pair, in this order: {_ORDER}. Never skip a pair "
+    "and never repeat one. Set `concept` to that concept's name exactly as "
+    "listed.\n\n"
     "Formats:\n"
     "- free: a short free-response question answerable in 1-3 sentences.\n"
     "- teachback: 'Explain to a classmate who missed the lecture ...' — the "
     "student teaches the idea back in their own words.\n"
     "- mc_reason: `prompt` is the question stem ONLY (never list the options in "
     "the prompt text) and asks the student to pick one option and give the "
-    "reason. Put four options in `option_letters` (A, B, C, D) and "
-    "`option_texts`. Exactly one is correct: `correct_option` is its letter "
-    'and its `option_wrong_keys` entry is "". Every other option is a '
-    "distractor whose `option_wrong_keys` entry is one of THIS item's "
-    "`wrong_keys` — the misconception that makes it tempting. The reference "
-    "answer names the correct letter AND the reason it is correct. For free "
-    'and teachback leave the option fields empty and `correct_option` "".\n\n'
+    'reason. Four options: `option_letters` is ["A", "B", "C", "D"] and '
+    "`option_texts` holds the four option texts in the same order. Exactly one "
+    "option is correct and `correct_option` is its letter. `option_wrong_keys` "
+    "has EXACTLY ONE ENTRY PER OPTION, in the same order (four entries): the "
+    "correct option's entry is the empty string \"\", and each distractor's "
+    "entry is one of THIS item's `wrong_keys` — the misconception that makes "
+    "that option tempting. The reference answer names the correct letter AND "
+    "the reason it is correct. For free and teachback items leave "
+    "`option_letters`, `option_texts`, `option_wrong_keys` empty and "
+    '`correct_option` "".\n\n'
     f"Difficulty: {_EASY} = recall or definition; {_MID} = application to a "
     f"concrete case; {_HARD} = transfer or analysis in a new situation.\n\n"
+    "Every item, in EVERY format (free and teachback included), carries:\n"
+    "- `reference_answer`: a complete model answer grounded ONLY in the "
+    "passages.\n"
+    f"- `rubric`: at least {CHECK_ITEM_MIN_RUBRIC} entries, each ONE binary "
+    "criterion a grader can mark present or absent in a student's answer.\n"
+    f"- at least {CHECK_ITEM_MIN_WRONG} common wrong reason(s) as two parallel "
+    "lists of the SAME length: `wrong_keys` are short snake_case identifiers "
+    "(no duplicates within an item; reuse the same key across items for the "
+    "same misconception) and `wrong_texts[i]` describes the misconception "
+    "`wrong_keys[i]` names. A free or teachback item lists the mistakes a "
+    "student is likely to make when answering it.\n\n"
     'Answer kind: `answer_kind` is "numeric" only when the whole answer is '
     "one number — then `canonical_answer` is that number as plain decimal text "
     'and `tolerance` the accepted absolute error as text ("" for exact). '
@@ -88,15 +103,16 @@ _PROMPT = (
     "`stepwise` is true only when the reference answer is written as at least "
     f"{CHECK_ITEM_STEPWISE_MIN_STEPS} numbered steps ('1.' or '2)' at the start "
     "of a line); otherwise false.\n\n"
-    "`reference_answer` is a complete model answer grounded ONLY in the "
-    "passages. `rubric` holds at least "
-    f"{CHECK_ITEM_MIN_RUBRIC} items, each ONE binary criterion a grader can mark "
-    "present or absent in a student's answer. Give at least "
-    f"{CHECK_ITEM_MIN_WRONG} common wrong reason(s) as parallel lists: "
-    "`wrong_keys` are short stable snake_case identifiers (reuse the same key "
-    "across items for the same misconception) and `wrong_texts` describe each "
-    "misconception.\n\n"
     "The prompt must NOT contain the reference answer or paraphrase it.\n\n"
+    "Shape of the list fields, for an mc_reason item whose correct option is "
+    'B: option_letters ["A", "B", "C", "D"], option_wrong_keys '
+    '["confuses_x_with_y", "", "ignores_z", "reverses_order"], correct_option '
+    '"B", wrong_keys ["confuses_x_with_y", "ignores_z", "reverses_order"], '
+    "wrong_texts [three matching descriptions]. For a free or teachback item: "
+    'wrong_keys ["confuses_x_with_y"], wrong_texts ["Treats x as if it were '
+    'y."], option_letters [], option_texts [], option_wrong_keys [], '
+    'correct_option "". A stepwise reference is written as numbered lines: '
+    '"1. First step..." then, on the next line, "2. Second step...".\n\n'
     "`chunk_ids` lists only ids from the [chunk <id>] markers whose text you "
     "actually used; leave it empty when you used only [passage] text.\n\n"
     # #150: the passages are uploaded course material, untrusted text.

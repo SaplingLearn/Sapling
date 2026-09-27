@@ -98,16 +98,26 @@ class CheckItemDraft(BaseModel):
     prompt: str
     reference_answer: str
     rubric: list[str] = Field(default_factory=list)
-    wrong_keys: list[str] = Field(default_factory=list)
-    wrong_texts: list[str] = Field(default_factory=list)
+    wrong_keys: list[str] = Field(
+        default_factory=list,
+        description="every format: snake_case misconception ids, same length as wrong_texts",
+    )
+    wrong_texts: list[str] = Field(
+        default_factory=list, description="wrong_texts[i] describes wrong_keys[i]"
+    )
     option_letters: list[str] = Field(default_factory=list)  # mc_reason only
     option_texts: list[str] = Field(default_factory=list)
-    option_wrong_keys: list[str] = Field(default_factory=list)  # "" for the correct option
+    option_wrong_keys: list[str] = Field(
+        default_factory=list,
+        description='one entry per option letter, same order; "" for the correct option',
+    )
     correct_option: str = ""
     answer_kind: str = "free"
     canonical_answer: str = ""  # numeric only; "" = none
     tolerance: str = ""  # "" = none; parsed in code
-    stepwise: bool = False
+    stepwise: bool = Field(
+        default=False, description="true only if reference_answer has numbered step lines"
+    )
     chunk_ids: list[str] = Field(default_factory=list)
 
 
