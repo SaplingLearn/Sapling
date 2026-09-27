@@ -1258,7 +1258,8 @@ class TestReadItems:
         bad = dict(self._stored_row(), difficulty="not-an-int")
         factory, _ = _cached_tables({"check_items": [bad]})
         with patch("services.check_item_service.table", side_effect=factory):
-            assert svc.get_check_item("i1") is None  # a row that cannot be read is skipped, never raised
+            # a row that cannot be read is skipped, never raised
+            assert svc.get_check_item("i1") is None
 
     def test_items_for_concepts_groups_by_concept_key(self):
         from services import check_item_service as svc
