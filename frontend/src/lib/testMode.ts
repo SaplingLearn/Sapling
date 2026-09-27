@@ -7,21 +7,28 @@
  * animations skipped, and force-graph cooldowns zeroed.
  *
  * NEXT_PUBLIC_ vars are inlined at build time, so with the flag off
- * every test-mode branch below is false — production bundles keep the
- * exact Math.random()/Date.now() behavior.
+ * every test-mode branch below is statically false — production
+ * bundles keep the exact Math.random()/Date.now() behavior.
  */
 
 /**
- * The one definition of an on/off build flag ("1" or "true"). Used for
- * IS_TEST_MODE below and by src/lib/analytics.ts's gate (test + local mode),
- * so "this is the test build" means exactly one thing app-wide.
+ * The one definition of an on/off build flag: "1" or "true". src/lib/
+ * analytics.ts's gate (test + local mode) calls it on its injectable env.
  */
 export function isTruthyBuildFlag(v: string | undefined): boolean {
   return v === "1" || v === "true";
 }
 
-// A literal process.env read, so Next inlines it at build time.
-export const IS_TEST_MODE = isTruthyBuildFlag(process.env.NEXT_PUBLIC_TEST_MODE);
+// The SAME rule as isTruthyBuildFlag, but kept as the literal inline
+// comparison it has always been (not a helper call), so the bundler treats
+// it exactly as before: when the build sets NEXT_PUBLIC_TEST_MODE the value
+// is inlined and the comparison folds. (With the var unset at build time,
+// Next leaves a runtime env lookup that evaluates false — the test-only
+// branches are inert rather than removed; that is unchanged from main.)
+// testMode.test.ts pins the two definitions to agree.
+export const IS_TEST_MODE =
+  process.env.NEXT_PUBLIC_TEST_MODE === "1" ||
+  process.env.NEXT_PUBLIC_TEST_MODE === "true";
 
 /**
  * mulberry32 — tiny 32-bit seeded PRNG. Same seed ⇒ same sequence,

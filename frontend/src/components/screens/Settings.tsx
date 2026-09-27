@@ -154,10 +154,10 @@ export function Settings() {
     }
   };
 
-  // Product analytics. Opting out stops this browser at once, then saves to
-  // the account; opting in saves to the account FIRST and only then resumes
-  // capture, so the two never disagree. The switch is disabled while a save
-  // is in flight, so toggles cannot overlap (chooseAnalytics also refuses).
+  // Product analytics. The account flag is the single source of truth.
+  // Opting out stops capture at once, then saves; opting in saves FIRST and
+  // only then starts capture. The switch is disabled while a save is in
+  // flight, so toggles cannot overlap (chooseAnalytics also refuses).
   const [analyticsSaving, setAnalyticsSaving] = React.useState(false);
   const setAnalyticsPreference = async (enabled: boolean) => {
     if (!userId || analyticsSaving) return;
@@ -166,10 +166,12 @@ export function Settings() {
       const result = await chooseAnalytics(userId, enabled, (optOut) =>
         updateSettings(userId, { analytics_opt_out: optOut }),
       );
-      if (result === "local_only") {
-        toast.error("Couldn't save that to your account. It still applies in this browser.");
-      } else if (result === "failed" && enabled) {
-        toast.error("Couldn't turn product analytics back on. Please try again.");
+      if (result === "failed") {
+        toast.error(
+          enabled
+            ? "Couldn't turn product analytics back on. Please try again."
+            : "Couldn't save that to your account. Analytics stays off for the rest of this visit.",
+        );
       }
     } finally {
       setAnalyticsSaving(false);
@@ -719,13 +721,12 @@ export function Settings() {
 }
 
 /**
- * Product-analytics opt-out (PostHog). Flipping it takes effect in this
- * browser at once (posthog-js consent, which survives sign-out — see
- * src/lib/analytics.ts resetAnalytics) and is saved to the account as
- * `analytics_opt_out`, which every browser applies on sign-in. When analytics
- * is not running in this build — no key, local mode, the E2E/test build — or
- * the browser sends Do Not Track / GPC, the switch renders disabled so the
- * page never implies a choice it cannot honour.
+ * Product-analytics opt-out (PostHog). The state comes from the signed-in
+ * student's account (`analytics_opt_out`, read by the UserProvider on every
+ * page load; src/lib/analytics.ts). The switch is disabled until that answer
+ * has arrived, while a save is in flight, under Do Not Track / GPC, and in a
+ * build that runs no analytics — so it never implies a choice it cannot
+ * honour.
  */
 function AnalyticsPreference({
   onChange,
@@ -740,13 +741,15 @@ function AnalyticsPreference({
     getServerAnalyticsState,
   );
   const on = state === "on";
-  const disabled = state === "unavailable" || state === "browser_blocked";
+  const disabled = state !== "on" && state !== "off";
   const note =
     state === "unavailable"
       ? "Analytics isn't running in this version of Sapling, so nothing is being collected."
       : state === "browser_blocked"
         ? "Your browser's Do Not Track or Global Privacy Control setting is on, so nothing is collected."
-        : "Turning this off is saved to your account and applies on every browser you sign in to.";
+        : state === "unknown"
+          ? "Nothing is collected until your saved setting has loaded."
+          : "Saved to your account, so it applies wherever you're signed in. Nothing about it is stored in your browser.";
 
   return (
     <div className="card" data-testid="settings-analytics" style={{ padding: "var(--pad-lg)", marginTop: 16 }}>
