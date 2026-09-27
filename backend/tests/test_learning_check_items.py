@@ -1392,6 +1392,11 @@ class TestFinalAnswerRules:
             ("Base Cases", "the base case"),
             ("Base Case", "Those base cases"),
             ("Base Case", "their base cases"),
+            # a consonant + "y" takes "-ies" (the A37 third review's live
+            # check stored "Logical fallacy" for "Logical Fallacies")
+            ("Logical Fallacies", "Logical fallacy"),
+            ("Logical Fallacy", "logical fallacies"),
+            ("Probability Theory", "Probability theories"),
             # a hyphen between two words is a space
             ("Base Case", "The base-case"),
             ("Base Case", "base-cases"),
@@ -1420,6 +1425,9 @@ class TestFinalAnswerRules:
             # spelling of "base case", "gases" in none of "gas laws"
             ("Base Case", "bases"),
             ("Gas Laws", "gases"),
+            ("Party System", "parties"),
+            # a vowel + "y" takes only "-s"
+            ("Relay", "relaies"),
             # a word shorter than the tokenizer floor is never inflected
             ("Type I", "type is"),
             # known gap (HANDOFF-06): an irregular plural is another word

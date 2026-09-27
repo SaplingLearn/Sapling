@@ -103,8 +103,12 @@ _STOPWORDS = frozenset(
 # nothing a hint naming the concept would not also say.
 _DETERMINERS = frozenset({"the", "a", "an", "its", "their", "this", "that", "these", "those"})
 # The regular English plural endings the concept-name rule reads on the
-# concept's last word ("base case" / "base cases", "class" / "classes").
+# concept's last word ("base case" / "base cases", "class" / "classes"), and
+# a consonant + "y" that takes "-ies" ("fallacy" / "fallacies": the A37 third
+# review's live check stored "Logical fallacy" for "Logical Fallacies").
 _PLURAL_ENDINGS = ("s", "es")
+_Y, _IES = "y", "ies"
+_VOWELS = frozenset("aeiou")
 _HYPHEN = "-"
 _MC_REASON = "mc_reason"
 _NUMERIC = "numeric"
@@ -905,14 +909,16 @@ def _unhyphenated(run: tuple[str, ...]) -> tuple[str, ...]:
 
 def _number_forms(a: str, b: str) -> bool:
     """Whether one word is the other's regular plural ("case" / "cases",
-    "class" / "classes"); a word shorter than _MIN_TOKEN_LEN has none ("i" /
+    "class" / "classes", "fallacy" / "fallacies" after a consonant, never
+    "relay" / "relaies"); a word shorter than _MIN_TOKEN_LEN has none ("i" /
     "is", "a" / "as")."""
     short, long = sorted((a, b), key=len)
-    return (
-        len(short) >= _MIN_TOKEN_LEN
-        and short.isalpha()
-        and long in {short + ending for ending in _PLURAL_ENDINGS}
-    )
+    if len(short) < _MIN_TOKEN_LEN or not short.isalpha():
+        return False
+    forms = {short + ending for ending in _PLURAL_ENDINGS}
+    if short.endswith(_Y) and short[-2] not in _VOWELS:
+        forms.add(short[: -len(_Y)] + _IES)
+    return long in forms
 
 
 def _in_a_spelling(concept: tuple[str, ...], run: tuple[str, ...]) -> bool:
