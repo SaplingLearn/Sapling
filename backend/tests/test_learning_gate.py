@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from test_learning_loop_invariants import reload_gate
+from test_learning_loop_invariants import db_client_calls, reload_gate
 
 
 def _reload(monkeypatch, env_value: str | None):
@@ -28,8 +28,10 @@ def test_env_off_is_false_and_reads_nothing(monkeypatch, env_value):
     gate = _reload(monkeypatch, env_value)
     t = _Table(rows=[{"learning_loop_beta": True}])
     monkeypatch.setattr(gate, "table", lambda name: t)
+    before = db_client_calls()
     assert gate.learning_loop_active("user_andres") is False
     assert t.calls == []
+    assert db_client_calls()[len(before) :] == [], "flag off, yet the DB client was called"
 
 
 @pytest.mark.parametrize("env_value", ["true", "TRUE", "True"])

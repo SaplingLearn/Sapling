@@ -50,6 +50,16 @@ def reload_gate(monkeypatch, env_value: str | None):
     return gate
 
 
+def db_client_calls() -> list:
+    """Every call that has reached db.connection's HTTP client so far. The
+    conftest hermetic fixture swaps that client for a MagicMock, so any read
+    path (learning.gate.table, db.connection.table, rpc) shows up here, not
+    only the symbol a test spies on."""
+    import db.connection as dbconn
+
+    return list(dbconn._client.mock_calls)
+
+
 def _imports_of(path: pathlib.Path) -> list[str]:
     roots = []
     for line in path.read_text().splitlines():
@@ -128,15 +138,26 @@ def test_inv_10_lru_cache_has_clear_hook():
 def test_inv_11_gate_false_when_env_unset(monkeypatch):
     gate = reload_gate(monkeypatch, None)
     calls = []
-    monkeypatch.setattr(gate, "table", lambda name: calls.append(name) or _Boom())
+    monkeypatch.setattr(gate, "table", lambda name: calls.append(name) or _Boom(calls))
+    before = db_client_calls()
     for uid in ("user_andres", "e2e-student", "nobody"):
         assert gate.learning_loop_active(uid) is False
     assert calls == [], "gate touched the database with the env var unset"
+    assert db_client_calls()[len(before) :] == [], (
+        "gate reached the DB client with the env var unset"
+    )
 
 
 class _Boom:
+    """Stand-in table that records a read instead of raising: the gate
+    swallows every exception, so a raise here would never reach the test."""
+
+    def __init__(self, calls: list | None = None):
+        self.calls = calls if calls is not None else []
+
     def select(self, *a, **k):
-        raise AssertionError("must not be called")
+        self.calls.append(("select", a, k))
+        return []
 
 
 def test_inv_12_one_prompt_stack_per_series_agent():
