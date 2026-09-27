@@ -517,6 +517,37 @@ def test_the_usage_read_pages_past_max_rows(usage):
     assert fake.reads == 2
 
 
+def test_dollar_thresholds_compare_exact_decimal_sums(usage, events, monkeypatch):
+    """Spend that EQUALS a threshold meets it (spec §3.5 "≥"). llm_usage.cost_usd is
+    numeric(12,6) and every cap is a decimal literal, so the sums and thresholds must be
+    exact: in float, 0.8 × 0.20 is 0.16000000000000003 and ten 0.02 rows sum to
+    0.19999999999999998. Row costs are the decimals PostgREST returns for a numeric."""
+    from decimal import Decimal
+
+    cap = Decimal(str(config.STUDENT_DAILY_BUDGET_USD))
+    soft = Decimal(str(config.STUDENT_SOFT_FRACTION)) * cap
+    usage([_row(cost=float(soft))])
+    assert ai_budget.check(UID, "tutor", "develop").level == "soft"
+    for shares in (8, 10):  # a row count: equal shares whose float sum lands one ulp under
+        usage([_row(cost=float(cap / shares)) for _ in range(shares)])
+        d = ai_budget.check(UID, "tutor", "develop")
+        assert (d.level, d.scope) == ("hard", "daily_usd"), shares
+    month = Decimal(str(config.STUDENT_MONTHLY_BUDGET_USD))
+    shares = 2000
+    usage([_row(cost=float(month / shares), ago_s=3 * 86_400) for _ in range(shares)])
+    d = ai_budget.check(UID, "tutor", "develop")
+    assert (d.level, d.scope) == ("hard", "monthly_usd")
+    payload = events[-1][1]["payload"]
+    assert payload["spent_usd"] == float(month) and payload["cap_usd"] == float(month)
+    # the platform alert level too: spend equal to PLATFORM_ALERT_FRACTION of the budget alerts
+    monkeypatch.setattr(config, "PLATFORM_DAILY_BUDGET_USD", config.STUDENT_DAILY_BUDGET_USD)
+    monkeypatch.setattr(ai_budget, "_spawn", lambda fn: fn())
+    alert = Decimal(str(config.PLATFORM_ALERT_FRACTION)) * cap
+    usage([_row(cost=float(alert), user="someone_else")])
+    ai_budget.check(UID, "grader")
+    assert [kw["payload"]["scope"] for _, kw in events][-1] == "platform"
+
+
 # ── rate limit and the 429 body (spec §3.5, §9, A20) ─────────────────────────
 
 

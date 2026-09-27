@@ -14,6 +14,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Callable, Literal, NamedTuple, get_args
 
 from fastapi import Request, status
@@ -83,8 +84,8 @@ _NORMAL = BudgetDecision(level="normal", tier_ceiling="deep")
 
 @dataclass(frozen=True)
 class _Usage:
-    month_usd: float
-    day_usd: float
+    month_usd: Decimal
+    day_usd: Decimal
     day_tokens: int
     day_grades: int
     minute_rows: int
@@ -195,26 +196,35 @@ def _parse_ts(value: object) -> datetime | None:
 
 
 # ── the one usage read ────────────────────────────────────────────────────────
-def _daily_cap(band: Band | None) -> float:
+def _exact(value: object) -> Decimal:
+    """A $ amount or a fraction as an exact decimal. llm_usage.cost_usd is numeric(12,6) and
+    every cap is a decimal literal, so "≥" compares decimals: in float, 0.8 × 0.20 is
+    0.16000000000000003 and ten 0.02 rows sum to 0.19999999999999998 (spend AT a threshold
+    would miss it). NULL → 0."""
+    return Decimal(str(value or 0))
+
+
+def _daily_cap(band: Band | None) -> Decimal:
     """spec §3.5: the band's daily $ cap; novice turns run to the novice allowance."""
-    multiplier = config.BUDGET_NOVICE_MULTIPLIER if band == "novice" else 1.0
-    return config.STUDENT_DAILY_BUDGET_USD * multiplier
+    multiplier = _exact(config.BUDGET_NOVICE_MULTIPLIER) if band == "novice" else 1
+    return _exact(config.STUDENT_DAILY_BUDGET_USD) * multiplier
 
 
 def _rate_reset(usage: _Usage, now: datetime) -> datetime:
     return (usage.minute_oldest or now) + timedelta(seconds=RATE_LIMIT_WINDOW_S)
 
 
-def _spend_fields(scope: Scope, usage: _Usage | None, cap: float) -> dict:
+def _spend_fields(scope: Scope, usage: _Usage | None, cap: Decimal | None = None) -> dict:
     """Behaviour 5: spent_usd = the month's $ for monthly_usd, else today's; cap_usd only for
-    the $ scopes. Nothing when the read failed (None values are omitted, never zeroed)."""
+    the $ scopes (``cap`` = the band's daily cap). Nothing when the read failed (None values
+    are omitted, never zeroed). Floats: the event payload is JSON."""
     if usage is None:
         return {}
     spent = usage.month_usd if scope == "monthly_usd" else usage.day_usd
     cap_usd = None
     if scope in _USD_SCOPES:
-        cap_usd = config.STUDENT_MONTHLY_BUDGET_USD if scope == "monthly_usd" else cap
-    return {"spent_usd": spent, "cap_usd": cap_usd}
+        cap_usd = config.STUDENT_MONTHLY_BUDGET_USD if scope == "monthly_usd" else float(cap)
+    return {"spent_usd": float(spent), "cap_usd": cap_usd}
 
 
 def _binding(hard: dict[Scope, datetime | None]) -> Scope:
@@ -241,14 +251,14 @@ def _load_rows(user_id: str, since: datetime) -> list[dict]:
 
 def _summarise(rows: list[dict], now: datetime) -> _Usage:
     day0, minute0 = _day_start(now), now - timedelta(seconds=RATE_LIMIT_WINDOW_S)
-    month_usd = day_usd = 0.0
+    month_usd = day_usd = Decimal(0)
     day_tokens = day_grades = minute_rows = 0
     oldest: datetime | None = None
     for row in rows:
         ts = _parse_ts(row.get("created_at"))
         if ts is None:
             continue
-        cost = float(row.get("cost_usd") or 0)
+        cost = _exact(row.get("cost_usd"))
         month_usd += cost
         if ts >= day0:
             day_usd += cost
@@ -290,7 +300,7 @@ def _grade_decision(user_id: str, usage: _Usage | None, now: datetime) -> Budget
     """The grader cap (spec §3.5): grading has its own cap, so a tutor-hard student still grades."""
     if usage is None or usage.day_grades < config.STUDENT_DAILY_GRADES:
         return _NORMAL
-    _emit_capped(user_id, "daily_grades", "grader_cap", **_spend_fields("daily_grades", usage, 0.0))
+    _emit_capped(user_id, "daily_grades", "grader_cap", **_spend_fields("daily_grades", usage))
     return BudgetDecision(
         level="hard", tier_ceiling="none", scope="daily_grades", reset_at=_next_day(now)
     )
@@ -312,7 +322,7 @@ def _spend_decision(
     if usage is not None:
         if usage.day_usd >= cap:
             hard["daily_usd"] = _next_day(now)
-        if usage.month_usd >= config.STUDENT_MONTHLY_BUDGET_USD:
+        if usage.month_usd >= _exact(config.STUDENT_MONTHLY_BUDGET_USD):
             hard["monthly_usd"] = _next_month(now)
         if usage.day_tokens >= config.STUDENT_DAILY_TOKENS:
             hard["daily_tokens"] = _next_day(now)
@@ -335,12 +345,10 @@ def _spend_decision(
     if kind == "close":
         return _NORMAL  # one call, nothing to downgrade: the close has no soft level
     soft: list[Scope] = []
-    if usage is not None and usage.day_usd >= config.STUDENT_SOFT_FRACTION * cap:
+    fraction = _exact(config.STUDENT_SOFT_FRACTION)
+    if usage is not None and usage.day_usd >= fraction * cap:
         soft.append("daily_usd")
-    if (
-        usage is not None
-        and usage.day_tokens >= config.STUDENT_SOFT_FRACTION * config.STUDENT_DAILY_TOKENS
-    ):
+    if usage is not None and usage.day_tokens >= fraction * config.STUDENT_DAILY_TOKENS:
         soft.append("daily_tokens")
     deep_cap = (
         params.LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE
@@ -440,7 +448,7 @@ def enforce_rate_limit_for(user_id: str) -> None:
     decision, usage = _rate_limit_decision(user_id)
     if decision is None:
         return
-    _emit_capped(user_id, "rate_limit", "hard", **_spend_fields("rate_limit", usage, 0.0))
+    _emit_capped(user_id, "rate_limit", "hard", **_spend_fields("rate_limit", usage))
     raise AIBudgetExceeded(decision)
 
 
@@ -503,15 +511,15 @@ def _check_platform() -> None:
             filters={"created_at": f"gte.{_iso(_day_start(_utcnow()))}"},
             order=_USAGE_ORDER,
         )
-        spent = sum(float(row.get("cost_usd") or 0) for row in rows)
+        spent = sum((_exact(row.get("cost_usd")) for row in rows), Decimal(0))
     except Exception as exc:
         logger.warning("ai_budget: platform spend read failed: %s", exc)
         return
-    if spent >= config.PLATFORM_ALERT_FRACTION * budget:
+    if spent >= _exact(config.PLATFORM_ALERT_FRACTION) * _exact(budget):
         logger.warning(
             "ai_budget: platform spend today is %s USD, at or above %s of the %s USD daily budget",
             spent,
             config.PLATFORM_ALERT_FRACTION,
             budget,
         )
-        _emit_capped(None, "platform", "soft", spent_usd=spent, cap_usd=budget)
+        _emit_capped(None, "platform", "soft", spent_usd=float(spent), cap_usd=budget)
