@@ -525,7 +525,43 @@ def test_loop_state_from_json_rejects_malformed_documents(bad):
     with pytest.raises(ValueError):
         LoopState.from_json(bad)
     recovered = LoopState.recover(bad)  # the store's fallback never raises
-    assert recovered.steps == {} and LoopState.from_json(recovered.to_json()) == recovered
+    assert LoopState.from_json(recovered.to_json()) == recovered
+    for step in recovered.steps.values():  # a malformed step restarts fresh
+        assert (step.rung, step.genuine_attempts, step.attempted_at) == (0, 0, [])
+        assert (step.last_rung_at, step.showed_work, step.exam_mode) == (None, False, False)
+
+
+def test_recover_keeps_a_malformed_steps_foreign_keys():
+    """A step that fails validation restarts fresh (PKG-06 fields at their
+    defaults, a finite first_shown_at kept) but keeps every key a later package
+    stored on it (A27: check_item_id, taught, …), so the next save erases none
+    of them. A non-object step is dropped, and `current` naming it is cleared."""
+    from learning.ladder import Rung
+    from learning.policy import LoopState
+
+    doc = {
+        "steps": {
+            "qa": {"first_shown_at": "bad", "rung": 3, "check_item_id": "ci-1", "taught": True},
+            "qb": {"first_shown_at": 5.0, "rung": 9, "node_id": "n-1"},
+            "qc": {"first_shown_at": 1.0, "taught": True},
+            "qd": "garbage",
+        },
+        "current": "qa",
+        "revealed": ["x"],
+    }
+    state = LoopState.recover(doc)
+    out = state.to_json()
+    assert set(out["steps"]) == {"qa", "qb", "qc"}
+    assert out["steps"]["qa"]["check_item_id"] == "ci-1" and out["steps"]["qa"]["taught"] is True
+    assert state.steps["qa"].rung is Rung.H0 and state.steps["qa"].first_shown_at == 0.0
+    assert out["steps"]["qb"]["node_id"] == "n-1" and state.steps["qb"].first_shown_at == 5.0
+    assert state.steps["qb"].rung is Rung.H0
+    assert out["steps"]["qc"]["taught"] is True
+    assert state.current == "qa" and out["revealed"] == ["x"]
+    assert LoopState.from_json(out) == state  # the recovered document is valid
+    assert LoopState.recover({"steps": {"qd": "garbage"}, "current": "qd"}).current is None
+    assert LoopState.recover({"steps": ["qa"], "current": "qa"}).current is None
+    assert LoopState.recover({"steps": {}, "current": "qz"}).current == "qz"
 
 
 # ── policy: tutor tier routing (spec §3.5 LOOP_MODEL_TIER, A15) ────────────────
@@ -1451,10 +1487,12 @@ def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
 
 
 def test_a_malformed_pkg06_field_never_erases_other_packages_keys(monkeypatch, caplog):
-    """A malformed PKG-06 field starts fresh on its own (a bad step is dropped;
-    a bad current / checks_since_rating takes its default), but every key PKG-06
-    does not own survives the load, so the next save cannot erase the session
-    request counters (§3.5) or this session's A23 "revealed" siblings."""
+    """A malformed PKG-06 field starts fresh on its own (a bad step restarts
+    with its PKG-06 fields at their defaults; a bad current /
+    checks_since_rating takes its default), but every key PKG-06 does not own
+    survives the load, top-level or on a step, so the next save cannot erase
+    the session request counters (§3.5), this session's A23 "revealed"
+    siblings or a step's check_item_id."""
     from learning import loop_state_store
 
     stored = {
@@ -1476,14 +1514,17 @@ def test_a_malformed_pkg06_field_never_erases_other_packages_keys(monkeypatch, c
         state = loop_state_store.load_loop_state("s1")
     assert any("malformed" in r.getMessage() for r in caplog.records)
     assert state.current is None and state.checks_since_rating == 4
-    assert list(state.steps) == ["r" * 64] and int(state.steps["r" * 64].rung) == 3
+    assert list(state.steps) == ["q", "r" * 64] and int(state.steps["r" * 64].rung) == 3
     assert state.steps["r" * 64].extra == {"node_id": "node-1"}
+    assert state.steps["q"].genuine_attempts == 0 and state.steps["q"].first_shown_at == 1.0
+    assert state.steps["q"].extra == {"check_item_id": "ci-1"}
     assert loop_state_store.save_loop_state("s1", state) is True
     written = t.update.call_args.args[0]["loop_state"]
     assert written["revealed"] == ["b" * 64]
     assert (written["tutor_requests"], written["deep_requests"]) == (39, 6)
     assert written["plan"] == {"approved": ["node-1"], "cursor": 0}
-    assert set(written["steps"]) == {"r" * 64} and written["checks_since_rating"] == 4
+    assert set(written["steps"]) == {"q", "r" * 64} and written["checks_since_rating"] == 4
+    assert written["steps"]["q"]["check_item_id"] == "ci-1"
 
 
 def test_load_loop_state_propagates_a_read_failure(monkeypatch):

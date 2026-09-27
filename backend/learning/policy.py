@@ -433,31 +433,57 @@ class LoopState:
     @classmethod
     def recover(cls, data: object) -> LoopState:
         """The store's fallback when from_json rejects a stored document. Each
-        malformed PKG-06 unit starts fresh on its own (a step that fails
-        validation is dropped; a bad `current` / `checks_since_rating` takes
-        its default) and every key PKG-06 does not own survives in `extra`, so
-        the next save never erases a later package's state ("revealed", "plan",
-        the session request counters). A non-object document keeps nothing."""
+        malformed PKG-06 unit starts fresh on its own and every key PKG-06 does
+        not own survives, at the top level in `extra` and on a step in its
+        `StepState.extra`, so the next save never erases a later package's
+        state ("revealed", "plan", the session request counters, a step's
+        check_item_id / taught). A step that fails validation restarts with
+        its PKG-06 fields at their defaults (a finite first_shown_at kept); a
+        non-object step, or every step when `steps` is not an object, is
+        dropped, and `current` naming a dropped step is cleared; a bad
+        `current` / `checks_since_rating` takes its default. A non-object
+        document keeps nothing."""
         if not isinstance(data, dict):
             return cls()
         steps: dict[str, StepState] = {}
-        raw_steps = data.get("steps")
+        raw_steps = data.get("steps", {})
+        dropped = not isinstance(raw_steps, dict)
         for qh, raw in raw_steps.items() if isinstance(raw_steps, dict) else ():
             try:
                 steps[str(qh)] = _step_from_json(str(qh), raw)
             except (ValueError, TypeError):
-                continue
+                steps.update(_fresh_step(str(qh), raw))
         current = data.get("current")
+        if not isinstance(current, str) or (
+            current not in steps and (dropped or current in raw_steps)
+        ):
+            current = None
         try:
             checks = _count(data.get("checks_since_rating", 0), "checks_since_rating")
         except ValueError:
             checks = 0
         return cls(
             steps=steps,
-            current=current if isinstance(current, str) else None,
+            current=current,
             checks_since_rating=checks,
             extra=_foreign_keys(data),
         )
+
+
+def _fresh_step(question_hash: str, raw: object) -> dict[str, StepState]:
+    """A malformed step restarted: PKG-06 fields at their defaults (a finite
+    first_shown_at kept), every other key kept in `extra`; {} for a non-object
+    step, which has nothing to keep."""
+    if not isinstance(raw, dict):
+        return {}
+    first = raw.get("first_shown_at")
+    return {
+        question_hash: StepState(
+            question_hash=question_hash,
+            first_shown_at=float(first) if _is_number(first) else 0.0,
+            extra={k: copy.deepcopy(v) for k, v in raw.items() if k not in _STEP_KEYS},
+        )
+    }
 
 
 def _foreign_keys(data: dict[str, Any]) -> dict[str, Any]:
