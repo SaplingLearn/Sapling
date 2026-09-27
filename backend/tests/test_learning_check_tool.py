@@ -755,6 +755,42 @@ def test_numeric_gate_never_issues_correct(check, answer_text, over):
     assert out.correct is False  # the grader said no; code never turned a match into "correct"
 
 
+@pytest.mark.parametrize(
+    "canonical,tolerance,answer_text",
+    [
+        # each |answer − canonical| is EXACTLY the tolerance in decimal; binary
+        # floats land a hair either side of it (|0.4 − 0.3| = 0.10000000000000003)
+        ("0.3", 0.1, "0.4"),
+        ("0.3", 0.1, "0.2"),
+        ("1.1", 0.1, "1.0"),
+        ("1.1", 0.1, "1.2"),
+        ("0.7", 0.1, "0.8"),
+        ("0.7", 0.1, "0.6"),
+        ("100000000.3", 0.1, "100000000.4"),
+    ],
+)
+def test_numeric_gate_keeps_the_verdict_exactly_on_the_tolerance_edge(
+    check, canonical, tolerance, answer_text
+):
+    """A22: only |answer − canonical| > tolerance is a clear mismatch; an answer
+    exactly `tolerance` away keeps the grader's verdict on both sides."""
+    _, state = check
+    state["item"] = _numeric_item(canonical_answer=canonical, tolerance=tolerance)
+    out = _run(check, _deps(), _answer(answer_text=answer_text))
+    assert out.correct is True and out.grader_backend == "gemini"
+
+
+@pytest.mark.parametrize(
+    "canonical,tolerance,answer_text",
+    [("0.3", 0.1, "0.41"), ("0.3", 0.1, "0.19"), ("9.81", None, "9.8100001")],
+)
+def test_numeric_gate_still_fires_just_past_the_edge(check, canonical, tolerance, answer_text):
+    _, state = check
+    state["item"] = _numeric_item(canonical_answer=canonical, tolerance=tolerance)
+    out = _run(check, _deps(), _answer(answer_text=answer_text))
+    assert out.correct is False and out.grader_backend == "deterministic"
+
+
 def test_numeric_match_keeps_a_yes_verdict(check):
     _, state = check
     state["item"] = _numeric_item()
