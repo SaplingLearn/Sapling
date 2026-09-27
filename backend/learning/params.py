@@ -134,7 +134,8 @@ RUNG_ASSISTED_MIN = 1
 RUNG_NO_CREDIT_MIN = 4
 LADDER_MAX_RUNG = 6
 # Band-control cut-points (unassisted_next 0.90 / 0.65, "2 windows", the
-# wheelspin opps>=6 arm) are unnamed in spec §3.3; PKG-06 names them here.
+# wheelspin opps>=6 arm) are unnamed in spec §3.3; PKG-06 names them in its
+# block below (0.65 is PRACTICE_TARGET_LO).
 
 # ------------------------------------- §3.4 probe, plan, step, brief, limits
 PROBE_ITEMS_PER_SKILL_MIN = 4
@@ -179,6 +180,31 @@ CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec la
 CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
 CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
 CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
+
+# ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
+# FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating
+# AGAIN/HARD/GOOD/EASY, which this module cannot import (fsrs imports params);
+# tests/test_learning_zpd_policy.py pins the equality. Read by
+# policy.evidence_for_rung.
+FSRS_RATING_AGAIN = 1
+FSRS_RATING_HARD = 2
+FSRS_RATING_GOOD = 3
+FSRS_RATING_EASY = 4  # never emitted in v1 (§3.2)
+# §3.3 band control: "unassisted_next > 0.90 for 2 windows" (the lower edge
+# "< 0.65" is PRACTICE_TARGET_LO above).
+BAND_CONTROL_HI = 0.90
+BAND_CONTROL_STOP_WINDOWS = 2
+# §3.3 ceiling: profic "H3 after 2 failed genuine attempts"; develop "H6 after ≥ 2".
+CEILING_PROFIC_ESCALATE_FAILS = 2
+CEILING_DEVELOP_H6_FAILS = 2
+# §3.3 wheelspin, clause 2: "opps ≥ 6 AND unassisted_next < 0.50".
+WHEELSPIN_OPPS_EARLY = 6
+WHEELSPIN_UNASSISTED_MAX = 0.50
+# §3.5 loop tutor context policy (A17/A18) and LOOP_MODEL_TIER (A15).
+LOOP_RAG_K_TEACH = 5  # teach-phase RAG k (unchanged from legacy)
+LOOP_RAG_K_TEACH_SOFT = 3  # † teach RAG k at the soft (and hard) budget level
+LOOP_SOURCE_CHUNKS_MAX = 2  # † the item's own source chunks for hint/feedback turns and H2
+LOOP_TIER_DEEP_MIN_FAILS = 2  # LOOP_MODEL_TIER: "≥ 2 failed genuine attempts" → deep
 
 
 # ------------------------------------------------------ §3.1 validity check
