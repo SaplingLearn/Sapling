@@ -21,6 +21,8 @@ Rules: read this file first; refuse to start if any earlier package is `blocked`
 | 14 | eval-ladder-cutover | planned | | | | | |
 | 00 | foundation | done | feat/learning-loop-00-foundation | 8409f89 | 5 modules (30 passed + 8 skipped placeholders) | — | HANDOFF-00.md |
 | 00 | foundation | done | feat/learning-loop-00-foundation | 93b38e9 | 6 modules (40 passed + 8 skipped placeholders; review fixes 76428bb..93b38e9) | — | HANDOFF-00.md |
+| 01 | bkt-core | done | feat/learning-loop-01-bkt-core | 1b6d5ef | tests/test_learning_bkt.py (153) + inv_03 | — | HANDOFF-01.md |
+| 00 | foundation | verified | feat/learning-loop-00-foundation | 93b38e9 | 6 modules (40 passed + 8 skipped placeholders; review fixes 76428bb..93b38e9) | PKG-01 2026-09-26 (base 3d1c7db): tests/test_learning_gate.py → 13 passed; invariants → 4 passed, 8 skipped; deps/settings/migration → 13 passed; flag grep → 1 hit; migration ls → 1 file; full suite → 2748 passed, 143 skipped | HANDOFF-00.md |
 
 ## Deviations
 
@@ -41,6 +43,12 @@ Format: `PKG-NN: <spec said> → <did instead> → <why> → <† if an A/B flag
 - PKG-00: acceptance 6 / self-check 6 `git diff --stat main...HEAD` → measured against `feat/learning-loop-series..HEAD` → the stacked run makes the diff against main include the planning base. Against the series base, every path is in the Files lists.
 - PKG-00: migration applied + E2E cycle → not run; needs local Supabase stack (supabase start): apply 20260926231744_learning_loop_beta.sql via `python -m db.migrate` and confirm settings GET returns `learning_loop_beta` → no supabase CLI / podman / docker on the executing machine; hermetic file-invariant tests only.
 - PKG-00: Task 7 `gh pr create` → skipped → stacked-branch run; PRs opened after review.
+- PKG-01: branch from `main` → `feat/learning-loop-01-bkt-core` cut from `feat/learning-loop-00-foundation` HEAD 3d1c7db → stacked series run (see the PKG-00 stacked-branch line).
+- PKG-01: SoW row / verified-row template `tests/test_learning_gate.py → 11 passed` → observed and recorded `13 passed` → PKG-00's recorded arithmetic-slip deviation, not a red row.
+- PKG-01: full suite `pytest tests/ -q` (SoW `-q -x`) → run with `-p no:cacheprovider --ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py` → OCR stack not installed (session override; CI's ignore set). N₀ = 2748 passed, 143 skipped; after PKG-01, 2902 passed, 142 skipped.
+- PKG-01: acceptance 8 / self-check 6 `git diff --stat main...HEAD` → measured as `git diff --stat feat/learning-loop-00-foundation..HEAD` → stacked run; against the PKG-00 head the diff is exactly the six listed paths.
+- PKG-01: commit trailer `Claude Fable 5.1` → `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` → session override.
+- PKG-01: Task 7 `git push` / `gh pr create` → skipped → stacked-branch run; PRs opened after review.
 
 ## Blocked notes
 
