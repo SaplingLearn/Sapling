@@ -137,7 +137,8 @@ _FIRST_PERSON = re.compile(r"\b(?=(?:im|i am|ive)\b)")
 # Pleas, matched on normalized text: n-grams that hold a word able to answer
 # an item alone ("no", "up", "hard", "start", "hour", "much", "lost", "can't
 # do it"), plus the idk variants outside NON_ATTEMPT_PATTERNS ("dunno",
-# "don't know").
+# "don't know"). "I can't do it" followed by a method ("by factoring", "with
+# substitution", "using", "via", "without") is worked reasoning, not a plea.
 _PLEA = re.compile(
     r"\bno (?:idea|clue)\b|\b(?:give|gave|giving) up\b"
     r"|\bdunno\b|\b(?:dont|do not) know\b|\bnot sure\b"
@@ -148,7 +149,7 @@ _PLEA = re.compile(
     r"|\b(?:im|i am|so|totally|completely|really|kinda|a bit|a little) (?:lost|confused|stuck)\b"
     r"|\b(?:taking|takes|took|been|for) forever\b"
     r"|\b(?:makes? no|doesnt make|dont make) sense\b|\bmove on\b|\bwalk me through\b"
-    r"|\bi (?:cant|cannot|can not|couldnt) do (?:it|this)\b"
+    r"|\bi (?:cant|cannot|can not|couldnt) do (?:it|this)\b(?! (?:by|with|using|via|without)\b)"
 )
 
 

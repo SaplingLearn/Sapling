@@ -1364,6 +1364,35 @@ def test_the_text_rules_run_in_linear_time_on_long_whitespace(size):
             assert took < 0.05, (fn.__name__, text[:30], size, took)
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["I can't do it by factoring, so I used the quadratic formula and got x = 3",
+     "I couldn't do this with substitution so I integrated by parts: x sin x + cos x",
+     "I cannot do it using the chain rule, so I expanded first: 6x + 6",
+     "I can't do it without a calculator, but roughly 1.41"],
+)  # fmt: skip
+def test_a_method_the_student_could_not_use_is_no_plea(text):
+    """ "I can't do it" is a plea (it keeps "idk, I can't do it" idk), but a
+    method after it ("by factoring", "with substitution") makes it part of
+    worked reasoning, which may count as a genuine attempt."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    assert has_non_attempt_phrase(text) is False
+    assert non_attempt_phrases(text) == ()
+
+
+def test_i_cannot_do_it_alone_is_a_plea():
+    from learning.gates import has_non_attempt_phrase
+
+    for text in (
+        "I can't do this",
+        "I can't do it.",
+        "i cannot do this, sorry",
+        "I couldn't do it",
+    ):
+        assert has_non_attempt_phrase(text) is True, text
+
+
 def test_has_non_attempt_phrase_matches_whole_words_only():
     from learning.gates import has_non_attempt_phrase
 
