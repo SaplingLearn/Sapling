@@ -30,27 +30,24 @@ const OPEN_EASE = 'cubic-bezier(0.22,1,0.36,1)';
 const CLOSE_MS = OPEN_MS;
 const CLOSE_EASE = OPEN_EASE;
 /*
- * How long the panel's contents take to clear, as the box collapses.
+ * Where in the collapse the panel hands over to the real card.
  *
- * This is the open's content timing, reversed — and the reversal is the whole
- * point. On the way in, `panelFade` holds the demo at zero for the first
- * 160ms of a 620ms box and has it fully painted by 580ms: the panel is blank
- * only while it is still SMALL, and by the time it fills the screen there is
- * something in it. Nobody reads that as a white flash, because the white is
- * never big.
+ * The flight's easing puts nearly all the movement up front: measured, the
+ * panel is already at card size about three quarters of the way through, and
+ * the rest is settling. That is the moment to swap.
  *
- * Clearing the contents quickly did the opposite. At a quarter of the flight
- * the panel went blank while still near full-screen, and the remaining
- * three quarters were a full-bleed white rectangle shrinking — which is
- * exactly the flash this was meant to avoid, just pointed the other way.
+ * Before this, the panel dissolved its contents to its own white ground and
+ * then sat there, card-sized and blank, until the overlay unmounted — a solid
+ * white card flashing where the real one was about to appear. It never turned
+ * into the card; it turned into a white rectangle that was later replaced by
+ * the card.
  *
- * 0.74 of the flight is 1 − 0.26: the demo stays up while the box is large
- * and is gone by the time it is card-sized, so the white phase lands in the
- * last quarter of the close and mirrors the first quarter of the open.
- * `ease-in` keeps it near full opacity early and drops it late, so the fade
- * tracks the box getting small rather than running ahead of it.
+ * So the contents are not cleared at all now. The demo stays up the whole way
+ * down, and at the hand-off the card underneath is un-hidden and the panel
+ * fades off it over the remaining quarter. What you see is the demo becoming
+ * the card, with nothing blank in between.
  */
-const CONTENT_CLEAR_MS = Math.round(CLOSE_MS * 0.74);
+const HANDOFF = 0.74;
 /** Safety net in case `onfinish` never fires (tab backgrounded mid-close). */
 const CLOSE_FALLBACK_MS = CLOSE_MS + 240;
 /** How long to wait before finishing when there is no card to fly back to. */
@@ -176,9 +173,11 @@ export function flipClose(
   // its card instead of on it.
   remeasureFlip(st);
   let done = false;
+  let reveal: ReturnType<typeof setTimeout> | undefined;
   const finish = () => {
     if (done) return;
     done = true;
+    if (reveal !== undefined) clearTimeout(reveal);
     if (st.el) {
       st.el.style.visibility = '';
       st.el = null;
@@ -205,18 +204,18 @@ export function flipClose(
     fill: 'both',
   });
 
-  // Dissolve the contents to the panel's own white ground as it goes. Every
-  // direct child is faded rather than the panel itself: fading the panel would
-  // take its background with it and the card would be flown back to by a
-  // transparent hole, with the gallery sliding underneath.
-  for (const child of Array.from(panel.children)) {
-    if (!(child instanceof HTMLElement) || !child.animate) continue;
-    child.animate([{ opacity: 1 }, { opacity: 0 }], {
-      duration: CONTENT_CLEAR_MS,
-      easing: 'ease-in',
-      fill: 'both',
-    });
-  }
+  // Un-hide the card just as the panel arrives on it, then fade the panel off
+  // it. The card is underneath at the same rect by then, so what the fade
+  // reveals is the card itself rather than the gallery — which is why this is
+  // safe to do to the whole panel, background and all, where fading it mid
+  // flight would have shown the rail sliding under a transparent hole.
+  const handoffAt = CLOSE_MS * HANDOFF;
+  reveal = setTimeout(() => { if (st.el) st.el.style.visibility = ''; }, handoffAt);
+
+  panel.animate(
+    [{ opacity: 1, offset: 0 }, { opacity: 1, offset: HANDOFF }, { opacity: 0, offset: 1 }],
+    { duration: CLOSE_MS, easing: 'linear', fill: 'both' },
+  );
 
   // The scrim goes with it. The opening fades this in (`panelFade`) while the
   // white box grows; the close used to leave it at full strength until the
