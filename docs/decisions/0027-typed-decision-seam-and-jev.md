@@ -97,7 +97,7 @@ toggle is an open product question.
    `llm_usage` under the caller's `request_id` (explicit, since the router
    runs outside the request contextvar), with `provider="typesafe"` for Jev,
    priced in `services/llm_pricing.py` (input only). `llm_usage.cost_usd` is
-   NUMERIC(18,10) (migration `20260927043405`): a Jev token is $0.000000042,
+   NUMERIC(18,10) (migration `20260927220057`, consolidated with the PostHog opt-out column and shipped in #677): a Jev token is $0.000000042,
    and the old 6dp column rounded decision-sized costs (a sub-12-token call
    to $0). Any served `jev-*` id without an exact price entry is priced at
    the family rate, so a vendor version bump never NULL-costs a call.

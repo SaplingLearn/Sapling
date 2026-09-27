@@ -59,7 +59,7 @@ MODEL_FAMILY_PRICING: tuple[tuple[str, tuple[float, float]], ...] = (
 )
 
 #: Fractional digits of a stored cost — llm_usage.cost_usd is NUMERIC(18,10)
-#: (migration 20260927043405). Six (the old NUMERIC(12,6)) rounded the
+#: (migration 20260927220057, added with the PostHog stack in #677). Six (the old NUMERIC(12,6)) rounded the
 #: decision seam's micro-dollar calls: one Jev token is $0.000000042, so a
 #: 653-token call ($0.000027426) was stored as 0.000027 and a sub-12-token call
 #: as $0. cost_usd() quantizes to this scale and the admin rollups round to
