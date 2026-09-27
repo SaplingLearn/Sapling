@@ -1,25 +1,25 @@
 {
   "assignments": [
     {
-      "description": null,
+      "description": "First laboratory report submission.",
       "due_date": "2026-09-12",
       "title": "Lab Report 1",
       "weight_pct": null
     },
     {
-      "description": null,
+      "description": "Second laboratory report submission.",
       "due_date": null,
       "title": "Lab Report 2",
       "weight_pct": null
     },
     {
-      "description": null,
+      "description": "Mid-semester examination.",
       "due_date": "2026-10-17",
       "title": "Midterm",
       "weight_pct": 30.0
     },
     {
-      "description": null,
+      "description": "Final examination covering course material.",
       "due_date": null,
       "title": "Final",
       "weight_pct": 40.0
