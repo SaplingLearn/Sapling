@@ -155,7 +155,27 @@ LEARNER_BRIEF_MAX_MISCONCEPTIONS = 5
 LOOP_LIMITS = {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000}
 GRADER_LIMITS = {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000}
 GRADER_LOW_CONFIDENCE = 0.6
-GRADER_RETRY_BELOW = 0.4  # ‡ spec §3.4 "below 0.4 → second grader call"
+# Spec §3.4 / §13 A6: below GRADER_SECOND_OPINION_CONFIDENCE, ONE second grader
+# call runs on the GRADER_SECOND_OPINION_SLOT model slot (spec §3.5, A22; PKG-05).
+GRADER_SECOND_OPINION_CONFIDENCE = 0.4
+GRADER_SECOND_OPINION_SLOT = "grader_second"
+FEEDBACK_HINT_MAX_SENTENCES = 2  # † PKG-05 grader brief: the hint is short; not a spec value
+GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guard; not a spec value
+# † PKG-05: the student answer is the one unbounded part of a grader message;
+# past this many characters grade() degrades to unavailable before any call, so
+# an oversized answer is never sent or billed. A size guard on the RAW answer,
+# not a token guarantee: at roughly one token per character the answer alone,
+# on both requests a run may make, stays under GRADER_LIMITS' token cap, but
+# the "> " quote on every answer line (up to 3x for a newline-heavy answer), the
+# system prompt, the item fields and multi-token characters ride on top. A run
+# that still trips the cap is metered (llm_usage) and comes back unavailable.
+GRADER_ANSWER_MAX_CHARS = 4_000
+# † PKG-05 numeric gate (A22): float noise at the tolerance edge. An answer
+# exactly `tolerance` away in decimal lands a hair either side in binary
+# (|0.4 − 0.3| = 0.10000000000000003), so a gap within this relative slack of
+# the operands' magnitude still counts as on the edge. Not a spec value: orders
+# of magnitude above double-precision error (~1e-16), below any tolerance.
+NUMERIC_GATE_EDGE_SLACK = 1e-12
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)

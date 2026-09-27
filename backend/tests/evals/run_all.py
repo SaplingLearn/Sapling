@@ -39,6 +39,7 @@ DATASETS = [
     "quiz_generation",
     "chat_tutor",
     "check_items",
+    "grader",
 ]
 
 

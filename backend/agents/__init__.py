@@ -45,6 +45,8 @@ logged by `agents.usage.record_agent_usage`.
 
 from pydantic_ai.usage import UsageLimits
 
+from learning.params import GRADER_LIMITS as _GRADER_LIMITS_SPEC
+
 WORKER_LIMITS = UsageLimits(
     # 3, not 2: a worker's only extra requests are output-validation
     # retries (#153 — output-retry budget of 2, so worst case is
@@ -110,9 +112,22 @@ CONTINUATION_LIMITS = UsageLimits(
     total_tokens_limit=50_000,
 )
 
+# Learning loop PKG-05 (spec §3.4): the rubric grader runs as its OWN agent
+# call from agents/tools/check.py::grade_answer (a route helper, A16), charged
+# via record_agent_usage(task="grader" / "grader_second"), never against
+# TUTOR_LIMITS. The values are learning.params.GRADER_LIMITS (request 2 / tool
+# calls 0 / tokens 20_000; one value, one name — PKG-01 keeps it a plain dict so
+# learning/ never imports pydantic_ai). Request 2 with the agent's retries=2
+# means a second validation retry trips UsageLimitExceeded rather than
+# UnexpectedModelBehavior; both degrade to the same `unavailable`, so the
+# WORKER_LIMITS 1 + 2-retry ladder buys no diagnosability here. The second
+# opinion is a separate run with its own GRADER_LIMITS.
+GRADER_LIMITS = UsageLimits(**_GRADER_LIMITS_SPEC)
+
 __all__ = [
     "WORKER_LIMITS",
     "ORCHESTRATOR_LIMITS",
     "TUTOR_LIMITS",
     "CONTINUATION_LIMITS",
+    "GRADER_LIMITS",
 ]

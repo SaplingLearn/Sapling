@@ -11,6 +11,8 @@ via env vars without touching code:
     SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
     SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
     SAPLING_MODEL_CHECK_ITEMS=gemini-2.5-flash-lite
+    SAPLING_MODEL_GRADER=gemini-2.5-flash-lite
+    SAPLING_MODEL_GRADER_SECOND=gemini-2.5-flash
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX, and
@@ -47,6 +49,8 @@ AgentTask = Literal[
     "ocr_vision",
     # Learning loop series (spec §2 slots): check-item generation (PKG-04).
     "check_items",
+    # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
+    "grader", "grader_second",
 ]
 
 
@@ -99,6 +103,11 @@ _DEFAULTS: dict[AgentTask, str] = {
     # structured generation off the request path, so lite is enough;
     # SAPLING_MODEL_CHECK_ITEMS overrides.
     "check_items": "gemini-2.5-flash-lite",
+    # Learning loop grader (PKG-05): short per-item binary judgments → lite tier (spec §2).
+    "grader": "gemini-2.5-flash-lite",
+    # One second opinion on a DIFFERENT model, same agent and prompt (spec §3.5, A22);
+    # thinking is pinned off per run in agents/grader.py.
+    "grader_second": "gemini-2.5-flash",
 }
 
 

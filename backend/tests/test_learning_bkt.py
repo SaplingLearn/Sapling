@@ -118,7 +118,7 @@ SPEC_34_NAMES = (
     "LOOP_LIMITS",
     "GRADER_LIMITS",
     "GRADER_LOW_CONFIDENCE",
-    "GRADER_RETRY_BELOW",
+    "GRADER_SECOND_OPINION_CONFIDENCE",
     "LEAK_NGRAM",
     "CHECK_ITEM_FORMATS",
     "CHECK_ITEM_DIFFICULTIES",
@@ -239,7 +239,7 @@ SPEC_VALUES = {
     "LOOP_LIMITS": {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000},
     "GRADER_LIMITS": {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000},
     "GRADER_LOW_CONFIDENCE": 0.6,
-    "GRADER_RETRY_BELOW": 0.4,
+    "GRADER_SECOND_OPINION_CONFIDENCE": 0.4,
     "LEAK_NGRAM": 6,
     "CHECK_ITEM_FORMATS": ("free", "teachback", "mc_reason"),
     "CHECK_ITEM_DIFFICULTIES": (1, 2, 3),
@@ -288,7 +288,7 @@ def test_ordered_pairs_are_ordered():
     assert params.EXAM_TARGET_LO < params.EXAM_TARGET_HI
     assert params.PI_LO < params.PI_HI
     assert params.PROBE_ITEMS_PER_SKILL_MIN < params.PROBE_ITEMS_PER_SKILL_MAX
-    assert params.GRADER_RETRY_BELOW < params.GRADER_LOW_CONFIDENCE
+    assert params.GRADER_SECOND_OPINION_CONFIDENCE < params.GRADER_LOW_CONFIDENCE
 
 
 def test_limits_are_plain_dicts_with_usage_limits_keys():

@@ -1470,13 +1470,99 @@ def test_gated_evidence_call_detector(source, expected):
     assert [fn for _, fn in _gated_evidence_calls(source)] == expected
 
 
+# PKG-05 (a PKG-03 reopen): learning/evidence.py::flush_pending is the one
+# route persister (spec §5, §13 A16) — grade_answer appends, the route calls
+# flush_pending, which sends a pure {"evidence": ...} literal. No route calls it
+# yet; the package that adds the first route caller (PKG-07's /check/answer)
+# retires this scan, its detectors and both sanctioned sets.
+SANCTIONED_EVIDENCE_PERSISTERS = frozenset({("learning/evidence.py", "flush_pending")})
+
+
+def _evidence_persister_calls(source: str) -> list[tuple[int, str]]:
+    """(line, nearest enclosing def) for each apply_graph_update call — bare or
+    `module.apply_graph_update` — whose second positional argument is a dict
+    literal with exactly one key, the constant "evidence". `line` is the
+    callee's line, as _graph_update_payloads reports it. A module-level call
+    has no def and is never returned."""
+    import ast
+
+    tree = ast.parse(source)
+    parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+    found = []
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and len(call.args) > 1):
+            continue
+        func = call.func
+        if not (
+            (isinstance(func, ast.Name) and func.id == "apply_graph_update")
+            or (isinstance(func, ast.Attribute) and func.attr == "apply_graph_update")
+        ):
+            continue
+        payload = call.args[1]
+        if not (
+            isinstance(payload, ast.Dict)
+            and len(payload.keys) == 1
+            and isinstance(payload.keys[0], ast.Constant)
+            and payload.keys[0].value == "evidence"
+        ):
+            continue
+        node = parents.get(call)
+        while node is not None and not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            node = parents.get(node)
+        if node is not None:
+            found.append((func.lineno, node.name))
+    return found
+
+
+_FLUSH = """
+def flush_pending(deps, course_id):
+    if not deps.pending_evidence:
+        return []
+    from services.graph_service import apply_graph_update
+
+    changes = apply_graph_update(deps.user_id, {"evidence": list(deps.pending_evidence)}, course_id)
+    deps.pending_evidence.clear()
+    return changes
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (_FLUSH, ["flush_pending"]),
+        (_FLUSH.replace("def flush_pending", "def persist_more"), ["persist_more"]),
+        (
+            _FLUSH.replace("apply_graph_update(deps", "gs.apply_graph_update(deps"),
+            ["flush_pending"],
+        ),
+        (_FLUSH.replace('{"evidence": list(', '{"updated_nodes": [], "evidence": list('), []),
+        (_FLUSH.replace('{"evidence": list(deps.pending_evidence)}', "payload"), []),
+        (_FLUSH.replace('{"evidence": ', '{"new_nodes": '), []),
+        ('apply_graph_update(u, {"evidence": evs})', []),
+        (
+            "def flush_pending(deps, c):\n    def inner():\n"
+            '        return apply_graph_update(u, {"evidence": evs}, c)\n    return inner()',
+            ["inner"],
+        ),
+    ],
+)
+def test_evidence_persister_detector(source, expected):
+    """Mutation cases for the PKG-05 excuse in the caller scan below: only a
+    pure-evidence literal whose nearest def is named counts, and the scan
+    excuses it only for a (file, def) in SANCTIONED_EVIDENCE_PERSISTERS."""
+    assert [fn for _, fn in _evidence_persister_calls(source)] == expected
+
+
 def test_no_production_caller_passes_evidence_yet():
     """PKG-03 adds the path and no caller: every apply_graph_update call in
     application code passes a payload that provably carries only the legacy
     keys. PKG-11 (reopen) excuses exactly the SANCTIONED_EVIDENCE_CALLERS
     call that _gated_evidence_calls finds behind `if loop_on:`. PKG-05
-    deletes this test (and its detectors) when it wires graded_check_tool →
-    apply_graph_update(..., {"evidence": ...})."""
+    (reopen) excuses exactly the SANCTIONED_EVIDENCE_PERSISTERS call that
+    _evidence_persister_calls finds (learning/evidence.py::flush_pending, the
+    route persister; spec §13 A16 builds no graded_check_tool). The package
+    that adds the first route caller of flush_pending (PKG-07) retires this
+    test and its detectors."""
     import test_learning_loop_invariants as inv
 
     problems, callers = [], set()
@@ -1488,6 +1574,10 @@ def test_no_production_caller_passes_evidence_yet():
             line
             for line, fn in _gated_evidence_calls(text)
             if (rel, fn) in SANCTIONED_EVIDENCE_CALLERS
+        } | {
+            line
+            for line, fn in _evidence_persister_calls(text)
+            if (rel, fn) in SANCTIONED_EVIDENCE_PERSISTERS
         }
         for line, problem in _graph_update_payloads(text):
             callers.add(rel)
@@ -1640,3 +1730,34 @@ def test_inv_01_private_writer_detector(source, rel, offends):
     import test_learning_loop_invariants as inv
 
     assert bool(inv._private_writer_offenders(rel, source)) is offends
+
+
+# ── grader_backend (reopened by PKG-05; spec §5, §13 A22) ─────────────────────
+
+
+class TestGraderBackend:
+    def test_field_defaults_to_none_and_accepts_only_the_four_backends(self):
+        assert _ev().grader_backend is None
+        for backend in ("deterministic", "gemini", "gemini_second", "jev"):
+            assert _ev(grader_backend=backend).grader_backend == backend
+        with pytest.raises(ValidationError):
+            _ev(grader_backend="gpt")
+
+    def test_evidence_row_journals_grader_backend_null_when_absent(self):
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {
+                        "node_id": "n1",
+                        "channel": "free_response",
+                        "correct": True,
+                        "grader_backend": "gemini",
+                    },
+                    {"node_id": "n1", "channel": "mc", "correct": False},
+                ]
+            },
+            edges=[],
+        )
+        first, second = _event_rows(mocks)
+        assert first["grader_backend"] == "gemini"
+        assert "grader_backend" in second and second["grader_backend"] is None

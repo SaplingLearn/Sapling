@@ -29,6 +29,8 @@ handlers here rather than growing parallel modules.
 
 from __future__ import annotations
 
+import re
+
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
 from agents._providers import (
@@ -432,3 +434,41 @@ register_function_handler(
         ],
     }),
 )
+
+
+# ── Learning loop grader (PKG-05) ───────────────────────────────────────────
+#
+# grade_answer (a route helper, spec §13 A16) runs grader_agent as its OWN
+# call, so the E2E lane needs a handler — for both slots: the second opinion
+# runs the same agent on the "grader_second" slot (A22). Content-driven in
+# exactly one way: a student answer containing E2E_GRADER_CORRECT_TOKEN grades
+# every rubric item yes, anything else every item no. Rubric ids come off the
+# prompt's `RUBRIC ITEM <id>:` lines (agents/grader.py::build_grader_message),
+# so any seeded item works. E2E_GRADER_CONFIDENCE sits above
+# GRADER_LOW_CONFIDENCE (and so above the second-opinion floor): E2E evidence is
+# full-weight and the second slot never fires in E2E. Emits through the OUTPUT
+# tool → the real schema validates. Request-path once PKG-07's /check/answer
+# calls grade_answer (no route does yet). Contract:
+# tests/test_learning_check_tool.py; PKG-13's learn-loop.spec.ts types the token.
+
+E2E_GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT"
+E2E_GRADER_CONFIDENCE = 0.95
+E2E_GRADER_HINT = "[e2e-function-model] Deterministic grader hint: check the base case first."
+
+_RUBRIC_ID_RE = re.compile(r"^RUBRIC ITEM (\S+):", re.M)
+
+
+def _grader_handler(messages, info) -> ModelResponse:
+    text = _last_user_prompt_text(messages)
+    verdict = "yes" if E2E_GRADER_CORRECT_TOKEN in text else "no"
+    args = {
+        "item_results": [f"{rid}:{verdict}" for rid in _RUBRIC_ID_RE.findall(text)],
+        "confidence": E2E_GRADER_CONFIDENCE,
+        "matched_wrong_key": "",
+        "feedback_hint": E2E_GRADER_HINT,
+    }
+    return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
+
+
+register_function_handler("grader", _grader_handler)
+register_function_handler("grader_second", _grader_handler)
