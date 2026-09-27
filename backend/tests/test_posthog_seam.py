@@ -36,9 +36,11 @@ SECRET = "SECRET-student-note-Ada-Lovelace-4471"
 
 
 @pytest.fixture
-def fake_client():
-    """Install a fake PostHog client for the duration of one test."""
+def fake_client(monkeypatch):
+    """Install a fake PostHog client, with the gate saying "on" (under pytest
+    the real gate is always off, and it is re-read on every submit)."""
     client = MagicMock(name="PosthogClient")
+    monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
     posthog_client.set_client_for_tests(client)
     try:
         yield client
@@ -85,9 +87,9 @@ def consent_db(monkeypatch):
     analytics_consent.clear_analytics_consent_cache()
     # Start from the request-free defaults (no request scope, no DNT/GPC),
     # as the sweeper or a script does.
-    from services.request_context import _PRIVACY_SIGNAL_CTX, _REQUEST_SCOPE_CTX
+    from services.request_context import _PRIVACY_SIGNAL_CTX, _REQUEST_CTX
 
-    scope_token = _REQUEST_SCOPE_CTX.set(None)
+    scope_token = _REQUEST_CTX.set(None)
     signal_token = _PRIVACY_SIGNAL_CTX.set(False)
     try:
         yield SimpleNamespace(answers=answers, calls=calls)
@@ -95,7 +97,7 @@ def consent_db(monkeypatch):
         # Deliver anything still queued against THIS test's fake lookup.
         posthog_client.flush_queue(timeout_seconds=5)
         _PRIVACY_SIGNAL_CTX.reset(signal_token)
-        _REQUEST_SCOPE_CTX.reset(scope_token)
+        _REQUEST_CTX.reset(scope_token)
         analytics_consent.clear_analytics_consent_cache()
 
 
@@ -168,7 +170,7 @@ class TestGate:
         # The live gate, with a token deliberately present: pytest wins.
         monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
         monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-        assert posthog_client.is_enabled() is False
+        assert posthog_client.disabled_reason() is not None
 
     def test_kill_switch_zero_is_not_truthy(self):
         env = {**_ON_ENV, "POSTHOG_DISABLED": "0"}
@@ -193,9 +195,9 @@ def test_disabled_means_no_client_no_processor_no_network(override, monkeypatch,
         lambda **k: _gate(env, **k),
     )
     with patch("posthog.Posthog") as ctor:
-        assert posthog_client.initialize_posthog() is None
+        assert posthog_client.initialize_posthog() is False
         ctor.assert_not_called()
-    assert posthog_client.get_posthog_client() is None
+    assert posthog_client._client is None
 
     events_service.log_event("note.created", category="usage", user_id=USER_ID, payload={})
     posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id=None)
@@ -212,7 +214,8 @@ def test_enabled_client_is_constructed_with_privacy_settings(monkeypatch):
     monkeypatch.delenv("POSTHOG_HOST", raising=False)
     with patch("posthog.Posthog") as ctor:
         try:
-            client = posthog_client.initialize_posthog()
+            assert posthog_client.initialize_posthog() is True
+            client = posthog_client._client
             assert client is ctor.return_value
             kwargs = ctor.call_args.kwargs
             assert kwargs["project_api_key"] == "phc_test"
@@ -224,11 +227,12 @@ def test_enabled_client_is_constructed_with_privacy_settings(monkeypatch):
             # start feature-flag polling = background network).
             assert "personal_api_key" not in kwargs and "secret_key" not in kwargs
             # Idempotent.
-            assert posthog_client.initialize_posthog() is client
+            assert posthog_client.initialize_posthog() is True
+            assert posthog_client._client is client
             assert ctor.call_count == 1
         finally:
             posthog_client.shutdown_posthog()
-    assert posthog_client.get_posthog_client() is None
+    assert posthog_client._client is None
 
 
 def test_lifespan_under_pytest_builds_no_client():
@@ -236,7 +240,7 @@ def test_lifespan_under_pytest_builds_no_client():
     leave the client None even with a token in the environment."""
     with patch.dict("os.environ", {"POSTHOG_PROJECT_TOKEN": "phc_test"}), \
          patch("posthog.Posthog") as ctor:
-        assert posthog_client.initialize_posthog() is None
+        assert posthog_client.initialize_posthog() is False
         ctor.assert_not_called()
 
 
@@ -276,10 +280,15 @@ class TestMirror:
         _drain()
         fake_client.capture.assert_not_called()
 
-    def test_no_user_is_a_personless_event(self, fake_client, sink):
+    def test_no_user_and_no_session_user_sends_nothing(self, fake_client, consent_db, sink):
+        """No personless events: sweeper/DBOS-style work that names nobody,
+        outside any request, is not sent at all — our own row is kept."""
         events_service.log_event("rag.index_failed", category="error", payload={"doc_id": "d"})
         _drain()
-        assert fake_client.capture.call_args.kwargs["distinct_id"] is None
+        fake_client.capture.assert_not_called()
+        assert consent_db.calls == []
+        events_service.flush_now()
+        assert [r["event_type"] for r in sink] == ["rag.index_failed"]
 
     def test_a_failing_client_never_raises_or_costs_the_db_row(self, fake_client, sink):
         fake_client.capture.side_effect = RuntimeError("posthog down")
@@ -288,7 +297,7 @@ class TestMirror:
         assert [r["event_type"] for r in sink] == ["note.created"]
 
     def test_no_client_is_a_no_op(self, sink):
-        assert posthog_client.get_posthog_client() is None
+        assert posthog_client._client is None
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
         events_service.flush_now()
         assert len(sink) == 1
@@ -299,6 +308,7 @@ class TestMirror:
         socket refused, log_event still returns immediately."""
         from posthog import Posthog
 
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
         client = Posthog(
             "phc_test", host="https://us.i.posthog.com", flush_interval=60, max_retries=0,
         )
@@ -675,14 +685,14 @@ class TestOptOut:
     def test_session_user_opt_out_covers_events_without_a_user(
         self, fake_client, consent_db, sink,
     ):
-        from services.request_context import _REQUEST_SCOPE_CTX
+        from services.request_context import _REQUEST_CTX, RequestView
 
         consent_db.answers[USER_ID] = Consent.DENIED
-        token = _REQUEST_SCOPE_CTX.set({"state": {"user_id": USER_ID}})
+        token = _REQUEST_CTX.set(RequestView({"state": {"user_id": USER_ID}}))
         try:
             events_service.log_event("rag.index_failed", category="error", payload={})
         finally:
-            _REQUEST_SCOPE_CTX.reset(token)
+            _REQUEST_CTX.reset(token)
         _drain()
         fake_client.capture.assert_not_called()
 
@@ -713,7 +723,8 @@ class TestOptOut:
         app.add_middleware(RequestIDMiddleware)
 
         @app.get("/api/thing/{thing_id}")
-        async def thing(thing_id: str):
+        async def thing(thing_id: str, request: Request):
+            request.state.user_id = USER_ID  # what auth_guard does
             events_service.log_event("note.created", category="usage", user_id=USER_ID)
             raise RuntimeError("boom")
 
@@ -743,7 +754,8 @@ class TestOptOut:
         app.add_exception_handler(Exception, unhandled_exception_handler)
 
         @app.get("/boom")
-        async def boom():
+        async def boom(request: Request):
+            request.state.user_id = USER_ID  # what auth_guard does
             raise RuntimeError("boom")
 
         r = TestClient(app, raise_server_exceptions=False).get("/boom", headers=headers)
@@ -906,11 +918,11 @@ class TestDeletedUsers:
 class TestSentinelIds:
     """Finding 4: only a real users.id becomes a distinct_id."""
 
-    @pytest.mark.parametrize("uid", ["anonymous", "backfill", None])
-    def test_placeholder_mirrors_personless(self, uid, fake_client, consent_db, sink):
+    @pytest.mark.parametrize("uid", ["anonymous", "backfill", None, "has space"])
+    def test_placeholder_or_none_sends_nothing(self, uid, fake_client, consent_db, sink):
         events_service.log_event("note.created", category="usage", user_id=uid)
         _drain()
-        assert fake_client.capture.call_args.kwargs["distinct_id"] is None
+        fake_client.capture.assert_not_called()
         assert consent_db.calls == []
 
     def test_unknown_id_is_skipped(self, fake_client, consent_db, sink):
@@ -947,7 +959,8 @@ class TestErrorEvents:
         app.add_middleware(RequestIDMiddleware)
 
         @app.get("/api/profile/{user_id}/thing")
-        def thing(user_id: str):
+        def thing(user_id: str, request: Request):
+            request.state.user_id = USER_ID  # what auth_guard does
             raise RuntimeError("boom")
 
         r = TestClient(app, raise_server_exceptions=False).get(f"/api/profile/{USER_ID}/thing")
@@ -1453,7 +1466,7 @@ class TestBoundedQueue:
                 )
         names = [small.get_nowait().name for _ in range(small.qsize())]
         assert names == ["e2", "e3", "e4"]
-        assert posthog_client.queue_dropped_count() == 2
+        assert posthog_client._dropped == 2
         assert caplog.text.count("PostHog queue full") == 1  # warn once, not per drop
         for _ in names:
             small.task_done()
@@ -1810,3 +1823,236 @@ class TestMigrationHeader:
         ).read_text()
         assert "ai_observability" not in sql
         assert "posthog_client" in sql and "analytics_consent" in sql
+
+
+# ── 10. Convergence review (PR #677) ────────────────────────────────────────
+
+
+def _signed_in_app(route_body):
+    """An app behind the real RequestIDMiddleware whose one route runs
+    ``route_body(request)`` after signing USER_ID in the way auth_guard does."""
+    from services.request_context import RequestIDMiddleware
+
+    app = FastAPI()
+    app.add_middleware(RequestIDMiddleware)
+
+    @app.post("/api/work/{item_id}")
+    def work(item_id: str, request: Request):
+        request.state.user_id = USER_ID
+        route_body(request)
+        return {}
+
+    return app
+
+
+class TestNoPersonlessEvents:
+    """Every PostHog event is attributed to a consenting student, or not sent."""
+
+    def _usage_result(self):
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import ModelResponse, TextPart
+        from pydantic_ai.models.function import FunctionModel
+
+        agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart("ok")])))
+        return asyncio.run(agent.run("hi"))
+
+    def test_opted_out_students_usage_outside_a_request_sends_nothing(
+        self, fake_client, consent_db, sink,
+    ):
+        """The document pipeline / DBOS / sweeper case: no request scope."""
+        from agents.usage import record_agent_usage
+
+        consent_db.answers[USER_ID] = Consent.DENIED
+        record_agent_usage(self._usage_result(), feature="documents", task="summary", user_id=USER_ID)
+        _drain()
+        fake_client.capture.assert_not_called()
+
+    def test_userless_usage_outside_a_request_sends_nothing(self, fake_client, consent_db, sink):
+        from agents.usage import record_agent_usage
+
+        record_agent_usage(self._usage_result(), feature="documents", task="summary")
+        _drain()
+        fake_client.capture.assert_not_called()
+        assert consent_db.calls == []
+        events_service.flush_now()
+        assert [r for r in sink if r.get("feature") == "documents"]  # our llm_usage row
+
+    def test_userless_exception_outside_a_request_sends_nothing(self, fake_client):
+        posthog_client.capture_exception(ValueError("x"), user_id=None, request_id="r")
+        _drain()
+        fake_client.capture.assert_not_called()
+
+
+class TestNoMisattribution:
+    """Only a ``user_id is None`` falls back to the session user. A caller that
+    names someone — even a placeholder or a malformed id — is never
+    re-attributed to whoever is signed in."""
+
+    @pytest.mark.parametrize("uid", ["anonymous", "backfill", "has space", "", "x" * 200])
+    def test_non_none_invalid_id_is_dropped_not_substituted(self, uid, fake_client, sink):
+        app = _signed_in_app(lambda request: events_service.log_event(
+            "note.created", category="usage", user_id=uid,
+        ))
+        assert TestClient(app).post("/api/work/1").status_code == 200
+        _drain()
+        fake_client.capture.assert_not_called()
+
+    def test_none_falls_back_to_the_session_user(self, fake_client, sink):
+        app = _signed_in_app(lambda request: events_service.log_event(
+            "note.created", category="usage", user_id=None,
+        ))
+        assert TestClient(app).post("/api/work/1").status_code == 200
+        _drain()
+        assert fake_client.capture.call_args.kwargs["distinct_id"] == USER_ID
+
+    def test_actor_rule_directly(self):
+        from services.request_context import _REQUEST_CTX, RequestView
+
+        token = _REQUEST_CTX.set(RequestView({"state": {"user_id": USER_ID}}))
+        try:
+            assert posthog_client._actor(None) == USER_ID
+            assert posthog_client._actor("anonymous") is None
+            assert posthog_client._actor("bad id") is None
+            assert posthog_client._actor(" user_42 ") == "user_42"
+        finally:
+            _REQUEST_CTX.reset(token)
+        assert posthog_client._actor(None) is None  # no request, nobody
+
+
+class TestRuntimeKillSwitch:
+    """POSTHOG_DISABLED takes effect without a restart — on submit AND for
+    items already queued."""
+
+    @pytest.fixture
+    def real_gate(self, fake_client, monkeypatch):
+        from agents._providers import model_mode
+
+        monkeypatch.setattr(
+            posthog_client, "disabled_reason",
+            lambda *, for_erasure=False: posthog_client._disabled_reason_for(
+                os.environ, under_pytest=False, model_mode=model_mode(),
+                for_erasure=for_erasure,
+            ),
+        )
+        monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+        monkeypatch.delenv("APP_ENV", raising=False)
+        monkeypatch.delenv("POSTHOG_DISABLED", raising=False)
+        return fake_client
+
+    def test_flipping_the_switch_stops_new_events(self, real_gate, monkeypatch, sink):
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
+        assert real_gate.capture.call_count == 1
+        monkeypatch.setenv("POSTHOG_DISABLED", "1")
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        _drain()
+        assert real_gate.capture.call_count == 1
+        assert posthog_client._queue.unfinished_tasks == 0
+
+    def test_items_queued_before_the_switch_are_dropped(
+        self, real_gate, monkeypatch, sink,
+    ):
+        import threading
+
+        release = threading.Event()
+
+        def slow(uid):
+            release.wait(2)
+            return Consent.ALLOWED
+
+        monkeypatch.setattr(analytics_consent, "_lookup", slow)
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        monkeypatch.setenv("POSTHOG_DISABLED", "1")
+        release.set()
+        _drain()
+        # At most the one item already past the gate check when it flipped.
+        assert real_gate.capture.call_count <= 1
+
+
+class TestSettingsEtagShape:
+    """The GET /settings ETag changes with the body's shape, not only its
+    updated_at — a pre-migration / pre-deploy cached body must miss."""
+
+    def _etag(self, row):
+        from main import app
+
+        def table_side_effect(name):
+            m = MagicMock()
+            m.select.return_value = [row] if name == "user_settings" else []
+            return m
+
+        with patch("routes.profile.require_self"), \
+             patch("routes.profile.table", side_effect=table_side_effect):
+            r = TestClient(app).get(f"/api/profile/{USER_ID}/settings")
+        assert r.status_code == 200
+        return r.headers["etag"]
+
+    def test_with_and_without_the_column_differ(self):
+        stamp = "2026-09-27T00:00:00Z"
+        with_col = self._etag({"user_id": USER_ID, "updated_at": stamp, "analytics_opt_out": False})
+        without = self._etag({"user_id": USER_ID, "updated_at": stamp})
+        assert with_col != without
+
+    def test_differs_from_the_pre_change_formula(self):
+        from services.http_cache import make_etag
+
+        stamp = "2026-09-27T00:00:00Z"
+        old = make_etag("settings", USER_ID, stamp)
+        assert self._etag({"user_id": USER_ID, "updated_at": stamp, "analytics_opt_out": False}) != old
+
+
+class TestRequestContextIsNarrow:
+    """The contextvar holds the request's state dict + a route accessor —
+    never the ASGI scope with its headers and cookies."""
+
+    def test_view_exposes_only_state_and_route(self, fake_client, sink):
+        from services.request_context import _REQUEST_CTX, RequestView
+
+        seen: dict = {}
+
+        def body(request):
+            view = _REQUEST_CTX.get()
+            seen["type"] = type(view)
+            seen["slots"] = RequestView.__slots__
+            seen["user"] = view.state.get("user_id")
+            seen["route"] = view.route_template()
+            seen["has_headers"] = any(
+                hasattr(view, a) for a in ("headers", "scope", "cookies", "query_string")
+            )
+
+        app = _signed_in_app(body)
+        TestClient(app).post(
+            "/api/work/42", headers={"Cookie": "sapling_session=SECRETCOOKIE"},
+        )
+        assert seen["type"] is RequestView
+        assert set(seen["slots"]) == {"state", "_route_of"}
+        assert seen["user"] == USER_ID  # request.state is the same dict
+        assert seen["route"] == "/api/work/{item_id}"
+        assert seen["has_headers"] is False
+
+
+class TestOneSubmitPath:
+    def test_all_three_uses_go_through_submit(self, fake_client, monkeypatch):
+        calls: list[str] = []
+        real = posthog_client._submit
+        monkeypatch.setattr(
+            posthog_client, "_submit",
+            lambda name, *a, **k: calls.append(name) or real(name, *a, **k),
+        )
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        events_service.log_llm_usage(
+            feature="f", task="t", model="gemini-2.5-flash", usage={}, user_id=USER_ID,
+        )
+        posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id="r")
+        assert calls == ["note.created", "$ai_generation", "$exception"]
+
+
+class TestNoRawClientApi:
+    def test_dead_public_api_is_gone(self):
+        for name in ("is_enabled", "get_posthog_client", "queue_dropped_count"):
+            assert not hasattr(posthog_client, name), name
+
+    def test_initialize_returns_a_bool_not_the_client(self):
+        assert posthog_client.initialize_posthog() is False  # pytest: gate is off
