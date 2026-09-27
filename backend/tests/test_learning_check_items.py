@@ -1699,3 +1699,223 @@ class TestWithdrawal:
                 retire.assert_called_once_with(tpr.USER_ID)
             else:
                 retire.assert_not_called()
+
+
+# ── scripts/backfill_check_items.py ────────────────────────────────────────
+
+
+@pytest.fixture
+def backfill(monkeypatch):
+    """Mirror of tests/test_backfill_document_chunks.py::backfill — the script
+    calls load_dotenv(".env.staging") at import; neutralise it first."""
+    import importlib
+    import sys
+
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
+    sys.modules.pop("scripts.backfill_check_items", None)
+    module = importlib.import_module("scripts.backfill_check_items")
+    monkeypatch.setattr(module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(module, "_project_ref", lambda: "proj-a")
+    yield module
+    sys.modules.pop("scripts.backfill_check_items", None)
+
+
+_NODES = [{"course_id": "course-1", "concept_name": "A"}]
+
+
+class TestBackfill:
+    def _wire(self, backfill, monkeypatch, *, nodes=_NODES, chunks=(_CHUNK,)):
+        import config
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        factory, mocks = _cached_tables(
+            {"graph_nodes": list(nodes), "documents": [{"id": "doc-1"}]}
+        )
+        monkeypatch.setattr(backfill, "table", factory)
+        monkeypatch.setattr(backfill, "model_mode", lambda: "real")
+        monkeypatch.setattr(backfill, "course_offering_ids", lambda c: ["off-1"])
+        monkeypatch.setattr(backfill, "source_chunks", lambda d: list(chunks))
+        monkeypatch.setattr(backfill, "coverage", lambda c: (1, 1))
+        return mocks
+
+    def test_refuses_when_flag_off(self, backfill, monkeypatch, capsys):
+        import config
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
+        with pytest.raises(SystemExit) as e:
+            backfill.main(["--course", "course-1", "--project", "proj-a"])
+        assert e.value.code == 2 and "LEARNING_LOOP_ENABLED" in capsys.readouterr().out
+
+    def test_refuses_outside_real_mode_without_function_mode(self, backfill, monkeypatch):
+        import config
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        monkeypatch.setattr(backfill, "model_mode", lambda: "function")
+        with pytest.raises(SystemExit) as e:
+            backfill.main(["--course", "course-1", "--project", "proj-a"])
+        assert e.value.code == 2
+
+    def test_function_mode_flag_allows_a_deterministic_run(self, backfill, monkeypatch):
+        from services.check_item_service import GenerationOutcome
+
+        self._wire(backfill, monkeypatch)
+        monkeypatch.setattr(backfill, "model_mode", lambda: "function")
+        with patch.object(
+            backfill, "generate_for_concepts", return_value=GenerationOutcome(9, 1, 0, 0)
+        ) as gen:
+            backfill.main(["--course", "course-1", "--project", "proj-a", "--function-mode"])
+        gen.assert_called_once()
+
+    def test_exactly_one_of_course_or_all_courses(self, backfill, monkeypatch):
+        import config
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        for argv in (
+            [],
+            ["--project", "proj-a"],
+            ["--course", "course-1", "--all-courses", "--project", "proj-a"],
+            ["--course", "course-1"],  # --project is required
+        ):
+            with pytest.raises(SystemExit) as e:
+                backfill.main(argv)
+            assert e.value.code == 2
+
+    def test_dry_run_reads_but_generates_nothing(self, backfill, monkeypatch, capsys):
+        self._wire(backfill, monkeypatch)
+        with (
+            patch.object(backfill, "generate_for_concepts") as gen,
+            patch("services.check_item_service.draft_items") as draft,
+        ):
+            backfill.main(["--course", "course-1", "--project", "proj-a", "--dry-run"])
+        gen.assert_not_called()
+        draft.assert_not_called()
+        out = capsys.readouterr().out
+        assert out.startswith("Project: proj-a") and "coverage course-1 1/1" in out
+        assert "would draft" in out
+
+    def test_all_courses_prints_coverage_per_course(self, backfill, monkeypatch, capsys):
+        from services.check_item_service import GenerationOutcome
+
+        mocks = self._wire(
+            backfill, monkeypatch, nodes=_NODES + [{"course_id": "course-2", "concept_name": "A"}]
+        )
+        calls = []
+
+        def fake_generate(**k):
+            calls.append(k)
+            return GenerationOutcome(9, 1, 0, 0)
+
+        monkeypatch.setattr(backfill, "generate_for_concepts", fake_generate)
+        backfill.main(["--all-courses", "--project", "proj-a"])
+        out = capsys.readouterr().out
+        assert "coverage course-1 1/1" in out and "coverage course-2 1/1" in out
+        # uncapped, the relevance floor, Flex, and the system actor (A23, Behaviour 8)
+        assert [c["course_id"] for c in calls] == ["course-1", "course-2"]
+        for c in calls:
+            assert c["user_id"] is None and c["flex"] is True and "max_concepts" not in c
+            assert c["min_chunk_score"] == 1
+        doc_read = mocks["documents"].select_with_count.call_args[1]
+        assert doc_read["filters"] == {
+            "offering_id": 'in.("off-1")',
+            "shareability": "eq.course_material",
+            "deleted_at": "is.null",
+        }
+        assert doc_read["order"] == "id"
+
+    def test_unknown_offerings_skip_the_course(self, backfill, monkeypatch, capsys):
+        self._wire(backfill, monkeypatch)
+        monkeypatch.setattr(backfill, "course_offering_ids", lambda c: None)
+        with patch.object(backfill, "generate_for_concepts") as gen:
+            backfill.main(["--course", "course-1", "--project", "proj-a"])
+        gen.assert_not_called()
+        assert "offerings unknown" in capsys.readouterr().out
+
+    def test_covered_concept_makes_zero_agent_calls_and_exits_zero(self, backfill, monkeypatch):
+        from learning.params import CHECK_ITEM_INITIAL_PER_CONCEPT
+
+        self._wire(backfill, monkeypatch)
+        full, _ = _cached_tables(
+            {"check_items": [{"id": f"i{n}"} for n in range(CHECK_ITEM_INITIAL_PER_CONCEPT)]}
+        )
+        with (
+            patch("services.check_item_service.table", side_effect=full),
+            patch("services.check_item_service.draft_items") as draft,
+        ):
+            backfill.main(
+                ["--course", "course-1", "--project", "proj-a"]
+            )  # returns: a fully covered run exits 0
+        draft.assert_not_called()
+
+    def test_zero_items_landed_exits_one(self, backfill, monkeypatch):
+        from services.check_item_service import GenerationOutcome
+
+        self._wire(backfill, monkeypatch)
+        monkeypatch.setattr(
+            backfill, "generate_for_concepts", lambda **k: GenerationOutcome(0, 1, 1, 0)
+        )
+        with pytest.raises(SystemExit) as e:
+            backfill.main(["--course", "course-1", "--project", "proj-a"])
+        assert e.value.code == 1
+
+    def test_refuses_when_project_is_not_the_connected_one(self, backfill, monkeypatch, capsys):
+        mocks = self._wire(backfill, monkeypatch)
+        with patch.object(backfill, "generate_for_concepts") as gen:
+            with pytest.raises(SystemExit) as e:
+                backfill.main(["--all-courses", "--project", "prod-ref"])
+        out = capsys.readouterr().out
+        assert e.value.code == 2 and "Project: proj-a" in out and "prod-ref" in out
+        gen.assert_not_called()
+        assert mocks == {}, "no table() read before the project check"
+
+    def test_concept_no_shared_passage_mentions_makes_no_agent_call(
+        self, backfill, monkeypatch, capsys
+    ):
+        """A23 relevance floor: a concept from a private note that no shared course-material
+        passage mentions is never drafted from unrelated (score-0) chunks."""
+        off_topic = {
+            "id": "c9",
+            "chunk_index": 0,
+            "chunk_text": "photosynthesis in leaves",
+            "doc_id": "doc-1",
+        }
+        self._wire(
+            backfill,
+            monkeypatch,
+            nodes=[{"course_id": "course-1", "concept_name": "Gradient descent"}],
+            chunks=(off_topic,),
+        )
+        empty, _ = _cached_tables({"check_items": []})
+        with (
+            patch("services.check_item_service.table", side_effect=empty),
+            patch("services.check_item_service.draft_items") as draft,
+            patch("services.check_item_service.create_items") as create,
+        ):
+            backfill.main(["--course", "course-1", "--project", "proj-a"])
+        draft.assert_not_called()
+        create.assert_not_called()
+        assert "unmatched 1" in capsys.readouterr().out
+
+
+class TestProjectRef:
+    @pytest.mark.parametrize(
+        "url,ref",
+        [
+            ("https://abcdefghij.supabase.co", "abcdefghij"),
+            ("https://ABCDEFGHIJ.supabase.co/", "abcdefghij"),
+            ("http://127.0.0.1:54321", "local"),
+            ("http://localhost:54321", "local"),
+            ("", "local"),
+        ],
+    )
+    def test_ref_is_parsed_from_supabase_url(self, monkeypatch, url, ref):
+        import importlib
+        import sys
+
+        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
+        sys.modules.pop("scripts.backfill_check_items", None)
+        try:
+            module = importlib.import_module("scripts.backfill_check_items")
+            monkeypatch.setattr(module, "SUPABASE_URL", url)
+            assert module._project_ref() == ref
+        finally:
+            sys.modules.pop("scripts.backfill_check_items", None)
