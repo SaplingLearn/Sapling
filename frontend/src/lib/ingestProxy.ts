@@ -11,6 +11,12 @@
  * credential to a third party on every analytics batch. Here the upstream
  * request is built from an allowlist instead: no cookies, no auth, no
  * client-IP headers, and the Host comes from the upstream URL.
+ *
+ * The client IP is withheld ON PURPOSE (not forwarded as `X-Forwarded-For`,
+ * never `cf-connecting-ip`): PostHog sees the Worker's egress address, so its
+ * `$ip` and any GeoIP it derived would describe Cloudflare, not the student.
+ * posthog-js sends `$geoip_disable` on every event (src/lib/analytics.ts) and
+ * the project runs with "Discard client IP data" on, so neither is kept.
  */
 
 /** PostHog US ingestion + asset hosts. */
@@ -21,21 +27,71 @@ export const POSTHOG_ASSETS_ORIGIN = "https://us-assets.i.posthog.com";
 export const INGEST_PREFIX = "/ingest";
 
 /**
+ * Every PostHog path is plain unreserved characters in non-empty segments,
+ * with an optional trailing slash (`/e/`, `/flags/`, `/i/v0/e/`,
+ * `/static/array.js`, `/array/phc_…/config.js`).
+ */
+const SAFE_REST = /^(?:\/[A-Za-z0-9._~-]+)+\/?$/;
+
+/**
+ * The path below `/ingest`, decoded and checked, or null to refuse it.
+ *
+ * Refused rather than normalised: a percent-encoded dot, slash, backslash or
+ * percent (`%2e%2e`, `%2F`, `%5c`, `%25` — any case) is checked on the RAW
+ * path, before decoding, because no real PostHog path contains one and an
+ * upstream that decodes it would read `/static/%2e%2e%2fflags` as `/flags`.
+ * After decoding, anything outside SAFE_REST and any `.`/`..` segment is
+ * refused too. The result is what both host routing and the upstream URL are
+ * built from, so the two can never disagree about which path is meant.
+ */
+export function normalisedIngestPath(pathname: string): string | null {
+  if (!pathname.startsWith(INGEST_PREFIX + "/")) return null;
+  const raw = pathname.slice(INGEST_PREFIX.length); // keeps the leading "/"
+  if (/%(?:2e|2f|5c|25)/i.test(raw)) return null;
+  let rest: string;
+  try {
+    rest = decodeURIComponent(raw);
+  } catch {
+    return null; // malformed escape
+  }
+  if (!SAFE_REST.test(rest)) return null;
+  if (rest.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  return rest;
+}
+
+/** `static/*` and `array/*` (SDK bundles, remote config) live on the assets host. */
+function isAssetPath(rest: string): boolean {
+  return rest.startsWith("/static/") || rest.startsWith("/array/");
+}
+
+/**
  * Map `/ingest/<rest>?<query>` to the PostHog URL. `static/*` and `array/*`
- * (SDK bundles + remote config scripts) live on the assets host; everything
- * else (`/e/`, `/flags/`, `/i/v0/e/`, …) on the ingestion host. The trailing
- * slash PostHog's endpoints use is preserved verbatim.
+ * go to the assets host; everything else (`/e/`, `/flags/`, `/i/v0/e/`, …) to
+ * the ingestion host. The trailing slash PostHog's endpoints use is kept.
  */
 export function upstreamUrl(pathname: string, search: string): string | null {
-  if (!pathname.startsWith(INGEST_PREFIX + "/")) return null;
-  const rest = pathname.slice(INGEST_PREFIX.length); // keeps the leading "/"
-  // Refuse traversal/odd paths rather than normalise them.
-  if (rest.includes("..") || rest.includes("//") || rest.includes("\\")) return null;
-  const origin =
-    rest.startsWith("/static/") || rest.startsWith("/array/")
-      ? POSTHOG_ASSETS_ORIGIN
-      : POSTHOG_INGEST_ORIGIN;
-  return origin + rest + (search ?? "");
+  const rest = normalisedIngestPath(pathname);
+  if (rest === null) return null;
+  const origin = isAssetPath(rest) ? POSTHOG_ASSETS_ORIGIN : POSTHOG_INGEST_ORIGIN;
+  const target = new URL(origin + rest + (search ?? ""));
+  // Belt and braces: the URL parser must agree the path stayed put on that host.
+  if (target.origin !== origin || target.pathname !== rest) return null;
+  return target.toString();
+}
+
+/**
+ * A versioned SDK bundle (`/ingest/static/<name>.js?v=<lib version>`):
+ * posthog-js puts its own version in the query, so a given URL never changes
+ * and the browser can keep it for good instead of revalidating every 4 hours
+ * (PostHog's own `max-age=14400`). Unversioned files — `static/array.js`,
+ * `array/<key>/config.js` — keep PostHog's headers.
+ */
+export const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+
+export function isImmutableAsset(pathname: string, search: string): boolean {
+  const rest = normalisedIngestPath(pathname);
+  if (rest === null || !rest.startsWith("/static/")) return false;
+  return new URLSearchParams(search).has("v");
 }
 
 /** Request headers worth forwarding. Everything else is dropped. */
@@ -70,11 +126,15 @@ const FORWARD_RESPONSE_HEADERS = [
   "vary",
 ] as const;
 
-export function downstreamResponseHeaders(upstream: Headers): Headers {
+export function downstreamResponseHeaders(
+  upstream: Headers,
+  opts: { immutable?: boolean } = {},
+): Headers {
   const out = new Headers();
   for (const name of FORWARD_RESPONSE_HEADERS) {
     const v = upstream.get(name);
     if (v !== null) out.set(name, v);
   }
+  if (opts.immutable) out.set("cache-control", IMMUTABLE_CACHE_CONTROL);
   return out;
 }

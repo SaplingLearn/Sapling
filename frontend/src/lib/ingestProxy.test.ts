@@ -6,7 +6,10 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  IMMUTABLE_CACHE_CONTROL,
   downstreamResponseHeaders,
+  isImmutableAsset,
+  normalisedIngestPath,
   upstreamRequestHeaders,
   upstreamUrl,
 } from "./ingestProxy";
@@ -30,6 +33,57 @@ describe("upstreamUrl", () => {
     expect(upstreamUrl("/api/auth/me", "")).toBeNull();
     expect(upstreamUrl("/ingest/../api", "")).toBeNull();
     expect(upstreamUrl("/ingest//evil.com/x", "")).toBeNull();
+  });
+
+  it("refuses percent-encoded traversal in any case, before decoding", () => {
+    for (const path of [
+      "/ingest/%2e%2e/api/auth/me",
+      "/ingest/%2E%2E/api",
+      "/ingest/static/%2e%2e/flags/",
+      "/ingest/static/..%2fflags/",
+      "/ingest/static/%2E%2E%2Fflags/",
+      "/ingest/static%2f..%2f..%2fapi",
+      "/ingest/static/%5c..%5cflags",
+      "/ingest/static/.%2e/e/",
+      "/ingest/%252e%252e/api", // double-encoded
+      "/ingest/static/./array.js",
+      "/ingest/static/../e/",
+      "/ingest/e\\..\\x",
+      "/ingest/%zz/e/", // malformed escape
+      "/ingest/e/%0d%0aHost:%20evil",
+    ]) {
+      expect(upstreamUrl(path, ""), path).toBeNull();
+      expect(normalisedIngestPath(path), path).toBeNull();
+    }
+  });
+
+  it("routes on the NORMALISED path: an encoded static/ prefix cannot pick the assets host", () => {
+    // Harmless percent-encoding of ordinary characters decodes, and the
+    // decoded path is what decides the host and what goes upstream.
+    expect(normalisedIngestPath("/ingest/%65/")).toBe("/e/");
+    expect(upstreamUrl("/ingest/%65/", "")).toBe("https://us.i.posthog.com/e/");
+    expect(upstreamUrl("/ingest/%73tatic/array.js", "")).toBe("https://us-assets.i.posthog.com/static/array.js");
+    // Every accepted target stays on a PostHog host.
+    for (const path of ["/ingest/e/", "/ingest/static/array.js", "/ingest/array/phc_x/config.js"]) {
+      const url = new URL(upstreamUrl(path, "?x=1")!);
+      expect(["us.i.posthog.com", "us-assets.i.posthog.com"]).toContain(url.hostname);
+    }
+  });
+});
+
+describe("immutable asset caching", () => {
+  it("only versioned /static/ bundles are immutable", () => {
+    expect(isImmutableAsset("/ingest/static/surveys.js", "?v=1.434.15")).toBe(true);
+    expect(isImmutableAsset("/ingest/static/array.js", "")).toBe(false);
+    expect(isImmutableAsset("/ingest/array/phc_x/config.js", "?v=1")).toBe(false);
+    expect(isImmutableAsset("/ingest/e/", "?v=1")).toBe(false);
+    expect(isImmutableAsset("/ingest/static/%2e%2e/e/", "?v=1")).toBe(false);
+  });
+
+  it("overrides PostHog's short max-age for them", () => {
+    const upstream = new Headers({ "cache-control": "public, max-age=14400", "content-type": "application/javascript" });
+    expect(downstreamResponseHeaders(upstream, { immutable: true }).get("cache-control")).toBe(IMMUTABLE_CACHE_CONTROL);
+    expect(downstreamResponseHeaders(upstream).get("cache-control")).toBe("public, max-age=14400");
   });
 });
 

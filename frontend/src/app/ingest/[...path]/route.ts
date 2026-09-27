@@ -5,41 +5,51 @@
  *
  * Implemented as a route handler, not a next.config rewrite, so the upstream
  * request is built from a header allowlist and never carries the student's
- * `sapling_session` cookie — see src/lib/ingestProxy.ts for the full reason.
- * Not in middleware.ts's matcher, so no session check runs here (and none is
- * needed: nothing user-scoped is served).
+ * `sapling_session` cookie or IP — see src/lib/ingestProxy.ts for the full
+ * reason. Not in middleware.ts's matcher, so no session check runs here (and
+ * none is needed: nothing user-scoped is served).
  */
 import {
   downstreamResponseHeaders,
+  isImmutableAsset,
   upstreamRequestHeaders,
   upstreamUrl,
 } from "@/lib/ingestProxy";
 
 export const dynamic = "force-dynamic";
 
+/** `duplex` is required by fetch() for a streamed body but missing from lib.dom. */
+type StreamingRequestInit = RequestInit & { duplex?: "half" };
+
 async function proxy(request: Request): Promise<Response> {
   const { pathname, search } = new URL(request.url);
   const target = upstreamUrl(pathname, search);
   if (!target) return new Response("Not found", { status: 404 });
 
-  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  const init: StreamingRequestInit = {
+    method: request.method,
+    headers: upstreamRequestHeaders(request.headers),
+  };
+  if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
+    // Stream the batch through instead of buffering it in the Worker.
+    init.body = request.body;
+    init.duplex = "half";
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetch(target, {
-      method: request.method,
-      headers: upstreamRequestHeaders(request.headers),
-      body: hasBody ? await request.arrayBuffer() : undefined,
-    });
+    upstream = await fetch(target, init);
   } catch {
     // Analytics is best-effort: a PostHog outage must look like a dropped
     // batch to the SDK, not an app error.
     return new Response(null, { status: 502 });
   }
 
+  const immutable = upstream.ok && isImmutableAsset(pathname, search);
   return new Response(request.method === "HEAD" ? null : upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
-    headers: downstreamResponseHeaders(upstream.headers),
+    headers: downstreamResponseHeaders(upstream.headers, { immutable }),
   });
 }
 
