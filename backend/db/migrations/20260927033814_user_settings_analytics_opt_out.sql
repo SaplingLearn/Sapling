@@ -1,7 +1,7 @@
 -- ADR 0028: persisted third-party analytics (PostHog) opt-out.
 --
--- The PostHog seam (services/posthog_client.py mirror, services/
--- ai_observability.py AI-span export) sends nothing for a user whose
+-- The PostHog seam (services/posthog_client.py: events, $ai_generation,
+-- exceptions — all through one consent worker) sends nothing for a user whose
 -- analytics_opt_out is true: services/analytics_consent.consent_for reads it
 -- through a per-process TTL cache that PATCH /api/profile/{user_id}/settings
 -- invalidates. The settings toggle writes it; the frontend also sets it when

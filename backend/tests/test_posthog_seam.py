@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import socket
+import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -121,14 +123,16 @@ _ON_ENV = {
 # ── 1. Gating ───────────────────────────────────────────────────────────────
 
 
-def _gate(env, *, under_pytest=False):
+def _gate(env, *, under_pytest=False, for_erasure=False):
     """The pure gate, with the mode resolved by the LLM seam itself
     (agents._providers.model_mode) from the env under test."""
     from agents import _providers
 
     with patch.dict("os.environ", {"SAPLING_MODEL_MODE": env.get("SAPLING_MODEL_MODE", "")}):
         mode = _providers.model_mode()
-    return posthog_client._disabled_reason_for(env, under_pytest=under_pytest, model_mode=mode)
+    return posthog_client._disabled_reason_for(
+        env, under_pytest=under_pytest, model_mode=mode, for_erasure=for_erasure,
+    )
 
 
 class TestGate:
@@ -186,7 +190,7 @@ def test_disabled_means_no_client_no_processor_no_network(override, monkeypatch,
     env = {**_ON_ENV, **override}
     monkeypatch.setattr(
         posthog_client, "disabled_reason",
-        lambda: _gate(env),
+        lambda **k: _gate(env, **k),
     )
     with patch("posthog.Posthog") as ctor:
         assert posthog_client.initialize_posthog() is None
@@ -203,7 +207,7 @@ def test_disabled_means_no_client_no_processor_no_network(override, monkeypatch,
 
 
 def test_enabled_client_is_constructed_with_privacy_settings(monkeypatch):
-    monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
+    monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
     monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
     monkeypatch.delenv("POSTHOG_HOST", raising=False)
     with patch("posthog.Posthog") as ctor:
@@ -385,7 +389,7 @@ class TestExceptionCapture:
             return out
 
         monkeypatch.setattr(posthog_client, "_scrub_event", spy)
-        monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
         monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
         real_ctor = posthog_pkg.Posthog
         monkeypatch.setattr(
@@ -405,8 +409,9 @@ class TestExceptionCapture:
         finally:
             posthog_client.shutdown_posthog()
 
-        assert len(captured) == 1
-        event = captured[0]
+        # [0] is our enqueue-time scrub of the bare list; [-1] is the SDK's
+        # before_send on the real event.
+        event = captured[-1]
         assert event["event"] == "$exception"
         assert event["distinct_id"] == USER_ID
         assert event["properties"]["request_id"] == "req-5"
@@ -437,9 +442,13 @@ class TestExceptionCapture:
         resp = asyncio.run(unhandled_exception_handler(request, exc))
         assert resp.status_code == 500
         _drain()
-        fake_client.capture_exception.assert_called_once_with(
-            exc, distinct_id=USER_ID, properties={"request_id": "rid-1"},
-        )
+        fake_client.capture.assert_called_once()
+        call = fake_client.capture.call_args
+        assert call.args == ("$exception",)
+        assert call.kwargs["distinct_id"] == USER_ID
+        assert call.kwargs["properties"]["request_id"] == "rid-1"
+        assert call.kwargs["properties"]["$exception_list"][0]["type"] == "RuntimeError"
+        assert call.kwargs["properties"]["$exception_list"][0]["value"] == "[redacted]"
 
     def test_500_handler_is_inert_when_disabled(self):
         from main import unhandled_exception_handler
@@ -451,7 +460,7 @@ class TestExceptionCapture:
         assert resp.status_code == 500
 
     def test_a_failing_capture_never_raises(self, fake_client):
-        fake_client.capture_exception.side_effect = RuntimeError("down")
+        fake_client.capture.side_effect = RuntimeError("down")
         posthog_client.capture_exception(ValueError("x"), user_id=None, request_id=None)
 
 
@@ -461,7 +470,7 @@ class TestExceptionCapture:
 class TestDeletePerson:
     @pytest.fixture
     def on(self, monkeypatch):
-        monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
         monkeypatch.setenv("POSTHOG_PERSONAL_API_KEY", "phx_key")
         monkeypatch.setenv("POSTHOG_PROJECT_ID", "4242")
         monkeypatch.setenv("POSTHOG_HOST", "https://us.i.posthog.com")
@@ -482,7 +491,8 @@ class TestDeletePerson:
 
     def test_runs_even_with_no_project_token(self, monkeypatch, on):
         monkeypatch.setattr(
-            posthog_client, "disabled_reason", lambda: posthog_client._NO_TOKEN,
+            posthog_client, "disabled_reason",
+            lambda *, for_erasure=False: None if for_erasure else posthog_client._NO_TOKEN,
         )
         with patch("httpx.post", return_value=MagicMock(status_code=202)) as post:
             posthog_client.delete_person(USER_ID)
@@ -490,6 +500,7 @@ class TestDeletePerson:
 
     @pytest.mark.parametrize("unset", ["POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID"])
     def test_unconfigured_warns_and_skips(self, on, monkeypatch, caplog, unset):
+        monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")  # PostHog WAS configured
         monkeypatch.delenv(unset)
         with patch("httpx.post") as post, caplog.at_level(logging.WARNING, "sapling.posthog"):
             posthog_client.delete_person(USER_ID)
@@ -679,7 +690,7 @@ class TestOptOut:
         consent_db.answers[USER_ID] = Consent.DENIED
         posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id="r")
         _drain()
-        fake_client.capture_exception.assert_not_called()
+        fake_client.capture.assert_not_called()
 
     @pytest.mark.parametrize("headers, signal", [
         ({"Sec-GPC": "1"}, True),
@@ -738,7 +749,7 @@ class TestOptOut:
         r = TestClient(app, raise_server_exceptions=False).get("/boom", headers=headers)
         assert r.status_code == 500
         _drain()
-        assert fake_client.capture_exception.called is captured
+        assert fake_client.capture.called is captured
 
 class TestSettingsContract:
     """The shared contract with the frontend (PR #675): PATCH accepts
@@ -868,7 +879,7 @@ class TestDeletedUsers:
     def test_person_delete_flushes_both_queues_before_the_request(
         self, monkeypatch, fake_client,
     ):
-        monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
         monkeypatch.setenv("POSTHOG_PERSONAL_API_KEY", "phx_key")
         monkeypatch.setenv("POSTHOG_PROJECT_ID", "4242")
         monkeypatch.setenv("POSTHOG_HOST", "https://us.i.posthog.com")
@@ -986,7 +997,7 @@ class TestApiHost:
         assert config.posthog_api_host() == "https://ph-app.example.com"
 
     def test_unknown_host_skips_the_delete_with_a_warning(self, monkeypatch, caplog):
-        monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
         monkeypatch.setenv("POSTHOG_PERSONAL_API_KEY", "phx_key")
         monkeypatch.setenv("POSTHOG_PROJECT_ID", "4242")
         monkeypatch.setenv("POSTHOG_HOST", "https://ph.example.com")
@@ -1114,7 +1125,7 @@ class TestNoRecreateAfterDelete:
     """R4: consent is re-checked at span END; a second bulk_delete follows."""
 
     def _on(self, monkeypatch):
-        monkeypatch.setattr(posthog_client, "disabled_reason", lambda: None)
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
         monkeypatch.setenv("POSTHOG_PERSONAL_API_KEY", "phx_key")
         monkeypatch.setenv("POSTHOG_PROJECT_ID", "4242")
         monkeypatch.setenv("POSTHOG_HOST", "https://us.i.posthog.com")
@@ -1179,7 +1190,7 @@ class TestGateUsesTheSeam:
         monkeypatch.setattr(_providers, "model_mode", lambda: "sentinel-mode")
         seen = {}
 
-        def spy(env, *, under_pytest, model_mode):
+        def spy(env, *, under_pytest, model_mode, for_erasure=False):
             seen["mode"] = model_mode
             return None
 
@@ -1309,8 +1320,9 @@ class TestNoReadOnTheLoop:
         asyncio.run(async_paths())
         _drain()
         assert seen and all(name == "posthog-send" and not loop for name, loop in seen)
-        assert fake_client.capture.call_count == 2
-        fake_client.capture_exception.assert_called_once()
+        assert [c.args[0] for c in fake_client.capture.call_args_list] == [
+            "note.created", "$exception", "$ai_generation",
+        ]
 
 
 class TestAiGeneration:
@@ -1445,3 +1457,356 @@ class TestBoundedQueue:
         assert caplog.text.count("PostHog queue full") == 1  # warn once, not per drop
         for _ in names:
             small.task_done()
+
+
+# ── 9. Final hardening (PR #677) ────────────────────────────────────────────
+
+
+def _postgrest_error(body: str):
+    """What db/connection.py raises: httpx's HTTPStatusError, whose str() is
+    only the status line — the column is named in the RESPONSE BODY."""
+    import httpx
+
+    request = httpx.Request("GET", "http://supabase.test/rest/v1/user_settings")
+    response = httpx.Response(400, text=body, request=request)
+    return httpx.HTTPStatusError("Client error '400 Bad Request'", request=request, response=response)
+
+
+_MISSING_OPT_OUT_BODY = json.dumps({
+    "code": "42703",
+    "message": "column user_settings_1.analytics_opt_out does not exist",
+})
+
+
+class TestQueueMaxParsing:
+    """POSTHOG_QUEUE_MAX never raises at import and never unbounds the queue."""
+
+    @pytest.mark.parametrize("raw, expect, warns", [
+        ("", 10_000, False),
+        ("  ", 10_000, False),
+        ("25", 25, False),
+        ("abc", 10_000, True),
+        ("1e3", 10_000, True),
+        ("0", 10_000, True),
+        ("-5", 10_000, True),
+    ])
+    def test_parsing(self, raw, expect, warns, caplog):
+        with caplog.at_level(logging.WARNING, "sapling.posthog"):
+            got = posthog_client._queue_max_from_env({"POSTHOG_QUEUE_MAX": raw})
+        assert got == expect
+        assert ("POSTHOG_QUEUE_MAX" in caplog.text) is warns
+
+    @pytest.mark.parametrize("raw", ["abc", "0", "-1", ""])
+    def test_bad_value_at_import_neither_raises_nor_unbounds(self, raw):
+        import subprocess
+        from pathlib import Path
+
+        backend = Path(__file__).resolve().parents[1]
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import services.posthog_client as p; print(p._queue.maxsize)"],
+            cwd=backend, env={**os.environ, "POSTHOG_QUEUE_MAX": raw},
+            capture_output=True, text=True, timeout=60,
+        )
+        assert out.returncode == 0, out.stderr[-2000:]
+        assert int(out.stdout.strip().splitlines()[-1]) == 10_000
+
+
+class TestDeployOrderRace:
+    """Code live before migration 20260927033814: settings keep working, the
+    PATCH says 503, and consent treats the missing column as "no"."""
+
+    def _tables(self, *, first_select_error=None, update_error=None):
+        calls: dict = {"selects": [], "updates": []}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_settings":
+                def select(cols, filters=None):
+                    calls["selects"].append(cols)
+                    if first_select_error is not None and len(calls["selects"]) == 1:
+                        raise first_select_error
+                    return [{"user_id": USER_ID, "theme": "dark"}]
+
+                def update(data, filters=None):
+                    calls["updates"].append(data)
+                    if update_error is not None:
+                        raise update_error
+                    return [{}]
+
+                m.select.side_effect = select
+                m.update.side_effect = update
+            else:
+                m.select.return_value = []
+            return m
+
+        return table_side_effect, calls
+
+    def test_get_retries_without_the_missing_column(self):
+        from main import app
+
+        table_side_effect, calls = self._tables(
+            first_select_error=_postgrest_error(_MISSING_OPT_OUT_BODY),
+        )
+        with patch("routes.profile.require_self"), \
+             patch("routes.profile.table", side_effect=table_side_effect):
+            r = TestClient(app).get(f"/api/profile/{USER_ID}/settings")
+        assert r.status_code == 200
+        assert r.json()["theme"] == "dark" and "analytics_opt_out" not in r.json()
+        assert "analytics_opt_out" in calls["selects"][0]
+        assert "analytics_opt_out" not in calls["selects"][1]
+
+    def test_pgrst204_shape_is_recognised_too(self):
+        from services.analytics_consent import missing_opt_out_column
+
+        assert missing_opt_out_column(_postgrest_error(json.dumps({
+            "code": "PGRST204",
+            "message": "Could not find the 'analytics_opt_out' column of "
+                       "'user_settings' in the schema cache",
+        })))
+        # Another column missing is a real schema problem: not swallowed.
+        assert not missing_opt_out_column(_postgrest_error(json.dumps({
+            "code": "42703", "message": "column user_settings.theme does not exist",
+        })))
+
+    def test_an_unrelated_error_still_surfaces(self):
+        from main import app
+
+        table_side_effect, _ = self._tables(first_select_error=_postgrest_error(json.dumps({
+            "code": "42703", "message": "column user_settings.theme does not exist",
+        })))
+        with patch("routes.profile.require_self"), \
+             patch("routes.profile.table", side_effect=table_side_effect):
+            r = TestClient(app, raise_server_exceptions=False).get(
+                f"/api/profile/{USER_ID}/settings",
+            )
+        assert r.status_code == 500
+
+    def test_patch_of_the_missing_column_is_a_503(self):
+        from main import app
+
+        table_side_effect, calls = self._tables(
+            first_select_error=_postgrest_error(_MISSING_OPT_OUT_BODY),
+            update_error=_postgrest_error(_MISSING_OPT_OUT_BODY),
+        )
+        with patch("routes.profile.require_self"), \
+             patch("routes.profile.table", side_effect=table_side_effect):
+            r = TestClient(app, raise_server_exceptions=False).patch(
+                f"/api/profile/{USER_ID}/settings", json={"analytics_opt_out": True},
+            )
+        assert r.status_code == 503
+        assert "not available yet" in r.json()["detail"]
+
+    def test_consent_treats_the_missing_column_as_denied(self, monkeypatch, caplog):
+        monkeypatch.setattr(analytics_consent, "_lookup", _REAL_LOOKUP)
+        t = MagicMock()
+        t.return_value.select.side_effect = _postgrest_error(_MISSING_OPT_OUT_BODY)
+        monkeypatch.setattr("db.connection.table", t)
+        with caplog.at_level(logging.WARNING, "sapling.analytics_consent"):
+            assert analytics_consent.consent_for(USER_ID) is Consent.DENIED
+        assert "migration pending" in caplog.text
+
+
+class TestProviderPassthrough:
+    """$ai_provider is the recorded provider; derived only when missing."""
+
+    @pytest.mark.parametrize("provider", ["typesafe", "jev"])
+    def test_recorded_provider_wins(self, provider, fake_client, sink):
+        events_service.log_llm_usage(
+            feature="tutor", task="chat", model="jev-1.13.0", provider=provider,
+            usage={"input_tokens": 5, "output_tokens": 3}, user_id=USER_ID,
+        )
+        _drain()
+        props = fake_client.capture.call_args.kwargs["properties"]
+        assert props["$ai_provider"] == provider
+        assert props["$ai_model"] == "jev-1.13.0"
+
+    @pytest.mark.parametrize("provider, model, expect", [
+        (None, "gemini-2.5-flash", "gemini"),
+        ("", "google-gla:gemini-2.5-flash", "google-gla"),
+        ("  ", "jev-1.13.0", "unknown"),
+    ])
+    def test_derived_only_when_missing(self, provider, model, expect, fake_client):
+        posthog_client.capture_ai_generation(
+            user_id=USER_ID, model=model, provider=provider, input_tokens=1,
+            output_tokens=1, cost_usd=None, request_id="r", feature="f", task=None,
+        )
+        _drain()
+        assert fake_client.capture.call_args.kwargs["properties"]["$ai_provider"] == expect
+
+    def test_no_dead_latency_parameter(self):
+        import inspect
+
+        params = inspect.signature(posthog_client.capture_ai_generation).parameters
+        assert "latency_s" not in params
+        assert "log_llm_usage" in posthog_client.capture_ai_generation.__doc__
+
+
+class TestConsentReadTimeout:
+    """The worker's read fails fast instead of holding the queue for 30 s."""
+
+    def test_lookup_passes_a_short_timeout(self, monkeypatch):
+        monkeypatch.setattr(analytics_consent, "_lookup", _REAL_LOOKUP)
+        t = MagicMock()
+        t.return_value.select.return_value = []
+        monkeypatch.setattr("db.connection.table", t)
+        analytics_consent.consent_for(USER_ID)
+        timeout = t.return_value.select.call_args.kwargs["timeout"]
+        assert 0 < timeout <= 5
+
+    def test_select_forwards_the_timeout_to_the_shared_client(self, monkeypatch):
+        from db import connection
+
+        fake = MagicMock()
+        fake.get.return_value = MagicMock(json=lambda: [], raise_for_status=lambda: None)
+        monkeypatch.setattr(connection, "_client", fake)
+        connection.table("users").select("id", timeout=3.0)
+        assert fake.get.call_args.kwargs["timeout"] == 3.0
+        connection.table("users").select("id")
+        assert "timeout" not in fake.get.call_args.kwargs  # default path unchanged
+
+    def test_a_timeout_is_denied(self, monkeypatch):
+        import httpx
+
+        monkeypatch.setattr(analytics_consent, "_lookup", _REAL_LOOKUP)
+        t = MagicMock()
+        t.return_value.select.side_effect = httpx.ReadTimeout("slow")
+        monkeypatch.setattr("db.connection.table", t)
+        assert analytics_consent.consent_for(USER_ID) is Consent.DENIED
+
+
+class TestErasureIsNotCapture:
+    """delete_person runs whenever it is configured — the kill switch and a
+    missing token stop capture, not erasure — and only WARNs where PostHog
+    was ever configured."""
+
+    @pytest.fixture
+    def outside_pytest(self, monkeypatch):
+        """The REAL gate, evaluated as if not under pytest."""
+        monkeypatch.setattr(
+            posthog_client, "disabled_reason",
+            lambda *, for_erasure=False: posthog_client._disabled_reason_for(
+                os.environ, under_pytest=False, model_mode="real", for_erasure=for_erasure,
+            ),
+        )
+        for var in (
+            "POSTHOG_PROJECT_TOKEN", "POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID",
+            "POSTHOG_API_HOST", "POSTHOG_DISABLED", "APP_ENV",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("POSTHOG_HOST", "https://us.i.posthog.com")
+
+    def _configure(self, monkeypatch):
+        monkeypatch.setenv("POSTHOG_PERSONAL_API_KEY", "phx_key")
+        monkeypatch.setenv("POSTHOG_PROJECT_ID", "4242")
+
+    @pytest.mark.parametrize("extra", [
+        {"POSTHOG_DISABLED": "1"},                               # kill switch on
+        {},                                                      # no project token
+        {"POSTHOG_DISABLED": "1", "POSTHOG_PROJECT_TOKEN": "phc_x"},
+    ])
+    def test_configured_deletes_even_when_capture_is_off(
+        self, extra, outside_pytest, monkeypatch,
+    ):
+        self._configure(monkeypatch)
+        for k, v in extra.items():
+            monkeypatch.setenv(k, v)
+        with patch("httpx.post", return_value=MagicMock(status_code=202)) as post:
+            posthog_client.delete_person(USER_ID)
+        post.assert_called_once()
+
+    def test_never_configured_deletes_nothing_and_says_nothing(
+        self, outside_pytest, caplog,
+    ):
+        with patch("httpx.post") as post, caplog.at_level(logging.WARNING, "sapling.posthog"):
+            posthog_client.delete_person(USER_ID)
+        post.assert_not_called()
+        assert caplog.records == []
+
+    @pytest.mark.parametrize("env, needle", [
+        ({"POSTHOG_PROJECT_TOKEN": "phc_x"}, "POSTHOG_PERSONAL_API_KEY"),
+        ({"POSTHOG_PERSONAL_API_KEY": "phx_key"}, "POSTHOG_PROJECT_ID"),
+        ({"POSTHOG_PERSONAL_API_KEY": "phx_key", "POSTHOG_PROJECT_ID": "4242",
+          "POSTHOG_HOST": "https://ph.example.com"}, "POSTHOG_API_HOST"),
+    ])
+    def test_ever_configured_but_incomplete_warns(
+        self, env, needle, outside_pytest, monkeypatch, caplog,
+    ):
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        with patch("httpx.post") as post, caplog.at_level(logging.WARNING, "sapling.posthog"):
+            posthog_client.delete_person(USER_ID)
+        post.assert_not_called()
+        assert "skipped" in caplog.text and needle in caplog.text
+
+    def test_deterministic_lanes_still_block_erasure(self, monkeypatch, caplog):
+        self._configure(monkeypatch)
+        monkeypatch.setattr(
+            posthog_client, "disabled_reason",
+            lambda *, for_erasure=False: posthog_client._disabled_reason_for(
+                os.environ, under_pytest=False, model_mode="function", for_erasure=for_erasure,
+            ),
+        )
+        with patch("httpx.post") as post, caplog.at_level(logging.WARNING, "sapling.posthog"):
+            posthog_client.delete_person(USER_ID)
+        post.assert_not_called()
+        assert "skipped" in caplog.text
+
+    @pytest.mark.parametrize("script", ["scripts/e2e-up.sh", "scripts/explore.sh"])
+    def test_lane_scripts_blank_the_personal_key(self, script):
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parents[2] / script).read_text()
+        assert re.search(r"^\s*export POSTHOG_PERSONAL_API_KEY=(\s|$)", text, re.M), script
+
+
+class TestExceptionPayloadAtEnqueue:
+    """The queue holds plain data: no exception, traceback or frame object —
+    those would keep every frame's locals (decrypted content) alive."""
+
+    def test_queued_item_holds_no_live_objects(self, fake_client, monkeypatch):
+        import types
+
+        queued: list = []
+        monkeypatch.setattr(posthog_client, "_enqueue", queued.append)
+
+        def handler_with_decrypted_locals():
+            note_body = SECRET  # noqa: F841 - must not be reachable from the queue
+            raise ValueError(f"bad input: {SECRET}")
+
+        try:
+            handler_with_decrypted_locals()
+        except ValueError as exc:
+            posthog_client.capture_exception(exc, user_id=USER_ID, request_id="r")
+        assert len(queued) == 1
+        item = queued[0]
+
+        def walk(obj):
+            assert not isinstance(
+                obj, (BaseException, types.TracebackType, types.FrameType),
+            ), type(obj)
+            if isinstance(obj, dict):
+                for v in obj.values():
+                    walk(v)
+            elif isinstance(obj, (list, tuple)):
+                for v in obj:
+                    walk(v)
+
+        walk(tuple(item))
+        assert SECRET not in json.dumps(item.properties, default=str)
+        exc_list = item.properties["$exception_list"]
+        assert exc_list[0]["type"] == "ValueError"
+        assert exc_list[0]["value"] == "[redacted]"
+        assert exc_list[0]["stacktrace"]["frames"]
+
+
+class TestMigrationHeader:
+    def test_header_names_the_current_seam(self):
+        from pathlib import Path
+
+        sql = (
+            Path(__file__).resolve().parents[1]
+            / "db" / "migrations" / "20260927033814_user_settings_analytics_opt_out.sql"
+        ).read_text()
+        assert "ai_observability" not in sql
+        assert "posthog_client" in sql and "analytics_consent" in sql

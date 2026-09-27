@@ -70,6 +70,7 @@ _TTL_S = 60.0
 #: every event (a DB outage must not turn every event into a round trip).
 _FAILURE_TTL_S = 10.0
 _MAX_ENTRIES = 10_000
+_LOOKUP_TIMEOUT_S = 3.0
 
 # uid -> (expires_at, answer)
 _cache: dict[str, tuple[float, Consent]] = {}
@@ -107,9 +108,17 @@ def consent_for(user_id: object) -> Consent:
         try:
             answer, ttl = _lookup(uid), _TTL_S
         except Exception as exc:
-            logger.warning(
-                "analytics consent lookup failed (%s); not sending", type(exc).__name__,
-            )
+            if missing_opt_out_column(exc):
+                # Deploy-order race: code shipped before its migration. The
+                # opt-out cannot be read, so nobody is sent (fail closed).
+                logger.warning(
+                    "analytics consent: user_settings.analytics_opt_out does not "
+                    "exist yet (migration pending); not sending",
+                )
+            else:
+                logger.warning(
+                    "analytics consent lookup failed (%s); not sending", type(exc).__name__,
+                )
             answer, ttl = Consent.DENIED, _FAILURE_TTL_S
         with _lock:
             if _clears != started:
@@ -130,6 +139,9 @@ def _lookup(user_id: str) -> Consent:
         "id,deleted_at,user_settings(analytics_opt_out)",
         filters={"id": f"eq.{user_id}"},
         limit=1,
+        # Fail fast: the worker serves every queued item, and a slow read
+        # only delays them (a timeout is a DENIED, like any other failure).
+        timeout=_LOOKUP_TIMEOUT_S,
     )
     if not rows:
         return Consent.DENIED  # not a user this app knows
@@ -143,6 +155,26 @@ def _lookup(user_id: str) -> Consent:
         return Consent.ALLOWED  # no settings row = the column default (false)
     # NOT NULL in the schema; anything but an explicit False fails closed.
     return Consent.ALLOWED if settings.get("analytics_opt_out") is False else Consent.DENIED
+
+
+#: PostgREST's "column not found" shapes (the #630 pattern in
+#: routes/documents.py): PGRST204 from the schema cache, or Postgres' 42703.
+_MISSING_COLUMN_MARKERS = ("PGRST204", "42703", "does not exist", "Could not find the")
+
+
+def missing_opt_out_column(exc: Exception) -> bool:
+    """Whether a PostgREST error says ``analytics_opt_out`` does not exist
+    (the code is live before its migration). Reads the RESPONSE BODY: the
+    ``raise_for_status()`` message never names the column."""
+    body = ""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            body = response.text or ""
+        except Exception:
+            body = ""
+    body = body or str(exc)
+    return "analytics_opt_out" in body and any(m in body for m in _MISSING_COLUMN_MARKERS)
 
 
 def clear_analytics_consent_cache(user_id: str | None = None) -> None:
