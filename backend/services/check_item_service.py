@@ -425,6 +425,26 @@ def retire_items_for_documents(document_ids: Iterable[str]) -> int:
     return retired
 
 
+def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:
+    """The ids among `document_ids` that are no longer item sources: deleted,
+    or no longer shared course material (the uploader opted out, #629). One
+    `in.(…)` read per _DOC_ID_BATCH ids; raises on a PostgREST failure."""
+    ids = sorted({d for d in document_ids if d})
+    live: dict[str, dict] = {}
+    for start in range(0, len(ids), _DOC_ID_BATCH):
+        batch = ids[start : start + _DOC_ID_BATCH]
+        rows = table("documents").select(
+            "id,user_id,shareability,shareability_confidence",
+            filters={
+                "id": "in.(" + ",".join(pg_quote_value(d) for d in batch) + ")",
+                "deleted_at": "is.null",
+            },
+        )
+        for row in rows or []:
+            live[row["id"]] = row
+    return [d for d in ids if d not in live or not document_is_item_source(live[d])]
+
+
 def retire_items_for_uploader(user_id: str) -> int:
     """Retire every item drafted from any document `user_id` uploaded (soft-
     deleted ones included) — the share_class_context opt-out (A23)."""
@@ -463,6 +483,23 @@ def _report_failure(
         user_id=user_id,
         payload={"document_id": document_id, "course_id": course_id, "reason": reason},
     )
+
+
+def _still_withdrawn(
+    source_docs: list[str], *, user_id: str | None, document_id: str | None, course_id: str
+) -> list[str]:
+    """`_withdrawn_sources`, failing CLOSED: a failed re-read treats every
+    source as withdrawn (the drafts are dropped, reported as StorageError)."""
+    try:
+        return _withdrawn_sources(source_docs)
+    except Exception:
+        logger.warning(
+            "check items: source re-check failed (course=%s); drafts dropped",
+            course_id,
+            exc_info=True,
+        )
+        _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
+        return list(source_docs)
 
 
 def _passage_key(chunk: dict):
@@ -572,9 +609,24 @@ def generate_for_concepts(
                     draft.concept,
                     names,
                 )
+
+        # A23: the sources were read before a call that can take minutes. A
+        # document deleted or opted out meanwhile had its items retired while
+        # these did not exist yet, so re-check right before writing...
+        recheck = {"user_id": user_id, "document_id": document_id, "course_id": course_id}
+        withdrawn = _still_withdrawn(source_docs, **recheck)
+        if withdrawn:
+            logger.info(
+                "check items: %d source document(s) withdrawn while drafting; "
+                "the call's drafts are dropped (course=%s)",
+                len(withdrawn),
+                course_id,
+            )
+            continue
+        written = 0
         for key, _, _ in batch:
             try:
-                created += len(
+                written += len(
                     create_items(
                         course_id,
                         key,
@@ -587,6 +639,24 @@ def generate_for_concepts(
             except Exception:
                 logger.warning(
                     "check items write failed (course=%s concept=%s)", course_id, key, exc_info=True
+                )
+                _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
+        created += written
+        # ...and once more after it: a withdrawal that landed between that
+        # read and the upsert found nothing to delete, so retire it here. A
+        # failure here is reported, never answered by deleting: the sources
+        # were live a moment ago, and retiring on a blip would also delete
+        # every older item citing them.
+        if written:
+            try:
+                withdrawn = _withdrawn_sources(source_docs)
+                if withdrawn:
+                    retire_items_for_documents(withdrawn)
+            except Exception:
+                logger.error(
+                    "check items: post-write source re-check failed (course=%s)",
+                    course_id,
+                    exc_info=True,
                 )
                 _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
 

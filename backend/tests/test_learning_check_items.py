@@ -983,6 +983,13 @@ def _gen_patches(factory, fake_draft):
 
 
 class TestGenerate:
+    @pytest.fixture(autouse=True)
+    def _sources_stay_live(self):
+        """Every source stays shared while these tests draft; the write-time
+        re-check itself is TestWithdrawalDuringDrafting's."""
+        with patch("services.check_item_service._withdrawn_sources", return_value=[]):
+            yield
+
     def test_flag_off_is_inert(self, monkeypatch):
         import config
         from services import check_item_service as svc
@@ -1400,6 +1407,83 @@ class TestGenerate:
         draft.assert_not_called()
         ev.assert_not_called()
         assert "check_items" not in mocks, "a non-source document must not reach the item table"
+
+
+class TestWithdrawalDuringDrafting:
+    """A23: a Flex call can take minutes. A source deleted or opted out while
+    it runs must not reach the class pool — delete_document / the opt-out
+    retire only the rows that exist when they run, so the write re-checks."""
+
+    def _run(self, monkeypatch, *, doc_reads, visibility=("shared",)):
+        import config
+        from services import check_item_service as svc
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
+        # unindexed: the one extracted-text passage, doc_id doc-1
+        factory, mocks = _cached_tables({"course_chunks": [], "check_items": []})
+        factory("documents").select.side_effect = list(doc_reads)
+
+        async def fake_draft(concepts, passages, *, deps, flex):
+            return _drafts_for(*concepts)
+
+        vis = list(visibility)
+        t, d, e = _gen_patches(factory, fake_draft)
+        with (
+            t,
+            d,
+            e as ev,
+            patch(
+                "services.check_item_service.decide_visibility",
+                side_effect=lambda *a, **k: vis.pop(0) if len(vis) > 1 else vis[0],
+            ),
+        ):
+            out = svc.generate_for_document(
+                "doc-1",
+                user_id="u1",
+                course_id="course-1",
+                concept_names=["Learning Rate"],
+                flex=True,
+            )
+        return out, mocks, ev
+
+    def test_a_source_deleted_mid_call_is_never_written(self, monkeypatch):
+        out, mocks, _ = self._run(monkeypatch, doc_reads=[[_doc()], []])
+        mocks["check_items"].upsert.assert_not_called()
+        assert out.items_created == 0 and out.concepts_attempted == 1
+        recheck = mocks["documents"].select.call_args_list[1][1]["filters"]
+        assert recheck == {"id": 'in.("doc-1")', "deleted_at": "is.null"}
+
+    def test_a_source_opted_out_mid_call_is_never_written(self, monkeypatch):
+        out, mocks, _ = self._run(
+            monkeypatch, doc_reads=[[_doc()], [_doc()]], visibility=("shared", "private")
+        )
+        mocks["check_items"].upsert.assert_not_called()
+        assert out.items_created == 0
+
+    def test_a_withdrawal_landing_during_the_write_is_retired_right_after(self, monkeypatch):
+        out, mocks, _ = self._run(monkeypatch, doc_reads=[[_doc()], [_doc()], []])
+        mocks["check_items"].upsert.assert_called_once()
+        mocks["check_items"].delete.assert_called_once()
+        filters = mocks["check_items"].delete.call_args.kwargs["filters"]
+        assert filters["source_document_ids"] == 'ov.{"doc-1"}'
+
+    def test_a_live_source_is_written_and_nothing_is_retired(self, monkeypatch):
+        out, mocks, _ = self._run(monkeypatch, doc_reads=[[_doc()], [_doc()], [_doc()]])
+        assert out.items_created == 2
+        mocks["check_items"].delete.assert_not_called()
+
+    def test_a_failed_recheck_fails_closed(self, monkeypatch):
+        out, mocks, ev = self._run(monkeypatch, doc_reads=[[_doc()], RuntimeError("pg down")])
+        mocks["check_items"].upsert.assert_not_called()
+        assert ev.call_args[1]["payload"]["reason"] == "StorageError"
+
+    def test_a_failed_post_write_recheck_is_reported_never_answered_by_deleting(self, monkeypatch):
+        out, mocks, ev = self._run(
+            monkeypatch, doc_reads=[[_doc()], [_doc()], RuntimeError("pg down")]
+        )
+        mocks["check_items"].upsert.assert_called_once()
+        mocks["check_items"].delete.assert_not_called()
+        assert ev.call_args[1]["payload"]["reason"] == "StorageError"
 
 
 # ── routes/documents.py hook ───────────────────────────────────────────────
