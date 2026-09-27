@@ -167,7 +167,9 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # Learning loop PKG-04 (spec §6, §13 A8): one check_items agent call (a
     # batch of concepts) or one concept's item write failed — an honest
     # degrade (ADR 0024), category="error"; payload document_id, course_id,
-    # reason (exception class name or StorageError). Never any item text.
+    # reason (exception class name or StorageError). Also an opt-out
+    # withdrawal that failed after the response (reason WithdrawalError,
+    # document_id and course_id null). Never any item text.
     "learn.check_items_failed",
 })
 

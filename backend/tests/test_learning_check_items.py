@@ -1847,6 +1847,32 @@ class TestWithdrawal:
         # deleted documents included: withdrawal covers every document ever uploaded
         assert call[1]["filters"] == {"user_id": "eq.user_andres"} and call[1]["order"] == "id"
 
+    def test_a_failed_opt_out_withdrawal_is_reported_never_raised(self, caplog):
+        """The opt-out runs as a post-response BackgroundTask: an exception
+        there vanishes after the 200, so the student would see the opt-out
+        succeed while their items stayed in the pool. Log at ERROR and emit
+        learn.check_items_failed so an operator can re-run it (idempotent)."""
+        from services import check_item_service as svc
+
+        factory, _ = _cached_tables({})
+        factory("documents").select_with_count.side_effect = RuntimeError("pg down")
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("services.check_item_service.log_event") as ev,
+            caplog.at_level("ERROR", logger="sapling.services.check_items"),
+        ):
+            assert svc.retire_items_for_uploader("user_andres") == 0
+        ev.assert_called_once()
+        assert ev.call_args[0][0] == "learn.check_items_failed"
+        assert ev.call_args[1]["category"] == "error"
+        assert ev.call_args[1]["user_id"] == "user_andres"
+        assert ev.call_args[1]["payload"] == {
+            "document_id": None,
+            "course_id": None,
+            "reason": "WithdrawalError",
+        }
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+
     def test_retire_is_never_gated_on_the_flag(self, monkeypatch):
         import config
         from services import check_item_service as svc

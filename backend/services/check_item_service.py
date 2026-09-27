@@ -451,15 +451,32 @@ def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:
 
 def retire_items_for_uploader(user_id: str) -> int:
     """Retire every item drafted from any document `user_id` uploaded (soft-
-    deleted ones included) — the share_class_context opt-out (A23)."""
-    ids = [
-        r["id"]
-        for r in page_all(
-            table("documents"), "id", filters={"user_id": f"eq.{user_id}"}, order="id"
+    deleted ones included) — the share_class_context opt-out (A23).
+
+    Raises nothing. It runs as a post-response BackgroundTask, where an
+    exception would vanish after the 200: the student would see the opt-out
+    succeed while their items stayed in the class pool. A failure is logged at
+    ERROR and emitted as `learn.check_items_failed` (reason WithdrawalError),
+    the way chunk_visibility.resync_user_chunk_visibility reports its own; the
+    call is idempotent, so an operator can re-run it. Returns 0 then."""
+    try:
+        ids = [
+            r["id"]
+            for r in page_all(
+                table("documents"), "id", filters={"user_id": f"eq.{user_id}"}, order="id"
+            )
+            if r.get("id")
+        ]
+        return retire_items_for_documents(ids)
+    except Exception:
+        logger.error(
+            "check items: opt-out withdrawal FAILED for user %s — items drafted from "
+            "their documents are still in the class pool (A23)",
+            user_id,
+            exc_info=True,
         )
-        if r.get("id")
-    ]
-    return retire_items_for_documents(ids)
+        _report_failure(user_id, None, None, _WITHDRAWAL_ERROR)
+        return 0
 
 
 # ── generation (flag-gated; spec §7: course level, never one student's gate) ─
@@ -476,10 +493,11 @@ class GenerationOutcome(NamedTuple):
 _NOTHING = GenerationOutcome(0, 0, 0, 0)
 _FAILED_EVENT = "learn.check_items_failed"
 _STORAGE_ERROR = "StorageError"
+_WITHDRAWAL_ERROR = "WithdrawalError"
 
 
 def _report_failure(
-    user_id: str | None, document_id: str | None, course_id: str, reason: str
+    user_id: str | None, document_id: str | None, course_id: str | None, reason: str
 ) -> None:
     log_event(
         _FAILED_EVENT,
