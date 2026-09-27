@@ -174,7 +174,7 @@ Anything that forwards spans or exception state is on the student-data path.
     and is unaffected by the opt-out or the headers.
 
     **Deploy order.** The code can be live before migration
-    `20260927033814` runs (and #651 — staging migrations racing the deploy —
+    `20260927220057` runs (and #651 — staging migrations racing the deploy —
     is still open, so this is a real window, not a theoretical one). Settings reads retry without `analytics_opt_out`
     when PostgREST says that column does not exist (the #630 pattern: read
     the response body), a PATCH of it answers 503 (nothing written), and the
