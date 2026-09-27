@@ -65,6 +65,20 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+zpd.step                      usage     concept_id, question_hash, phase, channel, band, ceiling,
+                                        ceiling_reason, first_attempt_correct, n_attempts,
+                                        max_rung_used, rungs[{rung, dwell_ms}],
+                                        time_to_first_attempt_ms, time_to_correct_ms,
+                                        independent_time_ms, assisted, confidence, fsrs_rating,
+                                        p_known_before, p_known_after, r_before, item_difficulty;
+                                        optional tier, grader_backend (omitted when unknown)
+                                        (learning loop PKG-06, spec §6)
+zpd.offer                     usage     accepted, band
+zpd.band_adjust               usage     direction, trigger, window_stats
+zpd.wheelspin                 error     concept_id, opps, unassisted_next, htc_k, prerequisite_ids
+zpd.leak                      error     rung_emitted, ceiling, detector, request_id
+zpd.rating                    usage     rating (too_easy / appropriate / too_hard),
+                                        checks_since_last
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -171,6 +185,17 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # withdrawal that failed after the response (reason WithdrawalError,
     # document_id and course_id null). Never any item text.
     "learn.check_items_failed",
+    # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
+    # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
+    # the loop tutor. Payloads are ids/counts/enums — the question_hash is a
+    # sha256, never the prompt. wheelspin and leak are category="error": a
+    # stuck student and a revealed answer are both things an admin must count.
+    "zpd.step",
+    "zpd.offer",
+    "zpd.band_adjust",
+    "zpd.wheelspin",
+    "zpd.leak",
+    "zpd.rating",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

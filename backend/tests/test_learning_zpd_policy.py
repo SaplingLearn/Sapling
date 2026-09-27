@@ -1211,3 +1211,311 @@ def test_load_save_round_trip_keeps_later_packages_keys(monkeypatch):
     written = t.update.call_args.args[0]["loop_state"]
     assert written["revealed"] == ["b" * 64] and written["active"] == "a" * 64
     assert written["checks_since_rating"] == 1
+
+
+# ── zpd.* events (spec §6) ────────────────────────────────────────────────────
+
+PAYLOAD_STR_MAX = 64  # a sha256 question_hash is exactly this long; nothing longer is an id
+
+
+def _recorder(monkeypatch):
+    from learning import zpd_events
+
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(zpd_events, "log_event", lambda et, **kw: calls.append((et, kw)))
+    return calls
+
+
+def _assert_ids_only(value):
+    if isinstance(value, str):
+        assert len(value) <= PAYLOAD_STR_MAX, f"payload string too long: {value[:20]}…"
+    elif isinstance(value, dict):
+        for v in value.values():
+            _assert_ids_only(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _assert_ids_only(v)
+    else:
+        assert value is None or isinstance(value, (bool, int, float)), type(value)
+
+
+def test_zpd_events_in_taxonomy_with_spec_categories():
+    from services.events_service import EVENT_TAXONOMY
+
+    for et in (
+        "zpd.step",
+        "zpd.offer",
+        "zpd.band_adjust",
+        "zpd.wheelspin",
+        "zpd.leak",
+        "zpd.rating",
+    ):
+        assert et in EVENT_TAXONOMY
+
+
+def test_emit_helpers_send_spec_payloads(monkeypatch):
+    from learning import zpd_events
+    from learning.ladder import Rung
+    from learning.policy import BandAction, CeilingReason
+
+    calls = _recorder(monkeypatch)
+    common = dict(user_id="user_andres", request_id="req-1")
+    zpd_events.emit_zpd_step(
+        **common,
+        concept_id="node-1",
+        question_hash="q" * 64,
+        phase="check",
+        channel="free_response",
+        band="develop",
+        ceiling=Rung.H3,
+        ceiling_reason=CeilingReason.DEVELOP,
+        first_attempt_correct=False,
+        n_attempts=2,
+        max_rung_used=Rung.H2,
+        rungs=[{"rung": 1, "dwell_ms": 9000}, {"rung": 2, "dwell_ms": 12000}],
+        time_to_first_attempt_ms=61000,
+        time_to_correct_ms=140000,
+        independent_time_ms=61000,
+        assisted=True,
+        confidence=0.8,
+        fsrs_rating=params.FSRS_RATING_HARD,
+        p_known_before=0.41,
+        p_known_after=0.52,
+        r_before=0.93,
+        item_difficulty=2,
+        tier="standard",
+        grader_backend="gemini",
+    )
+    zpd_events.emit_zpd_offer(**common, accepted=True, band="novice")
+    zpd_events.emit_zpd_band_adjust(
+        **common, direction=BandAction.HARDER, trigger="high", window_stats={"n": 8, "rate": 1.0}
+    )
+    zpd_events.emit_zpd_wheelspin(
+        **common,
+        concept_id="node-1",
+        opps=11,
+        unassisted_next=0.3,
+        htc_k=2.5,
+        prerequisite_ids=["node-0"],
+    )
+    zpd_events.emit_zpd_leak(**common, rung_emitted=Rung.H6, ceiling=Rung.H3, detector="ngram")
+    zpd_events.emit_zpd_rating(
+        **common, rating="too_hard", checks_since_last=params.ZPD_RATING_EVERY_N_CHECKS
+    )
+
+    got = {et: kw for et, kw in calls}
+    assert set(got) == {
+        "zpd.step",
+        "zpd.offer",
+        "zpd.band_adjust",
+        "zpd.wheelspin",
+        "zpd.leak",
+        "zpd.rating",
+    }
+    assert {et: kw["category"] for et, kw in calls} == {
+        "zpd.step": "usage",
+        "zpd.offer": "usage",
+        "zpd.band_adjust": "usage",
+        "zpd.wheelspin": "error",
+        "zpd.leak": "error",
+        "zpd.rating": "usage",
+    }
+    assert set(got["zpd.step"]["payload"]) == {
+        "concept_id",
+        "question_hash",
+        "phase",
+        "channel",
+        "band",
+        "ceiling",
+        "ceiling_reason",
+        "first_attempt_correct",
+        "n_attempts",
+        "max_rung_used",
+        "rungs",
+        "time_to_first_attempt_ms",
+        "time_to_correct_ms",
+        "independent_time_ms",
+        "assisted",
+        "confidence",
+        "fsrs_rating",
+        "p_known_before",
+        "p_known_after",
+        "r_before",
+        "item_difficulty",
+        "tier",
+        "grader_backend",
+    }
+    assert got["zpd.step"]["payload"]["ceiling"] == int(Rung.H3)
+    assert got["zpd.step"]["payload"]["ceiling_reason"] == "develop"
+    assert (got["zpd.step"]["payload"]["tier"], got["zpd.step"]["payload"]["grader_backend"]) == (
+        "standard",
+        "gemini",
+    )
+    assert set(got["zpd.offer"]["payload"]) == {"accepted", "band"}
+    assert set(got["zpd.band_adjust"]["payload"]) == {"direction", "trigger", "window_stats"}
+    assert got["zpd.band_adjust"]["payload"]["direction"] == "harder"
+    assert set(got["zpd.wheelspin"]["payload"]) == {
+        "concept_id",
+        "opps",
+        "unassisted_next",
+        "htc_k",
+        "prerequisite_ids",
+    }
+    assert set(got["zpd.leak"]["payload"]) == {"rung_emitted", "ceiling", "detector", "request_id"}
+    assert set(got["zpd.rating"]["payload"]) == {"rating", "checks_since_last"}
+    for et, kw in calls:
+        assert kw["user_id"] == "user_andres" and kw["request_id"] == "req-1"
+        _assert_ids_only(kw["payload"])
+    # enums and rungs reach the payload as plain JSON values
+    assert type(got["zpd.step"]["payload"]["max_rung_used"]) is int
+    assert type(got["zpd.leak"]["payload"]["rung_emitted"]) is int
+    assert type(got["zpd.step"]["payload"]["ceiling_reason"]) is str
+
+
+def test_zpd_step_omits_tier_and_grader_backend_when_unset(monkeypatch):
+    """A15/A24 keys are omitted when None — never zeroed or blanked."""
+    from learning import zpd_events
+    from learning.ladder import Rung
+    from learning.policy import CeilingReason
+
+    calls = _recorder(monkeypatch)
+    zpd_events.emit_zpd_step(
+        user_id="u",
+        request_id=None,
+        concept_id="node-1",
+        question_hash="q" * 64,
+        phase="probe",
+        channel="free_response",
+        band="novice",
+        ceiling=Rung.H4,
+        ceiling_reason=CeilingReason.NOVICE_WORKED_FIRST,
+        first_attempt_correct=True,
+        n_attempts=1,
+        max_rung_used=Rung.H0,
+        rungs=[],
+        time_to_first_attempt_ms=None,
+        time_to_correct_ms=None,
+        independent_time_ms=None,
+        assisted=False,
+        confidence=None,
+        fsrs_rating=params.FSRS_RATING_GOOD,
+        p_known_before=0.2,
+        p_known_after=0.3,
+        r_before=None,
+        item_difficulty=1,
+    )
+    [(event_type, kw)] = calls
+    assert event_type == "zpd.step"
+    assert "tier" not in kw["payload"] and "grader_backend" not in kw["payload"]
+
+
+def test_emit_helpers_are_keyword_only():
+    import inspect
+
+    from learning import zpd_events
+
+    for name in (
+        "emit_zpd_step",
+        "emit_zpd_offer",
+        "emit_zpd_band_adjust",
+        "emit_zpd_wheelspin",
+        "emit_zpd_leak",
+        "emit_zpd_rating",
+    ):
+        params_ = inspect.signature(getattr(zpd_events, name)).parameters.values()
+        assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params_), name
+
+
+def test_emit_helper_drops_a_malformed_event_instead_of_raising(monkeypatch, caplog):
+    """Event capture never raises into a request (events_service contract): a
+    caller bug in the rungs list drops the event with a log line."""
+    from learning import zpd_events
+    from learning.ladder import Rung
+    from learning.policy import CeilingReason
+
+    calls = _recorder(monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        zpd_events.emit_zpd_step(
+            user_id="u",
+            request_id="r",
+            concept_id="node-1",
+            question_hash="q" * 64,
+            phase="check",
+            channel="mc",
+            band="develop",
+            ceiling=Rung.H3,
+            ceiling_reason=CeilingReason.DEVELOP,
+            first_attempt_correct=False,
+            n_attempts=1,
+            max_rung_used=Rung.H1,
+            rungs=[{"rung": 1}],  # no dwell_ms
+            time_to_first_attempt_ms=None,
+            time_to_correct_ms=None,
+            independent_time_ms=None,
+            assisted=True,
+            confidence=None,
+            fsrs_rating=params.FSRS_RATING_HARD,
+            p_known_before=0.5,
+            p_known_after=0.55,
+            r_before=None,
+            item_difficulty=2,
+        )
+    assert calls == []
+    assert any("zpd.step" in r.getMessage() for r in caplog.records)
+
+
+def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
+    """Through the real events_service: enqueue only, worker never runs here."""
+    from learning import zpd_events
+    from services import events_service
+
+    rows: list = []
+    monkeypatch.setattr(
+        events_service,
+        "table",
+        lambda name: MagicMock(insert=lambda r: rows.append((name, r)) or r),
+    )
+    zpd_events.emit_zpd_offer(user_id="u", request_id="r", accepted=False, band="novice")
+    events_service.flush_now()
+    assert any(row["event_type"] == "zpd.offer" for _, batch in rows for row in batch)
+
+
+_PKG06_MODULES = ("policy", "gates", "leak", "ladder", "loop_state_store", "zpd_events")
+
+
+def _pkg06_imports(source: str) -> list[str]:
+    """Every PKG-06 module `source` imports, in any form: `import learning.x`,
+    `from learning.x import y`, `from learning import x`, at any depth."""
+    import ast
+
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+        else:
+            continue
+        found += [n for n in names if n.split(".")[:2] in (["learning", m] for m in _PKG06_MODULES)]
+    return found
+
+
+def test_pkg06_import_detector():
+    assert _pkg06_imports("import learning.policy") == ["learning.policy"]
+    assert _pkg06_imports("from learning import gates, bkt") == ["learning.gates"]
+    assert _pkg06_imports("def f():\n    from learning.leak import detect_leak") == [
+        "learning.leak",
+        "learning.leak.detect_leak",
+    ]
+    assert _pkg06_imports("import learning.bkt\nfrom learning import params") == []
+
+
+def test_zpd_layer_is_inert_nothing_imports_it():
+    offenders = []
+    for path in BACKEND.rglob("*.py"):
+        rel = path.relative_to(BACKEND).parts
+        if rel[0] in ("tests", "learning", "venv", ".venv"):
+            continue
+        if _pkg06_imports(path.read_text(errors="ignore")):
+            offenders.append(str(path.relative_to(BACKEND)))
+    assert offenders == [], f"PKG-06 modules must stay unreferenced until PKG-07: {offenders}"

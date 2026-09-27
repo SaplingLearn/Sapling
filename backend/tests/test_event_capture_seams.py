@@ -122,6 +122,13 @@ def test_event_taxonomy_is_pinned():
         "rag.visibility_resync_failed",
         # Learning loop PKG-04 (spec §6, A8): a check-item batch or write failed.
         "learn.check_items_failed",
+        # PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py
+        "zpd.step",
+        "zpd.offer",
+        "zpd.band_adjust",
+        "zpd.wheelspin",
+        "zpd.leak",
+        "zpd.rating",
     })
 
 
