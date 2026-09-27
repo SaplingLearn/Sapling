@@ -108,8 +108,10 @@ class WrongReasonCountEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
     def evaluate(self, ctx: _Ctx) -> float:
         return _every(
             ctx,
-            lambda i: len(i.wrong_keys) >= CHECK_ITEM_MIN_WRONG
-            and len(set(i.wrong_keys)) == len(i.wrong_keys) == len(i.wrong_texts),
+            lambda i: (
+                len(i.wrong_keys) >= CHECK_ITEM_MIN_WRONG
+                and len(set(i.wrong_keys)) == len(i.wrong_keys) == len(i.wrong_texts)
+            ),
         )
 
 
@@ -149,7 +151,9 @@ async def _run(case_input: CheckItemsInput) -> CheckItemsOutput:
             )
         return CheckItemsOutput.model_validate(body)
     passages = [{"id": cid, "text": text} for cid, text in chunks]
-    result = await _run_with_retry(check_items_agent, build_prompt([concept], passages), make_deps())
+    result = await _run_with_retry(
+        check_items_agent, build_prompt([concept], passages), make_deps()
+    )
     if MODE == "record":
         save_cassette("check_items", case_name, result.output)
     return result.output
