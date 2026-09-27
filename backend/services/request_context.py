@@ -24,8 +24,11 @@ import time
 import uuid
 from typing import Awaitable, Callable
 
-from fastapi import Request, Response
+from fastapi import HTTPException, Request, Response
+from posthog import identify_context, new_context
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from services.posthog_client import get_posthog_client
 
 
 _REQUEST_ID_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -47,6 +50,40 @@ def current_request_id() -> str | None:
 def new_request_id() -> str:
     """Mint a fresh request ID. Module-level so tests can monkeypatch."""
     return str(uuid.uuid4())
+
+
+class PostHogContextMiddleware:
+    """Bind a verified session user to all PostHog work within one request.
+
+    This is pure ASGI middleware so the PostHog context remains active through
+    downstream middleware, route handlers, and exception handling. The session
+    user ID is the app's stable primary identifier; no profile PII is read or
+    sent as an event property here.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or get_posthog_client() is None:
+            await self.app(scope, receive, send)
+            return
+
+        # auth_guard imports events_service, which imports this module for the
+        # request ID context. Keep this import local to avoid that cycle at app
+        # startup.
+        from services.auth_guard import get_session_user_id
+
+        request = Request(scope, receive=receive)
+        try:
+            user_id = get_session_user_id(request)
+        except HTTPException:
+            await self.app(scope, receive, send)
+            return
+
+        with new_context():
+            identify_context(user_id)
+            await self.app(scope, receive, send)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

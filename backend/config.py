@@ -18,6 +18,11 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 # visible through config.py.
 LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN", "")
 
+# PostHog product analytics is optional in production. The client is initialized
+# by main.py's lifespan only when both values are configured.
+POSTHOG_PROJECT_TOKEN = os.getenv("POSTHOG_PROJECT_TOKEN")
+POSTHOG_HOST = os.getenv("POSTHOG_HOST")
+
 PORT = int(os.getenv("PORT", "5000"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
@@ -84,6 +89,17 @@ def validate_config() -> None:
         missing.append("GEMINI_API_KEY")
     if not IS_LOCAL and len((SESSION_SECRET or "").strip().encode("utf-8")) < 32:
         missing.append("SESSION_SECRET (must be set and >= 32 bytes)")
+    if APP_ENV in {"local", "development", "dev"}:
+        for name, value in (
+            ("POSTHOG_PROJECT_TOKEN", POSTHOG_PROJECT_TOKEN),
+            ("POSTHOG_HOST", POSTHOG_HOST),
+        ):
+            if not value or not value.strip():
+                raise RuntimeError(
+                    f"{name} variable required by PostHog is missing or un-configured, "
+                    f"this causes events to be silently missed. This error stops appearing "
+                    f"once {name} is configured"
+                )
     if missing:
         raise RuntimeError(
             "Missing required configuration: "

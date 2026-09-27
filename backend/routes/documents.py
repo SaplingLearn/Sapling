@@ -41,6 +41,7 @@ from services.course_context_service import update_course_context
 from services.achievement_service import check_achievements
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
+from services.posthog_client import get_posthog_client
 from services.durable import workflow_id
 from services.document_indexing import index_document
 from services.xp_service import award_xp_safe
@@ -570,6 +571,16 @@ def _persist_document(
             "char_count": char_count,
         },
     )
+    posthog_client = get_posthog_client()
+    if posthog_client is not None:
+        posthog_client.capture(
+            "document_processed",
+            properties={
+                "document_category": result.classification.category,
+                "has_course": course_id is not None,
+                "character_count": char_count,
+            },
+        )
     return full_row["id"], full_row
 
 
@@ -710,6 +721,15 @@ async def upload_document_sync(
             "char_count": len(extracted_text),
         },
     )
+    posthog_client = get_posthog_client()
+    if posthog_client is not None:
+        posthog_client.capture(
+            "document_uploaded",
+            properties={
+                "character_count": len(extracted_text),
+                "has_course": True,
+            },
+        )
 
     deps = SaplingDeps(
         user_id=user_id,
@@ -876,6 +896,17 @@ async def upload_document(
                     "char_count": len(extracted_text) if extracted_text is not None else None,
                 },
             )
+            posthog_client = get_posthog_client()
+            if posthog_client is not None:
+                posthog_client.capture(
+                    "document_uploaded",
+                    properties={
+                        "character_count": (
+                            len(extracted_text) if extracted_text is not None else None
+                        ),
+                        "has_course": True,
+                    },
+                )
 
             # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
             # Failures here can NOT fall through to the legacy fallback —
