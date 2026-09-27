@@ -166,6 +166,12 @@ GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guar
 # an oversized answer is never sent or billed. Sized so that even at one token
 # per character both requests a run may make fit GRADER_LIMITS' token cap.
 GRADER_ANSWER_MAX_CHARS = 4_000
+# † PKG-05 numeric gate (A22): float noise at the tolerance edge. An answer
+# exactly `tolerance` away in decimal lands a hair either side in binary
+# (|0.4 − 0.3| = 0.10000000000000003), so a gap within this relative slack of
+# the operands' magnitude still counts as on the edge. Not a spec value: orders
+# of magnitude above double-precision error (~1e-16), below any tolerance.
+NUMERIC_GATE_EDGE_SLACK = 1e-12
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)

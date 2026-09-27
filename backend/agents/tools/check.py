@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from agents.deps import SaplingDeps
 from agents.grader import grade
 from learning.evidence import Evidence, GraderBackend
-from learning.params import LADDER_MAX_RUNG
+from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK
 
 if TYPE_CHECKING:
     from learning.checks import CheckItem
@@ -32,13 +32,6 @@ CHANNEL_FOR_FORMAT: dict[str, str] = {
 }
 _MC_REASON = "mc_reason"
 _NUMERIC = "numeric"
-# Float noise at the tolerance edge: an answer exactly `tolerance` away in
-# decimal lands a hair either side in binary (|0.4 − 0.3| = 0.10000000000000003).
-# The gate fires only on a CLEAR mismatch, so a gap within this relative slack
-# of the operands' magnitude still counts as on the edge. Not a policy value:
-# it sits orders of magnitude above double-precision error (~1e-16) and below
-# any tolerance a key would carry.
-_EDGE_SLACK = 1e-12
 
 
 class CheckAnswer(BaseModel):
@@ -91,7 +84,8 @@ def _numeric_mismatch(item, answer: CheckAnswer) -> bool:
     got, want = _parse_number(answer.answer_text), _parse_number(item.canonical_answer)
     if got is None or want is None:
         return False
-    slack = _EDGE_SLACK * max(1.0, abs(got), abs(want))
+    # The gate fires only on a CLEAR mismatch: float noise at the edge is no gap.
+    slack = NUMERIC_GATE_EDGE_SLACK * max(1.0, abs(got), abs(want))
     return abs(got - want) > (item.tolerance or 0.0) + slack
 
 

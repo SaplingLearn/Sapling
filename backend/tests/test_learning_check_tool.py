@@ -1248,3 +1248,64 @@ def test_nothing_calls_the_grading_helpers_yet():
         "routes/learn.py",
         "main.py",
     } <= scanned
+
+
+# ── loop-code constants (Do not: learning/params.py names only) ───────────
+
+# The files the prompt's "no numeric literals for weights/thresholds/rungs" rule
+# covers. Its pre-PR grep matches only the N.N form, so an exponent (1e-12) or
+# a bare int rung slips past it; this reads every numeric constant instead.
+LOOP_CODE_FILES = ("agents/grader.py", "agents/tools/check.py", "learning/evidence.py")
+# Identity values are never a policy value: a 1.0 weight or magnitude floor, a
+# 0.0 default tolerance, a 0 lower bound, GraderOutput's ge=0.0 / le=1.0.
+IDENTITY_LITERALS = frozenset({0, 1})
+# Ints that are not a weight, threshold or rung: pydantic-ai's output-validation
+# budget (#153, retries=2) and the prompt-hash prefix length (hexdigest()[:12]).
+NON_POLICY_INTS = {"agents/grader.py": frozenset({2, 12})}
+
+
+def _policy_literals(source: str, rel: str = "") -> list[tuple[int, int | float]]:
+    """(line, value) for each numeric constant in `source` that is neither an
+    identity value nor one of `rel`'s NON_POLICY_INTS. Strings never count."""
+    import ast
+
+    non_policy = NON_POLICY_INTS.get(rel, frozenset())
+    return [
+        (node.lineno, node.value)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+        and node.value not in IDENTITY_LITERALS
+        and not (type(node.value) is int and node.value in non_policy)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "hits"),
+    [
+        ("_EDGE_SLACK = 1e-12", 1),
+        ("if confidence < 0.4:\n    pass", 1),
+        ("if max_rung >= 4:\n    pass", 1),
+        ("w = 1.0 if ok else 0.0\nlo = 0", 0),
+        ("flag = True", 0),
+        ('doc = "1e-12 and 0.4 in prose"', 0),
+    ],
+)
+def test_policy_literal_detector(source, hits):
+    """Mutation cases for the scan below."""
+    assert len(_policy_literals(source)) == hits, _policy_literals(source)
+
+
+def test_loop_code_names_every_policy_number_in_params():
+    """Do not (PKG-05): no numeric literal for a weight, threshold or rung in the
+    loop code; learning/params.py names only."""
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    found = [
+        f"{rel}:{line} {value!r}"
+        for rel in LOOP_CODE_FILES
+        for line, value in _policy_literals((backend / rel).read_text(), rel)
+    ]
+    assert found == [], "\n".join(found)
