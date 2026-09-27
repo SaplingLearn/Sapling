@@ -6,11 +6,12 @@ the supervisor architecture's deterministic solution stripper). Two rules:
 - ngram: any LEAK_NGRAM consecutive tokens of the reference appear
   consecutively in the emitted text (a reference shorter than LEAK_NGRAM
   tokens: its whole token run, as PKG-04's checks.leak_in_prompt compares);
-- final_answer: the reference's final answer (the clause after its last '=',
-  else its last standalone number that is not a numbered-step label or an
-  exponent) appears
-  as a consecutive token run, or with every number compared by value ("1,250"
-  = "1250", "2.50" = "2.5"), so a reformatted answer still leaks.
+- final_answer: the reference's final answer (the clause after its last '=';
+  else its last standalone number that is not a numbered-step label, an
+  exponent or a power's base, so scientific notation gives its mantissa;
+  else its last power term, "3x^2"; Markdown emphasis read as its text)
+  appears as a consecutive token run, or with every number compared by value
+  ("1,250" = "1250", "2.50" = "2.5"), so a reformatted answer still leaks.
 
 Tokens are ASCII alphanumeric runs, lowercased (`[a-z0-9]+` over lowercase for
 ASCII text). The stripper tokenizes the same way over the original text, so
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import bisect
 import re
+import string
 from typing import Literal, NamedTuple
 
 from learning import params
@@ -30,19 +32,41 @@ Detector = Literal["none", "ngram", "final_answer"]
 WITHHELD = "[withheld]"
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
-# A number, a thousands-separated one ("1,250") included.
+# A number, a thousands-separated one ("1,250") included; an e-notation
+# exponent ("6.022e23") is part of the match, never of the number (group 1).
 _STANDALONE_NUMBER = re.compile(
-    r"(?<!\w)(?<!\d\.)(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:/\d+)?)(?!\w)(?!\.\d)"
+    r"(?<!\w)(?<!\d\.)(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:/\d+)?)"
+    r"(?:[eE][-+]?\d+)?(?!\w)(?!\.\d)"
 )
 # A numbered-step label at the start of a line ("2. Use it", "  3) Solve" — the
 # stepwise shape of checks._STEP_LINE — "Step 2: divide", "1.Convert") is not
 # an answer. A number alone on its line ("42."), a decimal ("1.5 m") and a
 # clock time ("12:30") are.
 _STEP_LABEL = re.compile(r"^[ \t]*(?:step[ \t]*)?\d+[.):](?!\d)(?=[ \t]*\S)", re.M | re.I)
-# What may stand between an exponent operator ("^", "**") and its exponent:
-# "10^-3", "4 ^ ( 2 )". A number after one is an exponent ("m/s^2", "cm^2",
-# "3x^2"), never the answer.
+# Markdown emphasis ("**42**", "**Final answer:** 1,250", "__42__", "***x***")
+# is read as its text. An opener follows no operand and precedes text, a closer
+# follows text and precedes no operand, so an exponent "x**2" is never one; the
+# span is bounded, so the scan stays linear.
+_EMPHASIS = re.compile(
+    r"(?<![A-Za-z0-9)\]}*_])(\*\*\*?|_{1,3})(?=[^\s*_])([^\n]{1,240}?)(?<=[^\s*_])\1"
+    r"(?![A-Za-z0-9*_])"
+)
+_STARSTAR = "**"
+# The spaces around an exponent operator and just inside brackets carry nothing
+# ("4 ^ ( 2 )" is "4^(2)"). Each alternative starts a whitespace run only at its
+# first character, so the substitution is linear.
+_POWER_SPACE = re.compile(r"(?<![ \t])[ \t]+(?=\^|\*\*|[)\]}])|(?<=[\^(\[{])[ \t]+|(?<=\*\*)[ \t]+")
+# Unspaced scientific notation ("6.02x10^23") reads as spaced ("6.02 x 10^23").
+_SCI_TIMES = re.compile(r"(?<=\d)[xX](?=10(?:\^|\*\*))")
+# What may stand between an exponent operator ("^", "**" touching its base) and
+# its exponent: "10^-3", "4^(2)". A number after one is an exponent ("m/s^2",
+# "cm^2", "3x^2"), and a number before one is a power's base ("10^23" of
+# "6 x 10^23"); neither is the answer.
 _EXPONENT_GAP = " \t({[-−+"
+_OPERAND_END = frozenset(string.ascii_letters + string.digits + ")]}")
+_BASE_OF = re.compile(r"[)\]}]*(?:\^|\*\*)")
+_OPERAND_POWER = re.compile(r"[A-Za-z0-9)\]}]\*\*")
+_CHUNK = re.compile(r"\S+")
 # The final answer ends at the next clause or sentence break: a comma (not a
 # thousands separator), a semicolon, "and"/"so", a newline, or sentence
 # punctuation that is not a decimal point.
@@ -67,24 +91,47 @@ def tokens(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN.findall(text)]
 
 
+def _is_exponent(text: str, start: int) -> bool:
+    """Whether the number at text[start:] is an exponent: after "^", or after a
+    "**" touching its base, across _EXPONENT_GAP."""
+    i = start
+    while i and text[i - 1] in _EXPONENT_GAP:
+        i -= 1
+    if text.endswith("^", 0, i):
+        return True
+    i -= len(_STARSTAR)
+    return i > 0 and text.startswith(_STARSTAR, i) and text[i - 1] in _OPERAND_END
+
+
 def _final_answer_text(reference: str) -> str:
+    reference = _EMPHASIS.sub(r"\2", reference)
     if "=" in reference:
         clause = _CLAUSE_BREAK.split(reference.rsplit("=", 1)[1], maxsplit=1)[0]
         if tokens(clause):
             return clause
-    text = _STEP_LABEL.sub(" ", reference)
+    text = _SCI_TIMES.sub(" x ", _POWER_SPACE.sub("", _STEP_LABEL.sub(" ", reference)))
     numbers = [
         m.group(1)
         for m in _STANDALONE_NUMBER.finditer(text)
-        if not text[: m.start()].rstrip(_EXPONENT_GAP).endswith(("^", "**"))
+        if not _is_exponent(text, m.start()) and not _BASE_OF.match(text, m.end())
     ]
-    return numbers[-1] if numbers else ""
+    if numbers:
+        return numbers[-1]
+    powers = [
+        chunk
+        for chunk in _CHUNK.findall(text)
+        if ("^" in chunk or _OPERAND_POWER.search(chunk)) and _TOKEN.search(chunk)
+    ]
+    return powers[-1] if powers else ""
 
 
 def final_answer(reference: str) -> tuple[str, ...]:
-    """Token run of the reference's final answer: the clause after its last '=',
-    else its last standalone number that is not a numbered-step label or an
-    exponent (after "^" / "**"); () when it has neither."""
+    """Token run of the reference's final answer: the clause after its last '=';
+    else its last standalone number that is not a numbered-step label, an
+    exponent (after "^" / a "**" touching its base) or a power's base (so
+    "6.02 x 10^23" gives its mantissa); else its last whitespace-delimited power
+    term ("3x^2", "cos(x^2)", "5^2"); () when it has none. Markdown emphasis
+    ("**42**") is read as its text first."""
     return tuple(tokens(_final_answer_text(reference)))
 
 

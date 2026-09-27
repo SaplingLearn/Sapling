@@ -1635,13 +1635,132 @@ def test_final_answer_skips_exponents():
     area = "The area of the square is 12 cm^2."
     assert final_answer(area) == ("12",)
     assert detect_leak(area, "So the area works out to 12 square centimetres.", Rung.H1).leaked
-    assert final_answer("Bring the exponent down: 3x^2") == ()
+    assert final_answer("Bring the exponent down: 3x^2") == ("3x", "2")
     assert strip_leak("Try step 2 again.", "Bring the exponent down: 3x^2") == "Try step 2 again."
-    assert final_answer("It is about 6 x 10^23") == ("10",)
+    assert final_answer("It is about 6 x 10^23") == ("6",)
     assert final_answer("Expand x**2 to get 4") == ("4",)
-    assert final_answer("The rate is 5 per 10^-3 s") == ("10",)
-    assert final_answer("It is 4 ^ ( 2 )") == ("4",)
+    assert final_answer("The rate is 5 per 10^-3 s") == ("5",)
+    assert final_answer("It is 4 ^ ( 2 )") == ("4", "2")
     assert final_answer("Raise it to the 2") == ("2",)  # no '^': still an answer
+
+
+def test_final_answer_takes_the_mantissa_never_a_power_base():
+    """Scientific notation: the mantissa is the answer, never the "10" the
+    exponent sits on (a base is skipped like an exponent), so a paraphrased
+    value leaks and an unrelated "10" in a hint does not. A power alone
+    ("5^2") is its base and exponent together."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer, strip_leak
+
+    assert final_answer("Avogadro is 6.022 x 10^23") == ("6", "022")
+    assert final_answer("Light travels at 3.0 × 10^8 m/s") == ("3", "0")
+    assert final_answer("It is 6.022e23 molecules") == ("6", "022")
+    assert final_answer("It is 2**10 bytes") == ("2", "10")
+    assert final_answer("the answer is 5^2") == ("5", "2")
+    ref = "The number of molecules is 6.02 x 10^23."
+    assert final_answer(ref) == ("6", "02")
+    assert detect_leak(ref, "You should get roughly 6.02 times ten to the 23rd.", Rung.H3) == (
+        True,
+        "final_answer",
+    )
+    unrelated = "Check the power of 10 you used."
+    assert detect_leak(ref, unrelated, Rung.H3) == (False, "none")
+    assert strip_leak(unrelated, ref) == unrelated
+    once = strip_leak("Close: about 6.02 x 10^23", ref)
+    assert once == "Close: about [withheld] x 10^23"
+    assert detect_leak(ref, once, Rung.H0) == (False, "none")
+    avogadro = "The answer is 6.022 x 10^23"
+    assert detect_leak(avogadro, "Multiply by 10 first.", Rung.H3) == (False, "none")
+    assert detect_leak(avogadro, "It is 6.022 times ten to the 23", Rung.H3).leaked
+    light = "Light travels at 3.0 x 10^8 m/s"
+    assert detect_leak(light, "It is about 3.0 times ten to the eighth.", Rung.H3).leaked
+
+
+def test_final_answer_falls_back_to_the_last_power_term():
+    """A symbolic answer with an exponent and no '=' ("3x^2") is the final
+    answer (spec §3.4 LEAK_NGRAM: "exact final numeric/symbolic answer"):
+    with no standalone number the last power term is the answer. A unit's
+    exponent after a number ("9.8 m/s^2") stays no answer, since the number
+    wins."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer, strip_leak
+
+    assert final_answer("The derivative is 3x^2") == ("3x", "2")
+    assert final_answer("d/dx of x^3 is 3x^2") == ("3x", "2")
+    assert final_answer("The unit of acceleration is m/s^2") == ("m", "s", "2")
+    assert final_answer("The acceleration is 9.8 m/s^2.") == ("9", "8")
+    assert final_answer("The area of the square is 12 cm^2.") == ("12",)
+    power = "Using the power rule, the derivative of x^3 is 3x^2."
+    assert final_answer(power) == ("3x", "2")
+    for hint in ("You should land on 3x^2.", "Nice, so the derivative comes out to 3x^2."):
+        assert detect_leak(power, hint, Rung.H3) == (True, "final_answer"), hint
+    assert strip_leak("You should land on 3x^2.", power) == "You should land on [withheld]."
+    assert detect_leak(power, "What happens to the exponent 3?", Rung.H3) == (False, "none")
+    short = "Bring the exponent down: 3x^2"
+    assert detect_leak(short, "The derivative is 3x^2.", Rung.H3) == (True, "final_answer")
+    chain = "By the chain rule the derivative of sin(x^2) is 2x cos(x^2)."
+    assert final_answer(chain) == ("cos", "x", "2")
+    assert detect_leak(chain, "so you get 2x cos(x^2)", Rung.H3).leaked
+
+
+def test_final_answer_reads_through_markdown_emphasis():
+    """A model-written reference may bold its answer. '**' is an exponent
+    only when it touches its base ("x**2"); an emphasis pair ("**42**",
+    "**Final answer:** 1,250", "__42__") is read as its text, so the bolded
+    answer is the final answer and a bolded step label is still a label."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, final_answer, strip_leak
+
+    assert final_answer("The answer is **42**.") == ("42",)
+    assert detect_leak("The answer is **42**.", "It comes out to 42.", Rung.H3) == (
+        True,
+        "final_answer",
+    )
+    total = (
+        "Multiply the unit price by the quantity and add the shipping fee. **Final answer:** 1,250"
+    )
+    assert final_answer(total) == ("1", "250")
+    hint = "Add them up: the total should come to 1250 once shipping is in."
+    assert detect_leak(total, hint, Rung.H3) == (True, "final_answer")
+    assert (
+        strip_leak(hint, total)
+        == "Add them up: the total should come to [withheld] once shipping is in."
+    )
+    slide = "The block slides a total distance of **14 m** before it stops."
+    assert final_answer(slide) == ("14",)
+    assert detect_leak(slide, "you should land on 14 m", Rung.H3).leaked
+    steps = "1. Multiply 3 by 4.\n2. **Result:** 12"
+    assert final_answer(steps) == ("12",)
+    assert detect_leak(steps, "You should end up with 12.", Rung.H3).leaked
+    assert detect_leak(steps, "Now multiply by 4.", Rung.H3) == (False, "none")
+    assert final_answer("**Step 1:** find F.\n**Step 2:** divide by m.") == ()
+    assert final_answer("The answer is __42__") == ("42",)
+    assert final_answer("The answer is ***42***") == ("42",)
+    assert final_answer("x**2 is **4**") == ("4",)
+    assert final_answer("Use x ** 2 then 4") == ("4",)
+
+
+def test_final_answer_runs_in_linear_time():
+    """References and hints are model text of any length: the fallback's
+    Markdown, exponent and power-term scans stay linear."""
+    import time
+
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    big = 20_000
+    for reference in (
+        "x" + " " * big + "^",
+        "**a " * (big // 4),
+        "1 " * (big // 2),
+        "the answer is " + "x^" * (big // 2),
+        "a" + " " * big + "b",
+        "(" * big + "2",
+    ):
+        start = time.perf_counter()
+        detect_leak(reference, reference, Rung.H3)
+        strip_leak(reference, reference)
+        assert time.perf_counter() - start < 1.0, reference[:20]
 
 
 def test_final_answer_keeps_a_thousands_separator():
