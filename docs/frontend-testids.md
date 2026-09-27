@@ -521,8 +521,8 @@ opt-out renders inactive, and asserts the E2E build sends no analytics).
 | --- | --- |
 | `settings-tab-${tab}` | the tab rail buttons — `tab` is the fixed tab key: `profile` / `cosmetics` / `preferences` / `notifications` / `data` |
 | `settings-analytics` | the Data tab's "Product analytics" card root |
-| `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — calls posthog-js `opt_out_capturing` / `opt_in_capturing` and PATCHes `analytics_opt_out` to the account; **disabled** when analytics is not running in this build (no key, local mode, the E2E/test build) or the browser sends Do Not Track / GPC |
-| `settings-analytics-note` | the status line under it ("isn't running in this version…" / DNT / "…saved to your account and applies on every browser…") |
+| `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — PATCHes `analytics_opt_out` to the account (opt-out stops capture first, opt-in saves first); **disabled** when analytics is not running in this build (no key, local mode, the E2E/test build), under Do Not Track / GPC, until the account answer has loaded, and while a save is in flight |
+| `settings-analytics-note` | the status line under it ("isn't running in this version…" / DNT / "…until your saved setting has loaded" / "Saved to your account…") |
 | `settings-toggle-${key}` | a Notifications-tab switch (the same `Toggle`) — `key` is the `user_settings` field it PATCHes: `notification_email` / `notification_push` / `notification_in_app` / `activity_status_visible` |
 
 ### `adminfb`
