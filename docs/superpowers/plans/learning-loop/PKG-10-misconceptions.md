@@ -14,9 +14,9 @@ Depends on (spec §14): **05, 05b, 06, 07, 09** — `grade_answer` and its `Grad
 
 ## Read before you start (in this order)
 
-0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 1. The rows that bind this package: **A22** (a `wrong_key` enters the rule only from a matched reason; the `mc_reason` option → key map is a prior, never a record on its own), **A24** (`match_wrong_reason` on the decision seam), **A15** (a misconception-confrontation turn is a `deep` turn), **A16** (the hook lives in `grade_answer`; no `graded_check_tool` exists), plus A19 (the learner brief is built once per session and stored), A2 (check items key on `concept_key`; the student's node comes from the caller), A6 (`GAP_CONFIDENCE_MAX` with `≤`, `NOVICE_FLOOR_IDK`), A1 (`idk` is a flag, not a channel) A23 (revealed items and the post-test reserve are never re-served) and A27 (the isomorph re-ask goes inside PKG-07's `_activate_next_item`, the only code that sets `loop_state["active"]`).
+0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 1. The rows that bind this package: **A22** (a `wrong_key` enters the rule only from a matched reason; the `mc_reason` option → key map is a prior, never a record on its own), **A24** (`match_wrong_reason` on the decision seam), **A15** (a misconception-confrontation turn is a `deep` turn), **A16** (the hook lives in `grade_answer`; no `graded_check_tool` exists), plus A19 (the learner brief is built once per session and stored), A2 (check items key on `concept_key`; the student's node comes from the caller), A6 (`GAP_CONFIDENCE_MAX` with `≤`, `NOVICE_FLOOR_IDK`), A1 (`idk` is a flag, not a channel) A23 (revealed items and the post-test reserve are never re-served), **A29** (the class rollup groups by course `concept_key` + `wrong_key`, never by the per-user `node_id`) and A27 (the isomorph re-ask goes inside PKG-07's `_activate_next_item`, the only code that sets `loop_state["active"]`).
 1. The same spec's §3.5–§3.6 (cost/routing/decision constants — the `LOOP_MODEL_TIER` row that names "misconception confrontation (PKG-10)" and the soft/deep-cap downgrades that follow it; §3.6 backend selection for `match_wrong_reason`), §7 (two-phase gate), §8 (invariants 13–29 — this package adds 17 and keeps 14, 22, 23, 25, 26 and 28 green), §14 (order and dependencies).
-2. `docs/superpowers/plans/learning-loop/LEDGER.md` — refuse to start if any row is `blocked` or `in-progress`. Rows 00–09, 05b and 06b must be `done` or `verified` (spec §14: 05, 05b, 06, 07 and 09 are this package's dependencies, and packages run strictly one at a time).
+2. `docs/superpowers/plans/learning-loop/LEDGER.md` — a package's state is its LATEST row (README "Ledger reading"); refuse to start if any earlier package's latest row is `blocked` or `in-progress`. The latest rows of 00–09, 05b and 06b must be `done`, `verified` or `reopened` (spec §14: 05, 05b, 06, 07 and 09 are this package's dependencies, and packages run strictly one at a time).
 3. `docs/superpowers/plans/learning-loop/HANDOFF-03.md`, `HANDOFF-04.md`, `HANDOFF-05.md`, `HANDOFF-05b.md`, `HANDOFF-06.md`, `HANDOFF-07.md`, `HANDOFF-09.md` — §Symbols added (and §Post-hoc changes) of each. You need from them: the `Evidence` model's file and field list, including PKG-05's `grader_backend` (03); `CheckItem`'s fields (`concept_key`, `question_hash`, `difficulty`, `format`, `options`, and `common_wrong: list[WrongReason(key, text)]` — the decrypted `common_wrong_json` column) and the check-item reader in `services/check_item_service.py` (04); `grade_answer`'s canonical signature, the `GradeOutcome` fields, the private `_record` / `_wrong_key` helpers and `CheckAnswer` (05); `decisions.match_wrong_reason`'s signature, the `WrongReasonState` fields, the `Pick` result, what each backend does with `prior`, and how `grade_answer` holds the grader's result after the PKG-05b reopen (05b); `policy.LoopState` with its `to_json`/`from_json` and `policy.model_tier`'s signature (06); the check-answer handler (`_grade_submission` and the fresh `SaplingDeps` it hands `grade_answer`), the per-turn user-message assembly and its one `policy.model_tier(...)` call, the item-selection site, the check-item read (`get_check_item`), and how the loop state is loaded onto `deps.loop_state` and saved — PKG-07 carries the JSON document and records its `LoopState` mapping (07); `learner_brief.build_brief`, `store_brief`, the `_open_misconception_keys` hook, and `close_session`'s `build_close(..., misconception_keys, ...)` call (09).
 4. `CLAUDE.md` §Conventions (Supabase only via `table()`/`rpc()`, encryption at write boundaries, `report_empty_result` for agent read tools) and §Gotchas (encrypted columns). The "Do not" list repeats what applies.
 5. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` §3.3 "Slip / misconception / novice rule" (the six verdicts and the A22 `wrong_key` bullet), §3.4 (`MISCONCEPTION_ROLLUP_MIN_USERS`, `LEARNER_BRIEF_MAX_MISCONCEPTIONS`), §4 "PKG-10" block (DDL, verbatim), §4's encryption paragraph (`evidence_text` is encrypted; `wrong_key` is the plaintext key; decrypted text only in memory, including before any decision-seam state), §5 (`Evidence`, incl. `verdict`/`wrong_key`), §7 (flag), §8 invariants 1, 7, 8, 9, 14, 17, 25, 28.
@@ -102,7 +102,7 @@ Rule: any red row → STOP. Diagnose, repair on this branch as commit `fix(learn
    - otherwise → `unknown` (re-ask an isomorph).
    Misconception outranks novice deliberately: PKG-08's `probe.novice_floor()` owns probe exit on its own, so returning `misconception` here loses nothing there and gains the record.
 3. **Store.** `record(user_id, node_id, check_item_id, wrong_key, evidence_text) -> dict` reads the open row for `(user_id, node_id, wrong_key)` (`resolved_at` is null); if found, `update` sets `count = count + 1`, `last_seen_at = now`, `check_item_id`, `evidence_text` (encrypted, latest wins); else `insert` a new row with `id = str(uuid.uuid4())`, `count = 1`. `evidence_text` passes through `encrypt_if_present` at the write boundary; `wrong_key` stays plaintext (it is the lookup key). Returns the row dict as written (with `evidence_text` still ciphertext — callers never need it back). `resolve(user_id, node_id, wrong_key) -> int` sets `resolved_at = now` on the open row(s); returns rows touched. `open_for(user_id, node_ids) -> list[dict]` returns `[{"node_id", "wrong_key", "count"}, ...]` for open rows, `count` descending, `node_ids` empty → `[]` with no read. None of the three raise on a DB error: log at WARNING, return `{}` / `0` / `[]` (fail closed, the store is a diagnosis input, never a gate).
-4. **Rollup.** `rollup(course_id) -> list[dict]` = `rpc("misconception_rollup", {"p_course_id": course_id})`, DB errors → `[]` + WARNING. Backend-only. Not registered on `chat_tutor`, `loop_tutor`, or `quiz` in this package. `quiz`'s existing `read_misconceptions_for_course` may switch to this source later — out of scope; the hand-off records it as an open question.
+4. **Rollup.** `rollup(course_id) -> list[dict]` = `rpc("misconception_rollup", {"p_course_id": course_id})` → rows `{"concept_key", "wrong_key", "users"}`, DB errors → `[]` + WARNING. The SQL groups by the COURSE concept (course, `concept_key`, `wrong_key`), never by `node_id`: `graph_nodes` rows are per user, so a per-node group holds one student and could never reach the `MISCONCEPTION_ROLLUP_MIN_USERS` distinct-user floor (spec §13 A29). `concept_key` is the SQL mirror of `services/graph_service._normalize_concept` (runs of whitespace become one space, trimmed, case-folded), so it equals `check_items.concept_key` (A2), and a consumer maps a row to items with `list_items(course_id, row["concept_key"])`. Backend-only. Not registered on `chat_tutor`, `loop_tutor`, or `quiz` in this package. `quiz`'s existing `read_misconceptions_for_course` may switch to this source later — out of scope; the hand-off records it as an open question.
 5. **The hook in `grade_answer`** (post-hoc PKG-05; spec §13 A16 — there is no `graded_check_tool`, and nothing here is a tutor tool). Two changes inside `agents/tools/check.py`, both reached only on the paths where `grade_answer` appends evidence (idk, the numeric mismatch, a returned grade — never `unavailable`, never `deps.learning_loop is False`):
    - **The key** (A22/A24). `match_wrong_key(item, *, prior, answer_text, deps) -> str | None` is the ONLY source of a `wrong_key`: it builds `decisions.WrongReasonState(question=<decrypted item prompt>, answer=<the text the grader saw>, wrong={key: text, …})` from the item's decrypted `common_wrong` (`CheckItem.common_wrong`, PKG-04; no identifiers — invariant 25) and awaits `decisions.match_wrong_reason(state, deps=deps, prior=<the grader's GradeResult>)`. With `prior` given the gemini backend returns the grader's own `matched_wrong_key` and makes NO model call, so grading cost is unchanged; `match_wrong_reason` is never called without `prior` (that would be an extra `decision` run counted against `STUDENT_DAILY_GRADES`). A `Pick` whose value is `"none"` or a key the item does not list, an item with no listed keys (no call), or a seam exception → `None` with a WARNING (a lost key loses a diagnosis, never evidence, and never for only one outcome). `grade_answer` feeds this key — instead of `result.matched_wrong_key` — into PKG-05's unchanged `_wrong_key(...)` A22 filter, so an `mc_reason` wrong option still carries a key only when the matched reason equals that option's key; the option → key map alone never reaches the rule or the store.
    - **The rule.** PKG-05's `_record(deps, outcome, ev)` becomes `async` and, before it appends, awaits `apply_misconception_rule(deps, *, item, grade, evidence, answer_text) -> Verdict | None` (`deps`, not a `RunContext`): `grade` is the `GradeOutcome` being returned (its `wrong_key` is the filtered key above), `evidence` the built `Evidence` (its `node_id` is the student's node, its `correct`/`idk` the outcome), `answer_text` the text the grader saw. The hook returns `None` without reading or writing anything when `deps.learning_loop` is False or `deps.loop_state is None` (a caller that loads no loop state gets no rule). Otherwise it appends this attempt to the session attempt log (the loop state's `attempts`, via the one accessor in `learning/misconceptions.py`), computes the verdict over that node's attempts and returns it; on `misconception` with a key it calls `record(...)` (via `asyncio.to_thread`) and sets the loop state's `confront = {"node_id", "wrong_key", "check_item_id"}`; on `slip` (or any other verdict) it records nothing. `_record` stamps `verdict` and `wrong_key` onto the `Evidence` before `model_dump()` and sets `GradeOutcome.verdict` (new field, default `None`). `isomorph_of` for the new attempt = the `question_hash` of the most recent earlier attempt in the log on the same `node_id` with a different `question_hash`, else `None` (derived, no selection plumbing). `Attempt.confidence` is `None`: `CheckAnswer` carries no student confidence (A16's body has none), and `grade.confidence` is the grader's — never read here.
@@ -139,13 +139,19 @@ CREATE TABLE IF NOT EXISTS misconceptions (
   resolved_at    timestamptz
 );
 CREATE INDEX IF NOT EXISTS misconceptions_user_node_idx ON misconceptions (user_id, node_id, wrong_key);
+-- graph_nodes rows are per user, so the rollup groups by the COURSE concept, never by
+-- node_id (A29). concept_key mirrors services/graph_service._normalize_concept (runs of
+-- whitespace become one space, trimmed, case-folded) and equals check_items.concept_key
+-- (A2). SQL lower() stands in for Python casefold(): they agree on ASCII names and
+-- can differ on some non-ASCII characters (e.g. ß, which casefold expands).
 CREATE OR REPLACE FUNCTION misconception_rollup(p_course_id text)
-RETURNS TABLE (node_id text, wrong_key text, users int)
+RETURNS TABLE (concept_key text, wrong_key text, users int)
 LANGUAGE sql SECURITY DEFINER AS $$
-  SELECT m.node_id, m.wrong_key, count(DISTINCT m.user_id)::int
+  SELECT lower(btrim(regexp_replace(g.concept_name, '\s+', ' ', 'g'))), m.wrong_key,
+         count(DISTINCT m.user_id)::int
   FROM misconceptions m JOIN graph_nodes g ON g.id = m.node_id
   WHERE g.course_id = p_course_id AND m.resolved_at IS NULL
-  GROUP BY m.node_id, m.wrong_key
+  GROUP BY g.course_id, lower(btrim(regexp_replace(g.concept_name, '\s+', ' ', 'g'))), m.wrong_key
   HAVING count(DISTINCT m.user_id) >= 5
 $$;
 REVOKE ALL ON FUNCTION misconception_rollup(text) FROM PUBLIC, anon, authenticated;
@@ -420,6 +426,28 @@ class TestMigration:
     def test_rollup_excludes_resolved_rows(self):
         assert "m.resolved_at IS NULL" in _migration()
 
+    def test_rollup_groups_by_course_concept_not_node(self):
+        """Spec §13 A29: graph_nodes rows are per user, so a node_id group holds
+        one student and never reaches the distinct-user floor. The rollup keys on
+        the course concept (the A2 concept_key) and returns it, never a node id."""
+        sql = _migration()
+        fn = sql[sql.index("CREATE OR REPLACE FUNCTION misconception_rollup"):]
+        key = r"lower(btrim(regexp_replace(g.concept_name, '\s+', ' ', 'g')))"
+        assert "RETURNS TABLE (concept_key text, wrong_key text, users int)" in fn
+        assert f"GROUP BY g.course_id, {key}, m.wrong_key" in fn
+        assert "m.node_id," not in fn.split("FROM", 1)[0], "the rollup must not return a node id"
+        assert "GROUP BY m.node_id" not in fn
+
+    def test_rollup_concept_key_mirrors_normalize_concept(self):
+        """The SQL key must equal the A2 key check_items use. Mirror the SQL
+        expression (whitespace runs → one space, trim, lower) in Python. SQL
+        lower() stands in for casefold(): they agree on ASCII names and can
+        differ on some non-ASCII characters (e.g. ß) — spec §13 A29's known gap."""
+        from services.graph_service import _normalize_concept
+
+        for name in ["Derivative", "  chain   Rule ", "Chain\tRule\n", "L'Hôpital's Rule", "big-O  Notation"]:
+            assert re.sub(r"\s+", " ", name).strip(" ").lower() == _normalize_concept(name)
+
     def test_evidence_text_has_no_unique(self):
         """Spec §4 encryption rule / inv 9: an encrypted column is never a key."""
         sql = _migration()
@@ -439,7 +467,7 @@ class TestMigration:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd backend && venv/bin/python -m pytest tests/test_learning_misconceptions.py -v`
-Expected: FAIL — `expected exactly one learning_misconceptions migration, got []` (5 failures). If `params.MISCONCEPTION_ROLLUP_MIN_USERS` is missing, the module errors at import: add it to `params.py` now (§Named constants) and record the deviation against PKG-01.
+Expected: FAIL — `expected exactly one learning_misconceptions migration, got []` (6 failures; `test_rollup_concept_key_mirrors_normalize_concept` reads no migration and already passes). If `params.MISCONCEPTION_ROLLUP_MIN_USERS` is missing, the module errors at import: add it to `params.py` now (§Named constants) and record the deviation against PKG-01.
 
 - [ ] **Step 3: Write the migration**
 
@@ -664,8 +692,9 @@ def test_open_for_returns_keyed_counts_desc_and_skips_empty_input():
 def test_rollup_calls_rpc_with_course_id():
     from learning import misconceptions
 
-    with patch.object(misconceptions, "rpc", return_value=[{"node_id": "n1", "wrong_key": "k1", "users": 7}]) as rpc:
-        assert misconceptions.rollup("c1") == [{"node_id": "n1", "wrong_key": "k1", "users": 7}]
+    rows = [{"concept_key": "chain rule", "wrong_key": "k1", "users": 7}]  # course concept, never a node id (A29)
+    with patch.object(misconceptions, "rpc", return_value=rows) as rpc:
+        assert misconceptions.rollup("c1") == rows
     rpc.assert_called_once_with("misconception_rollup", {"p_course_id": "c1"})
 
 
@@ -857,8 +886,10 @@ def open_for(user_id: str, node_ids: list[str]) -> list[dict]:
 
 
 def rollup(course_id: str) -> list[dict]:
-    """Class rollup via the SECURITY DEFINER SQL function; rows exist only
-    above MISCONCEPTION_ROLLUP_MIN_USERS distinct students (enforced in SQL).
+    """Class rollup via the SECURITY DEFINER SQL function: rows
+    {concept_key, wrong_key, users}, keyed on the course concept (spec §13 A29;
+    concept_key == check_items.concept_key), and only at or above
+    MISCONCEPTION_ROLLUP_MIN_USERS distinct students (enforced in SQL).
     Backend-only. NOT a tutor tool. The quiz agent's
     `read_misconceptions_for_course` may switch to this source later (out of
     scope here)."""
@@ -1500,7 +1531,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 gh pr create --title "feat(learning): PKG-10 misconceptions" --body-file - <<'EOF'
 Learning loop series, package 13 of 17. Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §3.3, §4 (PKG-10), §13 A15, A16, A22, A24.
 
-- `misconceptions` table + `misconception_rollup(text)` (SECURITY DEFINER, service_role only, HAVING ≥ MISCONCEPTION_ROLLUP_MIN_USERS distinct users); `evidence_text` encrypted, `wrong_key` plaintext key
+- `misconceptions` table + `misconception_rollup(text)` (SECURITY DEFINER, service_role only; grouped by course concept_key + wrong_key, never node_id — spec §13 A29; HAVING ≥ MISCONCEPTION_ROLLUP_MIN_USERS distinct users); `evidence_text` encrypted, `wrong_key` plaintext key
 - `learning/misconceptions.py`: pure `slip_or_misconception` (unknown/slip/misconception/gap/not_known/novice, plus `none`), fail-closed `record`/`resolve`/`open_for`, backend-only `rollup` — NOT a tutor tool (ADR 0023 §5; inv 17)
 - post-hoc: PKG-03 `Evidence.verdict`/`wrong_key`; PKG-06 `policy.next_isomorph`, loop-state `attempts`/`confront`; PKG-05 `grade_answer` runs the rule and records, with the `wrong_key` only from `decisions.match_wrong_reason` (prior = the grader's result, no extra model call; the mc_reason option → key map is never recorded alone — A22/A24); PKG-07 confrontation line on the deep tier (`misconception_active`, A15) + isomorph re-ask; PKG-09 brief reads open misconceptions from the store
 - constants: `MISCONCEPTION_MIN_ISOMORPHS = 2`, `GAP_CONFIDENCE_MAX = 0.4 †` (A6)
@@ -1546,6 +1577,7 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 10. `LEDGER.md` has row `10 | misconceptions | done | …`, `verified` rows for 05, 05b, 06, 07 and 09, `reopened` rows for 03, 05, 06, 07, 09.
 11. `grep -c "match_wrong_reason" backend/agents/tools/check.py` → `≥ 1`; `grep -c "graded_check\|RunContext" backend/agents/tools/check.py` → `0` (A16/A24: the key comes from the seam; no tool)
 12. `grep -c "misconception_active" backend/routes/learn_loop.py` → `≥ 1` (A15: the confronting turn is deep); `grep -c "model_pref" backend/routes/learn_loop.py` → `0` (invariant 22)
+13. `grep -c "RETURNS TABLE (concept_key text, wrong_key text, users int)" backend/db/migrations/*_learning_misconceptions.sql` → `1`; `grep -c "GROUP BY m.node_id" backend/db/migrations/*_learning_misconceptions.sql` → `0` (spec §13 A29: the floor counts students per course concept, never per per-user node)
 
 ## Hand-off
 

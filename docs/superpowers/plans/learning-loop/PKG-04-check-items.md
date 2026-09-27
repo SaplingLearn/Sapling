@@ -6,7 +6,7 @@
 
 ## Package id + goal
 
-**PKG-04 `check-items`.** After this package: every concept a document upload merges into the graph gets, at ingest time, a set of check items for its COURSE — one per (format × difficulty), `CHECK_ITEM_INITIAL_PER_CONCEPT` in all — each carrying a reference answer, an itemized binary rubric, common wrong reasons with stable keys, the answer structure of spec §13 A22 (`mc_reason` options with a wrong key per distractor and the correct letter, `answer_kind`, a numeric `canonical_answer`/`tolerance`) and A17's `stepwise` flag, and the ids of the course chunks it was written from. Items are course assets keyed on `(course_id, concept_key)` with no `graph_nodes` FK (A2), stored encrypted in `check_items` with a plaintext `question_hash` of the prompt, drafted only for concepts that still lack them and only from shared `course_material` documents (A23), and selectable by `learning.checks.select_item`. A backfill script (`--course <id>` or `--all-courses`; the launch runbook step, spec §11.7) covers concepts that predate the package and prints per-course coverage. An offline eval dataset scores the generator. Task 0 first reopens PKG-00 so `learning_loop_beta` is readable but not student-patchable (A14). All of it is inert when `LEARNING_LOOP_ENABLED` is unset. `tests/test_learning_check_items.py`, one added settings test and three invariants prove it.
+**PKG-04 `check-items`.** After this package: every concept a document upload merges into the graph gets, at ingest time, a set of check items for its COURSE — one per (format × difficulty), `CHECK_ITEM_INITIAL_PER_CONCEPT` in all — each carrying a reference answer, an itemized binary rubric, common wrong reasons with stable keys, the answer structure of spec §13 A22 (`mc_reason` options with a wrong key per distractor and the correct letter, `answer_kind`, a numeric `canonical_answer`/`tolerance`) and A17's `stepwise` flag, and the ids of the course chunks it was written from. Items are course assets keyed on `(course_id, concept_key)` with no `graph_nodes` FK (A2), stored encrypted in `check_items` with a plaintext `question_hash` of the prompt, drafted only for concepts that still lack them and only from shared `course_material` documents (A23), and selectable by `learning.checks.select_item`. A backfill script (`--course <id>` or `--all-courses`; the launch runbook step, spec §11.7) covers concepts that predate the package and prints per-course coverage. An offline eval dataset scores the generator. Task 0 only verifies that `learning_loop_beta` is on no settings API path: the CodeRabbit PR #673 reopen of PKG-00 already removed it (spec §13 A31), so Task 0 changes nothing. All of it is inert when `LEARNING_LOOP_ENABLED` is unset. `tests/test_learning_check_items.py` and three invariants prove it.
 
 This is the answer key the research names as the precondition for hint-not-answer tutoring (report §"Guardrails"): the grader (PKG-05) and the loop tutor (PKG-07) never solve an item themselves — they read what this package stored. The research calls such a key "verified"; ours is model-generated and unverified (spec §13 A17), so nothing in code or docs calls it verified.
 
@@ -18,14 +18,14 @@ Branch: `feat/learning-loop-04-check-items`. PR title: `feat(learning): PKG-04 c
 
 0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 0.
 0a. The same spec's §3.5–§3.6 (cost/routing/decision constants — the "Check items" table in §3.5 is this package's), §7 (two-phase gate; this package's hook is course-level and env-gated), §8 (invariants 13–29; 6, 9 and 12 are yours), §14 (order and dependencies).
-1. `docs/superpowers/plans/learning-loop/LEDGER.md` — refuse to start if any row is `blocked` or `in-progress`. Rows `00`–`03` must be `done` or `verified` (spec §14 order).
-2. `docs/superpowers/plans/learning-loop/HANDOFF-00.md` — what PKG-00 actually built. Its "Verify commands" are your State-of-the-world rows; Task 0 appends to its "Post-hoc changes". `HANDOFF-01.md` "Constants chosen" — the `CHECK_ITEM_*` names `learning/params.py` already exports (Task 8 appends to its "Post-hoc changes").
+1. `docs/superpowers/plans/learning-loop/LEDGER.md` — a package's state is its LATEST row (README "Ledger reading"); refuse to start if any earlier package's latest row is `blocked` or `in-progress`. The latest rows of `00`–`03` must be `done`, `verified` or `reopened` (spec §14 order).
+2. `docs/superpowers/plans/learning-loop/HANDOFF-00.md` — what PKG-00 actually built. Its "Verify commands" are your State-of-the-world rows; its "Post-hoc changes" record the CodeRabbit PR #673 reopen (commit `2349294`) that Task 0 verifies. `HANDOFF-01.md` "Constants chosen" — the `CHECK_ITEM_*` names `learning/params.py` already exports (Task 8 appends to its "Post-hoc changes").
 3. `CLAUDE.md` §Conventions and §Gotchas — encryption, the `table()` rule, RAG visibility, the function-mode seam, migrations. The "Do not" list below repeats the ones that bite here.
-4. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` §2 (module map: `checks.py`, `agents/check_items.py`, `services/check_item_service.py`, `scripts/backfill_check_items.py`), §3.4 (the `CHECK_ITEM_*` rows), §3.5 "Check items" table, §4 (the PKG-04 DDL block and the encryption paragraph under the DDL), §6 (`learn.check_items_failed`), §7 (the "PKG-04's ingest-time item hook" bullet and the per-environment table), §8 items 6, 9, 12, §11.1 item 3 and §11.7 steps 3, 7, 9 and 11 (the staging, production and nightly backfills — `--project`, dry run first), §12 (no `symbolic`/`exact`, no Batch API), §13 rows A2, A6, A8, A14, A17, A22, A23, A24.
+4. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` §2 (module map: `checks.py`, `agents/check_items.py`, `services/check_item_service.py`, `scripts/backfill_check_items.py`), §3.4 (the `CHECK_ITEM_*` rows), §3.5 "Check items" table, §4 (the PKG-04 DDL block and the encryption paragraph under the DDL), §6 (`learn.check_items_failed`), §7 (the "PKG-04's ingest-time item hook" bullet and the per-environment table), §8 items 6, 9, 12, §11.1 item 3 and §11.7 steps 3, 7, 9 and 11 (the staging, production and nightly backfills — `--project`, dry run first), §12 (no `symbolic`/`exact`, no Batch API), §13 rows A2, A6, A8, A14, A17, A22, A23, A24, A31 (Task 0 is verification only) and A32 (the `graded` column comment: every generated item is practice material).
 5. `docs/superpowers/plans/learning-loop/README.md` and `HANDOFF-template.md`.
 6. Research, only these sections: `docs/research/learning-loop/AI tutor learning loop research.md` §"Check: free response and teach-back for credit, multiple choice for speed" (~line 78), §"Feedback: high-information, after an attempt, never ending in the answer" (~line 82; the "expected answers + common wrong reasons block per concept" sentence is this package), §"Guardrails: withhold answers, ground in verified solutions, gate the grader" (~lines 131–137; the 51% number is why a reference answer exists), §"Prioritized recommendations" items 1–2 (~lines 155–159). `docs/research/learning-loop/ZPD lever tradeoffs and upgrades.md` — only the "Sycophancy under pushback" row (~line 96: "ground every check in a verified reference answer").
 7. Code you will mirror or call — read these before writing anything:
-   - `backend/routes/profile.py:79–84` (`_SETTINGS_COLS`), `:420–444` (`update_settings` and its `ALLOWED` set), `backend/models/__init__.py:327–339` (`UpdateSettingsBody`), `:378–390` (`SettingsResponse`), `backend/tests/test_learning_settings_flag.py` (whole file — Task 0 edits it), `backend/tests/test_profile_routes.py` (must stay green unedited).
+   - `backend/routes/profile.py:79–85` (`_SETTINGS_COLS`), `:420–480` (`update_settings`: its `ALLOWED` set, and the `share_class_context` resync that Task 6b extends), `backend/models/__init__.py:327` (`UpdateSettingsBody`), `:376` (`SettingsResponse`), `backend/tests/test_learning_settings_flag.py` (whole file: it pins the shipped A31 state; Task 0 runs it and never edits it), `backend/tests/test_profile_routes.py` (must stay green unedited).
    - `backend/services/quiz_identity.py:45–72` (`normalize_text`, `question_hash` — the normalization + version-tag idea you copy).
    - `backend/services/graph_service.py:563` (`_normalize_concept` — the A2 `concept_key`; import it, never re-implement it).
    - `backend/services/chunk_visibility.py:65–78` (`SHARED`, `COURSE_MATERIAL`), `:153` (`decide_visibility` — the one rule for "may this upload join the class pool": shareability, confidence floor, the uploader's stored consent), `backend/services/document_indexing.py:264–280` (how indexing calls it with the stored `shareability`/`shareability_confidence`), `backend/db/migrations/20260920072705_course_chunk_visibility.sql` (`course_chunks.visibility`).
@@ -59,7 +59,7 @@ Run every row before Task 0. Your base is `main` with PKG-00 through PKG-03 merg
 | this package's stubs are inert | `wc -l backend/learning/checks.py backend/agents/check_items.py backend/services/check_item_service.py` | 4 lines each (docstring only) |
 | no check_items task yet | `grep -c '"check_items"' backend/agents/_providers.py backend/agents/function_handlers_e2e.py` | `0` and `0` |
 | PKG-01 defines the §3.4 check-item rows | `grep -c "^CHECK_ITEM_" backend/learning/params.py` | `4` — `FORMATS`, `DIFFICULTIES`, `MIN_RUBRIC`, `MIN_WRONG` (Task 2 appends only the other names) |
-| the staff/QA toggle is still student-patchable | `grep -c '"learning_loop_beta"' backend/routes/profile.py` | `1` (the `ALLOWED` entry Task 0 removes) |
+| the staff/QA toggle is on no settings path (spec §13 A31) | `grep -c "learning_loop_beta" backend/routes/profile.py backend/models/__init__.py` | `0` and `0` (the CodeRabbit PKG-00 reopen `2349294` removed it; Task 0 re-checks) |
 | the A2 concept key exists | `grep -c "^def _normalize_concept" backend/services/graph_service.py` | `1` |
 | the visibility rule exists | `grep -c -e "^def decide_visibility" -e "^SHARED = " -e "^COURSE_MATERIAL = " backend/services/chunk_visibility.py` | `3` |
 | the course-offerings resolver exists | `grep -c "^def course_offering_ids" backend/services/academics.py` | `1` |
@@ -72,7 +72,7 @@ Rule: any red row → STOP. Diagnose, repair on this branch as commit `fix(learn
 
 ### Behaviour
 
-0. **`learning_loop_beta` is readable, not student-patchable (Task 0; spec §7, §13 A14).** It is a staff/QA toggle for the build phase, set by SQL or the seed, never shown in the student UI. Remove `"learning_loop_beta"` from `routes/profile.py::update_settings`'s `ALLOWED` and from `models.UpdateSettingsBody`; keep it in `_SETTINGS_COLS` and `SettingsResponse` (the settings GET still returns it). A PATCH carrying it answers 200 and leaves the column unchanged. The gate (`learning/gate.py`) is untouched — PKG-14b rewrites it. This is a reopen of PKG-00: its own first commit, ledger `00 | reopened`, HANDOFF-00 "Post-hoc changes" (README §Conventions).
+0. **`learning_loop_beta` is on no settings API path (Task 0; spec §7, §13 A31). This is verification only.** The CodeRabbit PR #673 reopen of PKG-00 (commit `2349294`; ledger `00 | reopened`; HANDOFF-00 "Post-hoc changes") removed it from `routes/profile.py::_SETTINGS_COLS` and `ALLOWED` and from `models.UpdateSettingsBody` and `SettingsResponse`. The settings GET does not return it, a PATCH carrying it answers 200 and writes nothing, and only `learning/gate.py` reads the column (failing closed). It is a staff/QA toggle for the build phase, set by SQL or the seed and never shown in the student UI. Task 0 proves this state still holds and changes nothing: no commit, no PKG-00 reopen and no `00 | reopened` row. The gate (`learning/gate.py`) is untouched; PKG-14b rewrites it.
 1. **Models (`learning/checks.py`).** `RubricItem(id: str, text: str)`, `WrongReason(key: str, text: str)`, `Option(letter: str, text: str, wrong_key: str | None)` (`wrong_key` is `None` on the correct option), `CheckItem` with the `check_items` columns as fields, DECRYPTED: `id, course_id, concept_key, document_id: str | None, format, difficulty: int, prompt, reference_answer, rubric: list[RubricItem], common_wrong: list[WrongReason], options: list[Option] | None = None, correct_option: str | None = None, answer_kind: Literal["free", "numeric"] = "free", canonical_answer: str | None = None, tolerance: float | None = None, canonical_verified: bool = False, stepwise: bool = False, source_chunk_ids: list[str], question_hash, graded: bool = False, created_at: str | None = None`. `CheckItemDraft` is the agent's per-item output and is FLAT (str / int / bool / list[str] only): `concept` (which of the call's concepts the item assesses — one call drafts up to `CHECK_ITEM_CONCEPTS_PER_CALL` concepts), `format, difficulty, prompt, reference_answer, rubric: list[str], wrong_keys: list[str], wrong_texts: list[str], option_letters: list[str], option_texts: list[str], option_wrong_keys: list[str]` (`""` for the correct option), `correct_option: str = ""`, `answer_kind: str = "free"`, `canonical_answer: str = ""` (`""` = none), `tolerance: str = ""` (`""` = none; parsed to a float in code), `stepwise: bool = False`, `chunk_ids: list[str]`. Rubric ids are assigned in code as `r1..rN` in output order; wrong reasons pair `wrong_keys[i]` with `wrong_texts[i]`; options zip `option_letters[i]` / `option_texts[i]` / `option_wrong_keys[i]` (`""` → `None`). For `mc_reason` the `prompt` is the stem alone: the options live only in `options_json`, and every surface renders them from there (PKG-12 serves the stored options, A22). `canonical_verified` is never an agent output: this package always writes `false`. It turns true only on an independent second-model agreement check or an instructor confirmation, neither of which the series builds, so PKG-05's numeric gate forwards every numeric answer to the rubric grader (A22).
 2. **Identity.** `question_hash(prompt_plaintext) -> str` is the full sha256 hex of `CHECK_HASH_VERSION + SEP + normalize(prompt)` where `normalize` collapses whitespace runs and `casefold`s (copy the idea from `quiz_identity.normalize_text`; do not import it — the two identities version independently). `item_id(course_id, concept_key, question_hash) -> str` is the sha256 hex of `course_id + SEP + concept_key + SEP + question_hash` (A2), so a re-run upserts onto the same row instead of rewriting its primary key.
 3. **Selection.** `select_item(items, *, format, difficulty, exclude_hashes=()) -> CheckItem | None`: candidates are items of exactly that `format` whose `question_hash` is not excluded; return the first at exactly `difficulty` (ties broken by `(created_at or "", id)`), else the nearest difficulty (`abs(d - difficulty)` ascending, lower first on ties), else `None`. Format is never substituted — each format is a different evidence channel (spec §3.1). `posttest_reserve_hash(items) -> str | None` (A23): the lowest `question_hash` among `free` items at `CHECK_ITEM_DIFFICULTIES[1]`, else the lowest `question_hash` overall, else `None`. This package only defines it; probe (PKG-08), in-session checks (PKG-07) and review (PKG-12) never serve that item, and the post-test (PKG-14) serves it.
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS check_items (
   source_chunk_ids  text[] NOT NULL DEFAULT '{}',
   source_document_ids text[] NOT NULL DEFAULT '{}',  -- documents whose passages drafted this item; withdrawal deletes by these (A23)
   question_hash     text NOT NULL,          -- sha256 of PLAINTEXT prompt (ADR 0025 pattern)
-  graded            boolean NOT NULL DEFAULT false,
+  graded            boolean NOT NULL DEFAULT false,   -- graded coursework flag; false on every generated item. Ungraded is not "practice" (H6 predicates, §3.3, A32)
   created_at        timestamptz NOT NULL DEFAULT now(),
   UNIQUE (course_id, concept_key, question_hash)
 );
@@ -187,120 +187,34 @@ All live in `backend/learning/params.py`. PKG-01 owns that file and has landed; 
 
 ## Tasks
 
-### Task 0: Reopen PKG-00 — `learning_loop_beta` is readable, not student-patchable (first commit)
+### Task 0: Verify that `learning_loop_beta` is on no settings API path (verification only; no commit)
 
-**Files:**
-- Modify: `backend/routes/profile.py` (`ALLOWED` loses `"learning_loop_beta"` and its comment line; `_SETTINGS_COLS` unchanged)
-- Modify: `backend/models/__init__.py` (`UpdateSettingsBody` loses `learning_loop_beta` and its comment; `SettingsResponse` keeps its field)
-- Modify: `backend/tests/test_learning_settings_flag.py`
-- Modify: `docs/superpowers/plans/learning-loop/HANDOFF-00.md` ("Post-hoc changes"), `docs/superpowers/plans/learning-loop/LEDGER.md` (two new `00` rows)
+The CodeRabbit PR #673 reopen of PKG-00 (commit `2349294`; ledger `00 | reopened`; HANDOFF-00 "Post-hoc changes") already removed the key from `_SETTINGS_COLS`, `ALLOWED`, `UpdateSettingsBody` and `SettingsResponse` (spec §13 A31). This task proves that state still holds. It edits no file, makes no commit, does not reopen PKG-00 and appends no `00 | reopened` row.
+
+**Files:** none.
 
 **Interfaces:**
-- Produces: `test_patch_ignores_learning_loop_beta`; a settings PATCH that never writes `learning_loop_beta`.
+- Consumes: the shipped PKG-00 settings state (HANDOFF-00 "Post-hoc changes", commit `2349294`) and `tests/test_learning_settings_flag.py`, which pins it.
+- Produces: nothing. Task 8 records the result in the `00 | verified` row.
 
-- [ ] **Step 1: Append the failing test** to `backend/tests/test_learning_settings_flag.py` (reuse its `_tables`, `_mock_self`, `client`, `USER_ID`)
+- [ ] **Step 1: Grep the settings path**
 
-```python
-def test_patch_ignores_learning_loop_beta():
-    """Spec §13 A14: learning_loop_beta is a staff/QA toggle set by SQL or the
-    seed. A student's own settings PATCH carrying it still answers 200, and the
-    key never reaches table().update — the column is left unchanged."""
-    table_side_effect, captured = _tables()
-    with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
-        alone = client.patch(f"/api/profile/{USER_ID}/settings", json={"learning_loop_beta": True})
-        mixed = client.patch(
-            f"/api/profile/{USER_ID}/settings",
-            json={"learning_loop_beta": True, "theme": "dark"},
-        )
-    assert alone.status_code == 200 and mixed.status_code == 200
-    assert len(captured["updates"]) == 1, "only the theme PATCH may write"
-    written = captured["updates"][0]
-    assert written["theme"] == "dark"
-    assert "learning_loop_beta" not in written
-```
+Run: `grep -c "learning_loop_beta" backend/routes/profile.py backend/models/__init__.py`
+Expected: `0` for each file. The key is in none of `_SETTINGS_COLS`, `ALLOWED`, `UpdateSettingsBody` or `SettingsResponse`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 2: Run the settings tests**
 
-Run: `cd backend && venv/bin/python -m pytest tests/test_learning_settings_flag.py -q -k test_patch_ignores_learning_loop_beta`
-Expected: FAIL — `AssertionError: only the theme PATCH may write`
+Run: `cd backend && venv/bin/python -m pytest tests/test_learning_settings_flag.py tests/test_profile_routes.py -q`
+Expected: all passed. `tests/test_learning_settings_flag.py` has held 8 tests since `2349294`. They pin the A31 contract: the column is not selected and the route module never names it; the GET has no such key; a PATCH of the key alone writes nothing, and one beside a real setting drops it; the `ALLOWED` filter drops it even if the model passes it; neither model has the field; and the gate fails closed on PostgREST's missing-column 400.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Frontend and gate**
 
-- `routes/profile.py::update_settings`: delete the `# Learning loop PKG-00: per-user opt-in …` comment and the `"learning_loop_beta",` entry from `ALLOWED`. Nothing else in the route changes.
-- `models/__init__.py`: delete `learning_loop_beta: Optional[bool] = None` and its comment from `UpdateSettingsBody`; keep `SettingsResponse.learning_loop_beta: bool = False`, with the comment `# Learning loop build phase: staff/QA toggle (spec §13 A14) — readable here, set by SQL or the seed, never student-patchable`.
-- `tests/test_learning_settings_flag.py`:
-  - module docstring → `"""PKG-00, reopened by PKG-04 (spec §13 A14): user_settings.learning_loop_beta is readable through the settings GET and NOT patchable by the student — a build-phase staff/QA toggle set by SQL or the seed. An unknown key must never reach the database write."""`
-  - delete `test_learning_loop_beta_is_patchable` and `test_learning_loop_beta_can_be_turned_off` — the behaviour they pin is deleted in this commit (deleted-test naming rule: name both in the commit message).
-  - rewrite these two in place, names kept:
+Run: `grep -rn "learning_loop_beta" frontend/src` and `grep -c "learning_loop_beta" backend/learning/gate.py`
+Expected: no frontend hit (the student UI never showed the toggle); the gate count is ≥ 1, because until PKG-14b the gate is the column's only reader.
 
-```python
-def test_unknown_key_never_reaches_the_update():
-    """UpdateSettingsBody drops unknown JSON keys itself (pydantic's default
-    extra='ignore'), so a request body alone never reaches the ALLOWED filter.
-    Widen model_dump so non-whitelisted keys — the staff/QA toggle included —
-    do reach it; they must still be dropped before table().update."""
-    real_dump = UpdateSettingsBody.model_dump
+- [ ] **Step 4: Record the result, or repair**
 
-    def dump_with_unlisted_keys(self, *args, **kwargs):
-        return {
-            **real_dump(self, *args, **kwargs),
-            "learning_loop_beta": True,
-            "learning_loop_beta_override": True,
-            "is_admin": True,
-        }
-
-    table_side_effect, captured = _tables()
-    with (
-        _mock_self(),
-        patch("routes.profile.table", side_effect=table_side_effect),
-        patch.object(UpdateSettingsBody, "model_dump", dump_with_unlisted_keys),
-    ):
-        r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
-    assert r.status_code == 200
-    assert len(captured["updates"]) == 1
-    written = captured["updates"][0]
-    assert written["theme"] == "dark"
-    for key in ("learning_loop_beta", "learning_loop_beta_override", "is_admin"):
-        assert key not in written, f"{key} reached table().update"
-
-
-def test_models_default_to_opted_out():
-    assert "learning_loop_beta" not in UpdateSettingsBody.model_fields
-    assert SettingsResponse(user_id=USER_ID).learning_loop_beta is False
-```
-
-  - leave `test_learning_loop_beta_is_a_selected_settings_column`, `test_get_settings_returns_learning_loop_beta` and `test_toggling_the_loop_flag_does_not_resync_class_context` unchanged (all three still hold).
-
-- [ ] **Step 4: Run tests, lint, the PKG-00 verify block**
-
-Run: `cd backend && venv/bin/python -m pytest tests/test_learning_settings_flag.py tests/test_profile_routes.py -q && venv/bin/ruff check .`, then the five PKG-00 rows of State of the world, then `grep -rn "learning_loop_beta" frontend/src`.
-Expected: all passed; `All checks passed!`; the PKG-00 rows exactly as in State of the world; no frontend hit (the student UI never showed the toggle).
-
-- [ ] **Step 5: Commit** (the reopen is its own commit)
-
-```
-git add backend/routes/profile.py backend/models/__init__.py backend/tests/test_learning_settings_flag.py
-git commit -m "fix(learning-loop): PKG-00 — learning_loop_beta is readable, not student-patchable
-
-Spec §13 A14: the build-phase beta column is a staff/QA toggle set by SQL or
-the seed. Removed from ALLOWED and UpdateSettingsBody; still selected and
-returned by the settings GET.
-
-Deleted tests (their code is deleted in this commit): test_learning_loop_beta_is_patchable, test_learning_loop_beta_can_be_turned_off
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
-- [ ] **Step 6: Record the reopen**
-
-Append to `LEDGER.md` (new rows; never edit an existing one): `| 00 | foundation | reopened | feat/learning-loop-04-check-items | <Task 0 sha> | test_learning_settings_flag.py: +1 (test_patch_ignores_learning_loop_beta), −2 deleted, 2 rewritten | — | HANDOFF-00.md |`, then — the PKG-00 verify block having passed in Step 4 — `| 00 | foundation | verified | feat/learning-loop-04-check-items | <Task 0 sha> | … | verified-by 04, <date>, <the five PKG-00 commands → outputs> | HANDOFF-00.md |`. Append to `HANDOFF-00.md` "Post-hoc changes": `PKG-04 <date>: learning_loop_beta removed from the student PATCH (spec §13 A14) — commit <sha>`.
-
-```
-git add docs/superpowers/plans/learning-loop/LEDGER.md docs/superpowers/plans/learning-loop/HANDOFF-00.md
-git commit -m "docs(learning-loop): PKG-04 — record the PKG-00 reopen (ledger, HANDOFF-00)
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
+If every step passes, there is nothing to commit: Task 8 appends the `00 | verified` row with these outputs. If a step fails (something re-added the key), that is a red State-of-the-world row: STOP, and repair it as a PKG-00 reopen (README "Touching an earlier package's code": `fix(learning-loop): PKG-00 — …` as its own first commit, ledger `00 | reopened`, a HANDOFF-00 "Post-hoc changes" line), then run Task 0 again.
 
 ### Task 1: Invariants 6, 9, 12
 
@@ -2079,7 +1993,7 @@ cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -
 
 Fill "Constants chosen" with the fifteen names of §Named constants (the four PKG-01 rows marked "defined by PKG-01"; the seven † marked). "Deviations": `CHECK_ITEM_STEPWISE_MIN_STEPS` and `CHECK_ITEM_FLEX_RETRIES` ("spec lacks; added"); the Flex fallback if Step 0 of Task 5 found no Google `service_tier`. "Known gaps": `canonical_verified` is always `false` — no agreement check exists, so every numeric answer goes to the rubric grader (A22); a course with no shared `course_material` gets no items (A23 coverage cost; `course_has_items` lets PKG-08/13 say so); a partially covered concept (1 to `CHECK_ITEM_INITIAL_PER_CONCEPT` − 1 items) receives a full fresh set, so it can end above `CHECK_ITEM_INITIAL_PER_CONCEPT`; `answerable_hook` is an unwired A24 stub; real student wrong reasons are not harvested yet (PKG-10); the eval baseline is a first recording; coverage after launch depends on the owner's nightly `--all-courses` job (spec §11.7 step 11) — the upload hook drafts at most `CHECK_ITEM_MAX_CONCEPTS_PER_DOC` concepts per upload and nothing else adds items; withdrawal DELETES items (re-sharing restores nothing until a later upload or backfill drafts afresh); a concept whose name no shared passage contains is never backfilled (`unmatched`, A23 relevance floor). "Open questions": whether upload-time generation usage should stay attributed to the uploader (it counts toward their A20 daily spend) or move to a NULL `user_id` like the backfill. "Post-hoc changes" (empty).
 
-- [ ] **Step 2:** Append the ledger row: `| 04 | check-items | done | feat/learning-loop-04-check-items | <sha> | 1 module (+3 invariants, +1 seam test, +1 settings test, +1 eval dataset) | — | HANDOFF-04.md |`. Append the Deviations lines. (Task 0 already appended the `00 | reopened` and `00 | verified` rows; never edit a row.) Append to `HANDOFF-01.md` "Post-hoc changes": `PKG-04 <date>: appended the PKG-04 check-items block to learning/params.py (spec §13 A6 convention; no PKG-01 constant changed) — commit <Task 2 sha>`.
+- [ ] **Step 2:** Append the ledger rows (new rows; never edit one). First `| 00 | foundation | verified | <branch> | <head SHA> | — | verified-by 04, <date>, <the five PKG-00 State-of-the-world commands and Task 0's three steps → outputs> | HANDOFF-00.md |`, with the branch and head SHA copied from the latest `00` row (PKG-04 depends on PKG-00). Then `| 04 | check-items | done | feat/learning-loop-04-check-items | <sha> | 1 module (+3 invariants, +1 seam test, +1 eval dataset) | — | HANDOFF-04.md |`. There is no `00 | reopened` row, because Task 0 changed nothing (spec §13 A31). Append the Deviations lines. Append to `HANDOFF-01.md` "Post-hoc changes": `PKG-04 <date>: appended the PKG-04 check-items block to learning/params.py (spec §13 A6 convention; no PKG-01 constant changed) — commit <Task 2 sha>`.
 
 - [ ] **Step 3: Commit**
 
@@ -2096,9 +2010,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ```
 gh pr create --title "feat(learning): PKG-04 check-items" --body-file - <<'EOF'
-Learning loop series, package 5 of 17 (depends on PKG-00; runs after PKG-03 in the spec §14 order). Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §2, §3.4, §3.5, §4, §7, §8.6/8.9/8.12, §13 A2/A14/A17/A22/A23.
+Learning loop series, package 5 of 17 (depends on PKG-00; runs after PKG-03 in the spec §14 order). Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §2, §3.4, §3.5, §4, §7, §8.6/8.9/8.12, §13 A2/A14/A17/A22/A23/A31/A32.
 
-- fix(PKG-00 reopen): learning_loop_beta is readable, not student-patchable (A14) — removed from ALLOWED/UpdateSettingsBody; test_patch_ignores_learning_loop_beta
+- Task 0 (no code): verified learning_loop_beta is on no settings API path (A31; shipped by the CodeRabbit PKG-00 reopen 2349294); PKG-00 unchanged
 - learning/checks.py: CheckItem/CheckItemDraft/Option models, question_hash over normalized plaintext, course-keyed item_id, select_item, posttest_reserve_hash, draft validation (rubric/wrong-reason minimums, no reference leak into the prompt, mc_reason options, numeric key, stepwise), deterministic chunk ranking
 - check_items table keyed on (course_id, concept_key) — no graph_nodes FK (A2); encrypted prompt/reference/rubric/common_wrong/options/correct_option/canonical_answer; plaintext question_hash, answer_kind, tolerance, canonical_verified, stepwise
 - services/check_item_service.py: encrypt-at-write / decrypt-at-read CRUD, course_has_items/count_items/coverage, shared-course_material sources only (A23 privacy), skip-covered batched generation (honest degrade → learn.check_items_failed)
@@ -2119,7 +2033,7 @@ EOF
 2. `venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q`
 3. `venv/bin/python -m pytest tests/ -q` (no `SAPLING_MODEL_MODE` exported)
 4. Prompts/tool descriptions touched? **Yes** — `agents/check_items.py` is new. From Task 7 on: `cd backend && SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/run_all.py` must print `PASS` for every dataset, `check_items` included. Any edit to `_PROMPT` after recording → re-record + re-baseline (Task 7 Step 2), never hand-edit cassettes. The other five datasets' baselines must not move.
-5. Request-path agent or route touched? **Yes** — `routes/documents.py` (both upload routes), `routes/profile.py` (Task 0) and a function-mode handler. After Task 6, run the E2E cycle once under the stack lock, in ONE flock invocation: `flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock -c 'make e2e-up && (cd frontend && npx playwright test e2e/upload.spec.ts) ; (cd backend && venv/bin/python -m e2e_oracles) ; make e2e-down'`. Expected: the upload journey passes unchanged (the flag is unset in the stack, so the hook is inert), oracles exit 0. Then, inside the same invocation, the flag-on smoke with `LEARNING_LOOP_ENABLED=true make e2e-up …` — expected: the journey still passes (the sync branch runs the `check_items` handler inline) and `logscan` reports no `UnregisteredHandlerError` and no `learn.check_items_failed`. If `make e2e-up` does not pass env through, see how `scripts/e2e-up.sh:190–200` forwards `SAPLING_MODEL_MODE`; if there is no channel, record the flag-on smoke as a Known gap for PKG-13 — do not modify the stack scripts.
+5. Request-path agent or route touched? **Yes** — `routes/documents.py` (both upload routes), `routes/profile.py` (Task 6b withdrawal) and a function-mode handler. After Task 6, run the E2E cycle once under the stack lock, in ONE flock invocation: `flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock -c 'make e2e-up && (cd frontend && npx playwright test e2e/upload.spec.ts) ; (cd backend && venv/bin/python -m e2e_oracles) ; make e2e-down'`. Expected: the upload journey passes unchanged (the flag is unset in the stack, so the hook is inert), oracles exit 0. Then, inside the same invocation, the flag-on smoke with `LEARNING_LOOP_ENABLED=true make e2e-up …` — expected: the journey still passes (the sync branch runs the `check_items` handler inline) and `logscan` reports no `UnregisteredHandlerError` and no `learn.check_items_failed`. If `make e2e-up` does not pass env through, see how `scripts/e2e-up.sh:190–200` forwards `SAPLING_MODEL_MODE`; if there is no channel, record the flag-on smoke as a Known gap for PKG-13 — do not modify the stack scripts.
 6. Scope check: `git diff --stat main...HEAD` — every path must be in this prompt's Files lists. Anything else: `git checkout main -- <path>` or record a Deviation.
 7. Sync check: `grep -o "E2E_[A-Z_]*" backend/agents/function_handlers_e2e.py | sort -u` differs from `main` ONLY by the eleven `E2E_CHECK_ITEM_*` names of Task 5; `tests/test_e2e_function_handlers.py` asserts them; no `frontend/e2e/*.spec.ts` change.
 
@@ -2127,8 +2041,8 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 
 ## Regression guard
 
-- Pre-series suite count N₀ (from State of the world) unchanged except for the tests this package adds (`tests/test_learning_check_items.py`, one test in `tests/test_e2e_function_handlers.py`, three un-skipped invariants) and Task 0's settings change (one test added, two deleted with the behaviour they pinned, two rewritten in place). Zero failures; zero new skips outside `test_learning_loop_invariants.py`.
-- PKG-00's modules stay green: `tests/test_learning_gate.py`, `tests/test_learning_deps.py`, `tests/test_learning_settings_flag.py`, `tests/test_learning_loop_beta_migration.py`. The settings GET still returns `learning_loop_beta`; `learning/gate.py` is untouched.
+- Pre-series suite count N₀ (from State of the world) unchanged except for the tests this package adds (`tests/test_learning_check_items.py`, one test in `tests/test_e2e_function_handlers.py`, three un-skipped invariants). Task 0 adds, deletes and edits no test. Zero failures; zero new skips outside `test_learning_loop_invariants.py`.
+- PKG-00's modules stay green and unedited: `tests/test_learning_gate.py`, `tests/test_learning_deps.py`, `tests/test_learning_settings_flag.py`, `tests/test_learning_loop_beta_migration.py`. No settings API field names `learning_loop_beta` (spec §13 A31); `learning/gate.py` is untouched.
 - Pre-series suites this package touches stay green and unedited except the taxonomy pin (and, only if one pins the exact background-task list, the one extra withdrawal task of Task 6b): `tests/test_documents_routes.py`, `tests/test_persist_document_indexing.py`, `tests/test_document_indexing.py`, `tests/test_dbos_resume.py`, `tests/test_xp_wiring.py`, `tests/test_model_mode_seam.py`, `tests/test_e2e_function_handlers.py`, `tests/test_event_capture_seams.py` (one added literal), `tests/test_graph_service.py`, `tests/test_chunk_visibility.py`, `tests/test_profile_routes.py`, `tests/test_quiz_identity*.py` (you copied its idea, not its code).
 - With `LEARNING_LOOP_ENABLED` unset: `routes/documents.py` schedules exactly the same four post-roll tasks as `main` (`test_flag_off_schedules_index_document_only`); no `check_items` table is ever read or written. With it set to `true`: the only behaviour change is the post-roll chain in Behaviour 10.
 - Eval baselines for the five pre-existing datasets are byte-identical to `main`.
@@ -2142,24 +2056,24 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 5. `grep -c -- "--all-courses" backend/scripts/backfill_check_items.py` → ≥ 1
 6. `cd backend && SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/check_items.py` → every evaluator ≥ baseline
 7. `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_06 or inv_09 or inv_12"` → `3 passed`
-8. `cd backend && venv/bin/python -m pytest tests/test_learning_settings_flag.py -q -k test_patch_ignores_learning_loop_beta` → `1 passed`; `grep -c '"learning_loop_beta"' backend/routes/profile.py` → `0`; `grep -c "learning_loop_beta" backend/models/__init__.py` → `1` (the `SettingsResponse` field)
+8. `grep -c "learning_loop_beta" backend/routes/profile.py backend/models/__init__.py` → `0` each; `cd backend && venv/bin/python -m pytest tests/test_learning_settings_flag.py -q` → all passed (8 tests since `2349294`; the file is unedited; spec §13 A31)
 9. `cd backend && venv/bin/python -m pytest tests/test_learning_check_items.py -q -k "covered or completed_work_or_opted_out"` → all passed (a covered concept makes zero agent calls in generation and in the backfill; a `completed_work`, `personal_notes` or opted-out document yields zero items)
 10. `cd backend && venv/bin/python -m pytest tests/ -q` → zero failures
 11. `cd backend && venv/bin/ruff check .` → `All checks passed!`
 12. `grep -c "learn.check_items_failed" backend/services/events_service.py backend/tests/test_event_capture_seams.py` → ≥ 1 each
 13. `grep -c "_index_then_check_items" backend/routes/documents.py` → ≥ 3 (definition + two scheduling sites)
-14. `git diff --stat main...HEAD` lists only: `backend/routes/profile.py`, `backend/models/__init__.py`, `backend/tests/test_learning_settings_flag.py`, `backend/learning/{params,checks}.py`, `backend/agents/{check_items,_providers,function_handlers_e2e}.py`, `backend/services/{check_item_service,events_service}.py`, `backend/routes/documents.py`, `backend/scripts/backfill_check_items.py`, `backend/db/migrations/*_learning_check_items.sql`, `backend/tests/test_learning_check_items.py`, `backend/tests/test_learning_loop_invariants.py`, `backend/tests/test_e2e_function_handlers.py`, `backend/tests/test_event_capture_seams.py`, `backend/tests/evals/{check_items.py,run_all.py,baselines.json,README.md,cassettes/check_items/*}`, `docs/superpowers/plans/learning-loop/{HANDOFF-00.md,HANDOFF-01.md,HANDOFF-04.md,LEDGER.md}`.
-15. `LEDGER.md` has new rows `00 | foundation | reopened | …`, `00 | foundation | verified | …` and `04 | check-items | done | …`.
+14. `git diff --stat main...HEAD` lists only: `backend/routes/profile.py` (Task 6b), `backend/learning/{params,checks}.py`, `backend/agents/{check_items,_providers,function_handlers_e2e}.py`, `backend/services/{check_item_service,events_service}.py`, `backend/routes/documents.py`, `backend/scripts/backfill_check_items.py`, `backend/db/migrations/*_learning_check_items.sql`, `backend/tests/test_learning_check_items.py`, `backend/tests/test_learning_loop_invariants.py`, `backend/tests/test_e2e_function_handlers.py`, `backend/tests/test_event_capture_seams.py`, `backend/tests/evals/{check_items.py,run_all.py,baselines.json,README.md,cassettes/check_items/*}`, `docs/superpowers/plans/learning-loop/{HANDOFF-01.md,HANDOFF-04.md,LEDGER.md}`.
+15. `LEDGER.md` has new rows `00 | foundation | verified | …` and `04 | check-items | done | …`, and no new `00 | reopened` row (Task 0 changed nothing, spec §13 A31).
 16. `cd backend && venv/bin/python -m pytest tests/test_learning_check_items.py -q -k "Withdrawal or project_is_not or no_shared_passage"` → all passed (a deleted or opted-out source document leaves zero servable items, never gated on the flag; the backfill refuses a `--project` that is not the connected one before any read; a concept no shared passage mentions makes no agent call); `grep -c "source_document_ids" backend/db/migrations/*_learning_check_items.sql` → ≥ 1; `grep -c "retire_items_for" backend/routes/documents.py backend/routes/profile.py` → ≥ 1 each
 
 ## Hand-off
 
-`docs/superpowers/plans/learning-loop/HANDOFF-04.md` per the template; the Verify commands block is fixed above (Task 8). Headings to fill: What changed · Symbols added (`learning/checks.py::{RubricItem,WrongReason,Option,CheckItem,CheckItemDraft,normalize,question_hash,item_id,select_item,posttest_reserve_hash,validate_draft,leak_in_prompt,clean_chunk_ids,rank_chunks_for_concept}`, `services/check_item_service.py::{concept_key,create_items,list_items,items_for_concepts,course_has_items,count_items,coverage,chunks_for_document,document_is_item_source,source_chunks,answerable_hook,GenerationOutcome,generate_for_concepts,generate_for_document}`, `agents/check_items.py::{CheckItemsOutput,CheckItemsUnavailable,check_items_agent,build_prompt,draft_items}`, `AgentTask "check_items"`, handler constants `E2E_CHECK_ITEM_*`, event `learn.check_items_failed`, table `check_items`, `routes/documents.py::_index_then_check_items`, `scripts/backfill_check_items.py`; the PKG-00 reopen: `learning_loop_beta` no longer in `ALLOWED`/`UpdateSettingsBody`) · Constants chosen · Deviations · Known gaps · Verify commands · Open questions · Post-hoc changes (empty).
+`docs/superpowers/plans/learning-loop/HANDOFF-04.md` per the template; the Verify commands block is fixed above (Task 8). Headings to fill: What changed · Symbols added (`learning/checks.py::{RubricItem,WrongReason,Option,CheckItem,CheckItemDraft,normalize,question_hash,item_id,select_item,posttest_reserve_hash,validate_draft,leak_in_prompt,clean_chunk_ids,rank_chunks_for_concept}`, `services/check_item_service.py::{concept_key,create_items,list_items,items_for_concepts,course_has_items,count_items,coverage,chunks_for_document,document_is_item_source,source_chunks,answerable_hook,GenerationOutcome,generate_for_concepts,generate_for_document}`, `agents/check_items.py::{CheckItemsOutput,CheckItemsUnavailable,check_items_agent,build_prompt,draft_items}`, `AgentTask "check_items"`, handler constants `E2E_CHECK_ITEM_*`, event `learn.check_items_failed`, table `check_items`, `routes/documents.py::_index_then_check_items`, `scripts/backfill_check_items.py`; no PKG-00 symbol changes, because Task 0 only verified the A31 state) · Constants chosen · Deviations · Known gaps · Verify commands · Open questions · Post-hoc changes (empty).
 
 ## Do not
 
 - Do not call `learning_loop_active(user_id)` anywhere in this package; the hook gates on `config.LEARNING_LOOP_ENABLED` only (Behaviour 10). Do not mount `routes/learn_loop.py`. Do not touch `services/chat_stream.py`, `agents/chat_tutor.py`, `services/graph_service.py` (import `_normalize_concept` only), `services/rag_service.py`, `services/document_indexing.py`, `services/chunk_visibility.py`, `agents/tools/graph.py`, `learning/gate.py`.
-- Task 0: do not drop `learning_loop_beta` from `_SETTINGS_COLS` or `SettingsResponse`, do not add a migration or an admin route for it, do not show it in the frontend. Do not keep a test that asserts a student PATCH writes it.
+- Task 0: change nothing. Do not re-add `learning_loop_beta` to `_SETTINGS_COLS`, `ALLOWED`, `UpdateSettingsBody` or `SettingsResponse` (spec §13 A31: a settings select that names a column whose migration may not be applied yet breaks settings GET/PATCH for every student). Do not edit `tests/test_learning_settings_flag.py`, and add no migration, admin route or frontend for the toggle.
 - Do not key an item on a `graph_nodes` row or add a `node_id` column (A2). Do not write `graph_nodes`, `graph_edges`, `node_mastery_events` here (spec §8.1).
 - Do not re-derive shareability or visibility: `chunk_visibility.decide_visibility` and the stored `course_chunks.visibility` decide (A23). Never fall back to `extracted_text` for a document whose chunks exist but are private, or for a document that is not an item source.
 - Do not draft a concept that already has `CHECK_ITEM_INITIAL_PER_CONCEPT` items. Do not put more than `CHECK_ITEM_CONCEPTS_PER_CALL` concepts in one call. Do not run an in-session top-up on Flex.
@@ -2171,7 +2085,7 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 - All Supabase access through `db/connection.py::table()`; no `httpx`, no `supabase` import. `in.(...)` values through `pg_quote_value`; course-wide reads through `page_all` with a total order.
 - Migrations: UTC-timestamp prefix, `_learning_` infix, append-only, never edited after creation; DDL verbatim from §Schema.
 - No `lru_cache` in this package.
-- Do not skip, xfail, or delete any pre-existing test — the only deletions are Task 0's two, removed with the behaviour they pinned and named in that commit's message. Do not hand-edit eval cassettes or baselines; do not touch the other five datasets' cassettes.
+- Do not skip, xfail, or delete any pre-existing test. Do not hand-edit eval cassettes or baselines; do not touch the other five datasets' cassettes.
 - Logscan `ALLOWLIST` in `backend/e2e_oracles/logscan.py` stays `()`. No `frontend/` change.
 - End every commit with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; end the PR body with the Claude Code attribution line.
 

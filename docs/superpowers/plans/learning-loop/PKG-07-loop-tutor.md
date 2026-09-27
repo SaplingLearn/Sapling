@@ -12,9 +12,9 @@ Branch: `feat/learning-loop-07-loop-tutor`. PR title: `feat(learning): PKG-07 lo
 
 ## Read before you start (in this order)
 
-0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 1. A27 (item activation, the current-concept band, the hard-level opener) is this package's to build — §Behaviour 15, 20 and Task 7b.
+0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 1. A27 (item activation, the current-concept band, the hard-level opener) is this package's to build — §Behaviour 15, 20 and Task 7b. A32 (the H6 item predicates: `taught` recorded at activation, `practice` = the active in-session check, `graded` = the stored flag) is wired here through `_h6_ok` — §Behaviour 13, 20 and Tasks 7/7b.
 1. Spec §3.5–§3.6 (cost/routing/decision constants), §7 (two-phase gate), §8 (invariants 13–29), §14 (order and dependencies).
-2. `docs/superpowers/plans/learning-loop/LEDGER.md` — refuse to start if any row is `blocked` or `in-progress`. Rows 00, 01, 02, 03, 04, 05, 05b, 06, 06b must be `done` or `verified`.
+2. `docs/superpowers/plans/learning-loop/LEDGER.md` — a package's state is its LATEST row (README "Ledger reading"); refuse to start if any earlier package's latest row is `blocked` or `in-progress`. The latest rows of 00, 01, 02, 03, 04, 05, 05b, 06, 06b must be `done`, `verified` or `reopened`.
 3. `docs/superpowers/plans/learning-loop/HANDOFF-05.md`, `HANDOFF-05b.md`, `HANDOFF-06.md` and `HANDOFF-06b.md` — §Symbols added and §Deviations. The "Dependency contract" table under §Spec below lists every symbol this package consumes with the signature it assumes; reconcile each against the hand-offs BEFORE Task 2 (rule in §State of the world).
 4. `CLAUDE.md` §Conventions and §Gotchas — repeated in "Do not" below.
 5. Spec §3.3 (ladder, ceiling, gates, evidence mapping), §3.4 (step/limits rows), §3.5 (the `LOOP_MODEL_TIER` table, the loop-tutor constants, the budget table and the degradation ladder), §6 (`zpd.*` payloads, incl. `zpd.step.tier` and `grader_backend`), §7 (which routes delegate; deps and tools), §8 invariants 6, 12, 15, 22, 23, 26, 27, 29, §9 (phases, the five stream events, the loop route table), §10 (the loop evals run per tier slot), §13 A14–A18, A20, A22, A23, A26.
@@ -131,7 +131,7 @@ Signatures below are what this prompt's code is written against. Where a hand-of
 | `learning.gates.NON_ATTEMPT_PATTERNS` / `matches_non_attempt(text) -> bool` (PKG-06) | fixed phrase list (`"just tell me"`, `"give me the answer"`, `"idk"`, `"i don't know"`, `"what's the answer"`), normalised whole-phrase match, never a model |
 | `learning.gates.genuine_attempt(text, *, independent_s, band) -> bool` (PKG-06) | `NON_ATTEMPT_PATTERNS` + independent-time gate (it decides hint unlocking only; it never blocks grading — A16) |
 | `learning.gates.rung_unlock(item_state: dict, now_s: float) -> tuple[bool, str]` (PKG-06) | `(ok, reason)`; reason ∈ {`"ok"`, `"no_genuine_attempt"`, `"dwell"`} |
-| `learning.gates.h6_allowed(item_state, item) -> bool` (PKG-06) | `H6_MIN_GENUINE_ATTEMPTS` + `taught` + `not graded` |
+| `learning.gates.h6_allowed(step, *, item_taught: bool, item_practice: bool, item_graded: bool) -> bool` (PKG-06, A32) | `genuine_attempts ≥ H6_MIN_GENUINE_ATTEMPTS and item_taught and item_practice and not item_graded and not exam_mode`. This package calls it only through `_h6_ok(state, qh, item_state, check)`: the step is the item's `loop_state` entry (adapted to PKG-06's `StepState` exactly as for `rung_unlock`), `item_taught = entry["taught"]` (set at activation, Behaviour 20), `item_practice = state["active"] == qh` (only the active in-session check is a practice item — never the post-test reserve, which activation excludes), `item_graded = check is None or check["graded"]` (a missing item fails closed) |
 | `learning.gates.offer_allowed(band, last_attempt_wrong: bool) -> bool` (PKG-06) | True only for `band in OFFER_BANDS` after a wrong genuine attempt |
 | `learning.leak.detect_leak(reference, emitted, rung) -> LeakVerdict` (PKG-06) | `verdict.leaked: bool`, `verdict.detector: str` (`"none"`/`"ngram"`/`"final_answer"`); rung ≥ H6 never leaks; pure |
 | `learning.leak.strip_leak(emitted, reference) -> str` (PKG-06) | removes every leaked run (emitted text FIRST); if PKG-06 did not ship it, add it to `learning/leak.py` in this package (pure, ≤ 30 lines, tests in `tests/test_learning_zpd_policy.py`) and append "Post-hoc changes" to HANDOFF-06 |
@@ -182,12 +182,12 @@ Signatures below are what this prompt's code is written against. Where a hand-of
    8. JSON response = `complete`'s dict plus `{"graded": bool, "verdict": str | None, "unavailable": bool, "answer_released": bool}`; the SSE `done` carries the same extras, preceded by `learner_state`/`hint_offer`. The reference never appears outside a released reply.
 10. **Deterministic turns (A17).**
     - **Check pose.** A chat turn in the `check` phase is `ladder.check_pose(item["prompt"])` (tier `none`; no model call; no evidence — the answer box is the only grading path). It is served at every budget level except when novice concepts pause.
-    - **Hint payloads.** A `hint` turn (an `/action` turn in the check phase, or a non-attempt submission) at rung H2, H4 or H6 calls `_leak_checked_payload(...)`, which builds `ladder.deterministic_content(rung, _item_like(item), [_item_like(s) for s in siblings], passages)` — H2 passages from `chunks_for_ids(item["source_chunk_ids"][:LOOP_SOURCE_CHUNKS_MAX], user_id=<requesting user>)` (visibility-aware and decrypted; chunks no longer visible are dropped; none left → `None`, the LLM writes H2); H4 siblings from `list_items(course_id, concept_key, format=…, difficulty=…)` minus the item's own hash — and runs `detect_leak(reference, payload.text, rung)` in the SAME function before anything is emitted (invariant 27). Leak-clean → served as the turn (tier `none`). Leaked → not served: `deterministic_payload=False` goes to `model_tier`, the LLM writes the rung, and its reply is leak-checked and stripped in `complete`. When the LLM path is unavailable (the hard level), a leaking payload is served anyway only when `gates.h6_allowed(...)` holds, and the step is then recorded as H6 (`state[qh]["rung"] = int(Rung.H6)`, so the later evidence carries `max_rung = H6` and no upward BKT credit, §3.3); otherwise the turn is paused.
+    - **Hint payloads.** A `hint` turn (an `/action` turn in the check phase, or a non-attempt submission) at rung H2, H4 or H6 calls `_leak_checked_payload(...)`, which builds `ladder.deterministic_content(rung, _item_like(item), [_item_like(s) for s in siblings], passages)` — H2 passages from `chunks_for_ids(item["source_chunk_ids"][:LOOP_SOURCE_CHUNKS_MAX], user_id=<requesting user>)` (visibility-aware and decrypted; chunks no longer visible are dropped; none left → `None`, the LLM writes H2); H4 siblings from `list_items(course_id, concept_key, format=…, difficulty=…)` minus the item's own hash — and runs `detect_leak(reference, payload.text, rung)` in the SAME function before anything is emitted (invariant 27). Leak-clean → served as the turn (tier `none`). Leaked → not served: `deterministic_payload=False` goes to `model_tier`, the LLM writes the rung, and its reply is leak-checked and stripped in `complete`. When the LLM path is unavailable (the hard level), a leaking payload is served anyway only when `_h6_ok(state, qh, state[qh], check)` holds (the H6 item predicates, A32), and the step is then recorded as H6 (`state[qh]["rung"] = int(Rung.H6)`, so the later evidence carries `max_rung = H6` and no upward BKT credit, §3.3); otherwise the turn is paused.
     - A served H4 sibling appends `payload.revealed_hash` to `loop_state["revealed"]` (ids only, de-duplicated; A23).
     - SSE: a deterministic turn yields `phase` (+ `check`), the pause notice when at the hard level, `learner_state`/`hint_offer`, then ONE `done` whose `data.reply` is the text (no `token` events; the client renders `done.reply`).
 11. **Stream events.** `SaplingEventType` gains `"phase"`, `"check"`, `"hint_offer"`, `"learner_state"` and `"budget"` (spec §9; `budget` data `{level, reset_at}`, A20/A26). `_stream_turn` yields them AROUND `stream_agent_turn`, never inside it: `phase` (`data={"phase": phase}`) and, when an item is active on a `check`/`hint` turn, `check` (`data={"question_hash", "format", "difficulty"}`) BEFORE iterating the ladder; on seeing the ladder's `done` event, `learner_state` (one per entry in `extra["learner_state"]`) and `hint_offer` (when `extra["hint_offer"]`) BEFORE re-yielding `done`. Error events pass through untouched; nothing is yielded after an `error`. The legacy client ignores unknown types (`frontend/src/lib/api.ts:383–392` if/else chain), so no frontend change is required for parity.
 12. **`/step/attempt`** body `LoopAttemptBody{session_id, user_id, question_hash, attempt_text}`: `independent_s = now − state[qh]["first_shown_at"]` (0 when unknown); `genuine = gates.genuine_attempt(attempt_text, independent_s=..., band=...)`; when genuine: append `now` to `state[qh]["attempted_at"]`, set `state[qh]["last_attempt_at"]`; save; return `{"genuine", "attempts": len(attempted_at), "independent_s"}`. `attempt_text` is never stored (no free text in `loop_state`) and never graded.
-13. **`/hint`** body `LoopHintBody{session_id, user_id, question_hash}`: 404 gate; `{"denied": "no_active_item"}` when `qh` is not the active item; `ok, reason = gates.rung_unlock(state[qh], now)` → `{"denied": reason}`; `next_rung = state[qh]["rung"] + 1`; `next_rung > int(ceiling)` → `{"denied": "ceiling"}`; `next_rung == Rung.H6 and not gates.h6_allowed(...)` → `{"denied": "h6_gate"}`; else set `rung = next_rung`, `last_rung_at = now`, save, and when `state[qh].get("offered")`: `emit_zpd_offer(accepted=True, band=band)` and clear `offered`. Return `{"rung": next_rung, "intent": Rung(next_rung).intent}`. This endpoint moves state only; the hint TEXT comes from the following `[ACTION: hint]` turn (PKG-13), which serves H2/H4/H6 deterministically when a leak-clean payload exists (Behaviour 10).
+13. **`/hint`** body `LoopHintBody{session_id, user_id, question_hash}`: 404 gate; `{"denied": "no_active_item"}` when `qh` is not the active item; `ok, reason = gates.rung_unlock(state[qh], now)` → `{"denied": reason}`; `next_rung = state[qh]["rung"] + 1`; `next_rung > int(ceiling)` → `{"denied": "ceiling"}`; `next_rung == Rung.H6 and not _h6_ok(state, qh, state[qh], check)` → `{"denied": "h6_gate"}` (spec §3.3 H6 item predicates, §13 A32); else set `rung = next_rung`, `last_rung_at = now`, save, and when `state[qh].get("offered")`: `emit_zpd_offer(accepted=True, band=band)` and clear `offered`. Return `{"rung": next_rung, "intent": Rung(next_rung).intent}`. This endpoint moves state only; the hint TEXT comes from the following `[ACTION: hint]` turn (PKG-13), which serves H2/H4/H6 deterministically when a leak-clean payload exists (Behaviour 10).
 14. **`/action`**: the `"[ACTION: ...]"` text `routes.learn._action_turn` builds; in the `check` phase every action type runs as a `hint` turn at the current rung (the prefix's ceiling line is the current rung, so the hint is bounded); otherwise the current phase. Assistant-only persistence, as today. Never graded (invariant 26).
 15. **Openers** (`/start-session`, `/start-session/stream`): mint `session_id`, resolve `course_id`/`offering_id` exactly as `routes.learn._start_session_agent` does (`:537–538`), run the pipeline with `state={}` (phase `teach`, band from `BKT_L0`, no item) through the same run sites — `ai_budget.check` with zero session counters, tier from `model_tier("opener", …)`, `context_policy("teach", opener=True, …)` (the catalog rides the opener only) — and stash `routes.learn.PENDING_SESSIONS[session_id]` with the SAME keys the legacy stash uses (`:607–616`) plus `"loop": True`; lazy materialisation stays with `_consume_pending`. At the hard level the opener is NOT paused: it serves the template `_LOOP_OPENER_TEMPLATE` (a module string constant, tier `none`, no model call) with the pause notice (JSON `"budget": {level, reset_at}`; SSE `budget` event before `done`), stashes `PENDING_SESSIONS` exactly as a model opener does, and returns 200 — so a capped student can still start a session and run the probe (spec §3.5 "At the hard level these keep working"; §13 A27). Return shapes are byte-compatible with the legacy routes' (`{"session_id","initial_message","graph_state"}` plus `budget` only at the hard level / streamed `done` with `session_id` + `graph_state`).
 16. **Readers this package builds.**
@@ -207,7 +207,7 @@ Signatures below are what this prompt's code is written against. Where a hand-of
 20. **Item activation and the current concept (spec §9, §13 A27) — this package owns it.** `_activate_next_item(user_id, course_id, state, *, now) -> str | None` is the only code that SETS `state["active"]` (feedback and withdrawal only clear it):
     1. `concept = state.get("concept")`; absent (no plan yet, or a course with no check items) → return `None` (teaching only). `concept_key` = the A2 key of that node (`_normalize_concept` of its `concept_name`, one `graph_nodes` read; the inverse of `_node_for_item`).
     2. `items = list_items(course_id, concept_key)`; `reserve = checks.posttest_reserve_hash(items)`; `exclude = seen_hashes(user_id) | revealed_hashes(user_id) | {k for k, v in state.items() if isinstance(v, dict) and "rung" in v} | ({reserve} if reserve else set())`; difficulty `d = LOOP_CHECK_DIFFICULTY_BY_BAND[band]` (the concept's band, as in Behaviour 8.3); formats = `CHECK_ITEM_FORMATS` rotated left by `state.get("concept_checks", 0)` (so a concept's second check uses another format when one is available); the first `checks.select_item(items, format=fmt, difficulty=d, exclude_hashes=exclude)` that returns an item wins (PKG-04's signature — `format` and `difficulty` are required keywords; HANDOFF-04 confirms). PKG-10 inserts `next_isomorph` before this loop, over the same exclusion-filtered items.
-    3. Hit → `state["active"] = qh`; `state[qh] = {"rung": 0, "attempts": 0, "wrong": 0, "first_shown_at": now, "check_item_id": item["id"], "node_id": concept, "feedback_given": False}`; return `qh`.
+    3. Hit → `state["active"] = qh`; `state[qh] = {"rung": 0, "attempts": 0, "wrong": 0, "first_shown_at": now, "check_item_id": item["id"], "node_id": concept, "feedback_given": False, "taught": bool(state.get("teach_turns") or state.get("concept_checks"))}`; return `qh`. `taught` is the H6 predicate (spec §3.3, §13 A32): the concept got a served teach turn, or a check with its feedback turn, in this session before this item. On a retry after step 4's advance the counters are already reset, so a concept reached by advancing the cursor starts untaught, and a "Check me" on an untaught concept fails closed.
     4. Miss → advance: `plan = state["plan"]`; `plan["cursor"] += 1`; past the end → `plan["done"] = True`, `state.pop("concept", None)`, return `None`; else `state["concept"] = plan["approved"][plan["cursor"]]`, `state["teach_turns"] = 0`, `state["concept_checks"] = 0`, and retry from 1 (at most once per remaining concept).
     - **Trigger 1 (automatic).** In `complete` (Behaviour 8.6.c), a served `teach` turn (not an opener, not paused) with no active item increments `state["teach_turns"]`; when it reaches `LOOP_TEACH_TURNS_BEFORE_CHECK`, `complete` calls `_activate_next_item`. On a hit the pose `ladder.check_pose(item["prompt"])` is saved as a second assistant message and returned as `check: {"question_hash", "format", "difficulty", "prompt", "options"}` in the JSON response and the SSE `done` data, with a `check` stream event (the same three keys) yielded before `done` (`_pre_done_events`). `options` = the stored `[{letter, text}]` for `mc_reason` (A22: never rebuilt, never marked correct, no `wrong_key`), else `null`. Never the reference.
     - **Trigger 2 (explicit).** `POST /check/next` (body `LoopCheckNextBody{session_id, user_id}`; `require_self` + gate; no model call, so no rate limit and no invariant-23 run site): an item already active and ungraded → return its pose unchanged (idempotent); else `_activate_next_item`; a hit whose band is `novice` while `ai_budget.check(user_id, "tutor", "novice").pause_novice` → the item is NOT activated and the route answers the 429 pause body (novice concepts pause at the hard level, spec §3.5); otherwise save the pose as an assistant message and return `{"phase": "check", "check": {…}}`; nothing to activate → `{"phase": "teach", "plan_done": <state["plan"]["done"]>, "check": null}`.
@@ -217,7 +217,7 @@ Signatures below are what this prompt's code is written against. Where a hand-of
 
 ### Schema (exact)
 
-None. This package writes `sessions.loop_state` (PKG-06's column) and reads `check_items` (PKG-04), `learner_state` and `node_mastery_events` (PKG-03), `course_chunks` + `course_chunk_contributors` (pre-series). `loop_state` shape this package establishes (ids/ints/floats/timestamps/enums only — no free text): per item, keyed by `question_hash`, `{rung: int, attempts: int, wrong: int, first_shown_at: iso, last_rung_at: iso, attempted_at: [iso], last_attempt_at: iso, graded_at: iso, last_correct: bool, last_verdict: "correct"|"not_yet"|"idk", first_attempt_correct: bool, max_rung: int, assisted: bool, offered: bool, feedback_given: bool, check_item_id: str, node_id: str, channel: enum, confidence: float, grader_backend: enum}` plus the top-level keys `active: question_hash`, `phase_served: enum`, `tutor_requests: int`, `deep_requests: int` (A20 session counters), `revealed: [question_hash]` (A17/A23; named by the spec §4 comment), and the A27 keys `concept: node_id`, `teach_turns: int`, `concept_checks: int` (this package writes them; `plan: {approved, cursor, done}` is PKG-08's, read and advanced here) — a shape extension of the spec §4 comment; list it under Deviations.
+None. This package writes `sessions.loop_state` (PKG-06's column) and reads `check_items` (PKG-04), `learner_state` and `node_mastery_events` (PKG-03), `course_chunks` + `course_chunk_contributors` (pre-series). `loop_state` shape this package establishes (ids/ints/floats/timestamps/enums only — no free text): per item, keyed by `question_hash`, `{rung: int, attempts: int, wrong: int, first_shown_at: iso, last_rung_at: iso, attempted_at: [iso], last_attempt_at: iso, graded_at: iso, last_correct: bool, last_verdict: "correct"|"not_yet"|"idk", first_attempt_correct: bool, max_rung: int, assisted: bool, offered: bool, feedback_given: bool, taught: bool, check_item_id: str, node_id: str, channel: enum, confidence: float, grader_backend: enum}` plus the top-level keys `active: question_hash`, `phase_served: enum`, `tutor_requests: int`, `deep_requests: int` (A20 session counters), `revealed: [question_hash]` (A17/A23; named by the spec §4 comment), and the A27 keys `concept: node_id`, `teach_turns: int`, `concept_checks: int` (this package writes them; `plan: {approved, cursor, done}` is PKG-08's, read and advanced here) — a shape extension of the spec §4 comment; list it under Deviations.
 
 ### Named constants
 
@@ -2545,7 +2545,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `learning.ladder.deterministic_content`; `learning.leak.detect_leak`; `services.rag_service.chunks_for_ids`; `services.check_item_service.list_items`; `learning.gates.h6_allowed`, `rung_unlock`.
-- Produces: `_leak_checked_payload(...)`; endpoints `step_attempt`, `hint`, `action`, `start_session`, `start_session_stream`; plain function `end_session(body, request) -> dict | None` (returns `None` here; PKG-09 fills it).
+- Produces: `_h6_ok(state, qh, item_state, check) -> bool` (the only caller of `gates.h6_allowed`, A32); `_leak_checked_payload(...)`; endpoints `step_attempt`, `hint`, `action`, `start_session`, `start_session_stream`; plain function `end_session(body, request) -> dict | None` (returns `None` here; PKG-09 fills it).
 
 - [ ] **Step 1: Write the failing tests** (append)
 
@@ -2600,6 +2600,19 @@ def test_hint_denied_h6_gate(gate_on, seams):
     seams.policy.ceiling.return_value = Rung.H6
     r = client.post("/api/learn/loop/hint", json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-1"})
     assert r.json() == {"denied": "h6_gate"}
+
+
+def test_hint_h6_gate_gets_taught_practice_and_graded(gate_on, seams):
+    """Spec §3.3 H6 item predicates, §13 A32: the gate gets the entry's
+    `taught`, practice = the ACTIVE in-session check, and the stored coursework
+    flag (ITEM carries no `graded` → False). Ungraded alone never admits H6."""
+    seams.load.return_value = _state(rung=5, attempts=1, taught=True)
+    seams.gates.rung_unlock.return_value = (True, "ok")
+    seams.gates.h6_allowed.return_value = True
+    seams.policy.ceiling.return_value = Rung.H6
+    r = client.post("/api/learn/loop/hint", json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-1"})
+    assert r.json() == {"rung": int(Rung.H6), "intent": Rung.H6.intent}
+    assert seams.gates.h6_allowed.call_args.kwargs == {"item_taught": True, "item_practice": True, "item_graded": False}
 
 
 def test_hint_unlocks_next_rung_and_emits_offer_when_offered(gate_on, seams):
@@ -2768,6 +2781,19 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     return {"genuine": genuine, "attempts": len(item.get("attempted_at") or []), "independent_s": independent_s}
 
 
+def _h6_ok(state: dict, qh: str | None, item_state: dict, check: dict | None) -> bool:
+    """Spec §3.3 H6 item predicates (§13 A32), for the one gate PKG-06 owns:
+    taught (recorded at activation), practice (the ACTIVE in-session check;
+    activation never selects the post-test reserve), not graded coursework (a
+    missing item fails closed). Ungraded alone never admits H6."""
+    return gates.h6_allowed(
+        item_state,
+        item_taught=bool(item_state.get("taught")),
+        item_practice=qh is not None and state.get("active") == qh,
+        item_graded=check is None or bool(check.get("graded")),
+    )
+
+
 @router.post("/hint")
 def hint(body: LoopHintBody, request: Request) -> dict:
     _gate(body.user_id, request)
@@ -2786,7 +2812,7 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     next_rung = int(item.get("rung", int(Rung.H0))) + 1
     if next_rung > int(ceiling):
         return {"denied": "ceiling"}
-    if next_rung == int(Rung.H6) and not gates.h6_allowed(item, check or {}):
+    if next_rung == int(Rung.H6) and not _h6_ok(state, body.question_hash, item, check):
         return {"denied": "h6_gate"}
     item["rung"], item["last_rung_at"] = next_rung, _now_iso()
     if item.get("offered"):
@@ -2829,7 +2855,7 @@ def _leak_checked_payload(*, user_id: str, item: dict, rung: Rung, reference: st
                 # Fall back to the LLM rung; only when no model may run (hard) is a
                 # leaking payload served — and then only where H6 is allowed, and
                 # recorded as H6 (no upward BKT credit, §3.3).
-                if not (hard and gates.h6_allowed(self.item_state, self.item)):
+                if not (hard and _h6_ok(self.state, self.active, self.item_state, self.item)):
                     return None
                 self.served_as_h6 = True
             self.revealed_hash = payload.revealed_hash
@@ -2898,6 +2924,7 @@ def test_activation_excludes_seen_revealed_reserve_and_session_hashes(seams):
     assert qh == ITEM["question_hash"] and st["active"] == qh
     assert st[qh]["node_id"] == "node-1" and st[qh]["check_item_id"] == ITEM["id"] and st[qh]["rung"] == 0
     assert st[qh]["first_shown_at"] == "2026-09-27T00:00:00+00:00"
+    assert st[qh]["taught"] is False  # no teach turn and no check on node-1 yet → no H6 (spec §3.3, A32)
     kw = seams.select_item.call_args.kwargs
     assert kw["exclude_hashes"] >= {"qh-seen", "qh-rev", "qh-reserve", "qh-old"}
     assert kw["difficulty"] == 2 and kw["format"] == "free"  # develop band (p 0.5) → difficulty 2; rotation 0 → first format
@@ -2938,6 +2965,7 @@ def test_teach_turn_activates_after_the_threshold_and_returns_the_pose(gate_on, 
     assert body["check"]["prompt"] == f"POSE: {ITEM['prompt']}"  # ladder.check_pose (seam), no model call
     assert "reference_answer" not in json.dumps(body["check"])
     assert seams.saved_state["active"] == ITEM["question_hash"]
+    assert seams.saved_state[ITEM["question_hash"]]["taught"] is True  # activated after served teach turns (A32)
     assert any("POSE:" in str(c.args) for c in seams.save_msg.call_args_list), "the pose is saved as an assistant row"
     seams.grade.assert_not_awaited()
     seams.flush.assert_not_called()
@@ -3042,7 +3070,7 @@ def test_opener_at_the_hard_level_serves_the_template_not_a_429(gate_on, seams):
 Run: `cd backend && venv/bin/python -m pytest tests/test_learn_loop_routes.py -v -k "activation or activates or check_next or per_concept or current_concept or opener_at_the_hard"`
 Expected: `ImportError: cannot import name '_activate_next_item'` / `_LOOP_OPENER_TEMPLATE`, 404 on `/check/next`, and the band assertion fails (`'develop' != 'novice'` — the concept band is not read yet) until Step 3.
 
-- [ ] **Step 3: Implement** per §Behaviour 20 and 15: `_concept_key_for_node(user_id, node_id) -> str | None` (one `graph_nodes` read by id + `_normalize_concept`; the inverse of `_node_for_item`); `_activate_next_item`; `_pose_payload(item) -> dict` (`question_hash`, `format`, `difficulty`, `prompt` = `ladder.check_pose(item["prompt"])`, `options` from the decrypted stored `options` for `mc_reason` else `None`); in `_LoopTurn.complete` step c, the teach-turn counter and Trigger 1 (the pose is saved with `save_message(session_id, "assistant", pose)` AFTER the teach reply's row, and `check` joins the returned dict; `_pre_done_events` yields a `check` event from `data["check"]` before `done`); in step b, the post-feedback counters and the cursor advance; `LoopCheckNextBody` + `check_next`; `_LoopOpener._deterministic_text` returns `_LOOP_OPENER_TEMPLATE` when `hard` (the opener is never paused; `plan()` therefore serves it with tier `none` and the pause notice). Add `"check/next"` to the gate-404 parametrization's route list and to the no-rate-limit list in `test_rate_limit_dependency_on_model_routes_only`.
+- [ ] **Step 3: Implement** per §Behaviour 20 and 15: `_concept_key_for_node(user_id, node_id) -> str | None` (one `graph_nodes` read by id + `_normalize_concept`; the inverse of `_node_for_item`); `_activate_next_item`; `_pose_payload(item) -> dict` (`question_hash`, `format`, `difficulty`, `prompt` = `ladder.check_pose(item["prompt"])`, `options` from the decrypted stored `options` for `mc_reason` else `None`); in `_LoopTurn.complete` step c, the teach-turn counter and Trigger 1 (the pose is saved with `save_message(session_id, "assistant", pose)` AFTER the teach reply's row, and `check` joins the returned dict; `_pre_done_events` yields a `check` event from `data["check"]` before `done`); in step b, the post-feedback counters and the cursor advance; the activation entry's `taught` flag (Behaviour 20 step 3, A32); `LoopCheckNextBody` + `check_next`; `_LoopOpener._deterministic_text` returns `_LOOP_OPENER_TEMPLATE` when `hard` (the opener is never paused; `plan()` therefore serves it with tier `none` and the pause notice). Add `"check/next"` to the gate-404 parametrization's route list and to the no-rate-limit list in `test_rate_limit_dependency_on_model_routes_only`.
 
 - [ ] **Step 4: Run tests, lint**
 

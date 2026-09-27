@@ -14,9 +14,9 @@ Depends on (spec §14): **08, 09, 12** (and **06b** for the budget-cap journey; 
 
 ## Read before you start (in this order)
 
-0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 1. The rows that bind this package: **A27** (render the `check` object a teach turn or `POST /check/next` returns; a "Check me" control; a capped student still gets a template opener and the probe), **A26** (frontend: no model toggle, explicit submissions, budget banner, empty state, resume, knowledge map, DueQueue polish, the budget-cap journey), **A16** (the attempt box grades only through `/check/answer(/stream)`), **A23** (`no_check_items`, check items as shared course assets), **A15** (tier routing in code; loop routes ignore `model_pref`; three tutor slots the seam must serve), **A20** (429 body, `budget` stream event, the hard level's "practice and review keep working"), **A14** (wording: `learning_loop_beta` is a build-phase staff/QA toggle, never a student opt-in), A2 (check items keyed on `(course_id, concept_key)`), A17 (the check pose is a template turn). And spec **§11.3** (launch UI readiness — this package builds it).
+0. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` **§13 Amendments log** — in force; where this file and §13 disagree, §13 wins. Re-read it before Task 1. The rows that bind this package: **A27** (render the `check` object a teach turn or `POST /check/next` returns; a "Check me" control; a capped student still gets a template opener and the probe), **A26** (frontend: no model toggle, explicit submissions, budget banner, empty state, resume, knowledge map, DueQueue polish, the budget-cap journey), **A16** (the attempt box grades only through `/check/answer(/stream)`), **A23** (`no_check_items`, check items as shared course assets), **A15** (tier routing in code; loop routes ignore `model_pref`; three tutor slots the seam must serve), **A20** (429 body, `budget` stream event, the hard level's "practice and review keep working"), **A14** (wording: `learning_loop_beta` is a build-phase staff/QA toggle, never a student opt-in), **A31** (the toggle is in no settings API field, so the UI can never see it; `/status` is the only input), A2 (check items keyed on `(course_id, concept_key)`), A17 (the check pose is a template turn). And spec **§11.3** (launch UI readiness — this package builds it).
 1. The same spec's §3.5–§3.6 (cost/routing/decision constants — the §3.5 budget table and degradation ladder the banner and the cap journey follow), §7 (two-phase gate), §8 (invariants 13–29 — this package owns 13a and 13b; 22 and 26 are the server halves of its no-`model_pref` and explicit-submission rules), §14 (order and dependencies).
-2. `docs/superpowers/plans/learning-loop/LEDGER.md` — refuse to start if any row is `blocked` or `in-progress`. Rows 00–12, 05b and 06b must be `done` or `verified` (spec §14: packages run strictly one at a time).
+2. `docs/superpowers/plans/learning-loop/LEDGER.md` — a package's state is its LATEST row (README "Ledger reading"); refuse to start if any earlier package's latest row is `blocked` or `in-progress`. The latest rows of 00–12, 05b and 06b must be `done`, `verified` or `reopened` (spec §14: packages run strictly one at a time).
 3. `docs/superpowers/plans/learning-loop/HANDOFF-07.md`, `HANDOFF-08.md`, `HANDOFF-09.md`, `HANDOFF-12.md` (also `HANDOFF-04.md` — the `check_items` columns and keying the seed writes; `HANDOFF-05.md` — the grader's correct-token constant; `HANDOFF-06.md` and `HANDOFF-06b.md` §Symbols added — the 429 body, `enforce_rate_limit`, the `budget` event levels; `HANDOFF-11.md` — the `flashcards` FSRS columns the capped seed writes). Copy every route path, body model, response key, event name, gate denial reason, and `E2E_*` constant name they list into the scratch table you keep for Task 5 Step 0. **They override the "expected contract" tables in this prompt wherever they differ.**
 4. `CLAUDE.md` §Conventions and §Gotchas — especially the E2E-stack-singleton `flock` rule and the function-mode seam paragraph.
 5. `docs/superpowers/specs/2026-09-26-learning-loop-design.md` §3.3 (gates: what a genuine attempt is, `OFFER_BANDS`), §3.4 (`PROBE_*`, `PLAN_*`), §3.5 (budget constants and the degradation ladder: what keeps working at the hard level), §6 (event payload keys), §7 (404 when the gate is false), §8 (invariants 1, 5, 6), §9 (session phases, the five stream events, the loop route table incl. `GET /sessions`), §11.3 (launch UI readiness).
@@ -1453,8 +1453,9 @@ Adapt mocked return shapes to the Step-0 table (e.g. whether `listLoopSessions` 
 `frontend/src/components/learn/LearnBranch.test.tsx`:
 ```tsx
 // @vitest-environment jsdom
-/** Spec §11.3: Learn() renders LoopLearn for /status → {active: true}
- * regardless of learning_loop_beta — /status is the only input (spec §7). */
+/** Spec §11.3: Learn() renders LoopLearn for /status → {active: true}.
+ * /status is the only input: no settings field carries learning_loop_beta
+ * (spec §7, §13 A31), so the UI cannot read the staff/QA toggle at all. */
 import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -1464,9 +1465,9 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/learn",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }),
 }));
-// A user whose settings say the staff/QA toggle is OFF: after launch that is every student.
+// Settings as the API returns them: no learning_loop_beta key (spec §13 A31).
 vi.mock("@/context/UserContext", () => ({
-  useUser: () => ({ userId: "u1", userReady: true, settings: { learning_loop_beta: false } }),
+  useUser: () => ({ userId: "u1", userReady: true, settings: { theme: "light" } }),
 }));
 vi.mock("./LoopLearn", () => ({ LoopLearn: () => <div data-testid="loop-phase" data-phase="probe" /> }));
 const getLoopStatus = vi.hoisted(() => vi.fn());
@@ -1476,7 +1477,7 @@ import { Learn } from "../screens/Learn";
 
 afterEach(cleanup);
 
-it("renders LoopLearn for {active: true} regardless of learning_loop_beta", async () => {
+it("renders LoopLearn for {active: true} with /status as the only input", async () => {
   getLoopStatus.mockResolvedValue({ active: true });
   render(<Learn />);
   expect(await screen.findByTestId("loop-phase")).toBeTruthy();
@@ -1485,7 +1486,7 @@ it("renders LoopLearn for {active: true} regardless of learning_loop_beta", asyn
 });
 ```
 
-(Adapt the `useUser` mock to `UserContext`'s real shape; keep a settings object whose `learning_loop_beta` is `false`.)
+(Adapt the `useUser` mock to `UserContext`'s real shape. Its settings object carries no `learning_loop_beta`, because the settings API never returns it (spec §13 A31).)
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -2233,7 +2234,7 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 
 1. `(under the stack lock) make e2e-up && (cd frontend && npx playwright test e2e/learn-loop.spec.ts) && (cd backend && venv/bin/python -m e2e_oracles); make e2e-down` → every learn-loop.spec.ts test passed (loop journey, resume, budget cap, legacy-user split), oracles exit 0
 2. `cd frontend && npx tsc --noEmit` → clean
-3. `cd frontend && npx vitest run src/components/learn` → all passed (incl. resume without a probe call, `LoopLearn` for `{active: true}` regardless of `learning_loop_beta`, no model toggle, banner from a 429, the empty state, DueQueue polish)
+3. `cd frontend && npx vitest run src/components/learn` → all passed (incl. resume without a probe call, `LoopLearn` for `{active: true}` with `/status` as the only input, no model toggle, banner from a 429, the empty state, DueQueue polish)
 4. `grep -c "E2E_LOOP_" backend/agents/function_handlers_e2e.py` → ≥ 3
 5. `grep -c '"/sessions"' backend/routes/learn_loop.py` → ≥ 1; `cd backend && venv/bin/python -m pytest tests/test_learn_loop_sessions.py -q` → all passed
 6. `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_13a or inv_13b"` → `2 passed`
