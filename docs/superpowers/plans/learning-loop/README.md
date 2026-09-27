@@ -62,6 +62,7 @@ PKG-15  jev-backend           post-series; needs 05b + the A24 privacy gate; not
 
 ## Files in this directory
 
+- `CONTINUE.md` — handover note: where the build stands, in-flight branches, decisions already made, and how to run the remaining packages.
 - `LEDGER.md` — append-only status; the series' memory.
 - `HANDOFF-template.md` — the hand-off note shape; `HANDOFF-NN.md` files are written by each package.
 - `PKG-00-foundation.md` … `PKG-14-eval-ladder-cutover.md`, plus `PKG-05b-decision-seam.md` and `PKG-06b-ai-budget-and-usage.md` — the prompts. Their branches follow the convention: `feat/learning-loop-05b-decision-seam`, `feat/learning-loop-06b-ai-budget-and-usage`.
