@@ -1,9 +1,13 @@
 {
-  "confidence": 0.9,
-  "feedback_hint": "Consider what happens when a recursive function does not have a condition to stop its calls. How does this differ from a loop, and what is the consequence of endlessly repeating calls?",
-  "item_results": [
-    "r1:no",
-    "r2:no"
-  ],
-  "matched_wrong_key": "w_speed"
+  "runs": [
+    {
+      "confidence": 0.9,
+      "feedback_hint": "The student's answer focuses on optimization and speed, but the core purpose of a base case is to prevent infinite recursion. Consider what would happen if there were no condition to stop the recursive calls.",
+      "item_results": [
+        "r1:no",
+        "r2:no"
+      ],
+      "matched_wrong_key": "w_speed"
+    }
+  ]
 }

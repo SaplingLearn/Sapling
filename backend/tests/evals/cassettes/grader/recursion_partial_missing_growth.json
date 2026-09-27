@@ -1,9 +1,13 @@
 {
-  "confidence": 0.9,
-  "feedback_hint": "What happens if the function never stops recursing?",
-  "item_results": [
-    "r1:yes",
-    "r2:no"
-  ],
-  "matched_wrong_key": ""
+  "runs": [
+    {
+      "confidence": 1.0,
+      "feedback_hint": "You mentioned that the base case stops the recursion, but can you explain what would happen if it didn't stop?",
+      "item_results": [
+        "r1:yes",
+        "r2:no"
+      ],
+      "matched_wrong_key": ""
+    }
+  ]
 }

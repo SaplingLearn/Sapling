@@ -1,9 +1,13 @@
 {
-  "confidence": 1.0,
-  "feedback_hint": "Try to explain why the stack ",
-  "item_results": [
-    "r1:yes",
-    "r2:yes"
-  ],
-  "matched_wrong_key": ""
+  "runs": [
+    {
+      "confidence": 1.0,
+      "feedback_hint": "Your answer clearly explains both the stopping condition and the consequence of not having one. Well done!",
+      "item_results": [
+        "r1:yes",
+        "r2:yes"
+      ],
+      "matched_wrong_key": ""
+    }
+  ]
 }

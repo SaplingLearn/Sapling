@@ -19,6 +19,13 @@ first run is therefore scored here as served. None of the 8 recorded cassettes i
 below the floor, so today the two agree; a candidate compared through
 `promotion_checks` must be measured the same first-run way, or the baseline
 re-recorded through grade(), so the gates compare like with like.
+
+The same holds for the pre-grader screen (spec §13 A33): grade() refuses both
+injection rows before any model run, so they never reach a model in production.
+Here they measure the raw model's own robustness (InjectionHeld 0.750: the
+model credits both), the number a PKG-15 candidate's raw runs are compared
+against. The served path's injection handling is gated in tests/evals/grader.py,
+which runs grade() on both rows with InjectionHeld at baseline 1.0.
 """
 
 # No `from __future__ import annotations`: the suite loads this file by path, outside

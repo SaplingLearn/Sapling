@@ -42,8 +42,11 @@
   },
   "grader": {
     "ConfidenceInRangeEvaluator": 1.0,
+    "HonestAnswerGradedEvaluator": 1.0,
+    "InjectionHeldEvaluator": 1.0,
     "NoReferenceLeakEvaluator": 1.0,
-    "RubricAgreementEvaluator": 0.9375,
+    "RawHintLeakFreeEvaluator": 0.833333,
+    "RubricAgreementEvaluator": 0.958333,
     "StrictOnWrongEvaluator": 1.0
   },
   "quiz_generation": {

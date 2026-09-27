@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -547,3 +548,106 @@ def test_a_refused_outcome_is_distinct_from_an_outage(monkeypatch):
     deps = _deps()
     out = _grade_answer(_item(), CheckAnswer(question_hash="qh-1", answer_text="x"), deps)
     assert out.unavailable is True and out.refused is None and deps.pending_evidence == []
+
+
+# ── tests/evals/grader.py measures the production path (CodeRabbit PR #673) ──
+
+EVALS = Path(__file__).resolve().parent / "evals"
+
+
+def _recorded_decision_injections() -> list[str]:
+    """The two answers CodeRabbit found credited, as the grader sees them: the
+    injection rows of the decisions gold, rendered the way the seam renders them."""
+    from services.decisions import mc_reason_answer
+
+    out = []
+    for stem in ("grade_rubric_items", "reason_is_correct"):
+        doc = json.loads((EVALS / "fixtures" / "decisions" / f"{stem}.json").read_text())
+        for case in doc["cases"]:
+            if "injection" not in case.get("tags", []):
+                continue
+            state = {**doc["base_state"], **case["state"]}
+            out.append(
+                state["answer"]
+                if stem == "grade_rubric_items"
+                else mc_reason_answer(state["selected_option"], state["reason"])
+            )
+    return out
+
+
+@pytest.fixture
+def grader_eval(monkeypatch):
+    """tests/evals/grader.py loaded by path. sys.path, sys.modules and
+    agents.grader._run_once are restored afterwards."""
+    import importlib.util
+    import sys
+
+    import agents.grader as g
+
+    monkeypatch.setattr(g, "_run_once", g._run_once)
+    saved = list(sys.path)
+    try:
+        spec = importlib.util.spec_from_file_location("grader_eval", EVALS / "grader.py")
+        mod = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, "grader_eval", mod)
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path[:] = saved
+    return mod
+
+
+def _injection_cases(ev) -> list:
+    return [c for c in ev.CASES if "injection" in (c.metadata or {}).get("tags", [])]
+
+
+def test_the_recorded_injections_match_this_modules_copies():
+    assert _recorded_decision_injections() == list(RECORDED_INJECTIONS.values())
+
+
+def test_the_grader_eval_carries_both_recorded_injections(grader_eval):
+    ev = grader_eval
+    injected = {c.inputs.student_answer: c for c in _injection_cases(ev)}
+    for answer in _recorded_decision_injections():
+        case = injected[answer]
+        assert not any(case.metadata["gold"].values()), case.name
+    assert len(ev.CASES) <= ev.GRADER_EVAL_MAX_CASES
+    # the two recorded rows, the two earlier injection cases, at most two variants
+    assert 4 <= len(_injection_cases(ev)) <= 6
+    assert len({c.name for c in ev.CASES}) == len(ev.CASES)
+
+
+def test_the_grader_eval_replays_through_grade(grader_eval):
+    """Replay of the committed cassettes: every injection case is refused by
+    grade() with no model run and nothing credited; every honest case is graded."""
+    ev = grader_eval
+    dataset = ev.make_dataset()
+    report = asyncio.run(dataset.evaluate(ev._run, progress=False))
+    assert not report.failures, [f.error_message for f in report.failures]
+    by_name = {c.name: c for c in report.cases}
+    for case in ev.CASES:
+        out = by_name[case.name].output
+        if case in _injection_cases(ev):
+            assert out.refused in guard.REFUSALS and out.runs == [], case.name
+            assert not any(out.item_results.values()) and out.all_yes is False
+        else:
+            assert out.refused is None and len(out.runs) >= 1, case.name
+    for name in ("InjectionHeldEvaluator", "HonestAnswerGradedEvaluator"):
+        assert all(c.scores[name].value == 1.0 for c in report.cases), name
+
+
+def test_the_eval_refusal_comes_from_grades_own_screen(grader_eval, monkeypatch):
+    """With grade()'s screen switched off, an injection case asks for a model run
+    its cassette does not have: the eval measures grade(), not a copy of it."""
+    import agents.grader as g
+
+    ev = grader_eval
+    monkeypatch.setattr(g.answer_guard, "screen", lambda text, **kw: guard.Screen())
+    case = _injection_cases(ev)[0]
+    with pytest.raises(RuntimeError, match="model run"):
+        asyncio.run(ev._run(case.inputs))
+
+
+def test_the_grader_baseline_requires_every_injection_held():
+    baselines = json.loads((EVALS / "baselines.json").read_text())["grader"]
+    assert baselines["InjectionHeldEvaluator"] == 1.0
+    assert baselines["HonestAnswerGradedEvaluator"] == 1.0

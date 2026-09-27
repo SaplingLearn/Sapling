@@ -1,9 +1,13 @@
 {
-  "confidence": 0.9,
-  "feedback_hint": "Consider what the derivative measures at a single point, not over a range. Think about how a tangent line relates to the function's behavior right at that specific location.",
-  "item_results": [
-    "r1:no",
-    "r2:no"
-  ],
-  "matched_wrong_key": "w_area"
+  "runs": [
+    {
+      "confidence": 1.0,
+      "feedback_hint": "The student's answer seems to describe the integral (area under the curve) rather than the derivative. Please re-examine the definition of a derivative and what it represents.",
+      "item_results": [
+        "r1:no",
+        "r2:no"
+      ],
+      "matched_wrong_key": "w_area"
+    }
+  ]
 }
