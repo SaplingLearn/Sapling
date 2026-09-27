@@ -1546,65 +1546,94 @@ def test_policy_never_imports_the_text_gate_but_gates_may_import_policy():
     assert not hasattr(policy, "matches_non_attempt") and not hasattr(policy, "gates")
 
 
-# ── leak detector (spec §3.4 LEAK_NGRAM; research "Guardrails") ───────────────
+# ── leak detector (spec §3.4 LEAK_NGRAM, §13 A34; research "Guardrails") ───────
+#
+# A34: the final-answer rule matches the item's STRUCTURED final_answer
+# (PKG-04's check_items.final_answer, stated by the generator verbatim from
+# its reference) and, for a numeric item, its canonical_answer by value. The
+# reference text is never parsed for a final answer, so every fixture names
+# its item's final answer.
 
 REF_POWER = (
     "The derivative of x squared is two x because the power rule brings "
     "the exponent down and reduces it by one"
 )
+FA_POWER = "two x"
 REF_EQ = "x + 3 = 10, so x = 7"
+FA_EQ = "7"
 REF_VEL = "The final velocity is 9.8 m/s"
+FA_VEL = "9.8 m/s"
 REF_SYM = "F = m a"
-# Shorter than LEAK_NGRAM tokens, no '=' and no number: only the whole-reference
-# run can catch these (free / mc_reason references may be this short).
+FA_SYM = "m a"
+# Shorter than LEAK_NGRAM tokens: only the whole-reference run can catch these
+# under the n-gram rule (free / mc_reason references may be this short).
 REF_SHORT = "The mitochondria."
+FA_SHORT = "mitochondria"
 REF_LAW = "Newton's third law"
+FA_LAW = "third law"
+REF_CELL = "The powerhouse of the cell"
+FA_CELL = "powerhouse of the cell"
 
 LEAKS = [
-    (REF_POWER, "Remember: the power rule brings the exponent down, so try that.", "ngram"),
-    (REF_POWER, "It reduces it by one and the power rule brings the exponent down.", "ngram"),
-    (REF_EQ, "So x must be 7.", "final_answer"),
-    (REF_EQ, "Check whether 7 satisfies the equation.", "final_answer"),
-    (REF_VEL, "Plug in and you get 9.8 m/s.", "final_answer"),
-    (REF_SYM, "Force is just m a, multiply them.", "final_answer"),
-    (REF_POWER, "the derivative of x squared is two x", "ngram"),
+    (
+        REF_POWER,
+        FA_POWER,
+        "Remember: the power rule brings the exponent down, so try that.",
+        "ngram",
+    ),
+    (
+        REF_POWER,
+        FA_POWER,
+        "It reduces it by one and the power rule brings the exponent down.",
+        "ngram",
+    ),
+    (REF_EQ, FA_EQ, "So x must be 7.", "final_answer"),
+    (REF_EQ, FA_EQ, "Check whether 7 satisfies the equation.", "final_answer"),
+    (REF_VEL, FA_VEL, "Plug in and you get 9.8 m/s.", "final_answer"),
+    (REF_SYM, FA_SYM, "Force is just m a, multiply them.", "final_answer"),
+    (REF_POWER, FA_POWER, "the derivative of x squared is two x", "ngram"),
+    (REF_POWER, FA_POWER, "So it comes out as two x.", "final_answer"),
     (
         REF_SHORT,
+        FA_SHORT,
         "Cellular respiration happens in the mitochondria, which produce most ATP.",
         "ngram",
     ),
-    ("The powerhouse of the cell", "It is the powerhouse of the cell.", "ngram"),
-    (REF_LAW, "This is Newton's third law at work.", "ngram"),
+    (REF_SHORT, FA_SHORT, "Mitochondria!", "final_answer"),
+    (REF_CELL, FA_CELL, "It is the powerhouse of the cell.", "ngram"),
+    (REF_LAW, FA_LAW, "This is Newton's third law at work.", "ngram"),
+    (REF_LAW, FA_LAW, "It is the Third Law.", "final_answer"),
 ]
 
 SAFE = [
-    (REF_POWER, "What rule applies when a variable is raised to a power?"),
-    (REF_POWER, "Look at the exponent first. What happens to it?"),
-    (REF_EQ, "Subtract 3 from both sides, then look at what is left."),
-    (REF_EQ, "What operation undoes adding 3?"),
-    (REF_VEL, "Which kinematic equation links acceleration and time?"),
-    (REF_SYM, "What is force in terms of mass? Think about Newton's second law."),
-    (REF_POWER, "The power rule is in section 2.3 of your notes; read the first line."),
-    (REF_SHORT, "Which organelle makes most of the cell's ATP?"),
-    (REF_LAW, "Which of Newton's laws pairs every force with another?"),
+    (REF_POWER, FA_POWER, "What rule applies when a variable is raised to a power?"),
+    (REF_POWER, FA_POWER, "Look at the exponent first. What happens to it?"),
+    (REF_EQ, FA_EQ, "Subtract 3 from both sides, then look at what is left."),
+    (REF_EQ, FA_EQ, "What operation undoes adding 3?"),
+    (REF_EQ, FA_EQ, "Try it with 17, then with 0.7."),  # a number is never read inside another
+    (REF_VEL, FA_VEL, "Which kinematic equation links acceleration and time?"),
+    (REF_SYM, FA_SYM, "What is force in terms of mass? Think about Newton's second law."),
+    (REF_POWER, FA_POWER, "The power rule is in section 2.3 of your notes; read the first line."),
+    (REF_SHORT, FA_SHORT, "Which organelle makes most of the cell's ATP?"),
+    (REF_LAW, FA_LAW, "Which of Newton's laws pairs every force with another?"),
 ]
 
 
-@pytest.mark.parametrize("reference,emitted,detector", LEAKS)
-def test_detect_leak_catches(reference, emitted, detector):
+@pytest.mark.parametrize("reference,final,emitted,detector", LEAKS)
+def test_detect_leak_catches(reference, final, emitted, detector):
     from learning.ladder import Rung
     from learning.leak import detect_leak
 
-    v = detect_leak(reference, emitted, Rung.H3)
+    v = detect_leak(reference, emitted, Rung.H3, final_answer=final)
     assert (v.leaked, v.detector) == (True, detector)
 
 
-@pytest.mark.parametrize("reference,emitted", SAFE)
-def test_detect_leak_zero_false_positives(reference, emitted):
+@pytest.mark.parametrize("reference,final,emitted", SAFE)
+def test_detect_leak_zero_false_positives(reference, final, emitted):
     from learning.ladder import Rung
     from learning.leak import detect_leak, tokens
 
-    assert detect_leak(reference, emitted, Rung.H0) == (False, "none")
+    assert detect_leak(reference, emitted, Rung.H0, final_answer=final) == (False, "none")
     ref, em = tokens(reference), tokens(emitted)
     n = min(params.LEAK_NGRAM, len(ref))
     em_grams = {tuple(em[j : j + n]) for j in range(len(em) - n + 1)}
@@ -1615,37 +1644,197 @@ def test_h6_is_never_a_leak():
     from learning.ladder import Rung
     from learning.leak import detect_leak
 
-    assert detect_leak(REF_EQ, REF_EQ, Rung.H6).leaked is False
-    assert detect_leak(REF_EQ, REF_EQ, Rung.H5).leaked is True
+    assert detect_leak(REF_EQ, REF_EQ, Rung.H6, final_answer=FA_EQ).leaked is False
+    assert detect_leak(REF_EQ, REF_EQ, Rung.H5, final_answer=FA_EQ).leaked is True
 
 
-def test_final_answer_extraction():
-    from learning.leak import final_answer
+def test_a_final_answer_is_required():
+    """A34: callers hold only items that passed selection (checks.is_servable),
+    so a missing or empty final answer is a programmer error — never a silent
+    fallback to parsing the reference."""
+    import inspect
 
-    assert final_answer(REF_EQ) == ("7",)
-    assert final_answer(REF_VEL) == ("9", "8")
-    assert final_answer(REF_SYM) == ("m", "a")
-    assert final_answer(REF_POWER) == ()
-    assert final_answer("y = 2x + 3") == ("2x", "3")
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    for missing in (None, "", "   ", "...", "“ ”"):
+        with pytest.raises(ValueError):
+            detect_leak(REF_EQ, "hint", Rung.H3, final_answer=missing)
+        with pytest.raises(ValueError):
+            detect_leak(REF_EQ, "hint", Rung.H6, final_answer=missing)
+        with pytest.raises(ValueError):
+            strip_leak("hint", REF_EQ, final_answer=missing)
+    for fn in (detect_leak, strip_leak):
+        params_ = inspect.signature(fn).parameters
+        assert params_["final_answer"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params_["final_answer"].default is inspect.Parameter.empty
+        assert params_["canonical_answer"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params_["canonical_answer"].default is None
+    with pytest.raises(TypeError):
+        detect_leak(REF_EQ, "hint", Rung.H3)
+    with pytest.raises(TypeError):
+        detect_leak(REF_EQ, "hint", Rung.H3, "7")
+    with pytest.raises(TypeError):
+        strip_leak("hint", REF_EQ, "7")
 
 
-def test_final_answer_clause_ends_at_a_sentence_break():
-    """The answer after the last '=' stops at a clause or sentence break, so a
-    trailing explanation does not dilute the run; a decimal point is not a break;
-    an empty right-hand side falls back to the last standalone number."""
-    from learning.leak import final_answer
+def test_the_reference_is_never_parsed_for_a_final_answer():
+    """The text heuristics (cue words, '=' clauses, last number, power terms,
+    justifications) are gone: only the structured answer is matched. An
+    intermediate number of the reference is no leak; the stated answer is."""
+    from learning import leak
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
 
-    assert final_answer("x = 7. Check it by substitution.") == ("7",)
-    assert final_answer("v = 9.8 AND nothing else") == ("9", "8")
-    assert final_answer("t = 4.5\nThen the ball lands.") == ("4", "5")
-    assert final_answer("After 12 steps the value is x =") == ("12",)
-    assert final_answer("") == ()
+    for gone in ("final_answer", "_final_answer_text", "_pick", "_CUE", "_ASIDE", "_eq_clauses"):
+        assert not hasattr(leak, gone), gone
+    ref = "x + 3 = 10, so x = 7"
+    assert detect_leak(ref, "What is 10 minus 3?", Rung.H3, final_answer="7") == (False, "none")
+    assert detect_leak(ref, "It is 7.", Rung.H3, final_answer="7") == (True, "final_answer")
+    # a final answer the reference text states differently is still the answer
+    assert detect_leak(ref, "Is it 3?", Rung.H3, final_answer="x = 7") == (False, "none")
+    assert detect_leak(ref, "So x=7 then.", Rung.H3, final_answer="x = 7").leaked
 
 
-REF_STEPS = (
-    "1. Identify the limiting reagent from the mole ratio.\n"
-    "2. Use it to compute the theoretical yield."
+DIFF_REF = "Differentiate term by term: the derivative of 2x^3 + 5 is 6x^2."
+G_REF = "The ball is in free fall, so g = 9.8 m/s^2"
+
+
+@pytest.mark.parametrize(
+    "hint", ["You should get 6x^2.", "You should get 6x².", "It is 6 x ^ 2.", "It is 6*x**2."]
 )
+def test_a_symbolic_final_answer_leaks_in_any_spelling(hint):
+    from learning.ladder import Rung
+    from learning.leak import WITHHELD, detect_leak, strip_leak
+
+    assert detect_leak(DIFF_REF, hint, Rung.H3, final_answer="6x^2") == (True, "final_answer")
+    once = strip_leak(hint, DIFF_REF, final_answer="6x^2")
+    assert WITHHELD in once and "6" not in once, once
+    assert detect_leak(DIFF_REF, once, Rung.H0, final_answer="6x^2") == (False, "none")
+    assert strip_leak(once, DIFF_REF, final_answer="6x^2") == once
+
+
+def test_a_hint_about_the_steps_is_clean():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    hint = "What happens to the constant 5 when you differentiate?"
+    assert detect_leak(DIFF_REF, hint, Rung.H3, final_answer="6x^2") == (False, "none")
+    assert strip_leak(hint, DIFF_REF, final_answer="6x^2") == hint
+    for clean in ("Bring the exponent 3 down.", "What is 2 times 3?", "Try x^2 first.", "12x^2?"):
+        assert detect_leak(DIFF_REF, clean, Rung.H1, final_answer="6x^2") == (False, "none"), clean
+
+
+def test_a_final_answer_with_a_unit_leaks_reformatted():
+    from learning.ladder import Rung
+    from learning.leak import WITHHELD, detect_leak, strip_leak
+
+    final = "9.8 m/s^2"
+    for hint in ("It is 9.80 m/s².", "that gives 9.8 m/s**2", "about 9.8 m / s ^ 2 here"):
+        assert detect_leak(G_REF, hint, Rung.H3, final_answer=final) == (True, "final_answer")
+        once = strip_leak(hint, G_REF, final_answer=final)
+        assert (
+            WITHHELD in once and detect_leak(G_REF, once, Rung.H0, final_answer=final)[0] is False
+        )
+    # a free item's answer is its whole run: the bare number alone is not it
+    # (a numeric item's canonical_answer catches that, below)
+    assert detect_leak(G_REF, "Use 9.8 for g.", Rung.H3, final_answer=final) == (False, "none")
+    assert detect_leak(
+        G_REF, "Use 9.8 for g.", Rung.H3, final_answer=final, canonical_answer="9.8"
+    ) == (True, "final_answer")
+
+
+MC_REF = "C: It never terminates, because no base case stops the calls."
+MC_FINAL = "It never terminates"  # option C's text (A34: the mc_reason final answer)
+
+
+def test_an_mc_reason_items_correct_option_text_leaks():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    hint = "So it never terminates?"
+    assert detect_leak(MC_REF, hint, Rung.H3, final_answer=MC_FINAL) == (True, "final_answer")
+    assert strip_leak(hint, MC_REF, final_answer=MC_FINAL) == "So [withheld]?"
+    for clean in ("What stops the calls?", "Which option describes the missing base case?"):
+        assert detect_leak(MC_REF, clean, Rung.H3, final_answer=MC_FINAL) == (False, "none")
+
+
+TB_REF = (
+    "Recursion works because a function calls itself on smaller inputs until a base case stops it."
+)
+TB_FINAL = "calls itself on smaller inputs"  # the teachback's decisive claim
+
+
+def test_a_teachback_claim_leaks_but_the_concept_name_alone_is_clean():
+    """PKG-04's validate_draft never accepts a final answer that is (part of)
+    the concept name, so a hint naming the concept is clean."""
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    leak_ = "It calls itself on smaller inputs."
+    assert detect_leak(TB_REF, leak_, Rung.H3, final_answer=TB_FINAL) == (True, "final_answer")
+    for clean in (
+        "Think about recursion: what does the function do each time?",
+        "Recursion needs a stopping point. What is it here?",
+    ):
+        assert detect_leak(TB_REF, clean, Rung.H3, final_answer=TB_FINAL) == (False, "none")
+
+
+REF_SLIDE = "The block slides 14 m before it stops; friction removes 3 J per metre of travel."
+FA_SLIDE = "14 m"
+
+
+def test_canonical_answer_is_matched_by_value():
+    """A numeric item's canonical_answer (PKG-04, decrypted by the caller) is
+    also matched as a number by value anywhere in the text; its sign and an
+    e-notation exponent are not part of the matched value."""
+    from learning.ladder import Rung
+    from learning.leak import WITHHELD, detect_leak, strip_leak
+
+    hint_3 = "Where do the 3 J go?"  # an intermediate number is no leak
+    for canonical in (None, "14"):
+        v = detect_leak(
+            REF_SLIDE, hint_3, Rung.H3, final_answer=FA_SLIDE, canonical_answer=canonical
+        )
+        assert v == (False, "none")
+    hint_14 = "So it should travel about 14.0 metres."
+    assert detect_leak(REF_SLIDE, hint_14, Rung.H3, final_answer=FA_SLIDE) == (False, "none")
+    assert detect_leak(
+        REF_SLIDE, hint_14, Rung.H3, final_answer=FA_SLIDE, canonical_answer="14"
+    ) == (True, "final_answer")
+    once = strip_leak(hint_14, REF_SLIDE, final_answer=FA_SLIDE, canonical_answer="14")
+    assert once == f"So it should travel about {WITHHELD} metres."
+    for canonical, hint in (
+        ("1250", "It comes to 1,250 J."),
+        ("1250.0", "It comes to 1250 J."),
+        ("2.50", "So v is 2.5 m/s."),
+        ("0.5", "About .50 of it."),
+        (".5", "About 0.5 of it."),
+        ("-3", "The root is −3."),
+        ("+42", "It is 42."),
+        ("6.022e23", "About 6.022 x 10^23 of them."),
+        (" 7 ", "Is it 7?"),
+    ):
+        v = detect_leak(REF_SLIDE, hint, Rung.H3, final_answer=FA_SLIDE, canonical_answer=canonical)
+        assert v == (True, "final_answer"), (canonical, hint)
+        once = strip_leak(hint, REF_SLIDE, final_answer=FA_SLIDE, canonical_answer=canonical)
+        assert WITHHELD in once, (canonical, once)
+        assert not detect_leak(
+            REF_SLIDE, once, Rung.H0, final_answer=FA_SLIDE, canonical_answer=canonical
+        ).leaked
+    assert detect_leak(
+        REF_SLIDE, "It is 12,500 J.", Rung.H3, final_answer=FA_SLIDE, canonical_answer="1250"
+    ) == (False, "none")
+    # a blank or non-numeric canonical_answer adds no value match
+    for canonical in ("", "   ", "abc", "nan", "x = 7"):
+        v = detect_leak(
+            REF_SLIDE, "Is it 7?", Rung.H3, final_answer=FA_SLIDE, canonical_answer=canonical
+        )
+        assert v == (False, "none"), canonical
+    # the n-gram rule still reads the reference
+    copied = "It slides 14 m before it stops, see?"
+    v = detect_leak(REF_SLIDE, copied, Rung.H3, final_answer="99 m", canonical_answer="99")
+    assert v == (True, "ngram")
 
 
 def test_a_short_reference_leaks_when_it_appears_whole():
@@ -1655,607 +1844,171 @@ def test_a_short_reference_leaks_when_it_appears_whole():
     from learning.ladder import Rung, deterministic_content
     from learning.leak import detect_leak, strip_leak
 
-    item = _item(ACTIVE_HASH, reference_answer=REF_SHORT)
+    item = _item(ACTIVE_HASH, reference_answer=REF_SHORT, final_answer=FA_SHORT)
     passage = "Cellular respiration happens in the mitochondria, which produce most ATP."
     payload = deterministic_content(Rung.H2, item, [], [passage])
-    assert detect_leak(item.reference_answer, payload.text, payload.rung) == (True, "ngram")
-    assert strip_leak("It is the mitochondria.", REF_SHORT) == "It is [withheld]."
-    assert detect_leak(REF_LAW, "Think about the third law.", Rung.H1) == (False, "none")
-    assert detect_leak("Paris", "The capital is Paris.", Rung.H1) == (True, "ngram")
-    assert detect_leak("", "anything at all", Rung.H1) == (False, "none")
+    verdict = detect_leak(
+        item.reference_answer, payload.text, payload.rung, final_answer=item.final_answer
+    )
+    assert verdict == (True, "ngram")
+    assert strip_leak("It is the mitochondria.", REF_SHORT, final_answer=FA_SHORT) == (
+        "It is [withheld]."
+    )
+    assert detect_leak(REF_LAW, "Think about the law.", Rung.H1, final_answer=FA_LAW) == (
+        False,
+        "none",
+    )
+    assert detect_leak("Paris", "The capital is Paris.", Rung.H1, final_answer="Paris") == (
+        True,
+        "ngram",
+    )
+    assert detect_leak("", "anything at all", Rung.H1, final_answer="x") == (False, "none")
 
 
-def test_final_answer_skips_numbered_step_labels():
-    """A stepwise reference (A17's H4-eligible items) with no '=' and no number
-    of its own has no final answer: its step labels are not answers, or every
-    stepwise sibling and every "step 2" in a hint would be a leak."""
+REF_STEPS = (
+    "1. Identify the limiting reagent from the mole ratio.\n"
+    "2. Use it to compute the theoretical yield.\n"
+    "Final answer: the theoretical yield."
+)
+FA_STEPS = "the theoretical yield"
+
+
+def test_a_stepwise_reference_leaks_its_final_answer_not_its_step_labels():
     from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer, strip_leak
+    from learning.leak import detect_leak, strip_leak
 
-    assert final_answer(REF_STEPS) == ()
-    assert final_answer("1) Convert to moles.\n2) The yield is 42 g") == ("42",)
-    assert final_answer("Steps:\n  1. Add 3.\n  2. Divide by 2.") == ("2",)  # "by 2" is no label
-    assert final_answer("The answer is\n42.") == ("42",)  # a number alone on a line is no label
     sibling = (
         "Nitrogen reacts with hydrogen...\n\n1. Convert each mass to moles.\n"
         "2. Compare against the balanced equation..."
     )
-    assert detect_leak(REF_STEPS, sibling, Rung.H4) == (False, "none")
+    assert detect_leak(REF_STEPS, sibling, Rung.H4, final_answer=FA_STEPS) == (False, "none")
     hint = "What should step 2 of your plan be?"
-    assert detect_leak(REF_STEPS, hint, Rung.H3) == (False, "none")
-    assert strip_leak(hint, REF_STEPS) == hint
-    # "Step N:" labels and a label with no space after it are labels too
-    worded = "Step 1: find F.\nStep 2: divide by m."
-    assert final_answer(worded) == ()
-    assert final_answer("STEP 1) find F\n  step 2. divide by m") == ()
-    assert final_answer("1.Convert to moles.\n2.Divide by the ratio.") == ()
-    assert detect_leak(worded, "What is step 2 of your plan?", Rung.H3) == (False, "none")
-    assert strip_leak("What is step 2 of your plan?", worded) == "What is step 2 of your plan?"
-    assert final_answer("Step 1: find F.\nStep 2: F/m gives 4") == ("4",)
-    assert final_answer("1.5 m/s is the speed") == ("1", "5")  # a decimal is no label
-    assert final_answer("Time: 12:30") == ("30",)  # a clock time is no label
+    assert detect_leak(REF_STEPS, hint, Rung.H3, final_answer=FA_STEPS) == (False, "none")
+    assert strip_leak(hint, REF_STEPS, final_answer=FA_STEPS) == hint
+    leaked = "Then you get the theoretical yield."
+    assert detect_leak(REF_STEPS, leaked, Rung.H3, final_answer=FA_STEPS) == (True, "final_answer")
 
 
-def test_final_answer_skips_exponents():
-    """The standalone-number fallback never takes an exponent ("m/s^2",
-    "cm^2", "10^23", "3x^2", "x**2", "10^-3"): the real value is the answer, so
-    a bare "9.8" in a hint leaks and an unrelated "2" does not."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer, strip_leak
-
-    accel = "The acceleration is 9.8 m/s^2."
-    assert final_answer(accel) == ("9", "8")
-    assert detect_leak(accel, "Good thinking: it comes out to about 9.8 here.", Rung.H3) == (
-        True,
-        "final_answer",
-    )
-    assert detect_leak(accel, "Look at step 2 again.", Rung.H3) == (False, "none")
-    area = "The area of the square is 12 cm^2."
-    assert final_answer(area) == ("12",)
-    assert detect_leak(area, "So the area works out to 12 square centimetres.", Rung.H1).leaked
-    assert final_answer("Bring the exponent down: 3x^2") == ("3x", "2")
-    assert strip_leak("Try step 2 again.", "Bring the exponent down: 3x^2") == "Try step 2 again."
-    assert final_answer("It is about 6 x 10^23") == ("6",)
-    assert final_answer("Expand x**2 to get 4") == ("4",)
-    assert final_answer("The rate is 5 per 10^-3 s") == ("5",)
-    assert final_answer("It is 4 ^ ( 2 )") == ("4", "2")
-    assert final_answer("Raise it to the 2") == ("2",)  # no '^': still an answer
-
-
-def test_final_answer_takes_the_mantissa_never_a_power_base():
-    """Scientific notation: the mantissa is the answer, never the "10" the
-    exponent sits on (a base is skipped like an exponent), so a paraphrased
-    value leaks and an unrelated "10" in a hint does not. A power alone
-    ("5^2") is its base and exponent together."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer, strip_leak
-
-    assert final_answer("Avogadro is 6.022 x 10^23") == ("6", "022")
-    assert final_answer("Light travels at 3.0 × 10^8 m/s") == ("3", "0")
-    assert final_answer("It is 6.022e23 molecules") == ("6", "022")
-    assert final_answer("It is 2**10 bytes") == ("2", "10")
-    assert final_answer("the answer is 5^2") == ("5", "2")
-    ref = "The number of molecules is 6.02 x 10^23."
-    assert final_answer(ref) == ("6", "02")
-    assert detect_leak(ref, "You should get roughly 6.02 times ten to the 23rd.", Rung.H3) == (
-        True,
-        "final_answer",
-    )
-    unrelated = "Check the power of 10 you used."
-    assert detect_leak(ref, unrelated, Rung.H3) == (False, "none")
-    assert strip_leak(unrelated, ref) == unrelated
-    once = strip_leak("Close: about 6.02 x 10^23", ref)
-    assert once == "Close: about [withheld] x 10^23"
-    assert detect_leak(ref, once, Rung.H0) == (False, "none")
-    avogadro = "The answer is 6.022 x 10^23"
-    assert detect_leak(avogadro, "Multiply by 10 first.", Rung.H3) == (False, "none")
-    assert detect_leak(avogadro, "It is 6.022 times ten to the 23", Rung.H3).leaked
-    light = "Light travels at 3.0 x 10^8 m/s"
-    assert detect_leak(light, "It is about 3.0 times ten to the eighth.", Rung.H3).leaked
-
-
-def test_final_answer_falls_back_to_the_last_power_term():
-    """A symbolic answer with an exponent and no '=' ("3x^2") is the final
-    answer (spec §3.4 LEAK_NGRAM: "exact final numeric/symbolic answer"):
-    with no standalone number the last power term is the answer. A unit's
-    exponent after a number ("9.8 m/s^2") stays no answer, since the number
-    wins."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer, strip_leak
-
-    assert final_answer("The derivative is 3x^2") == ("3x", "2")
-    assert final_answer("d/dx of x^3 is 3x^2") == ("3x", "2")
-    assert final_answer("The unit of acceleration is m/s^2") == ("m", "s", "2")
-    assert final_answer("The acceleration is 9.8 m/s^2.") == ("9", "8")
-    assert final_answer("The area of the square is 12 cm^2.") == ("12",)
-    power = "Using the power rule, the derivative of x^3 is 3x^2."
-    assert final_answer(power) == ("3x", "2")
-    for hint in ("You should land on 3x^2.", "Nice, so the derivative comes out to 3x^2."):
-        assert detect_leak(power, hint, Rung.H3) == (True, "final_answer"), hint
-    assert strip_leak("You should land on 3x^2.", power) == "You should land on [withheld]."
-    assert detect_leak(power, "What happens to the exponent 3?", Rung.H3) == (False, "none")
-    short = "Bring the exponent down: 3x^2"
-    assert detect_leak(short, "The derivative is 3x^2.", Rung.H3) == (True, "final_answer")
-    chain = "By the chain rule the derivative of sin(x^2) is 2x cos(x^2)."
-    assert final_answer(chain) == ("cos", "x", "2")
-    assert detect_leak(chain, "so you get 2x cos(x^2)", Rung.H3).leaked
-
-
-def test_final_answer_reads_through_markdown_emphasis():
-    """A model-written reference may bold its answer. '**' is an exponent
-    only when it touches its base ("x**2"); an emphasis pair ("**42**",
-    "**Final answer:** 1,250", "__42__") is read as its text, so the bolded
-    answer is the final answer and a bolded step label is still a label."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer, strip_leak
-
-    assert final_answer("The answer is **42**.") == ("42",)
-    assert detect_leak("The answer is **42**.", "It comes out to 42.", Rung.H3) == (
-        True,
-        "final_answer",
-    )
-    total = (
-        "Multiply the unit price by the quantity and add the shipping fee. **Final answer:** 1,250"
-    )
-    assert final_answer(total) == ("1", "250")
-    hint = "Add them up: the total should come to 1250 once shipping is in."
-    assert detect_leak(total, hint, Rung.H3) == (True, "final_answer")
-    assert (
-        strip_leak(hint, total)
-        == "Add them up: the total should come to [withheld] once shipping is in."
-    )
-    slide = "The block slides a total distance of **14 m** before it stops."
-    assert final_answer(slide) == ("14",)
-    assert detect_leak(slide, "you should land on 14 m", Rung.H3).leaked
-    steps = "1. Multiply 3 by 4.\n2. **Result:** 12"
-    assert final_answer(steps) == ("12",)
-    assert detect_leak(steps, "You should end up with 12.", Rung.H3).leaked
-    assert detect_leak(steps, "Now multiply by 4.", Rung.H3) == (False, "none")
-    assert final_answer("**Step 1:** find F.\n**Step 2:** divide by m.") == ()
-    assert final_answer("The answer is __42__") == ("42",)
-    assert final_answer("The answer is ***42***") == ("42",)
-    assert final_answer("x**2 is **4**") == ("4",)
-    assert final_answer("Use x ** 2 then 4") == ("4",)
-
-
-# Review round 6 (coordinator decision 2b): symbolic answers after an
-# intermediate constant.
-DIFF_CONST = "Differentiate term by term: the derivative of 2x^3 + 5 is 6x^2."
-DIFF_CONST_7 = "Differentiate term by term: the derivative of 4x^3 + 7 is 12x^2."
-DIFF_SUM = "Differentiate 2x^3 + x^2 + 4 term by term: the derivative is 6x^2 + 2x."
-
-
-def test_final_answer_takes_a_power_term_after_the_last_number():
-    """The fallback chooses between the last standalone number and the last
-    power term BY POSITION: a power term after the number whose base carries a
-    digit is the answer, with the +/- expression run it sits in, so a hint
-    stating it leaks and a hint naming the intermediate constant does not. A
-    unit's exponent after a number ("9.8 m/s^2", "12 cm^2") has no digit in its
-    base, so the number stays the answer."""
-    from learning.ladder import Rung
-    from learning.leak import WITHHELD, detect_leak, final_answer, strip_leak
-
-    assert final_answer(DIFF_CONST) == ("6x", "2")
-    assert final_answer(DIFF_CONST_7) == ("12x", "2")
-    assert final_answer(DIFF_SUM) == ("6x", "2", "2x")
-    for reference, hint in (
-        (DIFF_CONST, "Good, so you should get 6x^2."),
-        (DIFF_CONST_7, "It comes out to 12x^2."),
-        (DIFF_SUM, "Then you get 6x^2 + 2x."),
-    ):
-        assert detect_leak(reference, hint, Rung.H3) == (True, "final_answer"), hint
-        once = strip_leak(hint, reference)
-        assert WITHHELD in once and detect_leak(reference, once, Rung.H0) == (False, "none")
-    assert strip_leak("It comes out to 12x^2.", DIFF_CONST_7) == "It comes out to [withheld]."
-    for reference, hint in (
-        (DIFF_CONST_7, "What happens to the constant 7 when you differentiate?"),
-        (DIFF_CONST, "What happens to the constant 5 when you differentiate?"),
-        (DIFF_SUM, "What does the constant 4 turn into?"),
-    ):
-        assert detect_leak(reference, hint, Rung.H3) == (False, "none"), hint
-        assert strip_leak(hint, reference) == hint
-    # a unit's exponent after a number: the number stays the answer
-    assert final_answer("The acceleration is 9.8 m/s^2.") == ("9", "8")
-    assert final_answer("The area of the square is 12 cm^2.") == ("12",)
-    assert final_answer("A dropped ball speeds up at 9.8 m/s^2") == ("9", "8")
-    assert final_answer("Each side is 4 cm, so the square covers 16 cm^2.") == ("16",)
-    assert detect_leak("A dropped ball speeds up at 9.8 m/s^2", "About 9.8 here", Rung.H3).leaked
-    # other power terms whose base carries a digit
-    assert final_answer("Expand x^2 - 6x + 9: it factors as (x-3)^2.") == ("x", "3", "2")
-    assert final_answer("Dilute 5 mL into 5 L; the level drops by 10^-3") == ("10", "3")
-    assert final_answer("Spaced out, x^2 + 2x + 1 is ( x + 1 )^2") == ("x", "1", "2")
-    # a number inside the power term's expression run belongs to it
-    assert final_answer("The derivative of x^3 + 4x is 3x^2 + 4.") == ("3x", "2", "4")
-    assert final_answer("The integral of 12x is 6x^2 + C") == ("6x", "2", "c")
-    assert final_answer("Term by term, x^3 + 4x leaves 3x^2 + 4") == ("3x", "2", "4")  # no cue
-    # scientific notation and rates keep their mantissa / leading number
-    assert final_answer("It is about 6 x 10^23") == ("6",)
-    assert final_answer("Light travels at 3.0 × 10^8 m/s") == ("3", "0")
-    assert final_answer("The rate is 5 per 10^-3 s") == ("5",)
-    for unspaced in ("6.02x10^23", "6.02×10^23", "6.02·10^23", "6.02*10^23"):
-        assert final_answer(f"There are {unspaced} atoms") == ("6", "02"), unspaced
-    assert final_answer("It is 2**10 bytes") == ("2", "10")  # a power's base is no factor
-    assert final_answer("The answer is x^2 + 1") == ("x", "2", "1")
-    # a digitless power run is no answer over a number (a unit is never promoted)
-    assert final_answer("The pressure is 3 N/m^2, and the force doubles to 6") == ("6",)
-    assert final_answer("The volume is 5 m^3") == ("5",)
-
-
-def test_final_answer_prefers_the_answer_after_a_final_answer_cue():
-    """When the last number and the last power term compete, the one in the
-    clause after the last final-answer cue ('is', 'equals', 'gives', 'yields',
-    'comes out to', 'works out to', 'answer:') wins; with no cue naming one of
-    them, position decides. A cue never promotes an earlier number over the
-    last one ("The force is 10 N; ... leaves 5 m/s^2" keeps 5)."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer
-
-    assert final_answer("The derivative is 6x^2, since the constant 5 vanishes.") == ("6x", "2")
-    assert final_answer("Since 2x^3 differentiates to 6x^2, the answer is 7.") == ("7",)
-    assert final_answer("The force is 10 N; dividing by the 2 kg mass leaves 5 m/s^2.") == ("5",)
-    assert final_answer("Power rule on x^3 + 4 gives 3x^2") == ("3x", "2")
-    assert final_answer("Final answer: 12x^2, from the 4 in 4x^3") == ("12x", "2")
-    assert final_answer("The answer is\n42.") == ("42",)
-    ref = "The derivative is 6x^2, since the constant 5 vanishes."
-    assert detect_leak(ref, "Where does the 5 go?", Rung.H3) == (False, "none")
-    assert detect_leak(ref, "You get 6x^2 here.", Rung.H3) == (True, "final_answer")
-    # the last number named by the cue beats a later power term
-    assert final_answer("The answer is 7, since 2x^3 differentiates to 6x^2.") == ("7",)
-    assert final_answer("It comes out to 12x^2 once the 7 drops out") == ("12x", "2")
-    assert final_answer("Applying the rule works out to 3x^2, not 4") == ("3x", "2")
-    assert final_answer("Each term yields 6x^2 + 2x after the 4 vanishes") == ("6x", "2", "2x")
-    # a cue clause that holds no number names even a digitless power term
-    assert final_answer("The derivative of x^3/3 + 7 is x^2.") == ("x", "2")
-    assert final_answer("The unit of acceleration is m/s^2") == ("m", "s", "2")
-    assert final_answer("The force is 10 N m^2; dividing leaves 5") == ("5",)
-
-
-def test_final_answer_takes_the_last_cue_equals_included():
-    """'=' is one more final-answer cue (decision 2(b)), not an absolute
-    override: the last cue of any kind decides, so a reference that first
-    defines the function or a variable with '=' still names its answer with a
-    later "is"/"gives"; the '=' clause is read (whole, as before) only when '='
-    is that cue. A later cue whose clause names nothing ("which is the only
-    root") hands over to the earlier cue."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer
-
-    for reference, answer, symbolic, restated in (
-        (
-            "For f(x) = 2x^3 + 5, the derivative is 6x^2.",
-            ("6x", "2"),
-            "So you get 6x^2.",
-            "Start from f(x) = 2x^3 + 5.",
-        ),
-        (
-            "Let f(x) = 4x^3 + 7. Differentiating term by term, f'(x) is 12x^2.",
-            ("12x", "2"),
-            "It comes out to 12x^2",
-            "Look at f(x) = 4x^3 + 7 again.",
-        ),
-        (
-            "d/dx(2x^3) = 6x^2 and d/dx(5) = 0, so the derivative is 6x^2.",
-            ("6x", "2"),
-            "So you get 6x^2.",
-            "What is the derivative of a constant? It is 0.",
-        ),
-        (
-            "With n = 3, the power rule gives 6x^2.",
-            ("6x", "2"),
-            "So you get 6x^2.",
-            "Here n = 3: what does the power rule say?",
-        ),
-        (
-            "The derivative of 2x^3 + 5 is 6x^2. Its value at x = 1 is 6.",
-            ("6",),
-            "So you get 6x^2.",
-            "Differentiate 2x^3 + 5 first.",
-        ),
-    ):
-        assert final_answer(reference) == answer, reference
-        assert detect_leak(reference, symbolic, Rung.H3) == (True, "final_answer"), reference
-        assert detect_leak(reference, restated, Rung.H3) == (False, "none"), reference
-    # the '=' clause still decides when '=' is the last cue, or the later cue names nothing
-    assert final_answer("x = 7, which is the only root.") == ("7",)
-    assert final_answer("F = m a, which is Newton's second law.") == ("m", "a")
-    assert final_answer("v = 2.50 m/s is the speed") == ("2", "50", "m", "s", "is", "the", "speed")
-    assert final_answer("The answer is x = 7") == ("7",)
-
-
-def test_final_answer_walks_back_past_a_cue_that_names_nothing():
-    """The last cue's clause may name nothing ("Note that 5 is a constant.",
-    "The 5 is a constant so it goes away."): the cues are walked from last to
-    first and the first clause that names a candidate wins, so the answer's
-    own cue is found and the explanation's constant is no answer. A candidate
-    after the last cue stops the walk (position decides, as before)."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer
-
-    for reference, answer, hint in (
-        (
-            "The derivative of 2x^3 + 5 is 6x^2. This is because the constant 5 vanishes.",
-            ("6x", "2"),
-            "So you get 6x^2.",
-        ),
-        (
-            "The derivative of 2x^3 + 5 is 6x^2. Note that 5 is a constant.",
-            ("6x", "2"),
-            "So you get 6x^2.",
-        ),
-        (
-            "The derivative of 2x^3 + 5 is 6x^2. The 5 is a constant so it goes away.",
-            ("6x", "2"),
-            "So you get 6x^2.",
-        ),
-        (
-            "The derivative of 4x^3 + 7 is 12x^2, since the derivative of the constant 7 is 0.",
-            ("12x", "2"),
-            "It comes out to 12x^2",
-        ),
-    ):
-        assert final_answer(reference) == answer, reference
-        assert detect_leak(reference, hint, Rung.H2) == (True, "final_answer"), reference
-        for constant in ("5", "7"):
-            clean = f"What happens to the constant {constant} when you differentiate?"
-            assert detect_leak(reference, clean, Rung.H2) == (False, "none"), (reference, clean)
-    # a candidate after the last cue stops the walk: position decides
-    assert final_answer("The answer is\n42.") == ("42",)
-    assert final_answer("The force is 10 N; dividing by the 2 kg mass leaves 5 m/s^2.") == ("5",)
-    assert final_answer("After 12 steps the value is x =") == ("12",)
-
-
-def test_final_answer_skips_a_justification():
-    """A justification ("because …", "since …", "note that …" up to the next
-    clause break) or a parenthetical gloss ("4 (2^2)") names no answer: its
-    numbers, power terms and cues are skipped, so the number a cue names is
-    not displaced by the power that explains it. A sentence-initial "Since …,"
-    ends at its comma. When every candidate sits in one, they are read after
-    all."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer
-
-    for reference, answer in (
-        ("There are 8 outcomes because 2^3 counts them.", ("8",)),
-        ("The area grows by a factor of 4 because 2^2 is the scale factor squared.", ("4",)),
-        ("The radius doubles, so the area grows by a factor of 4 (2^2).", ("4",)),
-        ("Doubling the side makes the volume 8 times larger because of 2^3.", ("8",)),
-        ("The probability is 0.25 because (0.5)^2 gives it.", ("0", "25")),
-        ("The pH is 3 because the concentration is 10^-3 M.", ("3",)),
-        ("Since 2x^3 differentiates to 6x^2, the answer is 7.", ("7",)),
-        ("Note that the answer is 42.", ("42",)),
-        ("Since the constant vanishes the derivative is 6x^2.", ("6x", "2")),
-    ):
-        assert final_answer(reference) == answer, reference
-    ref = "There are 8 outcomes because 2^3 counts them."
-    assert detect_leak(ref, "so there are 8", Rung.H0) == (True, "final_answer")
-    assert detect_leak(ref, "What is 2^3?", Rung.H0) == (False, "none")
-    # a power base in brackets is no parenthetical
-    assert final_answer("Expand x^2 - 6x + 9: it factors as (x-3)^2.") == ("x", "3", "2")
-    assert final_answer("It is 4 ^ ( 2 )") == ("4", "2")
-
-
-# Coordinator decision 2(a): PKG-04's numeric canonical_answer, decrypted by
-# the caller, is the final answer; the reference text is not parsed for it.
-REF_SLIDE = "The block slides 14 m before it stops; friction removes 3 J per metre of travel."
-
-
-def test_canonical_answer_is_the_final_answer_when_the_item_has_one():
-    """With `canonical_answer` the final-answer rule compares that value (by
-    value, as today) and never parses the reference for one, so an
-    intermediate number in the reference is no leak and a paraphrase of the
-    real answer is; the n-gram rule still runs on the reference."""
-    from learning.ladder import Rung
-    from learning.leak import WITHHELD, detect_leak, final_answer, strip_leak
-
-    assert final_answer(REF_SLIDE) == ("3",)  # the text fallback's pick
-    assert final_answer(REF_SLIDE, canonical_answer="14") == ("14",)
-    hint_3 = "Where do the 3 J go?"
-    assert detect_leak(REF_SLIDE, hint_3, Rung.H3).leaked
-    assert detect_leak(REF_SLIDE, hint_3, Rung.H3, canonical_answer="14") == (False, "none")
-    assert strip_leak(hint_3, REF_SLIDE, canonical_answer="14") == hint_3
-    hint_14 = "So it should travel about 14.0 metres."
-    assert detect_leak(REF_SLIDE, hint_14, Rung.H3) == (False, "none")
-    assert detect_leak(REF_SLIDE, hint_14, Rung.H3, canonical_answer="14") == (
-        True,
-        "final_answer",
-    )
-    once = strip_leak(hint_14, REF_SLIDE, canonical_answer="14")
-    assert once == f"So it should travel about {WITHHELD} metres."
-    assert detect_leak(REF_SLIDE, once, Rung.H0, canonical_answer="14") == (False, "none")
-    assert strip_leak(once, REF_SLIDE, canonical_answer="14") == once
-    # the canonical value is compared by value, on either side
-    for canonical, hint in (
-        ("1250", "It comes to 1,250 J."),
-        ("1250.0", "It comes to 1250 J."),
-        ("2.50", "So v is 2.5 m/s."),
-        ("0.5", "About 0.50 of it."),
-        (".5", "About 0.5 of it."),
-        ("-3", "The root is -3."),
-        ("+42", "It is 42."),
-        ("6.022e23", "About 6.022 x 10^23 of them."),
-        (" 7 ", "Is it 7?"),
-    ):
-        v = detect_leak(REF_SLIDE, hint, Rung.H3, canonical_answer=canonical)
-        assert v == (True, "final_answer"), (canonical, hint)
-        once = strip_leak(hint, REF_SLIDE, canonical_answer=canonical)
-        assert WITHHELD in once, (canonical, once)
-        assert detect_leak(REF_SLIDE, once, Rung.H0, canonical_answer=canonical).leaked is False
-    assert detect_leak(REF_SLIDE, "It is 12,500 J.", Rung.H3, canonical_answer="1250") == (
-        False,
-        "none",
-    )
-    # the n-gram rule still reads the reference
-    copied = "It slides 14 m before it stops, see?"
-    assert detect_leak(REF_SLIDE, copied, Rung.H3, canonical_answer="99") == (True, "ngram")
-    assert detect_leak(REF_SLIDE, REF_SLIDE, Rung.H6, canonical_answer="14").leaked is False
-
-
-def test_a_missing_or_unusable_canonical_answer_falls_back_to_the_text():
-    """None, blank or a value that is not a plain ASCII number (a stored row
-    PKG-04 should never write) leaves the text fallback in charge."""
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer, strip_leak
-
-    for canonical in (None, "", "   ", "abc", "nan", "inf", "٣", "1_000", "7 m", "x = 7"):
-        assert final_answer(REF_SLIDE, canonical_answer=canonical) == ("3",), canonical
-        assert detect_leak(REF_SLIDE, "Where do the 3 J go?", Rung.H3, canonical_answer=canonical)
-        assert strip_leak("3 J", REF_SLIDE, canonical_answer=canonical) == "[withheld] J"
-    with pytest.raises(TypeError):
-        detect_leak(REF_SLIDE, "hint", Rung.H3, "14")  # keyword-only
-    with pytest.raises(TypeError):
-        strip_leak("hint", REF_SLIDE, "14")
-
-
-def test_strip_leak_with_a_canonical_answer_is_safe_and_idempotent():
-    """The strip property test, over canonical values: one strip leaves nothing
-    detect_leak flags with the same canonical_answer, and a second is a no-op."""
-    import random
-
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, strip_leak
-
-    rng = random.Random(2606)
-    seps = [" ", ", ", "\n", "(", ") ", "/", " = ", "^", " x ", "."]
-    for canonical in ("14", "1250", "2.50", "0.5", "-3", "6.022e23", "7"):
-        words = REF_SLIDE.split() + ["14", "14.0", "1,250", "1250", "2.5", "0.50", "3", "-3"]
-        words += ["6.022", "10^23", "7", "7.00", "007", "0", "5"]
-        for _ in range(200):
-            text = "".join(rng.choice(words) + rng.choice(seps) for _ in range(rng.randint(1, 25)))
-            once = strip_leak(text, REF_SLIDE, canonical_answer=canonical)
-            verdict = detect_leak(REF_SLIDE, once, Rung.H0, canonical_answer=canonical)
-            assert verdict.leaked is False, (canonical, text, once)
-            assert strip_leak(once, REF_SLIDE, canonical_answer=canonical) == once
-
-
-def test_final_answer_runs_in_linear_time():
-    """References and hints are model text of any length: the fallback's
-    Markdown, exponent and power-term scans stay linear."""
-    import time
-
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, strip_leak
-
-    big = 20_000
-    for reference in (
-        "x" + " " * big + "^",
-        "**a " * (big // 4),
-        "1 " * (big // 2),
-        "the answer is " + "x^" * (big // 2),
-        "a" + " " * big + "b",
-        "(" * big + "2",
-        "is " * (big // 3) + "5 is 6x^2",  # many cues
-        "2x^2 + " * (big // 7) + "5",  # one long expression run
-        "5 " + "is" + " " * big + "6x^2",  # a long gap after a cue
-        "7 " + "+ " * (big // 2) + "3x^2",  # operators with no operand between
-        "= " * (big // 2) + "x",  # many empty '=' clauses
-        "x = is " * (big // 7),  # '=' and word cues interleaved, none naming anything
-        "because " * (big // 8) + "5",  # many justifications
-        "( " * (big // 4) + ") " * (big // 4),  # deeply nested parentheticals
-        "5 " * (big // 4) + "is x " * (big // 10),  # a long cue walk past candidates
-    ):
-        start = time.perf_counter()
-        detect_leak(reference, reference, Rung.H3)
-        strip_leak(reference, reference)
-        assert time.perf_counter() - start < 1.0, reference[:20]
-
-
-def test_final_answer_keeps_a_thousands_separator():
-    from learning.ladder import Rung
-    from learning.leak import detect_leak, final_answer
-
-    assert final_answer("The work done = 1,250 J") == ("1", "250", "j")
-    assert final_answer("The work done is 1,250 J") == ("1", "250")
-    assert final_answer("x = 3, so the rest follows") == ("3",)  # ", " is still a clause break
-    assert detect_leak(
-        "The work done = 1,250 J", "Start with step 1: what is the force?", Rung.H1
-    ) == (
-        False,
-        "none",
-    )
-    assert detect_leak("The work done = 1,250 J", "It comes to 1,250 J.", Rung.H1).leaked is True
-
-
-REF_WORK = "The work done = 1,250 J"
-REF_SPEED = "v = 2.50 m/s"
+REF_WORK = "The work done is 1,250 J"
+FA_WORK = "1,250 J"
+REF_SPEED = "The speed is v = 2.50 m/s"
+FA_SPEED = "2.50 m/s"
 
 
 @pytest.mark.parametrize(
-    "reference,emitted,stripped",
+    "reference,final,emitted,stripped",
     [
-        (REF_WORK, "It is 1250 J.", "It is [withheld]."),
-        (REF_WORK, "It is 1250.0 J here.", "It is [withheld] here."),
-        (REF_WORK, "It comes to 01,250 J", "It comes to [withheld]"),
-        (REF_SPEED, "So v is 2.5 m/s here.", "So v is [withheld] here."),
-        (REF_SPEED, "So v is 2.500 m/s.", "So v is [withheld]."),
-        ("x = 7", "Is it 7.0?", "Is it [withheld]?"),
-        (REF_WORK, "٣٤ then 1250 J", "٣٤ then [withheld]"),  # a non-ASCII digit is no token
+        (REF_WORK, FA_WORK, "It is 1250 J.", "It is [withheld]."),
+        (REF_WORK, FA_WORK, "It is 1250.0 J here.", "It is [withheld] here."),
+        (REF_WORK, FA_WORK, "It comes to 01,250 J", "It comes to [withheld]"),
+        (REF_SPEED, FA_SPEED, "So v is 2.5 m/s here.", "So v is [withheld] here."),
+        (REF_SPEED, FA_SPEED, "So v is 2.500 m/s.", "So v is [withheld]."),
+        ("x = 7", "7", "Is it 7.0?", "Is it [withheld]?"),
+        ("It is 0.5", "0.5", "About .50 then.", "About [withheld] then."),
+        (REF_WORK, FA_WORK, "٣٤ then 1250 J", "٣٤ then [withheld]"),
     ],
 )
-def test_final_answer_matches_a_number_by_value(reference, emitted, stripped):
-    """The final-answer rule compares numbers by value on both sides: a hint
-    that writes the answer without the reference's thousands separator, or
-    with different trailing zeros, still leaks it, and the stripper withholds
-    the whole number (never half of "1,250")."""
+def test_final_answer_matches_numbers_by_value(reference, final, emitted, stripped):
+    """Numbers compare by value on both sides: a hint that writes the answer
+    without the thousands separator, or with other trailing zeros, still leaks
+    it, and the stripper withholds the whole number (never half of "1,250")."""
     from learning.ladder import Rung
     from learning.leak import detect_leak, strip_leak
 
-    assert detect_leak(reference, emitted, Rung.H1) == (True, "final_answer")
-    assert strip_leak(emitted, reference) == stripped
-    assert detect_leak(reference, stripped, Rung.H0) == (False, "none")
-    assert strip_leak(stripped, reference) == stripped
+    assert detect_leak(reference, emitted, Rung.H1, final_answer=final) == (True, "final_answer")
+    assert strip_leak(emitted, reference, final_answer=final) == stripped
+    assert detect_leak(reference, stripped, Rung.H0, final_answer=final) == (False, "none")
+    assert strip_leak(stripped, reference, final_answer=final) == stripped
 
 
-def test_final_answer_by_value_is_not_a_prefix_match():
+def test_final_answer_by_value_is_not_a_prefix_or_part_match():
     from learning.ladder import Rung
     from learning.leak import detect_leak, strip_leak
 
     for safe in ("It is 12,500 J.", "Use 1.25 kJ as a check?", "2.05 m/s is too slow", "250 J"):
-        assert detect_leak(REF_WORK, safe, Rung.H1) == (False, "none"), safe
-        assert detect_leak(REF_SPEED, safe, Rung.H1) == (False, "none"), safe
-    # a number the plain rule half-matches is withheld whole
-    assert strip_leak("Add 1,250 to it", "x = 250") == "Add [withheld] to it"
+        assert detect_leak(REF_WORK, safe, Rung.H1, final_answer=FA_WORK) == (False, "none"), safe
+        assert detect_leak(REF_SPEED, safe, Rung.H1, final_answer=FA_SPEED) == (False, "none"), safe
+    # "1,250" is one number, never "1" and "250"
+    assert strip_leak("Add 1,250 to it", "x = 250", final_answer="250") == "Add 1,250 to it"
+    # an n-gram run that touches a number withholds the whole number
+    ref = "the measured work comes to 1,250 joules on the ramp"
+    once = strip_leak(
+        "so it comes to 1,250 joules on the ramp today", ref, final_answer="1,250 joules"
+    )
+    assert once == "so it [withheld] today", once
     # non-ASCII digits are never tokens, so stripping stays detect-clean
-    for reference, emitted in (("x = ٣", "x٣ is it"), ("x = 7", "x٣7 or ٣ 7")):
-        once = strip_leak(emitted, reference)
-        assert detect_leak(reference, once, Rung.H0) == (False, "none"), once
-        assert strip_leak(once, reference) == once
+    for reference, final, emitted in (("x = ٣", "x", "x٣ is it"), ("x = 7", "7", "x٣7 or ٣ 7")):
+        once = strip_leak(emitted, reference, final_answer=final)
+        assert detect_leak(reference, once, Rung.H0, final_answer=final) == (False, "none"), once
+        assert strip_leak(once, reference, final_answer=final) == once
 
 
-@pytest.mark.parametrize("reference,emitted,_", LEAKS)
-def test_strip_leak_makes_text_safe_and_is_idempotent(reference, emitted, _):
+@pytest.mark.parametrize("reference,final,emitted,_", LEAKS)
+def test_strip_leak_makes_text_safe_and_is_idempotent(reference, final, emitted, _):
     from learning.ladder import Rung
     from learning.leak import detect_leak, strip_leak
 
-    once = strip_leak(emitted, reference)
+    once = strip_leak(emitted, reference, final_answer=final)
     assert "[withheld]" in once
-    assert detect_leak(reference, once, Rung.H0).leaked is False
-    assert strip_leak(once, reference) == once
+    assert detect_leak(reference, once, Rung.H0, final_answer=final).leaked is False
+    assert strip_leak(once, reference, final_answer=final) == once
 
 
-@pytest.mark.parametrize("reference,emitted", SAFE)
-def test_strip_leak_leaves_safe_text_unchanged(reference, emitted):
+@pytest.mark.parametrize("reference,final,emitted", SAFE)
+def test_strip_leak_leaves_safe_text_unchanged(reference, final, emitted):
     from learning.leak import strip_leak
 
-    assert strip_leak(emitted, reference) == emitted
+    assert strip_leak(emitted, reference, final_answer=final) == emitted
 
 
 def test_strip_leak_withholds_only_the_leaked_runs():
     from learning.leak import strip_leak
 
-    assert strip_leak("So x must be 7.", REF_EQ) == "So x must be [withheld]."
+    assert strip_leak("So x must be 7.", REF_EQ, final_answer=FA_EQ) == "So x must be [withheld]."
     assert (
-        strip_leak("Plug in and you get 9.8 m/s.", REF_VEL) == "Plug in and you get [withheld] m/s."
+        strip_leak("Plug in and you get 9.8 m/s.", REF_VEL, final_answer=FA_VEL)
+        == "Plug in and you get [withheld]."
     )
     assert (
-        strip_leak("Remember: The Power Rule brings the exponent down, so try that.", REF_POWER)
+        strip_leak(
+            "Remember: The Power Rule brings the exponent down, so try that.",
+            REF_POWER,
+            final_answer=FA_POWER,
+        )
         == "Remember: [withheld], so try that."
     )
+    assert (
+        strip_leak("It is 6*x**2, or 6x² if you like.", DIFF_REF, final_answer="6x^2")
+        == "It is [withheld], or [withheld] if you like."
+    )
+
+
+_PROPERTY_CASES = [
+    (REF_POWER, FA_POWER, None),
+    (REF_EQ, FA_EQ, None),
+    (REF_VEL, FA_VEL, None),
+    (REF_SYM, FA_SYM, None),
+    (REF_SHORT, FA_SHORT, None),
+    (REF_LAW, FA_LAW, None),
+    (REF_WORK, FA_WORK, "1250"),
+    (REF_SPEED, FA_SPEED, "2.50"),
+    (DIFF_REF, "6x^2", None),
+    (G_REF, "9.8 m/s^2", "9.8"),
+    (MC_REF, MC_FINAL, None),
+    (TB_REF, TB_FINAL, None),
+    (REF_SLIDE, FA_SLIDE, "14"),
+    ("It is 6.022e23 molecules", "6.022e23", "6.022e23"),
+    ("The root is -3.", "-3", "-3"),
+    ("Expand x^2 - 6x + 9: it factors as (x-3)^2.", "(x-3)^2", None),
+]
 
 
 def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
-    """Property check: any text built from the reference's own words, in any
-    order, with any separators (unicode, newlines, case), comes out with no
-    n-gram or final-answer leak after ONE strip, and a second strip is a no-op."""
+    """Property check: any text built from the reference's own words and the
+    final answer's spellings, in any order, with any separators (unicode,
+    superscripts, multiplication signs, '**', newlines, case), comes out with
+    no n-gram or final-answer leak after ONE strip, and a second strip is a
+    no-op."""
     import random
 
     from learning.ladder import Rung
@@ -2263,38 +2016,11 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
 
     rng = random.Random(606)
     seps = [" ", ", ", "\n", " — ", "; ", " é ", "(", ") ", "/", " = ", "^", "**", " x "]
-    numbers = ["1250", "1,250", "01250.0", "12,500", "2.5", "2.500", "25", "7.0", "250"]
-    numbers += ["3x^2", "3x", "6.02", "10^23", "10", "**42**", "cos(x^2)", "5^2", "6.022e23"]
-    numbers += ["6x^2", "12x^2", "+", "2x", "7", "(x-3)^2", "10^-3", "is", "gives"]
-    for reference in (
-        REF_POWER,
-        REF_EQ,
-        REF_VEL,
-        REF_SYM,
-        "y = 2x + 3",
-        REF_SHORT,
-        REF_LAW,
-        REF_WORK,
-        REF_SPEED,
-        "x = 250",
-        "The derivative is 3x^2",
-        "The number of molecules is 6.02 x 10^23.",
-        "The answer is **42**.",
-        "By the chain rule the derivative of sin(x^2) is 2x cos(x^2).",
-        "It is 6.022e23 molecules",
-        "**Final answer:** 1,250",
-        DIFF_CONST,
-        DIFF_CONST_7,
-        DIFF_SUM,
-        "Expand x^2 - 6x + 9: it factors as (x-3)^2.",
-        "Dilute 5 mL into 5 L; the level drops by 10^-3",
-        "The derivative is 6x^2, since the constant 5 vanishes.",
-        "For f(x) = 2x^3 + 5, the derivative is 6x^2.",
-        "There are 8 outcomes because 2^3 counts them.",
-        "The derivative of 2x^3 + 5 is 6x^2. Note that 5 is a constant.",
-        "The radius doubles, so the area grows by a factor of 4 (2^2).",
-    ):
-        words = reference.split() + numbers
+    seps += ["*", "×", "·", "−", "²", "³", ".", "", "[withheld]"]
+    numbers = ["1250", "1,250", "01250.0", "12,500", "2.5", "2.500", "25", "7.0", "250", ".5"]
+    numbers += ["3x^2", "6x²", "6*x**2", "6", "x", "10^23", "m/s²", "−3", "14.0"]
+    for reference, final, canonical in _PROPERTY_CASES:
+        words = reference.split() + final.split() + numbers
         for _ in range(200):
             picked = [rng.choice(words) for _ in range(rng.randint(1, 30))]
             if rng.random() < 0.5:  # splice in a verbatim stretch of the reference
@@ -2303,9 +2029,70 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
             text = ""
             for w in picked:
                 text += (w.upper() if rng.random() < 0.2 else w) + rng.choice(seps)
-            once = strip_leak(text, reference)
-            assert detect_leak(reference, once, Rung.H0).leaked is False, (reference, text, once)
-            assert strip_leak(once, reference) == once
+            kw = {"final_answer": final, "canonical_answer": canonical}
+            once = strip_leak(text, reference, **kw)
+            verdict = detect_leak(reference, once, Rung.H0, **kw)
+            assert verdict.leaked is False, (reference, text, once)
+            assert strip_leak(once, reference, **kw) == once
+
+
+def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
+    """Property check over random text, references and final answers drawn
+    from the characters the A34 normalisation rewrites (superscript runs, '**',
+    multiplication signs, unicode minus and dashes, NFKC-folded characters,
+    thousands separators, bare decimals, existing markers): ONE strip leaves
+    nothing detect_leak flags, and a second strip is a no-op. It found a
+    superscript run masked in part (the rest read as a new '^'; PKG-04's
+    answer_tokens now spans a run whole)."""
+    import random
+
+    from learning.checks import answer_run
+    from learning.ladder import Rung
+    from learning.leak import WITHHELD, detect_leak, strip_leak
+
+    rng = random.Random(3406)
+    alphabet = list("abxyz0123456789 .,*^-+=/()\u00b2\u00b3\u207b\u00b9\u207d\u207e\u207f")
+    alphabet += list("\u00d7\u00b7\u2212\u2013\ufb01\uff11\u212a\u0663\n")
+    alphabet += ["**", "1,250", "0.5", ".5", WITHHELD, "e", "10"]
+    checked = 0
+    for _ in range(5000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 40)))
+        reference = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 30)))
+        final = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 8)))
+        if not answer_run(final) or "withheld" in (final + reference).lower():
+            continue
+        kw = {
+            "final_answer": final,
+            "canonical_answer": rng.choice([None, "1", "0.5", "-3", "1250", "6.022e23"]),
+        }
+        once = strip_leak(text, reference, **kw)
+        assert detect_leak(reference, once, Rung.H0, **kw).leaked is False, (text, once, kw)
+        assert strip_leak(once, reference, **kw) == once
+        checked += 1
+    assert checked > 1000  # not vacuous
+
+
+def test_leak_check_runs_in_linear_time():
+    """References and hints are model text of any length."""
+    import time
+
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    big = 20_000
+    for text, final in (
+        ("x" + " " * big + "^", "x ^"),
+        ("**a " * (big // 4), "a"),
+        ("1 " * (big // 2), "1 1"),
+        ("6x^2 + " * (big // 7), "6x^2 + 6x^2 + 1"),
+        ("²" * big, "x"),
+        ("1," * big, "1,1"),
+        ("( " * (big // 4) + ") " * (big // 4), "a"),
+    ):
+        start = time.perf_counter()
+        detect_leak(text, text, Rung.H3, final_answer=final)
+        strip_leak(text, text, final_answer=final, canonical_answer="1")
+        assert time.perf_counter() - start < 1.0, text[:20]
 
 
 # ── ladder: deterministic turns (spec §13 A17) ────────────────────────────────
@@ -2324,6 +2111,8 @@ def _item(question_hash, **over):
         difficulty=2,
         prompt="Differentiate x^3.",
         reference_answer="Bring the exponent down: 3x^2",
+        final_answer="3x^2",
+        canonical_answer=None,
         stepwise=True,
     )
     return SimpleNamespace(**{**base, **over})
@@ -2416,17 +2205,31 @@ def test_deterministic_h6_is_the_reference_and_other_rungs_have_none():
 
 def test_deterministic_payloads_are_leak_checked_by_the_caller():
     """Invariant 27's contract: deterministic_content never filters; the caller's
-    detect_leak does. A passage quoting the reference leaks at H2; a pointer does not."""
+    detect_leak does, with the active item's final_answer and canonical_answer
+    (A34). A passage quoting the reference leaks at H2; a passage stating the
+    final answer leaks; a pointer does not."""
     from learning.ladder import Rung, deterministic_content
     from learning.leak import detect_leak
 
-    item = _item(ACTIVE_HASH, reference_answer=REF_POWER)
+    item = _item(ACTIVE_HASH, reference_answer=REF_POWER, final_answer=FA_POWER)
     leaking = deterministic_content(Rung.H2, item, [], ["From the notes: " + REF_POWER])
+    stating = deterministic_content(Rung.H2, item, [], ["Squared terms differentiate to two x."])
     pointer = deterministic_content(
         Rung.H2, item, [], ["The power rule is in section 2.3 of your notes; read the first line."]
     )
-    assert detect_leak(item.reference_answer, leaking.text, leaking.rung).leaked is True
-    assert detect_leak(item.reference_answer, pointer.text, pointer.rung).leaked is False
+
+    def check(payload):
+        return detect_leak(
+            item.reference_answer,
+            payload.text,
+            payload.rung,
+            final_answer=item.final_answer,
+            canonical_answer=item.canonical_answer,
+        )
+
+    assert check(leaking) == (True, "ngram")
+    assert check(stating) == (True, "final_answer")
+    assert check(pointer) == (False, "none")
 
 
 def test_pkg04_check_item_satisfies_item_like():
