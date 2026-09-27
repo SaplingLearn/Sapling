@@ -169,6 +169,22 @@ class TestConfiguration:
         monkeypatch.setenv(decisions.BACKEND_ENV, "off")
         assert decisions.configured_backend() == "off"
 
+    def test_function_is_a_configurable_backend_in_function_mode(self, monkeypatch):
+        """#672 review: the documented name must work — it used to fall
+        through _read_backend's allow-list to 'off' and DISABLE the seam."""
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        monkeypatch.setenv(decisions.BACKEND_ENV, "function")
+        assert decisions.configured_backend() == "function"
+        assert decisions.enabled() is True
+
+    def test_function_outside_function_mode_is_off_never_a_live_model(self, monkeypatch):
+        monkeypatch.setenv(decisions.BACKEND_ENV, "function")
+        assert decisions.configured_backend() == "off"
+        assert decisions.enabled() is False
+        monkeypatch.setenv(decisions.BACKEND_ENV, "jev")
+        monkeypatch.setenv(decisions.SHADOW_ENV, "function")
+        assert decisions.shadow_backend() == "off"
+
     def test_unknown_backend_is_off(self, monkeypatch):
         monkeypatch.setenv(decisions.BACKEND_ENV, "gpt-9")
         assert decisions.configured_backend() == "off"
@@ -276,6 +292,36 @@ class TestFlashLiteBackend:
         assert usage[0]["feature"] == "test"
         assert usage[0]["provider"] == "gemini"
 
+    def test_usage_row_carries_the_callers_request_id(self, sink):
+        """#672 review: outside a request (the router's detached task — no
+        request contextvar) the row must still join to its turn."""
+        from services.request_context import current_request_id
+
+        assert current_request_id() is None, "precondition: no request scope here"
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)):
+            _decide()
+        (row,) = _usage_rows(sink)
+        assert row["request_id"] == "req-1"
+
+    def test_an_off_list_answer_keeps_what_the_backend_said(self, sink):
+        answers = [
+            {"key": "urgent", "value": "maybe", "confidence": 0.9},
+            {"key": "team", "value": "legal", "confidence": 0.8},
+        ]
+        with decision_agent.override(model=_agent_model(answers)):
+            result = _decide()
+        urgent, team = result.answers["urgent"], result.answers["team"]
+        assert (urgent.value, urgent.raw, urgent.confidence) == (False, "maybe", 0.9)
+        assert urgent.default_reason == "invalid"
+        assert (team.value, team.raw, team.confidence) == (None, "legal", 0.8)
+        # The event keeps the enum-only contract: an off-list value is free
+        # model text, so it is masked there (the Answer keeps it).
+        (event,) = _decision_events(sink)
+        ev = event["payload"]["answers"]["urgent"]
+        assert ev == {"value": False, "raw": decisions.INVALID_RAW, "confidence": 0.9,
+                      "defaulted": "invalid"}
+        assert "legal" not in json.dumps(event)
+
     def test_agent_error_degrades_to_defaults(self, sink):
         with decision_agent.override(model=_agent_model(raises=RuntimeError("boom"))):
             result = _decide()
@@ -377,8 +423,9 @@ class TestJevBackend:
         assert row["model"] == "jev-1.13.0"
         assert row["task"] == "decision"
         assert (row["prompt_tokens"], row["completion_tokens"]) == (312, 48)
-        # $0.042 / 1M input tokens, output free.
-        assert row["cost_usd"] == pytest.approx(312 * 0.042 / 1_000_000, abs=1e-6)
+        # $0.042 / 1M input tokens, output free — exactly, at the column's
+        # 10dp (the old 6dp stored 0.000013).
+        assert row["cost_usd"] == 0.000013104
 
     def test_base_url_and_model_are_configurable(self, monkeypatch):
         seen: list[httpx.Request] = []
@@ -517,6 +564,23 @@ class TestJevBackend:
         assert loud and all(r.exc_info is None for r in loud), (
             "WARN without a traceback — the e2e logscan oracle flags tracebacks")
 
+    @pytest.mark.parametrize("probabilities, score, expected", [
+        # An out-of-range key must not beat the real levels.
+        ({"0": 0.1, "1": 0.2, "7": 0.7}, 1.05, "frustrated"),
+        # Negative / non-numeric keys only: fall back to a valid `score`.
+        ({"-1": 0.9, "high": 0.5}, 1.9, "angry"),
+        # Nothing usable in the distribution, score still valid.
+        ({"9": 1.0}, 0.2, "calm"),
+    ])
+    def test_score_ignores_bad_probability_keys(self, monkeypatch, probabilities, score, expected):
+        body = json.loads(json.dumps(JEV_OK))
+        body["answers"]["mood"] = {"type": "score", "score": score,
+                                   "probabilities": probabilities, "confidence": 0.9}
+        _use_jev(monkeypatch, _jev_transport(body))
+        result = _decide()
+        assert result.value("mood") == expected
+        assert result.answers["mood"].defaulted is False
+
     def test_uncertain_noul_falls_under_the_floor(self, monkeypatch):
         body = json.loads(json.dumps(JEV_OK))
         body["answers"]["urgent"] = {"type": "noul", "noul": 0.6}  # |2p-1| = 0.2
@@ -541,6 +605,60 @@ class TestJevBackend:
         assert sent["history"][-1].startswith("turn-39"), "newest turns are kept"
         assert state["history"] == history, "the caller's state is not mutated"
         assert typesafe_client.estimate_tokens(json.dumps(sent)) <= typesafe_client.STATE_TOKEN_BUDGET
+
+    def test_fit_state_matches_the_reference_and_serializes_each_item_once(self, monkeypatch):
+        """#672 review: the trim loop re-serialized the whole state per
+        dropped item (O(n^2) on a long tail). The linear version must pick
+        exactly what the old loop picked, dumping the full state at most once."""
+        def reference(state, truncatable, qtok):
+            budget = (typesafe_client.STATE_TOKEN_BUDGET - qtok
+                      - decisions._JEV_BUDGET_MARGIN)
+
+            def size(x):
+                return typesafe_client.estimate_tokens(
+                    json.dumps(x, ensure_ascii=False, default=str))
+
+            if size(state) <= budget:
+                return state
+            trimmed = {k: (list(v) if k in truncatable and isinstance(v, list) else v)
+                       for k, v in state.items()}
+            while size(trimmed) > budget:
+                for key in truncatable:
+                    if isinstance(trimmed.get(key), list) and trimmed[key]:
+                        trimmed[key].pop(0)
+                        break
+                else:
+                    return "over"
+            return trimmed
+
+        cases = [
+            {"message": "latest", "history": [f"t{i} " + "x" * 3000 for i in range(40)]},
+            {"message": "ü" * 20, "a": [{"s": "é" * 2500, "n": i} for i in range(30)],
+             "b": ["y" * 4000 for _ in range(20)], "tail": 1},
+            {"message": "fits", "history": ["short"] * 3},
+            {"message": "z" * 100_000, "history": ["h"] * 5},
+        ]
+        for case in cases:
+            for qtok in (0, 700):
+                want = reference(case, ("a", "b", "history"), qtok)
+                try:
+                    got = decisions._fit_state(case, ("a", "b", "history"), qtok)
+                except decisions._BackendFailed:
+                    got = "over"
+                assert got == want
+
+        calls = []
+        real_dumps = json.dumps
+
+        def counting(obj, *a, **k):
+            if isinstance(obj, dict) and "history" in obj:
+                calls.append(1)
+            return real_dumps(obj, *a, **k)
+
+        monkeypatch.setattr(decisions.json, "dumps", counting)
+        big = {"message": "m", "history": ["x" * 400 for _ in range(2000)]}
+        decisions._fit_state(big, ("history",), 0)
+        assert len(calls) <= 1, f"state re-serialized {len(calls)} times"
 
     def test_oversized_untruncatable_state_degrades_without_a_call(self, monkeypatch):
         seen: list = []
@@ -596,6 +714,20 @@ class TestShadowAndEvent:
         assert shadow["fallback_reason"] == "shadow_same_as_served"
         assert shadow["agree"] is None
         assert [r["provider"] for r in _usage_rows(sink)] == ["gemini"]
+
+    def test_an_off_list_shadow_answer_disagrees(self, monkeypatch, sink):
+        _use_jev(monkeypatch, _jev_transport(JEV_OK))
+        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        shadow_answers = [
+            {"key": "urgent", "value": "perhaps", "confidence": 0.9},   # off-list
+            {"key": "team", "value": "technical", "confidence": 0.9},   # agrees
+        ]
+        with decision_agent.override(model=_agent_model(shadow_answers)):
+            _decide()
+        (event,) = _decision_events(sink)
+        assert event["payload"]["shadow"]["agree"] == {
+            "urgent": False, "team": True, "mood": None,
+        }
 
     def test_degraded_primary_with_a_failing_shadow_ends_in_defaults(self, monkeypatch):
         _use_jev(monkeypatch, _jev_transport({"e": 1}, status=503))
