@@ -624,6 +624,23 @@ def test_enforce_rate_limit_answers_429_with_reset_at(usage, events, monkeypatch
     assert TestClient(_budget_app()).post("/model").json() == {"ok": True}
 
 
+def test_retry_after_never_invites_an_early_retry(usage, monkeypatch):
+    """Retry-After is whole seconds; rounding the wait DOWN sends an obedient client back
+    before reset_at, into a second 429 (Behaviour 4: never promise an early resume)."""
+    import math
+
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(ai_budget, "get_session_user_id", lambda request: UID)
+    half = ai_budget.RATE_LIMIT_WINDOW_S / 2
+    usage([_row(ago_s=half + 0.4) for _ in range(config.LEARN_RATE_LIMIT_PER_MIN)])
+    r = TestClient(_budget_app()).post("/model")
+    assert r.status_code == 429
+    wait = (datetime.fromisoformat(r.json()["reset_at"]) - NOW).total_seconds()
+    assert 0 < wait % 1  # a fractional wait: the case a floor gets wrong
+    assert int(r.headers["Retry-After"]) == math.ceil(wait)
+
+
 def test_main_registers_the_budget_handler():
     from main import app
 

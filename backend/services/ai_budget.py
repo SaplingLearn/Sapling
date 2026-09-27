@@ -10,6 +10,7 @@ id — no lru_cache (CLAUDE.md #98); tests/conftest.py resets the module state a
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -466,12 +467,13 @@ def enforce_rate_limit(request: Request) -> None:
 
 async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JSONResponse:
     """HTTP 429 {"detail": "ai budget reached", "reset_at": <iso or null>} (spec §3.5, A20), plus
-    the house request_id and the scope; Retry-After (≥ 1 s) when the reset is known."""
+    the house request_id and the scope; Retry-After (≥ 1 s) when the reset is known, rounded UP
+    so a client that obeys it never retries before reset_at."""
     rid = getattr(request.state, "request_id", None) or current_request_id()
     reset_at = exc.decision.reset_at
     headers: dict[str, str] = {}
     if reset_at is not None:
-        headers["Retry-After"] = str(max(1, int((reset_at - _utcnow()).total_seconds())))
+        headers["Retry-After"] = str(max(1, math.ceil((reset_at - _utcnow()).total_seconds())))
     if rid:
         headers["X-Request-ID"] = rid
     content = {
