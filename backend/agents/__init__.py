@@ -124,10 +124,24 @@ CONTINUATION_LIMITS = UsageLimits(
 # opinion is a separate run with its own GRADER_LIMITS.
 GRADER_LIMITS = UsageLimits(**_GRADER_LIMITS_SPEC)
 
+# Learning loop (PKG-07, spec §3.4, A18): the loop tutor declares two read
+# tools and writes at most STEP_MAX_SENTENCES sentences, so it gets a tight
+# per-run budget (was 14/14/120_000 before the cost amendment). Per-run
+# max_tokens (agents/loop_tutor.tier_run_kwargs) makes the output bound hard.
+# The grader is a SEPARATE agent run under GRADER_LIMITS, called by the
+# check-answer route, never by this agent. The #646 continuation for a loop
+# turn still runs under CONTINUATION_LIMITS.
+LOOP_LIMITS = UsageLimits(
+    request_limit=4,
+    tool_calls_limit=3,
+    total_tokens_limit=40_000,
+)
+
 __all__ = [
     "WORKER_LIMITS",
     "ORCHESTRATOR_LIMITS",
     "TUTOR_LIMITS",
     "CONTINUATION_LIMITS",
     "GRADER_LIMITS",
+    "LOOP_LIMITS",
 ]

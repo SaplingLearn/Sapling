@@ -652,3 +652,20 @@ def test_env_module_registers_decision_handler_on_dispatch(monkeypatch):
     # Request-path from PKG-10 on (match_wrong_reason without a prior grade);
     # until then services/decisions.py is its only runner, and no route calls it.
     assert "decision" in providers._FUNCTION_HANDLERS
+
+
+@pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
+def test_env_module_registers_loop_tutor_handler_on_dispatch(monkeypatch, slot):
+    """PKG-07: one loop_tutor_agent, three tier slots picked per run (spec §3.5, A15);
+    the E2E module serves every slot the same fixed reply, with no tool call."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.loop_tutor import loop_tutor_agent
+
+    deps = _deps()
+    result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
+
+    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_REPLY
+
+    assert result.output == E2E_LOOP_TUTOR_REPLY
+    assert not deps.pending_evidence  # the handler scripts no tool call; the loop has no grader tool

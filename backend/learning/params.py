@@ -285,3 +285,10 @@ LOOP_SESSION_MAX_TUTOR_REQUESTS = 40  # † reaching it = hard (an optimized 10-
 LOOP_SESSION_MAX_DEEP_REQUESTS = 6  # † develop/profic: reaching it = soft (deep → standard)
 # † novice: reaching it turns novice deep turns into standard (a trailing comment would wrap the name)
 LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE = 12
+
+# ── Loop tutor tiers (PKG-07; spec §3.5, A15/A18) ──────────────────────────
+# † deep slot thinking cap; 2.5 Pro cannot go below 128 — never send 0
+LOOP_PRO_THINKING_BUDGET = 1024
+LOOP_FLASH_THINKING_BUDGET = 0  # standard slot
+# † per-run max_tokens = the slot's thinking budget + this (Gemini's max_output_tokens includes thinking)
+LOOP_MAX_VISIBLE_TOKENS = 400

@@ -504,3 +504,29 @@ def _decision_handler(messages, info) -> ModelResponse:
 
 
 register_function_handler("decision", _decision_handler)
+
+
+# ── Learning loop tutor (PKG-07) ───────────────────────────────────────────
+#
+# Plain-text reply like _chat_tutor_handler, served for ALL THREE tier slots
+# (the loop route picks the slot per run; spec §3.5). The loop agent has no
+# grader tool and this handler scripts no tool call (module rule: no tool
+# calls, zero model-driven writes). Shape obeys the loop's own turn rules
+# (≤ STEP_MAX_SENTENCES sentences, exactly one question) so
+# frontend/e2e/learn-loop.spec.ts (PKG-13) can assert the same constant the
+# route persists. Keep in sync with tests/test_loop_tutor_agent.py.
+E2E_LOOP_TUTOR_REPLY = (
+    "[e2e-function-model] Deterministic loop tutor reply. Key idea: a "
+    "recursive function needs a base case it is guaranteed to reach. Try "
+    "writing the base case for factorial before anything else. Which input "
+    "should stop the recursion?"
+)
+
+
+def _loop_tutor_handler(messages, info) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content=E2E_LOOP_TUTOR_REPLY)])
+
+
+register_function_handler("loop_tutor_lite", _loop_tutor_handler)
+register_function_handler("loop_tutor", _loop_tutor_handler)
+register_function_handler("loop_tutor_deep", _loop_tutor_handler)
