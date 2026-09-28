@@ -1010,6 +1010,21 @@ class TestRepairAndOptions:
         for word in sorted(_NEGATIONS & _STOPWORDS):
             assert word in misconception_slug(f"Thinks {word} works.").split("_"), word
 
+    @pytest.mark.parametrize("said", ["N/A", "None", "-", ".", "...", "null.", "Not applicable"])
+    def test_a_placeholder_misconception_text_states_none(self, said):
+        """Review of A37 round 4: only a blank misconception_text counted as
+        missing, so "N/A", "None" or "-" was stored as a common wrong reason
+        the grader reads ("COMMON WRONG REASON k1: N/A"). Such a text states
+        no mistake: it is dropped under misconception_text, and repair_draft
+        keys nothing from it."""
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _mc_draft(options=_opts(_CORRECT, (_ITER[0], False, "k1", said), _LOSS, _SIGN))
+        reasons = validate_draft(draft)
+        assert any(r.startswith("misconception_text: option 2") for r in reasons), reasons
+        unkeyed = _mc_draft(options=_opts(_CORRECT, (_ITER[0], False, None, said), _LOSS, _SIGN))
+        assert repair_draft(unkeyed) == (unkeyed, [])
+
     @pytest.mark.parametrize(
         "options",
         [

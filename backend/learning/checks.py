@@ -535,6 +535,18 @@ _NEGATIONS = frozenset(
     """.split()
 )
 _SLUG_STOPWORDS = _STOPWORDS - _NEGATIONS
+# What a model writes in misconception_text for "none" (compared as option
+# texts are). Stored, it read as a common wrong reason: "COMMON WRONG REASON
+# k1: N/A" in the grader's prompt (review of A37 round 4).
+_NO_MISCONCEPTION = frozenset(
+    {"n/a", "na", "none", "null", "nil", "nothing", "tbd", "todo", "unknown", "not applicable"}
+)
+
+
+def _states_misconception(text: str | None) -> bool:
+    """Whether a distractor's misconception_text states a mistake at all: a
+    letter or digit in any script, and not a placeholder (_NO_MISCONCEPTION)."""
+    return any(ch.isalnum() for ch in text or "") and _option_form(text) not in _NO_MISCONCEPTION
 
 
 def _form_digest(text: str) -> str:
@@ -585,9 +597,11 @@ MC_OPTION_RULES = (
 
 def _misconception_reasons(options: list[OptionDraft]) -> list[str]:
     """correct_misconception, misconception_key and misconception_text:
-    the correct option states none; every distractor states one, under a
-    key of its own, and no two distractors state the same one (compared as
-    option texts are: whitespace, case and closing punctuation aside)."""
+    the correct option states none; every distractor states one (a text
+    with no letter or digit, or a placeholder such as "N/A", states none),
+    under a key of its own, and no two distractors state the same one
+    (compared as option texts are: whitespace, case and closing punctuation
+    aside)."""
     reasons = []
     keyed: dict[str, int] = {}
     stated: dict[str, int] = {}
@@ -611,6 +625,11 @@ def _misconception_reasons(options: list[OptionDraft]) -> list[str]:
             keyed[key] = n
         if _blank(said):
             reasons.append(f"misconception_text: option {n} has no misconception_text")
+            continue
+        if not _states_misconception(said):
+            reasons.append(
+                f"misconception_text: option {n} states no misconception ({_shown(said)})"
+            )
             continue
         form = _option_form(said)
         if form in stated:
@@ -794,7 +813,7 @@ def _rekey_misconceptions(options: list[OptionDraft]) -> list[str]:
     """The misconception_key repair of repair_draft, in place on `options`
     (exactly one of them marked correct); one line per distractor keyed."""
     numbered = [(n, o) for n, o in enumerate(options, start=1) if not o.is_correct]
-    if any(_blank(o.misconception_text) for _, o in numbered):
+    if not all(_states_misconception(o.misconception_text) for _, o in numbered):
         return []
     forms = [_option_form(o.misconception_text) for _, o in numbered]
     if len(set(forms)) != len(forms):
