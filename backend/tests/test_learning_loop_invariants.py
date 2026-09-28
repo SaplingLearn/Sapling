@@ -36,6 +36,9 @@ SERIES_AGENT_TASKS = (
 # spec §8.12: one prompt stack per series agent module
 SERIES_AGENT_MODULES = (
     "check_items.py",
+    # A37 (coordinator's ruling, 2026-09-28): the mc_reason top-up, its own
+    # agent and prompt stack on the check_items model slot
+    "check_items_topup.py",
     "grader.py",
     "decision.py",
     "loop_tutor.py",
