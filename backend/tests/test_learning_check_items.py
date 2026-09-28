@@ -1010,6 +1010,93 @@ class TestRepairAndOptions:
         for word in sorted(_NEGATIONS & _STOPWORDS):
             assert word in misconception_slug(f"Thinks {word} works.").split("_"), word
 
+    @pytest.mark.parametrize(
+        "key,form",
+        [
+            ("rate_is_loss", "rate_is_loss"),
+            ("Rate_Is_Loss", "rate_is_loss"),
+            ("rate_is_loss ", "rate_is_loss"),
+            ("confuses-ethos-with-pathos", "confuses_ethos_with_pathos"),
+            ("omits_R_or_T", "omits_r_or_t"),
+            ("mass vs. KE", "mass_vs_ke"),
+            ("doesn't_scale", "doesnt_scale"),
+            ("dérivée__fausse", "derivee_fausse"),
+            ("—", ""),
+            ("", ""),
+        ],
+    )
+    def test_a_wrong_key_form_is_snake_case(self, key, form):
+        from learning.checks import wrong_key_form
+
+        assert wrong_key_form(key) == form
+        assert wrong_key_form(form) == form
+
+    def test_distractor_keys_are_compared_and_stored_in_snake_case(self):
+        """Review of A37 round 4: keys were compared as raw strings, so
+        "Foo", "foo" and "foo " passed as three distinct keys and were stored
+        so; and a model's "confuses-fallacies" was stored beside code's
+        snake_case keys (33 of 276 live distractor keys). A key is only the
+        stated misconception's id, so writing it in snake_case guesses
+        nothing: repair_draft does, and a key that then matches another
+        distractor's is a shared key, re-keyed from its own text as before."""
+        from learning.checks import common_wrong, lettered_options, repair_draft, validate_draft
+
+        snake = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
+        cased = _mc_draft(
+            options=_opts(
+                _CORRECT,
+                (_ITER[0], False, "Foo", "Counts iterations."),
+                (_LOSS[0], False, "foo", "Treats the rate as the loss."),
+                (_SIGN[0], False, "foo ", "Thinks it flips the sign."),
+            )
+        )
+        assert any(r.startswith("misconception_key:") for r in validate_draft(cased))
+        fixed, repairs = repair_draft(cased)
+        assert validate_draft(fixed) == [], validate_draft(fixed)
+        keys = [w.key for w in common_wrong(fixed)]
+        assert keys == ["counts_iterations", "treats_rate_as_loss", "thinks_it_flips_sign"]
+        assert all(r.startswith("misconception_key:") and r.endswith("(repaired)") for r in repairs)
+        kebab = _mc_draft(
+            options=_opts(
+                _CORRECT,
+                (_ITER[0], False, "Confuses-Rate-With-Count", "Counts iterations."),
+                (_LOSS[0], False, "omits_R_or_T", "Treats the rate as the loss."),
+                _SIGN,
+            )
+        )
+        reasons = validate_draft(kebab)
+        assert [r.split(":")[0] for r in reasons] == ["misconception_key", "misconception_key"]
+        fixed, repairs = repair_draft(kebab)
+        assert [w.key for w in common_wrong(fixed)] == [
+            "confuses_rate_with_count",
+            "omits_r_or_t",
+            "rate_is_sign",
+        ]
+        assert len(repairs) == 2 and validate_draft(fixed) == []
+        stored, _ = lettered_options(fixed, slot_key=_SLOT_KEY)
+        assert all(snake.fullmatch(o.wrong_key) for o in stored if o.wrong_key)
+        assert kebab.options[1].misconception_key == "Confuses-Rate-With-Count"  # not mutated
+        assert repair_draft(fixed) == (fixed, [])
+
+    def test_free_and_teachback_wrong_keys_are_written_in_snake_case(self):
+        """The same key form for free and teachback wrong_keys, so one
+        misconception is one key across an item's formats for PKG-10. Two
+        keys that are one key in that form are a duplicate, as before."""
+        from learning.checks import common_wrong, repair_draft, validate_draft
+
+        for fmt in ("free", "teachback"):
+            draft = _draft(format=fmt, wrong_keys=["Rate-Is-Iterations "])
+            assert any(r.startswith("wrong_keys:") for r in validate_draft(draft))
+            fixed, repairs = repair_draft(draft)
+            assert fixed.wrong_keys == ["rate_is_iterations"] and validate_draft(fixed) == []
+            assert [w.key for w in common_wrong(fixed)] == ["rate_is_iterations"]
+            assert len(repairs) == 1 and repairs[0].startswith("wrong_keys:"), repairs
+            assert draft.wrong_keys == ["Rate-Is-Iterations "]  # not mutated
+        twice = _draft(wrong_keys=["Foo", "foo"], wrong_texts=["Counts passes.", "Sums losses."])
+        assert "duplicate wrong keys" in validate_draft(twice)
+        assert "duplicate wrong keys" in validate_draft(repair_draft(twice)[0])
+        assert "blank wrong key" in validate_draft(_draft(wrong_keys=["—"]))
+
     @pytest.mark.parametrize("said", ["N/A", "None", "-", ".", "...", "null.", "Not applicable"])
     def test_a_placeholder_misconception_text_states_none(self, said):
         """Review of A37 round 4: only a blank misconception_text counted as

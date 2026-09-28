@@ -513,7 +513,8 @@ def _shown(value: str) -> str:
 # stating different misconceptions share one, or a distractor that states one
 # gives no key, code keys it from its own text (misconception_slug) — no
 # guess. Two distractors stating the same misconception are not two mistakes,
-# and no key makes them so: that draft is dropped.
+# and no key makes them so: that draft is dropped. Keys are compared and
+# stored in one form, snake_case (wrong_key_form), in every format.
 
 _SLUG_WORD = re.compile(r"[a-z0-9]+")
 _APOSTROPHES = str.maketrans("", "", "'\u2019")  # "doesn't" is one word
@@ -553,6 +554,25 @@ def _form_digest(text: str) -> str:
     return _sha256(_option_form(text))[:_SLUG_DIGEST_LEN]
 
 
+def _ascii_words(text: str) -> list[str]:
+    """`text`'s Latin words and numbers: apostrophes dropped, accents folded
+    to ASCII, casefolded."""
+    folded = unicodedata.normalize("NFKD", text.translate(_APOSTROPHES))
+    return _SLUG_WORD.findall(folded.encode("ascii", "ignore").decode("ascii").casefold())
+
+
+def wrong_key_form(key: str | None) -> str:
+    """The form a wrong-reason key is compared and stored in, in every format:
+    snake_case — apostrophes dropped, accents folded to ASCII, casefolded, and
+    every run of other characters one "_" ("Confuses-Ethos " ->
+    "confuses_ethos"); "" for a key with no Latin letter or digit. A key is
+    only an id, so writing it this way guesses nothing (review of A37 round
+    4: "Foo", "foo" and "foo " had passed as three keys, and 33 of 276 live
+    distractor keys were stored in kebab or mixed case beside code's
+    snake_case ones)."""
+    return "_".join(_ascii_words(key or ""))
+
+
 def misconception_slug(text: str) -> str:
     """A snake_case key for a misconception, from its own text: its first
     _SLUG_MAX_WORDS words that are not English function words (_STOPWORDS,
@@ -560,8 +580,7 @@ def misconception_slug(text: str) -> str:
     opposite mistake), accents folded to ASCII, apostrophes dropped;
     "misconception_<digest>" for a text with no Latin letter or digit.
     Deterministic."""
-    folded = unicodedata.normalize("NFKD", text.translate(_APOSTROPHES))
-    words = _SLUG_WORD.findall(folded.encode("ascii", "ignore").decode("ascii").casefold())
+    words = _ascii_words(text)
     content = [w for w in words if w not in _SLUG_STOPWORDS] or words
     if not content:
         return f"{_SLUG_FALLBACK}_{_form_digest(text)}"
@@ -599,7 +618,8 @@ def _misconception_reasons(options: list[OptionDraft]) -> list[str]:
     """correct_misconception, misconception_key and misconception_text:
     the correct option states none; every distractor states one (a text
     with no letter or digit, or a placeholder such as "N/A", states none),
-    under a key of its own, and no two distractors state the same one
+    under a snake_case key of its own (keys compared in wrong_key_form, so
+    "Foo" and "foo " are one key), and no two distractors state the same one
     (compared as option texts are: whitespace, case and closing punctuation
     aside)."""
     reasons = []
@@ -614,15 +634,21 @@ def _misconception_reasons(options: list[OptionDraft]) -> list[str]:
                     "misconception (the correct option has none)"
                 )
             continue
-        if _blank(key):
+        form = wrong_key_form(key)
+        if not form:
             reasons.append(f"misconception_key: option {n} has no misconception_key")
-        elif key in keyed:
+        elif form in keyed:
             reasons.append(
-                f"misconception_key: options {keyed[key]} and {n} share misconception_key "
-                f"{_shown(key)} (each distractor has its own)"
+                f"misconception_key: options {keyed[form]} and {n} share misconception_key "
+                f"{_shown(form)} (each distractor has its own)"
             )
         else:
-            keyed[key] = n
+            keyed[form] = n
+            if key != form:
+                reasons.append(
+                    f"misconception_key: option {n}'s key {_shown(key)} is not snake_case "
+                    f"({_shown(form)})"
+                )
         if _blank(said):
             reasons.append(f"misconception_text: option {n} has no misconception_text")
             continue
@@ -818,13 +844,9 @@ def _rekey_misconceptions(options: list[OptionDraft]) -> list[str]:
     forms = [_option_form(o.misconception_text) for _, o in numbered]
     if len(set(forms)) != len(forms):
         return []
-    held = [o.misconception_key for _, o in numbered]
-    todo = [
-        (n, o)
-        for n, o in numbered
-        if _blank(o.misconception_key) or held.count(o.misconception_key) > 1
-    ]
-    taken = {o.misconception_key for _, o in numbered} - {o.misconception_key for _, o in todo}
+    held = [wrong_key_form(o.misconception_key) for _, o in numbered]
+    todo = [(n, o) for (n, o), form in zip(numbered, held) if not form or held.count(form) > 1]
+    taken = {form for form in held if form and held.count(form) == 1}
     lines = []
     for n, option in todo:
         slug = misconception_slug(option.misconception_text)
@@ -839,12 +861,32 @@ def _rekey_misconceptions(options: list[OptionDraft]) -> list[str]:
         if key is None:  # a digest collision: leave it for misconception_key to drop
             continue
         taken.add(key)
-        had = option.misconception_key
-        was = "no key" if _blank(had) else f"the shared key {_shown(had)}"
+        had = wrong_key_form(option.misconception_key)
+        was = f"the shared key {_shown(had)}" if had else "no key"
         option.misconception_key = key
         lines.append(
             f"misconception_key: option {n} had {was}, so it was keyed {_shown(key)} from its "
             "own misconception_text (repaired)"
+        )
+    return lines
+
+
+def _snake_case_keys(options: list[OptionDraft]) -> list[str]:
+    """The distractor half of the key-form repair of repair_draft, in place on
+    `options`; one line per key rewritten. A key with no Latin letter or digit,
+    or one whose form another distractor's key shares, is left for the
+    misconception_key repair, which reads it as no key or a shared key."""
+    forms = [wrong_key_form(o.misconception_key) for o in options if not o.is_correct]
+    lines = []
+    for n, option in enumerate(options, start=1):
+        key = option.misconception_key
+        form = wrong_key_form(key)
+        if option.is_correct or not form or form == key or forms.count(form) > 1:
+            continue
+        option.misconception_key = form
+        lines.append(
+            f"misconception_key: option {n}'s key {_shown(key)} was written in snake_case as "
+            f"{_shown(form)} (repaired)"
         )
     return lines
 
@@ -859,11 +901,17 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     is correct is not in doubt, and A34's rule that final_answer equal the
     correct option's text still cross-checks the flag.
 
-    misconception_key — in an mc_reason draft with exactly one option marked
-    is_correct, where every distractor states a misconception_text and no two
-    state the same one, a distractor whose key is blank or shared with another
-    distractor is keyed from its own text (misconception_slug; a key another
-    distractor already holds gets the text's digest appended). The
+    misconception_key / wrong_keys — a key is only an id, so a key with a
+    Latin letter or digit is written in its snake_case form (wrong_key_form):
+    each distractor's key in an mc_reason draft with exactly one option marked
+    is_correct (unless another distractor's key has the same form: that is a
+    shared key, below), and each wrong key of a free or teachback draft (two
+    that are then one key stay a duplicate, and drop). Then, in an mc_reason
+    draft with exactly one option marked is_correct, where every distractor
+    states a misconception_text and no two state the same one, a distractor
+    whose key is blank in that form or shared with another distractor is
+    keyed from its own text (misconception_slug; a key another distractor
+    already holds gets the text's digest appended). The
     misconception each distractor carries is stated, so its key is only an
     id: re-keying guesses nothing, and every key stays distinct. A draft
     where two distractors state one misconception, or one states none, is
@@ -921,7 +969,17 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
             "was cleared (repaired)"
         )
     if mc_one:
+        repairs.extend(_snake_case_keys(fixed.options))
         repairs.extend(_rekey_misconceptions(fixed.options))
+    if fixed.format != _MC_REASON:
+        for i, key in enumerate(fixed.wrong_keys):
+            form = wrong_key_form(key)
+            if form and form != key:
+                fixed.wrong_keys[i] = form
+                repairs.append(
+                    f"wrong_keys: key {_shown(key)} was written in snake_case as {_shown(form)} "
+                    "(repaired)"
+                )
     final = answer_run(fixed.final_answer)
     reference = answer_run(fixed.reference_answer)
     if (
@@ -1167,7 +1225,8 @@ def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
 
 
 def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
-    """A free or teachback draft's paired wrong_keys / wrong_texts (A22)."""
+    """A free or teachback draft's paired wrong_keys / wrong_texts (A22),
+    its keys compared and stored in wrong_key_form."""
     reasons = []
     if len(draft.wrong_keys) != len(draft.wrong_texts):
         reasons.append(
@@ -1176,10 +1235,14 @@ def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
         )
     if len(draft.wrong_keys) < CHECK_ITEM_MIN_WRONG:
         reasons.append(f"{len(draft.wrong_keys)} wrong reason(s), needs >= {CHECK_ITEM_MIN_WRONG}")
-    if len(set(draft.wrong_keys)) != len(draft.wrong_keys):
+    forms = [wrong_key_form(k) for k in draft.wrong_keys]
+    if len(set(forms)) != len(forms):
         reasons.append("duplicate wrong keys")
-    if any(not k.strip() for k in draft.wrong_keys):
+    if not all(forms):
         reasons.append("blank wrong key")
+    for key, form in zip(draft.wrong_keys, forms):
+        if form and key != form:
+            reasons.append(f"wrong_keys: key {_shown(key)} is not snake_case ({_shown(form)})")
     return reasons
 
 
