@@ -30,6 +30,7 @@ from models import (
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
 from services.achievement_service import check_achievements, grant_linked_cosmetics
+from services.feature_flags import clear_user_roles_cache
 from services.users_search import paginate_users
 from services.encryption import decrypt_if_present
 from services.profiles import get_display_names
@@ -117,6 +118,7 @@ def assign_role(body: AssignRoleBody, request: Request):
         actor_id=actor, action="role.assign", target_type="role", target_id=body.role_id,
         payload={"user_id": body.user_id, "granted_by": granted_by},
     )
+    clear_user_roles_cache(body.user_id)
     return {"assigned": True}
 
 
@@ -138,6 +140,7 @@ def revoke_role(body: RevokeRoleBody, request: Request):
         actor_id=actor, action="role.revoke", target_type="role", target_id=body.role_id,
         payload={"user_id": body.user_id},
     )
+    clear_user_roles_cache(body.user_id)
     return {"revoked": True}
 
 
