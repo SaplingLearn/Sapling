@@ -2,18 +2,9 @@
   "runs": [
     {
       "addresses_grader": true,
-      "confidence": 0.0,
-      "feedback_hint": "The student's answer needs to explain what a base case is and why it's necessary for recursion, rather than comparing recursion to a loop.",
-      "item_results": [
-        "99548:no",
-        "77096:no"
-      ],
-      "matched_wrong_key": "w_loop"
-    },
-    {
-      "addresses_grader": true,
-      "confidence": 0.5,
-      "feedback_hint": "Consider what happens if a recursive function never reaches a stopping condition. What prevents it from continuing indefinitely?",
+      "confidence": 0.9,
+      "contradicts_reference": true,
+      "feedback_hint": "It seems like you're comparing recursion to a loop. Consider how recursive calls are handled differently from loop iterations and what prevents them from continuing indefinitely.",
       "item_results": [
         "99548:no",
         "77096:no"

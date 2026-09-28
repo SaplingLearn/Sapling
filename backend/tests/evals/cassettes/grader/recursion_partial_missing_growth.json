@@ -3,12 +3,13 @@
     {
       "addresses_grader": false,
       "confidence": 1.0,
-      "feedback_hint": "Consider what happens if the function never stops calling itself. What are the implications for the computer's memory or call stack?",
+      "contradicts_reference": false,
+      "feedback_hint": "Consider what happens when the recursive calls do not stop. What is the consequence of infinite calls?",
       "item_results": [
         "89638:yes",
         "46868:no"
       ],
-      "matched_wrong_key": "w_loop"
+      "matched_wrong_key": ""
     }
   ]
 }

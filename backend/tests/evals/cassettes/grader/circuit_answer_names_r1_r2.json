@@ -3,6 +3,7 @@
     {
       "addresses_grader": false,
       "confidence": 1.0,
+      "contradicts_reference": false,
       "feedback_hint": "",
       "item_results": [
         "50387:yes",

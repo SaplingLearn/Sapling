@@ -2,8 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.8,
-      "feedback_hint": "The student describes recursion as a loop, implying it ends on its own. A base case is crucial for preventing infinite calls, not for assuming natural termination like a loop. What would happen if the condition to stop never occurs?",
+      "confidence": 1.0,
+      "contradicts_reference": true,
+      "feedback_hint": "The student describes recursion as a loop that ends on its own, which is not accurate. Consider how recursive calls differ from loop iterations and what prevents them from continuing indefinitely.",
       "item_results": [
         "42605:no",
         "60874:no"

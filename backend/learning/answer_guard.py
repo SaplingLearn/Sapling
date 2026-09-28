@@ -608,7 +608,9 @@ _DIRECTIVES = (
     ),
     # the grader's own output fields
     _directive(
-        "output_fields", r"\b(?:item_results|matched_wrong_key|feedback_hint|addresses_grader)\b"
+        "output_fields",
+        r"\b(?:item_results|matched_wrong_key|feedback_hint|addresses_grader"
+        r"|contradicts_reference)\b",
     ),
     # addressing the grader
     _directive(

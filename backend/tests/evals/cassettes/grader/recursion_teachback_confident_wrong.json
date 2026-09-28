@@ -2,8 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.8,
-      "feedback_hint": "Consider what happens when a recursive function keeps calling itself without any condition to stop. How does this compare to a loop that eventually finishes?",
+      "confidence": 1.0,
+      "contradicts_reference": true,
+      "feedback_hint": "Consider what happens if a recursive function doesn't have a condition to stop its calls. What prevents the function from calling itself infinitely?",
       "item_results": [
         "27895:no",
         "93888:no"

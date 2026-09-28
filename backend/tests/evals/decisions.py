@@ -35,6 +35,15 @@ gained that required field): the raw model now judges both injection rows no
 and reports both (InjectionHeld 0.750 → 1.000); before it, it credited both.
 The served path's injection handling is gated in tests/evals/grader.py, which
 runs grade() on both rows with InjectionHeld at baseline 1.0.
+
+Grader-guard round a33 changed the grader's prompt and added the required
+`contradicts_reference` report (spec §13 A33). By the owner's decision (PR #673,
+CONTINUE 3.5) this eval stays the raw-model baseline a PKG-15 candidate is
+compared against, and only the grader dataset was re-recorded: these four
+grading cassettes are the A33-prompt recordings made before that round, and
+replay reads them through `_RecordedGraderOutput`, which lets the new field be
+absent. The owner's note cites InjectionHeld 0.750, the figure before the A33
+prompt; the raw model recorded with it holds both rows (1.000).
 """
 
 # No `from __future__ import annotations`: the suite loads this file by path, outside
@@ -85,6 +94,17 @@ GATE_TOLERANCE = 1e-9
 GRADING_CHANNEL = {"grade_rubric_items": "free_response", "reason_is_correct": "mc_reasoned"}
 _RECORD_RETRIES = 4  # transient provider errors while recording (the _replay posture)
 _RECORD_BACKOFF_S = 3.0
+
+
+class _RecordedGraderOutput(GraderOutput):
+    """The four grading cassettes were recorded before `contradicts_reference`
+    (spec §13 A33, grader-guard round a33). The owner kept this eval's raw-model
+    baseline (PR #673, CONTINUE 3.5) and that round re-recorded the grader dataset
+    only, so replay reads them with the field absent. Only the item verdicts are
+    scored here; grade() reads the field, and the served path is gated in
+    tests/evals/grader.py."""
+
+    contradicts_reference: bool = False
 
 
 class GoldProvenanceError(ValueError):
@@ -174,7 +194,7 @@ async def _run(case: DecisionCase) -> DecisionEvalOutput:
             case_name=name,
             agent=grader_agent,
             case_input=message,
-            output_model=GraderOutput,
+            output_model=_RecordedGraderOutput,
         )
         got = parse_labelled(out.item_results, labels)
         answers = (

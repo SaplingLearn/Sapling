@@ -449,12 +449,13 @@ register_function_handler(
 # every rubric item yes, anything else every item no. Rubric labels come off the
 # prompt's `RUBRIC ITEM <label>:` lines (agents/grader.py::build_grader_message;
 # each label is fresh and random per grading call, spec §13 A33, and grade()
-# maps labels back), so any seeded item works. `addresses_grader` is always false
-# (spec §13 A33: an E2E answer never addresses the grader). E2E_GRADER_CONFIDENCE
+# maps labels back), so any seeded item works. `addresses_grader` and
+# `contradicts_reference` are always false (spec §13 A33: an E2E answer never
+# addresses the grader, and its all-yes is no conflict). E2E_GRADER_CONFIDENCE
 # sits above GRADER_LOW_CONFIDENCE (and so above the second-opinion floor): E2E
 # evidence is full-weight, and the second slot fires only to confirm a credited
-# verdict on an answer with a suspicion signal (A33) — never on the bare token,
-# which is one identifier. Emits through the OUTPUT
+# verdict on an answer with a suspicion signal or a conflicted all-yes (A33) —
+# never on the bare token, which is one identifier. Emits through the OUTPUT
 # tool → the real schema validates. Request-path once PKG-07's /check/answer
 # calls grade_answer (no route does yet). Contract:
 # tests/test_learning_check_tool.py; PKG-13's learn-loop.spec.ts types the token.
@@ -471,6 +472,7 @@ def _grader_handler(messages, info) -> ModelResponse:
     verdict = "yes" if E2E_GRADER_CORRECT_TOKEN in text else "no"
     args = {
         "addresses_grader": False,  # A33: an E2E answer never addresses the grader
+        "contradicts_reference": False,  # A33 (round a33): nor contradicts the reference
         "item_results": [f"{rid}:{verdict}" for rid in _RUBRIC_ID_RE.findall(text)],
         "confidence": E2E_GRADER_CONFIDENCE,
         "matched_wrong_key": "",

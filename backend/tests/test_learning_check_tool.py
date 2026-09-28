@@ -161,6 +161,7 @@ _LABELS = {"r1": "48213", "r2": "73920"}  # what a grading call's fresh labels l
 def _good(conf: float = 0.9) -> dict:
     return {
         "addresses_grader": False,
+        "contradicts_reference": False,
         "item_results": ["r1:yes", "r2:yes"],
         "confidence": conf,
         "matched_wrong_key": "",

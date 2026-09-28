@@ -2,13 +2,14 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.8,
-      "feedback_hint": "Consider how a base case prevents infinite calls, and how that differs from a loop that has a set range.",
+      "confidence": 1.0,
+      "contradicts_reference": true,
+      "feedback_hint": "The student's answer incorrectly equates recursion to a loop. Consider how recursive calls differ from loop iterations and why a base case is essential to prevent infinite execution.",
       "item_results": [
         "42605:no",
         "88032:no"
       ],
-      "matched_wrong_key": ""
+      "matched_wrong_key": "w_loop"
     }
   ]
 }
