@@ -202,7 +202,7 @@ describe('roster fetch removed; /me owns the display name', () => {
     const fetchMock = stubFetch(() => ({
       ok: true,
       status: 200,
-      json: async () => ({ name: 'Renamed', roles: [], equipped_cosmetics: {} }),
+      json: async () => ({ user_id: 'stale-1', name: 'Renamed', roles: [], equipped_cosmetics: {} }),
     }));
     vi.stubGlobal('fetch', fetchMock);
     render(
@@ -213,5 +213,34 @@ describe('roster fetch removed; /me owns the display name', () => {
     await waitFor(() => expect(screen.getByTestId('name').textContent).toBe('Renamed'));
     const urls = fetchMock.mock.calls.map(([u]) => String(u));
     expect(urls.some(u => /\/api\/users(\?|$)/.test(u))).toBe(false);
+    // The confirmed name is persisted, so the next page load boots with it.
+    expect(JSON.parse(localStorage.getItem('sapling_user') ?? 'null')).toMatchObject({
+      id: 'stale-1',
+      name: 'Renamed',
+    });
+  });
+
+  it("treats a /me answer for a different user as a stale identity", async () => {
+    // Shared browser: localStorage holds user A (stale-1) while the session
+    // cookie belongs to user B. /me answers for the cookie, so its name must
+    // never be shown next to A's id; the client identity is cleared instead.
+    seed();
+    vi.stubGlobal(
+      'fetch',
+      stubFetch(() => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ user_id: 'someone-else', name: 'Other Person', roles: [] }),
+      })),
+    );
+    render(
+      <UserProvider>
+        <Probe />
+        <NameProbe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('out'));
+    expect(screen.getByTestId('name').textContent).not.toBe('Other Person');
+    expect(localStorage.getItem('sapling_user')).toBeNull();
   });
 });

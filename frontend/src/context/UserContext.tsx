@@ -190,9 +190,29 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const data = await res.json();
-      // The display name can change after login (Settings); /me is its
-      // source of truth, as the discarded /api/users roster used to be.
-      if (data.name) setUserName(data.name);
+      // /me answers for whoever owns the session cookie and ignores
+      // ?user_id=. A different user_id means this client's identity (e.g. a
+      // localStorage copy from another account on a shared browser) is not
+      // the session's: the same stale-identity case as a 401 above.
+      if (data.user_id && data.user_id !== uid) {
+        clearStaleClientAuth();
+        if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
+          window.location.replace('/?error=session_expired');
+        }
+        return;
+      }
+      // /me is the source of truth for the display name (it may have changed
+      // since this browser signed in, e.g. from another device). Persist the
+      // confirmed name so the next page load boots with it.
+      if (data.name) {
+        setUserName(data.name);
+        try {
+          const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
+          if (saved && saved.id === uid && saved.name !== data.name) {
+            localStorage.setItem('sapling_user', JSON.stringify({ ...saved, name: data.name }));
+          }
+        } catch {}
+      }
       setUsername(data.username ?? null);
       setRoles(data.roles ?? []);
       setEquippedCosmetics(data.equipped_cosmetics ?? {});
