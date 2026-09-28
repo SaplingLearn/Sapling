@@ -10,11 +10,15 @@ Distinct keys are enforced by the schema descriptions and by validation. The rul
 
 The prompt, the schema descriptions, the E2E handler constants, the `WrongReasonCount` evaluator and the schema-budget pin follow. The free and teachback format lines now restate the short closing sentence, because the structure change alone tripled the direct CS101 calls (8 of 44 to 24 of 44) that left "Final answer:" off every free and teachback reference (Deviations). The check_items eval is re-recorded.
 
+Review of round 4 (commits 88f0973, 62771ab, f5682c3). Keys have one form, `checks.wrong_key_form`: snake_case, with apostrophes dropped, accents folded, case folded, and each run of other characters written as one `_`. Validation compares keys in that form, so "Foo", "foo" and "foo " are one shared key, no longer three. It also names a key not written in that form, under `misconception_key` (or `wrong_keys` for free and teachback). `repair_draft` writes each distractor key and each free or teachback wrong key in that form. A distractor key whose form another distractor's key also has goes through the existing re-key from its own text. A derived key keeps its negations (`_NEGATIONS`), so "does not need" no longer turns into `…_need_…`. A `misconception_text` with no letter or digit, or a placeholder such as "N/A" or "None" (`_NO_MISCONCEPTION`), states no misconception and drops the draft. The replay eval is unchanged.
+
 ## Symbols added
 
 - `backend/learning/checks.py::OptionDraft.misconception_key` / `.misconception_text` — `str | None = None` each; null on the correct option. They replace `OptionDraft.wrong_key`.
 - `backend/learning/checks.py::common_wrong(draft) -> list[WrongReason]` — the wrong reasons an item is stored with; for `mc_reason`, from the distractors; for a draft `validate_draft` passed.
-- `backend/learning/checks.py::misconception_slug(text) -> str` — deterministic snake_case key from a misconception's text: first `_SLUG_MAX_WORDS` words that are not `_STOPWORDS`, ASCII-folded, apostrophes dropped; `misconception_<digest>` for a text with no Latin letter or digit.
+- `backend/learning/checks.py::misconception_slug(text) -> str` — deterministic snake_case key from a misconception's text: first `_SLUG_MAX_WORDS` words that are not `_STOPWORDS` (the `_NEGATIONS` are kept), ASCII-folded, apostrophes dropped; `misconception_<digest>` for a text with no Latin letter or digit.
+- `backend/learning/checks.py::wrong_key_form(key) -> str` — the snake_case form every wrong-reason key is compared and stored in, in every format; `""` for a key with no Latin letter or digit (review of round 4).
+- `backend/learning/checks.py::_NEGATIONS` (the `_STOPWORDS` negations a derived key keeps) and `_NO_MISCONCEPTION` (placeholder texts that state no misconception) — private word lists (review of round 4).
 - `backend/learning/checks.py::MC_OPTION_RULES` — now `("option_count", "one_correct", "correct_misconception", "misconception_key", "misconception_text", "option_text", "letter")`.
 - `backend/agents/check_items.py::_CLOSING` — the sentence the free and teachback format lines end with.
 - `backend/agents/function_handlers_e2e.py::E2E_CHECK_ITEM_OPTIONS` — option objects now carry `misconception_key` / `misconception_text`; the `mc_reason` item lists `wrong_keys: []`, `wrong_texts: []`; `E2E_CHECK_ITEM_MC_WRONG_KEYS` / `_MC_WRONG_TEXTS` are its distractors' misconceptions and its stored common wrong reasons.
@@ -23,6 +27,7 @@ The prompt, the schema descriptions, the E2E handler constants, the `WrongReason
 ## Constants chosen
 
 - `_SLUG_MAX_WORDS = 6` † and `_SLUG_DIGEST_LEN = 8` † (`learning/checks.py`): key-format literals, not loop tuning knobs, so they are not in `learning/params.py` (the `_MIN_TOKEN_LEN` precedent).
+- `_NEGATIONS` and `_NO_MISCONCEPTION` (`learning/checks.py`, review of round 4): word lists, not tuning knobs. `_NEGATIONS` is exactly the negations that `_STOPWORDS` already lists. `_NO_MISCONCEPTION` holds "n/a", "na", "none", "null", "nil", "nothing", "tbd", "todo", "unknown" and "not applicable", compared as option texts are.
 - Unchanged: `CHECK_ITEM_MC_OPTIONS = 4` †, `CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS = 20` †, `CHECK_ITEM_MIN_WRONG`.
 
 ## Deviations from spec
@@ -36,15 +41,17 @@ The prompt, the schema descriptions, the E2E handler constants, the `WrongReason
 - The `McCorrectNotLongest` gate 0.611 → 0.5 (the round-4 recording: 9 of 17 stored drafts against 11 of 17) → the gate follows the recording, as in rounds 2 and 3. The direct runs show no change: the correct option was strictly the longest in 56 of 135 stored items against 57 of 130 on the round-3 draft (24 calls each, three subjects).
 - Hand-off file: rounds 1–3 recorded the lane in HANDOFF-04 Post-hoc changes → round 4 also writes this HANDOFF-a37.md, as the coordinator asked, and adds HANDOFF-04 Post-hoc lines. The four HANDOFF-04 Known gaps and the Open question that round 4 changes are rewritten there.
 - Commit subjects: rounds 1–3 used `PKG-04 —` → round 4 uses `PKG-a37 —`, as the coordinator asked.
+- Review of round 4: the decision's "distinct keys" → keys are compared and stored in `wrong_key_form`. That also covers free and teachback `wrong_keys`, which the decision does not touch, so that one misconception has one spelling across an item's formats for PKG-10. Two free or teachback keys that share a form still drop as `duplicate wrong keys`, as two identical keys did before (commit f5682c3).
 
 ## Known gaps
 
-- Two distractors stating the same misconception still drop the item, as the decision says. On the round-4 draft this is 6 of 432 `mc_reason` drafts in 72 direct calls, every one of them that case: "This crop moved from the Americas to Afro-Eurasia." on all three HIST200 distractors, and "Confuses the recursive case with the base case." on two CS101 ones. It was 2 of 96 in the live runs. A distractor stating no misconception would drop too; none did. Together with a deliberating reference, it can leave a concept below 2 `mc_reason` items. That happened in 1 of 16 live passes: ENG150 Logical Fallacies, where the difficulty-1 question "which of these is a fallacy?" was set against three appeals whose distractors genuinely share one mistake, and whose passages miss the fallacy chunks (A37 known limit (8)). In the direct runs, a concept fell below 2 in 3 of 120 calls on the final prompt (ENG150 2 of 48, HIST200 1 of 24). A wording asking for distractors wrong in different ways (24 ENG150 calls each) moved none of it: 22 and 23 of 24 against 23 of 24.
+- Two distractors stating the same misconception still drop the item, as the decision says. On the round-4 draft this is 6 of 432 `mc_reason` drafts in 72 direct calls, every one of them that case: "This crop moved from the Americas to Afro-Eurasia." on all three HIST200 distractors, and "Confuses the recursive case with the base case." on two CS101 ones. It was 2 of 96 in the live runs. A distractor stating no misconception would drop too (since the review, a placeholder such as "N/A" counts as none); none did. Together with a deliberating reference, it can leave a concept below 2 `mc_reason` items. That happened in 1 of 16 live passes: ENG150 Logical Fallacies, where the difficulty-1 question "which of these is a fallacy?" was set against three appeals whose distractors genuinely share one mistake, and whose passages miss the fallacy chunks (A37 known limit (8)). In the direct runs, a concept fell below 2 in 3 of 120 calls on the final prompt (ENG150 2 of 48, HIST200 1 of 24). A wording asking for distractors wrong in different ways (24 ENG150 calls each) moved none of it: 22 and 23 of 24 against 23 of 24.
 - A37 known limit (1) remains at about the round-3 rate. A call that writes no "Final answer:" sentence on its free and teachback references loses them: 6 of 32 direct calls on CS101, 0 of 40 on ENG150, HIST200 and CHEM121. The round-3 draft had 8 of 44 and 1 of 24. This is open for the coordinator (spec §13 A37 (1)). The live check hit it once in 16 passes, in run 1's CS101 pass 2, which kept 1 of 12 free and teachback drafts.
-- Keys stay model-invented or code-derived. A derived key (`counts_iterations`) seldom matches the key another item uses for the same misconception, so PKG-10's rollup by `wrong_key` can split one misconception across two keys. Real student wrong reasons are still PKG-10's.
+- Requirement "≥ 2 `mc_reason` stored per concept per pass" is not met in every pass: 15 of 16 live passes, and in the direct runs a concept fell below 2 in 3 of 120 calls on the final prompt. The review of round 4 confirmed this. It cannot be closed inside the decision, because each remedy changes something the spec fixes. (a) Accept the rate as the bar. (b) Store a same-category item with its distractors under one key, which reverses the decided "identical misconception texts → reject". (c) Top up a concept that ends a pass below 2 with one more call, which changes §3.5's per-upload call count and needs a format-restricted prompt. The miss does not persist: a concept that ends a pass with fewer than `CHECK_ITEM_INITIAL_PER_CONCEPT` (9) items is drafted again by the next generation run that names it, and by the nightly `--all-courses` backfill (§11.7 step 11). This is left to the coordinator (Open questions).
+- Keys stay model-invented or code-derived. Since the review they are written in one snake_case form, so a difference of case, spacing or separator no longer splits a key. A derived key (`counts_iterations`) still seldom matches the key another item uses for the same misconception, so PKG-10's rollup by `wrong_key` can still split one misconception across two keys. Real student wrong reasons are still PKG-10's. A derived key can also spend its `_SLUG_MAX_WORDS` on short function words (`believes_a_pointer_needs_to_be`), because `_STOPWORDS` holds only words of 3 or more letters. This is cosmetic: the key is an id and never states the opposite mistake.
 - An `mc_reason` draft's own `wrong_keys` / `wrong_texts` are ignored. A model that fills them anyway spends tokens on data nobody reads; the round-4 recording and live runs had 0 such drafts.
 - A37 known limits (2) and (4)–(9) are unchanged: surface-form `option_text`, the 20-token cap on long correct options, unverified content, the grader request limit, the cosmetic ". .", the lexical passage ranking, and options that carry their own reason.
-- Flakes observed: none new. See the live check below.
+- Flakes observed: none new. See the live check below. The review's warm default-lane `e2e_cycle` at f5682c3 (flag unset, full Chapter 1 suite): 88 passed, 13 skipped, and 1 failed, `e2e/gradebook.spec.ts:35`, the known Landing term-chip flake. The lane changes no frontend file. Oracles found 0 findings.
 
 Live check: two fresh-DB `e2e_cycle` mid-hooks on the code of d28fe4a, each replaying 76 migrations, on real gemini-2.5-flash-lite with `LEARNING_LOOP_ENABLED=true`. The probe is `scratchpad/mcfix5/live_probe.py`, not committed. Four lectures were inserted as shared `course_material` with `index_status='pending'` and indexed by `index_document`: CS101 recursion and pointers (`rich-course-cs101`, 18 shared chunks), HIST200 Atlantic world (15), ENG150 argument and fallacies (21, the third review's subject), and a CHEM121 gases lecture, the physical-science one (`rich-course-chem121`, 21). `generate_for_document` then ran twice per subject for two concepts, on the standard tier, retiring the items between passes. Drop reasons were computed from the returned drafts with `repair_draft` + `validate_draft` and matched the stored counts in every pass.
 
@@ -74,20 +81,31 @@ Live check: two fresh-DB `e2e_cycle` mid-hooks on the code of d28fe4a, each repl
 
 ## Verify commands
 
+The prompt's seven canonical lines (PKG-04 Task 8) come first, then this lane's own checks.
+
 ```
-cd backend && venv/bin/python -m pytest tests/test_learning_check_items.py -q -p no:cacheprovider          → 412 passed
+cd backend && venv/bin/python -m pytest tests/test_learning_check_items.py -q                   → N passed (N ≥ 14)
+ls backend/db/migrations/*_learning_check_items.sql                                              → 1 file
+grep -c '"check_items"' backend/agents/_providers.py backend/agents/function_handlers_e2e.py     → ≥ 1 each
+grep -ohE "options_json|correct_option|answer_kind|canonical_answer|canonical_verified|stepwise" backend/db/migrations/*_learning_check_items.sql | sort -u | wc -l → 6
+grep -c -- "--all-courses" backend/scripts/backfill_check_items.py                               → ≥ 1
+cd backend && SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/check_items.py                → every evaluator ≥ baseline
+cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_06 or inv_09 or inv_12" → 3 passed
+cd backend && venv/bin/python -m pytest tests/test_learning_check_items.py -q -p no:cacheprovider → N passed (N ≥ 436)
 cd backend && venv/bin/python -m pytest tests/test_agent_output_schemas.py tests/test_e2e_function_handlers.py -q -p no:cacheprovider → all passed
-grep -c "misconception_key" backend/learning/checks.py                                                    → ≥ 1
-grep -c "wrong_key: str" backend/learning/checks.py                                                       → 1 (the stored Option; OptionDraft has none)
-cd backend && SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/check_items.py                           → every evaluator at its baseline (McOptionsValid 1.000, McReasonValid 0.944, DraftValid 0.981, FinalAnswerValid 1.000, WrongReasonCount 1.000, McCorrectNotLongest 0.500)
-cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -p no:cacheprovider      → 17 passed, 1 skipped
+grep -c "misconception_key" backend/learning/checks.py                                           → ≥ 1
+grep -c "wrong_key: str" backend/learning/checks.py                                              → 1 (the stored Option; OptionDraft has none)
+grep -c "def wrong_key_form" backend/learning/checks.py                                          → 1
+cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -p no:cacheprovider → 17 passed, 1 skipped
 ```
+
+(Observed at the review of round 4, f5682c3: `436 passed`, `backend/db/migrations/20260927065932_learning_check_items.sql`, `2` / `1`, `6`, `2`, every evaluator at its baseline (McOptionsValid 1.000, McReasonValid 0.944, DraftValid 0.981, FinalAnswerValid 1.000, WrongReasonCount 1.000, McCorrectNotLongest 0.500), `3 passed, 15 deselected`; the lane's lines: `436 passed`, all passed, `27`, `1`, `1`, `17 passed, 1 skipped`.)
 
 ## Open questions for the series owner
 
 - A37 known limit (1): a call that leaves "Final answer:" off every free and teachback reference loses those drafts. A34 gives the free and teachback formats no second statement of the answer to repair against. Taken option: the prompt's closing-sentence lines, measured above; a structural fix (for example code closing every reference from the `final_answer` field) would change A34 and is the coordinator's call.
 - Should a derived key reuse a key the course already uses for the same misconception text, so that PKG-10's rollup does not split it? That would need a read across items at write time. Taken option: derive from the text alone, deterministically.
-- A same-category `mc_reason` question ("which of these is a fallacy?" against three appeals) has distractors that genuinely share one misconception. The decision rejects identical misconception texts, and this is what left ENG150's Logical Fallacies at 1 item in 1 of 16 live passes. Should such an item be stored with its distractors under one key (PKG-10 would then read one misconception for three options)? Taken option: reject, as decided.
+- A same-category `mc_reason` question ("which of these is a fallacy?" against three appeals) has distractors that genuinely share one misconception. The decision rejects identical misconception texts, and this is what left ENG150's Logical Fallacies at 1 item in 1 of 16 live passes, below the required "≥ 2 `mc_reason` stored per concept per pass". The review of round 4 confirmed the miss and left the ruling to the coordinator. The options are in Known gaps. (a) Accept about 1 pass in 16 (about 2.5% per call) as the bar, since the nightly backfill drafts the concept again. (b) Store such an item with its distractors under one key, so PKG-10 would read one misconception for three options. (c) Top up the concept with one more call, which changes §3.5. Taken option: reject, as decided. Nothing is changed until the coordinator rules.
 
 ## Post-hoc changes
 
