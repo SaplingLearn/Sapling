@@ -119,6 +119,21 @@ export function GradebookLanding() {
   );
 
   React.useEffect(() => {
+    // Until UserContext has hydrated, `userId` is '' for EVERY visitor, so it
+    // says nothing yet. Taking the logged-out branch on it put the demo chips
+    // in front of a signed-in user for the length of their terms request, and
+    // a click on one ("Fall 2025") was then overwritten by the real load's
+    // setSelected(currentTerm). With this gate a signed-in user has no chips
+    // at all until their own terms land, so there is no choice to overwrite.
+    if (!userReady) return;
+    // A new identity (sign-out, a cleared stale session) starts from nothing:
+    // the previous identity's chips and selection must not stay clickable, and
+    // the summary effect must wait for THIS identity's terms.
+    let stale = false;
+    setSemesters([]);
+    setSelected("");
+    setTermsReady(false);
+    setLoading(true);
     // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
     // user with no terms must see their own empty state, never demo chips.
     if (!userId) {
@@ -134,6 +149,7 @@ export function GradebookLanding() {
       getSemesters().catch(() => ({ semesters: [] })),
     ])
       .then(([coursesRes, semestersRes]) => {
+        if (stale) return;
         const all = coursesRes.courses ?? [];
         const terms = semestersRes.semesters ?? [];
         const labels = courseTermLabels(all, terms);
@@ -151,11 +167,19 @@ export function GradebookLanding() {
         setColorMap(colors);
       })
       .catch(() => {
+        if (stale) return;
         setSemesters([]);
         setSelected("");
       })
-      .finally(() => setTermsReady(true));
-  }, [userId, requestedTerm]);
+      .finally(() => {
+        if (!stale) setTermsReady(true);
+      });
+    // An identity that changes mid-load must not have the old identity's
+    // terms applied over it.
+    return () => {
+      stale = true;
+    };
+  }, [userId, userReady, requestedTerm]);
 
   React.useEffect(() => {
     if (!termsReady) return;
@@ -171,17 +195,28 @@ export function GradebookLanding() {
       setLoading(false);
       return;
     }
+    // Two quick chip clicks put two summaries in flight; whichever answers
+    // last would otherwise paint its term's courses under the current chip.
+    // Only the request for the term still selected may touch state.
+    let stale = false;
     setLoading(true);
     getGradebookSummary(userId, selected)
       .then((res) => {
+        if (stale) return;
         setCourses(res.courses.length ? res.courses : []);
         setTermGpa(res.gpa ?? null);
       })
       .catch(() => {
+        if (stale) return;
         setCourses([]);
         setTermGpa(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!stale) setLoading(false);
+      });
+    return () => {
+      stale = true;
+    };
   }, [userId, selected, termsReady]);
 
   const gridRef = React.useRef<HTMLDivElement>(null);
