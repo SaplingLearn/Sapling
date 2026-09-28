@@ -25,9 +25,8 @@ tries to change how it is graded. A report from either run is refused (reason
 `addresses_grader`), whatever the verdict. Behind that, a first verdict that
 credits any item on an answer with a suspicion signal
 (`answer_guard.suspicion`: a verdict in any shape, grading talk, a letter of
-another alphabet inside a word, a switch of language, hidden text, a claim the
-student names only to reject it) is confirmed by the second opinion, and an
-item is credited only when both runs credit it.
+another alphabet inside a word, a switch of language, hidden text) is confirmed
+by the second opinion, and an item is credited only when both runs credit it.
 
 The grader's own output decides the other confirmation (grader-guard round
 a33): it reports `contradicts_reference` — whether the answer (for mc_reason,

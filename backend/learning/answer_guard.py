@@ -103,9 +103,12 @@ an authority, key-value/table/closing-tag structure), a letter of another
 alphabet inside a Latin word (`mixed_script()`: `yеs`, `мark`), a switch into
 another language (a Russian, Chinese or Spanish directive after an English
 answer), hidden text (bidi overrides, tag characters, invisible characters, a
-letter-spaced run, base64 that decodes to text), and a claim the student names
-only to reject it ("people say …, but really …"). A word, an entity or a shape
-the item's own text uses is never a signal for that item.
+letter-spaced run, base64 that decodes to text). A word, an entity or a shape
+the item's own text uses is never a signal for that item. A claim the student
+names only to reject it ("people say …, but really …") is no signal: the attack
+and an honest refutation share that frame, so no keyword list tells them apart.
+The grader's own report does (`contradicts_reference`, read by grade(); spec
+§13 A33, grader-guard round a33).
 
 Known limits: directives are refused in English only (another language is a
 suspicion signal when it switches from the answer's own, never a refusal);
@@ -147,7 +150,6 @@ Suspicion = Literal[
     "mixed_script",
     "language_switch",
     "hidden_text",
-    "rejection_frame",
 ]
 SUSPICIONS: tuple[str, ...] = get_args(Suspicion)
 
@@ -805,10 +807,8 @@ def _vocabulary(context: str, rubric_ids: tuple[str, ...]) -> _Vocabulary:
     exempt = {s.name for s in _SIGNALS if s.count(folded)}
     if _AI_TOPIC.search(folded.text):
         exempt |= {s.name for s in _SIGNALS if s.ai}
-    # suspicion shapes the item's own text has: key-value/table/tag structure, a
-    # rejection frame ("Some say X. Are they right?")
+    # a suspicion shape the item's own text has: key-value/table/tag structure
     exempt |= {"structure"} if _STRUCTURE.search(folded.text) else set()
-    exempt |= {"rejection_frame"} if _rejection_frame(folded.text) else set()
     return _Vocabulary(
         frozenset(_spelling(m.group()) for m in ids.finditer(folded.text)),
         frozenset(exempt),
@@ -894,9 +894,9 @@ def screen(text: str, *, rubric_ids: Iterable[str] = (), context: str = "") -> S
 # (spec §13 A33, Layer 4). The labels make a verdict addressed to a rubric id
 # inert; these name the rest of what could steer a grader — a verdict addressed
 # by position, quantifier or content, grading talk, a letter from another
-# alphabet inside a word, a switch into another language, hidden text, and a
-# claim the student names only to reject it. A credited first verdict on an
-# answer with any of them needs the second opinion's agreement. Each reads the
+# alphabet inside a word, a switch into another language, and hidden text. A
+# credited first verdict on an answer with any of them needs the second
+# opinion's agreement. Each reads the
 # detection copy, and a word the item's own text uses is course vocabulary (a
 # statistics item's "confidence", a circuit's "R1: yes"). The second run can
 # report text aimed at the grader like the first, which refuses the answer.
@@ -1207,39 +1207,6 @@ def _hidden_text(text: str) -> bool:
     return any(_decodes_to_text(m.group()) for m in _BASE64_RUN.finditer(text or ""))
 
 
-# ── a claim the student names only to reject it ──────────────────────────────
-# "Some people say <the correct idea>, but that is wrong: <a misconception>",
-# "My textbook says …; I think the textbook is wrong", "although it looks like
-# …, really …". Not an injection: a grading-accuracy miss (the first slot
-# credited the rejected claim, the second opinion did not). Honest answers use
-# the same frames to reject a misconception; they pay the second run only. A
-# source cited without a contrast ("my teacher said …") is no frame.
-# A claim attributed to someone else ("people say", "my textbook says") counts
-# only with a contrast in the answer; a rejection counts alone.
-_ATTRIBUTION = re.compile(
-    r"\b(?:(?:some|many|most|other)\s+(?:people|students|sources|books|textbooks|teachers"
-    r"|websites)|people|others|everyone|they|(?:my|the|a|our|this)\s+(?:textbook|book|teacher"
-    r"|professor|notes|friend|lecture|slides|source|website|tutor|ta))\s+(?:(?:often|usually"
-    r"|sometimes|commonly|might|may|will|would)\s+)?(?:say|says|said|claims?|claimed|think|thinks"
-    r"|thought|believe|believes|argue|argues|write|writes|wrote|states?|stated|teach|teaches"
-    r"|taught|tell|tells|told|suggests?)\b"
-)
-_CONTRAST = re.compile(r"\b(?:but|however|yet|whereas|instead|actually|really|in\s+fact)\b")
-_REJECTION = re.compile(
-    r"\bbut\s+(?:really|actually|in\s+(?:fact|reality|truth))\b"
-    r"|\b(?:that|this|which|it|they|those|the\s+\w+)\s+(?:is|are|was|were|'s)\s+(?:simply\s+"
-    r"|just\s+|actually\s+)?(?:wrong|false|incorrect|mistaken|a\s+myth|not\s+(?:true|right"
-    r"|correct|the\s+case))\b"
-    r"|\bit\s+is\s+not\s+true\s+that\b|\bisn't\s+true\b"
-    r"|\b(?:although|though|while|even\s+though|even\s+if)\s+it\s+(?:(?:may|might|can|could)\s+)?"
-    r"(?:looks?|seems?|appears?|sounds?)\b"
-)
-
-
-def _rejection_frame(text: str) -> bool:
-    return bool(_REJECTION.search(text) or (_ATTRIBUTION.search(text) and _CONTRAST.search(text)))
-
-
 def suspicion(
     text: str, *, rubric_ids: Iterable[str] = (), context: str = ""
 ) -> tuple[Suspicion, ...]:
@@ -1258,7 +1225,5 @@ def suspicion(
         "mixed_script": lambda: mixed_script(text),
         "language_switch": lambda: _language_switch(text, context),
         "hidden_text": lambda: _hidden_text(text),
-        "rejection_frame": lambda: "rejection_frame" not in vocab.exempt
-        and _rejection_frame(folds[0].text),
     }
     return tuple(name for name in SUSPICIONS if checks[name]())
