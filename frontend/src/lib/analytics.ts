@@ -22,6 +22,12 @@
  *   across full page loads; that trade is accepted.
  * - **A capture gate** (`gatedBeforeSend`) drops every event unless capture
  *   is allowed right now, so opting out or leaving the shell stops it at once.
+ * - **An admin kill switch gates all of the above.** `setProductAnalyticsFlag`
+ *   (called by `FlagsProvider` off `GET /api/flags`'s `product_analytics`
+ *   flag, #620) must be explicitly turned on before anything starts;
+ *   defaults to off, so a page that hasn't heard from `/api/flags` yet — or
+ *   never will — runs no analytics, same fail-closed posture as the account
+ *   preference.
  * - **Do Not Track / Global Privacy Control means off**, always.
  * - **Pseudonymous.** `identify` carries the user's UUID and nothing else — no
  *   name, email or person properties — and runs in posthog-js's `loaded` hook,
@@ -266,6 +272,20 @@ export type AnalyticsState =
   | "off_unsaved"
   | "on_not_running";
 
+/**
+ * #620: the admin `product_analytics` switch (FlagsProvider →
+ * setProductAnalyticsFlag). Off until `/api/flags` answers, so analytics
+ * fails closed for the whole page load until the flag is known — same
+ * fail-closed posture as the account preference below.
+ */
+let productAnalyticsFlag = false;
+
+export function setProductAnalyticsFlag(on: boolean): void {
+  productAnalyticsFlag = on;
+  if (on) ensureStarted();
+  notify();
+}
+
 let env: AnalyticsEnv = readAnalyticsEnv();
 export type PosthogLoader = () => Promise<PostHog>;
 const defaultLoader: PosthogLoader = () => import("posthog-js").then((m) => m.default);
@@ -344,6 +364,7 @@ export function subscribeAnalytics(listener: () => void): () => void {
 /** Capture is allowed right now: configured, no DNT/GPC, account on, on an app route. */
 function captureAllowed(): boolean {
   return (
+    productAnalyticsFlag &&
     isAnalyticsConfigured() &&
     !browserSignalsDoNotTrack() &&
     account === "on" &&
@@ -382,6 +403,7 @@ export function gatedBeforeSend(event: CaptureResult | null): CaptureResult | nu
  * attempt per call, never a loop.
  */
 function ensureStarted(): void {
+  if (!productAnalyticsFlag) return;
   if (!captureAllowed()) return;
   if (client) {
     identify();
@@ -533,6 +555,7 @@ export function __resetAnalyticsForTests(
   env = opts.env ?? {};
   load = opts.load ?? defaultLoader;
   isAppRoute = opts.isAppRoute ?? isAppShellRoute;
+  productAnalyticsFlag = false;
   account = "unknown";
   offUnsaved = false;
   currentUser = null;

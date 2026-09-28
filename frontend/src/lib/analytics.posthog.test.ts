@@ -31,6 +31,7 @@ import {
   buildPosthogConfig,
   chooseAnalytics,
   scrubEvent,
+  setProductAnalyticsFlag,
   stopAnalytics,
 } from "./analytics";
 
@@ -83,6 +84,10 @@ beforeEach(() => {
       return ph;
     },
   });
+  // #620: __resetAnalyticsForTests always resets the product_analytics flag
+  // to its production default (off); every test in this file predates the
+  // flag and exercises the real SDK once the account says on, so turn it on.
+  setProductAnalyticsFlag(true);
 });
 
 afterEach(() => {
