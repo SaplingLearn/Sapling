@@ -60,7 +60,13 @@ test("app actions land in the events table and surface via /api/admin/analytics"
   // 1) A routed 404 with a query string → error.4xx (path only, never the
   //    query), and an unrouted 404 → nothing. Both fired first so FIFO
   //    flushing guarantees they land with/before the note.
-  const anon = await playwright.request.newContext({ baseURL: FRONTEND_URL });
+  // Explicitly EMPTY storageState: Playwright Test hands its `use` options
+  // (the student's storageState included) to playwright.request.newContext
+  // as defaults, so omitting it would sign this "anonymous" request in.
+  const anon = await playwright.request.newContext({
+    baseURL: FRONTEND_URL,
+    storageState: { cookies: [], origins: [] },
+  });
   try {
     const unrouted = await anon.get(UNROUTED_PATH);
     expect(unrouted.status()).toBe(404);
