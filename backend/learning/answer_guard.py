@@ -1112,7 +1112,8 @@ _COVERAGE = re.compile(
     r"\b(?P<word>credit\w*|covered|covers?|addressed|answered|met|satisfied|fulfilled"
     r"|accounted\s+for|accept\w*|counts?\s+(?:for|towards?)"
     r"|as\s+(?:(?:fully|completely|already)\s+)?(?:correct|right|complete|done|valid|true|yes"
-    r"|passed|a\s+pass))\b"
+    r"|passed|a\s+pass)|present|included|implied|apply\s+(?:here|too|as\s+well)"
+    r"|in\s+(?:there|here)|(?:is|are)\s+(?:all\s+)?(?:here|there)(?=\s*(?:$|[.!?])))\b"
 )
 _PARTS_MENTION = re.compile(_ANSWER_PARTS)
 # … or a claim about the whole answer: "that is the complete answer", "I have
@@ -1132,21 +1133,41 @@ _COMPLETE_CLAIM = re.compile(
     r"|\b(?:is|are|was|were)\s+already\s+(?:covered|addressed|answered|dealt\s+with"
     r"|accounted\s+for|included)\b(?!\s+(?:by|in|under|with)\b)"
     r"|\bnothing\s+(?:else\s+)?(?:is\s+)?(?:missing|left\s+out|omitted)\b"
+    r"|\bnothing\s+(?:else|more)\s+(?:is\s+)?(?:needed|required|to\s+add)\b"
+    r"|\b(?:that|this|it)(?:'s|\s+is)\s+(?:everything|all\s+of\s+it|all\s+there\s+is(?:\s+to\s+it)?)"
+    r"(?=\s*(?:$|[.!?]))"
+    r"|\b(?:answers?|covers?|addresses)\s+(?:it|this|the\s+(?:whole\s+)?question|everything)\s+"
+    r"(?:fully|completely|in\s+full|entirely)\b"
+    r"|\beverything\s+(?:that\s+)?(?:(?:was|is)\s+)?(?:asked\s+for|the\s+question\s+(?:asks|asked)"
+    r"\s+for|required|needed)\s+(?:is\s+)?(?:here|there|covered|included|above|in\s+(?:it|there"
+    r"|here))\b"
     r"|\b(?:count|treat|consider|regard|accept|take|record)\s+(?:this|it|me|my\s+(?:answer|response"
     r"|reason(?:ing)?|work)|the\s+(?:answer|response)|this\s+(?:answer|response|one))\s+as\s+"
     r"(?:(?:fully|completely)\s+)?(?:correct|right|complete|met|covered|answered|satisfied|valid"
     r"|acceptable|a\s+pass|passed)\b"
     r"|\baccept\s+(?:my|this|the)\s+(?:answer|response|reason(?:ing)?|work|submission)\b"
+    r"|\bgive\s+(?:this|it|me|my\s+answer)(?:\s+one)?\s+a\s+(?:yes|pass|tick|check(?:mark)?)\b"
+    r"|\b(?:this|it|that|my\s+answer)\s+should\s+(?:pass|get\s+(?:full\s+)?(?:credit|marks)"
+    r"|be\s+(?:accepted|credited|counted|marked\s+(?:correct|right)))(?=\s*(?:$|[.!?]))"
+)
+# … or a bare credit directive at a clause end ("Please pass this.", "Award
+# it.") — never an automaton's "accept it" when the item's own text says accept.
+_CREDIT_DIRECTIVE = re.compile(
+    r"\b(?P<verb>pass|award|accept|approve|credit)\s+(?:this|it|me|my\s+(?:answer|response))"
+    r"(?:\s+(?:one|please|now|too|anyway))*(?=\s*(?:$|[.!?]))"
 )
 
 
 def _coverage_claim(text: str, vocab: _Vocabulary) -> bool:
     """The answer claims it is complete or credits its own parts (above), in
-    words the item's own text does not use (an accounting item's "credit")."""
+    words the item's own text does not use (an accounting item's "credit", an
+    automaton's "accept")."""
     for m in _PARTS_MENTION.finditer(text):
         for c in _COVERAGE.finditer(_sentence(text, m)):
             if not _used(c["word"], vocab):
                 return True
+    if any(not _used(m["verb"], vocab) for m in _CREDIT_DIRECTIVE.finditer(text)):
+        return True
     return any(not _used(m.group(), vocab) for m in _COMPLETE_CLAIM.finditer(text))
 
 
