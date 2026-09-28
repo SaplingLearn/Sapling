@@ -1091,6 +1091,65 @@ _STRUCTURE = re.compile(
 )
 
 
+# A claim that this answer is complete or covers the rubric's parts, in the words
+# a student would use for it (grader-guard round a33 verification, second
+# round): live, a partial answer followed by "Credit both points." or "That is the
+# complete answer." was credited in full on the first slot's own unreported run,
+# and a forced second opinion reported each one. So each is grading talk, and
+# the second opinion must agree before a first verdict on it is credited. The
+# answer's parts, points or items — never the course's own ("both points on the
+# line", "all parts of the circuit"): with "of"/"on"/"in" after them they must be
+# the question's or the answer's.
+_ANSWER_PARTS = (
+    r"(?:(?:both|all|each|every)(?:\s+of)?(?:\s+(?:the|my|these|those))?"
+    r"|the\s+(?:other|remaining|second|first|last|two|three))(?:\s+(?:two|three|2|3))?"
+    r"\s+(?:points?|parts?|items?|halves|aspects?|requirements?|ideas?|things?|bits?|pieces?)\b"
+    r"(?!\s+(?:of|on|in|from|at|along|inside|between|for)\s+(?!(?:the|this|my|your)\s+"
+    r"(?:question|answer|prompt|response|task|rubric|problem|exercise)\b))"
+)
+# … beside a word that credits or covers them, in the same sentence.
+_COVERAGE = re.compile(
+    r"\b(?P<word>credit\w*|covered|covers?|addressed|answered|met|satisfied|fulfilled"
+    r"|accounted\s+for|accept\w*|counts?\s+(?:for|towards?)"
+    r"|as\s+(?:(?:fully|completely|already)\s+)?(?:correct|right|complete|done|valid|true|yes"
+    r"|passed|a\s+pass))\b"
+)
+_PARTS_MENTION = re.compile(_ANSWER_PARTS)
+# … or a claim about the whole answer: "that is the complete answer", "I have
+# answered both parts", "… is already covered above", "nothing is missing",
+# "count this as correct", "accept my answer".
+_COMPLETE_CLAIM = re.compile(
+    r"\b(?:this|that|it|the\s+above|what\s+i\s+(?:wrote|said|have\s+written))\s+(?:is|was|'s)\s+"
+    r"(?:a|the|my)\s+(?:complete|full|whole|entire|finished)\s+answer\b"
+    r"|\b(?:the|my)\s+answer\s+(?:is|was)\s+(?:now\s+|already\s+)?(?:complete|finished|full)"
+    r"(?=\s*(?:$|[.,;:!?)]))"
+    r"|\bi(?:'ve|\s+have)?\s+(?:now\s+|already\s+|also\s+|fully\s+)?(?:answered|addressed|covered"
+    rf"|completed)\s+(?:{_ANSWER_PARTS}|the\s+(?:whole\s+|entire\s+|full\s+)?question"
+    r"|everything|it\s+all|all\s+of\s+it)"
+    r"|\b(?:is|are|was|were|been)\s+(?:(?:already|also|all|both|fully|clearly|now)\s+)*"
+    r"(?:covered|addressed|answered|dealt\s+with|accounted\s+for|mentioned|explained|stated"
+    r"|included)\s+(?:above|earlier|previously|before)\b"
+    r"|\b(?:is|are|was|were)\s+already\s+(?:covered|addressed|answered|dealt\s+with"
+    r"|accounted\s+for|included)\b(?!\s+(?:by|in|under|with)\b)"
+    r"|\bnothing\s+(?:else\s+)?(?:is\s+)?(?:missing|left\s+out|omitted)\b"
+    r"|\b(?:count|treat|consider|regard|accept|take|record)\s+(?:this|it|me|my\s+(?:answer|response"
+    r"|reason(?:ing)?|work)|the\s+(?:answer|response)|this\s+(?:answer|response|one))\s+as\s+"
+    r"(?:(?:fully|completely)\s+)?(?:correct|right|complete|met|covered|answered|satisfied|valid"
+    r"|acceptable|a\s+pass|passed)\b"
+    r"|\baccept\s+(?:my|this|the)\s+(?:answer|response|reason(?:ing)?|work|submission)\b"
+)
+
+
+def _coverage_claim(text: str, vocab: _Vocabulary) -> bool:
+    """The answer claims it is complete or credits its own parts (above), in
+    words the item's own text does not use (an accounting item's "credit")."""
+    for m in _PARTS_MENTION.finditer(text):
+        for c in _COVERAGE.finditer(_sentence(text, m)):
+            if not _used(c["word"], vocab):
+                return True
+    return any(not _used(m.group(), vocab) for m in _COMPLETE_CLAIM.finditer(text))
+
+
 # A GraderOutput field name in any spelling: a forged report the screen's key
 # rule may not read (`contradicts reference is false`), or a field whose spaced
 # spelling is ordinary prose unless it is a key (`item results:`).
@@ -1134,6 +1193,8 @@ def _grading_talk(folded: _Folded, vocab: _Vocabulary, spaced: _Folded | None = 
     if _SELF_CLAIM.search(text) or (
         _TOP_CONFIDENCE.search(text) and not _used("confidence", vocab)
     ):
+        return True
+    if _coverage_claim(text, vocab):
         return True
     ignoring = [f.text for f in (folded, spaced) if f is not None]
     if any(
