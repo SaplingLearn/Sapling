@@ -364,21 +364,29 @@ def test_wrong_method_on_real_route_emits_error_4xx(sink):
     assert events[0]["payload"]["route"] == "/ok"
 
 
-def test_unauthenticated_api_users_still_emits_error_4xx(sink, monkeypatch):
+def test_unauthenticated_auth_me_still_emits_error_4xx(sink, monkeypatch):
     """The real app's unauthenticated 401s (a logged-out page load hitting
-    /api/users or /api/auth/me) are routed requests and keep their rows."""
+    /api/auth/me) are routed requests and keep their rows. (/api/users was
+    the other example until #698 deleted the roster route.)"""
+    from routes import auth as auth_routes
     from services import auth_guard
 
     monkeypatch.setattr(auth_guard, "_decode_session", auth_guard._real_decode_session)
     monkeypatch.setattr(
         auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id
     )
-    r = client.get("/api/users")
+    # routes/auth.py binds the guard by name, and conftest stubs that copy too.
+    monkeypatch.setattr(
+        auth_routes, "get_session_user_id", auth_guard._real_get_session_user_id
+    )
+    r = client.get("/api/auth/me")
     assert r.status_code == 401
     events = _events(sink)
     assert [e["event_type"] for e in events] == ["error.4xx"]
-    assert events[0]["payload"]["path"] == "/api/users"
-    assert events[0]["payload"]["route"] == "/api/users"
+    assert events[0]["payload"]["path"] == "/api/auth/me"
+    # FastAPI 0.138 records an included router's route relative to its
+    # prefix (#699), 0.136 the full template; both end in /me.
+    assert events[0]["payload"]["route"].endswith("/me")
     assert events[0]["user_id"] is None
 
 
