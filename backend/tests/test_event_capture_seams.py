@@ -152,6 +152,14 @@ def _mini_app() -> FastAPI:
     def _ok():
         return {"ok": True}
 
+    @mini.get("/needs-auth")
+    def _needs_auth():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    @mini.get("/typed/{n}")
+    def _typed(n: int):
+        return {"n": n}
+
     @mini.get("/crash")
     def _crash():
         # A TRULY unhandled exception — no HTTPException, no app-level
@@ -175,32 +183,102 @@ def test_2xx_and_3xx_emit_zero_events(sink):
     assert _events(sink) == []
 
 
-def test_unmatched_404_emits_single_error_4xx_with_payload(sink):
-    r = client.get("/api/definitely-not-a-route")
+# #690: internet scanners probing paths this API never served (/wp/, /.env,
+# /index.php, /robots.txt, the bare API root, …) were ~9.4k of prod's 30-day
+# error.4xx rows, every one anonymous, drowning the 4xx rollups. A 404 that
+# matched NO route is that traffic by definition — no handler ran, so it says
+# nothing about the product — and it is no longer recorded. The per-request log
+# line still carries it.
+_SCANNER_PATHS = [
+    "/api/definitely-not-a-route",
+    "/wp/",
+    "/wordpress/",
+    "/.env",
+    "/api/.env",
+    "/index.php",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/",
+]
+
+
+@pytest.mark.parametrize("path", _SCANNER_PATHS)
+def test_unmatched_404_emits_no_event(sink, path):
+    r = client.get(path)
+    assert r.status_code == 404
+    # Still a normal, correlated response — only the events row is gone.
+    assert r.headers["X-Request-ID"]
+    assert _events(sink) == []
+
+
+def test_unmatched_404_on_other_methods_emits_no_event(sink):
+    for method in ("POST", "PUT", "DELETE", "HEAD"):
+        assert client.request(method, "/wp-login.php").status_code == 404
+    assert _events(sink) == []
+
+
+# Review of #690: only ANONYMOUS unrouted 404s are dropped. A request that
+# presents credentials is one of OUR clients — a typo'd frontend /api/ URL, a
+# renamed or unmounted router, Canopy polling a wrong path — and its unrouted
+# 404 is exactly the regression the error rollup exists to surface. Presence
+# is checked, not validity: a scanner forging a cookie keeps its row, which is
+# the cheap side to err on.
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"headers": {"Cookie": "sapling_session=anything.sig"}}, id="session-cookie"),
+        pytest.param({"headers": {"Authorization": "Bearer not-checked"}}, id="bearer-header"),
+        pytest.param({"params": {"auth_token": "anything.sig"}}, id="auth-token-param"),
+    ],
+)
+def test_unmatched_404_with_credentials_still_emits(sink, kwargs):
+    r = client.get("/api/renamed-router/thing", **kwargs)
     assert r.status_code == 404
     events = _events(sink)
-    assert len(events) == 1
-    ev = events[0]
-    assert ev["event_type"] == "error.4xx"
-    assert ev["category"] == "error"
-    payload = ev["payload"]
-    assert payload["path"] == "/api/definitely-not-a-route"
-    assert payload["method"] == "GET"
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    payload = events[0]["payload"]
+    assert payload["path"] == "/api/renamed-router/thing"
     assert payload["status_code"] == 404
-    assert isinstance(payload["duration_ms"], (int, float))
-    # No route matched -> no template to record.
     assert "route" not in payload
-    # The contextvar was already reset when the event fires; the middleware
-    # must pass the request id explicitly.
-    assert ev["request_id"] == r.headers["X-Request-ID"]
+    # The credential itself never reaches the row.
+    assert "anything.sig" not in str(events[0])
+    assert "not-checked" not in str(events[0])
+
+
+def test_blank_credentials_count_as_anonymous(sink):
+    r = client.get(
+        "/.env", headers={"Cookie": "sapling_session=", "Authorization": ""},
+    )
+    assert r.status_code == 404
+    assert _events(sink) == []
+
+
+def test_no_route_non_404_emits_without_route(sink):
+    """A no-route response that is NOT a 404 is kept: CORSMiddleware rejects a
+    disallowed-Origin preflight with a 400 before routing runs. On a real
+    deploy that is a misconfigured frontend origin, not a scanner."""
+    r = client.options(
+        "/api/users",
+        headers={
+            "Origin": "https://not-an-allowed-origin.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert r.status_code == 400
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    assert events[0]["payload"]["status_code"] == 400
+    assert events[0]["payload"]["method"] == "OPTIONS"
+    assert "route" not in events[0]["payload"]
 
 
 def test_error_event_records_path_never_query_string(sink):
-    r = client.get("/api/definitely-not-a-route?q=super-secret-search-term")
+    mini_client = TestClient(_mini_app())
+    r = mini_client.get("/items/abc-123?q=super-secret-search-term")
     assert r.status_code == 404
     events = _events(sink)
     assert len(events) == 1
-    assert events[0]["payload"]["path"] == "/api/definitely-not-a-route"
+    assert events[0]["payload"]["path"] == "/items/abc-123"
     assert "super-secret-search-term" not in str(events[0])
 
 
@@ -238,6 +316,106 @@ def test_error_event_carries_user_id_from_request_state(sink):
     events = _events(sink)
     assert len(events) == 1
     assert events[0]["user_id"] == "user-from-state"
+
+
+def test_matched_route_404_emits_single_error_4xx_with_payload(sink):
+    """A 404 a HANDLER chose (a missing row, a disabled feature) is a product
+    signal, unlike an unrouted path: it keeps its full event."""
+    mini_client = TestClient(_mini_app())
+    r = mini_client.get("/items/abc-123")
+    events = _events(sink)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["event_type"] == "error.4xx"
+    assert ev["category"] == "error"
+    assert ev["payload"]["method"] == "GET"
+    assert ev["payload"]["status_code"] == 404
+    assert isinstance(ev["payload"]["duration_ms"], (int, float))
+    # The contextvar was already reset when the event fires; the middleware
+    # must pass the request id explicitly.
+    assert ev["request_id"] == r.headers["X-Request-ID"]
+
+
+def test_matched_route_401_emits_error_4xx(sink):
+    mini_client = TestClient(_mini_app())
+    assert mini_client.get("/needs-auth").status_code == 401
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    assert events[0]["payload"]["status_code"] == 401
+    assert events[0]["payload"]["route"] == "/needs-auth"
+
+
+def test_matched_route_422_emits_error_4xx(sink):
+    mini_client = TestClient(_mini_app())
+    assert mini_client.get("/typed/not-an-int").status_code == 422
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    assert events[0]["payload"]["status_code"] == 422
+    assert events[0]["payload"]["route"] == "/typed/{n}"
+
+
+def test_wrong_method_on_real_route_emits_error_4xx(sink):
+    """A 405 is a PARTIAL route match — the path is ours, so the row stays."""
+    mini_client = TestClient(_mini_app())
+    assert mini_client.post("/ok").status_code == 405
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    assert events[0]["payload"]["status_code"] == 405
+    assert events[0]["payload"]["route"] == "/ok"
+
+
+def test_unauthenticated_api_users_still_emits_error_4xx(sink, monkeypatch):
+    """The real app's unauthenticated 401s (a logged-out page load hitting
+    /api/users or /api/auth/me) are routed requests and keep their rows."""
+    from services import auth_guard
+
+    monkeypatch.setattr(auth_guard, "_decode_session", auth_guard._real_decode_session)
+    monkeypatch.setattr(
+        auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id
+    )
+    r = client.get("/api/users")
+    assert r.status_code == 401
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    assert events[0]["payload"]["path"] == "/api/users"
+    assert events[0]["payload"]["route"] == "/api/users"
+    assert events[0]["user_id"] is None
+
+
+def test_handler_404_on_real_app_route_emits_under_installed_fastapi(sink, monkeypatch):
+    """The unrouted-404 filter trusts FastAPI to stamp scope["route"] on a
+    match. Pin that on the REAL app, under whatever FastAPI is installed (the
+    local venv and requirements.lock have drifted before), with a handler that
+    raises its own 404: if a FastAPI upgrade stopped stamping the route, this
+    anonymous-looking request would silently lose its row."""
+    import fastapi
+    from routes import notes as notes_routes
+
+    async def _no_note(**_):
+        return None
+
+    monkeypatch.setattr(notes_routes, "get_note", _no_note)
+    r = client.get("/api/notes/no-such-note", params={"user_id": "user_andres"})
+    assert r.status_code == 404
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"], fastapi.__version__
+    route = events[0]["payload"].get("route")
+    assert route and route.endswith("/{note_id}"), (fastapi.__version__, route)
+
+
+def test_metrics_route_disabled_404_still_emits_error_4xx(sink, monkeypatch):
+    """#690: /api/internal/metrics answers a deliberate 404 while
+    CANOPY_METRICS_TOKEN is unset. That row is how an unset prod token became
+    visible at all, so the unrouted-404 filter must not swallow it. (The
+    template is asserted by suffix: FastAPI 0.138's included routers record the
+    route relative to its router's prefix, i.e. "/metrics".)"""
+    monkeypatch.delenv("CANOPY_METRICS_TOKEN", raising=False)
+    r = client.get("/api/internal/metrics")
+    assert r.status_code == 404
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    assert events[0]["payload"]["path"] == "/api/internal/metrics"
+    assert events[0]["payload"]["route"].endswith("/metrics")
 
 
 # ── Seam 1b: get_session_user_id stamps request.state.user_id ────────────────
