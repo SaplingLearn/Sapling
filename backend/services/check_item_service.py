@@ -6,9 +6,9 @@ services/graph_service._normalize_concept(concept_name) — never a student's
 graph_nodes row (A2). Nothing here writes graph_nodes (spec §8.1).
 
 Encryption: prompt, reference_answer, rubric_json, common_wrong_json,
-options_json, correct_option and canonical_answer are encrypted at write
-(services/encryption.py) and decrypted at read in `_row_to_item`, the single
-decrypt boundary. question_hash is the plaintext lookup key, hashed from the
+options_json, correct_option, canonical_answer and final_answer (A34) are
+encrypted at write (services/encryption.py) and decrypted at read in
+`_row_to_item`, the single decrypt boundary. question_hash is the plaintext lookup key, hashed from the
 PLAINTEXT prompt before encryption. No filter, order or join here ever names
 an encrypted column (invariant 9).
 
@@ -69,7 +69,7 @@ _COLUMNS = (
     "id,course_id,concept_key,document_id,format,difficulty,prompt,reference_answer,"
     "rubric_json,common_wrong_json,options_json,correct_option,answer_kind,"
     "canonical_answer,tolerance,canonical_verified,stepwise,source_chunk_ids,"
-    "source_document_ids,question_hash,graded,created_at"
+    "source_document_ids,question_hash,graded,created_at,final_answer"
 )
 
 #: A24 stub for services/decisions.py::item_answerable (PKG-05b): "is this item
@@ -127,6 +127,8 @@ def _build_row(
         "difficulty": draft.difficulty,
         "prompt": encrypt_if_present(draft.prompt),
         "reference_answer": encrypt_if_present(draft.reference_answer),
+        # A34: stated by the generator, verbatim from the reference; validated.
+        "final_answer": encrypt_if_present(draft.final_answer),
         "rubric_json": encrypt_if_present(json.dumps(rubric)),
         "common_wrong_json": encrypt_if_present(json.dumps(wrong)),
         "options_json": options,
@@ -248,6 +250,8 @@ def _row_to_item(row: dict) -> CheckItem:
         question_hash=row.get("question_hash"),
         graded=bool(row.get("graded")),
         created_at=row.get("created_at"),
+        # A34: None on a legacy row — checks.is_servable keeps it from being served.
+        final_answer=decrypt_if_present(row.get("final_answer")),
     )
 
 
@@ -435,6 +439,44 @@ def retire_items_for_documents(document_ids: Iterable[str]) -> int:
         )
         retired += len(rows or [])
     logger.info("check items retired: %d (documents: %d)", retired, len(ids))
+    return retired
+
+
+def items_missing_final_answer(course_id: str) -> dict[str, list[str]]:
+    """A34: the course's rows drafted before check_items.final_answer existed
+    (the column is NULL), as {concept_key: [item ids]} in id order. Reads ids
+    and keys, and final_answer only to see that it is NULL — never decrypted,
+    never filtered on (invariant 9), and no reference text is read: a final
+    answer is never derived from a reference, the concept is redrafted."""
+    missing: dict[str, list[str]] = {}
+    for row in page_all(
+        table(_TABLE),
+        "id,concept_key,final_answer",
+        filters={"course_id": f"eq.{course_id}"},
+        order="id",
+    ):
+        if row.get("final_answer") is None and row.get("id"):
+            missing.setdefault(row.get("concept_key"), []).append(row["id"])
+    return missing
+
+
+def retire_items_by_id(item_ids: Iterable[str]) -> int:
+    """DELETE the given items (_DOC_ID_BATCH ids per `in.(…)`); returns how
+    many went. The A34 backfill mode retires rows without a final_answer this
+    way before it redrafts their concepts; nothing serves them either way."""
+    ids = [i for i in dict.fromkeys(item_ids) if i]
+    retired = 0
+    for start in range(0, len(ids), _DOC_ID_BATCH):
+        batch = ids[start : start + _DOC_ID_BATCH]
+        rows = table(_TABLE).delete(
+            filters={
+                "id": "in.(" + ",".join(pg_quote_value(i) for i in batch) + ")",
+                "select": "id",
+            }
+        )
+        retired += len(rows or [])
+    if ids:
+        logger.info("check items retired by id: %d", retired)
     return retired
 
 

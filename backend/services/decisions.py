@@ -63,7 +63,7 @@ from agents.usage import record_agent_usage
 from learning.answer_guard import Refusal
 from learning.checks import RubricItem, WrongReason
 from learning.evidence import GraderBackend
-from services import events_service
+from services import ai_budget, events_service
 
 logger = logging.getLogger("sapling.decisions")
 
@@ -558,6 +558,9 @@ async def _run_decision(decision: str, state, deps):
     token cap is checked AFTER a response; a validation failure can follow a billed
     request): the §3.5 caps (STUDENT_DAILY_GRADES counts task="decision") and the admin
     cost analytics read llm_usage only — the agents.grader._run_once posture."""
+    # spec §3.5: decisions count as grades (STUDENT_DAILY_GRADES); PKG-06b, invariant 23
+    if ai_budget.check(deps.user_id, "decision").level == "hard":
+        return None  # the callers' existing unavailable path runs
     message, output_type = decision_request(decision, state)
     usage = RunUsage()
     try:

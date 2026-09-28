@@ -11,6 +11,16 @@ keyed on the offering.
 Stores data in:
 - offering_concept_stats: per-concept aggregated metrics (per offering)
 - offering_summary: class-wide summary with Gemini-generated text (per offering)
+
+The prose in offering_summary.summary_text has no reader on any request path.
+Two regimes, switched by the process-wide LEARNING_LOOP_ENABLED (a class mixes
+students on and off the loop, so a per-user gate cannot pick):
+- loop off (the pre-series product, unchanged): `update_course_context`
+  regenerates the prose synchronously whenever the per-concept stats hash moves.
+- loop on (spec §13 A35): `update_course_context` writes the same numbers and
+  no prose (NULL text and hash), and nothing else writes it. The loop moves
+  mastery on every graded answer, so the old regime put a course_summary call
+  on the answer path for each of the student's offerings, for text nothing reads.
 """
 
 import copy
@@ -19,6 +29,7 @@ import hashlib
 from datetime import datetime, timezone
 from functools import lru_cache
 
+import config
 from db.connection import table
 from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
@@ -157,6 +168,7 @@ def update_course_context(offering_id: str) -> None:
     Aggregate mastery + quiz data for the students enrolled in an **offering**
     (a course taught in a term) and upsert into offering_concept_stats and
     offering_summary. Offering-scoped. Called automatically after any graph update.
+    With the loop on it writes no prose (§13 A35; see the module docstring).
     Students who opted out of sharing (user_settings.share_class_context = false,
     #72) are excluded before any of their graph data is read.
 
@@ -354,6 +366,29 @@ def update_course_context(offering_id: str) -> None:
         reverse=True,
     )
     top_mastered_concepts = [name for name, _ in sorted_by_mastered[:5]]
+
+    if config.LEARNING_LOOP_ENABLED:
+        # §13 A35: the numbers, and no prose. This runs after every evidence
+        # flush for each of the student's offerings of the course, and the
+        # prose has no reader. The text and its hash are cleared: prose from
+        # before the loop turned on would contradict the numbers the loop
+        # keeps moving, and a NULL hash makes the pre-series regime below
+        # rewrite it once if the kill switch turns the loop off.
+        table("offering_summary").upsert(
+            {
+                "offering_id": offering_id,
+                "student_count": student_count,
+                "avg_class_mastery": avg_class_mastery,
+                "top_struggling_concepts": top_struggling_concepts,
+                "top_mastered_concepts": top_mastered_concepts,
+                "summary_text": None,
+                "summary_hash": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="offering_id",
+        )
+        clear_course_context_cache()  # #98: aggregates changed → drop cached read
+        return
 
     # Generate data hash to detect changes
     stats_for_hash = [

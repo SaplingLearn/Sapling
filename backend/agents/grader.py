@@ -67,7 +67,7 @@ from learning.params import (
     GRADER_SECOND_OPINION_SLOT,
     LEAK_NGRAM,
 )
-from services import events_service
+from services import ai_budget, events_service
 
 logger = logging.getLogger("sapling.agents.grader")
 
@@ -400,6 +400,8 @@ class _UnfinishedRun:
 async def _run_once(
     message: str, deps: SaplingDeps, *, second_opinion: bool = False
 ) -> GraderOutput:
+    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps this to unavailable
+        raise UsageLimitExceeded("ai budget: grader cap reached")
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
     # Passed in, so a run that raises still says what the provider billed: the
     # token cap is checked AFTER a response (pydantic-ai), and a validation
@@ -459,7 +461,13 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     an item is credited only when both runs credit it (disagreement → the lower
     verdict at the lower confidence). A first run below the floor is replaced by
     the second opinion, signal or not (§3.4 / A6). A hint past
-    GRADER_HINT_MAX_CHARS is dropped, never an outage."""
+    GRADER_HINT_MAX_CHARS is dropped, never an outage.
+
+    PKG-06b: the grader cap is checked first, before the message is built and before any
+    run, so a capped attempt is unavailable whatever its outcome (spec §3.5, A22, inv 28)."""
+    # spec §3.5 grader cap (PKG-06b), invariant 28
+    if ai_budget.check(deps.user_id, "grader").level == "hard":
+        return GradeResult(unavailable=True)
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
         # come back a full-weight "incorrect" (check_item_service falls back to

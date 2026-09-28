@@ -368,6 +368,9 @@ E2E_CHECK_ITEM_REFERENCE = (
     "The learning rate controls the size of each parameter update step "
     "taken along the negative gradient."
 )
+# A34: every item states its final answer, verbatim from its reference (and,
+# for mc_reason, the correct option's text) — never in the prompt.
+E2E_CHECK_ITEM_FINAL_ANSWER = "The size of each parameter update step"
 E2E_CHECK_ITEM_RUBRIC = [
     "Names the step size or update magnitude.",
     "Ties the step to the gradient direction.",
@@ -378,7 +381,7 @@ E2E_CHECK_ITEM_WRONG_TEXT = "Confuses the learning rate with the number of itera
 # to one of the item's own wrong_keys.
 E2E_CHECK_ITEM_OPTION_LETTERS = ["A", "B", "C", "D"]
 E2E_CHECK_ITEM_OPTION_TEXTS = [
-    "The size of each parameter update step",
+    E2E_CHECK_ITEM_FINAL_ANSWER,
     "The number of iterations to run",
     "The value of the loss",
     "The sign of the gradient",
@@ -404,6 +407,7 @@ def _e2e_check_item(concept: str, fmt: str) -> dict:
         "difficulty": CHECK_ITEM_DIFFICULTIES[0],
         "prompt": E2E_CHECK_ITEM_PROMPT_TEMPLATE.format(concept=concept, format=fmt),
         "reference_answer": E2E_CHECK_ITEM_REFERENCE,
+        "final_answer": E2E_CHECK_ITEM_FINAL_ANSWER,
         "rubric": E2E_CHECK_ITEM_RUBRIC,
         "wrong_keys": [E2E_CHECK_ITEM_WRONG_KEY],
         "wrong_texts": [E2E_CHECK_ITEM_WRONG_TEXT],

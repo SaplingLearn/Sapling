@@ -396,6 +396,24 @@ def get_courses(user_id: str) -> list:
     return result
 
 
+def _refresh_course_context(offering_id: str, user_id: str) -> None:
+    """Refresh one offering's class aggregates after a write that touched them.
+
+    A post-commit side effect: the write it follows stands, so a failure never
+    reaches the caller, but it is logged with its traceback, never swallowed.
+    """
+    try:
+        from services.course_context_service import update_course_context
+
+        update_course_context(offering_id)
+    except Exception:
+        logger.warning(
+            "graph: course-context refresh failed offering=%s user=%s "
+            "(the write it follows stands)",
+            offering_id, user_id, exc_info=True,
+        )
+
+
 def add_course(
     user_id: str,
     course_id: str,
@@ -461,11 +479,7 @@ def add_course(
         "color": color,
         "nickname": nickname,
     })
-    try:
-        from services.course_context_service import update_course_context
-        update_course_context(offering_id)
-    except Exception:
-        pass
+    _refresh_course_context(offering_id, user_id)
     return {"course_id": course_id, "already_existed": False}
 
 
@@ -516,13 +530,9 @@ def delete_node(user_id: str, node_id: str) -> dict:
     if course_id:
         # course_id from graph_nodes is the abstract course; refresh each of the
         # user's offerings of that course (analytics is offering-scoped).
-        from services.course_context_service import update_course_context
         from services.academics import user_offering_ids_for_course
         for offering_id in user_offering_ids_for_course(user_id, course_id):
-            try:
-                update_course_context(offering_id)
-            except Exception:
-                pass
+            _refresh_course_context(offering_id, user_id)
     return {"deleted": True}
 
 
@@ -549,15 +559,11 @@ def delete_course(user_id: str, course_id: str) -> dict:
     """
     from services.academics import user_offering_ids_for_course
     offering_ids = user_offering_ids_for_course(user_id, course_id)
-    from services.course_context_service import update_course_context
     for offering_id in offering_ids:
         table("enrollments").delete(
             {"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
         )
-        try:
-            update_course_context(offering_id)
-        except Exception:
-            pass
+        _refresh_course_context(offering_id, user_id)
     return {"deleted": True}
 
 
@@ -871,6 +877,10 @@ def _apply_evidence(
     only). Propagated updates are derived from the journaled evidence, so
     they are not journaled themselves. `by_id` is the user- and
     course-scoped existing_rows; a node outside it is never read or written.
+
+    The journal rows of one call share `created_at` and have random ids, so
+    each carries `evidence_seq` = 0..n−1 in apply order (§13 A36): a replay
+    orders by (created_at, evidence_seq). A skipped evidence takes no number.
     """
     changes: list[dict] = []
     now_iso = now.isoformat()
@@ -882,6 +892,7 @@ def _apply_evidence(
     for node_id in owned:
         states.setdefault(node_id, LearnerState(user_id=user_id, node_id=node_id))
     seen_checks: set[tuple[str, str]] = set()
+    seq = 0  # next evidence_seq: counts journaled rows only
 
     for ev in evidences:
         row = by_id.get(ev.node_id)
@@ -957,7 +968,9 @@ def _apply_evidence(
             "question_hash": ev.question_hash,
             "confidence": ev.confidence,
             "grader_backend": ev.grader_backend,  # A22; null when no verdict (idk)
+            "evidence_seq": seq,  # A36: apply order within this call
         })
+        seq += 1
         changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
         if row.get("course_id"):
             touched_courses.add(row["course_id"])
@@ -1224,14 +1237,10 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     if touched_courses:
         # touched_courses holds abstract course ids (the graph key). Analytics is
         # offering-scoped, so refresh each of this user's offerings of those courses.
-        from services.course_context_service import update_course_context
         from services.academics import user_offering_ids_for_course
         for cid in touched_courses:
             for offering_id in user_offering_ids_for_course(user_id, cid):
-                try:
-                    update_course_context(offering_id)
-                except Exception:
-                    pass
+                _refresh_course_context(offering_id, user_id)
 
     # The knowledge graph is the ONLY thing that advances these three stats, so
     # this is the only place they can be dispatched from. Without it `rooted`,

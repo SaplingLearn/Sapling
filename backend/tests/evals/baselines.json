@@ -11,11 +11,12 @@
   },
   "check_items": {
     "CitesChunkEvaluator": 1.0,
-    "DraftValidEvaluator": 0.796296,
+    "DraftValidEvaluator": 0.722222,
+    "FinalAnswerValidEvaluator": 1.0,
     "HasReferenceEvaluator": 1.0,
     "NoLeakInPromptEvaluator": 1.0,
     "RubricCountEvaluator": 0.833333,
-    "WrongReasonCountEvaluator": 1.0
+    "WrongReasonCountEvaluator": 0.666667
   },
   "concept_extraction": {
     "AllNamesTitleCaseEvaluator": 1.0,

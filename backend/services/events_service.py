@@ -72,6 +72,20 @@ learn.answer_refused          audit     reason (grader_directive / role_marker /
                                         answer that addressed the grader, or was longer than
                                         GRADER_ANSWER_MAX_CHARS, was not graded (PKG-05 reopen,
                                         spec §6, §13 A33); counts only, never the answer
+zpd.step                      usage     concept_id, question_hash, phase, channel, band, ceiling,
+                                        ceiling_reason, first_attempt_correct, n_attempts,
+                                        max_rung_used, rungs[{rung, dwell_ms}],
+                                        time_to_first_attempt_ms, time_to_correct_ms,
+                                        independent_time_ms, assisted, confidence, fsrs_rating,
+                                        p_known_before, p_known_after, r_before, item_difficulty;
+                                        optional tier, grader_backend (omitted when unknown)
+                                        (learning loop PKG-06, spec §6)
+zpd.offer                     usage     accepted, band
+zpd.band_adjust               usage     direction, trigger, window_stats
+zpd.wheelspin                 error     concept_id, opps, unassisted_next, htc_k, prerequisite_ids
+zpd.leak                      error     rung_emitted, ceiling, detector, request_id
+zpd.rating                    usage     rating (too_easy / appropriate / too_hard),
+                                        checks_since_last
 decision.made                 usage     decision, backend, request_id, latency_ms, confidence,
                                         fallback — one answered decision of the learning loop's
                                         typed decision seam (PKG-05b, spec §6, §13 A24)
@@ -81,6 +95,7 @@ decision.shadow               usage     decision, request_id, primary_value, sha
                                         PKG-15 plumbing, never fired in the series; enums only
 decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
                                         / both_failed; PKG-15 adds the Jev error enums), request_id
+ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -195,6 +210,17 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # reason enum, format, check_item_id, request_id and counts (verdict_tokens is
     # a count of a suspicion signal, never a reason). Never the answer text.
     "learn.answer_refused",
+    # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
+    # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
+    # the loop tutor. Payloads are ids/counts/enums — the question_hash is a
+    # sha256, never the prompt. wheelspin and leak are category="error": a
+    # stuck student and a revealed answer are both things an admin must count.
+    "zpd.step",
+    "zpd.offer",
+    "zpd.band_adjust",
+    "zpd.wheelspin",
+    "zpd.leak",
+    "zpd.rating",
     # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
     # (services/decisions.py). `made` = one answered decision, with the backend
     # that answered; `fallback` = served by another backend (reason jev_absent)
@@ -204,6 +230,10 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "decision.made",
     "decision.shadow",
     "decision.fallback",
+    # PKG-06b (spec §6, §13 A20): a per-student AI cap was hit. category="usage": it fires at
+    # most once per user/scope/level/day, but for many students at once near a price change;
+    # the /errors feed must not drown in it.
+    "ai.budget_capped",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
@@ -275,12 +305,17 @@ def log_llm_usage(
     provider: str = "gemini",
     user_id: str | None = None,
     request_id: str | None = None,
+    cached_tokens: int | None = None,
+    thinking_tokens: int | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
     ``usage`` is any Pydantic AI / Gemini usage object (or dict); it is
     normalized here and the cost computed from ``llm_pricing.MODEL_PRICING``
     (``cost_usd = NULL`` for unpriced models).
+
+    ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
+    ``None`` when unmeasured, and cached input is billed at the cached rate.
     """
     if not _logging_enabled():
         return
@@ -296,8 +331,13 @@ def log_llm_usage(
             "prompt_tokens": tokens["prompt_tokens"],
             "completion_tokens": tokens["completion_tokens"],
             "total_tokens": tokens["total_tokens"],
+            # Both keys on EVERY row: PostgREST rejects a bulk insert whose
+            # objects' keys differ (PGRST102), and the worker batches rows.
+            "cached_tokens": cached_tokens,
+            "thinking_tokens": thinking_tokens,
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                cached_tokens=cached_tokens,
             ),
         }
         _enqueue("llm_usage", row)

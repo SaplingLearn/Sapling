@@ -125,10 +125,18 @@ def test_event_taxonomy_is_pinned():
         # PKG-05 reopen (spec §6, §13 A33): an answer that addressed the grader
         # was refused before grading. Emit coverage: test_learning_answer_guard.py.
         "learn.answer_refused",
+        # PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py
+        "zpd.step",
+        "zpd.offer",
+        "zpd.band_adjust",
+        "zpd.wheelspin",
+        "zpd.leak",
+        "zpd.rating",
         # PKG-05b: the typed decision seam (spec §6). Emit coverage: test_learning_decisions.py.
         "decision.made",
         "decision.shadow",
         "decision.fallback",
+        "ai.budget_capped",           # PKG-06b: a per-student AI cap was hit
     })
 
 

@@ -1954,3 +1954,114 @@ class TestJournalBeforeAMigration:
             (True, True),
             (False, True),
         ]
+
+
+# ── evidence_seq (reopened for the live sequence-test finding; spec §4, §13 A36) ──
+
+
+class TestEvidenceSeq:
+    """Every row one apply_graph_update call journals shares one created_at and
+    has a random uuid id, so without evidence_seq nothing orders them for a
+    replay: a 3-question quiz had to be re-ordered from its p_before → p_after
+    links."""
+
+    def test_a_three_evidence_flush_numbers_its_rows_along_the_p_chain(self):
+        from types import SimpleNamespace
+
+        from learning.evidence import flush_pending
+
+        factory, mocks = _evidence_factory(NODES, [])
+        deps = SimpleNamespace(
+            user_id="u1",
+            pending_evidence=[
+                {"node_id": "n1", "channel": "mc", "correct": True},
+                {"node_id": "n1", "channel": "mc", "correct": False},
+                {"node_id": "n1", "channel": "free_response", "correct": True},
+            ],
+        )
+        clock = patch("services.graph_service.datetime", wraps=datetime)
+        with (
+            patch("services.graph_service.table", side_effect=factory),
+            patch("learning.learner_state.table", side_effect=factory),
+            patch("services.graph_service.touch_streak_safe"),
+            patch("services.course_context_service.update_course_context"),
+            patch("services.academics.user_offering_ids_for_course", return_value=[]),
+            patch("services.achievement_service.check_achievements"),
+            clock as fake_dt,
+        ):
+            fake_dt.now.return_value = NOW
+            flush_pending(deps, "c1")
+        rows = _event_rows(mocks)
+        assert [r["evidence_seq"] for r in rows] == [0, 1, 2]
+        assert len({r["created_at"] for r in rows}) == 1, "the timestamp cannot order them"
+        assert rows[0]["p_before"] == pytest.approx(BKT_L0)
+        for earlier, later in zip(rows, rows[1:]):
+            assert later["p_before"] == pytest.approx(earlier["p_after"])
+        # Replaying in evidence_seq order reproduces every posterior.
+        from learning import bkt
+
+        p = rows[0]["p_before"]
+        for row in sorted(rows, key=lambda r: r["evidence_seq"]):
+            p = bkt.update(p, row["channel"], row["correct"], weight=row["weight"])
+            assert p == pytest.approx(row["p_after"])
+
+    def test_seq_follows_apply_order_across_nodes(self):
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {"node_id": "n2", "channel": "mc", "correct": True},
+                    {"node_id": "n1", "channel": "mc", "correct": False},
+                    {"node_id": "n2", "channel": "mc", "correct": False},
+                ]
+            },
+            edges=[],
+        )
+        rows = _event_rows(mocks)
+        assert [(r["node_id"], r["evidence_seq"]) for r in rows] == [
+            ("n2", 0),
+            ("n1", 1),
+            ("n2", 2),
+        ]
+
+    def test_skipped_evidence_takes_no_seq(self):
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {"node_id": "ghost", "channel": "mc", "correct": True},
+                    {"node_id": "n1", "channel": "mc", "correct": True},
+                    {"node_id": "n1", "channel": "mc", "correct": False},
+                ]
+            },
+            edges=[],
+        )
+        assert [r["evidence_seq"] for r in _event_rows(mocks)] == [0, 1]
+
+    def test_each_call_starts_at_zero(self):
+        payload = {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
+        first = [r["evidence_seq"] for r in _event_rows(_apply(payload, edges=[])[1])]
+        second = [r["evidence_seq"] for r in _event_rows(_apply(payload, edges=[])[1])]
+        assert first == second == [0]
+
+    def test_propagation_writes_no_journal_row_and_takes_no_seq(self):
+        _, mocks, _ = _apply(
+            {
+                "evidence": [
+                    {"node_id": "n1", "channel": "free_response", "correct": True},
+                    {"node_id": "n1", "channel": "mc", "correct": True},
+                ]
+            }
+        )
+        rows = _event_rows(mocks)
+        assert [(r["node_id"], r["evidence_seq"]) for r in rows] == [("n1", 0), ("n1", 1)]
+
+    def test_legacy_rows_never_carry_it(self):
+        _, trace = _run_legacy(LEGACY_PAYLOAD)
+        assert trace == LEGACY_TRACE
+        payload = {
+            **LEGACY_PAYLOAD,
+            "evidence": [{"node_id": "n1", "channel": "mc", "correct": True}],
+        }
+        _, mocks, _ = _apply(payload, edges=[])
+        legacy_row, evidence_row = _event_rows(mocks)
+        assert legacy_row["event_type"] == "quiz_correct" and "evidence_seq" not in legacy_row
+        assert evidence_row["evidence_seq"] == 0

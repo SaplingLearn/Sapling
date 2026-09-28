@@ -13,6 +13,7 @@ Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md §3.1–§3.4.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 # --------------------------------------------------------------- §3.1 BKT
@@ -134,7 +135,8 @@ RUNG_ASSISTED_MIN = 1
 RUNG_NO_CREDIT_MIN = 4
 LADDER_MAX_RUNG = 6
 # Band-control cut-points (unassisted_next 0.90 / 0.65, "2 windows", the
-# wheelspin opps>=6 arm) are unnamed in spec §3.3; PKG-06 names them here.
+# wheelspin opps>=6 arm) are unnamed in spec §3.3; PKG-06 names them in its
+# block below (0.65 is PRACTICE_TARGET_LO).
 
 # ------------------------------------- §3.4 probe, plan, step, brief, limits
 PROBE_ITEMS_PER_SKILL_MIN = 4
@@ -212,6 +214,54 @@ CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec la
 CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
 CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
 CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
+# † A34 (PKG-06's reopen): the most tokens (checks.answer_tokens) a check item's
+# structured final_answer may hold — the decisive core the leak check matches,
+# never the whole reference, yet room for a number with its unit, an
+# expression, an mc_reason option's text or a teachback claim.
+CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS = 20
+
+# ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
+# FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating
+# AGAIN/HARD/GOOD/EASY, which this module cannot import (fsrs imports params);
+# tests/test_learning_zpd_policy.py pins the equality. Read by
+# policy.evidence_for_rung.
+FSRS_RATING_AGAIN = 1
+FSRS_RATING_HARD = 2
+FSRS_RATING_GOOD = 3
+FSRS_RATING_EASY = 4  # never emitted in v1 (§3.2)
+# §3.3 band control: "unassisted_next > 0.90 for 2 windows" (the lower edge
+# "< 0.65" is PRACTICE_TARGET_LO above).
+BAND_CONTROL_HI = 0.90
+BAND_CONTROL_STOP_WINDOWS = 2
+# §3.3 ceiling: profic "H3 after 2 failed genuine attempts"; develop "H6 after ≥ 2".
+CEILING_PROFIC_ESCALATE_FAILS = 2
+CEILING_DEVELOP_H6_FAILS = 2
+# §3.3 wheelspin, clause 2: "opps ≥ 6 AND unassisted_next < 0.50".
+WHEELSPIN_OPPS_EARLY = 6
+WHEELSPIN_UNASSISTED_MAX = 0.50
+# §3.5 loop tutor context policy (A17/A18) and LOOP_MODEL_TIER (A15).
+LOOP_RAG_K_TEACH = 5  # teach-phase RAG k (unchanged from legacy)
+LOOP_RAG_K_TEACH_SOFT = 3  # † teach RAG k at the soft (and hard) budget level
+LOOP_SOURCE_CHUNKS_MAX = 2  # † the item's own source chunks for hint/feedback turns and H2
+LOOP_TIER_DEEP_MIN_FAILS = 2  # LOOP_MODEL_TIER: "≥ 2 failed genuine attempts" → deep
+# §6 zpd.* payloads carry ids, counts, enums and bools only (PKG-06 Behaviour
+# 10): no payload string is longer than a sha256 question_hash (64 hex chars).
+EVENT_PAYLOAD_STR_MAX = 64
+
+
+def gate_seconds(name: str, scale: float = 1.0) -> float:
+    """A `GATE_*` seconds constant times `scale` (spec §13 A5).
+
+    A5 scales every gate by `config.LEARNING_GATE_TIME_SCALE` (default 1.0; the
+    E2E lane sets 0.01). This module is stdlib-only and must not import config,
+    so the factor is an argument: `learning.gates` threads it from its callers'
+    `time_scale=`, and the route layer reads the config value (HANDOFF-06)."""
+    value = globals().get(name) if name.startswith("GATE_") else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"gate_seconds: {name!r} is not a GATE_* seconds constant")
+    if not (math.isfinite(scale) and scale > 0):
+        raise ValueError(f"gate_seconds: scale must be finite and > 0, got {scale!r}")
+    return float(value) * scale
 
 
 # ------------------------------------------------------ §3.1 validity check
@@ -240,3 +290,11 @@ def validate_channels(channels: Mapping[str, Mapping[str, float | bool]], t: flo
 
 
 validate_channels(CHANNELS, BKT_T)
+
+
+# PKG-06b (spec §3.5, §13 A20): per-session loop request caps. The counters live in
+# sessions.loop_state as ints tutor_requests / deep_requests (PKG-07 maintains them).
+LOOP_SESSION_MAX_TUTOR_REQUESTS = 40  # † reaching it = hard (an optimized 10-turn session uses ≈ 7)
+LOOP_SESSION_MAX_DEEP_REQUESTS = 6  # † develop/profic: reaching it = soft (deep → standard)
+# † novice: reaching it turns novice deep turns into standard (a trailing comment would wrap the name)
+LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE = 12

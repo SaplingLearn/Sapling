@@ -64,7 +64,11 @@ and `check_items` — 106 cassettes.
 nine items per case from `fixtures/tutor_course.json` passages and scores them
 with the same code rules the service stores by (`learning/checks.py::
 validate_draft`) plus grounding (cited chunk ids are input ids; no reference
-leaks into the prompt). Its baseline is a first recording.
+leaks into the prompt) and `FinalAnswerValid` (spec §13 A34, required 1.0:
+every accepted draft's final answer is a verbatim copy from its reference).
+Its baseline was re-recorded by PKG-06's A34 reopen of PKG-04 (29af030; one
+recording on the final prompt — DraftValid 0.722, WrongReasonCount 0.667,
+both lower than the first recording; HANDOFF-04/HANDOFF-06).
 
 `chat_tutor` records against the committed fixture course
 (`fixtures/tutor_course.json`) through the TutorRetrieval seam
