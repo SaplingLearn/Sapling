@@ -85,6 +85,16 @@ def _reset_events_service():
     events_service.reset_for_tests()
 
 
+@pytest.fixture(autouse=True)
+def _reset_ai_budget():
+    """PKG-06b: reset ai_budget's per-process state (request cache, once-per-day event set,
+    platform timestamp) so one test's caps never leak into another."""
+    from services import ai_budget
+    ai_budget.reset_for_tests()
+    yield
+    ai_budget.reset_for_tests()
+
+
 @pytest.fixture
 def sink():
     """Collect events the code under test enqueues, instead of hitting the DB.

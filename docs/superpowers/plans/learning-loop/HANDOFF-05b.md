@@ -134,3 +134,5 @@ ls docs/decisions/*decision-seam*.md                                            
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+
+- PKG-06b 2026-09-27: _run_decision checks ai_budget.check(user_id, "decision") first; hard → None (the unavailable path) — commit 70043ce. No model call and no `llm_usage` row under the cap; the callers' existing `None` path runs, so e.g. `match_wrong_reason` without a prior emits `decision.fallback{reason: both_failed}` as for an outage (spec §6 has no budget reason; HANDOFF-06b Open question (f)). `grade_rubric_items`/`reason_is_correct` needed no change: their backend is `agents.grader.grade()`, capped by the PKG-05 reopen d2bc776. Known gaps' "No `ai_budget.check` in `_run_decision`" is closed.

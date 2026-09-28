@@ -3000,14 +3000,45 @@ def test_emit_helpers_reach_log_event_without_raising(monkeypatch):
 
 
 _PKG06_MODULES = ("policy", "gates", "leak", "ladder", "loop_state_store", "zpd_events")
+# PKG-06b (spec §14 row 06b; HANDOFF-06 "BudgetDecision.tier_ceiling reuses Tier"): the AI budget
+# imports policy's three type aliases, and nothing else from the PKG-06 layer. Matched per import
+# STATEMENT — `from learning.policy import <some of these names>`, absolute — so the bare module
+# (`import learning.policy`, `from learning import policy`: every policy function) and any other
+# PKG-06 name there (model_tier, a gates helper) are still offenders.
+_PKG06_SANCTIONED_IMPORTS = {
+    "services/ai_budget.py": ("learning.policy", frozenset({"Band", "BudgetLevel", "Tier"})),
+}
 
 
-def _pkg06_imports(source: str, package: str = "") -> list[str]:
+# What the real app may load from the PKG-06 layer at boot (PKG-06b): the one sanctioned import
+# above brings learning.policy, and policy imports learning.ladder's Rung. Nothing else.
+_PKG06_SANCTIONED_APP_LOADS = frozenset({"learning.policy", "learning.ladder"})
+
+
+def _sanctioned_import(rel: str):
+    """A node predicate: True for the one import statement `rel` may make (none for most files)."""
+    import ast
+
+    rule = _PKG06_SANCTIONED_IMPORTS.get(rel)
+
+    def skip(node) -> bool:
+        return (
+            rule is not None
+            and isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module == rule[0]
+            and {a.name for a in node.names} <= rule[1]
+        )
+
+    return skip
+
+
+def _pkg06_imports(source: str, package: str = "", skip=lambda node: False) -> list[str]:
     """Every PKG-06 module `source` imports, in any form: `import learning.x`,
     `from learning.x import y`, `from learning import x`, a relative import
     resolved against `package` (the importing file's dotted package), and
     `importlib.import_module(...)` / `import_module(...)` / `__import__(...)`
-    with a string literal, at any depth."""
+    with a string literal, at any depth. Nodes `skip` accepts are left out."""
     import ast
 
     def resolve(level: int, module: str | None, base: str) -> str | None:
@@ -3018,6 +3049,8 @@ def _pkg06_imports(source: str, package: str = "") -> list[str]:
 
     found = []
     for node in ast.walk(ast.parse(source)):
+        if skip(node):
+            continue
         if isinstance(node, ast.Import):
             names = [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom):
@@ -3108,10 +3141,41 @@ def _inertness_offenders(root) -> list[str]:
             continue
         if rel[0] == "learning" and len(rel) == 2 and rel[1][:-3] in _PKG06_MODULES:
             continue
-        package = ".".join(rel[:-1])
-        if _pkg06_imports(path.read_text(errors="ignore"), package=package):
-            offenders.append("/".join(rel))
+        package, name = ".".join(rel[:-1]), "/".join(rel)
+        text = path.read_text(errors="ignore")
+        if _pkg06_imports(text, package=package, skip=_sanctioned_import(name)):
+            offenders.append(name)
     return offenders
+
+
+def test_inertness_scan_sanctions_only_the_budget_alias_import(tmp_path):
+    """PKG-06b: services/ai_budget.py may import exactly Band, BudgetLevel and Tier
+    from learning.policy; any other PKG-06 name there, or the same import anywhere
+    else, is still flagged."""
+    (tmp_path / "services").mkdir()
+    (tmp_path / "services" / "ai_budget.py").write_text(
+        "from learning.policy import Band, BudgetLevel, Tier\n"
+    )
+    (tmp_path / "services" / "other.py").write_text("from learning.policy import Tier\n")
+    assert _inertness_offenders(tmp_path) == ["services/other.py"]
+    (tmp_path / "services" / "ai_budget.py").write_text("from learning.policy import Tier as T\n")
+    assert _inertness_offenders(tmp_path) == ["services/other.py"]  # a subset, renamed or not
+    for extra in (
+        "from learning.policy import Tier, model_tier\n",
+        "from learning.policy import Tier\nfrom learning import gates\n",
+        "import learning.leak\n",
+        # the bare module reaches every policy function (policy.model_tier …): never sanctioned
+        "from learning import policy\n",
+        "import learning.policy\n",
+        "import learning.policy as p\n",
+        "from learning.policy import Tier\nimport learning.policy\n",
+        "from learning.policy import *\n",
+        "def f():\n    import importlib\n    return importlib.import_module('learning.policy')\n",
+    ):
+        (tmp_path / "services" / "ai_budget.py").write_text(extra)
+        assert _inertness_offenders(tmp_path) == ["services/ai_budget.py", "services/other.py"], (
+            extra
+        )
 
 
 def test_zpd_layer_is_inert_nothing_imports_it():
@@ -3123,9 +3187,17 @@ def test_importing_the_app_loads_no_pkg06_module():
     """The ast scan above sees import statements and literal dynamic imports,
     not what actually loads (a computed module name, a loader outside the
     tree). Import the real app in a clean interpreter and read sys.modules:
-    flag-off byte-identity needs no PKG-06 module loaded at all. The two are
+    flag-off byte-identity needs no PKG-06 BEHAVIOUR loaded. The two are
     complementary: this probe cannot see a lazy import inside a function
-    body, which the ast scan catches."""
+    body, which the ast scan catches.
+
+    PKG-06b: services/ai_budget.py imports policy's type aliases (sanctioned
+    above) and main.py registers its 429 handler, so the real app loads
+    learning.policy and, through policy's own `from learning.ladder import
+    Rung`, learning.ladder — pure definitions, no behaviour. The loaded set
+    must be EXACTLY that sanctioned pair: any further PKG-06 module — through
+    ai_budget, through policy or ladder themselves (the ast scan exempts the
+    PKG-06 modules from each other), or through any other loader — fails."""
     import os
     import subprocess
     import sys
@@ -3150,6 +3222,7 @@ def test_importing_the_app_loads_no_pkg06_module():
         f"loaded = [m for m in {wanted!r} if m in sys.modules]\n"
         "print('LEARNING_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('learning.'))))\n"
         "print('PKG06_LOADED=' + ','.join(loaded))\n"
+        "print('APP_LOADED=' + ','.join(sorted(m for m in sys.modules if m.startswith('services.'))))\n"
     )
     proc = subprocess.run(
         [sys.executable, "-c", program],
@@ -3162,4 +3235,9 @@ def test_importing_the_app_loads_no_pkg06_module():
     assert proc.returncode == 0, "importing main failed:\n" + proc.stderr
     lines = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "_LOADED=" in line)
     assert "learning.gate" in lines["LEARNING_LOADED"].split(","), lines  # not vacuous
-    assert lines["PKG06_LOADED"] == "", f"the app imports PKG-06 modules: {lines['PKG06_LOADED']}"
+    assert "services.ai_budget" in lines["APP_LOADED"].split(","), lines  # the real module, no stub
+    loaded = set(filter(None, lines["PKG06_LOADED"].split(",")))
+    assert loaded == _PKG06_SANCTIONED_APP_LOADS, (
+        f"the app loads PKG-06 modules beyond the sanctioned {sorted(_PKG06_SANCTIONED_APP_LOADS)}: "
+        f"{sorted(loaded)}"
+    )
