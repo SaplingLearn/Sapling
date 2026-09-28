@@ -19,15 +19,18 @@ because the upload path (which validates drafts) must not load the dark
 PKG-06 layer.
 
 An mc_reason draft states its options as objects (§13 A37): each option's text,
-whether it is the correct one, and — on a distractor — the wrong key naming the
-misconception that makes it tempting. It carries no letters. `repair_draft`
-makes the repairs that need no guess, `validate_draft` names every remaining
-fault by its rule, and `lettered_options` letters the valid options and places
-the correct one at a slot keyed by a server secret, so the model can neither
-drift a key off its option nor bias the answer's position, and a client that
-knows the question_hash cannot compute it. `stored_rubric` appends code's own
-criterion to an mc_reason rubric, so a reason that only restates the chosen
-option never passes the grader.
+whether it is the correct one, and — on a distractor — its own misconception,
+a key and a sentence naming the mistake that makes it tempting. It carries no
+letters and no wrong-reason lists of its own: `common_wrong` takes the item's
+common wrong reasons from its distractors, so there is nothing for a key to
+cross-reference. `repair_draft` makes the repairs that need no guess,
+`validate_draft` names every remaining fault by its rule, and
+`lettered_options` letters the valid options and places the correct one at a
+slot keyed by a server secret, so the model can neither drift a misconception
+off its option nor bias the answer's position, and a client that knows the
+question_hash cannot compute it. `stored_rubric` appends code's own criterion
+to an mc_reason rubric, so a reason that only restates the chosen option never
+passes the grader.
 """
 
 from __future__ import annotations
@@ -162,7 +165,10 @@ class CheckItem(BaseModel):
 
 class OptionDraft(BaseModel):
     """One mc_reason option as the agent states it (§13 A37). No letter: code
-    letters the options and places the correct one after validation."""
+    letters the options and places the correct one after validation. A
+    distractor carries its own misconception as two flat scalars (a nested
+    {key, text} model would be an optional nested model on the correct option
+    and take the output past the #153 budget of 20 properties)."""
 
     text: str = Field(
         description=(
@@ -176,12 +182,19 @@ class OptionDraft(BaseModel):
     is_correct: bool = Field(
         description="true on exactly one option, the correct answer; false on every distractor"
     )
-    wrong_key: str | None = Field(
+    misconception_key: str | None = Field(
         default=None,
         description=(
-            "null on the correct option; on a distractor, the one entry of this item's "
-            "wrong_keys that names the misconception making it tempting (a different "
-            "entry for each distractor)"
+            "null on the correct option; on a distractor, a short snake_case id of the "
+            "misconception that makes it tempting, different on each distractor (reuse the "
+            "same id across items for the same misconception)"
+        ),
+    )
+    misconception_text: str | None = Field(
+        default=None,
+        description=(
+            "null on the correct option; on a distractor, one sentence describing that "
+            "misconception (each distractor states a different one)"
         ),
     )
 
@@ -201,8 +214,9 @@ class CheckItemDraft(BaseModel):
         default_factory=list,
         description=(
             f"mc_reason only: exactly {CHECK_ITEM_MC_OPTIONS} options, the correct one first "
-            "(is_correct true, wrong_key null), then the distractors (is_correct false, each "
-            "with its own wrong_key); [] for free and teachback"
+            "(is_correct true, both misconception fields null), then the distractors "
+            "(is_correct false, each with its own misconception_key and misconception_text); "
+            "[] for free and teachback"
         ),
     )
     reference_answer: str = Field(
@@ -225,13 +239,14 @@ class CheckItemDraft(BaseModel):
     wrong_keys: list[str] = Field(
         default_factory=list,
         description=(
-            f"every format, never empty: at least {CHECK_ITEM_MIN_WRONG} snake_case misconception "
-            f"id(s) — for mc_reason at least {CHECK_ITEM_MC_OPTIONS - 1}, one per distractor in "
-            "the distractors' order — same length as wrong_texts"
+            f"free and teachback, never empty: at least {CHECK_ITEM_MIN_WRONG} snake_case "
+            "misconception id(s), same length as wrong_texts; [] for mc_reason (each distractor "
+            "states its own misconception)"
         ),
     )
     wrong_texts: list[str] = Field(
-        default_factory=list, description="wrong_texts[i] describes wrong_keys[i]"
+        default_factory=list,
+        description="wrong_texts[i] describes wrong_keys[i]; [] for mc_reason",
     )
     answer_kind: str = "free"
     canonical_answer: str = ""  # numeric only; "" = none
@@ -483,15 +498,114 @@ def _blank(key: str | None) -> bool:
     return not (key or "").strip()
 
 
+def _shown(value: str) -> str:
+    """`value` quoted for a reason or a repair line. create_items joins those
+    with "; ", so a model-written key holding one shows it as ", " instead."""
+    return repr(value.replace("; ", ", "))
+
+
+# ── mc_reason misconceptions (A37) ─────────────────────────────────────────
+#
+# Each distractor states its own misconception, and the item's common wrong
+# reasons are read off the distractors (common_wrong), so the one thing left
+# to check is that the distractors state DIFFERENT misconceptions under
+# DIFFERENT keys. A key is only the misconception's id: when two distractors
+# stating different misconceptions share one, or a distractor that states one
+# gives no key, code keys it from its own text (misconception_slug) — no
+# guess. Two distractors stating the same misconception are not two mistakes,
+# and no key makes them so: that draft is dropped.
+
+_SLUG_WORD = re.compile(r"[a-z0-9]+")
+_APOSTROPHES = str.maketrans("", "", "'\u2019")  # "doesn't" is one word
+# How many content words a derived key keeps, and how many hex digits of the
+# text's digest tell two derived keys apart. Key-format literals, not loop
+# tuning knobs, so they do not live in learning/params.py.
+_SLUG_MAX_WORDS = 6
+_SLUG_DIGEST_LEN = 8
+_SLUG_FALLBACK = "misconception"
+
+
+def _form_digest(text: str) -> str:
+    return _sha256(_option_form(text))[:_SLUG_DIGEST_LEN]
+
+
+def misconception_slug(text: str) -> str:
+    """A snake_case key for a misconception, from its own text: its first
+    _SLUG_MAX_WORDS words that are not English function words (_STOPWORDS),
+    accents folded to ASCII, apostrophes dropped; "misconception_<digest>"
+    for a text with no Latin letter or digit. Deterministic."""
+    folded = unicodedata.normalize("NFKD", text.translate(_APOSTROPHES))
+    words = _SLUG_WORD.findall(folded.encode("ascii", "ignore").decode("ascii").casefold())
+    content = [w for w in words if w not in _STOPWORDS] or words
+    if not content:
+        return f"{_SLUG_FALLBACK}_{_form_digest(text)}"
+    return "_".join(content[:_SLUG_MAX_WORDS])
+
+
+def common_wrong(draft: CheckItemDraft) -> list[WrongReason]:
+    """The common wrong reasons an item is stored with (common_wrong_json):
+    for mc_reason, each distractor's misconception in the order the agent
+    wrote the distractors — the draft's own wrong_keys / wrong_texts are not
+    read — and for free and teachback, wrong_keys paired with wrong_texts.
+    For a draft validate_draft passed."""
+    if draft.format == _MC_REASON:
+        return [
+            WrongReason(key=o.misconception_key or "", text=o.misconception_text or "")
+            for o in draft.options
+            if not o.is_correct
+        ]
+    return [WrongReason(key=k, text=t) for k, t in zip(draft.wrong_keys, draft.wrong_texts)]
+
+
 #: The A37 option rules, by the word each reason of `_option_reasons` leads with.
 MC_OPTION_RULES = (
     "option_count",
     "one_correct",
-    "correct_key",
-    "distractor_key",
+    "correct_misconception",
+    "misconception_key",
+    "misconception_text",
     "option_text",
     "letter",
 )
+
+
+def _misconception_reasons(options: list[OptionDraft]) -> list[str]:
+    """correct_misconception, misconception_key and misconception_text:
+    the correct option states none; every distractor states one, under a
+    key of its own, and no two distractors state the same one (compared as
+    option texts are: whitespace, case and closing punctuation aside)."""
+    reasons = []
+    keyed: dict[str, int] = {}
+    stated: dict[str, int] = {}
+    for n, option in enumerate(options, start=1):
+        key, said = option.misconception_key, option.misconception_text
+        if option.is_correct:
+            if not (_blank(key) and _blank(said)):
+                reasons.append(
+                    f"correct_misconception: option {n} is marked correct and carries a "
+                    "misconception (the correct option has none)"
+                )
+            continue
+        if _blank(key):
+            reasons.append(f"misconception_key: option {n} has no misconception_key")
+        elif key in keyed:
+            reasons.append(
+                f"misconception_key: options {keyed[key]} and {n} share misconception_key "
+                f"{_shown(key)} (each distractor has its own)"
+            )
+        else:
+            keyed[key] = n
+        if _blank(said):
+            reasons.append(f"misconception_text: option {n} has no misconception_text")
+            continue
+        form = _option_form(said)
+        if form in stated:
+            reasons.append(
+                f"misconception_text: options {stated[form]} and {n} state the same misconception"
+            )
+        else:
+            stated[form] = n
+    return reasons
 
 
 def _option_reasons(draft: CheckItemDraft) -> list[str]:
@@ -508,30 +622,7 @@ def _option_reasons(draft: CheckItemDraft) -> list[str]:
     correct = [n for n, o in enumerate(options, start=1) if o.is_correct]
     if len(correct) != 1:
         reasons.append(f"one_correct: {len(correct)} options marked is_correct, not exactly 1")
-    for n in correct:
-        if not _blank(options[n - 1].wrong_key):
-            reasons.append(
-                f"correct_key: option {n} is marked correct and carries wrong_key "
-                f"{options[n - 1].wrong_key!r} (the correct option has none)"
-            )
-    listed = set(draft.wrong_keys)
-    keyed: dict[str, int] = {}
-    for n, option in enumerate(options, start=1):
-        if option.is_correct:
-            continue
-        if _blank(option.wrong_key):
-            reasons.append(f"distractor_key: option {n} has no wrong_key")
-            continue
-        if option.wrong_key not in listed:
-            reasons.append(
-                f"distractor_key: option {n}'s wrong_key {option.wrong_key!r} is not in wrong_keys"
-            )
-        if option.wrong_key in keyed:
-            reasons.append(
-                f"distractor_key: options {keyed[option.wrong_key]} and {n} share wrong_key "
-                f"{option.wrong_key!r} (each distractor names its own misconception)"
-            )
-        keyed.setdefault(option.wrong_key, n)
+    reasons.extend(_misconception_reasons(options))
     seen: dict[str, int] = {}
     for n, option in enumerate(options, start=1):
         form = _option_form(option.text)
@@ -661,11 +752,13 @@ def _remove_markers(draft: CheckItemDraft) -> list[str]:
             setattr(draft, name, clean)
             marked.append(name)
     for option in draft.options:
-        clean = _unmarked(option.text)
-        if clean != option.text:
-            option.text = clean
-            if "options" not in marked:
-                marked.append("options")
+        for name in ("text", "misconception_text"):
+            value = getattr(option, name)
+            clean = _unmarked(value) if value is not None else None
+            if clean != value:
+                setattr(option, name, clean)
+                if "options" not in marked:
+                    marked.append("options")
     return marked
 
 
@@ -683,15 +776,65 @@ def _closed(reference: str, final_answer: str) -> str:
     return f"{body} Final answer: {answer}" + ("" if answer.endswith(_SENTENCE_END) else ".")
 
 
+def _rekey_misconceptions(options: list[OptionDraft]) -> list[str]:
+    """The misconception_key repair of repair_draft, in place on `options`
+    (exactly one of them marked correct); one line per distractor keyed."""
+    numbered = [(n, o) for n, o in enumerate(options, start=1) if not o.is_correct]
+    if any(_blank(o.misconception_text) for _, o in numbered):
+        return []
+    forms = [_option_form(o.misconception_text) for _, o in numbered]
+    if len(set(forms)) != len(forms):
+        return []
+    held = [o.misconception_key for _, o in numbered]
+    todo = [
+        (n, o)
+        for n, o in numbered
+        if _blank(o.misconception_key) or held.count(o.misconception_key) > 1
+    ]
+    taken = {o.misconception_key for _, o in numbered} - {o.misconception_key for _, o in todo}
+    lines = []
+    for n, option in todo:
+        slug = misconception_slug(option.misconception_text)
+        key = next(
+            (
+                k
+                for k in (slug, f"{slug}_{_form_digest(option.misconception_text)}")
+                if k not in taken
+            ),
+            None,
+        )
+        if key is None:  # a digest collision: leave it for misconception_key to drop
+            continue
+        taken.add(key)
+        had = option.misconception_key
+        was = "no key" if _blank(had) else f"the shared key {_shown(had)}"
+        option.misconception_key = key
+        lines.append(
+            f"misconception_key: option {n} had {was}, so it was keyed {_shown(key)} from its "
+            "own misconception_text (repaired)"
+        )
+    return lines
+
+
 def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     """`draft` with the repairs that need no guess made (§13 A37), and one
     line per repair, led by the rule it satisfies. The input is never mutated.
 
-    correct_key — an mc_reason draft with EXACTLY one option marked is_correct
-    whose wrong_key is not null (a key, or "") gets that key cleared:
-    is_correct is explicit, so which option is correct is not in doubt, and
-    A34's rule that final_answer equal the correct option's text still
-    cross-checks the flag.
+    correct_misconception — an mc_reason draft with EXACTLY one option marked
+    is_correct whose misconception_key or misconception_text is not null (a
+    value, or "") gets both cleared: is_correct is explicit, so which option
+    is correct is not in doubt, and A34's rule that final_answer equal the
+    correct option's text still cross-checks the flag.
+
+    misconception_key — in an mc_reason draft with exactly one option marked
+    is_correct, where every distractor states a misconception_text and no two
+    state the same one, a distractor whose key is blank or shared with another
+    distractor is keyed from its own text (misconception_slug; a key another
+    distractor already holds gets the text's digest appended). The
+    misconception each distractor carries is stated, so its key is only an
+    id: re-keying guesses nothing, and every key stays distinct. A draft
+    where two distractors state one misconception, or one states none, is
+    left as it is and dropped.
 
     final_answer — an mc_reason reference that names no "Final answer" and
     does not contain the final answer gets A34's closing sentence, "Final
@@ -722,8 +865,9 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     an H4 sibling candidate (A17).
 
     Nothing else is repaired: which option is correct (none or several
-    marked) is never inferred, and a distractor's missing, shared or unlisted
-    key is never guessed."""
+    marked) is never inferred, a distractor's missing misconception is never
+    invented, and two distractors stating one misconception are never told
+    apart."""
     fixed = draft.model_copy(deep=True)
     repairs: list[str] = []
     marked = _remove_markers(fixed)
@@ -734,13 +878,17 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
         )
     correct = [o for o in fixed.options if o.is_correct]
     mc_one = fixed.format == _MC_REASON and len(correct) == 1
-    if mc_one and correct[0].wrong_key is not None:
+    if mc_one and (
+        correct[0].misconception_key is not None or correct[0].misconception_text is not None
+    ):
         n = fixed.options.index(correct[0]) + 1
-        key, correct[0].wrong_key = correct[0].wrong_key, None
+        correct[0].misconception_key = correct[0].misconception_text = None
         repairs.append(
-            f"correct_key: option {n} is marked correct, so its wrong_key {key!r} "
+            f"correct_misconception: option {n} is marked correct, so its misconception "
             "was cleared (repaired)"
         )
+    if mc_one:
+        repairs.extend(_rekey_misconceptions(fixed.options))
     final = answer_run(fixed.final_answer)
     reference = answer_run(fixed.reference_answer)
     if (
@@ -807,8 +955,10 @@ def lettered_options(draft: CheckItemDraft, *, slot_key: bytes) -> tuple[list[Op
     question_hash, so a slot computed from it alone would give the answer
     away — then lettered A, B, C, … in that order. `slot_key` is the server's
     secret (the service derives it from ENCRYPTION_KEY); there is no default.
-    The correct option stores no wrong_key. Raises ValueError unless exactly
-    one option is marked correct (validate_draft first) or on an empty key."""
+    The correct option stores no wrong_key; a distractor stores its
+    misconception_key, the key common_wrong stores its misconception under.
+    Raises ValueError unless exactly one option is marked correct
+    (validate_draft first) or on an empty key."""
     if not isinstance(slot_key, bytes) or not slot_key:
         raise ValueError("slot_key must be the non-empty server secret (bytes)")
     correct = [o for o in draft.options if o.is_correct]
@@ -819,7 +969,7 @@ def lettered_options(draft: CheckItemDraft, *, slot_key: bytes) -> tuple[list[Op
     slot = int(digest.hexdigest(), 16) % len(draft.options)
     ordered = distractors[:slot] + correct + distractors[slot:]
     options = [
-        Option(letter=letter, text=o.text, wrong_key=None if o.is_correct else o.wrong_key)
+        Option(letter=letter, text=o.text, wrong_key=None if o.is_correct else o.misconception_key)
         for letter, o in zip(string.ascii_uppercase, ordered)
     ]
     return options, options[slot].letter
@@ -983,14 +1133,34 @@ def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
     return reasons
 
 
+def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
+    """A free or teachback draft's paired wrong_keys / wrong_texts (A22)."""
+    reasons = []
+    if len(draft.wrong_keys) != len(draft.wrong_texts):
+        reasons.append(
+            f"wrong_keys ({len(draft.wrong_keys)}) and wrong_texts "
+            f"({len(draft.wrong_texts)}) differ in length"
+        )
+    if len(draft.wrong_keys) < CHECK_ITEM_MIN_WRONG:
+        reasons.append(f"{len(draft.wrong_keys)} wrong reason(s), needs >= {CHECK_ITEM_MIN_WRONG}")
+    if len(set(draft.wrong_keys)) != len(draft.wrong_keys):
+        reasons.append("duplicate wrong keys")
+    if any(not k.strip() for k in draft.wrong_keys):
+        reasons.append("blank wrong key")
+    return reasons
+
+
 def validate_draft(draft: CheckItemDraft) -> list[str]:
     """Every reason `draft` is unusable; [] when it may be stored. Each reason
     names the rule it is about (format, difficulty, prompt, reference, rubric,
     wrong, leak, answer_kind, canonical, tolerance, stepwise, final_answer; an
     mc_reason draft's A37 option rules lead with option_count, one_correct,
-    correct_key, distractor_key, option_text or letter, and its reference is
-    checked for the model's own working under deliberation). Run repair_draft
-    first to store what it can repair."""
+    correct_misconception, misconception_key, misconception_text, option_text
+    or letter, and its reference is checked for the model's own working under
+    deliberation). The wrong rules read a free or teachback draft's
+    wrong_keys / wrong_texts; an mc_reason draft's wrong reasons are its
+    distractors' misconceptions (common_wrong), and its own lists are not
+    read. Run repair_draft first to store what it can repair."""
     reasons: list[str] = []
     if draft.format not in CHECK_ITEM_FORMATS:
         reasons.append(f"format {draft.format!r} is not one of {CHECK_ITEM_FORMATS}")
@@ -1003,17 +1173,8 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
     rubric = [r for r in draft.rubric if r.strip()]
     if len(rubric) < CHECK_ITEM_MIN_RUBRIC:
         reasons.append(f"rubric has {len(rubric)} item(s), needs >= {CHECK_ITEM_MIN_RUBRIC}")
-    if len(draft.wrong_keys) != len(draft.wrong_texts):
-        reasons.append(
-            f"wrong_keys ({len(draft.wrong_keys)}) and wrong_texts "
-            f"({len(draft.wrong_texts)}) differ in length"
-        )
-    if len(draft.wrong_keys) < CHECK_ITEM_MIN_WRONG:
-        reasons.append(f"{len(draft.wrong_keys)} wrong reason(s), needs >= {CHECK_ITEM_MIN_WRONG}")
-    if len(set(draft.wrong_keys)) != len(draft.wrong_keys):
-        reasons.append("duplicate wrong keys")
-    if any(not k.strip() for k in draft.wrong_keys):
-        reasons.append("blank wrong key")
+    if draft.format != _MC_REASON:  # an mc_reason item's are its distractors' (A37)
+        reasons.extend(_wrong_list_reasons(draft))
     if draft.prompt.strip() and leak_in_prompt(draft.prompt, draft.reference_answer):
         reasons.append("leak: the reference answer appears in the prompt")
     if draft.answer_kind not in CHECK_ITEM_ANSWER_KINDS:

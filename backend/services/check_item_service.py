@@ -39,6 +39,7 @@ from learning.checks import (
     RubricItem,
     WrongReason,
     clean_chunk_ids,
+    common_wrong,
     item_id,
     lettered_options,
     parse_tolerance,
@@ -111,7 +112,9 @@ def _build_row(
     qh = question_hash(draft.prompt)  # PLAINTEXT, before encryption
     # A37 review: an mc_reason rubric ends with code's reason criterion.
     rubric = [r.model_dump() for r in stored_rubric(draft)]
-    wrong = [{"key": k, "text": t} for k, t in zip(draft.wrong_keys, draft.wrong_texts)]
+    # A37: an mc_reason item's wrong reasons are its distractors' misconceptions,
+    # the keys its stored options carry; free and teachback pair their lists.
+    wrong = [w.model_dump() for w in common_wrong(draft)]
     options = None
     correct_option = None
     if draft.format == _MC_REASON:

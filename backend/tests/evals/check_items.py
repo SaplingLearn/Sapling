@@ -13,15 +13,18 @@ edit an existing one to make it pass.
 Evaluators score the contracts the service enforces in code
 (learning/checks.py::validate_draft) plus grounding: every item has a
 reference answer, >= CHECK_ITEM_MIN_RUBRIC rubric items and >=
-CHECK_ITEM_MIN_WRONG paired, unique wrong reasons, cites only input chunk ids,
+CHECK_ITEM_MIN_WRONG paired, unique wrong reasons (for mc_reason, its
+distractors' own misconceptions — spec §13 A37), cites only input chunk ids,
 never leaks its reference into the prompt, and is stored — valid under
 validate_draft once repair_draft has made the repairs that need no guess,
 exactly as check_item_service.create_items stores it (the A22 / A37 option,
 numeric and stepwise rules and the A34 final_answer rules included).
 McOptionsValid (spec §13 A37) is required at 1.0: every mc_reason draft's
-options pass every A37 option rule, and a case with no mc_reason draft scores
-0.0 — the live sequence test of 2026-09-27 stored 0 of 12 when the options were
-parallel arrays. McReasonValid is the share of mc_reason drafts stored (the A34
+options pass every A37 option rule (each distractor stating its own
+misconception, under a key of its own, once repaired), and a case with no
+mc_reason draft scores 0.0 — the live sequence test of 2026-09-27 stored 0 of
+12 when the options were parallel arrays. McReasonValid is the share of
+mc_reason drafts stored (the A34
 final_answer rules included), gated at its recorded rate.
 McCorrectNotLongest (review of A37) is the share of stored mc_reason drafts
 whose correct option is not strictly the longest, gated at its recorded rate.
@@ -52,6 +55,7 @@ from agents.check_items import CheckItemsOutput, build_prompt, check_items_agent
 from learning.checks import (  # noqa: E402
     MC_OPTION_RULES,
     answer_in,
+    common_wrong,
     leak_in_prompt,
     repair_draft,
     validate_draft,
@@ -124,18 +128,31 @@ class RubricCountEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return _every(ctx, lambda i: len(i.rubric) >= CHECK_ITEM_MIN_RUBRIC)
 
 
+def _wrong_reasons_ok(draft) -> bool:
+    """>= CHECK_ITEM_MIN_WRONG reasons, unique keys, keys and texts paired.
+    An mc_reason item's reasons are its distractors' misconceptions (spec §13
+    A37, round 4: checks.common_wrong after repair_draft, as create_items
+    stores them) — each stated, under a distinct key — and its own
+    wrong_keys / wrong_texts are not read."""
+    if draft.format == "mc_reason":
+        wrong = common_wrong(repair_draft(draft)[0])
+        keys = [w.key for w in wrong]
+        return (
+            len(wrong) >= CHECK_ITEM_MIN_WRONG
+            and len(set(keys)) == len(keys)
+            and all(w.key.strip() and w.text.strip() for w in wrong)
+            and len({" ".join(w.text.split()).casefold() for w in wrong}) == len(wrong)
+        )
+    keys, texts = draft.wrong_keys, draft.wrong_texts
+    return len(keys) >= CHECK_ITEM_MIN_WRONG and len(set(keys)) == len(keys) == len(texts)
+
+
 @dataclass
 class WrongReasonCountEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
-    """>= CHECK_ITEM_MIN_WRONG reasons, unique keys, keys and texts paired."""
+    """Every item's wrong reasons are well formed (_wrong_reasons_ok)."""
 
     def evaluate(self, ctx: _Ctx) -> float:
-        return _every(
-            ctx,
-            lambda i: (
-                len(i.wrong_keys) >= CHECK_ITEM_MIN_WRONG
-                and len(set(i.wrong_keys)) == len(i.wrong_keys) == len(i.wrong_texts)
-            ),
-        )
+        return _every(ctx, _wrong_reasons_ok)
 
 
 @dataclass

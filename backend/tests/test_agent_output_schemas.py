@@ -57,10 +57,13 @@ PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 15}
 
 # Per-object nesting ceilings above MAX_OBJECT_DEPTH, keyed by schema title,
 # each pinned exactly (test_depth_exceptions_are_exact). OptionDraft (spec §13
-# A37): one mc_reason option — {text, is_correct, wrong_key}, three scalars —
-# one level below CheckItemDraft. Parallel option arrays let the model drift a
-# key off its option (live sequence test 2026-09-27: 0 of 12 mc_reason drafts
-# stored); an object per option makes that drift unrepresentable. Recorded live
+# A37): one mc_reason option — {text, is_correct, misconception_key,
+# misconception_text}, four scalars — one level below CheckItemDraft. Parallel
+# option arrays let the model drift a key off its option (live sequence test
+# 2026-09-27: 0 of 12 mc_reason drafts stored), and a key that had to name an
+# entry of the item's wrong_keys was the one cross-reference left (round 4); an
+# object per option carrying its own misconception makes both unrepresentable
+# and brings the whole check_items output to exactly 20 properties. Recorded live
 # against gemini-2.5-flash-lite with no schema rejection
 # (tests/evals/cassettes/check_items) and exercised end to end on the local
 # stack (A37's live numbers).
@@ -332,12 +335,15 @@ def test_depth_exceptions_are_exact():
 
 
 def test_the_depth_exception_is_one_small_flat_object():
-    """OptionDraft may sit one level deeper only while it stays three scalar
-    fields: no list, no object, no optional model inside it."""
+    """OptionDraft may sit one level deeper only while it stays four scalar
+    fields: no list, no object, no optional model inside it. A distractor's
+    misconception is two flat scalars, not a nested {key, text} model: that
+    would be an optional nested model on the correct option and would take
+    the schema to 21 properties (spec §13 A37, round 4)."""
     from learning.checks import OptionDraft
 
     props = OptionDraft.model_json_schema()["properties"]
-    assert set(props) == {"text", "is_correct", "wrong_key"}
+    assert set(props) == {"text", "is_correct", "misconception_key", "misconception_text"}
     for spec in props.values():
         kinds = [spec.get("type")] + [b.get("type") for b in spec.get("anyOf", [])]
         assert not {"array", "object"} & set(kinds), spec

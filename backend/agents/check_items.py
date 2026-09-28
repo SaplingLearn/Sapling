@@ -2,8 +2,9 @@
 
 One tool-less structured call per batch of up to CHECK_ITEM_CONCEPTS_PER_CALL
 concepts, off the request path (Flex for background prefill, A23). Output is
-flat but for one list of small mc_reason option objects, which code letters
-and orders after validation (A37;
+flat but for one list of small mc_reason option objects — each distractor
+stating its own misconception — which code letters and orders after
+validation, taking the item's common wrong reasons from the distractors (A37;
 docs/attempts/2026-05-03-orchestrator-schema-complexity.md). The
 reference answer is the answer key the grader (PKG-05) reads — it never solves
 the item itself (research §Guardrails). References are model-generated and
@@ -90,13 +91,17 @@ _PROMPT = (
     "gives what the student computes it from) and asks the student to pick "
     "one option and give the reason. `options` holds exactly "
     f"{_MC_OPTIONS} options, each an object: `text` (the option as the "
-    "student reads it), `is_correct` and `wrong_key`. Write the correct "
-    "option FIRST, with `is_correct` true and `wrong_key` null; then the "
+    "student reads it), `is_correct`, `misconception_key` and "
+    "`misconception_text`. Write the correct option FIRST, with `is_correct` "
+    "true and both misconception fields null; then the "
     f"{_MC_DISTRACTORS} distractors, each with `is_correct` false and its own "
-    "`wrong_key` — one of THIS item's `wrong_keys`, naming the misconception "
-    f"that makes that option tempting. The {_MC_DISTRACTORS} distractors "
-    f"carry {_MC_DISTRACTORS} DIFFERENT keys, so the item lists at least "
-    f"{_MC_DISTRACTORS} wrong_keys. No two options say the same thing, and "
+    "misconception — the mistake that makes that option tempting: "
+    "`misconception_key` a short snake_case id and `misconception_text` one "
+    f"sentence describing it. The {_MC_DISTRACTORS} distractors state "
+    f"{_MC_DISTRACTORS} different misconceptions under {_MC_DISTRACTORS} "
+    "different keys. For an mc_reason item `wrong_keys` and `wrong_texts` "
+    "are [] — code takes its common wrong reasons from the distractors. No "
+    "two options say the same thing, and "
     "every option is a SHORT phrase, never an explanation — at most "
     f"{CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens — because the correct "
     "option's text is the item's final_answer. The options are alike in "
@@ -137,12 +142,13 @@ _PROMPT = (
     "in the prompt and is never the concept's name or a part of it.\n"
     f"- `rubric`: at least {CHECK_ITEM_MIN_RUBRIC} entries, each ONE binary "
     "criterion a grader can mark present or absent in a student's answer.\n"
-    f"- at least {CHECK_ITEM_MIN_WRONG} common wrong reason(s) as two parallel "
-    "lists of the SAME length: `wrong_keys` are short snake_case identifiers "
-    "(no duplicates within an item; reuse the same key across items for the "
-    "same misconception) and `wrong_texts[i]` describes the misconception "
-    "`wrong_keys[i]` names. A free or teachback item lists the mistakes a "
-    "student is likely to make when answering it.\n\n"
+    f"- free and teachback: at least {CHECK_ITEM_MIN_WRONG} common wrong "
+    "reason(s) as two parallel lists of the SAME length: `wrong_keys` are "
+    "short snake_case identifiers (no duplicates within an item; reuse the "
+    "same key across items for the same misconception) and `wrong_texts[i]` "
+    "describes the misconception `wrong_keys[i]` names — the mistakes a "
+    "student is likely to make when answering it. An mc_reason item states "
+    "its misconceptions on its distractors instead (above).\n\n"
     'Answer kind: `answer_kind` is "numeric" only when the whole answer is '
     "one number — then `canonical_answer` is that number (the value "
     "`final_answer` states) as plain decimal text "
@@ -153,15 +159,18 @@ _PROMPT = (
     "of a line); otherwise false.\n\n"
     "The prompt must NOT contain the reference answer or paraphrase it.\n\n"
     "Shape of the list fields, for an mc_reason item: options "
-    '[{"text": "<the correct answer>", "is_correct": true, "wrong_key": null}, '
-    '{"text": "<a tempting wrong answer>", "is_correct": false, "wrong_key": '
-    '"confuses_x_with_y"}, {"text": "<another>", "is_correct": false, '
-    '"wrong_key": "ignores_z"}, {"text": "<another>", "is_correct": false, '
-    '"wrong_key": "reverses_order"}], wrong_keys ["confuses_x_with_y", '
-    '"ignores_z", "reverses_order"], wrong_texts [three matching '
-    "descriptions], final_answer the correct option's text exactly. For a "
-    'free or teachback item: wrong_keys ["confuses_x_with_y"], wrong_texts '
-    '["Treats x as if it were y."], options []. A stepwise reference is '
+    '[{"text": "<the correct answer>", "is_correct": true, '
+    '"misconception_key": null, "misconception_text": null}, '
+    '{"text": "<a tempting wrong answer>", "is_correct": false, '
+    '"misconception_key": "confuses_x_with_y", "misconception_text": '
+    '"Treats x as if it were y."}, {"text": "<another>", "is_correct": false, '
+    '"misconception_key": "ignores_z", "misconception_text": "<its own '
+    'mistake>"}, {"text": "<another>", "is_correct": false, '
+    '"misconception_key": "reverses_order", "misconception_text": "<its own '
+    'mistake>"}], wrong_keys [], wrong_texts [], final_answer the correct '
+    "option's text exactly. For a free or teachback item: wrong_keys "
+    '["confuses_x_with_y"], wrong_texts ["Treats x as if it were y."], '
+    "options []. A stepwise reference is "
     'written as numbered lines: "1. First step..." then, on the next line, '
     '"2. Second step...".\n\n'
     "`chunk_ids` lists only ids from the [chunk <id>] markers whose text you "

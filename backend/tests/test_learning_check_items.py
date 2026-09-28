@@ -167,9 +167,14 @@ def _draft(**over):
 
 
 # The agent's mc_reason options (spec §13 A37): objects, the correct one flagged
-# is_correct with no wrong_key, each distractor keyed to a different one of the
-# item's wrong_keys. Written correct-first, as the prompt asks; code letters
-# them and places the correct one (checks.lettered_options).
+# is_correct with no misconception, each distractor stating its own
+# misconception (a key and a sentence). Written correct-first, as the prompt
+# asks; code letters them, places the correct one (checks.lettered_options) and
+# takes the item's common wrong reasons from the distractors
+# (checks.common_wrong). A row is (text, is_correct, misconception_key), its
+# misconception_text the key's in _MISCONCEPTIONS (so two rows with one key
+# state one misconception) or one named after the option; or a 4-tuple that
+# states its misconception_text itself.
 _MC_OPTIONS = (
     ("The update step size", True, None),
     ("The iteration count", False, "rate_is_iterations"),
@@ -177,6 +182,11 @@ _MC_OPTIONS = (
     ("The gradient sign", False, "rate_is_sign"),
 )
 _CORRECT, _ITER, _LOSS, _SIGN = _MC_OPTIONS
+_MISCONCEPTIONS = {
+    "rate_is_iterations": "Counts iterations.",
+    "rate_is_loss": "Treats the rate as the loss.",
+    "rate_is_sign": "Thinks it flips the sign.",
+}
 # A test server secret for the correct option's slot (checks.lettered_options).
 _SLOT_KEY = b"test option-slot key, 32 bytes!!"
 
@@ -184,7 +194,23 @@ _SLOT_KEY = b"test option-slot key, 32 bytes!!"
 def _opts(*rows):
     from learning.checks import OptionDraft
 
-    return [OptionDraft(text=t, is_correct=c, wrong_key=k) for t, c, k in rows]
+    options = []
+    for text, correct, key, *said in rows:
+        if said:
+            (misconception,) = said
+        elif key is None:
+            misconception = None
+        else:
+            misconception = _MISCONCEPTIONS.get(key, f"Picks {text} for a wrong reason.")
+        options.append(
+            OptionDraft(
+                text=text,
+                is_correct=correct,
+                misconception_key=key,
+                misconception_text=misconception,
+            )
+        )
+    return options
 
 
 def _mc_draft(**over):
@@ -196,12 +222,9 @@ def _mc_draft(**over):
             "Final answer: The update step size."
         ),
         final_answer="The update step size",
-        wrong_keys=["rate_is_iterations", "rate_is_loss", "rate_is_sign"],
-        wrong_texts=[
-            "Counts iterations.",
-            "Treats the rate as the loss.",
-            "Thinks it flips the sign.",
-        ],
+        # A37: an mc_reason item's wrong reasons are its distractors' misconceptions
+        wrong_keys=[],
+        wrong_texts=[],
         options=_opts(*_MC_OPTIONS),
     )
     base.update(over)
@@ -535,11 +558,46 @@ class TestValidateDraft:
                 "one_correct",
             ),
             ((_CORRECT, (_ITER[0], True, None), _LOSS, _SIGN), "one_correct"),
-            (((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN), "correct_key"),
-            ((_CORRECT, (_ITER[0], False, None), _LOSS, _SIGN), "distractor_key"),
-            ((_CORRECT, (_ITER[0], False, "  "), _LOSS, _SIGN), "distractor_key"),
-            ((_CORRECT, (_ITER[0], False, "rate_is_loss"), _LOSS, _SIGN), "distractor_key"),
-            ((_CORRECT, (_ITER[0], False, "not_listed"), _LOSS, _SIGN), "distractor_key"),
+            (
+                ((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN),
+                "correct_misconception",
+            ),
+            (
+                ((_CORRECT[0], True, None, "Thinks it scales."), _ITER, _LOSS, _SIGN),
+                "correct_misconception",
+            ),
+            (
+                (_CORRECT, (_ITER[0], False, None, "Counts iterations."), _LOSS, _SIGN),
+                "misconception_key",
+            ),
+            (
+                (_CORRECT, (_ITER[0], False, "  ", "Counts iterations."), _LOSS, _SIGN),
+                "misconception_key",
+            ),
+            # a shared key, read before repair_draft re-keys it
+            (
+                (_CORRECT, (_ITER[0], False, "rate_is_loss", "Counts iterations."), _LOSS, _SIGN),
+                "misconception_key",
+            ),
+            (
+                (_CORRECT, (_ITER[0], False, "rate_is_iterations", None), _LOSS, _SIGN),
+                "misconception_text",
+            ),
+            (
+                (_CORRECT, (_ITER[0], False, "rate_is_iterations", " "), _LOSS, _SIGN),
+                "misconception_text",
+            ),
+            ((_CORRECT, (_ITER[0], False, None), _LOSS, _SIGN), "misconception_text"),
+            # two distractors state one misconception, whatever their keys
+            (
+                (
+                    _CORRECT,
+                    (_ITER[0], False, "rate_is_iterations", "treats the rate as  the LOSS"),
+                    _LOSS,
+                    _SIGN,
+                ),
+                "misconception_text",
+            ),
             (
                 (_CORRECT, _ITER, ("the ITERATION count.", False, "rate_is_loss"), _SIGN),
                 "option_text",
@@ -552,6 +610,25 @@ class TestValidateDraft:
 
         reasons = validate_draft(_mc_draft(options=_opts(*options)))
         assert any(r.startswith(f"{rule}:") for r in reasons), reasons
+
+    def test_an_mc_reason_draft_has_no_wrong_key_lists_to_cross_reference(self):
+        """A37 (coordinator decision, round 4): each distractor states its own
+        misconception, and code takes the item's common wrong reasons from the
+        distractors, so an mc_reason draft's own wrong_keys / wrong_texts are
+        never read — nothing can name a key the item does not list, and a
+        list the model fills anyway neither drops the draft nor is stored."""
+        from learning.checks import WrongReason, common_wrong, validate_draft
+
+        stray = _mc_draft(wrong_keys=["k", "k", " ", "not_an_option"], wrong_texts=["a"])
+        assert validate_draft(stray) == []
+        expected = [WrongReason(key=k, text=_MISCONCEPTIONS[k]) for _, _, k in _MC_OPTIONS[1:]]
+        assert common_wrong(stray) == common_wrong(_mc_draft()) == expected
+        # free and teachback items keep their paired lists
+        assert common_wrong(_draft()) == [
+            WrongReason(
+                key="rate_is_iterations", text="Confuses the rate with the number of iterations."
+            )
+        ]
 
     @pytest.mark.parametrize(
         "over",
@@ -683,8 +760,9 @@ class TestValidateDraft:
 
     def test_the_live_run_1_shape_is_named_rule_by_rule(self):
         """Live sequence test 2026-09-27, run 1: the correct option carried a
-        wrong_key, two distractors shared a key, a one-item rubric. Each fault
-        is reported by its own rule; none is guessed around."""
+        wrong_key, two distractors shared a key (here: one misconception
+        stated twice), a one-item rubric. Each fault is reported by its own
+        rule; none is guessed around."""
         from learning.checks import validate_draft
 
         draft = _mc_draft(
@@ -697,7 +775,12 @@ class TestValidateDraft:
             rubric=["Names the step size."],
         )
         words = {r.split(":")[0].split(" ")[0] for r in validate_draft(draft)}
-        assert {"correct_key", "distractor_key", "rubric"} <= words, words
+        assert {
+            "correct_misconception",
+            "misconception_key",
+            "misconception_text",
+            "rubric",
+        } <= words, words
 
     def test_option_and_numeric_fields_are_ignored_where_they_do_not_apply(self):
         from learning.checks import validate_draft
@@ -753,20 +836,157 @@ class TestRepairAndOptions:
     repairs only what needs no guess, then letters them and places the
     correct one."""
 
-    def test_repair_clears_the_wrong_key_of_the_one_option_marked_correct(self):
+    @pytest.mark.parametrize(
+        "key,said",
+        [("rate_is_loss", "Treats the rate as the loss."), ("", None), (None, "Scales."), ("", "")],
+    )
+    def test_repair_clears_the_misconception_of_the_one_option_marked_correct(self, key, said):
         from learning.checks import repair_draft, validate_draft
 
-        for key in ("rate_is_loss", ""):
-            draft = _mc_draft(options=_opts((_CORRECT[0], True, key), _ITER, _LOSS, _SIGN))
-            fixed, repairs = repair_draft(draft)
-            assert [o.wrong_key for o in fixed.options] == [
-                None,
-                *(k for _, _, k in _MC_OPTIONS[1:]),
-            ]
-            assert len(repairs) == 1 and repairs[0].startswith("correct_key:"), repairs
-            assert validate_draft(fixed) == []
-            # the input is never mutated
-            assert draft.options[0].wrong_key == key
+        draft = _mc_draft(options=_opts((_CORRECT[0], True, key, said), _ITER, _LOSS, _SIGN))
+        fixed, repairs = repair_draft(draft)
+        assert [(o.misconception_key, o.misconception_text) for o in fixed.options] == [
+            (None, None),
+            *((k, _MISCONCEPTIONS[k]) for _, _, k in _MC_OPTIONS[1:]),
+        ]
+        assert len(repairs) == 1 and repairs[0].startswith("correct_misconception:"), repairs
+        assert validate_draft(fixed) == []
+        # the input is never mutated
+        assert (draft.options[0].misconception_key, draft.options[0].misconception_text) == (
+            key,
+            said,
+        )
+
+    def test_repair_rekeys_distractors_that_share_a_key_from_their_own_misconceptions(self):
+        """A37 (coordinator decision, round 4). The third review's ENG150 run
+        stored 1 mc_reason item for a concept because the model gave two
+        distractors one key. Each distractor now states its misconception,
+        so when two share a key while stating DIFFERENT misconceptions, which
+        misconception each option carries is not in doubt: code keys each of
+        them from its own text. The untouched distractor keeps its key, the
+        stored options and the stored wrong reasons carry the same keys, and
+        the input is never mutated."""
+        from learning.checks import (
+            WrongReason,
+            common_wrong,
+            lettered_options,
+            repair_draft,
+            validate_draft,
+        )
+
+        draft = _mc_draft(
+            options=_opts(
+                _CORRECT, (_ITER[0], False, "rate_is_loss", "Counts iterations."), _LOSS, _SIGN
+            )
+        )
+        assert any(r.startswith("misconception_key:") for r in validate_draft(draft))
+        fixed, repairs = repair_draft(draft)
+        assert [o.misconception_key for o in fixed.options] == [
+            None,
+            "counts_iterations",
+            "treats_rate_as_loss",
+            "rate_is_sign",
+        ]
+        assert [r.split(":")[0] for r in repairs] == ["misconception_key", "misconception_key"]
+        assert all(r.endswith("(repaired)") for r in repairs), repairs
+        assert validate_draft(fixed) == []
+        assert common_wrong(fixed) == [
+            WrongReason(key="counts_iterations", text="Counts iterations."),
+            WrongReason(key="treats_rate_as_loss", text="Treats the rate as the loss."),
+            WrongReason(key="rate_is_sign", text="Thinks it flips the sign."),
+        ]
+        stored, _ = lettered_options(fixed, slot_key=_SLOT_KEY)
+        assert {o.wrong_key for o in stored if o.wrong_key} == {w.key for w in common_wrong(fixed)}
+        assert draft.options[1].misconception_key == "rate_is_loss"
+        # deterministic: the same draft is re-keyed the same way
+        assert repair_draft(draft) == (fixed, repairs)
+        # three distractors on one key, three misconceptions: all three re-keyed
+        three = _mc_draft(
+            options=_opts(
+                _CORRECT,
+                (_ITER[0], False, "k", "Counts iterations."),
+                (_LOSS[0], False, "k", "Treats the rate as the loss."),
+                (_SIGN[0], False, "k", "Thinks it flips the sign."),
+            )
+        )
+        fixed, repairs = repair_draft(three)
+        assert [o.misconception_key for o in fixed.options[1:]] == [
+            "counts_iterations",
+            "treats_rate_as_loss",
+            "thinks_it_flips_sign",
+        ]
+        assert len(repairs) == 3 and validate_draft(fixed) == []
+
+    @pytest.mark.parametrize("blank", [None, "", "   "])
+    def test_repair_keys_a_distractor_with_no_key_from_its_misconception(self, blank):
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _mc_draft(
+            options=_opts(_CORRECT, (_ITER[0], False, blank, "Counts iterations."), _LOSS, _SIGN)
+        )
+        fixed, repairs = repair_draft(draft)
+        assert fixed.options[1].misconception_key == "counts_iterations"
+        assert [r.split(":")[0] for r in repairs] == ["misconception_key"]
+        assert validate_draft(fixed) == []
+
+    def test_a_derived_key_never_collides_with_another_distractors_key(self):
+        """A key derived from a misconception's text that another distractor
+        already carries, or that another derived key took (the text's first
+        words agree), gets a digest of its own text: distinct, and the same
+        on every run."""
+        from learning.checks import repair_draft, validate_draft
+
+        taken = _mc_draft(
+            options=_opts(
+                _CORRECT,
+                (_ITER[0], False, "counts_iterations", "Counts every pass."),
+                (_LOSS[0], False, None, "Counts iterations."),
+                _SIGN,
+            )
+        )
+        fixed, _ = repair_draft(taken)
+        key = fixed.options[2].misconception_key
+        assert re.fullmatch(r"counts_iterations_[0-9a-f]{8}", key), key
+        assert validate_draft(fixed) == [] and repair_draft(taken)[0] == fixed
+        alike = _mc_draft(
+            options=_opts(
+                _CORRECT,
+                (_ITER[0], False, "k", "Thinks the rate is the count of passes over the data."),
+                (_LOSS[0], False, "k", "Thinks the rate is the count of passes over the labels."),
+                _SIGN,
+            )
+        )
+        fixed, _ = repair_draft(alike)
+        first, second = (o.misconception_key for o in fixed.options[1:3])
+        assert first == "thinks_rate_is_count_of_passes"
+        assert re.fullmatch(r"thinks_rate_is_count_of_passes_[0-9a-f]{8}", second), second
+        assert validate_draft(fixed) == []
+
+    @pytest.mark.parametrize(
+        "text,slug",
+        [
+            ("Counts iterations.", "counts_iterations"),
+            ("Treats the rate as the loss.", "treats_rate_as_loss"),
+            ("Thinks the rate doesn't matter.", "thinks_rate_doesnt_matter"),
+            ("Confond la dérivée et la fonction", "confond_la_derivee_et_la_fonction"),
+            (
+                "Believes the learning rate is the number of passes over the whole dataset.",
+                "believes_learning_rate_is_number_of",
+            ),
+        ],
+    )
+    def test_a_misconception_slug_is_snake_case_from_its_text(self, text, slug):
+        from learning.checks import misconception_slug
+
+        assert misconception_slug(text) == slug
+
+    def test_a_misconception_with_no_latin_word_is_keyed_by_its_digest(self):
+        from learning.checks import misconception_slug
+
+        key = misconception_slug("混淆了学习率和损失")
+        assert re.fullmatch(r"misconception_[0-9a-f]{8}", key), key
+        assert key == misconception_slug("混淆了学习率和损失")
+        assert key != misconception_slug("混淆了学习率")
 
     @pytest.mark.parametrize(
         "options",
@@ -780,8 +1000,27 @@ class TestRepairAndOptions:
                 _LOSS,
                 _SIGN,
             ),
-            # a distractor without its key: which misconception it is, is never guessed
+            # a distractor without a misconception: which one it is, is never guessed
             (_CORRECT, (_ITER[0], False, None), _LOSS, _SIGN),
+            (_CORRECT, (_ITER[0], False, "rate_is_iterations", "  "), _LOSS, _SIGN),
+            # two distractors state ONE misconception (a shared key, or two keys):
+            # the options are not distinct mistakes, and no key makes them so
+            (_CORRECT, _ITER, (_LOSS[0], False, "rate_is_iterations"), _SIGN),
+            (_CORRECT, _ITER, (_LOSS[0], False, "rate_is_loss", "counts  ITERATIONS"), _SIGN),
+            # a shared key beside a distractor with no misconception: no re-key
+            (
+                _CORRECT,
+                (_ITER[0], False, "rate_is_loss", "Counts iterations."),
+                _LOSS,
+                (_SIGN[0], False, "rate_is_sign", None),
+            ),
+            # a shared key while which options are distractors is in doubt
+            (
+                (_CORRECT[0], False, None),
+                (_ITER[0], False, "rate_is_loss", "Counts iterations."),
+                _LOSS,
+                _SIGN,
+            ),
         ],
     )
     def test_repair_never_guesses(self, options):
@@ -927,7 +1166,7 @@ class TestRepairAndOptions:
         the tutor's H4/H6 hint payloads. The marker is the prompt builder's,
         not course content, so code removes it from every text the item
         stores, in every format; chunk_ids is untouched (A37 review)."""
-        from learning.checks import repair_draft, validate_draft
+        from learning.checks import common_wrong, repair_draft, validate_draft
 
         mark = f"[chunk {self._HEX}]"
         draft = _mc_draft(
@@ -936,7 +1175,12 @@ class TestRepairAndOptions:
                 f"The rate scales each step {mark}. [CHUNK c2] Final answer: The update step size."
             ),
             rubric=[f"Ties the rate to the step {mark}", "Names the gradient."],
-            wrong_texts=["Counts iterations [chunk c1].", "Treats the rate as the loss.", "x"],
+            options=_opts(
+                _CORRECT,
+                (_ITER[0], False, "rate_is_iterations", "Counts iterations [chunk c1]."),
+                _LOSS,
+                _SIGN,
+            ),
             chunk_ids=["c1"],
         )
         fixed, repairs = repair_draft(draft)
@@ -945,14 +1189,21 @@ class TestRepairAndOptions:
             "The rate scales each step. Final answer: The update step size."
         )
         assert fixed.rubric == ["Ties the rate to the step", "Names the gradient."]
-        assert fixed.wrong_texts[0] == "Counts iterations."
+        # a distractor's misconception is stored as a common wrong reason (A37)
+        assert fixed.options[1].misconception_text == "Counts iterations."
+        assert common_wrong(fixed)[0].text == "Counts iterations."
         assert fixed.chunk_ids == ["c1"] and validate_draft(fixed) == []
         (line,) = [r for r in repairs if r.startswith("chunk_marker:")]
         assert "prompt" in line and "reference_answer" in line and "rubric" in line
+        assert "options" in line
         assert "[chunk" in draft.reference_answer  # the input is never mutated
-        free = _draft(reference_answer=f"The size of each update step [chunk {self._HEX}].")
+        free = _draft(
+            reference_answer=f"The size of each update step [chunk {self._HEX}].",
+            wrong_texts=["Counts iterations [chunk c1]."],
+        )
         fixed, repairs = repair_draft(free)
         assert fixed.reference_answer == "The size of each update step."
+        assert fixed.wrong_texts == ["Counts iterations."]
         assert [r.split(":")[0] for r in repairs] == ["chunk_marker"]
 
     @pytest.mark.parametrize(
@@ -1114,24 +1365,37 @@ class TestRepairAndOptions:
         "…share wrong_key 'k'; each distractor…" as two reasons."""
         from learning.checks import MC_OPTION_RULES, repair_draft, validate_draft
 
+        # A key the model wrote may itself hold "; ": a reason or a repair
+        # line that shows it must still read as one.
         broken = _mc_draft(
             prompt="Is option C right? Give your reason.",
             options=_opts(
                 (_CORRECT[0], True, "rate_is_loss"),
                 (_ITER[0], True, None),
-                ("...", False, "not_listed"),
-                (_SIGN[0], False, "not_listed"),
-                (_SIGN[0], False, None),
+                ("...", False, "a; b", "Counts; badly."),
+                (_SIGN[0], False, "a; b", "Counts; badly."),
+                (_SIGN[0] + " too", False, None, "x"),
             ),
         )
         reasons = validate_draft(broken)
         words = {r.split(":")[0] for r in reasons}
         assert set(MC_OPTION_RULES) <= words, words
         fixed = _mc_draft(
-            stepwise=True, options=_opts((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN)
+            stepwise=True,
+            options=_opts(
+                (_CORRECT[0], True, "rate_is_loss"),
+                (_ITER[0], False, "a; b", "Counts iterations."),
+                (_LOSS[0], False, "a; b", "Treats; the rate as the loss."),
+                _SIGN,
+            ),
         )
         _, repairs = repair_draft(fixed)
-        assert len(repairs) == 2
+        assert [r.split(":")[0] for r in repairs] == [
+            "correct_misconception",
+            "misconception_key",
+            "misconception_key",
+            "stepwise",
+        ]
         assert not [r for r in reasons + repairs if "; " in r]
 
     def test_no_reason_of_any_rule_holds_a_semicolon(self):
@@ -1882,6 +2146,12 @@ class TestCreateItems:
         assert mc["correct_option"] != letter and decrypt_if_present(mc["correct_option"]) == letter
         (right,) = [o for o in decrypt_json(mc["options_json"]) if o["wrong_key"] is None]
         assert right == {"letter": letter, "text": "The update step size", "wrong_key": None}
+        # A37: the common wrong reasons are the distractors' own misconceptions,
+        # so every stored option key is a stored wrong reason's key
+        wrong = json.loads(decrypt_if_present(mc["common_wrong_json"]))
+        assert wrong == [{"key": k, "text": _MISCONCEPTIONS[k]} for _, _, k in _MC_OPTIONS[1:]]
+        keys = {o["wrong_key"] for o in decrypt_json(mc["options_json"]) if o["wrong_key"]}
+        assert keys == {w["key"] for w in wrong}
         assert num["answer_kind"] == "numeric" and num["tolerance"] == 0.001
         assert (
             num["canonical_answer"] != "0.01"
@@ -1928,13 +2198,22 @@ class TestCreateItems:
         assert any("rubric" in r.getMessage() for r in caplog.records)
 
     def test_a_repairable_mc_draft_is_repaired_logged_and_stored(self, caplog):
-        """A37: the one repair that needs no guess (the option marked correct
-        carried a wrong_key) is made in code and logged by its rule; the row
-        stores the correct option with no key."""
+        """A37: the repairs that need no guess (the option marked correct
+        carried a misconception, two distractors stating different
+        misconceptions shared a key) are made in code and logged by rule;
+        the row stores the correct option with no key and the re-keyed
+        distractors' misconceptions as its common wrong reasons."""
         from services import check_item_service as svc
         from services.encryption import decrypt_if_present, decrypt_json
 
-        draft = _mc_draft(options=_opts((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN))
+        draft = _mc_draft(
+            options=_opts(
+                (_CORRECT[0], True, "rate_is_loss"),
+                (_ITER[0], False, "rate_is_loss", "Counts iterations."),
+                _LOSS,
+                _SIGN,
+            )
+        )
         factory, mocks = _cached_tables({})
         with (
             patch("services.check_item_service.table", side_effect=factory),
@@ -1946,9 +2225,17 @@ class TestCreateItems:
         options = decrypt_json(row["options_json"])
         letter = decrypt_if_present(row["correct_option"])
         assert [o["letter"] for o in options if o["wrong_key"] is None] == [letter]
-        assert any(
-            "correct_key" in r.getMessage() and "repaired" in r.getMessage() for r in caplog.records
-        )
+        wrong = json.loads(decrypt_if_present(row["common_wrong_json"]))
+        assert [w["key"] for w in wrong] == [
+            "counts_iterations",
+            "treats_rate_as_loss",
+            "rate_is_sign",
+        ]
+        assert {o["wrong_key"] for o in options if o["wrong_key"]} == {w["key"] for w in wrong}
+        for rule in ("correct_misconception", "misconception_key"):
+            assert any(
+                rule in r.getMessage() and "repaired" in r.getMessage() for r in caplog.records
+            ), rule
 
     def test_an_unrepairable_mc_draft_is_dropped_with_its_rules(self, caplog):
         from services import check_item_service as svc
@@ -2352,7 +2639,9 @@ class TestAgentPlumbing:
     def test_output_schema_is_flat_and_never_carries_canonical_verified(self):
         """Flat but for one list of small objects (spec §13 A37): the
         mc_reason options, each stating its own text, whether it is correct
-        and its wrong_key — so a key can never drift off its option."""
+        and — on a distractor — its own misconception (a key and a sentence),
+        so a misconception can never drift off its option and there is no
+        second list to cross-reference."""
         from agents.check_items import CheckItemsOutput
 
         schema = CheckItemsOutput.model_json_schema()
@@ -2364,10 +2653,21 @@ class TestAgentPlumbing:
                 assert spec["items"] == {"type": "string"}, (name, spec)
         assert props["options"]["items"] == {"$ref": "#/$defs/OptionDraft"}
         option = schema["$defs"]["OptionDraft"]
-        assert set(option["properties"]) == {"text", "is_correct", "wrong_key"}
+        assert set(option["properties"]) == {
+            "text",
+            "is_correct",
+            "misconception_key",
+            "misconception_text",
+        }
         assert set(option["required"]) == {"text", "is_correct"}
         assert option["properties"]["is_correct"]["type"] == "boolean"
-        assert {"type": "null"} in option["properties"]["wrong_key"]["anyOf"]
+        for name in ("misconception_key", "misconception_text"):
+            assert {"type": "null"} in option["properties"][name]["anyOf"], name
+        # the whole output stays inside the #153 budget of 20 properties
+        total = len(schema["properties"]) + sum(
+            len(d["properties"]) for d in schema["$defs"].values()
+        )
+        assert total == 20
         for gone in ("option_letters", "option_texts", "option_wrong_keys", "correct_option"):
             assert gone not in props, f"A37: {gone} is code's, not the agent's"
         assert "canonical_verified" not in props, "A22: never an agent output"
@@ -2392,17 +2692,54 @@ class TestAgentPlumbing:
         from agents.check_items import _PROMPT, CheckItemsOutput
         from learning.params import CHECK_ITEM_MC_OPTIONS
 
-        for phrase in ("`options`", "`is_correct`", "`wrong_key`", "null", "never name an option"):
+        for phrase in (
+            "`options`",
+            "`is_correct`",
+            "`misconception_key`",
+            "`misconception_text`",
+            "null",
+            "never name an option",
+        ):
             assert phrase in _PROMPT, phrase
         assert f"exactly {CHECK_ITEM_MC_OPTIONS} options" in _PROMPT
-        for gone in ("option_letters", "option_texts", "option_wrong_keys", "correct_option"):
+        for gone in (
+            "option_letters",
+            "option_texts",
+            "option_wrong_keys",
+            "correct_option",
+            "`wrong_key`",
+        ):
             assert gone not in _PROMPT, gone
         schema = CheckItemsOutput.model_json_schema()["$defs"]
         assert (
             f"exactly {CHECK_ITEM_MC_OPTIONS}"
             in schema["CheckItemDraft"]["properties"]["options"]["description"]
         )
-        assert "null" in schema["OptionDraft"]["properties"]["wrong_key"]["description"]
+        for name in ("misconception_key", "misconception_text"):
+            assert "null" in schema["OptionDraft"]["properties"][name]["description"], name
+
+    def test_the_mc_misconceptions_ride_on_the_distractors_with_no_list_to_match(self):
+        """A37 (coordinator decision, round 4): the one cross-reference left
+        in round 3 — each distractor's key had to name a DISTINCT entry of the
+        item's wrong_keys — was the rule the model broke (1 mc_reason item for
+        a concept in the ENG150 review run). Each distractor now states its
+        own misconception; the prompt and the schema say that an mc_reason
+        item's wrong_keys / wrong_texts are [] and that the distractors'
+        misconceptions differ."""
+        from agents.check_items import _PROMPT, CheckItemsOutput
+
+        for phrase in (
+            "its own misconception",
+            "different misconceptions",
+            "`wrong_keys` and `wrong_texts` are []",
+        ):
+            assert phrase in _PROMPT, phrase
+        defs = CheckItemsOutput.model_json_schema()["$defs"]
+        draft = defs["CheckItemDraft"]["properties"]
+        assert "[] for mc_reason" in draft["wrong_keys"]["description"]
+        assert "[] for mc_reason" in draft["wrong_texts"]["description"]
+        key = defs["OptionDraft"]["properties"]["misconception_key"]["description"]
+        assert "snake_case" in key and "different" in key
 
     def test_the_options_are_asked_alike_in_length_and_without_their_own_reason(self):
         """Review of A37: the correct option was the single longest in 10 of
@@ -4232,17 +4569,24 @@ class TestMcReasonEval:
         assert MC_OPTION_RULES == (
             "option_count",
             "one_correct",
-            "correct_key",
-            "distractor_key",
+            "correct_misconception",
+            "misconception_key",
+            "misconception_text",
             "option_text",
             "letter",
         )
         a34_only = _mc_draft(final_answer="The loss value")  # not the correct option's text
+        # one misconception stated by two distractors: not repairable
         shared = _mc_draft(options=_opts(_CORRECT, _ITER, (_LOSS[0], False, _ITER[2]), _SIGN))
         repairable = _mc_draft(
             options=_opts((_CORRECT[0], True, "rate_is_loss"), _ITER, _LOSS, _SIGN)
         )
-        assert self._options_score(a34_only, repairable, _draft(rubric=[])) == 1.0
+        rekeyed = _mc_draft(
+            options=_opts(
+                _CORRECT, _ITER, (_LOSS[0], False, _ITER[2], "Treats the rate as the loss."), _SIGN
+            )
+        )
+        assert self._options_score(a34_only, repairable, rekeyed, _draft(rubric=[])) == 1.0
         assert self._options_score(_mc_draft(), shared) == 0.5
         assert self._options_score(_draft()) == 0.0  # no mc_reason draft at all is a miss
 
@@ -4299,6 +4643,41 @@ class TestMcReasonEval:
         assert self._score(repairable) == 1.0  # the service repairs it, then stores it
         assert self._score(_mc_draft(), broken) == 0.5
         assert self._score(_draft()) == 0.0  # no mc_reason draft at all is a miss
+
+    def test_wrong_reason_count_reads_an_mc_items_distractors(self):
+        """A37 round 4: an mc_reason item's wrong reasons are its
+        distractors' misconceptions (checks.common_wrong, after repair_draft
+        as create_items stores them), so WrongReasonCount scores those — never
+        the draft's own wrong_keys / wrong_texts, which the prompt leaves []."""
+        import importlib.util
+        import sys
+        from types import SimpleNamespace
+
+        path = pathlib.Path(__file__).parent / "evals" / "check_items.py"
+        spec = importlib.util.spec_from_file_location("_eval_check_items_wrong", path)
+        mod = importlib.util.module_from_spec(spec)
+        saved = list(sys.path)
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path[:] = saved
+
+        def score(*drafts):
+            ctx = SimpleNamespace(output=SimpleNamespace(items=list(drafts)))
+            return mod.WrongReasonCountEvaluator().evaluate(ctx)
+
+        rekeyed = _mc_draft(
+            options=_opts(
+                _CORRECT, _ITER, (_LOSS[0], False, _ITER[2], "Treats the rate as the loss."), _SIGN
+            )
+        )
+        one_mistake_twice = _mc_draft(
+            options=_opts(_CORRECT, _ITER, (_LOSS[0], False, _ITER[2]), _SIGN)
+        )
+        assert score(_mc_draft(), rekeyed, _draft()) == 1.0
+        assert score(_mc_draft(wrong_keys=["k", "k"], wrong_texts=[])) == 1.0  # not read
+        assert score(_mc_draft(), one_mistake_twice) == 0.0
+        assert score(_draft(wrong_keys=["k", "k"], wrong_texts=["a", "b"])) == 0.0
 
 
 class TestProjectRef:

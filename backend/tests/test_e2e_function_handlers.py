@@ -599,11 +599,14 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
     from agents.function_handlers_e2e import (
         E2E_CHECK_ITEM_FINAL_ANSWER,
         E2E_CHECK_ITEM_MC_WRONG_KEYS,
+        E2E_CHECK_ITEM_MC_WRONG_TEXTS,
         E2E_CHECK_ITEM_OPTIONS,
         E2E_CHECK_ITEM_REFERENCE,
+        E2E_CHECK_ITEM_WRONG_KEY,
+        E2E_CHECK_ITEM_WRONG_TEXT,
         E2E_DOC_CONCEPTS,
     )
-    from learning.checks import lettered_options, repair_draft
+    from learning.checks import WrongReason, common_wrong, lettered_options, repair_draft
     from learning.params import CHECK_ITEM_MC_OPTIONS
 
     items = result.output.items
@@ -624,12 +627,26 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
         assert [o.model_dump() for o in i.options] == E2E_CHECK_ITEM_OPTIONS
         assert len(i.options) == CHECK_ITEM_MC_OPTIONS
         (correct,) = [o for o in i.options if o.is_correct]
-        assert correct.text == E2E_CHECK_ITEM_FINAL_ANSWER and correct.wrong_key is None
-        assert [o.wrong_key for o in i.options if not o.is_correct] == E2E_CHECK_ITEM_MC_WRONG_KEYS
+        assert correct.text == E2E_CHECK_ITEM_FINAL_ANSWER
+        assert (correct.misconception_key, correct.misconception_text) == (None, None)
+        distractors = [o for o in i.options if not o.is_correct]
+        assert [o.misconception_key for o in distractors] == E2E_CHECK_ITEM_MC_WRONG_KEYS
+        assert [o.misconception_text for o in distractors] == E2E_CHECK_ITEM_MC_WRONG_TEXTS
+        # A37 round 4: each distractor states its own misconception, the item
+        # lists none, and code takes its common wrong reasons from the options
+        assert i.wrong_keys == [] and i.wrong_texts == []
+        assert common_wrong(i) == [
+            WrongReason(key=k, text=t)
+            for k, t in zip(E2E_CHECK_ITEM_MC_WRONG_KEYS, E2E_CHECK_ITEM_MC_WRONG_TEXTS)
+        ]
         stored, letter = lettered_options(i, slot_key=b"any server secret")
         assert [o.letter for o in stored if o.wrong_key is None] == [letter]
+        assert [o.wrong_key for o in stored if o.wrong_key] == E2E_CHECK_ITEM_MC_WRONG_KEYS
     for i in (i for i in items if i.format != "mc_reason"):
         assert i.options == []
+        assert common_wrong(i) == [
+            WrongReason(key=E2E_CHECK_ITEM_WRONG_KEY, text=E2E_CHECK_ITEM_WRONG_TEXT)
+        ]
     assert "check_items" in providers._FUNCTION_HANDLERS
 
 

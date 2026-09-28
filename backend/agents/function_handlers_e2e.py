@@ -378,11 +378,15 @@ E2E_CHECK_ITEM_RUBRIC = [
 E2E_CHECK_ITEM_WRONG_KEY = "rate_is_iteration_count"
 E2E_CHECK_ITEM_WRONG_TEXT = "Confuses the learning rate with the number of iterations."
 # mc_reason (A22, A37): four option OBJECTS — the correct one first, flagged
-# is_correct with no wrong_key, then three distractors, each keyed to a different
-# one of the item's own wrong_keys. No letters: code letters the options and
-# places the correct one at a slot keyed by the server secret over the
-# question_hash (checks.lettered_options), so the stored letter of each
-# concept's item is fixed by its prompt and the stack's ENCRYPTION_KEY.
+# is_correct with no misconception, then three distractors, each stating its
+# own misconception (a key and a sentence). The item lists no wrong_keys /
+# wrong_texts of its own: code takes its common wrong reasons from the
+# distractors (checks.common_wrong), so the stored common_wrong_json is
+# E2E_CHECK_ITEM_MC_WRONG_KEYS paired with E2E_CHECK_ITEM_MC_WRONG_TEXTS. No
+# letters: code letters the options and places the correct one at a slot keyed
+# by the server secret over the question_hash (checks.lettered_options), so the
+# stored letter of each concept's item is fixed by its prompt and the stack's
+# ENCRYPTION_KEY.
 E2E_CHECK_ITEM_MC_WRONG_KEYS = [
     E2E_CHECK_ITEM_WRONG_KEY,
     "rate_is_loss_value",
@@ -394,13 +398,17 @@ E2E_CHECK_ITEM_MC_WRONG_TEXTS = [
     "Thinks the learning rate sets the direction of the step.",
 ]
 E2E_CHECK_ITEM_OPTIONS = [
-    {"text": E2E_CHECK_ITEM_FINAL_ANSWER, "is_correct": True, "wrong_key": None},
+    {"text": E2E_CHECK_ITEM_FINAL_ANSWER, "is_correct": True,
+     "misconception_key": None, "misconception_text": None},
     {"text": "The number of iterations to run", "is_correct": False,
-     "wrong_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[0]},
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[0],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[0]},
     {"text": "The value of the loss", "is_correct": False,
-     "wrong_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[1]},
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[1],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[1]},
     {"text": "The sign of the gradient", "is_correct": False,
-     "wrong_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[2]},
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[2],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[2]},
 ]
 
 
@@ -421,11 +429,7 @@ def _e2e_check_item(concept: str, fmt: str) -> dict:
     }
     if fmt == "mc_reason":
         # The reference quotes the correct option's text and names no letter.
-        item.update({
-            "wrong_keys": E2E_CHECK_ITEM_MC_WRONG_KEYS,
-            "wrong_texts": E2E_CHECK_ITEM_MC_WRONG_TEXTS,
-            "options": E2E_CHECK_ITEM_OPTIONS,
-        })
+        item.update({"wrong_keys": [], "wrong_texts": [], "options": E2E_CHECK_ITEM_OPTIONS})
     return item
 
 
