@@ -85,6 +85,7 @@ renders the element.
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` (the `flags` tab — default/rollout editor, per-user/per-role override rules, and a per-student "explain" lookup; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Settings | `settings` | `frontend/src/components/screens/Settings.tsx` (the `/settings` screen — tab rail + the Data tab's product-analytics opt-out) — added with the PostHog frontend integration |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
@@ -398,6 +399,35 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
+
+### `admin-tab-*` / `flag`
+
+Added with the #620 feature-flags admin UI (ADR 0029). `admin-tab-{tab}` is
+on every button in `Admin.tsx`'s tab bar (one per `Tab` value — `users`,
+`allowlist`, `roles`, `flags`, `achievements`, `cosmetics`, `analytics`,
+`audit`, `feedback`); Task 8's E2E journey opens the flags tab via
+`admin-tab-flags`. The tab's own content is `admin/FeatureFlags.tsx`, a new
+file with no baselined backlog — every button/input in it is tagged.
+
+| testid | element |
+| --- | --- |
+| `admin-tab-{tab}` | one tab-bar button per `Tab` value (`Admin.tsx`) |
+| `flag-row-{key}` | a flag's summary row; click toggles its editor open/closed |
+| `flag-default-{key}` | the editor's default-variant `<select>` |
+| `flag-rollout-{key}` | the rollout-percent `<input type="range">` |
+| `flag-rollout-variant-{key}` | the `<select>` for which variant a percent rollout serves (disabled at 0%) |
+| `flag-save-{key}` | Save button — gated behind the two-click `useConfirm` pattern (`frontend/src/lib/useConfirm.ts`): the first click arms it ("Click again to save"), the second calls `adminUpdateFlag` |
+| `flag-target-row-{key}-{type}-{id}` | one override-rule row, suffixed with the rule's `target_type` (`user`/`role`) and `target_id` |
+| `flag-target-remove-{key}-{type}-{id}` | that row's "Remove" button (`adminDeleteFlagTarget`) |
+| `flag-target-add-{key}` | "Add rule" button (`adminUpsertFlagTarget`) |
+| `flag-target-type-{key}` | the new-rule `user`/`role` type `<select>` |
+| `flag-target-role-{key}` | the role picker `<select>`, shown when the rule type is `role` |
+| `flag-target-user-search-{key}` | the student search `<input>`, shown when the rule type is `user` (debounced `adminFetchUsers` lookup) |
+| `flag-target-user-result-{key}-{userId}` | one search-result button in that dropdown |
+| `flag-target-variant-{key}` | the new-rule variant `<select>` |
+| `flag-explain-input-{key}` | "check a student" user-id `<input>` (Enter key or the Check button runs `adminExplainFlag`) |
+| `flag-explain-check-{key}` | the explicit "Check" button alongside that input |
+| `flag-explain-result-{key}` | the explain result, rendered as `"<variant> (<step>: <detail>)"` |
 
 ### `profile`
 

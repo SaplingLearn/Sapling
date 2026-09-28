@@ -22,8 +22,9 @@ import {
 import { supabase } from "@/lib/supabase";
 import type { Role, Cosmetic, CosmeticType, RarityTier, AllowlistEmail, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
 import { AchievementWiki } from "./admin/AchievementWiki";
+import { FeatureFlagsTab } from "./admin/FeatureFlags";
 
-type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
+type Tab = "users" | "allowlist" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", "title"];
@@ -54,7 +55,7 @@ export function Admin() {
     );
   }
 
-  const tabs: Tab[] = ["users", "allowlist", "roles", "achievements", "cosmetics", "analytics", "audit", "feedback"];
+  const tabs: Tab[] = ["users", "allowlist", "roles", "flags", "achievements", "cosmetics", "analytics", "audit", "feedback"];
 
   return (
     <div>
@@ -68,6 +69,7 @@ export function Admin() {
         {tabs.map((t) => (
           <button
             key={t}
+            data-testid={`admin-tab-${t}`}
             onClick={() => setTab(t)}
             style={{
               padding: "8px 16px",
@@ -87,6 +89,7 @@ export function Admin() {
         {tab === "users" && <UsersTab />}
         {tab === "allowlist" && <AllowlistTab />}
         {tab === "roles" && <RolesTab />}
+        {tab === "flags" && <FeatureFlagsTab />}
         {tab === "achievements" && <AchievementWiki />}
         {tab === "cosmetics" && <CosmeticsTab />}
         {tab === "analytics" && <AnalyticsTab />}
