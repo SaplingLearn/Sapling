@@ -66,26 +66,36 @@ describe("FeatureFlagsTab", () => {
     expect(await screen.findByTestId("flag-row-learning_loop")).toBeTruthy();
   });
 
-  it("requires a confirming second click before saving a default change", async () => {
+  it("requires a confirming second click before saving a default change, and states the scope while armed", async () => {
     api.adminUpdateFlag.mockResolvedValue({ flag: { ...FLAG, default_variant: "on" } });
     render(<FeatureFlagsTab />);
     fireEvent.click(await screen.findByTestId("flag-row-learning_loop"));
     fireEvent.change(screen.getByTestId("flag-default-learning_loop"), { target: { value: "on" } });
 
+    // Not armed yet: no scope text, no save.
+    expect(screen.queryByTestId("flag-save-scope-learning_loop")).toBeNull();
+
     const save = screen.getByTestId("flag-save-learning_loop");
     fireEvent.click(save);
     expect(api.adminUpdateFlag).not.toHaveBeenCalled();
+
+    // Armed: the scope text states the transition and who it applies to.
+    const scope = screen.getByTestId("flag-save-scope-learning_loop");
+    expect(scope.textContent).toContain("off → on");
+    expect(scope.textContent).toContain("rollout 0% → 0%");
+    expect(scope.textContent).toContain("every student without a user or role rule");
 
     fireEvent.click(save);
     await waitFor(() => expect(api.adminUpdateFlag).toHaveBeenCalledWith(
       "learning_loop", { default_variant: "on", rollout_percent: 0, rollout_variant: null }));
   });
 
-  it("does not save without the confirming second click", async () => {
+  it("does not save without the confirming second click, even with the scope shown", async () => {
     render(<FeatureFlagsTab />);
     fireEvent.click(await screen.findByTestId("flag-row-learning_loop"));
     fireEvent.change(screen.getByTestId("flag-default-learning_loop"), { target: { value: "on" } });
     fireEvent.click(screen.getByTestId("flag-save-learning_loop"));
+    expect(screen.getByTestId("flag-save-scope-learning_loop")).toBeTruthy();
     expect(api.adminUpdateFlag).not.toHaveBeenCalled();
   });
 

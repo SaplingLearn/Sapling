@@ -417,6 +417,7 @@ file with no baselined backlog — every button/input in it is tagged.
 | `flag-rollout-{key}` | the rollout-percent `<input type="range">` |
 | `flag-rollout-variant-{key}` | the `<select>` for which variant a percent rollout serves (disabled at 0%) |
 | `flag-save-{key}` | Save button — gated behind the two-click `useConfirm` pattern (`frontend/src/lib/useConfirm.ts`): the first click arms it ("Click again to save"), the second calls `adminUpdateFlag` |
+| `flag-save-scope-{key}` | shown only while `flag-save-{key}` is armed — states the pending transition (`Default {before} → {after}; rollout {before}% → {after}%{variant}`) and that it applies to every student without a user or role rule (design spec §7) |
 | `flag-target-row-{key}-{type}-{id}` | one override-rule row, suffixed with the rule's `target_type` (`user`/`role`) and `target_id` |
 | `flag-target-remove-{key}-{type}-{id}` | that row's "Remove" button (`adminDeleteFlagTarget`) |
 | `flag-target-add-{key}` | "Add rule" button (`adminUpsertFlagTarget`) |
