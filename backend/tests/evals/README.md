@@ -70,8 +70,10 @@ Its baseline was re-recorded by PKG-06's A34 reopen of PKG-04 (29af030; one
 recording on the final prompt — DraftValid 0.722, WrongReasonCount 0.667,
 both lower than the first recording; HANDOFF-04/HANDOFF-06), then by the A37
 reopen (spec §13 A37: the mc_reason options as objects, 48a65bc), its
-review round (options alike in length) and its third review (the reference
-as a strong student's reason, never the model thinking aloud).
+review round (options alike in length), its third review (the reference
+as a strong student's reason, never the model thinking aloud) and its round 4
+(each distractor states its own misconception; the item's wrong reasons are
+read off the distractors, and WrongReasonCount scores those for mc_reason).
 `McOptionsValid` (required 1.0) and `McReasonValid` score the mc_reason
 drafts; `McCorrectNotLongest` is the share of stored mc_reason drafts whose
 correct option is not strictly the longest, gated at its recorded rate.
