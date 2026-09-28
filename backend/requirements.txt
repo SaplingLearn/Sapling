@@ -23,7 +23,7 @@ psycopg[binary]>=3.2,<4
 # OCR pipeline (Docling = default, GOT-OCR 2.0 = optional GPU fallback)
 docling>=2.15,<3
 transformers>=4.46,<5
-torch>=2.5,<3  # install CPU wheel in CPU-only deployments: pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.5,<3  # CPU-only deployments: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu (#700)
 
 openpyxl==3.1.5
 beautifulsoup4==4.15.0
