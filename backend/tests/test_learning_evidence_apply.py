@@ -1821,8 +1821,9 @@ def _apply_with_unknown_columns(unknown: set[str], payload=None, caplog=None, er
 
 
 class TestJournalBeforeAMigration:
-    """A route that runs before 20260927093149_learning_grader_backend.sql (or the
-    older 20260814051517 event_type migration) must still journal the evidence:
+    """A route that runs before 20260927182054_learning_mastery_event_seq.sql or
+    20260927093149_learning_grader_backend.sql (or the older 20260814051517
+    event_type migration) must still journal the evidence:
     learner_state and graph_nodes are already written when the journal insert
     runs, so a lost row is a silent gap in the replayable history."""
 
@@ -1844,6 +1845,21 @@ class TestJournalBeforeAMigration:
             for r in caplog.records
             if r.levelname == "WARNING"
         )
+
+    def test_a_missing_evidence_seq_column_keeps_the_row_and_the_older_columns(self, caplog):
+        """A36's evidence_seq (20260927182054) postdates the learner_state migration
+        the evidence path needs, like grader_backend: a code-first deploy degrades
+        the row to a NULL evidence_seq (as the migration's own header describes
+        rows written before it) instead of losing it (a33 verification)."""
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, writes = _apply_with_unknown_columns({"evidence_seq"})
+        assert len(writes) == 1
+        assert [("evidence_seq" in a, "grader_backend" in a) for a in attempts] == [
+            (True, True),
+            (False, True),
+        ]
+        assert attempts[-1]["event_type"] and attempts[-1]["channel"] == "free_response"
+        assert any("20260927182054" in r.getMessage() for r in caplog.records)
 
     def test_both_optional_columns_missing_still_lands_the_row(self):
         attempts, _ = _apply_with_unknown_columns({"grader_backend", "event_type"})

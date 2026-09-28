@@ -664,8 +664,11 @@ def add_node(
 # environment has. The PKG-03 evidence columns (channel … confidence,
 # 20260927024349_learning_learner_state.sql) are not listed: the evidence
 # path reads learner_state, which that same migration creates, before it ever
-# reaches this insert.
+# reaches this insert. Every later evidence column is listed (A36's
+# evidence_seq: a row written before its migration has it NULL, as that
+# migration's header says of rows written before it).
 _JOURNAL_OPTIONAL_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("20260927182054_learning_mastery_event_seq.sql", ("evidence_seq",)),
     ("20260927093149_learning_grader_backend.sql", ("grader_backend",)),
     ("20260814051517_node_mastery_events_event_type.sql", ("event_type",)),
 )
@@ -717,7 +720,7 @@ def _insert_mastery_event(event_row: dict) -> None:
     an optional column (`_JOURNAL_OPTIONAL_COLUMNS`) as unknown — a deploy ahead
     of that migration — drops exactly that column and tries again, so the row
     degrades to what the environment can store (E7's event_type; PKG-05's
-    grader_backend, CodeRabbit PR #673). Any other error (a CHECK violation, a
+    grader_backend, CodeRabbit PR #673; A36's evidence_seq). Any other error (a CHECK violation, a
     transient 5xx) keeps every column and is retried once unchanged; if it
     fails again the row is lost and the error is logged. Every failure is
     logged loudly — a silently-dropped write is the bug class this whole batch
