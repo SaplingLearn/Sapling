@@ -333,6 +333,10 @@ def _deliver(item: _Item) -> None:
     try:
         if disabled_reason() is not None:  # switched off while it waited
             return
+        from services.feature_flags import flag_on
+
+        if not flag_on("product_analytics", item.actor):  # #620: admin switch
+            return
         distinct_id = _distinct_id_for(item.actor)
         if distinct_id is _SKIP:
             return
