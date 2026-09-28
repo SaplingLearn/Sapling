@@ -34,7 +34,12 @@ the reason) rejects or argues against the reference, or asserts a common wrong
 reason — before its verdicts, and `matched_wrong_key` after them. An all-yes
 whose own run reports either (`_conflicted`) is a verdict at odds with itself:
 it is confirmed by the second opinion like a suspicious one, and an all-yes that
-no confident run confirms is no verdict at all. An mc_reason reason is judged
+no confident run confirms is no verdict at all. A second sure run that credits
+every item is that confirmation even when it reports the conflict too: credit
+needs two sure runs, not two reports (HANDOFF-a33 open question (a)). Only a
+verdict that needs confirmation asks for a second run, so a failure between the
+runs (an outage, the grader cap) drops only such a verdict — a known invariant-28
+residual (HANDOFF-a33 Known gaps). An mc_reason reason is judged
 apart from the option — the letter is never evidence — so this holds whichever
 option was chosen.
 

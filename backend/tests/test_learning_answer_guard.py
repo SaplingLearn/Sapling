@@ -19,6 +19,7 @@ import json
 import re
 import unicodedata
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -1545,6 +1546,70 @@ def test_an_unconfirmed_conflicted_all_yes_is_no_verdict(monkeypatch, events, ca
     assert calls["n"] == 2 and res.unavailable is True and res.refused is None
     assert res.all_yes is False and events == []
     assert any("contradicts" in r.getMessage() for r in caplog.records)
+
+
+# The floor guard in `_needs_confirmation` (a first run below
+# GRADER_SECOND_OPINION_CONFIDENCE is no verdict to confirm). Without it, an
+# unsure first run that credits something would be ANDed with the second opinion
+# and lend it its own confidence — the round-0 veto — and an unsure conflicted
+# all-yes would "confirm" a conflicted second opinion. Both pins fail when
+# `and first.confidence >= GRADER_SECOND_OPINION_CONFIDENCE` is removed (the
+# a33 verification's mutant; `test_a_low_confidence_first_run_never_vetoes…`
+# credits nothing on its first run, so it asks for no confirmation either way).
+
+
+def test_an_unsure_first_run_that_credits_part_never_vetoes_a_confident_all_yes(
+    monkeypatch, events
+):
+    unsure = {**_all_yes(0.2), "item_results": ["r1:yes", "r2:no"]}
+    res, calls = _grade_with(monkeypatch, [unsure, _all_yes(0.9)], answer=GRADING_TALK)
+    assert calls["n"] == 2 and res.backend == "gemini_second"
+    assert res.all_yes is True and res.item_results == {"r1": True, "r2": True}
+    assert res.confidence == 0.9
+
+
+def test_an_unsure_conflicted_all_yes_confirms_no_conflicted_second_opinion(monkeypatch, events):
+    res, calls = _grade_with(
+        monkeypatch, [_conflicted(0.2), _conflicted(0.9)], answer=PLAIN_WRONG_REASON
+    )
+    assert calls["n"] == 2 and res.unavailable is True and res.refused is None
+    assert res.all_yes is False and events == []
+
+
+def test_a_conflicted_all_yes_a_conflicted_second_run_credits_is_credited(monkeypatch, events):
+    """HANDOFF-a33 open question (a), taken: two sure runs that both credit every
+    item are a confirmation, even when both report the contradiction. The rule is
+    "credit needs two sure runs"; the unsure-first-run path above has only one.
+    Measured live: no second run was conflicted and credited (0 of 16)."""
+    second = _conflicted(0.9, matched_wrong_key="w_loop")
+    res, calls = _grade_with(
+        monkeypatch, [_conflicted(0.95, matched_wrong_key="w_loop"), second],
+        answer=PLAIN_WRONG_REASON,
+    )
+    assert calls["n"] == 2 and res.unavailable is False and res.all_yes is True
+    assert res.confidence == 0.9 and res.matched_wrong_key == "w_loop"
+
+
+def test_a_confirmation_the_grader_cap_cuts_short_is_unavailable(monkeypatch, events):
+    """A known invariant-28 residual (HANDOFF-a33 Known gaps): only a verdict that
+    needs confirmation asks for a second run, so a cap reached between the two
+    runs drops a credited first verdict (unavailable) while a first verdict that
+    needed none is recorded. Pinned so a change to it is a decision, not drift."""
+    from services import ai_budget
+
+    seen = {"n": 0}
+
+    def check(user_id, task):
+        seen["n"] += 1  # grade()'s own check, the first run's, then the second's
+        return SimpleNamespace(level="hard" if seen["n"] >= 3 else "ok")
+
+    monkeypatch.setattr(ai_budget, "check", check)
+    res, calls = _grade_with(monkeypatch, [_conflicted(0.95)], answer=PLAIN_WRONG_REASON)
+    assert calls["n"] == 1 and res.unavailable is True and res.refused is None
+    seen["n"] = 0
+    no = {**_all_yes(0.95), "item_results": _ALL_NO}
+    res, calls = _grade_with(monkeypatch, [no], answer=PLAIN_WRONG_REASON)
+    assert calls["n"] == 1 and res.unavailable is False and res.all_yes is False
 
 
 @pytest.mark.parametrize("option", ["A", "B"])
