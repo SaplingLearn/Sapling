@@ -128,7 +128,17 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         #   auth_guard.get_session_user_id on a successful decode (the shared
         #   ASGI scope is the only channel that propagates back out of
         #   BaseHTTPMiddleware's downstream task).
-        if response.status_code >= 400:
+        # - #690: a 404 that matched NO route is not recorded. That is the
+        #   internet-scanner traffic (/wp/, /.env, /index.php, /robots.txt, the
+        #   bare API root, ...) — ~9.4k anonymous rows a month on prod, burying
+        #   every 4xx rollup — and it carries no product signal: no handler ran.
+        #   The log line above still records it. Everything else is kept: any
+        #   status from a matched route (a handler's own 404, 401, 403, 422),
+        #   a 405 (a PARTIAL match — the path is ours), and a no-route non-404
+        #   such as a CORS preflight rejection.
+        route = request.scope.get("route")
+        unrouted_404 = response.status_code == 404 and route is None
+        if response.status_code >= 400 and not unrouted_404:
             # Local import: events_service imports current_request_id from
             # this module at import time, so a top-level import here would be
             # circular.
@@ -140,7 +150,6 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                 "status_code": response.status_code,
                 "duration_ms": round(dur_ms, 1),
             }
-            route = request.scope.get("route")
             template = getattr(route, "path_format", None) or getattr(route, "path", None)
             if template:
                 payload["route"] = template

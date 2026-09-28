@@ -4,8 +4,10 @@
  *
  * API-level (no page): as the seeded student (the default storageState the
  * global setup mints for rich-user-active), drive two cheap real actions —
- * a bogus /api path (→ the RequestIDMiddleware error.4xx seam) and a note
- * created via POST /api/notes (→ the note.created seam). Then, as the seeded
+ * a read of a note that does not exist (a ROUTED 404 → the RequestIDMiddleware
+ * error.4xx seam) and a note created via POST /api/notes (→ the note.created
+ * seam). A path that matches no route at all is fired too: since #690 that
+ * scanner-shaped 404 is deliberately NOT recorded, and this journey pins it. Then, as the seeded
  * admin (rich-user-admin holds the admin role per db/seed_local_rich.py;
  * authenticated via the same support/session.ts test-login helper the
  * multi-user journeys use), poll GET /api/admin/analytics/usage/summary until
@@ -15,16 +17,18 @@
  *
  * Timing: log_event is fire-and-forget onto an in-process queue; the worker
  * thread flushes ≤1s. So the rollup is polled with expect.poll (≤5s), never
- * a bare sleep. The 404 fires BEFORE the note create: the queue is FIFO, so
- * note.created visible ⇒ the earlier error.4xx row landed too.
+ * a bare sleep. The 404s fire BEFORE the note create: the queue is FIFO, so
+ * note.created visible ⇒ the earlier error.4xx row landed too — and an
+ * unrouted-404 row, had one been enqueued, would have landed with it.
  *
  * Isolation: `events` is NOT in support/db.ts's TRUNCATE_DENYLIST, so the
  * per-test reset starts this test from an empty events table — no from/to
  * scoping needed. A late flush from a prior test could still slip in after
  * the truncate, so the causal assertions key on values unique to THIS test
- * (the bogus path, the created note's id via queryRaw), not on bare counts.
+ * (the missing-note path, the created note's id via queryRaw), not on bare
+ * counts.
  *
- * Privacy: the bogus request carries a query string; the error event must
+ * Privacy: the missing-note request carries a query string; the error event must
  * record only the path — the query value must appear nowhere in the
  * analytics payloads.
  */
@@ -34,7 +38,10 @@ import { mintStorageState } from "./support/session";
 import { FRONTEND_URL, USER_ACTIVE } from "./support/stack";
 
 const USER_ADMIN = "rich-user-admin"; // seeded with the admin role
-const BOGUS_PATH = "/api/e2e-observability-no-such-route";
+// Routed: GET /api/notes/{note_id} answers its own 404 for an unknown id.
+const MISSING_NOTE_PATH = "/api/notes/e2e-observability-no-such-note";
+// Unrouted: scanner-shaped, matches nothing — must leave no events row (#690).
+const UNROUTED_PATH = "/api/e2e-observability-no-such-route";
 const SECRET_QUERY = "e2e-secret-query-term";
 
 test("app actions land in the events table and surface via /api/admin/analytics", async ({
@@ -46,10 +53,15 @@ test("app actions land in the events table and surface via /api/admin/analytics"
   const me = await request.get("/api/auth/me");
   expect(me.status(), await me.text()).toBe(200);
 
-  // 1) A 404 with a query string → error.4xx (path only, never the query).
-  //    Fired first so FIFO flushing guarantees it lands with/before the note.
-  const bogus = await request.get(`${BOGUS_PATH}?q=${SECRET_QUERY}`);
-  expect(bogus.status()).toBe(404);
+  // 1) A routed 404 with a query string → error.4xx (path only, never the
+  //    query), and an unrouted 404 → nothing. Both fired first so FIFO
+  //    flushing guarantees they land with/before the note.
+  const unrouted = await request.get(UNROUTED_PATH);
+  expect(unrouted.status()).toBe(404);
+  const missing = await request.get(
+    `${MISSING_NOTE_PATH}?user_id=${USER_ACTIVE}&q=${SECRET_QUERY}`,
+  );
+  expect(missing.status(), await missing.text()).toBe(404);
 
   // 2) One cheap real action through the API → note.created.
   const noteRes = await request.post("/api/notes", {
@@ -112,7 +124,15 @@ test("app actions land in the events table and surface via /api/admin/analytics"
     expect(JSON.stringify(mine!.payload)).not.toContain("E2E observability note");
     expect(JSON.stringify(mine!.payload)).not.toContain("has_body is true");
 
-    // 4) The 404 surfaces in /errors with the full payload contract.
+    // The unrouted 404 was never recorded (#690): note.created is visible and
+    // the queue is FIFO, so a row for it would already be here.
+    const unroutedRows = await queryRaw(
+      "SELECT 1 FROM events WHERE payload->>'path' = $1",
+      [UNROUTED_PATH],
+    );
+    expect(unroutedRows, "an unrouted 404 must not write an events row").toHaveLength(0);
+
+    // 4) The routed 404 surfaces in /errors with the full payload contract.
     let errBody: {
       errors: Array<{
         event_type: string;
@@ -128,16 +148,16 @@ test("app actions land in the events table and surface via /api/admin/analytics"
           const res = await admin.get("/api/admin/analytics/errors");
           if (!res.ok()) return false;
           errBody = (await res.json()) as typeof errBody;
-          return errBody.errors.some((e) => e.path === BOGUS_PATH);
+          return errBody.errors.some((e) => e.path === MISSING_NOTE_PATH);
         },
         {
           timeout: 5_000,
-          message: `the ${BOGUS_PATH} 404 should appear in /errors`,
+          message: `the ${MISSING_NOTE_PATH} 404 should appear in /errors`,
         },
       )
       .toBe(true);
 
-    const errRow = errBody.errors.find((e) => e.path === BOGUS_PATH)!;
+    const errRow = errBody.errors.find((e) => e.path === MISSING_NOTE_PATH)!;
     expect(errRow.event_type).toBe("error.4xx");
     expect(errRow.method).toBe("GET");
     expect(errRow.status_code).toBe(404);
