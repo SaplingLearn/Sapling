@@ -1081,7 +1081,8 @@ class TestRepairAndOptions:
     def test_free_and_teachback_wrong_keys_are_written_in_snake_case(self):
         """The same key form for free and teachback wrong_keys, so one
         misconception is one key across an item's formats for PKG-10. Two
-        keys that are one key in that form are a duplicate, as before."""
+        keys that are one key in that form are a duplicate until repair_draft
+        keys each from its own wrong text (below)."""
         from learning.checks import common_wrong, repair_draft, validate_draft
 
         for fmt in ("free", "teachback"):
@@ -1094,8 +1095,104 @@ class TestRepairAndOptions:
             assert draft.wrong_keys == ["Rate-Is-Iterations "]  # not mutated
         twice = _draft(wrong_keys=["Foo", "foo"], wrong_texts=["Counts passes.", "Sums losses."])
         assert "duplicate wrong keys" in validate_draft(twice)
-        assert "duplicate wrong keys" in validate_draft(repair_draft(twice)[0])
-        assert "blank wrong key" in validate_draft(_draft(wrong_keys=["—"]))
+        assert "blank wrong key" in validate_draft(_draft(wrong_keys=["  "]))
+
+    @pytest.mark.parametrize("fmt", ["free", "teachback"])
+    @pytest.mark.parametrize(
+        "keys,texts",
+        [
+            # a key with no Latin letter or digit (a course taught in Chinese
+            # or Russian): its form is "", which read as a blank key
+            (["误解"], ["把学习率当成损失。"]),
+            (["заблуждение"], ["Путает скорость обучения с потерей."]),
+            (["—"], ["Counts iterations."]),
+            # keys that differ only in non-Latin letters share one form
+            (["uses_λ_for_f", "uses_ν_for_f"], ["Uses lambda for f.", "Uses nu for f."]),
+            (["Δv_sign", "δv_sign"], ["Flips the sign of Δv.", "Drops the sign of δv."]),
+            # keys that differ only in case share one form
+            (["Foo", "foo"], ["Counts passes.", "Sums losses."]),
+        ],
+    )
+    def test_a_free_or_teachback_key_with_no_form_of_its_own_is_keyed_from_its_text(
+        self, fmt, keys, texts
+    ):
+        """Review of A37 round 4's fix: wrong_key_form keeps only Latin
+        letters and digits, so a free or teachback key with none ("误解") was
+        dropped as a "blank wrong key", and two that differ only in other
+        letters ("uses_λ_for_f", "uses_ν_for_f") as "duplicate wrong keys" —
+        both stored before. An mc_reason distractor's such key is keyed from
+        its own misconception_text. A wrong key is as much an id of its
+        stated wrong text, so the same repair guesses nothing here either:
+        each such key is keyed from its own wrong_texts[i]."""
+        from learning.checks import common_wrong, misconception_slug, repair_draft, validate_draft
+
+        draft = _draft(format=fmt, wrong_keys=list(keys), wrong_texts=list(texts))
+        assert validate_draft(draft) != []
+        fixed, repairs = repair_draft(draft)
+        assert validate_draft(fixed) == [], validate_draft(fixed)
+        stored = [w.key for w in common_wrong(fixed)]
+        assert len(set(stored)) == len(stored) == len(keys)
+        assert stored[0] == misconception_slug(texts[0])
+        assert [w.text for w in common_wrong(fixed)] == list(texts)
+        assert repairs and all(
+            r.startswith("wrong_keys:") and r.endswith("(repaired)") for r in repairs
+        ), repairs
+        # the line names the key the model wrote, never "no key"
+        assert any(repr(keys[0]) in r or "shared key" in r for r in repairs), repairs
+        assert not any("no key" in r for r in repairs), repairs
+        assert draft.wrong_keys == list(keys)  # not mutated
+        assert repair_draft(fixed) == (fixed, [])
+
+    def test_a_key_with_no_latin_letter_is_named_so_not_blank(self):
+        """The reason a key with no Latin letter or digit gives names the
+        key, in every format: it is not blank."""
+        from learning.checks import validate_draft
+
+        reasons = validate_draft(_draft(wrong_keys=["误解"], wrong_texts=["把学习率当成损失。"]))
+        assert "blank wrong key" not in reasons, reasons
+        assert "wrong_keys: key '误解' has no Latin letter or digit" in reasons, reasons
+        assert "duplicate wrong keys" not in validate_draft(
+            _draft(wrong_keys=["误解", "错误"], wrong_texts=["把学习率当成损失。", "数错了。"])
+        )
+        mc = _mc_draft(options=_opts(_CORRECT, (_ITER[0], False, "迭代"), _LOSS, _SIGN))
+        assert (
+            "misconception_key: option 2's key '迭代' has no Latin letter or digit"
+            in validate_draft(mc)
+        ), validate_draft(mc)
+
+    def test_an_mc_repair_line_names_a_key_with_no_latin_letter(self):
+        """An mc_reason distractor whose key has no Latin letter or digit is
+        keyed from its own text; the repair line names the key it had, not
+        "no key"."""
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _mc_draft(
+            options=_opts(_CORRECT, (_ITER[0], False, "迭代", "Counts iterations."), _LOSS, _SIGN)
+        )
+        fixed, repairs = repair_draft(draft)
+        assert fixed.options[1].misconception_key == "counts_iterations"
+        assert validate_draft(fixed) == []
+        (line,) = repairs
+        assert "'迭代'" in line and "no key" not in line, line
+
+    @pytest.mark.parametrize(
+        "keys,texts",
+        [
+            # two keys of one form stating ONE wrong reason: not told apart
+            (["Foo", "foo"], ["Counts passes.", "counts  PASSES"]),
+            # a key with no form beside a text that states nothing
+            (["误解", "k2"], ["N/A", "Sums losses."]),
+            # the lists are not paired
+            (["误解"], ["Counts passes.", "Sums losses."]),
+        ],
+    )
+    def test_the_free_and_teachback_rekey_never_guesses(self, keys, texts):
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _draft(wrong_keys=list(keys), wrong_texts=list(texts))
+        fixed, repairs = repair_draft(draft)
+        assert not [r for r in repairs if "keyed" in r], repairs
+        assert validate_draft(fixed) != []
 
     @pytest.mark.parametrize("said", ["N/A", "None", "-", ".", "...", "null.", "Not applicable"])
     def test_a_placeholder_misconception_text_states_none(self, said):

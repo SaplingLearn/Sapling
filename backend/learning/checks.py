@@ -635,8 +635,12 @@ def _misconception_reasons(options: list[OptionDraft]) -> list[str]:
                 )
             continue
         form = wrong_key_form(key)
-        if not form:
+        if _blank(key):
             reasons.append(f"misconception_key: option {n} has no misconception_key")
+        elif not form:
+            reasons.append(
+                f"misconception_key: option {n}'s key {_shown(key)} has no Latin letter or digit"
+            )
         elif form in keyed:
             reasons.append(
                 f"misconception_key: options {keyed[form]} and {n} share misconception_key "
@@ -835,34 +839,58 @@ def _closed(reference: str, final_answer: str) -> str:
     return f"{body} Final answer: {answer}" + ("" if answer.endswith(_SENTENCE_END) else ".")
 
 
+def _keys_from_texts(keys: list[str | None], texts: list[str | None]) -> dict[int, str]:
+    """The key-from-text repair of repair_draft over one list of wrong
+    reasons — an mc_reason draft's distractors, or a free or teachback
+    draft's wrong_keys paired with wrong_texts: index -> the key derived from
+    that reason's own text (misconception_slug; with the text's digest
+    appended when another reason already holds it), for each key whose
+    wrong_key_form is blank (no key, or none with a Latin letter or digit) or
+    shared with another reason's key. {} unless every text states a
+    misconception and no two state the same one: each key is then only the
+    id of a stated text, so deriving it guesses nothing and keeps every key
+    distinct."""
+    if not all(_states_misconception(t) for t in texts):
+        return {}
+    said = [_option_form(t) for t in texts]
+    if len(set(said)) != len(said):
+        return {}
+    held = [wrong_key_form(k) for k in keys]
+    taken = {form for form in held if form and held.count(form) == 1}
+    derived: dict[int, str] = {}
+    for i, (form, text) in enumerate(zip(held, texts)):
+        if form and held.count(form) == 1:
+            continue
+        slug = misconception_slug(text)
+        key = next((k for k in (slug, f"{slug}_{_form_digest(text)}") if k not in taken), None)
+        if key is None:  # a digest collision: left for validation to drop
+            continue
+        taken.add(key)
+        derived[i] = key
+    return derived
+
+
+def _had(key: str | None) -> str:
+    """What a reason re-keyed by _keys_from_texts had, for its repair line."""
+    form = wrong_key_form(key)
+    if form:
+        return f"the shared key {_shown(form)}"
+    if _blank(key):
+        return "no key"
+    return f"the key {_shown(key)}, which has no Latin letter or digit"
+
+
 def _rekey_misconceptions(options: list[OptionDraft]) -> list[str]:
     """The misconception_key repair of repair_draft, in place on `options`
     (exactly one of them marked correct); one line per distractor keyed."""
     numbered = [(n, o) for n, o in enumerate(options, start=1) if not o.is_correct]
-    if not all(_states_misconception(o.misconception_text) for _, o in numbered):
-        return []
-    forms = [_option_form(o.misconception_text) for _, o in numbered]
-    if len(set(forms)) != len(forms):
-        return []
-    held = [wrong_key_form(o.misconception_key) for _, o in numbered]
-    todo = [(n, o) for (n, o), form in zip(numbered, held) if not form or held.count(form) > 1]
-    taken = {form for form in held if form and held.count(form) == 1}
+    derived = _keys_from_texts(
+        [o.misconception_key for _, o in numbered], [o.misconception_text for _, o in numbered]
+    )
     lines = []
-    for n, option in todo:
-        slug = misconception_slug(option.misconception_text)
-        key = next(
-            (
-                k
-                for k in (slug, f"{slug}_{_form_digest(option.misconception_text)}")
-                if k not in taken
-            ),
-            None,
-        )
-        if key is None:  # a digest collision: leave it for misconception_key to drop
-            continue
-        taken.add(key)
-        had = wrong_key_form(option.misconception_key)
-        was = f"the shared key {_shown(had)}" if had else "no key"
+    for i, key in derived.items():
+        n, option = numbered[i]
+        was = _had(option.misconception_key)
         option.misconception_key = key
         lines.append(
             f"misconception_key: option {n} had {was}, so it was keyed {_shown(key)} from its "
@@ -871,11 +899,40 @@ def _rekey_misconceptions(options: list[OptionDraft]) -> list[str]:
     return lines
 
 
+def _repair_wrong_keys(draft: CheckItemDraft) -> list[str]:
+    """The wrong_keys repair of repair_draft for a free or teachback draft,
+    in place on `draft`; one line per key rewritten. As for mc_reason
+    distractors: a key with a form of its own is written in that form, and
+    one whose form is blank or shared with another key is keyed from its own
+    wrong text (_keys_from_texts) when the two lists are paired."""
+    keys, texts = draft.wrong_keys, draft.wrong_texts
+    forms = [wrong_key_form(k) for k in keys]
+    lines = []
+    for i, (key, form) in enumerate(zip(keys, forms)):
+        if form and form != key and forms.count(form) == 1:
+            keys[i] = form
+            lines.append(
+                f"wrong_keys: key {_shown(key)} was written in snake_case as {_shown(form)} "
+                "(repaired)"
+            )
+    if len(keys) != len(texts):
+        return lines
+    for i, key in _keys_from_texts(keys, texts).items():
+        was = _had(keys[i])
+        keys[i] = key
+        lines.append(
+            f"wrong_keys: wrong reason {i + 1} had {was}, so it was keyed {_shown(key)} from its "
+            "own wrong text (repaired)"
+        )
+    return lines
+
+
 def _snake_case_keys(options: list[OptionDraft]) -> list[str]:
     """The distractor half of the key-form repair of repair_draft, in place on
     `options`; one line per key rewritten. A key with no Latin letter or digit,
     or one whose form another distractor's key shares, is left for the
-    misconception_key repair, which reads it as no key or a shared key."""
+    misconception_key repair (_keys_from_texts), which keys it from its own
+    misconception_text."""
     forms = [wrong_key_form(o.misconception_key) for o in options if not o.is_correct]
     lines = []
     for n, option in enumerate(options, start=1):
@@ -904,17 +961,18 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
     misconception_key / wrong_keys — a key is only an id, so a key with a
     Latin letter or digit is written in its snake_case form (wrong_key_form):
     each distractor's key in an mc_reason draft with exactly one option marked
-    is_correct (unless another distractor's key has the same form: that is a
-    shared key, below), and each wrong key of a free or teachback draft (two
-    that are then one key stay a duplicate, and drop). Then, in an mc_reason
-    draft with exactly one option marked is_correct, where every distractor
-    states a misconception_text and no two state the same one, a distractor
-    whose key is blank in that form or shared with another distractor is
-    keyed from its own text (misconception_slug; a key another distractor
-    already holds gets the text's digest appended). The
-    misconception each distractor carries is stated, so its key is only an
-    id: re-keying guesses nothing, and every key stays distinct. A draft
-    where two distractors state one misconception, or one states none, is
+    is_correct, and each wrong key of a free or teachback draft, unless
+    another's key has the same form (a shared key, below). Then, in an
+    mc_reason draft with exactly one option marked is_correct where every
+    distractor states a misconception_text and no two state the same one, or
+    in a free or teachback draft whose wrong_keys and wrong_texts are paired
+    where every wrong text states a misconception and no two state the same
+    one, a key that is blank in that form (none, or none with a Latin letter
+    or digit: "误解") or shared with another is keyed from its own text
+    (misconception_slug; a key another already holds gets the text's digest
+    appended; _keys_from_texts). Each wrong reason is stated, so its key is
+    only an id: re-keying guesses nothing, and every key stays distinct. A
+    draft where two reasons state one misconception, or one states none, is
     left as it is and dropped.
 
     final_answer — an mc_reason reference that names no "Final answer" and
@@ -972,14 +1030,7 @@ def repair_draft(draft: CheckItemDraft) -> tuple[CheckItemDraft, list[str]]:
         repairs.extend(_snake_case_keys(fixed.options))
         repairs.extend(_rekey_misconceptions(fixed.options))
     if fixed.format != _MC_REASON:
-        for i, key in enumerate(fixed.wrong_keys):
-            form = wrong_key_form(key)
-            if form and form != key:
-                fixed.wrong_keys[i] = form
-                repairs.append(
-                    f"wrong_keys: key {_shown(key)} was written in snake_case as {_shown(form)} "
-                    "(repaired)"
-                )
+        repairs.extend(_repair_wrong_keys(fixed))
     final = answer_run(fixed.final_answer)
     reference = answer_run(fixed.reference_answer)
     if (
@@ -1226,7 +1277,9 @@ def _final_answer_reasons(draft: CheckItemDraft) -> list[str]:
 
 def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
     """A free or teachback draft's paired wrong_keys / wrong_texts (A22),
-    its keys compared and stored in wrong_key_form."""
+    its keys compared and stored in wrong_key_form: a key that is blank, or
+    has no Latin letter or digit, is named as such, and two keys of one form
+    are a duplicate (repair_draft keys either from its own wrong text)."""
     reasons = []
     if len(draft.wrong_keys) != len(draft.wrong_texts):
         reasons.append(
@@ -1236,12 +1289,15 @@ def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
     if len(draft.wrong_keys) < CHECK_ITEM_MIN_WRONG:
         reasons.append(f"{len(draft.wrong_keys)} wrong reason(s), needs >= {CHECK_ITEM_MIN_WRONG}")
     forms = [wrong_key_form(k) for k in draft.wrong_keys]
-    if len(set(forms)) != len(forms):
+    named = [form for form in forms if form]
+    if len(set(named)) != len(named):
         reasons.append("duplicate wrong keys")
-    if not all(forms):
+    if any(_blank(k) for k in draft.wrong_keys):
         reasons.append("blank wrong key")
     for key, form in zip(draft.wrong_keys, forms):
-        if form and key != form:
+        if not form and not _blank(key):
+            reasons.append(f"wrong_keys: key {_shown(key)} has no Latin letter or digit")
+        elif form and key != form:
             reasons.append(f"wrong_keys: key {_shown(key)} is not snake_case ({_shown(form)})")
     return reasons
 
