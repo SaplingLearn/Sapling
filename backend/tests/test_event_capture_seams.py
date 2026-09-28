@@ -217,6 +217,61 @@ def test_unmatched_404_on_other_methods_emits_no_event(sink):
     assert _events(sink) == []
 
 
+# Review of #690: only ANONYMOUS unrouted 404s are dropped. A request that
+# presents credentials is one of OUR clients — a typo'd frontend /api/ URL, a
+# renamed or unmounted router, Canopy polling a wrong path — and its unrouted
+# 404 is exactly the regression the error rollup exists to surface. Presence
+# is checked, not validity: a scanner forging a cookie keeps its row, which is
+# the cheap side to err on.
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"headers": {"Cookie": "sapling_session=anything.sig"}}, id="session-cookie"),
+        pytest.param({"headers": {"Authorization": "Bearer not-checked"}}, id="bearer-header"),
+        pytest.param({"params": {"auth_token": "anything.sig"}}, id="auth-token-param"),
+    ],
+)
+def test_unmatched_404_with_credentials_still_emits(sink, kwargs):
+    r = client.get("/api/renamed-router/thing", **kwargs)
+    assert r.status_code == 404
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    payload = events[0]["payload"]
+    assert payload["path"] == "/api/renamed-router/thing"
+    assert payload["status_code"] == 404
+    assert "route" not in payload
+    # The credential itself never reaches the row.
+    assert "anything.sig" not in str(events[0])
+    assert "not-checked" not in str(events[0])
+
+
+def test_blank_credentials_count_as_anonymous(sink):
+    r = client.get(
+        "/.env", headers={"Cookie": "sapling_session=", "Authorization": ""},
+    )
+    assert r.status_code == 404
+    assert _events(sink) == []
+
+
+def test_no_route_non_404_emits_without_route(sink):
+    """A no-route response that is NOT a 404 is kept: CORSMiddleware rejects a
+    disallowed-Origin preflight with a 400 before routing runs. On a real
+    deploy that is a misconfigured frontend origin, not a scanner."""
+    r = client.options(
+        "/api/users",
+        headers={
+            "Origin": "https://not-an-allowed-origin.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert r.status_code == 400
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"]
+    assert events[0]["payload"]["status_code"] == 400
+    assert events[0]["payload"]["method"] == "OPTIONS"
+    assert "route" not in events[0]["payload"]
+
+
 def test_error_event_records_path_never_query_string(sink):
     mini_client = TestClient(_mini_app())
     r = mini_client.get("/items/abc-123?q=super-secret-search-term")
@@ -325,6 +380,27 @@ def test_unauthenticated_api_users_still_emits_error_4xx(sink, monkeypatch):
     assert events[0]["payload"]["path"] == "/api/users"
     assert events[0]["payload"]["route"] == "/api/users"
     assert events[0]["user_id"] is None
+
+
+def test_handler_404_on_real_app_route_emits_under_installed_fastapi(sink, monkeypatch):
+    """The unrouted-404 filter trusts FastAPI to stamp scope["route"] on a
+    match. Pin that on the REAL app, under whatever FastAPI is installed (the
+    local venv and requirements.lock have drifted before), with a handler that
+    raises its own 404: if a FastAPI upgrade stopped stamping the route, this
+    anonymous-looking request would silently lose its row."""
+    import fastapi
+    from routes import notes as notes_routes
+
+    async def _no_note(**_):
+        return None
+
+    monkeypatch.setattr(notes_routes, "get_note", _no_note)
+    r = client.get("/api/notes/no-such-note", params={"user_id": "user_andres"})
+    assert r.status_code == 404
+    events = _events(sink)
+    assert [e["event_type"] for e in events] == ["error.4xx"], fastapi.__version__
+    route = events[0]["payload"].get("route")
+    assert route and route.endswith("/{note_id}"), (fastapi.__version__, route)
 
 
 def test_metrics_route_disabled_404_still_emits_error_4xx(sink, monkeypatch):

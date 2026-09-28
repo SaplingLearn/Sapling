@@ -122,23 +122,43 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         #   above, so `rid` is passed explicitly;
         # - only the PATH is recorded, never the full URL — query strings
         #   carry search terms and other user input;
-        # - `route` is the matched FastAPI template (bounded cardinality);
-        #   unmatched requests (e.g. a bare 404) simply omit it;
+        # - `route` is the matched FastAPI template (bounded cardinality). The
+        #   only rows recorded WITHOUT it are no-route responses other than a
+        #   404 — e.g. CORSMiddleware's 400 for a disallowed-Origin preflight,
+        #   which answers before routing runs — and a no-route 404 from a
+        #   request that presented credentials (below);
         # - user_id comes off request.state, stamped by
         #   auth_guard.get_session_user_id on a successful decode (the shared
         #   ASGI scope is the only channel that propagates back out of
         #   BaseHTTPMiddleware's downstream task).
-        # - #690: a 404 that matched NO route is not recorded. That is the
-        #   internet-scanner traffic (/wp/, /.env, /index.php, /robots.txt, the
-        #   bare API root, ...) — ~9.4k anonymous rows a month on prod, burying
-        #   every 4xx rollup — and it carries no product signal: no handler ran.
-        #   The log line above still records it. Everything else is kept: any
-        #   status from a matched route (a handler's own 404, 401, 403, 422),
-        #   a 405 (a PARTIAL match — the path is ours), and a no-route non-404
-        #   such as a CORS preflight rejection.
+        # - #690: an ANONYMOUS 404 that matched NO route is not recorded. That
+        #   is the internet-scanner traffic (/wp/, /.env, /index.php,
+        #   /robots.txt, the bare API root, ...) — ~9.4k anonymous rows a month
+        #   on prod, burying every 4xx rollup — and it carries no product
+        #   signal: no handler ran. The log line above still records it.
+        #   Everything else is kept: any status from a matched route (a
+        #   handler's own 404, 401, 403, 422), a 405 (a PARTIAL match — the
+        #   path is ours), a no-route non-404 such as a CORS preflight
+        #   rejection, and an unrouted 404 from a request that PRESENTS
+        #   credentials (a session cookie/`auth_token`, or an Authorization
+        #   header): that is one of our own clients — a typo'd frontend URL, a
+        #   renamed or unmounted router, Canopy polling a wrong path — and
+        #   exactly the regression this rollup exists to surface.
+        #
+        #   "Matched" is read off scope["route"], which FastAPI's router stamps
+        #   on a full or partial match. That is a framework detail, not a public
+        #   contract: were an upgrade to stop stamping it, every routed 404
+        #   would look unrouted. The credentials rule bounds that failure to
+        #   anonymous 404s (signed-in users and Canopy keep their rows), and
+        #   test_handler_404_on_real_app_route_emits_under_installed_fastapi
+        #   pins the stamping on the real app under the installed FastAPI.
         route = request.scope.get("route")
-        unrouted_404 = response.status_code == 404 and route is None
-        if response.status_code >= 400 and not unrouted_404:
+        anonymous_unrouted_404 = False
+        if response.status_code == 404 and route is None:
+            from services.auth_guard import presents_credentials
+
+            anonymous_unrouted_404 = not presents_credentials(request)
+        if response.status_code >= 400 and not anonymous_unrouted_404:
             # Local import: events_service imports current_request_id from
             # this module at import time, so a top-level import here would be
             # circular.

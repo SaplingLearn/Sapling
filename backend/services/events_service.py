@@ -32,7 +32,8 @@ goes through ``content=`` and lands only as a ``content_fp`` fingerprint.
 event_type                    category  payload keys
 ============================  ========  =====================================================
 error.4xx / error.5xx         error     path, method, status_code, duration_ms, route (template)
-                                        (a 404 that matched NO route is not recorded, #690)
+                                        (an ANONYMOUS 404 that matched no route is not
+                                        recorded, #690)
 auth.login                    audit     method ("google" / "test_login")
 auth.permission_denied        audit     reason, route
 document.upload               usage     course_id, offering_id, char_count
