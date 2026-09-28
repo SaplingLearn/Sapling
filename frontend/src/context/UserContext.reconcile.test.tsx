@@ -26,9 +26,6 @@ function Probe() {
 function stubFetch(me: () => Promise<Partial<Response>> | Partial<Response>) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes('/api/users')) {
-      return { ok: true, status: 200, json: async () => ({ users: [] }) } as Response;
-    }
     if (url.includes('/api/auth/me')) {
       return (await me()) as Response;
     }
@@ -179,5 +176,71 @@ describe('#191 setActiveUser persist gate (real provider)', () => {
     await waitFor(() => expect(screen.getByTestId('auth-state').textContent).toBe('in'));
     const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
     expect(saved).toMatchObject({ id: 'u9', name: 'Nine' });
+  });
+});
+
+function NameProbe() {
+  const { userName, userReady } = useUser();
+  return <div data-testid="name">{userReady ? userName : 'loading'}</div>;
+}
+
+describe('roster fetch removed; /me owns the display name', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.history.replaceState({}, '', '/');
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('never requests the /api/users roster and refreshes the name from /me', async () => {
+    // The provider used to fetch every user's decrypted name on each page
+    // load and discard it; /api/users is admin-only now. A name changed
+    // after login still reaches the header, through /me.
+    seed();
+    const fetchMock = stubFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ user_id: 'stale-1', name: 'Renamed', roles: [], equipped_cosmetics: {} }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <UserProvider>
+        <NameProbe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('name').textContent).toBe('Renamed'));
+    const urls = fetchMock.mock.calls.map(([u]) => String(u));
+    expect(urls.some(u => /\/api\/users(\?|$)/.test(u))).toBe(false);
+    // The confirmed name is persisted, so the next page load boots with it.
+    expect(JSON.parse(localStorage.getItem('sapling_user') ?? 'null')).toMatchObject({
+      id: 'stale-1',
+      name: 'Renamed',
+    });
+  });
+
+  it("treats a /me answer for a different user as a stale identity", async () => {
+    // Shared browser: localStorage holds user A (stale-1) while the session
+    // cookie belongs to user B. /me answers for the cookie, so its name must
+    // never be shown next to A's id; the client identity is cleared instead.
+    seed();
+    vi.stubGlobal(
+      'fetch',
+      stubFetch(() => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ user_id: 'someone-else', name: 'Other Person', roles: [] }),
+      })),
+    );
+    render(
+      <UserProvider>
+        <Probe />
+        <NameProbe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('out'));
+    expect(screen.getByTestId('name').textContent).not.toBe('Other Person');
+    expect(localStorage.getItem('sapling_user')).toBeNull();
   });
 });

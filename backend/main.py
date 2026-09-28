@@ -320,36 +320,6 @@ def health():
     }
 
 
-@app.get("/api/users")
-def list_users(request: Request):
-    """List users with decrypted display names.
-
-    The display name now lives on `user_profiles` (migration 0024 moved it out of
-    `users`); it is 🔒 encrypted there. Resolve it via services.profiles, which
-    decrypts. `users.room_id` was likewise renamed to `current_room_id` by 0024 —
-    select the new column but keep the legacy `room_id` response key.
-
-    Requires an authenticated session: this returns decrypted legal names,
-    so an unauthenticated caller must never reach the roster (401).
-    """
-    from services.auth_guard import get_session_user_id
-    get_session_user_id(request)  # 401 if unauthenticated
-    from db.connection import table
-    from services.profiles import get_display_names
-    rows = table("users").select("id,current_room_id")
-    names = get_display_names([r.get("id") for r in rows if r.get("id")])
-    users = [
-        {
-            "id": r.get("id"),
-            "name": names.get(r.get("id"), ""),
-            "room_id": r.get("current_room_id"),
-        }
-        for r in rows
-    ]
-    users.sort(key=lambda u: (u["name"] or "").lower())
-    return {"users": users}
-
-
 @app.get("/api/gemini-test")
 def gemini_test(request: Request):
     """Admin-only Gemini connectivity check. Shows a clear error if the API
