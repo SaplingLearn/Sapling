@@ -428,8 +428,10 @@ def _submit(
 
 #: Events that stay in our own table only. error.4xx is every 401 from an
 #: expired cookie, every 404 probe and every 422: high volume, no product
-#: signal, and a raw path per row.
-_NOT_MIRRORED: frozenset[str] = frozenset({"error.4xx"})
+#: signal, and a raw path per row. flag.changed (#620) is an admin audit
+#: event whose `field` names the rule's target — `user:<another student's
+#: id>` — in a value no key-based id filter can see.
+_NOT_MIRRORED: frozenset[str] = frozenset({"error.4xx", "flag.changed"})
 
 #: Payload keys that carry a request path. Whatever the emitter put there (a
 #: raw path like auth.permission_denied's `/api/profile/<another user's id>`,
@@ -483,7 +485,7 @@ def mirror_event(
 
     Called only from ``events_service.log_event``, after its kill-switch
     check. ``content_fp`` is never forwarded (a hash of student text).
-    ``error.4xx`` is not mirrored; ``path``/``route`` become the route
+    ``error.4xx`` and ``flag.changed`` are not mirrored; ``path``/``route`` become the route
     template; the #117 category is sent as ``event_category``. Consent is
     decided on the worker, at send time.
     """

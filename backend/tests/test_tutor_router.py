@@ -201,6 +201,31 @@ def test_router_error_still_emits_one_decision(monkeypatch, sink, caplog):
     assert loud and all(r.exc_info is None for r in loud), "WARN, no traceback"
 
 
+@pytest.mark.parametrize("failure,reason", [("hang", "router_timeout"),
+                                            ("raise", "router_error")])
+def test_flag_driven_failure_logs_the_backend_it_requested(monkeypatch, sink, failure, reason):
+    """#620 final review: on the flag path configured_backend() is "off", so
+    a defaults row that fell back to it logged `requested: "off"` for a turn
+    that asked for jev."""
+    monkeypatch.setattr(decisions, "worst_case_s", lambda: -0.95)  # backstop = 50ms
+
+    async def broken(*a, **k):
+        if failure == "hang":
+            await asyncio.sleep(5)
+        raise RuntimeError("bug in the seam")
+
+    monkeypatch.setattr(decisions, "decide", broken)
+
+    async def run():
+        return await _observe()
+
+    with patch("services.feature_flags.flag_variant", return_value="jev"):
+        result = asyncio.run(run())
+    assert (result.fallback_reason, result.requested) == (reason, "jev")
+    (event,) = _decision_events(sink)
+    assert event["payload"]["requested"] == "jev"
+
+
 def test_function_mode_routes_with_the_e2e_handler(monkeypatch, sink):
     """The E2E lane's shape: function mode, no backend env, the env-named
     handlers module — the router runs and every key is answered above floor."""

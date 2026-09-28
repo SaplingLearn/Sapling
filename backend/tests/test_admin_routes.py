@@ -966,3 +966,102 @@ class TestAnalyticsOverview:
         )
         assert body["role_counts"][0]["slug"] == "admin"
         assert body["role_counts"][0]["count"] == 3
+
+
+# ── #620: role mutations keep the feature-flag caches honest ───────────────
+
+class TestRoleMutationsClearFlagCaches:
+    """A role rule resolves through the per-user roles cache (priority
+    included) and the flag snapshot; every role mutation that can change a
+    resolution must drop what it invalidates."""
+
+    @staticmethod
+    def _prime_roles(*user_ids):
+        from services import feature_flags as ff
+        with ff._lock:
+            for uid in user_ids:
+                ff._roles[uid] = (float("inf"), (("r1", 10),))
+        return ff
+
+    def test_assign_clears_only_that_users_roles(self):
+        ff = self._prime_roles("u1", "u2")
+        with _mock_admin(), patch("routes.admin.table"), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.post("/api/admin/roles/assign", json={"user_id": "u1", "role_id": "r1"})
+        assert r.status_code == 200
+        assert "u1" not in ff._roles and "u2" in ff._roles
+
+    def test_revoke_clears_only_that_users_roles(self):
+        ff = self._prime_roles("u1", "u2")
+        with _mock_admin(), patch("routes.admin.table"), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.request("DELETE", "/api/admin/roles/revoke",
+                               json={"user_id": "u1", "role_id": "r1"})
+        assert r.status_code == 200
+        assert "u1" not in ff._roles and "u2" in ff._roles
+
+    def test_update_clears_every_users_roles(self):
+        """display_priority rides in each user's cached role tuple."""
+        ff = self._prime_roles("u1", "u2")
+        with _mock_admin(), patch("routes.admin.table"), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.patch("/api/admin/roles/r1", json={"display_priority": 90})
+        assert r.status_code == 200
+        assert not ff._roles
+
+    def test_delete_removes_the_roles_flag_rules_and_clears_caches(self):
+        ff = self._prime_roles("u1", "u2")
+        handles: dict[str, MagicMock] = {}
+
+        def by_name(name):
+            m = handles.setdefault(name, MagicMock())
+            if name == "roles":
+                m.select.return_value = [{"id": "r1", "slug": "beta"}]
+            elif name == "feature_flag_targets":
+                m.delete.return_value = [
+                    {"flag_key": "learning_loop", "target_type": "role",
+                     "target_id": "r1", "variant": "on"},
+                    {"flag_key": "product_analytics", "target_type": "role",
+                     "target_id": "r1", "variant": "off"},
+                ]
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action") as role_audit, \
+             patch("routes.admin_flags.log_admin_action") as flag_audit, \
+             patch("routes.admin_flags.log_event") as flag_event, \
+             patch("routes.admin.clear_feature_flags_cache") as clear_snapshot:
+            r = client.delete("/api/admin/roles/r1")
+        assert r.status_code == 200
+        handles["feature_flag_targets"].delete.assert_called_once_with(
+            filters={"target_type": "eq.role", "target_id": "eq.r1"})
+        assert role_audit.call_args.kwargs["action"] == "role.delete"
+        audited = [(c.kwargs["target_id"], c.kwargs["payload"]) for c in flag_audit.call_args_list]
+        assert audited == [
+            ("learning_loop", {"key": "learning_loop", "field": "role:r1",
+                               "before": "on", "after": None}),
+            ("product_analytics", {"key": "product_analytics", "field": "role:r1",
+                                   "before": "off", "after": None}),
+        ]
+        assert all(c.kwargs["action"] == "flag.update" for c in flag_audit.call_args_list)
+        assert flag_event.call_count == 2
+        assert clear_snapshot.called
+        assert not ff._roles
+
+    def test_admin_role_delete_refusal_touches_no_rules(self):
+        handles: dict[str, MagicMock] = {}
+
+        def by_name(name):
+            m = handles.setdefault(name, MagicMock())
+            m.select.return_value = [{"id": "rA", "slug": "admin"}]
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"):
+            r = client.delete("/api/admin/roles/rA")
+        assert r.status_code == 409
+        assert "feature_flag_targets" not in handles

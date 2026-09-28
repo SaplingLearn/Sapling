@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -69,12 +70,30 @@ def _view(fd: feature_flags.FlagDef, snap: feature_flags.Snapshot) -> dict:
     }
 
 
-def _changed(actor: str, key: str, field: str, before, after) -> None:
+def record_flag_change(actor: str, key: str, field: str, before, after) -> None:
+    """Audit + `flag.changed` + cache clear for one changed flag field or rule.
+    Also called by routes/admin.py when deleting a role removes its rules."""
     payload = {"key": key, "field": field, "before": before, "after": after}
     log_admin_action(actor_id=actor, action="flag.update", target_type="feature_flag",
                      target_id=key, payload=payload)
     log_event("flag.changed", category="audit", user_id=actor, payload=payload)
     feature_flags.clear_feature_flags_cache()
+
+
+def _canonical_target_id(target_type: str, target_id: str) -> Optional[str]:
+    """The target's id exactly as the DB stores it, or None if there is no
+    such user/role. The resolver compares rule ids to `user_roles.role_id`
+    as strings, so a rule saved under an upper-case UUID would never match.
+    A PostgREST 4xx here is a malformed id (`roles.id` is a UUID: 22P02 ->
+    400), which is "no such role", not a server error."""
+    name = "users" if target_type == "user" else "roles"
+    try:
+        rows = table(name).select("id", filters={"id": f"eq.{target_id}"}) or []
+    except httpx.HTTPStatusError as exc:
+        if 400 <= exc.response.status_code < 500:
+            return None
+        raise
+    return str(rows[0]["id"]) if rows else None
 
 
 def _ensure_row(fd: feature_flags.FlagDef, actor: str) -> None:
@@ -115,7 +134,7 @@ def update_flag(key: str, body: FlagPatch, request: Request):
     )
     for field in ("default_variant", "rollout_percent", "rollout_variant"):
         if current.get(field) != merged[field]:
-            _changed(actor, key, field, current.get(field), merged[field])
+            record_flag_change(actor, key, field, current.get(field), merged[field])
     feature_flags.clear_feature_flags_cache()
     return {"flag": _view(fd, feature_flags.read_config())}
 
@@ -126,21 +145,18 @@ def upsert_target(key: str, body: TargetBody, request: Request):
     actor = get_session_user_id(request)
     fd = _def(key)
     _check(fd, body.variant, "variant")
-    if body.target_type == "user":
-        exists = table("users").select("id", filters={"id": f"eq.{body.target_id}"})
-    else:
-        exists = table("roles").select("id", filters={"id": f"eq.{body.target_id}"})
-    if not exists:
+    target_id = _canonical_target_id(body.target_type, body.target_id)
+    if target_id is None:
         raise HTTPException(status_code=404, detail=f"Unknown {body.target_type}")
     _ensure_row(fd, actor)
     before = next((t["variant"] for t in feature_flags.read_config().targets.get(key, [])
-                   if t["target_type"] == body.target_type and t["target_id"] == body.target_id), None)
+                   if t["target_type"] == body.target_type and t["target_id"] == target_id), None)
     table("feature_flag_targets").upsert(
-        {"flag_key": key, "target_type": body.target_type, "target_id": body.target_id,
+        {"flag_key": key, "target_type": body.target_type, "target_id": target_id,
          "variant": body.variant, "created_by": actor},
         on_conflict="flag_key,target_type,target_id",
     )
-    _changed(actor, key, f"{body.target_type}:{body.target_id}", before, body.variant)
+    record_flag_change(actor, key, f"{body.target_type}:{target_id}", before, body.variant)
     return {"flag": _view(fd, feature_flags.read_config())}
 
 
@@ -153,7 +169,7 @@ def delete_target(key: str, target_type: Literal["user", "role"], target_id: str
         "flag_key": f"eq.{key}", "target_type": f"eq.{target_type}", "target_id": f"eq.{target_id}",
     })
     if removed:
-        _changed(actor, key, f"{target_type}:{target_id}", removed[0].get("variant"), None)
+        record_flag_change(actor, key, f"{target_type}:{target_id}", removed[0].get("variant"), None)
     return {"flag": _view(fd, feature_flags.read_config())}
 
 

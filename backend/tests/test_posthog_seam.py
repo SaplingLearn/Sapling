@@ -958,6 +958,20 @@ class TestErrorEvents:
         events_service.flush_now()
         assert [r["event_type"] for r in sink] == ["error.4xx"]
 
+    def test_flag_changed_is_not_mirrored(self, fake_client, sink):
+        """#620 final review: flag.changed's `field` names a rule target —
+        `user:<another student's id>` — under a key no id filter can know."""
+        other = "b" * 32
+        events_service.log_event(
+            "flag.changed", category="audit", user_id=USER_ID,
+            payload={"key": "learning_loop", "field": f"user:{other}",
+                     "before": None, "after": "on"},
+        )
+        _drain()
+        fake_client.capture.assert_not_called()
+        events_service.flush_now()
+        assert [r["event_type"] for r in sink] == ["flag.changed"]  # our row is kept
+
     def test_5xx_path_is_the_matched_template(self, fake_client, sink):
         """Through the middleware: the mirrored path/route are the matched
         route template, never the raw path (which embeds an id)."""

@@ -7,13 +7,18 @@ Its CONFIGURATION — default, percentage rollout, user/role rules — lives in
 Resolution, first match wins (see `explain`): env override → fail-closed →
 user rule → role rule (highest roles.display_priority, then lowest role id)
 → percentage rollout (stable sha256 bucket) → default. Anything unreadable or
-invalid resolves to variants[0] ("off"). Reads come from a 30 s per-process
-snapshot; admin writes call `clear_feature_flags_cache()` (#98).
+invalid resolves to variants[0] ("off"). Reads come from a per-process
+snapshot (30 s, `FEATURE_FLAGS_SNAPSHOT_TTL_S`); admin writes call
+`clear_feature_flags_cache()` (#98). A user's roles are cached 60 s
+(`FEATURE_FLAGS_ROLES_TTL_S`). Both TTLs are read at call time; 0 means
+"always read fresh" (the E2E stack exports 0 so a per-test DB reset is seen
+immediately).
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import threading
 import time
@@ -21,7 +26,7 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
-from db.connection import table
+from db.connection import page_all, table
 
 logger = logging.getLogger("sapling.feature_flags")
 
@@ -60,14 +65,35 @@ class Snapshot:
     targets: dict[str, list[dict]]   # key -> feature_flag_targets rows
 
 
-SNAPSHOT_TTL_S = 30.0
-ROLES_TTL_S = 60.0
-_PAGE = 1000  # PostgREST max_rows; page so a large table never truncates
+SNAPSHOT_TTL_ENV = "FEATURE_FLAGS_SNAPSHOT_TTL_S"
+ROLES_TTL_ENV = "FEATURE_FLAGS_ROLES_TTL_S"
+DEFAULT_SNAPSHOT_TTL_S = 30.0
+DEFAULT_ROLES_TTL_S = 60.0
 
 _lock = threading.Lock()
 _snapshot: tuple[float, Snapshot] | None = None
+#: Bumped by every clear. A snapshot read that began before a clear must not
+#: store its (pre-write) result after it, or the write stays invisible for a
+#: whole TTL.
+_generation = 0
 _roles: dict[str, tuple[float, tuple[tuple[str, int], ...]]] = {}
 _warned: set[str] = set()
+
+
+def _ttl(env: str, default: float) -> float:
+    try:
+        value = float(os.getenv(env) or default)
+    except ValueError:
+        return default
+    return value if math.isfinite(value) and value >= 0 else default
+
+
+def snapshot_ttl_s() -> float:
+    return _ttl(SNAPSHOT_TTL_ENV, DEFAULT_SNAPSHOT_TTL_S)
+
+
+def roles_ttl_s() -> float:
+    return _ttl(ROLES_TTL_ENV, DEFAULT_ROLES_TTL_S)
 
 
 def _warn_once(key: str, msg: str, *args, **kwargs) -> None:
@@ -77,9 +103,10 @@ def _warn_once(key: str, msg: str, *args, **kwargs) -> None:
 
 
 def clear_feature_flags_cache() -> None:
-    global _snapshot
+    global _snapshot, _generation
     with _lock:
         _snapshot = None
+        _generation += 1
 
 
 def clear_user_roles_cache(user_id: str | None = None) -> None:
@@ -90,27 +117,20 @@ def clear_user_roles_cache(user_id: str | None = None) -> None:
             _roles.pop(user_id, None)
 
 
-def _select_all(name: str, columns: str) -> list[dict]:
-    rows: list[dict] = []
-    offset = 0
-    while True:
-        page = table(name).select(columns, limit=_PAGE, offset=offset) or []
-        rows.extend(page)
-        if len(page) < _PAGE:
-            return rows
-        offset += _PAGE
-
-
 def read_config() -> Snapshot:
-    """Uncached read of every flag row and rule (admin API + cache fill)."""
-    flags = _select_all(
-        "feature_flags",
+    """Uncached read of every flag row and rule (admin API + cache fill).
+    Paged in a total order: offset paging over an unordered select can skip
+    or repeat a row at a page boundary."""
+    flags = list(page_all(
+        table("feature_flags"),
         "key,default_variant,rollout_percent,rollout_variant,updated_at,updated_by",
-    )
-    targets = _select_all(
-        "feature_flag_targets",
+        order="key",
+    ))
+    targets = list(page_all(
+        table("feature_flag_targets"),
         "flag_key,target_type,target_id,variant,created_at,created_by",
-    )
+        order="flag_key,target_type,target_id",
+    ))
     by_key: dict[str, list[dict]] = {}
     for t in targets:
         by_key.setdefault(t["flag_key"], []).append(t)
@@ -119,13 +139,18 @@ def read_config() -> Snapshot:
 
 def _get_snapshot(fresh: bool = False) -> Snapshot:
     global _snapshot
-    if not fresh:
-        with _lock:
-            if _snapshot and time.monotonic() - _snapshot[0] < SNAPSHOT_TTL_S:
-                return _snapshot[1]
+    ttl = snapshot_ttl_s()
+    with _lock:
+        generation = _generation
+        if not fresh and _snapshot and time.monotonic() - _snapshot[0] < ttl:
+            return _snapshot[1]
     snap = read_config()  # raises on failure: callers fail closed, nothing cached
     with _lock:
-        _snapshot = (time.monotonic(), snap)
+        if generation == _generation:  # no clear landed while we were reading
+            _snapshot = (time.monotonic(), snap)
+    # The store answered: a later outage is news again, so let it warn.
+    for key in REGISTRY:
+        _warned.discard(f"store:{key}")
     return snap
 
 
@@ -133,7 +158,7 @@ def _user_roles(user_id: str) -> tuple[tuple[str, int], ...]:
     now = time.monotonic()
     with _lock:
         hit = _roles.get(user_id)
-        if hit and now - hit[0] < ROLES_TTL_S:
+        if hit and now - hit[0] < roles_ttl_s():
             return hit[1]
     rows = table("user_roles").select(
         "role_id,roles!inner(display_priority)", filters={"user_id": f"eq.{user_id}"},
@@ -154,12 +179,48 @@ def rollout_bucket(key: str, user_id: str) -> float:
     return int(digest[:8], 16) % 10000 / 100
 
 
+#: (primary, shadow) backends -> the decision_router variant that runs them.
+_ROUTER_VARIANTS = {
+    ("off", "off"): "off",
+    ("jev", "off"): "jev",
+    ("jev", "flash_lite"): "jev_shadow",
+}
+
+
+def _legacy_router_override() -> Resolution | None:
+    """Spec §4 step 1, legacy half: function mode or an explicit
+    SAPLING_DECISIONS_BACKEND makes `decisions.router_backends` ignore the
+    flag, so report the variant the router will ACTUALLY run. A backend pair
+    no variant names (flash_lite, function) reads as "off" with the pair in
+    the detail."""
+    from services import decisions  # decisions imports this module lazily too
+
+    if decisions._model_mode() == "function":
+        detail = "SAPLING_MODEL_MODE=function"
+    elif (os.getenv(decisions.BACKEND_ENV) or "").strip():
+        detail = f"{decisions.BACKEND_ENV} (legacy)"
+    else:
+        return None
+    backends = (decisions.configured_backend(), decisions.shadow_backend())
+    variant = _ROUTER_VARIANTS.get(backends)
+    if variant is None:
+        return Resolution("off", "env_override",
+                          f"{detail}: router runs {backends[0]!r}"
+                          + (f" + shadow {backends[1]!r}" if backends[1] != "off" else ""))
+    return Resolution(variant, "env_override", detail)
+
+
 def explain(key: str, user_id: str | None, *, fresh: bool = False) -> Resolution:
     fd = REGISTRY.get(key)
     if fd is None:
         _warn_once(f"unregistered:{key}", "feature flag %r is not registered; off", key)
         return Resolution("off", "fail_closed", "unregistered flag")
     off = fd.variants[0]
+
+    if key == "decision_router":
+        legacy = _legacy_router_override()
+        if legacy is not None:
+            return legacy
 
     env = (os.getenv(f"SAPLING_FLAG_{key.upper()}") or "").strip().lower()
     if env:
