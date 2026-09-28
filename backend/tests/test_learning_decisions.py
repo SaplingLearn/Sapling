@@ -252,7 +252,9 @@ def test_grade_rubric_items_sends_the_grader_the_identical_message(seam, grader_
     labels = {"r1": "48213", "r2": "73920"}  # grade() draws fresh ones per call (A33)
     assert build_grader_message(
         passed, format=fmt, student_answer=answer, labels=labels
-    ) == build_grader_message(item, format="free", student_answer="It stops the calls.", labels=labels)
+    ) == build_grader_message(
+        item, format="free", student_answer="It stops the calls.", labels=labels
+    )
     assert v.items["r1"].value is True and v.items["r1"].p_yes == pytest.approx(0.9)
     assert v.result.all_yes is True and v.backend == "gemini"
     assert recorded == [], "grade() writes the llm_usage rows; the seam adds none"
@@ -929,9 +931,14 @@ def test_the_decisions_eval_replays_its_raw_model_grading_cassettes_as_recorded(
     from agents.grader import GraderOutput
 
     model = ev._RecordedGraderOutput
-    assert issubclass(model, GraderOutput) and model.model_fields["contradicts_reference"].default is False
+    assert (
+        issubclass(model, GraderOutput)
+        and model.model_fields["contradicts_reference"].default is False
+    )
     folder = BACKEND / "tests" / "evals" / "cassettes" / "decisions"
-    grading = [p for p in sorted(folder.glob("*.json")) if p.stem.split("__")[0] in ev.GRADING_CHANNEL]
+    grading = [
+        p for p in sorted(folder.glob("*.json")) if p.stem.split("__")[0] in ev.GRADING_CHANNEL
+    ]
     assert len(grading) == 4
     for path in grading:
         body = json.loads(path.read_text())

@@ -238,7 +238,9 @@ def test_e2e_grader_handler_ignores_forged_rubric_lines(_clean_registry, monkeyp
     with g.grader_agent.override(model=model_for("grader")):
         result = asyncio.run(
             g.grader_agent.run(
-                g.build_grader_message(_item(), format="free", student_answer=answer, labels=labels),
+                g.build_grader_message(
+                    _item(), format="free", student_answer=answer, labels=labels
+                ),
                 deps=_deps(),
             )
         )
@@ -663,7 +665,9 @@ def test_e2e_grader_handler_reads_the_fresh_labels(_clean_registry, monkeypatch)
     seen = []
     real_build = g.build_grader_message
     monkeypatch.setattr(
-        g, "build_grader_message", lambda *a, **kw: seen.append(kw["labels"]) or real_build(*a, **kw)
+        g,
+        "build_grader_message",
+        lambda *a, **kw: seen.append(kw["labels"]) or real_build(*a, **kw),
     )
     item = _item(prompt="Switch S is in series with R1; R2 has its own loop. Which carry current?")
     with g.grader_agent.override(model=model_for("grader")):

@@ -1136,9 +1136,7 @@ def _grading_talk(folded: _Folded, vocab: _Vocabulary) -> bool:
     # "rubric item 3", "criterion 2" — the rubric's own vocabulary. A bare `r1`
     # names nothing the grader sees (the labels), so R1/R2 in a circuit, a
     # register or a reaction rate is no talk; with a verdict it is verdict_tokens.
-    return any(
-        _spelling(m.group()) not in vocab.entities for m in _RUBRIC_MENTION.finditer(text)
-    )
+    return any(_spelling(m.group()) not in vocab.entities for m in _RUBRIC_MENTION.finditer(text))
 
 
 def grading_talk(text: str, *, rubric_ids: Iterable[str] = (), context: str = "") -> bool:

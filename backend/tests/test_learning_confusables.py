@@ -43,7 +43,9 @@ def _reads_as(text: str) -> str:
     """What the guard's detection copy does per character, before case folding:
     NFKD, marks dropped, then the table."""
     base = "".join(
-        c for c in unicodedata.normalize("NFKD", text) if unicodedata.category(c) not in {"Mn", "Me"}
+        c
+        for c in unicodedata.normalize("NFKD", text)
+        if unicodedata.category(c) not in {"Mn", "Me"}
     )
     return base.translate(str.maketrans(data.CONFUSABLES))
 
