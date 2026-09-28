@@ -54,7 +54,11 @@ test("admin analytics dashboard renders live usage, errors, and controls (#122)"
 
   // 2) Non-admin gate: the student sees the refusal screen, not the panels.
   await page.goto(`${FRONTEND_URL}/admin/analytics`);
-  await expect(page.getByText(/don't have admin access/i)).toBeVisible();
+  // Scoped to the shell: on a cold stack a stray second copy of the page can
+  // sit in the DOM for a moment, and an unscoped getByText trips strict mode.
+  await expect(
+    page.getByTestId("app-shell").getByText(/don't have admin access/i),
+  ).toBeVisible();
 
   // 3) As the admin, poll the API until the flush lands, then drive the UI.
   const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
