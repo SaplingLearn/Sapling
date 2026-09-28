@@ -4,16 +4,10 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 import { API_URL, getMe } from '@/lib/api';
 
-interface UserOption {
-  id: string;
-  name: string;
-}
-
 interface UserContextValue {
   userId: string;
   userName: string;
   avatarUrl: string;
-  users: UserOption[];
   userReady: boolean;
   isAuthenticated: boolean;
   isApproved: boolean;
@@ -37,7 +31,6 @@ export const UserContext = createContext<UserContextValue>({
   userId: '',
   userName: '',
   avatarUrl: '',
-  users: [],
   userReady: false,
   isAuthenticated: false,
   isApproved: false,
@@ -71,7 +64,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState('');
   const [userName, setUserName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
-  const [users, setUsers] = useState<UserOption[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [userReady, setUserReady] = useState(false);
@@ -156,21 +148,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/users`, { credentials: 'include' })
-      .then(r => r.json())
-      .then((data: { users: UserOption[] }) => {
-        const list = data.users ?? [];
-        setUsers(list);
-        setUserId(prev => {
-          const match = list.find(u => u.id === prev);
-          if (match) setUserName(match.name);
-          return prev;
-        });
-      })
-      .catch(() => {});
-  }, []);
-
   // Shared teardown for "this client's identity is no longer valid": local
   // state plus the persisted localStorage copy. Used by signOut and by the
   // #191 stale-identity reconciliation in fetchProfileData.
@@ -213,6 +190,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const data = await res.json();
+      // The display name can change after login (Settings); /me is its
+      // source of truth, as the discarded /api/users roster used to be.
+      if (data.name) setUserName(data.name);
       setUsername(data.username ?? null);
       setRoles(data.roles ?? []);
       setEquippedCosmetics(data.equipped_cosmetics ?? {});
@@ -276,11 +256,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
-      userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+      userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
       setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
     }),
-    [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+    [userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
      username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile, signOut]
   );
 

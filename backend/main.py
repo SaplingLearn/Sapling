@@ -329,11 +329,13 @@ def list_users(request: Request):
     decrypts. `users.room_id` was likewise renamed to `current_room_id` by 0024 —
     select the new column but keep the legacy `room_id` response key.
 
-    Requires an authenticated session: this returns decrypted legal names,
-    so an unauthenticated caller must never reach the roster (401).
+    Admin-only: this returns every user's decrypted legal name, so an
+    unauthenticated caller gets 401 and a signed-in non-admin 403. No student
+    surface needs the roster (UserContext used to fetch it on every page load
+    and discard it).
     """
-    from services.auth_guard import get_session_user_id
-    get_session_user_id(request)  # 401 if unauthenticated
+    from services.auth_guard import require_admin
+    require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
     from db.connection import table
     from services.profiles import get_display_names
     rows = table("users").select("id,current_room_id")

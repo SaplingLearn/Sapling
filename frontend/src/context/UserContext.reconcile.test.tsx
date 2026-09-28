@@ -26,9 +26,6 @@ function Probe() {
 function stubFetch(me: () => Promise<Partial<Response>> | Partial<Response>) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes('/api/users')) {
-      return { ok: true, status: 200, json: async () => ({ users: [] }) } as Response;
-    }
     if (url.includes('/api/auth/me')) {
       return (await me()) as Response;
     }
@@ -179,5 +176,42 @@ describe('#191 setActiveUser persist gate (real provider)', () => {
     await waitFor(() => expect(screen.getByTestId('auth-state').textContent).toBe('in'));
     const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
     expect(saved).toMatchObject({ id: 'u9', name: 'Nine' });
+  });
+});
+
+function NameProbe() {
+  const { userName, userReady } = useUser();
+  return <div data-testid="name">{userReady ? userName : 'loading'}</div>;
+}
+
+describe('roster fetch removed; /me owns the display name', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.history.replaceState({}, '', '/');
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('never requests the /api/users roster and refreshes the name from /me', async () => {
+    // The provider used to fetch every user's decrypted name on each page
+    // load and discard it; /api/users is admin-only now. A name changed
+    // after login still reaches the header, through /me.
+    seed();
+    const fetchMock = stubFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ name: 'Renamed', roles: [], equipped_cosmetics: {} }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <UserProvider>
+        <NameProbe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('name').textContent).toBe('Renamed'));
+    const urls = fetchMock.mock.calls.map(([u]) => String(u));
+    expect(urls.some(u => /\/api\/users(\?|$)/.test(u))).toBe(false);
   });
 });

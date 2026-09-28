@@ -5,6 +5,10 @@ The roster endpoint returns each user's decrypted legal name, so it must
 require an authenticated session. See issue #156: it previously had no
 auth dependency and leaked the full roster to anonymous callers.
 
+It is also admin-only: any signed-in student could otherwise pull every
+user's decrypted legal name, and the only client caller (UserContext, on
+every page load) discarded the result unread.
+
 The autouse `_bypass_session_auth` fixture in conftest.py stubs the auth
 guard so authenticated-path tests don't need real tokens; the
 unauthenticated test restores the real guard to assert the 401.
@@ -25,15 +29,35 @@ class TestListUsersAuth:
         from services import auth_guard
 
         with patch.object(
+            auth_guard, "require_admin", auth_guard._real_require_admin
+        ), patch.object(
             auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id
         ), patch.object(
             auth_guard, "_decode_session", auth_guard._real_decode_session
         ):
-            # No cookie, no auth_token: _decode_session raises 401 before any
-            # DB access, so we never touch the (unmocked) users table.
+            # No cookie, no auth_token: require_admin's session read raises 401
+            # before any role or roster lookup.
             r = client.get("/api/users")
 
         assert r.status_code == 401
+
+    def test_signed_in_non_admin_gets_403_and_no_roster_read(self):
+        # Restore the real require_admin; the bypassed session guard still
+        # yields a signed-in user, whose role lookup comes back empty.
+        from services import auth_guard
+
+        roles_table = MagicMock()
+        roles_table.select.return_value = []
+        roster_read = MagicMock()
+        with patch.object(
+            auth_guard, "require_admin", auth_guard._real_require_admin
+        ), patch.object(auth_guard, "table", return_value=roles_table), patch(
+            "db.connection.table", side_effect=roster_read
+        ):
+            r = client.get("/api/users")
+
+        assert r.status_code == 403
+        roster_read.assert_not_called()
 
     def test_authenticated_returns_200_with_decrypted_names(self):
         # users now carries id + current_room_id (0024 dropped name, renamed
