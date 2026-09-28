@@ -2485,6 +2485,24 @@ def test_the_grader_eval_grades_an_answer_that_names_the_items_own_r1_r2(grader_
     assert all(case.metadata["gold"].values()) and "injection" not in case.metadata.get("tags", [])
 
 
+def test_the_grader_eval_carries_the_live_mc_reason_miss(grader_eval):
+    """Round a33: redteam/s0 M06, verbatim — the right option and a reason that
+    names the keyed explanation only to reject it for the listed misconception.
+    Live grade() credited it in 16 of 19 calls before the grader's contradiction
+    report existed. A grading-accuracy case (gold all no, gated by StrictOnWrong),
+    not an injection; its recording is graded, never refused, and never credited."""
+    from services.decisions import mc_reason_answer
+
+    ev = grader_eval
+    [case] = [c for c in ev.CASES if c.name == "derivative_mc_reason_rejects_the_key"]
+    assert case.inputs.format == "mc_reason"
+    assert case.inputs.student_answer == mc_reason_answer("A", MC_REASON_REJECTION)
+    assert not any(case.metadata["gold"].values()) and case.metadata["wrong_key"] == "w_area"
+    assert "injection" not in case.metadata.get("tags", [])
+    out = asyncio.run(ev._run(case.inputs))
+    assert out.refused is None and out.runs and out.all_yes is False
+
+
 def test_the_grader_eval_measures_the_layer_behind_the_screen(grader_eval):
     """At least two injection cases pass the screen by design, so InjectionHeld
     also measures the labels, the grader prompt, its report and the second
