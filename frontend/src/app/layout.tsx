@@ -3,6 +3,7 @@ import React from 'react';
 import { Spectral, DM_Sans, Playfair_Display, JetBrains_Mono } from 'next/font/google';
 import { resolveSiteUrl } from '@/lib/deployGuard';
 import { UserProvider } from '@/context/UserContext';
+import { FlagsProvider } from '@/context/FlagsContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './globals.css';
@@ -80,7 +81,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ErrorBoundary>
           <ToastProvider>
-            <UserProvider>{children}</UserProvider>
+            <UserProvider>
+              <FlagsProvider>{children}</FlagsProvider>
+            </UserProvider>
           </ToastProvider>
         </ErrorBoundary>
       </body>

@@ -190,6 +190,27 @@ def enabled() -> bool:
     return configured_backend() != OFF
 
 
+#: decision_router flag variant -> (primary, shadow) backends (#620).
+_FLAG_BACKENDS = {
+    "off": (OFF, OFF),
+    "jev": (JEV, OFF),
+    "jev_shadow": (JEV, FLASH_LITE),
+}
+
+
+def router_backends(user_id: str | None) -> tuple[str, str]:
+    """The tutor router's (primary, shadow) backends for this student.
+
+    Function mode and an explicitly-set SAPLING_DECISIONS_BACKEND keep the
+    env-driven behaviour (the E2E lane and the operator emergency override);
+    otherwise the `decision_router` feature flag decides (ADR 0029).
+    """
+    if _model_mode() == "function" or (os.getenv(BACKEND_ENV) or "").strip():
+        return configured_backend(), shadow_backend()
+    from services.feature_flags import flag_variant
+    return _FLAG_BACKENDS.get(flag_variant("decision_router", user_id), (OFF, OFF))
+
+
 def confidence_floor() -> float:
     return min(1.0, max(0.0, _read_float(FLOOR_ENV, DEFAULT_CONFIDENCE_FLOOR)))
 
@@ -961,12 +982,20 @@ async def decide(
     request_id: str | None = None,
     truncatable: Sequence[str] = (),
     event_extra: Mapping[str, Any] | None = None,
+    backend: str | None = None,
+    shadow: str | None = None,
 ) -> DecisionResult:
     """Answer ``questions`` about ``state``. Never raises; see the module doc.
 
     ``state`` must be JSON-serialisable (a string, object or array — Jev's
     three accepted shapes). ``truncatable`` names top-level list-valued keys
     that may lose their OLDEST items to fit Jev's 32k budget.
+
+    ``backend``/``shadow`` override :func:`configured_backend` /
+    :func:`shadow_backend` for callers (like the tutor router, #620) that
+    resolve their own backends per user rather than once per process. When
+    the two resolve equal, the shadow is dropped (comparing a backend with
+    itself is not a shadow run).
 
     With a shadow configured, both backends run concurrently and this awaits
     both — latency is the slower of the two. A primary that degrades onto the
@@ -978,7 +1007,7 @@ async def decide(
     Emits exactly one ``decision.made`` event (``event_extra`` is merged into
     its payload) unless the backend is off.
     """
-    primary_backend = configured_backend()
+    primary_backend = backend if backend is not None else configured_backend()
     if primary_backend == OFF:
         return DecisionResult(
             answers=_all_defaults(questions, "no_backend"),
@@ -986,7 +1015,9 @@ async def decide(
         )
     common = dict(truncatable=truncatable, feature=feature, user_id=user_id,
                   request_id=request_id)
-    shadow_name = shadow_backend()
+    shadow_name = shadow if shadow is not None else shadow_backend()
+    if shadow_name == primary_backend:
+        shadow_name = OFF
     try:
         if shadow_name == OFF:
             result = await _answer_with(primary_backend, state, questions,

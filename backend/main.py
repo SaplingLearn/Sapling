@@ -24,6 +24,8 @@ logging.basicConfig(
 
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
+from routes.admin_flags import router as admin_flags_router
+from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
@@ -311,6 +313,10 @@ app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
+# Mounted BEFORE admin_router so its specific /flags paths win over any
+# generic admin_router route that could otherwise shadow them.
+app.include_router(admin_flags_router, prefix="/api/admin/flags")
+app.include_router(flags_router,       prefix="/api/flags")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(admin_documents_router, prefix="/api/admin/documents")

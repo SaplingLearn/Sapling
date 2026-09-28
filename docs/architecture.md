@@ -32,6 +32,33 @@ Identity is likewise split: `users` is slimmed to account state, with a 1:1 `use
 
 Almost everything currently runs inline on the request path. The one true background task is in `backend/routes/quiz.py:483`, where FastAPI `background_tasks.add_task(_update_context, ...)` defers the post-quiz context regeneration. `backend/services/course_context_service.py:109` `update_course_context` is called inline from `apply_graph_update` and from course add/delete, but its expensive Gemini summary is hash-gated — it only re-runs `_generate_summary_with_gemini` when the stats hash changes. It resolves the touched course to an `offering_id` and upserts into `offering_concept_stats` / `offering_summary`. Achievement checks (`check_achievements`) are also inline and wrapped in best-effort `try/except`.
 
+## Feature flags
+
+Flags are declared in code and configured in the DB (#620, ADR 0029):
+`backend/services/feature_flags.py::REGISTRY` is the only place a flag's key,
+variants and client-visibility are defined; its *configuration* — default
+variant, percentage rollout, per-user/role rules — lives in
+`feature_flags`/`feature_flag_targets` and is edited from `/admin`
+(`routes/admin_flags.py`). Resolution is first-match-wins: a
+`SAPLING_FLAG_<KEY>` env override, then fail-closed (unregistered flag,
+invalid value, or an unreadable store), then a per-user rule, a per-role
+rule, a stable percentage rollout, and finally the stored default —
+anything that goes wrong resolves to `variants[0]` ("off"), never an
+exception the caller has to handle. Backend code reads flags through
+`flag_variant`/`flag_on`/`require_flag`; the frontend calls `useFlag(key)`
+against the client-visible subset served at `GET /api/flags`. Reads are
+served from a 30 s per-process snapshot cache that every admin write clears
+on its own process (other replicas catch up within the TTL;
+`FEATURE_FLAGS_SNAPSHOT_TTL_S` / `FEATURE_FLAGS_ROLES_TTL_S` tune it, and the
+E2E stack sets both to 0). Three flags
+exist today: `decision_router` (the ADR 0027 tutor-router backend, replacing
+`SAPLING_DECISIONS_BACKEND` as the normal rollout lever — the env var still
+overrides it, for the E2E seam and incidents), `learning_loop` (#673), and
+`product_analytics` (gates PostHog capture end to end, ADR 0028; seeded
+`on`). The admin API itself is the one place that does NOT fail closed on a
+DB error — it raises, so a broken flag store shows up as an error rather
+than a deceptively healthy "off".
+
 ## Known sharp edges
 
 - `upload_document`'s worker agents run in parallel, but text extraction still runs before the stream opens by default (`OCR_ASYNC_ENABLED` moves it onto a thread inside the SSE context — ADR 0010's lightweight variant), so wall-clock ≈ extraction time + classifier + max(worker) time on the request path.

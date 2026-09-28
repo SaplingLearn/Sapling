@@ -25,6 +25,7 @@ import {
   readAnalyticsEnv,
   scrubEvent,
   scrubValue,
+  setProductAnalyticsFlag,
   stopAnalytics,
   stripUrlQuery,
   subscribeAnalytics,
@@ -70,6 +71,11 @@ function setup(env: AnalyticsEnv = ENV) {
   ph = fakePosthog();
   load = vi.fn(async () => ph as unknown as PostHog);
   __resetAnalyticsForTests({ env, load: load as unknown as () => Promise<PostHog> });
+  // #620: __resetAnalyticsForTests always resets the product_analytics flag
+  // to its production default (off); every test in this file below predates
+  // the flag and expects analytics to run once the account says so, so turn
+  // it on here. The one test that exercises the flag itself toggles it back.
+  setProductAnalyticsFlag(true);
 }
 
 /** A signed-in student whose account answers `optOut`. */
@@ -193,6 +199,7 @@ describe("build gating", () => {
         throw new Error("blocked");
       },
     });
+    setProductAnalyticsFlag(true);
     await signIn("u-1", false);
     expect(await __analyticsLoadedForTests()).toBeNull();
   });
@@ -321,6 +328,7 @@ describe("a failed posthog-js load", () => {
         return ph as unknown as PostHog;
       },
     });
+    setProductAnalyticsFlag(true);
     await signIn("u-1", false);
     expect(getAnalyticsState()).toBe("on_not_running");
     await new Promise((r) => setTimeout(r, 20));
@@ -330,6 +338,34 @@ describe("a failed posthog-js load", () => {
     expect(attempts).toBe(2);
     expect(getAnalyticsState()).toBe("on");
     expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+  });
+});
+
+describe("the product_analytics admin flag (#620)", () => {
+  it("never starts posthog-js while the product_analytics flag is off (#620)", async () => {
+    // Arrange the same "signed in, allowed" state the existing start test
+    // uses ("account false: loaded, identified by UUID alone in `loaded`,
+    // events pass"), then:
+    setProductAnalyticsFlag(false);
+    await signIn("3f1c-uuid", false);
+    expect(load).not.toHaveBeenCalled();
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+
+    setProductAnalyticsFlag(true);
+    await __analyticsLoadedForTests();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(ph.identify.mock.calls).toEqual([["3f1c-uuid"]]);
+    expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
+  });
+
+  it("never reports on while the flag is off, whatever the account says (#620)", async () => {
+    setProductAnalyticsFlag(false);
+    await signIn("3f1c-uuid", false); // the account says on
+    expect(getAnalyticsState()).toBe("unavailable");
+    setProductAnalyticsFlag(true);
+    expect(getAnalyticsState()).toBe("on");
+    setProductAnalyticsFlag(false); // an admin switches it off mid-visit
+    expect(getAnalyticsState()).toBe("unavailable");
   });
 });
 

@@ -90,6 +90,7 @@ decision.made                 usage     feature, backend (who answered: jev | fl
                                         honoured), tutor_model (resolved model name) and
                                         model_pref_requested (the raw request field).
                                         ADR 0027 / #640 / #642.
+flag.changed                  audit     key, field, before, after
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -200,6 +201,8 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # router fires it on every chat turn once enabled, and it is the dataset
     # the routing-accuracy and Jev-agreement reviews are run over.
     "decision.made",
+    # #620: admin feature-flag change (audit).
+    "flag.changed",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

@@ -22,7 +22,7 @@ import pytest
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.testclient import TestClient
 
-from services import analytics_consent, events_service, posthog_client
+from services import analytics_consent, events_service, feature_flags, posthog_client
 from services.analytics_consent import Consent
 
 # The shape production actually issues (routes/auth.py: f"user_{google_id}").
@@ -113,6 +113,16 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", _refuse)
     monkeypatch.setattr(socket.socket, "connect_ex", _refuse)
     return attempts
+
+
+@pytest.fixture(autouse=True)
+def product_analytics_on(monkeypatch):
+    """The hermetic DB has no `feature_flags` row, so `product_analytics`
+    resolves to its off default (#620); every existing test in this module
+    predates the flag and expects delivery, so default it to on here.
+    ``TestProductAnalyticsFlag`` overrides this per-test to exercise the
+    real gating behaviour."""
+    monkeypatch.setattr(feature_flags, "flag_on", lambda key, user_id: True)
 
 
 _ON_ENV = {
@@ -947,6 +957,20 @@ class TestErrorEvents:
         fake_client.capture.assert_not_called()
         events_service.flush_now()
         assert [r["event_type"] for r in sink] == ["error.4xx"]
+
+    def test_flag_changed_is_not_mirrored(self, fake_client, sink):
+        """#620 final review: flag.changed's `field` names a rule target —
+        `user:<another student's id>` — under a key no id filter can know."""
+        other = "b" * 32
+        events_service.log_event(
+            "flag.changed", category="audit", user_id=USER_ID,
+            payload={"key": "learning_loop", "field": f"user:{other}",
+                     "before": None, "after": "on"},
+        )
+        _drain()
+        fake_client.capture.assert_not_called()
+        events_service.flush_now()
+        assert [r["event_type"] for r in sink] == ["flag.changed"]  # our row is kept
 
     def test_5xx_path_is_the_matched_template(self, fake_client, sink):
         """Through the middleware: the mirrored path/route are the matched
@@ -2056,3 +2080,27 @@ class TestNoRawClientApi:
 
     def test_initialize_returns_a_bool_not_the_client(self):
         assert posthog_client.initialize_posthog() is False  # pytest: gate is off
+
+
+class TestProductAnalyticsFlag:
+    """#620: `product_analytics` gates the worker's delivery, after the
+    disabled_reason() re-check and before the consent read."""
+
+    def test_worker_drops_when_flag_off(self, monkeypatch):
+        from services import posthog_client as pc
+        sent = []
+
+        class _C:
+            def capture(self, *a, **k):
+                sent.append(a)
+
+        monkeypatch.setattr(pc, "_client", _C())
+        monkeypatch.setattr(pc, "disabled_reason", lambda **k: None)
+        monkeypatch.setattr(pc, "_distinct_id_for", lambda actor: actor)
+        item = pc._Item(name="x", properties={}, actor="u1", captured_at=0.0)
+        monkeypatch.setattr("services.feature_flags.flag_on", lambda k, u: False)
+        pc._deliver(item)
+        assert sent == []
+        monkeypatch.setattr("services.feature_flags.flag_on", lambda k, u: True)
+        pc._deliver(item)
+        assert len(sent) == 1

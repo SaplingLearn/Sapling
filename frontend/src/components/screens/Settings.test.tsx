@@ -14,7 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import type { PostHog } from "posthog-js";
 import type { UserProfile, UserSettings } from "@/lib/types";
-import { __resetAnalyticsForTests, applyAccountAnalytics, beginAccountRead } from "@/lib/analytics";
+import {
+  __resetAnalyticsForTests,
+  applyAccountAnalytics,
+  beginAccountRead,
+  setProductAnalyticsFlag,
+} from "@/lib/analytics";
 
 vi.mock("@/context/UserContext", () => ({
   useUser: () => ({
@@ -165,6 +170,10 @@ function startAnalytics(accountOptOut: unknown) {
         reset: vi.fn(),
       }) as unknown as PostHog,
   });
+  // #620: __resetAnalyticsForTests resets the product_analytics admin flag to
+  // its off-by-default state; these tests predate the flag and exercise the
+  // account-preference layer with it on.
+  setProductAnalyticsFlag(true);
   const gen = beginAccountRead("u1");
   if (accountOptOut !== "pending") applyAccountAnalytics(gen, "u1", accountOptOut);
 }
@@ -229,6 +238,16 @@ describe("Settings → Data: product analytics opt-out", () => {
     expect(toggle).toBeDisabled();
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/Do Not Track/);
+  });
+
+  it("shows analytics as not running while the admin flag is off (#620)", async () => {
+    startAnalytics(false); // the account says on
+    setProductAnalyticsFlag(false);
+    const toggle = await openDataTab();
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/isn't running/);
+    expect(screen.getByTestId("settings-analytics-note")).not.toHaveTextContent(/Saved to your account/);
   });
 
   it("shows the account's opt-out", async () => {
@@ -304,6 +323,7 @@ describe("Settings → Data: product analytics opt-out", () => {
         throw new Error("chunk blocked");
       },
     });
+    setProductAnalyticsFlag(true);
     await act(async () => {
       applyAccountAnalytics(beginAccountRead("u1"), "u1", false);
       await new Promise((r) => setTimeout(r, 0));
