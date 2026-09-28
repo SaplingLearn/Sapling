@@ -480,12 +480,16 @@ _READER = (
     r"|reviews?|reviewing|sees?|seeing)"
 )
 _AIMED = re.compile(
-    rf"\b(?:you|your|please|grader|grading|rubric|model|ai|assistant|chatbot|llm|bot|{_READER})\b"
+    r"\b(?:you|your|please|graders?|grading|rubric|model|ai|assistant|chatbot|llm|bot"
+    rf"|{_READER})\b"
 )
 _ADVERB = r"(?:(?:not|never|also|still|only|always|then|just|simply|really|now|first|please)\s+)?"
+# The imperative may sit behind a hashtag, a list dash, emphasis or a quote
+# (`#RememberToIgnore…`, `- make_sure_to_ignore…`; the verification's second round).
 _AIMED_LEAD = re.compile(
-    r"(?:^|[,:(]|\b(?:so|and|then|but|now|also|please|just))\s*"
-    r"(?:remember|be\s+sure|make\s+sure|be\s+certain|take\s+care|be\s+careful"
+    r"(?:^|[,:(]|\b(?:so|and|then|but|now|also|please|just))[ \t]*+[#*_>\"'`\[(-]{0,8}[ \t]*+"
+    r"(?:(?:always|just|please|kindly|now|also)\s+)?"
+    r"(?:remember|be\s+sure|make\s+sure|be\s+certain|ensure|take\s+care|be\s+careful"
     r"|do\s+not\s+forget|don'?t\s+forget|never\s+forget|try|kindly|feel\s+free)\s+(?:to\s+)?"
     rf"{_ADVERB}$"
 )
@@ -1120,7 +1124,10 @@ def _used(word: str, vocab: _Vocabulary) -> bool:
     return bool(vocab.text) and re.search(rf"(?<!\w){phrase}(?!\w)", vocab.text) is not None
 
 
-def _grading_talk(folded: _Folded, vocab: _Vocabulary) -> bool:
+def _grading_talk(folded: _Folded, vocab: _Vocabulary, spaced: _Folded | None = None) -> bool:
+    """`spaced` is the fold that reads "_" and camel humps as spaces: only the
+    ignore-directives are read on it too (`#RememberToIgnorePreviousInstructions`),
+    so an identifier such as `E2E_GRADER_CORRECT` stays no talk."""
     text, cased = folded.text, folded.cased
     if any(not _used(m.group(), vocab) for m in _GRADING_PHRASE.finditer(text)):
         return True
@@ -1128,7 +1135,13 @@ def _grading_talk(folded: _Folded, vocab: _Vocabulary) -> bool:
         _TOP_CONFIDENCE.search(text) and not _used("confidence", vocab)
     ):
         return True
-    if any(rx.search(text) for name, rx in _EXEMPTED_IGNORING if name not in vocab.exempt):
+    ignoring = [f.text for f in (folded, spaced) if f is not None]
+    if any(
+        rx.search(t)
+        for name, rx in _EXEMPTED_IGNORING
+        if name not in vocab.exempt
+        for t in ignoring
+    ):
         return True
     if any(not _used(m["name"], vocab) for m in _FIELD_NAME.finditer(text)):
         return True
@@ -1160,8 +1173,10 @@ def grading_talk(text: str, *, rubric_ids: Iterable[str] = (), context: str = ""
     names a rubric item or criterion by number — none of them a
     word or entity the item's own text uses. Read on the fold that drops
     invisible characters only: "_" stays part of a word, so an identifier such as
-    `E2E_GRADER_CORRECT` or `grade_book` is no talk."""
-    return _grading_talk(_fold(text), _vocabulary(context, tuple(rubric_ids)))
+    `E2E_GRADER_CORRECT` or `grade_book` is no talk — except for the
+    ignore-directives, which are read on the fold that splits identifiers too."""
+    first, spaced = _folds(text)
+    return _grading_talk(first, _vocabulary(context, tuple(rubric_ids)), spaced)
 
 
 # ── scripts: a letter of another alphabet in a word, a switch of language ────
@@ -1312,7 +1327,7 @@ def suspicion(
     folds = _folds(text)
     checks: dict[Suspicion, Callable[[], bool]] = {
         "verdict_tokens": lambda: any(_verdict_anywhere(f, pattern, id_rx, vocab) for f in folds),
-        "grading_talk": lambda: _grading_talk(folds[0], vocab),
+        "grading_talk": lambda: _grading_talk(folds[0], vocab, folds[1]),
         "mixed_script": lambda: mixed_script(text),
         "language_switch": lambda: _language_switch(text, context),
         "hidden_text": lambda: _hidden_text(text),
