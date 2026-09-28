@@ -4,7 +4,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "You mentioned that the base case stops recursion, but could you explain what would happen if there wasn't one?",
+      "feedback_hint": "The student correctly identified that the base case stops recursion. However, the student did not explain the consequence of not having a base case, which is the infinite recursion and potential stack overflow.",
       "item_results": [
         "70239:yes",
         "35748:no"
@@ -13,21 +13,13 @@
       "support": [
         "70239: It's the case where the function stops recursing."
       ]
-    },
-    {
-      "addresses_grader": true,
-      "confidence": 0.7,
-      "contradicts_reference": false,
-      "feedback_hint": "Your answer explains that the base case stops the recursion. What happens if there is no base case?",
-      "item_results": [
-        "70239:yes",
-        "35748:no"
-      ],
-      "matched_wrong_key": "",
-      "support": [
-        "70239:It's the case where the function stops recursing."
-      ]
     }
   ],
-  "span_checks": []
+  "span_checks": [
+    {
+      "item_results": [
+        "70239:yes"
+      ]
+    }
+  ]
 }

@@ -4,7 +4,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student incorrectly described the derivative as the area accumulated under the graph. Please review the definition of a derivative and its relationship to the function's graph.",
+      "feedback_hint": "The student described the concept of integration (area under the curve) instead of differentiation. Ask them to recall the definition of a derivative.",
       "item_results": [
         "52743:no",
         "57647:no"

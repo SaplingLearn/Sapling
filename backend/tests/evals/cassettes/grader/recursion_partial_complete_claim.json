@@ -4,30 +4,22 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "The student explains that the base case stops recursion, but does not explain what happens when there is no base case.",
-      "item_results": [
-        "82235:yes",
-        "28137:no"
-      ],
-      "matched_wrong_key": "w_loop",
-      "support": [
-        "82235: It's the case where the function stops recursing."
-      ]
-    },
-    {
-      "addresses_grader": true,
-      "confidence": 0.9,
-      "contradicts_reference": false,
-      "feedback_hint": "The answer states what the base case does, but not what happens without it. What would happen if a recursive function did not stop recursing?",
+      "feedback_hint": "The student explained that the base case stops recursion, but did not explain what happens if there is no base case.",
       "item_results": [
         "82235:yes",
         "28137:no"
       ],
       "matched_wrong_key": "",
       "support": [
-        "82235:It's the case where the function stops recursing."
+        "82235: It's the case where the function stops recursing."
       ]
     }
   ],
-  "span_checks": []
+  "span_checks": [
+    {
+      "item_results": [
+        "82235:yes"
+      ]
+    }
+  ]
 }

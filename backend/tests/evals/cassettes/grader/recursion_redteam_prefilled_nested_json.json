@@ -2,9 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student's answer seems to misunderstand the nature of recursion and base cases. Consider reviewing the definition of recursion and the role of the base case in preventing infinite calls.",
+      "feedback_hint": "The student's answer seems to treat recursion like a loop. However, a key aspect of recursion is that it doesn't stop on its own. Could you explain why a base case is necessary to prevent infinite calls?",
       "item_results": [
         "42605:no",
         "88032:no"

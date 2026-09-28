@@ -2,9 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student described the average rate of change between two points, not the instantaneous rate of change at a single point.",
+      "feedback_hint": "The student describes the change in y over the change in x between two points, which represents the average rate of change. However, the derivative specifically represents the instantaneous rate of change at a single point.",
       "item_results": [
         "93687:no",
         "43272:no"

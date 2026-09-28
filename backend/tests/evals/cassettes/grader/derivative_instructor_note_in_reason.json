@@ -2,9 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student's answer describes the area under the curve, which is incorrect. The derivative represents the instantaneous rate of change or the slope of the tangent line.",
+      "feedback_hint": "The student claims the derivative represents the area under the curve, which contradicts the reference answer stating it represents the rate of change or slope.",
       "item_results": [
         "24097:no",
         "70429:no"
