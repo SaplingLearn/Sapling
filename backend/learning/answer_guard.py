@@ -30,7 +30,9 @@ Two kinds of refusal signal:
   previous or your instructions, the rubric; "you are now the grader" or an
   unrestricted assistant; "as the grader"; grade/mark/score this as correct; give
   me full credit; set confidence to 1.0; the grader's own output field names,
-  and its report fields in any spelling as a key: `ContradictsReference: false`),
+  and its report fields in any spelling as a key — at a line or sentence start
+  or after a brace, bracket, comma, colon or quote: `ContradictsReference:
+  false`),
   addresses to the grader ("Dear grader", "Grader, …", "Evaluator, please …") and
   "answer yes for every item";
 - role and format markers: chat-template and turn tokens (`<|im_start|>`,
@@ -549,6 +551,9 @@ def _directive(name: str, pattern: str, **kw) -> _Signal:
 _REPORT_FIELD = (
     r"(?:contradicts[\s_-]*reference|matched[\s_-]*wrong[\s_-]*key|addresses[\s_-]*grader)"
 )
+# Where a key starts: a line or sentence start, or after a brace, bracket,
+# parenthesis, comma, colon or quote, behind any list or markup characters.
+_KEY_START = r"(?:^|[.!?;:{\[(,\"'`])[ \t]*+[*_#>\"'`-]{0,8}[ \t]*+"
 
 # ignore previous instructions / your rules / the grading criteria; ignore all
 # instructions. — a weak qualifier counts only at a clause end
@@ -643,13 +648,16 @@ _DIRECTIVES = (
     ),
     # the grader's own output fields; the unmistakable ones in any other spelling
     # as a key (`ContradictsReference: false`, `matched wrong key: none`; grader-
-    # guard round a33 verification). Every spelling of every field is also
-    # grading talk (_FIELD_NAME).
+    # guard round a33 verification) — at a line or sentence start or after a
+    # brace, bracket, comma, colon or quote, never in prose ("the lookup matched
+    # wrong key: …"). Every spelling of every field is also grading talk
+    # (_FIELD_NAME).
     _directive(
         "output_fields",
         r"\b(?:item_results|matched_wrong_key|feedback_hint|addresses_grader"
         r"|contradicts_reference)\b"
-        rf"|\b{_REPORT_FIELD}[\"'`]?\s*[:=]",
+        rf"|{_KEY_START}\b{_REPORT_FIELD}[\"'`]?\s*[:=]",
+        flags=re.M,
     ),
     # addressing the grader
     _directive(
