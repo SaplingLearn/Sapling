@@ -786,3 +786,81 @@ class TestOcrCacheKey:
         high = _ocr_cache_key(b"same-bytes")
 
         assert low != high
+
+
+class TestDoclingFailureIsVisible:
+    """A Docling failure must be loud, not a silent Tesseract downgrade.
+
+    #700: every Docling run in the deployed image failed at import (a CUDA
+    torchvision next to CPU torch), and both OCR entry points fell back to
+    Tesseract without a log line. Tesseract drops table rows, so uploads lost
+    structure for weeks with nothing to show for it.
+    """
+
+    _BROKEN = RuntimeError("operator torchvision::nms does not exist")
+
+    @pytest.fixture(autouse=True)
+    def _fresh_once_flag(self, monkeypatch):
+        import services.extraction_service as es
+        monkeypatch.setattr(es, "_DOCLING_UNAVAILABLE_WARNED", False)
+
+    def _warnings(self, caplog):
+        return [
+            r.getMessage() for r in caplog.records
+            if r.levelname == "WARNING" and r.name == "services.extraction_service"
+        ]
+
+    def test_pdf_docling_failure_warns_with_the_cause(self, monkeypatch, caplog):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        with (
+            patch("services.extraction_service.extract_pdf_with_docling", side_effect=self._BROKEN),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("tess", 1),
+            ),
+            caplog.at_level("WARNING", logger="services.extraction_service"),
+        ):
+            assert extract_text_from_pdf_ocr(b"pdf") == ("tess", 1)
+
+        msgs = self._warnings(caplog)
+        assert len(msgs) == 1
+        assert "torchvision::nms" in msgs[0] and "tesseract" in msgs[0].lower()
+
+    def test_image_docling_failure_warns_with_the_cause(self, monkeypatch, caplog):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        with (
+            patch("services.extraction_service._image_to_pdf_bytes", return_value=b"pdf"),
+            patch("services.extraction_service.extract_pdf_with_docling", side_effect=self._BROKEN),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_image_bytes_impl",
+                return_value="tess-img",
+            ),
+            caplog.at_level("WARNING", logger="services.extraction_service"),
+        ):
+            assert extract_text_from_image_bytes(b"img") == "tess-img"
+
+        msgs = self._warnings(caplog)
+        assert len(msgs) == 1
+        assert "torchvision::nms" in msgs[0] and "tesseract" in msgs[0].lower()
+
+    def test_docling_not_installed_warns_once_per_process(self, monkeypatch, caplog):
+        # Local dev and CI run without Docling; that must not warn per upload.
+        from services.extraction_backends.docling_backend import DoclingUnavailableError
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                side_effect=DoclingUnavailableError("not installed"),
+            ),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("tess", 1),
+            ),
+            caplog.at_level("WARNING", logger="services.extraction_service"),
+        ):
+            extract_text_from_pdf_ocr(b"pdf")
+            extract_text_from_pdf_ocr(b"pdf")
+
+        msgs = self._warnings(caplog)
+        assert len(msgs) == 1
+        assert "not installed" in msgs[0]

@@ -42,6 +42,29 @@ from services.extraction_backends.gemini_vision_backend import (
 
 logger = logging.getLogger(__name__)
 
+# "Docling isn't installed" is the normal state of local dev and CI, so it is
+# reported once per process; a Docling that is installed but FAILS is reported
+# every time (#700: a broken image downgraded every upload to Tesseract, which
+# drops table rows, with no log line at all).
+_DOCLING_UNAVAILABLE_WARNED = False
+
+
+def _warn_docling_fallback(err: Exception, where: str) -> None:
+    global _DOCLING_UNAVAILABLE_WARNED
+    if isinstance(err, DoclingUnavailableError):
+        if _DOCLING_UNAVAILABLE_WARNED:
+            return
+        _DOCLING_UNAVAILABLE_WARNED = True
+        logger.warning(
+            "Docling unavailable (%s); %s falls back to tesseract "
+            "(logged once per process)", err, where,
+        )
+        return
+    logger.warning(
+        "Docling failed (%s: %s); %s falls back to tesseract, which loses "
+        "tables and layout", type(err).__name__, err, where,
+    )
+
 
 def _clean_text(value: str) -> str:
     return "\n".join(line.rstrip() for line in value.splitlines()).strip()
@@ -117,10 +140,8 @@ def extract_text_from_image_bytes(image_bytes: bytes, lang: str = "eng") -> str:
         text, _, _ = extract_pdf_with_docling(_image_to_pdf_bytes(image_bytes), max_pages=1)
         if text.strip():
             return text
-    except DoclingUnavailableError:
-        pass
-    except Exception:
-        pass
+    except Exception as e:
+        _warn_docling_fallback(e, "image OCR")
 
     return tesseract_backend.extract_text_from_image_bytes_impl(image_bytes, lang=lang)
 
@@ -153,11 +174,13 @@ def extract_text_from_pdf_ocr(
     try:
         markdown, page_count, metadata = extract_pdf_with_docling(pdf_bytes, max_pages=max_pages)
     except DoclingUnavailableError as e:
+        _warn_docling_fallback(e, "PDF OCR")
         try:
             return tesseract_backend.extract_text_from_pdf_ocr_impl(pdf_bytes, max_pages=max_pages, lang=lang)
         except Exception as tess_err:
             raise RuntimeError(f"Docling unavailable ({e}) and tesseract fallback failed ({tess_err})") from e
     except Exception as e:
+        _warn_docling_fallback(e, "PDF OCR")
         try:
             return tesseract_backend.extract_text_from_pdf_ocr_impl(pdf_bytes, max_pages=max_pages, lang=lang)
         except Exception as tess_err:
