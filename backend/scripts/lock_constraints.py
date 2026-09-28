@@ -9,27 +9,36 @@ dependency floated, and `genai-prices` 0.1.x reached the deployed image while
 CI still pinned 0.0.66. pydantic-ai then swallowed a TypeError and every
 `llm_usage` row recorded 0 tokens for two months (#689).
 
-The Dockerfile uses this script twice:
+The Dockerfile uses this script like this:
 
+    pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.5,<3"
     python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt
+    python scripts/lock_constraints.py pin torch >> /tmp/lock-constraints.txt
     pip install -c /tmp/lock-constraints.txt -r requirements.txt
     python scripts/lock_constraints.py verify requirements.lock
 
 `constraints` turns the lock into a hash-free pip constraints file. pip
 switches to hash-checking mode as soon as any constraint carries a `--hash`,
 so the hashes must go. A constraint does not add a package to the install; it
-only pins a package if something needs it. That means a package missing from
-the lock (the OCR stack) installs normally, while every package the lock does
-pin, including the OCR stack's transitive dependencies, must resolve to the
-locked version or the build fails.
+only pins a package if something needs it. So a package missing from the lock
+(the OCR stack) installs normally, while every package the lock does pin,
+including any the OCR stack depends on, must resolve to the locked version or
+the build fails. The OCR stack's OTHER dependencies (numpy, scipy,
+huggingface-hub, tokenizers, safetensors, opencv, ...) are not in the lock and
+still float.
 
-`verify` runs after the install. It fails the build if any installed package
-that the lock pins is at a different version. This catches the gaps the
-constrained resolve cannot see, such as a package installed by the separate
-torch step, or a later `pip install` line added without `-c`.
+`pin torch` prints `torch==<installed version>` (e.g. `torch==2.14.0+cpu`).
+Appending it to the constraints stops the constrained install from
+backtracking onto a PyPI torch, which on Linux is the CUDA build.
 
-`constraints` uses only the standard library, because it runs before anything
-is installed. `verify` needs `packaging`, which the lock pins.
+`verify` runs after the last install. It fails the build if any installed
+package that the lock pins is at a different version, which catches anything
+the constrained resolve did not touch. It also fails the build if any
+`nvidia-*` or `cuda-*` distribution is installed, i.e. if CUDA got in anyway.
+
+`constraints` and `pin` use only the standard library, because they run before
+requirements.txt is installed. `verify` runs after it and needs `packaging`,
+which requirements.txt lists for that reason.
 """
 
 from __future__ import annotations
@@ -37,7 +46,8 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
-from typing import Callable, Optional
+from importlib import metadata
+from typing import Callable, Iterable, Optional
 
 # A requirement line in a uv-compiled lock: `name==version [; marker] [\]`.
 # Continuation lines (`--hash=...`, `# via ...`) are indented.
@@ -48,6 +58,9 @@ _PIN = re.compile(
     r"\s*(?:;\s*(?P<marker>[^\\]+?))?"
     r"\s*\\?\s*$"
 )
+
+# Distributions that only arrive with a CUDA build of torch.
+_CUDA_PREFIXES = ("nvidia-", "cuda-")
 
 
 @dataclass(frozen=True)
@@ -60,11 +73,6 @@ class LockedPin:
         # Constraints may not carry extras, so none are emitted.
         line = f"{self.name}=={self.version}"
         return f"{line} ; {self.marker}" if self.marker else line
-
-
-def canonical(name: str) -> str:
-    """PEP 503 name normalisation."""
-    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def parse_lock(text: str) -> list[LockedPin]:
@@ -100,11 +108,18 @@ def constraints_text(pins: list[LockedPin]) -> str:
     return "".join(pin.constraint() + "\n" for pin in pins)
 
 
+def installed_pin(name: str, version_of: Callable[[str], Optional[str]]) -> str:
+    """`name==<installed version>`, or ValueError if it is not installed."""
+    version = version_of(name)
+    if version is None:
+        raise ValueError(f"{name} is not installed; nothing to pin")
+    return f"{name}=={version}"
+
+
 def find_drift(
     pins: list[LockedPin],
     version_of: Callable[[str], Optional[str]],
     marker_applies: Callable[[str], bool],
-    versions_equal: Callable[[str, str], bool],
 ) -> tuple[list[str], int]:
     """Compare installed versions against the lock.
 
@@ -113,6 +128,8 @@ def find_drift(
     constraint only applies when something needs the package. A locked package
     installed at another version is.
     """
+    from packaging.version import Version
+
     problems: list[str] = []
     checked = 0
     for pin in pins:
@@ -122,32 +139,42 @@ def find_drift(
         if installed is None:
             continue
         checked += 1
-        if not versions_equal(installed, pin.version):
+        if Version(installed) != Version(pin.version):
             problems.append(f"{pin.name}: installed {installed}, lock pins {pin.version}")
     return problems, checked
 
 
+def cuda_distributions(names: Iterable[str]) -> list[str]:
+    """The installed distributions that mean a CUDA torch got into the image."""
+    from packaging.utils import canonicalize_name
+
+    return sorted({n for n in map(canonicalize_name, names) if n.startswith(_CUDA_PREFIXES)})
+
+
+def _installed_version(name: str) -> Optional[str]:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
 def _verify(pins: list[LockedPin]) -> int:
-    from importlib import metadata
-
     from packaging.markers import Marker
-    from packaging.version import Version
-
-    def version_of(name: str) -> Optional[str]:
-        try:
-            return metadata.version(name)
-        except metadata.PackageNotFoundError:
-            return None
 
     problems, checked = find_drift(
         pins,
-        version_of=version_of,
+        version_of=_installed_version,
         marker_applies=lambda marker: Marker(marker).evaluate(),
-        versions_equal=lambda a, b: Version(a) == Version(b),
     )
+    cuda = cuda_distributions(d.metadata["Name"] for d in metadata.distributions())
+    if cuda:
+        problems.append(
+            "CUDA distributions installed (torch must be the CPU build): " + ", ".join(cuda)
+        )
     if problems:
         print(
-            "Installed packages drift from requirements.lock (#694):\n  " + "\n  ".join(problems),
+            "The installed set does not match requirements.lock (#694):\n  "
+            + "\n  ".join(problems),
             file=sys.stderr,
         )
         return 1
@@ -157,17 +184,30 @@ def _verify(pins: list[LockedPin]) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"requirements.lock: {checked} installed packages match their locked versions.")
+    print(
+        f"requirements.lock: {checked} installed packages match their locked versions; no CUDA distributions."
+    )
     return 0
 
 
+_USAGE = "usage: lock_constraints.py constraints <requirements.lock> | verify <requirements.lock> | pin <distribution>"
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[1] not in {"constraints", "verify"}:
-        print(f"usage: {argv[0]} constraints|verify <requirements.lock>", file=sys.stderr)
+    if len(argv) != 3 or argv[1] not in {"constraints", "verify", "pin"}:
+        print(_USAGE, file=sys.stderr)
         return 2
-    with open(argv[2], encoding="utf-8") as fh:
+    command, arg = argv[1], argv[2]
+    if command == "pin":
+        try:
+            print(installed_pin(arg, _installed_version))
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        return 0
+    with open(arg, encoding="utf-8") as fh:
         pins = parse_lock(fh.read())
-    if argv[1] == "constraints":
+    if command == "constraints":
         sys.stdout.write(constraints_text(pins))
         return 0
     return _verify(pins)
