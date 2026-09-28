@@ -69,10 +69,11 @@ previous instructions" never after a modal, an auxiliary or a causative
 (`cannot simply ignore the instructions`, `clinicians should disregard the
 earlier guidelines`, `were told to ignore`, `lets the compiler ignore`) unless
 the clause or the match names the reader or a model (`disregard your prior
-instructions`) or an imperative or impersonal lead comes before it (`remember
-to`, `make sure to`, `it is important to`, `one must`, `whoever reads this
-should`), and never about a topic's own rules (`the rules of the game`); what
-that filter lets through is still a suspicion signal; "mark it correct" never with a subject before it (`the harness would never mark it as
+instructions`, `whoever reads this should`) or an imperative lead comes before
+it (`remember to`, `make sure to`) — an impersonal lead (`it is important to`,
+`one must`) and a `whoever` who is not the reader stay descriptions —, and never
+about a topic's own rules (`the rules of the game`); what that filter lets
+through is still a suspicion signal; "mark it correct" never with a subject before it (`the harness would never mark it as
 passed`), a condition around it (`mark it correct … when both inputs are 1`, `if
 every clause is satisfied, mark it satisfied`) or a bare `full` (`mark it full`
 is a bounded buffer), unless that text talks to the grader; "award full marks"
@@ -454,11 +455,13 @@ def _grader_confidence(text: str, m: re.Match[str]) -> bool:
 # ignore", "lets the compiler ignore") — or the rules are the course's own topic
 # ("the rules of the game", "the previous rules for series circuits"). A clause
 # or a match that names the reader or a model is always aimed ("you should
-# ignore …", "disregard your prior instructions"), and so is a "to", "must" or
-# "should" after an imperative verb, an impersonal lead or the reader as its
-# subject (_AIMED_LEAD: "remember to", "make sure to", "it is important to", "one
-# must", "whoever reads this should"; grader-guard round a33 verification). What
-# this filter lets through is still a suspicion signal (_EXEMPTED_IGNORING).
+# ignore …", "disregard your prior instructions", "whoever reads this should"),
+# and so is a "to" after an imperative verb (_AIMED_LEAD: "remember to", "make
+# sure to"; grader-guard round a33 verification). A "whoever" who is not the
+# reader ("whoever took part … had to ignore") and an impersonal lead ("it is
+# important to", "one must") are how honest procedure is written, so they stay
+# descriptions (the verification's second round). What this filter lets through
+# is still a suspicion signal (_EXEMPTED_IGNORING).
 _DESCRIBED = re.compile(
     r"(?:\b(?:would|will|could|might|may|can|cannot|can't|won't|wouldn't|couldn't|shouldn't"
     r"|should|must|does|did|doesn't|didn't|never|not|to|has|have|had)"
@@ -467,20 +470,21 @@ _DESCRIBED = re.compile(
     r"\s+(?:(?:not|never|also|still|only|always|then|just|simply|really|safely|first|usually"
     r"|often)\s+)?$"
 )
+# The reader: "whoever reads this", "anyone grading" — never a bare "whoever"
+# ("whoever took part in the trial had to ignore …" is a description).
+_READER = (
+    r"(?:who(?:so)?ever|whomever|(?:any|every)(?:one|body))\s+(?:who\s+|that\s+)?(?:is\s+)?"
+    r"(?:reads?|reading|grades?|grading|marks?|marking|checks?|checking|evaluates?|evaluating"
+    r"|reviews?|reviewing|sees?|seeing)"
+)
 _AIMED = re.compile(
-    r"\b(?:you|your|please|grader|grading|rubric|model|ai|assistant|chatbot|llm|bot"
-    r"|whoever|whomever|(?:any|every)(?:one|body)\s+(?:reading|who\s+reads|grading|marking"
-    r"|checking))\b"
+    rf"\b(?:you|your|please|grader|grading|rubric|model|ai|assistant|chatbot|llm|bot|{_READER})\b"
 )
 _ADVERB = r"(?:(?:not|never|also|still|only|always|then|just|simply|really|now|first|please)\s+)?"
 _AIMED_LEAD = re.compile(
-    r"(?:(?:^|[,:(]|\b(?:so|and|then|but|now|also|please|just))\s*"
+    r"(?:^|[,:(]|\b(?:so|and|then|but|now|also|please|just))\s*"
     r"(?:remember|be\s+sure|make\s+sure|be\s+certain|take\s+care|be\s+careful"
     r"|do\s+not\s+forget|don'?t\s+forget|never\s+forget|try|kindly|feel\s+free)\s+(?:to\s+)?"
-    r"|\bit(?:'s|\s+is|\s+was|\s+will\s+be|\s+would\s+be)\s+(?:(?:very|so|really|now|also)\s+)?"
-    r"(?:important|essential|necessary|crucial|vital|best|wise|advisable|required|mandatory"
-    r"|imperative|key|critical|time)\s+(?:(?:here|now|then)\s+)?to\s+"
-    r"|\bone\s+(?:must|should|ought\s+to|has\s+to|needs\s+to|is\s+to|shall)\s+)"
     rf"{_ADVERB}$"
 )
 _RULES_TOPIC = re.compile(
