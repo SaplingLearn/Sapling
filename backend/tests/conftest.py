@@ -64,16 +64,20 @@ def _clear_rate_limit_state():
 def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""
-    from services import academics, analytics_consent, course_context_service, growth
+    from services import academics, analytics_consent, course_context_service, feature_flags, growth
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
     analytics_consent.clear_analytics_consent_cache()
+    feature_flags.clear_feature_flags_cache()
+    feature_flags.clear_user_roles_cache()
     yield
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
     analytics_consent.clear_analytics_consent_cache()
+    feature_flags.clear_feature_flags_cache()
+    feature_flags.clear_user_roles_cache()
 
 
 @pytest.fixture(autouse=True)
