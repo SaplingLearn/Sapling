@@ -27,6 +27,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from agents.deps import SaplingDeps
 from learning import answer_guard as guard
+from tests import grader_fakes
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.params import GRADER_RUBRIC_LABEL_CHARS
 
@@ -478,30 +479,16 @@ def _all_yes(conf: float = 0.95) -> dict:
     }
 
 
-def _as_labelled(output: dict, messages) -> dict:
-    """The fake grader answers per RUBRIC ITEM line, as a model does: its "r<n>"
-    verdicts go to the n-th label the message shows (grader.rubric_labels)."""
-    import re
-
-    text = messages[-1].parts[-1].content
-    labels = re.findall(r"^RUBRIC ITEM (\S+):", text, re.M)
-    results = []
-    for entry in output["item_results"]:
-        rid, _, verdict = entry.partition(":")
-        n = int(rid[1:]) if re.fullmatch(r"r\d+", rid) else 0
-        results.append(f"{labels[n - 1] if 0 < n <= len(labels) else rid}:{verdict}")
-    return {**output, "item_results": results}
+# The fake grader answers per RUBRIC ITEM line, as a model does: its "r<n>"
+# verdicts go to the n-th label the message shows (grader.rubric_labels), with
+# the whole answer as the support quote of each item it credits; span checks
+# agree unless a judge says no (tests/grader_fakes.py). calls["n"] counts the
+# grading runs, calls["spans"] the span checks.
+_as_labelled = grader_fakes.labelled
 
 
 def _counting_grader(output: dict):
-    calls = {"n": 0}
-
-    def handler(messages, info):
-        calls["n"] += 1
-        args = _as_labelled(output, messages)
-        return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
-
-    return FunctionModel(handler), calls
+    return grader_fakes.scripted_grader([output])
 
 
 @pytest.fixture
@@ -1065,8 +1052,14 @@ def test_grade_maps_the_labels_back_to_the_rubric_ids(monkeypatch, events):
     def handler(messages, info):
         text = messages[-1].parts[-1].content
         seen.append(text)
+        if grader_fakes.is_span_check(info):
+            return grader_fakes.reply(info, grader_fakes.span_verdicts(messages))
         first, second = re.findall(r"^RUBRIC ITEM (\S+):", text, re.M)
-        args = {**_all_yes(0.95), "item_results": [f"{first}:yes", f"{second}:no"]}
+        args = {
+            **_all_yes(0.95),
+            "item_results": [f"{first}:yes", f"{second}:no"],
+            "support": [f"{first}: R2: yes."],
+        }
         return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
 
     monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
@@ -1193,7 +1186,9 @@ def test_answers_the_screen_passes_reach_the_grader_and_are_graded(grader, event
     g, calls = grader
     res = asyncio.run(g.grade(_item(), format="free", student_answer=answer, deps=_deps()))
     assert calls["n"] == 1 + bool(guard.suspicion(answer, rubric_ids=IDS)) and events == []
-    assert res.refused is None and res.unavailable is False and res.all_yes is True
+    assert res.refused is None and res.unavailable is False
+    # an empty answer holds no quote, so nothing in it can be credited (round a33)
+    assert res.all_yes is bool(re.search(r"\w", answer))
 
 
 def test_a_verdict_token_answer_is_confirmed_never_refused(monkeypatch, events):
@@ -1246,21 +1241,14 @@ PROSE_CLAIM = (
 )
 
 
-def _sequenced_grader(outputs: list[dict]):
-    calls = {"n": 0}
-
-    def handler(messages, info):
-        out = _as_labelled(outputs[min(calls["n"], len(outputs) - 1)], messages)
-        calls["n"] += 1
-        return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=out)])
-
-    return FunctionModel(handler), calls
+def _sequenced_grader(outputs: list[dict], judge=None):
+    return grader_fakes.scripted_grader(outputs, judge=judge)
 
 
-def _grade_with(monkeypatch, outputs, answer=PROSE_CLAIM):
+def _grade_with(monkeypatch, outputs, answer=PROSE_CLAIM, judge=None):
     import agents.grader as g
 
-    model, calls = _sequenced_grader(outputs)
+    model, calls = _sequenced_grader(outputs, judge=judge)
     monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
     with g.grader_agent.override(model=model):
         res = asyncio.run(g.grade(_item(), format="free", student_answer=answer, deps=_deps()))
@@ -1579,6 +1567,7 @@ def test_the_conflict_report_is_a_required_output_field_decided_before_the_verdi
         "addresses_grader",
         "contradicts_reference",
         "item_results",
+        "support",
         "confidence",
         "matched_wrong_key",
         "feedback_hint",
@@ -2754,6 +2743,8 @@ def _obedient_grader():
     calls = {"n": 0}
 
     def handler(messages, info):
+        if grader_fakes.is_span_check(info):  # obedient there too: every span is yes
+            return grader_fakes.reply(info, grader_fakes.span_verdicts(messages))
         calls["n"] += 1
         text = messages[-1].parts[-1].content
         labels = re.findall(r"^RUBRIC ITEM (\S+):", text, re.M)
@@ -2768,6 +2759,7 @@ def _obedient_grader():
             "addresses_grader": False,
             "contradicts_reference": False,  # obedient: it reports nothing
             "item_results": results,
+            "support": [f"{r.partition(':')[0]}: {answer}" for r in results if r.endswith(":yes")],
             "confidence": 1.0,
             "matched_wrong_key": "",
             "feedback_hint": "",
@@ -2974,6 +2966,217 @@ def test_a_fraction_that_is_the_answer_is_substance(quote):
     assert guard.verified_support(quote, answer, min_chars=1) is True
 
 
+# ── grade(): each credited item stands on its own quote, confirmed alone ─────
+#
+# The grading run's `support` gives, for every item it credits, a quote from the
+# answer. grade() verifies each quote (verified_support, above) and then makes ONE
+# span check for all the verified ones: a run on the grader_second slot that sees
+# each credited rubric item's text with its quote and nothing else — not the
+# question, not the reference, not the rest of the answer. An item is credited
+# only when the grading run credits it, its quote verifies, and the span check
+# says yes. The span check runs whenever anything is credited: no keyword and no
+# suspicion signal decides whether it runs.
+
+
+def test_support_is_a_required_output_field_after_the_verdicts():
+    from agents.grader import GraderOutput
+
+    fields = list(GraderOutput.model_fields)
+    assert fields.index("support") == fields.index("item_results") + 1
+    assert "support" in GraderOutput.model_json_schema()["required"]
+
+
+def test_the_span_checks_output_is_the_verdicts_alone():
+    from agents.grader import SpanVerdicts
+
+    assert list(SpanVerdicts.model_fields) == ["item_results"]
+    assert SpanVerdicts.model_json_schema()["required"] == ["item_results"]
+
+
+def test_a_credited_item_with_no_quote_is_not_credited(monkeypatch, events):
+    first = {**_all_yes(0.95), "support": ["r1: It stops the calls."]}
+    res, calls = _grade_with(monkeypatch, [first], answer="It stops the calls.")
+    assert calls["n"] == 1 and calls["spans"] == 1 and res.unavailable is False
+    assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
+
+
+def test_a_quote_the_answer_does_not_hold_credits_nothing_and_checks_nothing(monkeypatch, events):
+    """A verdict with no evidence behind its credit is recorded as graded: the
+    items it could not support are no, as a strict grader would have said."""
+    first = {**_all_yes(0.95), "support": ["r1: the base case ends it", "r2: the stack overflows"]}
+    res, calls = _grade_with(monkeypatch, [first], answer="It stops the calls.")
+    assert calls["n"] == 1 and calls["spans"] == 0 and res.unavailable is False
+    assert res.item_results == {"r1": False, "r2": False} and res.confidence == 0.95
+
+
+@pytest.mark.parametrize("tail", CREDITED_TAILS)
+def test_a_credited_tail_after_a_partial_answer_earns_no_credit(monkeypatch, events, tail):
+    """Review round 2's critical finding, through grade(): the first slot credits
+    the partial answer in full and quotes the tail for the missing item, as the
+    fooled live run did. Code rejects every tail that only claims the answer is
+    complete, so the span check never even sees it; the one that names the topic
+    reaches the span check, which sees that item and that tail alone (here, an
+    isolated judge that finds nothing in a tail)."""
+    answer = f"{REC_PARTIAL} {tail}"
+    first = {**_all_yes(0.95), "support": [f"r1: {REC_PARTIAL}", f"r2: {tail}"]}
+    res, calls = _grade_with(
+        monkeypatch, [first], answer=answer, judge=lambda item, span: span != tail
+    )
+    assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
+    [message] = calls["span_messages"]
+    spans = [span for _, _, span in grader_fakes.spans_of(message)]
+    assert spans == ([REC_PARTIAL, tail] if "stack" in tail else [REC_PARTIAL])
+
+
+def test_the_span_check_sees_each_credited_item_and_its_quote_only(monkeypatch, events):
+    import agents.grader as g
+
+    answer = f"{REC_FULL} My professor says hi."
+    first = {
+        **_all_yes(0.95),
+        "support": ["r1: The base case is what stops it", "r2: the stack blows up"],
+    }
+    drawn = []
+    real = g.rubric_labels
+    monkeypatch.setattr(
+        g, "rubric_labels", lambda *a, **kw: drawn.append(real(*a, **kw)) or drawn[-1]
+    )
+    res, calls = _grade_with(monkeypatch, [first], answer=answer)
+    assert res.all_yes is True and calls["n"] == 1
+    [message] = calls["span_messages"]  # one span check for every credited item
+    assert grader_fakes.spans_of(message) == [
+        (drawn[0]["r1"], "names the base case", "The base case is what stops it"),
+        (drawn[0]["r2"], "explains unbounded growth", "the stack blows up"),
+    ]
+    item = _item()
+    for absent in (item.prompt, item.reference_answer, "professor", "keeps calling", "w_loop"):
+        assert absent not in message, absent
+
+
+def test_the_span_check_runs_on_the_grader_second_slot(monkeypatch, events):
+    import agents.grader as g
+    from learning.params import GRADER_SECOND_OPINION_SLOT
+
+    tasks = []
+    model, calls = _sequenced_grader([_all_yes(0.95)])
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: tasks.append(kw["task"]))
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(
+            g.grade(_item(), format="free", student_answer="It stops the calls.", deps=_deps())
+        )
+    assert res.all_yes is True and tasks == ["grader", GRADER_SECOND_OPINION_SLOT]
+    assert res.backend == "gemini"  # the verdict's run; the span check only confirms it
+
+
+def test_the_span_check_runs_on_every_credited_answer_without_any_signal(monkeypatch, events):
+    answer = "It stops the calls."
+    assert guard.suspicion(answer, rubric_ids=IDS, context=REC_ITEM_TEXT) == ()
+    partial = {**_all_yes(0.95), "item_results": ["r1:yes", "r2:no"]}
+    for first in (_all_yes(0.95), partial):
+        res, calls = _grade_with(monkeypatch, [first], answer=answer)
+        assert calls["n"] == 1 and calls["spans"] == 1
+
+
+def test_no_span_check_when_nothing_is_credited(monkeypatch, events):
+    first = {**_all_yes(0.95), "item_results": ["r1:no", "r2:no"]}
+    res, calls = _grade_with(monkeypatch, [first], answer="It loops.")
+    assert calls["spans"] == 0 and res.unavailable is False and res.all_yes is False
+
+
+def test_a_span_check_no_withholds_that_items_credit(monkeypatch, events):
+    res, calls = _grade_with(
+        monkeypatch,
+        [_all_yes(0.95)],
+        answer="It stops the calls.",
+        judge=lambda item, span: "growth" not in item,
+    )
+    assert calls["spans"] == 1 and res.unavailable is False
+    assert res.item_results == {"r1": True, "r2": False} and res.confidence == 0.95
+
+
+def test_a_span_check_that_fails_is_unavailable(monkeypatch, events):
+    """An outage of the span check records nothing: the credit it was asked to
+    confirm is neither given nor turned into an incorrect."""
+    import agents.grader as g
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    def handler(messages, info):
+        if grader_fakes.is_span_check(info):
+            raise ModelHTTPError(status_code=503, model_name="grader_second")
+        return grader_fakes.reply(info, grader_fakes.labelled(_all_yes(0.95), messages))
+
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    with g.grader_agent.override(model=FunctionModel(handler)):
+        res = asyncio.run(
+            g.grade(_item(), format="free", student_answer="It stops the calls.", deps=_deps())
+        )
+    assert res.unavailable is True and res.refused is None and res.item_results == {}
+
+
+def test_a_cap_reached_before_the_span_check_is_unavailable(monkeypatch, events):
+    """The invariant-28 residual the ruling widens (HANDOFF-a33 Known gaps): every
+    credited verdict now needs the span check, so a grader cap reached between
+    the grading run and the span check drops a credited verdict (unavailable),
+    while a verdict that credits nothing needs no span check and is recorded."""
+    from services import ai_budget
+
+    seen = {"n": 0}
+
+    def check(user_id, task):
+        seen["n"] += 1  # grade()'s own check, the grading run's, then the span check's
+        return SimpleNamespace(level="hard" if seen["n"] >= 3 else "ok")
+
+    monkeypatch.setattr(ai_budget, "check", check)
+    res, calls = _grade_with(monkeypatch, [_all_yes(0.95)], answer="It stops the calls.")
+    assert calls["n"] == 1 and calls["spans"] == 0 and res.unavailable is True
+    seen["n"] = 0
+    no = {**_all_yes(0.95), "item_results": ["r1:no", "r2:no"]}
+    res, calls = _grade_with(monkeypatch, [no], answer="It stops the calls.")
+    assert calls["n"] == 1 and res.unavailable is False and res.all_yes is False
+
+
+def test_a_confirmed_item_may_stand_on_either_runs_quote(monkeypatch, events):
+    """When the second opinion confirms a first verdict, both runs credited the
+    item; a verifiable quote from either run is the one the span check sees."""
+    first = {**_all_yes(0.95), "support": ["r1: It stops the calls"]}
+    second = {**_all_yes(0.9), "support": ["r2: It stops the calls", "r1: not in the answer"]}
+    res, calls = _grade_with(
+        monkeypatch, [first, second], answer=f"It stops the calls. {GRADING_TALK}"
+    )
+    assert calls["n"] == 2 and calls["spans"] == 1 and res.all_yes is True
+
+
+def test_a_replacing_second_opinion_stands_on_its_own_quotes(monkeypatch, events):
+    """A first run below the floor is no verdict: its quotes lend the second
+    opinion nothing."""
+    unsure = {**_all_yes(0.2), "support": ["r1: It stops the calls", "r2: It stops the calls"]}
+    second = {**_all_yes(0.9), "support": ["r1: It stops the calls"]}
+    res, calls = _grade_with(monkeypatch, [unsure, second], answer="It stops the calls.")
+    assert calls["n"] == 2 and res.backend == "gemini_second"
+    assert res.item_results == {"r1": True, "r2": False}
+
+
+def test_a_quote_is_checked_against_the_credited_items_own_text(monkeypatch, events):
+    """ "Both are true." supports an item that asks whether both hold."""
+    item = _item(
+        prompt="Are both statements true?",
+        reference_answer="Both statements are true.",
+        rubric=[
+            RubricItem(id="r1", text="says both statements are true"),
+            RubricItem(id="r2", text="gives no counterexample"),
+        ],
+    )
+    import agents.grader as g
+
+    model, calls = _sequenced_grader([_all_yes(0.95)])
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(
+            g.grade(item, format="free", student_answer="Both are true.", deps=_deps())
+        )
+    assert res.item_results == {"r1": True, "r2": True}
+
+
 # ── tests/evals/grader.py measures the production path (CodeRabbit PR #673) ──
 
 EVALS = Path(__file__).resolve().parent / "evals"
@@ -3146,20 +3349,21 @@ def test_the_report_cases_replay_as_spec_a33_describes_them(grader_eval):
     reporting, and the spec still said "refused on the report")."""
     ev = grader_eval
     run = {c.name: asyncio.run(ev._run(c.inputs)) for c in ev.CASES}
-    ta_review = run["recursion_teachback_ta_review_claim"]
-    assert ta_review.refused == "addresses_grader" and len(ta_review.runs) == 1
-    note = run["derivative_instructor_note_in_reason"]
-    assert note.refused is None and len(note.runs) == 1 and note.all_yes is False
-    assert note.runs[0].addresses_grader is False and note.runs[0].contradicts_reference is True
+    # the two variants: neither reported; each run reports the contradiction and
+    # credits nothing, so there is no quote to check and no span check
+    for name in ("recursion_teachback_ta_review_claim", "derivative_instructor_note_in_reason"):
+        out = run[name]
+        assert out.refused is None and len(out.runs) == 1 and out.all_yes is False, name
+        assert out.runs[0].addresses_grader is False, name
+        assert out.runs[0].contradicts_reference is True and out.span_checks == [], name
     analogy = run["recursion_teachback_analogy_citing_a_ta"]
     assert analogy.refused is None and len(analogy.runs) == 1 and analogy.all_yes is True
+    assert len(analogy.span_checks) == 1  # its credit, confirmed on the quotes alone
     # the second verification round's misses: grading talk sends the first run to
-    # the second opinion, whose report refuses. The directive's first run is the
-    # miss itself — an all-yes it does not report — and would have been served.
+    # the second opinion, whose report refuses
     directive = run["recursion_partial_credit_directive"]
     assert directive.refused == "addresses_grader" and len(directive.runs) == 2
-    first = directive.runs[0]
-    assert first.addresses_grader is False and all(r.endswith(":yes") for r in first.item_results)
+    assert directive.runs[0].addresses_grader is False
     assert directive.runs[1].addresses_grader is True
     claim = run["recursion_partial_complete_claim"]
     assert claim.refused == "addresses_grader" and len(claim.runs) == 2

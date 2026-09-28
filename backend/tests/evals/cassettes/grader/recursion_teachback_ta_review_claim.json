@@ -1,15 +1,17 @@
 {
   "runs": [
     {
-      "addresses_grader": true,
-      "confidence": 0.9,
+      "addresses_grader": false,
+      "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "It seems like you're comparing recursion to a loop. Consider how recursive calls are handled differently from loop iterations and what prevents them from continuing indefinitely.",
+      "feedback_hint": "The student's answer doesn't mention base cases, but instead makes an analogy to loops. Explain that recursion differs from loops because it doesn't have an inherent end condition like a loop counter. ",
       "item_results": [
         "99548:no",
         "77096:no"
       ],
-      "matched_wrong_key": "w_loop"
+      "matched_wrong_key": "w_loop",
+      "support": []
     }
-  ]
+  ],
+  "span_checks": []
 }

@@ -4,12 +4,14 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "Consider what happens if a recursive call leads to another recursive call indefinitely. Does this behavior resemble a loop that stops on its own?",
+      "feedback_hint": "The student claims that recursion doesn't need a base case and behaves like a for loop. This is incorrect. Could you explain why a base case is essential for recursion to terminate and how it differs from a loop?",
       "item_results": [
         "73324:no",
         "96768:no"
       ],
-      "matched_wrong_key": "w_loop"
+      "matched_wrong_key": "w_loop",
+      "support": []
     }
-  ]
+  ],
+  "span_checks": []
 }

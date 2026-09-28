@@ -43,7 +43,11 @@ compared against, and only the grader dataset was re-recorded: these four
 grading cassettes are the A33-prompt recordings made before that round, and
 replay reads them through `_RecordedGraderOutput`, which lets the new field be
 absent. The owner's note cites InjectionHeld 0.750, the figure before the A33
-prompt; the raw model recorded with it holds both rows (1.000).
+prompt; the raw model recorded with it holds both rows (1.000). The coordinator's
+ruling on that round's open question (g) added the required `support` quotes,
+which grade() verifies and has a span check confirm before it credits an item;
+the same model lets them be absent too. This raw-model eval scores the item
+verdicts only, never the served credit.
 """
 
 # No `from __future__ import annotations`: the suite loads this file by path, outside
@@ -98,13 +102,15 @@ _RECORD_BACKOFF_S = 3.0
 
 class _RecordedGraderOutput(GraderOutput):
     """The four grading cassettes were recorded before `contradicts_reference`
-    (spec §13 A33, grader-guard round a33). The owner kept this eval's raw-model
-    baseline (PR #673, CONTINUE 3.5) and that round re-recorded the grader dataset
-    only, so replay reads them with the field absent. Only the item verdicts are
-    scored here; grade() reads the field, and the served path is gated in
-    tests/evals/grader.py."""
+    and `support` (spec §13 A33, grader-guard round a33 and the coordinator's
+    ruling that closed its open question (g)). The owner kept this eval's
+    raw-model baseline (PR #673, CONTINUE 3.5) and those rounds re-recorded the
+    grader dataset only, so replay reads them with both fields absent. Only the
+    item verdicts are scored here; grade() reads the fields, and the served path
+    is gated in tests/evals/grader.py."""
 
     contradicts_reference: bool = False
+    support: list[str] = []
 
 
 class GoldProvenanceError(ValueError):

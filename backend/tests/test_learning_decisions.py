@@ -925,15 +925,17 @@ def test_eval_caps_each_gold_file_not_the_whole_dataset(tmp_path):
 def test_the_decisions_eval_replays_its_raw_model_grading_cassettes_as_recorded(ev):
     """Owner decision (PR #673, CONTINUE 3.5): this eval keeps its raw-model
     baseline, and grader-guard round a33 re-recorded the grader dataset only. The
-    four grading cassettes predate `GraderOutput.contradicts_reference` (spec §13
-    A33), so replay reads them through a model that lets that field be absent —
-    the item verdicts, which are all this eval scores, stay as recorded."""
+    four grading cassettes predate `GraderOutput.contradicts_reference` and
+    `support` (spec §13 A33), so replay reads them through a model that lets those
+    fields be absent — the item verdicts, which are all this eval scores, stay as
+    recorded."""
     from agents.grader import GraderOutput
 
     model = ev._RecordedGraderOutput
     assert (
         issubclass(model, GraderOutput)
         and model.model_fields["contradicts_reference"].default is False
+        and model.model_fields["support"].default == []
     )
     folder = BACKEND / "tests" / "evals" / "cassettes" / "decisions"
     grading = [

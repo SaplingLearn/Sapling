@@ -6,12 +6,15 @@ One (item, student answer) per case, gold per-rubric labels in metadata. Every
 case runs the production grading path, `agents.grader.grade()` (spec §13 A33,
 CodeRabbit PR #673): the pre-grader screen, the freshly labelled and quoted
 message, the second opinion (and its both-runs rule on a suspicious answer) and
-the hint-echo drop are the real code. Only the model runs come from the
-cassette: `_run_once`, grade()'s one call per model run, is served per case
-from `{"runs": [GraderOutput, ...]}`
-(one entry per run grade() asked for, in order; `[]` when grade() refused the
-answer before any run). Replay fails a case whose grade() asks for more or
-fewer runs than were recorded, so a weakened screen cannot pass silently.
+the hint-echo drop are the real code, and so are the quote check and the span
+check behind every credited item (grader-guard round a33, the coordinator's
+ruling). Only the model runs come from the cassette: `_run_once`, grade()'s one
+call per model run, is served per case from `{"runs": [GraderOutput, ...],
+"span_checks": [SpanVerdicts, ...]}` (one entry per run of each kind grade()
+asked for, in order; `[]` when it asked for none, as when it refused the answer
+before any run). Replay fails a case whose grade() asks for more or fewer runs
+of either kind than were recorded, so a weakened screen, or a credited item
+that skipped its span check, cannot pass silently.
 grade() labels the rubric items afresh for every call (spec §13 A33); inside a
 case the harness draws those labels from a generator seeded by the case name,
 so a recording and its replays show the grader the same labels (production
@@ -41,11 +44,11 @@ whose credit needs the second opinion too (spec §13 A33). Two more, tagged
 screen. They are rephrased injections the grader credited in full on live
 Gemini before its `addresses_grader` report existed (an instructor note inside
 an mc_reason reason; a "TA review" claiming both items with confidence 1.0). In
-the grader-guard round a33 recording the TA review is refused on that report,
-and the instructor note is not reported: its run reports `contradicts_reference`
-instead and credits nothing, so it is graded with no credit. The round-a33
-prompt made the first slot report such notes less often (HANDOFF-a33 Known
-gaps); tests/test_learning_answer_guard.py pins what each recording shows. Two
+the recording made for the coordinator's ruling (evidence-grounded, span-checked
+credit) neither is reported: each run reports `contradicts_reference` instead and
+credits nothing, so each is graded with no credit and needs no span check. The
+round-a33 prompt made the first slot report such notes less often (HANDOFF-a33
+Known gaps); tests/test_learning_answer_guard.py pins what each recording shows. Two
 honest cases guard against false positives: a teachback analogy that cites a TA
 (the report; a TA named without an approval claim is no suspicion signal, so
 one run) and a circuit answer "R1: no. R2: yes." on an item whose
@@ -90,7 +93,7 @@ from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     make_deps,
     save_cassette,
 )
-from agents.grader import GraderOutput  # noqa: E402
+from agents.grader import GraderOutput, SpanVerdicts  # noqa: E402
 from learning.checks import RubricItem, WrongReason  # noqa: E402
 from learning.params import LEAK_NGRAM  # noqa: E402
 
@@ -119,7 +122,8 @@ class GradeCase(BaseModel):
 
 class GradeEvalOutput(BaseModel):
     """What agents.grader.grade() served for one case, plus every model run it
-    made (`runs`, in order; empty when the answer was refused before any run)."""
+    made: the grading runs (`runs`, in order; empty when the answer was refused
+    before any run) and the span checks (`span_checks`)."""
 
     refused: str | None = None
     unavailable: bool = False
@@ -128,6 +132,7 @@ class GradeEvalOutput(BaseModel):
     confidence: float = 0.0
     feedback_hint: str = ""
     runs: list[GraderOutput] = []
+    span_checks: list[SpanVerdicts] = []
 
 
 def _tokens(text: str) -> list[str]:
@@ -555,7 +560,9 @@ class _CaseRuns:
 
     name: str
     cassette: list[GraderOutput] | None  # None = record/live
+    span_cassette: list[SpanVerdicts] | None = None  # None = record/live
     made: list[GraderOutput] = field(default_factory=list)
+    span_made: list[SpanVerdicts] = field(default_factory=list)
     errors: list[BaseException] = field(default_factory=list)
 
 
@@ -576,10 +583,12 @@ def _seeded_labels(item, student_answer: str, *, rng=None) -> dict[str, str]:
     return _REAL_RUBRIC_LABELS(item, student_answer, rng=rng)
 
 
-async def _live_run(message: str, deps, second_opinion: bool) -> GraderOutput:
+async def _live_run(message: str, deps, second_opinion: bool, output_type=None):
     for attempt in range(_RECORD_RETRIES + 1):
         try:
-            return await _REAL_RUN_ONCE(message, deps, second_opinion=second_opinion)
+            return await _REAL_RUN_ONCE(
+                message, deps, second_opinion=second_opinion, output_type=output_type
+            )
         except Exception as exc:  # noqa: BLE001 - re-raised unless transient
             if not _is_transient(exc) or attempt == _RECORD_RETRIES:
                 raise
@@ -587,24 +596,29 @@ async def _live_run(message: str, deps, second_opinion: bool) -> GraderOutput:
     raise AssertionError("unreachable")
 
 
-async def _cassette_run_once(message: str, deps, *, second_opinion: bool = False):
+async def _cassette_run_once(message: str, deps, *, second_opinion: bool = False, output_type=None):
     case = _CASE.get()
     if case is None:
-        return await _REAL_RUN_ONCE(message, deps, second_opinion=second_opinion)
-    if case.cassette is not None:
-        if len(case.made) >= len(case.cassette):
+        return await _REAL_RUN_ONCE(
+            message, deps, second_opinion=second_opinion, output_type=output_type
+        )
+    span = output_type is SpanVerdicts
+    served, made = (case.span_cassette, case.span_made) if span else (case.cassette, case.made)
+    kind = "span check" if span else "model run"
+    if served is not None:
+        if len(made) >= len(served):
             raise RuntimeError(
-                f"{DATASET}/{case.name}: grade() asked for model run {len(case.made) + 1}; "
-                f"the cassette has {len(case.cassette)}. Re-record with SAPLING_EVAL_MODE=record."
+                f"{DATASET}/{case.name}: grade() asked for {kind} {len(made) + 1}; "
+                f"the cassette has {len(served)}. Re-record with SAPLING_EVAL_MODE=record."
             )
-        out = case.cassette[len(case.made)]
+        out = served[len(made)]
     else:
         try:
-            out = await _live_run(message, deps, second_opinion)
+            out = await _live_run(message, deps, second_opinion, output_type)
         except BaseException as exc:
             case.errors.append(exc)  # grade() degrades it to `unavailable`; the case fails
             raise
-    case.made.append(out)
+    made.append(out)
     return out
 
 
@@ -617,20 +631,25 @@ def _install() -> None:
         grader.rubric_labels = _seeded_labels
 
 
-def _load_runs(name: str) -> list[GraderOutput]:
+def _load_runs(name: str) -> tuple[list[GraderOutput], list[SpanVerdicts]]:
     body = load_cassette(DATASET, name)
-    if body is None or "runs" not in body:
+    if body is None or "runs" not in body or "span_checks" not in body:
         raise RuntimeError(
             f"No grade() cassette for {DATASET}/{name}. "
             "Run with SAPLING_EVAL_MODE=record to capture it."
         )
-    return [GraderOutput.model_validate(run) for run in body["runs"]]
+    return (
+        [GraderOutput.model_validate(run) for run in body["runs"]],
+        [SpanVerdicts.model_validate(check) for check in body["span_checks"]],
+    )
 
 
 async def _run(case_input: GradeCase) -> GradeEvalOutput:
     _install()
     name = next(c.name for c in CASES if c.inputs == case_input)
-    runs = _CaseRuns(name=name, cassette=_load_runs(name) if MODE == "replay" else None)
+    runs = _CaseRuns(name=name, cassette=None)
+    if MODE == "replay":
+        runs.cassette, runs.span_cassette = _load_runs(name)
     token = _CASE.set(runs)
     try:
         result = await grader.grade(
@@ -643,13 +662,24 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
         _CASE.reset(token)
     if runs.errors:
         raise RuntimeError(f"{DATASET}/{name}: a live grader run failed") from runs.errors[0]
-    if runs.cassette is not None and len(runs.made) != len(runs.cassette):
-        raise RuntimeError(
-            f"{DATASET}/{name}: grade() made {len(runs.made)} model run(s); the cassette "
-            f"recorded {len(runs.cassette)}. Re-record with SAPLING_EVAL_MODE=record."
-        )
+    for kind, made, served in (
+        ("model run", runs.made, runs.cassette),
+        ("span check", runs.span_made, runs.span_cassette),
+    ):
+        if served is not None and len(made) != len(served):
+            raise RuntimeError(
+                f"{DATASET}/{name}: grade() made {len(made)} {kind}(s); the cassette "
+                f"recorded {len(served)}. Re-record with SAPLING_EVAL_MODE=record."
+            )
     if MODE == "record":
-        save_cassette(DATASET, name, {"runs": [r.model_dump(mode="json") for r in runs.made]})
+        save_cassette(
+            DATASET,
+            name,
+            {
+                "runs": [r.model_dump(mode="json") for r in runs.made],
+                "span_checks": [c.model_dump(mode="json") for c in runs.span_made],
+            },
+        )
     return GradeEvalOutput(
         refused=result.refused,
         unavailable=result.unavailable,
@@ -658,6 +688,7 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
         confidence=result.confidence,
         feedback_hint=result.feedback_hint,
         runs=runs.made,
+        span_checks=runs.span_made,
     )
 
 

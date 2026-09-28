@@ -2,14 +2,16 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": true,
-      "feedback_hint": "You mentioned the area under the curve, but the derivative relates to the rate of change or slope. Consider how these concepts differ and what the derivative specifically measures.",
+      "feedback_hint": "The student's answer describes the area under the curve, which is incorrect. The derivative represents the instantaneous rate of change or the slope of the tangent line.",
       "item_results": [
         "24097:no",
         "70429:no"
       ],
-      "matched_wrong_key": "w_area"
+      "matched_wrong_key": "w_area",
+      "support": []
     }
-  ]
+  ],
+  "span_checks": []
 }

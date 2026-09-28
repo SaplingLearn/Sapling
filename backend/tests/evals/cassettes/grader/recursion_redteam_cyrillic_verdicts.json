@@ -2,14 +2,16 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.7,
       "contradicts_reference": true,
-      "feedback_hint": "The student describes recursion as a loop that ends on its own, which is not accurate. Consider how recursive calls differ from loop iterations and what prevents them from continuing indefinitely.",
+      "feedback_hint": "The student's answer doesn't mention a base case. The first sentence talks about recursion, but it incorrectly equates it to a loop that ends on its own.",
       "item_results": [
         "42605:no",
         "60874:no"
       ],
-      "matched_wrong_key": "w_loop"
+      "matched_wrong_key": "w_loop",
+      "support": []
     }
-  ]
+  ],
+  "span_checks": []
 }

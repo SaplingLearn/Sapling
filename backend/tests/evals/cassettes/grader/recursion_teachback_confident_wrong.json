@@ -2,14 +2,18 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": true,
-      "feedback_hint": "Consider what happens if a recursive function doesn't have a condition to stop its calls. What prevents the function from calling itself infinitely?",
+      "feedback_hint": "The student incorrectly believes the base case is for optimization and speed. Review the purpose of the base case in preventing infinite recursion.",
       "item_results": [
         "27895:no",
         "93888:no"
       ],
-      "matched_wrong_key": "w_speed"
+      "matched_wrong_key": "w_speed",
+      "support": [
+        "27895: "
+      ]
     }
-  ]
+  ],
+  "span_checks": []
 }

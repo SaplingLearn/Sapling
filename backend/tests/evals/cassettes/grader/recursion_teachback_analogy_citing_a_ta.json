@@ -9,7 +9,19 @@
         "86701:yes",
         "32600:yes"
       ],
-      "matched_wrong_key": ""
+      "matched_wrong_key": "",
+      "support": [
+        "86701: the base case is what stops the calls",
+        "32600: Without it you would keep calling yourself forever until the stack overflows"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "86701:yes",
+        "32600:yes"
+      ]
     }
   ]
 }

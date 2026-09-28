@@ -9,7 +9,19 @@
         "50387:yes",
         "85826:yes"
       ],
-      "matched_wrong_key": ""
+      "matched_wrong_key": "",
+      "support": [
+        "50387: R1: no.",
+        "85826: R2: yes."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "50387:no",
+        "85826:no"
+      ]
     }
   ]
 }

@@ -9,7 +9,19 @@
         "66871:yes",
         "67101:yes"
       ],
-      "matched_wrong_key": ""
+      "matched_wrong_key": "",
+      "support": [
+        "66871: The base case is what stops it",
+        "67101: otherwise it keeps calling itself and the stack blows up."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "66871:yes",
+        "67101:yes"
+      ]
     }
   ]
 }

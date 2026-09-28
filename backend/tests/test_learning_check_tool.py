@@ -22,6 +22,7 @@ from pydantic_ai.usage import RequestUsage
 from agents import GRADER_LIMITS
 from agents.deps import SaplingDeps
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
+from tests import grader_fakes
 from learning.params import (
     GRADER_ANSWER_MAX_CHARS,
     GRADER_LIMITS as GRADER_LIMITS_SPEC,
@@ -128,31 +129,18 @@ def _message_labels(messages) -> list[str]:
     return []
 
 
-def _as_labelled(payload: dict, messages) -> dict:
-    """A fake grader answers per RUBRIC ITEM line, as a model does: a scripted
-    "r<n>" verdict goes to the n-th label the message shows (spec §13 A33: every
-    grading call labels the rubric items afresh)."""
-    labels = _message_labels(messages)
-    results = []
-    for entry in payload.get("item_results", []):
-        rid, _, verdict = entry.partition(":")
-        n = int(rid[1:]) if re.fullmatch(r"r\d+", rid) else 0
-        results.append(f"{labels[n - 1] if 0 < n <= len(labels) else rid}:{verdict}")
-    return {**payload, "item_results": results}
+# A fake grader answers per RUBRIC ITEM line, as a model does: a scripted "r<n>"
+# verdict goes to the n-th label the message shows (spec §13 A33: every grading
+# call labels the rubric items afresh), with the whole answer as the support
+# quote of each item it credits; the span check grade() then makes agrees
+# (grader-guard round a33; tests/grader_fakes.py). calls["n"] counts grading
+# runs, calls["spans"] span checks.
+_as_labelled = grader_fakes.labelled
 
 
 def _scripted_grader(outputs: list[dict]):
     """A FunctionModel that emits each dict in turn through the output tool."""
-    calls = {"n": 0}
-
-    def handler(messages, info):
-        payload = _as_labelled(outputs[min(calls["n"], len(outputs) - 1)], messages)
-        calls["n"] += 1
-        return ModelResponse(
-            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=payload)]
-        )
-
-    return FunctionModel(handler), calls
+    return grader_fakes.scripted_grader(outputs)
 
 
 _LABELS = {"r1": "48213", "r2": "73920"}  # what a grading call's fresh labels look like
@@ -292,8 +280,11 @@ def test_grade_returns_all_yes_and_records_usage(monkeypatch):
     assert res.unavailable is False and res.all_yes is True
     assert res.item_results == {"r1": True, "r2": True}
     assert res.low_confidence is False and res.backend == "gemini"
-    assert calls["n"] == 1
-    assert recorded == [{"feature": "tutor", "task": "grader", "user_id": "u1"}]
+    assert calls["n"] == 1 and calls["spans"] == 1  # the credit's span check (round a33)
+    assert recorded == [
+        {"feature": "tutor", "task": "grader", "user_id": "u1"},
+        {"feature": "tutor", "task": GRADER_SECOND_OPINION_SLOT, "user_id": "u1"},
+    ]
 
 
 def test_grade_flags_low_confidence(monkeypatch):
@@ -343,7 +334,7 @@ def test_grade_second_opinion_runs_on_grader_second_slot(monkeypatch):
     async def _run(message, **kw):
         seen.append((message, kw))
         conf = GRADER_SECOND_OPINION_CONFIDENCE / 2 if len(seen) == 1 else 0.9
-        return SimpleNamespace(output=g.GraderOutput(**_good(conf)))
+        return SimpleNamespace(output=g.GraderOutput(**_good(conf), support=[]))
 
     tasks = []
     monkeypatch.setattr(g.grader_agent, "run", _run)
@@ -399,7 +390,7 @@ def test_grade_degrades_when_the_second_opinion_fails(monkeypatch, caplog):
         calls.append(kw)
         if len(calls) == 1:
             return SimpleNamespace(
-                output=g.GraderOutput(**_good(GRADER_SECOND_OPINION_CONFIDENCE / 2))
+                output=g.GraderOutput(**_good(GRADER_SECOND_OPINION_CONFIDENCE / 2), support=[])
             )
         raise UnexpectedModelBehavior("garbage")
 
@@ -414,10 +405,14 @@ def test_grade_degrades_when_the_second_opinion_fails(monkeypatch, caplog):
 
 def _billed_grader(payloads: list[dict], usages: list[RequestUsage | None] | None = None):
     """A FunctionModel that emits each payload in turn through the output tool;
-    response i is billed usages[i] (None or missing: the FunctionModel estimate)."""
-    calls = {"n": 0}
+    response i is billed usages[i] (None or missing: the FunctionModel estimate).
+    A span check (round a33) agrees and is counted in calls["spans"]."""
+    calls = {"n": 0, "spans": 0}
 
     def handler(messages, info):
+        if grader_fakes.is_span_check(info):
+            calls["spans"] += 1
+            return grader_fakes.reply(info, grader_fakes.span_verdicts(messages))
         i = calls["n"]
         calls["n"] += 1
         payload = _as_labelled(payloads[min(i, len(payloads) - 1)], messages)
@@ -527,7 +522,8 @@ def test_an_oversized_answer_is_refused_before_any_model_call(monkeypatch, caplo
         )
     assert at_limit.unavailable is False and at_limit.refused is None
     assert over.refused == "too_long" and over.unavailable is True and over.all_yes is False
-    assert calls["n"] == 1 and [row["task"] for row in rows] == ["grader"]
+    # the answer at the limit is graded: its credit costs one span check (round a33)
+    assert calls["n"] == 1 and [row["task"] for row in rows] == ["grader", "grader_second"]
     [(event_type, kw)] = events
     assert event_type == "learn.answer_refused" and kw["payload"]["reason"] == "too_long"
     assert kw["payload"]["answer_chars"] == GRADER_ANSWER_MAX_CHARS + 1

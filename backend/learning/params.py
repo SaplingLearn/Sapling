@@ -187,6 +187,13 @@ NUMERIC_GATE_EDGE_SLACK = 1e-12
 # length a GRADER_ANSWER_MAX_CHARS answer holds under 5% of them, so a redraw
 # stays rare. Not a spec value.
 GRADER_RUBRIC_LABEL_CHARS = 5
+# † PKG-a33 (grader-guard round a33, the coordinator's ruling; spec §13 A33): a
+# credited rubric item needs a quote from the answer (GraderOutput.support) with
+# at least this many letters and digits — or the whole answer, when that is
+# shorter ("12") — before the span check may confirm it
+# (learning/answer_guard.verified_support). A lone "2/2" or "r1" supports
+# nothing; "is 12" and "slope" do. Not a spec value.
+GRADER_SUPPORT_MIN_CHARS = 4
 # † PKG-05 reopen (spec §3.4, §13 A33): a refusal is never a skip, and never the
 # first answer an honest student loses. The route asks again; the Nth refusal of
 # the same item (the tutor's check, PKG-07; the probe, PKG-08) records it as idk.
