@@ -357,6 +357,16 @@ describe("the product_analytics admin flag (#620)", () => {
     expect(ph.identify.mock.calls).toEqual([["3f1c-uuid"]]);
     expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
   });
+
+  it("never reports on while the flag is off, whatever the account says (#620)", async () => {
+    setProductAnalyticsFlag(false);
+    await signIn("3f1c-uuid", false); // the account says on
+    expect(getAnalyticsState()).toBe("unavailable");
+    setProductAnalyticsFlag(true);
+    expect(getAnalyticsState()).toBe("on");
+    setProductAnalyticsFlag(false); // an admin switches it off mid-visit
+    expect(getAnalyticsState()).toBe("unavailable");
+  });
 });
 
 describe("stale account reads", () => {

@@ -253,7 +253,9 @@ export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
 
 /**
  * What the Settings switch shows, and what the gate lets through:
- * - `unavailable`: this build runs no analytics (no key, local/test mode)
+ * - `unavailable`: analytics is not running here at all — this build runs
+ *   none (no key, local/test mode), or the admin `product_analytics` flag is
+ *   off for this student (#620; also while it has not loaded yet)
  * - `browser_blocked`: Do Not Track / Global Privacy Control is on
  * - `unknown`: nobody signed in, or their account answer has not arrived (or
  *   the read failed) — nothing is captured, the switch is disabled
@@ -342,7 +344,7 @@ export function isAnalyticsConfigured(): boolean {
 }
 
 export function getAnalyticsState(): AnalyticsState {
-  if (!isAnalyticsConfigured()) return "unavailable";
+  if (!isAnalyticsConfigured() || !productAnalyticsFlag) return "unavailable";
   if (browserSignalsDoNotTrack()) return "browser_blocked";
   if (account === "off") return offUnsaved ? "off_unsaved" : "off";
   if (account === "on" && loadFailed && !client) return "on_not_running";

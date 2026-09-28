@@ -35,6 +35,9 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
     // synchronously in the effect — react-hooks/set-state-in-effect.
     void (async () => {
       setFlags(null);
+      // The previous user's analytics flag must not stay in force while this
+      // user's flags are in flight: off until this refetch settles.
+      setProductAnalyticsFlag(false);
       let f: FlagMap = {};
       let ok = true;
       if (who) {

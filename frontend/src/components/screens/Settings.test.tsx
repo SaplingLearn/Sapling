@@ -240,6 +240,16 @@ describe("Settings → Data: product analytics opt-out", () => {
     expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/Do Not Track/);
   });
 
+  it("shows analytics as not running while the admin flag is off (#620)", async () => {
+    startAnalytics(false); // the account says on
+    setProductAnalyticsFlag(false);
+    const toggle = await openDataTab();
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("settings-analytics-note")).toHaveTextContent(/isn't running/);
+    expect(screen.getByTestId("settings-analytics-note")).not.toHaveTextContent(/Saved to your account/);
+  });
+
   it("shows the account's opt-out", async () => {
     startAnalytics(true);
     const toggle = await openDataTab();
