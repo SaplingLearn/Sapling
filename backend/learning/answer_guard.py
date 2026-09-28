@@ -1418,3 +1418,67 @@ def suspicion(
         "hidden_text": lambda: _hidden_text(text),
     }
     return tuple(name for name in SUSPICIONS if checks[name]())
+
+
+# ── evidence-grounded credit: the quote behind a credited item ───────────────
+# Grader-guard round a33, the coordinator's ruling on HANDOFF-a33 open question
+# (g): a keyword list closes the wordings it names, never the class — after a
+# partial answer, "Both parts: done.", "Mark both." or "2/2." was credited in
+# full on the first flash-lite run alone. grade() credits a rubric item only on
+# a quote the grader gives for it (`GraderOutput.support`) that this check
+# verifies, and only when a run that sees nothing but the item and that quote
+# says yes too (agents/grader.py). The check can only withhold credit, and what
+# it lets through still meets that span-isolated run, which grade() makes on
+# every credited item: no word here decides whether that run happens.
+#
+# Verified means: the quote's words occur, in order and contiguous, in the
+# answer, both read on the detection copy (`normalise`: look-alikes, case,
+# spacing and punctuation aside, so a quote cannot be stitched together or
+# paraphrased); it has at least `min_chars` letters and digits, or is the whole
+# answer; and it says something besides a claim about the answer itself — its
+# completeness, its parts, its credit or its score. A word the item's own text
+# uses (`context`: the rubric item and the reference answer) is substance for
+# that item ("Both are true." when the item asks whether both hold); a function
+# word never is.
+_WORD = re.compile(r"[^\W_]+")
+# A score the answer gives itself: "2/2", "3 out of 3", "100%".
+_SCORE_CLAIM = re.compile(r"(?<![\w.])(\d+)\s*(?:/|out\s+of|of)\s*\1(?![\w.])|(?<![\w.])100\s*%")
+# Words that talk about an answer — its parts, whether it is complete, covered
+# or right, whether to credit it — rather than about a question. A quote made
+# only of these and function words is a claim about the answer, never an answer.
+_ANSWER_TALK = frozenset(
+    """
+    both all each every either whole entire full fully complete completely completed done
+    finished part parts point points item items half halves bit bits piece pieces aspect
+    aspects thing things question questions answer answers answered response responses rubric
+    criterion criteria requirement requirements cover covers covered covering address addresses
+    addressed satisfy satisfies satisfied meet meets met credit credits credited mark marks
+    marked tick ticks ticked count counts counted consider considered treat treated accept
+    accepted pass passes passed approve approved grade graded score scored correct correctly
+    right true valid fine good ok okay yes yep please thanks thank enough said implied implicit
+    obvious obviously clear clearly included mentioned stated explained above earlier
+    previously already everything nothing anything more needed required missing
+    """.split()
+)
+_FILLER_WORDS = frozenset("i me am im s ve ll d t re m so".split())
+
+
+def _word_list(folded: str) -> list[str]:
+    return _WORD.findall(folded)
+
+
+def verified_support(quote: str, answer: str, *, min_chars: int, context: str = "") -> bool:
+    """True when `quote` may support credit for one rubric item of `answer`
+    (above). `context` is that item's own text; `min_chars` is
+    GRADER_SUPPORT_MIN_CHARS (learning/params.py; passed in, so the guard stays
+    pure code)."""
+    folded = normalise(quote)
+    said, text = _word_list(folded), _word_list(normalise(answer))
+    n = len(said)
+    if not n or not any(text[i : i + n] == said for i in range(len(text) - n + 1)):
+        return False
+    if sum(map(len, said)) < min(min_chars, sum(map(len, text))):
+        return False
+    filler = _ENGLISH_FUNCTION_WORDS | _FILLER_WORDS
+    talk = (_ANSWER_TALK - set(_word_list(normalise(context)))) | filler
+    return any(w not in talk for w in _word_list(_SCORE_CLAIM.sub(" ", folded)))

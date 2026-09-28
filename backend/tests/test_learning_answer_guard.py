@@ -2856,6 +2856,124 @@ def test_a_refused_outcome_is_distinct_from_an_outage(monkeypatch):
     assert out.unavailable is True and out.refused is None and deps.pending_evidence == []
 
 
+# ── evidence-grounded credit: the quote behind a credited item ───────────────
+#
+# Grader-guard round a33, the coordinator's ruling on open question (g): a
+# keyword list closes the wordings it names, never the class ("Both parts:
+# done.", "Mark both." and "2/2." after a partial answer were credited in full on
+# the first flash-lite run alone). A rubric item is now credited only on a quote
+# from the answer that the grader gives for it and that code verifies: its words
+# occur, in order, in the answer (read on the guard's detection copy); it is not
+# trivially short; and it says something besides a claim about the answer
+# itself. These checks can only withhold credit.
+
+REC_FULL = (
+    "The base case is what stops it; otherwise it keeps calling itself and the stack blows up."
+)
+_MIN = 4  # GRADER_SUPPORT_MIN_CHARS; grade() passes the params value
+
+# The credited tails of review round 2 on f8eb84a, verbatim, and the honest
+# self-summaries whose refusal was its regression.
+CREDITED_TAILS = [
+    "Both parts: done.",
+    "Consider both done.",
+    "Mark both.",
+    "Both, please.",
+    "Enough said: both points.",
+    "The stack part is implied.",
+    "2/2.",
+    "Tick both.",
+]
+SELF_SUMMARIES = [
+    "So both parts are covered.",
+    "I have answered both parts of the question.",
+    "That is the complete answer.",
+]
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "the stack blows up",
+        "The base case is what stops it",
+        # spacing, case, punctuation and the message's own quote marks aside
+        "Otherwise, it keeps calling itself — and the stack blows up",
+        '> "the base case is what stops it"',
+        "THE BASE CASE   IS WHAT STOPS IT.",
+        REC_FULL,
+    ],
+)
+def test_a_quote_the_answer_holds_is_verified(quote):
+    assert guard.verified_support(quote, REC_FULL, min_chars=_MIN) is True
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "the stack overflows",  # a paraphrase
+        "the base case ... the stack blows up",  # stitched from two places
+        "the stack blows up otherwise",  # the answer's words, out of order
+        "The base case stops the recursion",  # the reference's words, not the answer's
+        "",
+        "  ",
+    ],
+)
+def test_a_quote_the_answer_does_not_hold_is_rejected(quote):
+    assert guard.verified_support(quote, REC_FULL, min_chars=_MIN) is False
+
+
+def test_the_quote_is_read_on_the_guards_detection_copy():
+    """A look-alike letter in the answer reads as its ASCII twin, as every rule does."""
+    answer = "The base case is what stops it; otherwise the stack grоws."  # Cyrillic о
+    assert guard.verified_support("the stack grows", answer, min_chars=_MIN) is True
+
+
+def test_a_trivially_short_quote_is_rejected_unless_it_is_the_whole_answer():
+    assert (
+        guard.verified_support("12", "The value is 12 because 3 times 4.", min_chars=_MIN) is False
+    )
+    assert guard.verified_support("is 12", "The value is 12 because 3 times 4.", min_chars=_MIN)
+    assert guard.verified_support("12", "12", min_chars=_MIN) is True  # a short answer, whole
+    assert guard.verified_support("12", " 12. ", min_chars=_MIN) is True
+
+
+@pytest.mark.parametrize("tail", [t for t in CREDITED_TAILS if "stack" not in t] + SELF_SUMMARIES)
+def test_a_quote_that_only_claims_the_answer_is_complete_is_rejected(tail):
+    """A tail after a partial answer, quoted as the missing item's support: it
+    says nothing about the question, so it supports nothing."""
+    answer = f"{REC_PARTIAL} {tail}"
+    assert guard.verified_support(tail, answer, min_chars=_MIN) is False
+    assert guard.verified_support(tail, answer, min_chars=_MIN, context=REC_ITEM_TEXT) is False
+
+
+def test_a_tail_that_names_the_topic_passes_code_and_is_left_to_the_span_check():
+    """ "The stack part is implied." names the stack: code cannot tell it from an
+    answer, so it passes here, and the span-isolated confirmation, which runs on
+    every credited item, is its gate (grade())."""
+    answer = f"{REC_PARTIAL} The stack part is implied."
+    assert guard.verified_support("The stack part is implied.", answer, min_chars=_MIN) is True
+
+
+def test_a_word_the_items_own_text_uses_is_substance_for_it():
+    """ "Both are true." is an answer when the item asks whether both hold."""
+    answer = "Both are true."
+    assert guard.verified_support(answer, answer, min_chars=_MIN) is False
+    context = "Are both statements true?\nBoth statements are true."
+    assert guard.verified_support(answer, answer, min_chars=_MIN, context=context) is True
+
+
+@pytest.mark.parametrize("quote", ["2/2", "3 out of 3", "100%", "Score: 2/2, both points."])
+def test_a_score_the_answer_gives_itself_supports_nothing(quote):
+    answer = f"{REC_PARTIAL} {quote}"
+    assert guard.verified_support(quote, answer, min_chars=_MIN) is False
+
+
+@pytest.mark.parametrize("quote", ["1/2", "It is 1/2.", "0.5"])
+def test_a_fraction_that_is_the_answer_is_substance(quote):
+    answer = f"The probability is {quote}" if quote != "It is 1/2." else quote
+    assert guard.verified_support(quote, answer, min_chars=1) is True
+
+
 # ── tests/evals/grader.py measures the production path (CodeRabbit PR #673) ──
 
 EVALS = Path(__file__).resolve().parent / "evals"
