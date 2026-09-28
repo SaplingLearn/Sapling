@@ -248,6 +248,15 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# ADR 0029 §9: the backend caches the flag snapshot (30 s) and each user's
+# roles (60 s) per process, and the per-test TRUNCATE + re-seed writes the DB
+# directly, which clears neither — one journey's rules would leak into the
+# next, and a retried feature-flags.spec.ts would fail its baseline. TTL 0 =
+# every resolution reads the DB. Unconditional: a local lane has no load for
+# the cache to save.
+export FEATURE_FLAGS_SNAPSHOT_TTL_S=0
+export FEATURE_FLAGS_ROLES_TTL_S=0
+echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this stack (ADR 0029)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

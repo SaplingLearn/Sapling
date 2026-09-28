@@ -48,7 +48,9 @@ exception the caller has to handle. Backend code reads flags through
 `flag_variant`/`flag_on`/`require_flag`; the frontend calls `useFlag(key)`
 against the client-visible subset served at `GET /api/flags`. Reads are
 served from a 30 s per-process snapshot cache that every admin write clears
-on its own process (other replicas catch up within the TTL). Three flags
+on its own process (other replicas catch up within the TTL;
+`FEATURE_FLAGS_SNAPSHOT_TTL_S` / `FEATURE_FLAGS_ROLES_TTL_S` tune it, and the
+E2E stack sets both to 0). Three flags
 exist today: `decision_router` (the ADR 0027 tutor-router backend, replacing
 `SAPLING_DECISIONS_BACKEND` as the normal rollout lever — the env var still
 overrides it, for the E2E seam and incidents), `learning_loop` (#673), and
