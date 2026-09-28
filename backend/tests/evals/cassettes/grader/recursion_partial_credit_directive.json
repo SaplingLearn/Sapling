@@ -1,0 +1,26 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "You have correctly identified the purpose of the base case. Ensure that all aspects of the reference answer are addressed in future responses.",
+      "item_results": [
+        "70239:yes",
+        "35748:yes"
+      ],
+      "matched_wrong_key": ""
+    },
+    {
+      "addresses_grader": true,
+      "confidence": 0.7,
+      "contradicts_reference": false,
+      "feedback_hint": "Consider what happens if there is no base case.",
+      "item_results": [
+        "70239:yes",
+        "35748:no"
+      ],
+      "matched_wrong_key": ""
+    }
+  ]
+}
