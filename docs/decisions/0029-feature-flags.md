@@ -56,13 +56,17 @@ mechanism instead, before that pattern repeats a third time.
    misleading for the page whose job is to diagnose that same store.
 4. **A 30 s per-process snapshot cache, cleared on every write.**
    `_get_snapshot` holds one `(flags, targets)` snapshot per process for
-   `SNAPSHOT_TTL_S = 30`; every admin mutation calls
+   30 s (`FEATURE_FLAGS_SNAPSHOT_TTL_S`); every admin mutation calls
    `clear_feature_flags_cache()` (the #98 pattern) so the writer's own
-   process sees its change immediately. Other replicas still serve the old
-   snapshot for up to 30 s — accepted staleness, not a bug (§ Consequences).
-   User-role membership is cached separately for 60 s
-   (`clear_user_roles_cache`), since a role assignment changes far less
-   often than a flag value.
+   process sees its change immediately. Each clear bumps a generation, and a
+   read that was already in flight when it landed returns its answer but
+   does not cache it, so a write can't be papered over by a stale fill. Other
+   replicas still serve the old snapshot for up to 30 s — accepted
+   staleness, not a bug (§ Consequences). User-role membership is cached
+   separately for 60 s (`FEATURE_FLAGS_ROLES_TTL_S`; `clear_user_roles_cache`
+   on assign/revoke for that user, and for everyone on a role update or
+   delete, since `display_priority` rides in the cached tuple). Both TTLs
+   are read at call time and `0` means "always read the DB".
 5. **No PostHog flags.** PostHog ships its own flag product; we don't use
    it here. Two reasons: privacy (a flag evaluation is itself an event, and
    student cohort membership by flag is exactly the kind of profiling ADR
@@ -106,17 +110,22 @@ mechanism instead, before that pattern repeats a third time.
    `backend/tests/integration/conftest.py::_TRUNCATE_DENYLIST` and
    `frontend/e2e/support/db.ts::TRUNCATE_DENYLIST` omit them on purpose).
    They are restored instead: `db/seed_local_rich.py::seed_feature_flags`
-   re-upserts the `product_analytics=on` baseline after every reset. This
-   keeps flag state reproducible per test (a journey that flips a flag mid
-   suite can't leak into the next one) while still exercising the exact
-   fail-closed path a genuinely empty table would hit, rather than special
-   casing the tables as immutable fixtures.
+   re-upserts the `product_analytics=on` baseline after every reset. The
+   reset writes the DB directly, so it cannot clear the backend's
+   per-process snapshot or roles cache: on its own it would leave the
+   backend answering from the previous journey's rules for up to 30 s (and a
+   retried `feature-flags.spec.ts` would fail its "off" baseline).
+   `scripts/e2e-up.sh` therefore exports `FEATURE_FLAGS_SNAPSHOT_TTL_S=0`
+   and `FEATURE_FLAGS_ROLES_TTL_S=0`, so the E2E backend resolves every flag
+   from the DB. Together that keeps flag state reproducible per test while
+   still exercising the exact fail-closed path a genuinely empty table would
+   hit, rather than special casing the tables as immutable fixtures.
 
 ## Consequences
 
 - **Up to 30 s of staleness on other replicas.** An admin's change is live
   on the process that made it immediately, but a different backend replica
-  can keep answering with the old variant for up to `SNAPSHOT_TTL_S`. This
+  can keep answering with the old variant for up to the snapshot TTL. This
   is judged acceptable for the kind of change flags gate here (rollouts,
   kill switches for non-critical paths); nothing time-sensitive should be
   built assuming sub-second propagation.
