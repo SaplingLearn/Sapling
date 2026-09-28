@@ -121,6 +121,12 @@ function FlagEditor({ flag, roles, onSaved }: {
   }, [flag.key, def, pct, rv, onSaved, toast]);
   const saveConfirm = useConfirm(actuallySave);
 
+  // Shown only while the Save button is armed (spec §7: the confirm step
+  // must state the scope of a default/rollout change before it applies).
+  const rolloutAfter = pct > 0 ? `${pct}% ${rv ?? "…"}` : `${pct}%`;
+  const saveScopeText = `Default ${flag.default_variant} → ${def}; rollout ${flag.rollout_percent}% → ${rolloutAfter}. `
+    + `Applies to every student without a user or role rule.`;
+
   const addRule = async () => {
     if (!ruleId) return;
     try {
@@ -200,6 +206,12 @@ function FlagEditor({ flag, roles, onSaved }: {
           {saveConfirm.armed ? "Click again to save" : "Save"}
         </button>
       </div>
+
+      {saveConfirm.armed && (
+        <div data-testid={`flag-save-scope-${flag.key}`} style={{ fontSize: 12, color: "var(--warn)" }}>
+          {saveScopeText}
+        </div>
+      )}
 
       <div>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)", marginBottom: 6 }}>Rules</div>
