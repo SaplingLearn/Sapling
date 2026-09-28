@@ -20,11 +20,15 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 from scripts.lock_constraints import (
+    CPU_TORCH,
     LockedPin,
     constraints_text,
+    cpu_build_problems,
     cuda_distributions,
     find_drift,
     installed_pin,
+    installed_pins,
+    main,
     parse_lock,
 )
 from tests.dependency_manifest import BACKEND, OCR_STACK, lock_pins, read, requirements
@@ -129,9 +133,25 @@ def _is_constrained(args: list[str]) -> bool:
     return any(a == "-c" and args[i + 1 : i + 2] == [_CONSTRAINTS] for i, a in enumerate(args))
 
 
-def _is_cpu_torch_step(args: list[str]) -> bool:
+def _cpu_index_packages(args: list[str]) -> list[str] | None:
+    """Canonical names installed by a pip install whose ONLY index is the CPU one.
+
+    None for any other install. `--extra-index-url` does not count: it keeps
+    PyPI in play, and PyPI's Linux torch / torchvision are the CUDA builds.
+    """
+    only_cpu_index = any(
+        (a == "--index-url" and args[i + 1 : i + 2] == [_TORCH_INDEX])
+        or a == f"--index-url={_TORCH_INDEX}"
+        for i, a in enumerate(args)
+    )
+    if not only_cpu_index or any(a.startswith("--extra-index-url") for a in args):
+        return None
     packages = [a for a in args if not a.startswith("-") and a != _TORCH_INDEX]
-    return _TORCH_INDEX in args and packages == ["torch>=2.5,<3"]
+    return [canonicalize_name(Requirement(p).name) for p in packages]
+
+
+def _is_cpu_torch_step(args: list[str]) -> bool:
+    return "torch" in (_cpu_index_packages(args) or [])
 
 
 def _unconstrained_installs(text: str) -> list[list[str]]:
@@ -164,21 +184,44 @@ def test_torch_is_installed_once_from_the_cpu_index():
     assert len([a for a in _installs(_DOCKERFILE) if _is_cpu_torch_step(a)]) == 1
 
 
-def test_constraints_come_from_the_lock_and_pin_the_installed_torch():
-    """Without the torch pin, the constrained install may backtrack onto a PyPI torch (CUDA on Linux)."""
+def test_torchvision_is_installed_with_torch_from_the_cpu_index():
+    """#700: left to the constrained step, torchvision came from PyPI as the CUDA
+    build, next to the CPU torch, and `torchvision::nms` did not exist.
+
+    Same install as torch, so pip resolves the torchvision built for that torch.
+    The torch range stays; torchvision is left to that resolution, not pinned by hand.
+    """
+    torch_steps = [a for a in _installs(_DOCKERFILE) if _is_cpu_torch_step(a)]
+    assert [sorted(_cpu_index_packages(a)) for a in torch_steps] == [sorted(CPU_TORCH)]
+    packages = [a for a in torch_steps[0] if not a.startswith("-") and a != _TORCH_INDEX]
+    assert "torch>=2.5,<3" in packages
+
+
+def _pinned(command: list[str]) -> list[str]:
+    """The distributions a `lock_constraints.py pin ... >> constraints` command pins."""
+    if command[:3] != ["python", _SCRIPT, "pin"] or command[-2:] != [">>", _CONSTRAINTS]:
+        return []
+    return command[3:-2]
+
+
+def test_constraints_come_from_the_lock_and_pin_the_installed_torch_pair():
+    """Without the pins, the constrained install may backtrack onto a PyPI torch
+    or torchvision (CUDA on Linux). #700 was the torchvision half of that."""
     cmds = _run_commands(_DOCKERFILE)
     derive = _positions(
         cmds,
         lambda c: c == ["python", _SCRIPT, "constraints", "requirements.lock", ">", _CONSTRAINTS],
     )
-    pin = _positions(cmds, lambda c: c == ["python", _SCRIPT, "pin", "torch", ">>", _CONSTRAINTS])
     torch_step = _positions(cmds, _install_matching(_is_cpu_torch_step))
     constrained = _positions(cmds, _install_matching(_is_constrained))
-    assert derive and pin and torch_step and constrained
-    assert torch_step[0] < pin[0], "torch must be installed before its version is pinned"
-    assert derive[0] < pin[0] < constrained[0], (
-        "append the torch pin after the lock, before any constrained install"
-    )
+    assert derive and torch_step and constrained
+    for name in CPU_TORCH:
+        pin = _positions(cmds, lambda c, name=name: name in _pinned(c))
+        assert pin, f"{name} is never pinned into {_CONSTRAINTS}"
+        assert torch_step[0] < pin[0], f"{name} must be installed before its version is pinned"
+        assert derive[0] < pin[0] < constrained[0], (
+            f"append the {name} pin after the lock, before any constrained install"
+        )
 
 
 def test_verify_and_pip_check_run_after_the_last_install():
@@ -188,6 +231,16 @@ def test_verify_and_pip_check_run_after_the_last_install():
     pip_check = _positions(cmds, lambda c: c == ["pip", "check"])
     assert verify and verify[-1] > last_install
     assert pip_check and pip_check[-1] > last_install
+
+
+def test_cpu_torch_smoke_runs_after_the_last_install():
+    """#700: the PyPI torchvision next to the CPU torch passes `verify` (no nvidia-*
+    dists) and `pip check`, then fails the moment an operator is loaded, so the
+    build must actually run one (torchvision.ops.nms)."""
+    cmds = _run_commands(_DOCKERFILE)
+    last_install = max(_positions(cmds, lambda c: _pip_install_args(c) is not None))
+    smoke = _positions(cmds, lambda c: c == ["python", _SCRIPT, "cpu-torch"])
+    assert smoke and smoke[-1] > last_install
 
 
 def test_torch_layer_is_cached_ahead_of_the_lock():
@@ -361,6 +414,45 @@ def test_pin_emits_the_installed_local_version():
     assert installed_pin("torch", {"torch": "2.14.0+cpu"}.get) == "torch==2.14.0+cpu"
     with pytest.raises(ValueError):
         installed_pin("torch", {}.get)
+
+
+def test_pin_covers_several_distributions_or_none():
+    installed = {"torch": "2.14.0+cpu", "torchvision": "0.29.0+cpu"}
+    assert installed_pins(["torch", "torchvision"], installed.get) == [
+        "torch==2.14.0+cpu",
+        "torchvision==0.29.0+cpu",
+    ]
+    with pytest.raises(ValueError):
+        installed_pins(["torch", "torchvision"], {"torch": "2.14.0+cpu"}.get)
+
+
+def test_pin_command_prints_one_line_per_distribution(capsys):
+    assert main(["lock_constraints.py", "pin", "packaging", "pytest"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert [ln.split("==")[0] for ln in lines] == ["packaging", "pytest"]
+
+
+@pytest.mark.parametrize(
+    "installed, problems",
+    [
+        ({"torch": "2.9.0+cpu", "torchvision": "0.24.0+cpu"}, []),
+        # The #700 image: CPU torch, PyPI (CUDA) torchvision.
+        (
+            {"torch": "2.9.0+cpu", "torchvision": "0.24.0"},
+            ["torchvision 0.24.0 is not a +cpu build"],
+        ),
+        (
+            {"torch": "2.9.0+cu130", "torchvision": "0.24.0+cu130"},
+            [
+                "torch 2.9.0+cu130 is not a +cpu build",
+                "torchvision 0.24.0+cu130 is not a +cpu build",
+            ],
+        ),
+        ({"torch": "2.9.0+cpu"}, ["torchvision is not installed"]),
+    ],
+)
+def test_cpu_build_problems(installed, problems):
+    assert cpu_build_problems(installed.get) == problems
 
 
 def test_cuda_distributions_are_detected():

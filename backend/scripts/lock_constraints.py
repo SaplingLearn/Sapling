@@ -11,11 +11,12 @@ CI still pinned 0.0.66. pydantic-ai then swallowed a TypeError and every
 
 The Dockerfile uses this script like this:
 
-    pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.5,<3"
+    pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.5,<3" torchvision
     python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt
-    python scripts/lock_constraints.py pin torch >> /tmp/lock-constraints.txt
+    python scripts/lock_constraints.py pin torch torchvision >> /tmp/lock-constraints.txt
     pip install -c /tmp/lock-constraints.txt -r requirements.txt
     python scripts/lock_constraints.py verify requirements.lock
+    python scripts/lock_constraints.py cpu-torch
 
 `constraints` turns the lock into a hash-free pip constraints file. pip
 switches to hash-checking mode as soon as any constraint carries a `--hash`,
@@ -27,14 +28,27 @@ the build fails. The OCR stack's OTHER dependencies (numpy, scipy,
 huggingface-hub, tokenizers, safetensors, opencv, ...) are not in the lock and
 still float.
 
-`pin torch` prints `torch==<installed version>` (e.g. `torch==2.14.0+cpu`).
-Appending it to the constraints stops the constrained install from
-backtracking onto a PyPI torch, which on Linux is the CUDA build.
+`pin torch torchvision` prints one `name==<installed version>` line per
+distribution (e.g. `torch==2.14.0+cpu`). Appending them to the constraints
+stops the constrained install from backtracking onto a PyPI torch or
+torchvision, which on Linux are the CUDA builds. torchvision needs the pin as
+much as torch does (#700): docling depends on it, so without its own CPU-index
+install and pin the constrained step pulled the PyPI (CUDA) torchvision in
+next to the CPU torch, and `torchvision::nms` did not exist at runtime.
 
 `verify` runs after the last install. It fails the build if any installed
 package that the lock pins is at a different version, which catches anything
 the constrained resolve did not touch. It also fails the build if any
 `nvidia-*` or `cuda-*` distribution is installed, i.e. if CUDA got in anyway.
+
+`cpu-torch` also runs after the last install (#700). It fails the build unless
+torch and torchvision are both `+cpu` builds and `torchvision.ops.nms` runs on
+a tiny tensor. The PyPI torchvision next to the CPU torch passes every other
+check: it brings no nvidia-* distribution, and its `torch==<version>`
+requirement is satisfied by the `+cpu` torch, so `verify` and `pip check` are
+both clean. It then raises `operator torchvision::nms does not exist` (at
+`import torchvision` for torch 2.14 / torchvision 0.29), so docling's layout
+model cannot load and every scanned PDF silently fell back to tesseract.
 
 `constraints` and `pin` use only the standard library, because they run before
 requirements.txt is installed. `verify` runs after it and needs `packaging`,
@@ -116,6 +130,11 @@ def installed_pin(name: str, version_of: Callable[[str], Optional[str]]) -> str:
     return f"{name}=={version}"
 
 
+def installed_pins(names: Iterable[str], version_of: Callable[[str], Optional[str]]) -> list[str]:
+    """`installed_pin` for each name; ValueError if any is missing."""
+    return [installed_pin(name, version_of) for name in names]
+
+
 def find_drift(
     pins: list[LockedPin],
     version_of: Callable[[str], Optional[str]],
@@ -149,6 +168,68 @@ def cuda_distributions(names: Iterable[str]) -> list[str]:
     from packaging.utils import canonicalize_name
 
     return sorted({n for n in map(canonicalize_name, names) if n.startswith(_CUDA_PREFIXES)})
+
+
+# The torch distributions the image installs from the CPU wheel index (#700).
+CPU_TORCH = ("torch", "torchvision")
+
+
+def cpu_build_problems(version_of: Callable[[str], Optional[str]]) -> list[str]:
+    """Why the installed torch / torchvision are not both CPU wheels, if they are not.
+
+    The CPU index tags its wheels with the `+cpu` local version. The PyPI Linux
+    wheels carry no local version and are the CUDA builds.
+    """
+    from packaging.version import Version
+
+    problems = []
+    for name in CPU_TORCH:
+        version = version_of(name)
+        if version is None:
+            problems.append(f"{name} is not installed")
+        elif Version(version).local != "cpu":
+            problems.append(f"{name} {version} is not a +cpu build")
+    return problems
+
+
+def nms_keeps() -> list[int]:
+    """Run torchvision.ops.nms on three boxes; the CPU build keeps [0, 2].
+
+    Box 1 overlaps box 0 (IoU ~0.68) and scores lower, so it is suppressed.
+    A torchvision built for another torch raises
+    `operator torchvision::nms does not exist` here, either at the import or
+    at the call depending on the version pair.
+    """
+    import torch
+    from torchvision.ops import nms
+
+    boxes = torch.tensor([[0.0, 0.0, 10.0, 10.0], [1.0, 1.0, 11.0, 11.0], [20.0, 20.0, 30.0, 30.0]])
+    scores = torch.tensor([0.9, 0.8, 0.7])
+    return nms(boxes, scores, iou_threshold=0.5).tolist()
+
+
+def _cpu_torch() -> int:
+    problems = cpu_build_problems(_installed_version)
+    if not problems:
+        try:
+            keeps = nms_keeps()
+        except Exception as exc:  # the #700 failure is a RuntimeError from the op lookup
+            problems.append(f"torchvision.ops.nms failed: {type(exc).__name__}: {exc}")
+        else:
+            if keeps != [0, 2]:
+                problems.append(f"torchvision.ops.nms kept {keeps}, expected [0, 2]")
+    if problems:
+        print(
+            "torch / torchvision are not a working CPU pair (#700):\n  " + "\n  ".join(problems),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        "CPU torch pair OK: "
+        + ", ".join(f"{name} {_installed_version(name)}" for name in CPU_TORCH)
+        + "; torchvision.ops.nms runs."
+    )
+    return 0
 
 
 def _installed_version(name: str) -> Optional[str]:
@@ -190,21 +271,27 @@ def _verify(pins: list[LockedPin]) -> int:
     return 0
 
 
-_USAGE = "usage: lock_constraints.py constraints <requirements.lock> | verify <requirements.lock> | pin <distribution>"
+_USAGE = (
+    "usage: lock_constraints.py constraints <requirements.lock> | verify <requirements.lock>"
+    " | pin <distribution>... | cpu-torch"
+)
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[1] not in {"constraints", "verify", "pin"}:
-        print(_USAGE, file=sys.stderr)
-        return 2
-    command, arg = argv[1], argv[2]
-    if command == "pin":
+    command = argv[1] if len(argv) > 1 else None
+    if command == "cpu-torch" and len(argv) == 2:
+        return _cpu_torch()
+    if command == "pin" and len(argv) >= 3:
         try:
-            print(installed_pin(arg, _installed_version))
+            print("\n".join(installed_pins(argv[2:], _installed_version)))
         except ValueError as exc:
             print(exc, file=sys.stderr)
             return 1
         return 0
+    if len(argv) != 3 or command not in {"constraints", "verify"}:
+        print(_USAGE, file=sys.stderr)
+        return 2
+    arg = argv[2]
     with open(arg, encoding="utf-8") as fh:
         pins = parse_lock(fh.read())
     if command == "constraints":

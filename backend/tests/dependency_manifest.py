@@ -14,9 +14,11 @@ from scripts.lock_constraints import LockedPin, parse_lock
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Installed in the image from the CPU wheel index (torch) or unconstrained,
-# and deliberately left out of requirements.lock.
-OCR_STACK = frozenset({"torch", "docling", "transformers"})
+# Installed in the image from the CPU wheel index (torch, torchvision) or
+# unconstrained, and deliberately left out of requirements.lock. torchvision is
+# not a direct requirement (docling pulls it in), but a lock pin on it would
+# fight the CPU-index install (#700).
+OCR_STACK = frozenset({"torch", "torchvision", "docling", "transformers"})
 
 
 def read(name: str) -> str:
