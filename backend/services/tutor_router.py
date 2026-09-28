@@ -23,6 +23,11 @@ fire-and-forget task on the running loop and returns immediately; the task has
 its own timeout backstop and can never raise into the turn. With the seam off
 (the default), it returns before building any state.
 
+Which backends run is per-student: :func:`decisions.router_backends` (#620)
+resolves the ``decision_router`` feature flag (off | jev | jev_shadow) unless
+an operator has set ``SAPLING_DECISIONS_BACKEND`` or the process is in
+function mode, in which case that env-driven behaviour wins instead.
+
 Only student-authored chat turns are routed (``/chat`` and ``/chat/stream``),
 and only once they are PERSISTED — exactly one decision per saved student
 message, whichever pipeline served it and however many attempts it took.
@@ -154,14 +159,14 @@ def build_state(message: str, history: list | None) -> dict:
 
 
 async def _route(state: dict, *, user_id: str | None, request_id: str | None,
-                 extra: dict) -> decisions.DecisionResult:
+                 extra: dict, primary: str, shadow: str) -> decisions.DecisionResult:
     backstop = decisions.worst_case_s() + 1.0
     try:
         return await asyncio.wait_for(
             decisions.decide(
                 state, QUESTIONS, feature=FEATURE, user_id=user_id,
                 request_id=request_id, truncatable=("recent_conversation",),
-                event_extra=extra,
+                event_extra=extra, backend=primary, shadow=shadow,
             ),
             timeout=backstop,
         )
@@ -222,7 +227,8 @@ def observe_tutor_turn(
     exactly as it would without this call.
     """
     try:
-        if not decisions.enabled():
+        primary, shadow = decisions.router_backends(user_id)
+        if primary == decisions.OFF:
             return None
         state = build_state(message, history)
         extra = {
@@ -234,7 +240,8 @@ def observe_tutor_turn(
             "history_messages": len(state["recent_conversation"]),
         }
         task = asyncio.get_running_loop().create_task(
-            _route(state, user_id=user_id, request_id=request_id, extra=extra),
+            _route(state, user_id=user_id, request_id=request_id, extra=extra,
+                  primary=primary, shadow=shadow),
             name="tutor-router",
         )
         _inflight.add(task)

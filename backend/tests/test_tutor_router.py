@@ -460,19 +460,23 @@ def test_off_schedules_nothing_at_the_persist_point():
 
 def test_the_seam_switch_is_read_once_per_turn(router_on, monkeypatch):
     """#672 review: learn.py re-checked decisions.enabled() before calling
-    observe_tutor_turn, which checks it itself. One owner: the router."""
+    observe_tutor_turn, which checks it itself. One owner: the router.
+
+    #620 update: the router's on/off check moved from `decisions.enabled()`
+    to `decisions.router_backends()` (which also picks the decision_router
+    flag's backends); the "one owner" property is what this test pins."""
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("reply"))
     reads: list = []
 
-    def enabled():
+    def router_backends(user_id):
         reads.append(1)
-        return True
+        return (decisions.JEV, decisions.OFF)
 
     async def no_route(*a, **k):
         return None
 
-    monkeypatch.setattr(decisions, "enabled", enabled)
+    monkeypatch.setattr(decisions, "router_backends", router_backends)
     monkeypatch.setattr(tutor_router, "_route", no_route)
     with (
         patch("routes.learn.table", side_effect=_table_factory),
@@ -582,7 +586,7 @@ def test_router_failure_cannot_fail_the_turn():
     with (
         patch("routes.learn.table", side_effect=_table_factory),
         patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("services.tutor_router.decisions.enabled", side_effect=RuntimeError("boom")),
+        patch("services.tutor_router.decisions.router_backends", side_effect=RuntimeError("boom")),
     ):
         r = _post_chat()
     assert r.status_code == 200 and r.json()["reply"] == "reply"
