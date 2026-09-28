@@ -523,6 +523,18 @@ _APOSTROPHES = str.maketrans("", "", "'\u2019")  # "doesn't" is one word
 _SLUG_MAX_WORDS = 6
 _SLUG_DIGEST_LEN = 8
 _SLUG_FALLBACK = "misconception"
+# The negations a derived key keeps although _STOPWORDS lists them: without
+# its "not", "Thinks recursion does not need a base case." was keyed
+# thinks_recursion_need_a_base_case, the opposite mistake (review of A37
+# round 4). The "-n't" stems stand for a contraction whose apostrophe is not
+# one _APOSTROPHES drops ("doesn`t").
+_NEGATIONS = frozenset(
+    """
+    ain aren cannot couldn didn doesn don hadn hasn haven isn mightn mustn needn
+    neither never none nor not nothing shan shouldn wasn weren without won wouldn
+    """.split()
+)
+_SLUG_STOPWORDS = _STOPWORDS - _NEGATIONS
 
 
 def _form_digest(text: str) -> str:
@@ -531,12 +543,14 @@ def _form_digest(text: str) -> str:
 
 def misconception_slug(text: str) -> str:
     """A snake_case key for a misconception, from its own text: its first
-    _SLUG_MAX_WORDS words that are not English function words (_STOPWORDS),
-    accents folded to ASCII, apostrophes dropped; "misconception_<digest>"
-    for a text with no Latin letter or digit. Deterministic."""
+    _SLUG_MAX_WORDS words that are not English function words (_STOPWORDS,
+    except the _NEGATIONS, which a key keeps so that it never names the
+    opposite mistake), accents folded to ASCII, apostrophes dropped;
+    "misconception_<digest>" for a text with no Latin letter or digit.
+    Deterministic."""
     folded = unicodedata.normalize("NFKD", text.translate(_APOSTROPHES))
     words = _SLUG_WORD.findall(folded.encode("ascii", "ignore").decode("ascii").casefold())
-    content = [w for w in words if w not in _STOPWORDS] or words
+    content = [w for w in words if w not in _SLUG_STOPWORDS] or words
     if not content:
         return f"{_SLUG_FALLBACK}_{_form_digest(text)}"
     return "_".join(content[:_SLUG_MAX_WORDS])

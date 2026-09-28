@@ -989,6 +989,28 @@ class TestRepairAndOptions:
         assert key != misconception_slug("混淆了学习率")
 
     @pytest.mark.parametrize(
+        "text,slug",
+        [
+            ("Thinks recursion does not need a base case.", "thinks_recursion_not_need_a_base"),
+            ("Assumes tariffs cannot raise prices.", "assumes_tariffs_cannot_raise_prices"),
+            ("Thinks the volume is never affected by heat.", "thinks_volume_is_never_affected_by"),
+            ("Believes a loop runs without a condition.", "believes_a_loop_runs_without_a"),
+            ("Thinks neither mass nor speed matters.", "thinks_neither_mass_nor_speed_matters"),
+        ],
+    )
+    def test_a_misconception_slug_keeps_its_negation(self, text, slug):
+        """Review of A37 round 4: the slug dropped every _STOPWORDS word,
+        "not", "never" and "cannot" among them, so a derived key named the
+        opposite mistake ("Thinks recursion does not need a base case." ->
+        thinks_recursion_need_a_base_case). The grader reads the key beside
+        its text, and PKG-10 rolls up by key."""
+        from learning.checks import _NEGATIONS, _STOPWORDS, misconception_slug
+
+        assert misconception_slug(text) == slug
+        for word in sorted(_NEGATIONS & _STOPWORDS):
+            assert word in misconception_slug(f"Thinks {word} works.").split("_"), word
+
+    @pytest.mark.parametrize(
         "options",
         [
             # no option marked correct: which one is, is never inferred
