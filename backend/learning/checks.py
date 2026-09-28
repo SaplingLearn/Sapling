@@ -1279,8 +1279,17 @@ def _wrong_list_reasons(draft: CheckItemDraft) -> list[str]:
     """A free or teachback draft's paired wrong_keys / wrong_texts (A22),
     its keys compared and stored in wrong_key_form: a key that is blank, or
     has no Latin letter or digit, is named as such, and two keys of one form
-    are a duplicate (repair_draft keys either from its own wrong text)."""
+    are a duplicate (repair_draft keys either from its own wrong text). Each
+    wrong text states a misconception, as a distractor's misconception_text
+    does: one with no letter or digit, or a placeholder such as "N/A", states
+    none (_states_misconception), and stored it would reach the grader as a
+    common wrong reason."""
     reasons = []
+    for i, text in enumerate(draft.wrong_texts, start=1):
+        if not _states_misconception(text):
+            reasons.append(
+                f"wrong_texts: wrong reason {i} states no misconception ({_shown(text)})"
+            )
     if len(draft.wrong_keys) != len(draft.wrong_texts):
         reasons.append(
             f"wrong_keys ({len(draft.wrong_keys)}) and wrong_texts "

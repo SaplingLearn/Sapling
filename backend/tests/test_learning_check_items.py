@@ -1194,6 +1194,20 @@ class TestRepairAndOptions:
         assert not [r for r in repairs if "keyed" in r], repairs
         assert validate_draft(fixed) != []
 
+    @pytest.mark.parametrize("fmt", ["free", "teachback"])
+    @pytest.mark.parametrize("said", ["N/A", "None", "", "   ", "-", "...", "Not applicable"])
+    def test_a_placeholder_wrong_text_states_no_wrong_reason(self, fmt, said):
+        """Review of A37 round 4: a placeholder misconception_text drops an
+        mc_reason draft, but a free or teachback wrong text of "N/A", "" or
+        "   " was still stored as a common wrong reason the grader reads
+        ("COMMON WRONG REASON rate_is_iterations: N/A"). It states none, in
+        every format."""
+        from learning.checks import repair_draft, validate_draft
+
+        draft = _draft(format=fmt, wrong_texts=[said])
+        reasons = validate_draft(repair_draft(draft)[0])
+        assert any(r.startswith("wrong_texts: wrong reason 1") for r in reasons), reasons
+
     @pytest.mark.parametrize("said", ["N/A", "None", "-", ".", "...", "null.", "Not applicable"])
     def test_a_placeholder_misconception_text_states_none(self, said):
         """Review of A37 round 4: only a blank misconception_text counted as
