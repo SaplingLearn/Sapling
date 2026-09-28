@@ -1551,11 +1551,12 @@ def test_an_unconfirmed_conflicted_all_yes_is_no_verdict(monkeypatch, events, ca
 # The floor guard in `_needs_confirmation` (a first run below
 # GRADER_SECOND_OPINION_CONFIDENCE is no verdict to confirm). Without it, an
 # unsure first run that credits something would be ANDed with the second opinion
-# and lend it its own confidence — the round-0 veto — and an unsure conflicted
-# all-yes would "confirm" a conflicted second opinion. Both pins fail when
-# `and first.confidence >= GRADER_SECOND_OPINION_CONFIDENCE` is removed (the
-# a33 verification's mutant; `test_a_low_confidence_first_run_never_vetoes…`
-# credits nothing on its first run, so it asks for no confirmation either way).
+# and lend it its own confidence — the round-0 veto. The first and third pins
+# below fail when `and first.confidence >= GRADER_SECOND_OPINION_CONFIDENCE` is
+# removed (the a33 verification's mutant; checked). `test_a_low_confidence_first_
+# run_never_vetoes…` credits nothing on its first run, so it asks for no
+# confirmation either way; the second pin is also held by the conflicted-second-
+# run rule below.
 
 
 def test_an_unsure_first_run_that_credits_part_never_vetoes_a_confident_all_yes(
@@ -1576,18 +1577,40 @@ def test_an_unsure_conflicted_all_yes_confirms_no_conflicted_second_opinion(monk
     assert res.all_yes is False and events == []
 
 
-def test_a_conflicted_all_yes_a_conflicted_second_run_credits_is_credited(monkeypatch, events):
-    """HANDOFF-a33 open question (a), taken: two sure runs that both credit every
-    item are a confirmation, even when both report the contradiction. The rule is
-    "credit needs two sure runs"; the unsure-first-run path above has only one.
-    Measured live: no second run was conflicted and credited (0 of 16)."""
+def test_an_unsure_conflicted_all_yes_lends_the_second_opinion_nothing(monkeypatch, events):
+    no = {**_all_yes(0.9), "item_results": _ALL_NO}
+    res, calls = _grade_with(monkeypatch, [_conflicted(0.2), no], answer=PLAIN_WRONG_REASON)
+    assert calls["n"] == 2 and res.unavailable is False and res.backend == "gemini_second"
+    assert res.item_results == {"r1": False, "r2": False} and res.confidence == 0.9
+
+
+def test_a_conflicted_second_run_is_no_confirmation(monkeypatch, events, caplog):
+    """A second run whose own all-yes contradicts its own report is no verdict,
+    whether it replaced an unsure first run (above) or was asked to confirm one:
+    it confirms nothing, so the result is unavailable. HANDOFF-a33 open question
+    (a) first took "credited" on 0 of 16 such second runs; the a33 verification's
+    live corpus then credited self-contradicting answers (a listed wrong reason
+    followed by the rubric's own content, gold all no) through exactly this path
+    in 5 of 12 grade calls, both runs reporting the conflict each time."""
     second = _conflicted(0.9, matched_wrong_key="w_loop")
-    res, calls = _grade_with(
-        monkeypatch, [_conflicted(0.95, matched_wrong_key="w_loop"), second],
-        answer=PLAIN_WRONG_REASON,
-    )
-    assert calls["n"] == 2 and res.unavailable is False and res.all_yes is True
-    assert res.confidence == 0.9 and res.matched_wrong_key == "w_loop"
+    with caplog.at_level("WARNING", logger="sapling.agents.grader"):
+        res, calls = _grade_with(
+            monkeypatch,
+            [_conflicted(0.95, matched_wrong_key="w_loop"), second],
+            answer=PLAIN_WRONG_REASON,
+        )
+    assert calls["n"] == 2 and res.unavailable is True and res.refused is None
+    assert res.all_yes is False and events == []
+    assert any("contradicts its own report" in r.getMessage() for r in caplog.records)
+
+
+def test_a_conflicted_second_run_confirms_no_suspicious_first_verdict(monkeypatch, events):
+    """The same rule when the confirmation was asked for by a suspicion signal:
+    the second run's conflicted all-yes confirms nothing, not even the part the
+    first run credited."""
+    first = {**_all_yes(0.95), "item_results": ["r1:yes", "r2:no"]}
+    res, calls = _grade_with(monkeypatch, [first, _conflicted(0.9)], answer=GRADING_TALK)
+    assert calls["n"] == 2 and res.unavailable is True and res.refused is None
 
 
 def test_a_confirmation_the_grader_cap_cuts_short_is_unavailable(monkeypatch, events):

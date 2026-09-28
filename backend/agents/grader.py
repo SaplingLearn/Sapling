@@ -34,12 +34,14 @@ the reason) rejects or argues against the reference, or asserts a common wrong
 reason — before its verdicts, and `matched_wrong_key` after them. An all-yes
 whose own run reports either (`_conflicted`) is a verdict at odds with itself:
 it is confirmed by the second opinion like a suspicious one, and an all-yes that
-no confident run confirms is no verdict at all. A second sure run that credits
-every item is that confirmation even when it reports the conflict too: credit
-needs two sure runs, not two reports (HANDOFF-a33 open question (a)). Only a
-verdict that needs confirmation asks for a second run, so a failure between the
-runs (an outage, the grader cap) drops only such a verdict — a known invariant-28
-residual (HANDOFF-a33 Known gaps). An mc_reason reason is judged
+no confident run confirms is no verdict at all. A second run whose own all-yes
+is conflicted is no verdict either, whether it replaced an unsure first run or
+was asked to confirm one: the result is unavailable (live, two conflicted
+all-yes runs credited self-contradicting answers; HANDOFF-a33). Only an all-yes
+can be conflicted and only a verdict that needs confirmation asks for a second
+run, so this and a failure between the runs (an outage, the grader cap) drop
+only such verdicts — known invariant-28 residuals (HANDOFF-a33 Known gaps). An
+mc_reason reason is judged
 apart from the option — the letter is never evidence — so this holds whichever
 option was chosen.
 
@@ -522,8 +524,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     verdict at the lower confidence). So is a first all-yes whose own run reports
     that the answer contradicts the reference or asserts a listed wrong reason
     (`_conflicted`, round a33). A first run below the floor is replaced by the
-    second opinion, signal or not (§3.4 / A6); a conflicted all-yes from that
-    second opinion has no run to confirm it and is `unavailable`. A hint past
+    second opinion, signal or not (§3.4 / A6). A conflicted all-yes from the
+    second opinion — replacing or confirming — is no verdict: `unavailable`. A hint past
     GRADER_HINT_MAX_CHARS is dropped, never an outage.
 
     PKG-06b: the grader cap is checked first, before the message is built and before any
@@ -606,21 +608,24 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         logger.warning("grader unavailable for item %s: %s", item.id, why)
         return GradeResult(unavailable=True)
     results = parse_labelled(out.item_results, labels)
+    if len(runs) > 1 and _conflicted(out, results, item):
+        # A33 (round a33): the second opinion's all-yes contradicts its own
+        # report, so it is no verdict. Replacing a first run too unsure to use,
+        # nothing else is left; asked to confirm one, it confirms nothing (live,
+        # two conflicted all-yes runs credited self-contradicting answers; a33
+        # verification). Nothing is recorded — an invariant-28 residual, since
+        # only an all-yes can be conflicted (HANDOFF-a33 Known gaps).
+        logger.warning(
+            "grader unavailable for item %s: the second opinion's all-yes contradicts "
+            "its own report, so it is no verdict",
+            item.id,
+        )
+        return GradeResult(unavailable=True)
     if confirming:
         # A33: a confirmed item is credited only when both runs credit it;
         # disagreement → the lower verdict, at the lower of the two confidences
         results = {rid: ok and first[rid] for rid, ok in results.items()}
         confidence = min(confidence, runs[0].confidence)
-    elif len(runs) > 1 and _conflicted(out, results, item):
-        # A33 (round a33): the second opinion replaced a first run too unsure to
-        # use, and its all-yes contradicts its own report — no run confirms it,
-        # so there is no verdict to record for either outcome (inv 28)
-        logger.warning(
-            "grader unavailable for item %s: the second opinion's all-yes contradicts "
-            "its own report and no confident run confirms it",
-            item.id,
-        )
-        return GradeResult(unavailable=True)
     all_yes = bool(results) and all(results.values())
     # A key the item does not list is not a match (behaviour 1: "a listed key or
     # ''"), so an invented key never reaches PKG-10's misconception rule.
