@@ -16,7 +16,9 @@ scope is "docling or auto, and Docling succeeded". When both rescuers are
 enabled they run in sequence, GOT-OCR first (local, free), then vision over the
 pages GOT-OCR could not fill.
 """
+import contextvars
 import hashlib
+import importlib.util
 import io
 import logging
 import os
@@ -44,25 +46,49 @@ logger = logging.getLogger(__name__)
 
 # "Docling isn't installed" is the normal state of local dev and CI, so it is
 # reported once per process; a Docling that is installed but FAILS is reported
-# every time (#700: a broken image downgraded every upload to Tesseract, which
-# drops table rows, with no log line at all).
+# every time, with its traceback (#700: a broken image downgraded every upload
+# to Tesseract, which drops table rows, with no log line at all).
 _DOCLING_UNAVAILABLE_WARNED = False
+
+# Set whenever an extraction fell back from Docling to Tesseract, so
+# extract_text_from_file can skip caching the degraded text (it would outlive
+# the fix by the cache TTL).
+_DOCLING_FELL_BACK: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "docling_fell_back", default=False
+)
+
+
+def _docling_package_installed() -> bool:
+    """True when the docling package itself is present. docling_backend wraps
+    ANY ImportError as DoclingUnavailableError, so a missing transitive
+    library in an installed Docling looks like "not installed" there."""
+    try:
+        return importlib.util.find_spec("docling") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def reset_docling_fallback_state() -> None:
+    """Test hook (tests/conftest.py): forget the once-per-process warning."""
+    global _DOCLING_UNAVAILABLE_WARNED
+    _DOCLING_UNAVAILABLE_WARNED = False
 
 
 def _warn_docling_fallback(err: Exception, where: str) -> None:
     global _DOCLING_UNAVAILABLE_WARNED
-    if isinstance(err, DoclingUnavailableError):
+    _DOCLING_FELL_BACK.set(True)
+    if isinstance(err, DoclingUnavailableError) and not _docling_package_installed():
         if _DOCLING_UNAVAILABLE_WARNED:
             return
         _DOCLING_UNAVAILABLE_WARNED = True
         logger.warning(
-            "Docling unavailable (%s); %s falls back to tesseract "
+            "Docling not installed (%s); %s falls back to tesseract "
             "(logged once per process)", err, where,
         )
         return
     logger.warning(
         "Docling failed (%s: %s); %s falls back to tesseract, which loses "
-        "tables and layout", type(err).__name__, err, where,
+        "tables and layout", type(err).__name__, err, where, exc_info=err,
     )
 
 
@@ -137,7 +163,13 @@ def extract_text_from_image_bytes(image_bytes: bytes, lang: str = "eng") -> str:
         return tesseract_backend.extract_text_from_image_bytes_impl(image_bytes, lang=lang)
 
     try:
-        text, _, _ = extract_pdf_with_docling(_image_to_pdf_bytes(image_bytes), max_pages=1)
+        pdf_bytes = _image_to_pdf_bytes(image_bytes)
+    except Exception:
+        # PIL could not read the image: not a Docling failure, so no alarm.
+        logger.debug("image not convertible for Docling; using tesseract", exc_info=True)
+        return tesseract_backend.extract_text_from_image_bytes_impl(image_bytes, lang=lang)
+    try:
+        text, _, _ = extract_pdf_with_docling(pdf_bytes, max_pages=1)
         if text.strip():
             return text
     except Exception as e:
@@ -173,18 +205,13 @@ def extract_text_from_pdf_ocr(
 
     try:
         markdown, page_count, metadata = extract_pdf_with_docling(pdf_bytes, max_pages=max_pages)
-    except DoclingUnavailableError as e:
-        _warn_docling_fallback(e, "PDF OCR")
-        try:
-            return tesseract_backend.extract_text_from_pdf_ocr_impl(pdf_bytes, max_pages=max_pages, lang=lang)
-        except Exception as tess_err:
-            raise RuntimeError(f"Docling unavailable ({e}) and tesseract fallback failed ({tess_err})") from e
     except Exception as e:
         _warn_docling_fallback(e, "PDF OCR")
+        state = "unavailable" if isinstance(e, DoclingUnavailableError) else "failed"
         try:
             return tesseract_backend.extract_text_from_pdf_ocr_impl(pdf_bytes, max_pages=max_pages, lang=lang)
         except Exception as tess_err:
-            raise RuntimeError(f"Docling failed ({e}) and tesseract fallback failed ({tess_err})") from e
+            raise RuntimeError(f"Docling {state} ({e}) and tesseract fallback failed ({tess_err})") from e
 
     per_page = list(metadata.get("per_page_markdown") or [])
     flagged = list(metadata.get("fallback_pages") or [])
@@ -382,8 +409,16 @@ def extract_text_from_file(file_bytes: bytes, filename: str, content_type: str) 
     hit = cache.get_str(key)
     if hit is not None:
         return hit
-    text = _extract_text_from_file_uncached(file_bytes, filename, content_type)
-    cache.set_str(key, text, ttl_seconds=_OCR_CACHE_TTL)
+    token = _DOCLING_FELL_BACK.set(False)
+    try:
+        text = _extract_text_from_file_uncached(file_bytes, filename, content_type)
+        fell_back = _DOCLING_FELL_BACK.get()
+    finally:
+        _DOCLING_FELL_BACK.reset(token)
+    # A Tesseract fallback is a degraded result under the Docling key; caching
+    # it would keep serving table-less text for the TTL after Docling is fixed.
+    if not fell_back:
+        cache.set_str(key, text, ttl_seconds=_OCR_CACHE_TTL)
     return text
 
 

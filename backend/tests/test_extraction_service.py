@@ -799,11 +799,6 @@ class TestDoclingFailureIsVisible:
 
     _BROKEN = RuntimeError("operator torchvision::nms does not exist")
 
-    @pytest.fixture(autouse=True)
-    def _fresh_once_flag(self, monkeypatch):
-        import services.extraction_service as es
-        monkeypatch.setattr(es, "_DOCLING_UNAVAILABLE_WARNED", False)
-
     def _warnings(self, caplog):
         return [
             r.getMessage() for r in caplog.records
@@ -847,6 +842,7 @@ class TestDoclingFailureIsVisible:
         # Local dev and CI run without Docling; that must not warn per upload.
         from services.extraction_backends.docling_backend import DoclingUnavailableError
         monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setattr("services.extraction_service._docling_package_installed", lambda: False)
         with (
             patch(
                 "services.extraction_service.extract_pdf_with_docling",
@@ -864,3 +860,96 @@ class TestDoclingFailureIsVisible:
         msgs = self._warnings(caplog)
         assert len(msgs) == 1
         assert "not installed" in msgs[0]
+
+    def test_installed_but_unimportable_docling_warns_every_time(self, monkeypatch, caplog):
+        # docling_backend wraps ANY ImportError as "not installed". When the
+        # package IS installed, that ImportError is a broken image (#700's
+        # family), so it must stay loud, not go quiet after the first upload.
+        from services.extraction_backends.docling_backend import DoclingUnavailableError
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setattr("services.extraction_service._docling_package_installed", lambda: True)
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                side_effect=DoclingUnavailableError("Docling not installed: libGL.so.1"),
+            ),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("tess", 1),
+            ),
+            caplog.at_level("WARNING", logger="services.extraction_service"),
+        ):
+            extract_text_from_pdf_ocr(b"pdf")
+            extract_text_from_pdf_ocr(b"pdf")
+
+        assert len(self._warnings(caplog)) == 2
+
+    def test_failure_warning_carries_the_traceback(self, monkeypatch, caplog):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        with (
+            patch("services.extraction_service.extract_pdf_with_docling", side_effect=self._BROKEN),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("tess", 1),
+            ),
+            caplog.at_level("WARNING", logger="services.extraction_service"),
+        ):
+            extract_text_from_pdf_ocr(b"pdf")
+
+        rec = [r for r in caplog.records if r.levelname == "WARNING"][0]
+        assert rec.exc_info is not None
+
+    def test_unconvertible_image_does_not_blame_docling(self, monkeypatch, caplog):
+        # A corrupt image fails in PIL before Docling runs; that is not a
+        # Docling failure and must not raise the Docling alarm.
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        with (
+            patch("services.extraction_service._image_to_pdf_bytes", side_effect=OSError("cannot identify image file")),
+            patch("services.extraction_service.extract_pdf_with_docling") as docling,
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_image_bytes_impl",
+                return_value="tess-img",
+            ),
+            caplog.at_level("WARNING", logger="services.extraction_service"),
+        ):
+            assert extract_text_from_image_bytes(b"img") == "tess-img"
+
+        docling.assert_not_called()
+        assert self._warnings(caplog) == []
+
+
+class TestFallbackTextIsNotCached:
+    """With Redis on, a tesseract fallback must not be cached under the Docling
+    key: after Docling is fixed (#702), re-uploads of the same bytes would keep
+    getting the table-less text for the 30-day TTL."""
+
+    def _run(self, monkeypatch, docling_side_effect):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "false")
+        docling_kwargs = (
+            {"side_effect": docling_side_effect}
+            if isinstance(docling_side_effect, Exception)
+            else {"return_value": docling_side_effect}
+        )
+        with (
+            patch("services.extraction_service.cache.enabled", return_value=True),
+            patch("services.extraction_service.cache.get_str", return_value=None),
+            patch("services.extraction_service.cache.set_str") as set_str,
+            patch("services.extraction_service.extract_text_from_pdf_native", return_value=("", 1)),
+            patch("services.extraction_service.extract_pdf_with_docling", **docling_kwargs),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("tess", 1),
+            ),
+        ):
+            extract_text_from_file(b"%PDF-1.4", "a.pdf", "application/pdf")
+        return set_str
+
+    def test_fallback_result_is_not_cached(self, monkeypatch):
+        set_str = self._run(monkeypatch, RuntimeError("operator torchvision::nms does not exist"))
+        set_str.assert_not_called()
+
+    def test_docling_result_is_cached(self, monkeypatch):
+        good = ("# Table", 1, {"fallback_pages": [], "per_page_markdown": ["# Table"]})
+        set_str = self._run(monkeypatch, good)
+        set_str.assert_called_once()
