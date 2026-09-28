@@ -108,6 +108,8 @@ const eslintConfig = [
       "src/components/screens/achievements/HeroCard.tsx",
       "src/components/screens/achievements/LeaderboardTab.tsx",
       "src/components/screens/achievements/ActivityTab.tsx",
+      // Admin "Feature flags" tab (#620). New file, no baselined backlog.
+      "src/components/screens/admin/FeatureFlags.tsx",
     ],
     rules: {
       "no-restricted-syntax": [
