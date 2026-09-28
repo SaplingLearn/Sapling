@@ -38,7 +38,11 @@ from agents._providers import (
     register_function_handler,
     set_function_stream_delay_ms,
 )
-from learning.params import CHECK_ITEM_DIFFICULTIES, CHECK_ITEM_FORMATS
+from learning.params import (
+    CHECK_ITEM_DIFFICULTIES,
+    CHECK_ITEM_FORMATS,
+    CHECK_ITEM_MC_MIN_PER_CONCEPT,
+)
 
 # Streamed-replay pacing (#356): re-chunk streamed text into small deltas with
 # 150ms between them, giving the mid-stream journeys (Stop a turn, switch
@@ -355,9 +359,14 @@ register_function_handler("note_chat", _note_chat_handler)
 # synchronously inside the upload when SAPLING_MODEL_MODE=function, since
 # post-response handlers stay unregistered by design. Inert unless
 # LEARNING_LOOP_ENABLED=true (unset in the E2E stack until PKG-13, spec §7).
-# One item per format for each E2E_DOC_CONCEPTS name — the function-mode
-# upload's concepts — so each draft's `concept` matches the call's batch.
-# Prompts differ per (concept, format) so every question_hash differs.
+# For each E2E_DOC_CONCEPTS name — the function-mode upload's concepts, so
+# each draft's `concept` matches the call's batch — one free and one teachback
+# item, and CHECK_ITEM_MC_MIN_PER_CONCEPT mc_reason items (difficulties 1, 2):
+# a function-mode pass leaves no concept below the A37 mc_reason floor, so it
+# makes no top-up call. The top-up agent rides this same handler (it runs on
+# the check_items slot) and keeps only its concept's mc_reason drafts.
+# Prompts differ per (concept, format, difficulty) so every question_hash
+# differs; the difficulty-1 prompts are the ones PKG-04 shipped.
 # Backend contract test: tests/test_e2e_function_handlers.py. Keep in sync.
 
 E2E_CHECK_ITEM_PROMPT_TEMPLATE = (
@@ -412,12 +421,15 @@ E2E_CHECK_ITEM_OPTIONS = [
 ]
 
 
-def _e2e_check_item(concept: str, fmt: str) -> dict:
+def _e2e_check_item(
+    concept: str, fmt: str, difficulty: int = CHECK_ITEM_DIFFICULTIES[0]
+) -> dict:
+    label = fmt if difficulty == CHECK_ITEM_DIFFICULTIES[0] else f"{fmt} {difficulty}"
     item = {
         "concept": concept,
         "format": fmt,
-        "difficulty": CHECK_ITEM_DIFFICULTIES[0],
-        "prompt": E2E_CHECK_ITEM_PROMPT_TEMPLATE.format(concept=concept, format=fmt),
+        "difficulty": difficulty,
+        "prompt": E2E_CHECK_ITEM_PROMPT_TEMPLATE.format(concept=concept, format=label),
         "reference_answer": E2E_CHECK_ITEM_REFERENCE,
         "final_answer": E2E_CHECK_ITEM_FINAL_ANSWER,
         "rubric": E2E_CHECK_ITEM_RUBRIC,
@@ -437,9 +449,15 @@ register_function_handler(
     "check_items",
     _structured_output({
         "items": [
-            _e2e_check_item(name, fmt)
+            item
             for name, _, _ in E2E_DOC_CONCEPTS
-            for fmt in CHECK_ITEM_FORMATS
+            for item in [
+                *(_e2e_check_item(name, fmt) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
+                *(
+                    _e2e_check_item(name, "mc_reason", level)
+                    for level in CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
+                ),
+            ]
         ],
     }),
 )

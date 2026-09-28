@@ -587,7 +587,9 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
     """PKG-04: the check_items generator is a REQUEST-PATH agent in function
     mode (the upload hook runs it synchronously there), so it must have a
     handler that passes the real flat output schema and code validation —
-    one item per format for each function-mode upload concept."""
+    one free and one teachback item for each function-mode upload concept,
+    and CHECK_ITEM_MC_MIN_PER_CONCEPT mc_reason items, so a function-mode pass
+    leaves no concept below the A37 floor and makes no top-up call."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     from agents.check_items import check_items_agent
@@ -607,12 +609,26 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
         E2E_DOC_CONCEPTS,
     )
     from learning.checks import WrongReason, common_wrong, lettered_options, repair_draft
-    from learning.params import CHECK_ITEM_MC_OPTIONS
+    from learning.params import (
+        CHECK_ITEM_DIFFICULTIES,
+        CHECK_ITEM_MC_MIN_PER_CONCEPT,
+        CHECK_ITEM_MC_OPTIONS,
+    )
 
     items = result.output.items
-    assert [(i.concept, i.format) for i in items] == [
-        (name, fmt) for name, _, _ in E2E_DOC_CONCEPTS for fmt in CHECK_ITEM_FORMATS
+    first = CHECK_ITEM_DIFFICULTIES[0]
+    mc_levels = CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
+    assert [(i.concept, i.format, i.difficulty) for i in items] == [
+        pair
+        for name, _, _ in E2E_DOC_CONCEPTS
+        for pair in [
+            *((name, fmt, first) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
+            *((name, "mc_reason", level) for level in mc_levels),
+        ]
     ]
+    for name, _, _ in E2E_DOC_CONCEPTS:
+        mc = [i for i in items if i.concept == name and i.format == "mc_reason"]
+        assert len(mc) == CHECK_ITEM_MC_MIN_PER_CONCEPT, "a function-mode pass needs no top-up"
     assert len({i.prompt for i in items}) == len(items), "prompts must differ so hashes differ"
     for i in items:
         assert i.reference_answer == E2E_CHECK_ITEM_REFERENCE
@@ -648,6 +664,22 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
             WrongReason(key=E2E_CHECK_ITEM_WRONG_KEY, text=E2E_CHECK_ITEM_WRONG_TEXT)
         ]
     assert "check_items" in providers._FUNCTION_HANDLERS
+
+
+def test_the_mc_reason_top_up_rides_the_check_items_handler(monkeypatch):
+    """A37 (coordinator's ruling, 2026-09-28): the top-up is its own agent on
+    the check_items model slot, so function mode answers it with the
+    check_items handler — no handler of its own, no UnregisteredHandlerError.
+    Code keeps only the concept's mc_reason drafts (check_item_service)."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items_topup import check_items_topup_agent
+    from agents.function_handlers_e2e import E2E_DOC_CONCEPTS
+
+    with check_items_topup_agent.override(model=model_for("check_items")):
+        result = check_items_topup_agent.run_sync("Concept: Gradient Descent", deps=_deps())
+    concepts = {i.concept for i in result.output.items}
+    assert concepts == {name for name, _, _ in E2E_DOC_CONCEPTS}
 
 
 # ── Decision seam (learning loop PKG-05b) ─────────────────────────────────
