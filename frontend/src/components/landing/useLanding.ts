@@ -17,15 +17,23 @@ import { humanizeError } from '@/lib/errorMessage';
 import { SCRAMBLE } from '@/lib/landing/content';
 import { LandingEngine } from '@/lib/landing/engine';
 import type { BuiltGraph } from '@/lib/landing/engine/graph';
-import { armFlip, flipClose, flipOpen } from '@/lib/landing/engine/flip';
+import { armFlip, flipClose, flipOpen, remeasureFlip } from '@/lib/landing/engine/flip';
 import {
-  beginExitExplore, beginExplore, pickNode, settleExitExplore,
+  EXPLORE_FILL_MS, beginExitExplore, beginExplore, pickNode, settleExitExplore,
 } from '@/lib/landing/engine/graphView';
 
 /** How long the intro overlay holds before the hero takes over. */
 const INTRO_MS = 1900;
-/** Explore exit transition length, after which the camera hands back. */
-const EXPLORE_OUT_MS = 720;
+/**
+ * Explore exit transition length, after which the camera hands back.
+ *
+ * Tied to the longest clock inside `drawExplore` rather than chosen. At the
+ * old 720ms the renderer swapped while the camera was still 15% out and the
+ * staggered node reveal only 42% unwound, so the graph jumped the remainder
+ * in a single frame — worst where explore had been entered early, since every
+ * node the scroll view had not spawned yet popped out of existence at once.
+ */
+const EXPLORE_OUT_MS = EXPLORE_FILL_MS;
 const SCRAMBLE_TICK_MS = 30;
 
 /** One text slot scrambling into place during the intro cascade. */
@@ -108,7 +116,6 @@ export function useLanding(props: LandingProps) {
   const [graph, setGraph] = useState<BuiltGraph | null>(null);
   const [tutorMode, setTutorMode] = useState(0);
   const [galIdx, setGalIdx] = useState(-1);
-  const [modalAnim, setModalAnim] = useState(false);
   const [jumpOpen, setJumpOpen] = useState(false);
   const [pastHero, setPastHero] = useState(false);
   const [navMenuOpen, setNavMenuOpen] = useState(false);
@@ -411,6 +418,21 @@ export function useLanding(props: LandingProps) {
     const engine = engineRef.current;
     if (!engine || s.current.exploring) return;
     expOut.current = false;
+    // The act's stage is only flush with the viewport while the page sits
+    // inside the section's sticky range. Everything explore mode draws — the
+    // canvas, the course label, the legend, the detail panel, the exit pill —
+    // hangs off that stage, so clicking the canvas on the way in or out used
+    // to lock the whole mode against a half-scrolled stage: the graph centred
+    // above or below where it belongs, with the bottom of it cut off. Nothing
+    // could recover it either, because the next line freezes the page.
+    //
+    // So land on the pinned position that matches the progress the act has
+    // actually played — not merely the nearest one, which could sit at the
+    // end of a runway the reader never scrubbed. The engine eases the page
+    // there across the same window and the same curve the camera uses, so the
+    // correction is part of the transition rather than a cut inside it.
+    // Ordered before `beginExplore` only so both clocks start on this frame.
+    engine.glideToPinnedAct1();
     beginExplore(engine.view, engine.graph);
     document.body.style.overflow = 'hidden';
     const cinema = refs.cinema.current;
@@ -530,20 +552,45 @@ export function useLanding(props: LandingProps) {
     const engine = engineRef.current;
     if (!engine) return;
     document.body.style.overflow = 'hidden';
-    armFlip(engine.flip, from);
-    flipRan.current = false;
+    // Freeze the rail underneath. Nothing can see it move behind a full-bleed
+    // panel, and holding it is what keeps the card still for the collapse to
+    // land on — see MarqueeController.hold.
+    engine.marquee.hold(true);
+
+    // Switching demos from inside the lab arrives with no card: the rail
+    // passes null, as do the graph act's "Quiz me" / "Ask the tutor". Re-arming
+    // with null there would throw away the card the visitor actually clicked —
+    // which both strands it at `visibility: hidden` for the rest of the
+    // session and loses the rect the expansion flies from. Keep it instead,
+    // re-measured, since the rail has drifted since the click.
+    const switching = s.current.galIdx >= 0 && !from;
+    if (switching) remeasureFlip(engine.flip);
+    else armFlip(engine.flip, from);
+
     setGalIdx(i);
-    setModalAnim(true);
-     
+
+    // A switch deliberately plays NO opening animation. The expansion is the
+    // gesture of arriving in the lab from the rail; replaying it to change
+    // which demo you are looking at re-enacts an arrival that already
+    // happened, and reads as the lab closing and reopening rather than as
+    // the panel changing its mind. The panel div carries no key, so the
+    // index change re-renders the same DOM node and nothing restarts on its
+    // own — leaving this alone is what gives a straight swap.
+    //
+    // The flip source is still carried across, for two reasons that have
+    // nothing to do with the opening: the card stays owned so `flipClose`
+    // can un-hide it, and its rect is re-measured so the eventual close
+    // flies back to where that card has drifted to.
+    if (!switching) flipRan.current = false;
   }, []);
 
   const closeGal = useCallback(() => {
     const engine = engineRef.current;
     if (!engine) return;
     flipRan.current = false;
-    setModalAnim(false);
     flipClose(engine.flip, refs.panel.current, () => {
       document.body.style.overflow = '';
+      engine.marquee.hold(false);
       setGalIdx(-1);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -619,7 +666,7 @@ export function useLanding(props: LandingProps) {
     engineRef,
     state: {
       heroMounted, heroText0, heroText1, heroText2, loadPct, introGone, graph,
-      tutorMode, galIdx, modalAnim, jumpOpen,
+      tutorMode, galIdx, jumpOpen,
       pastHero, navMenuOpen, exploring, expNode, openFaq, email, subscribed,
       subscribing, subscribeError,
       plantVal, plantedCount, jumpDown,

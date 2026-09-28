@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useScrollLock } from '@/lib/useScrollLock';
 
-const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
+const UI_FONT = "var(--font-dm-sans), var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
 
 const SIZE_WIDTH: Record<string, string> = {
   sm: '420px',
