@@ -2782,6 +2782,31 @@ class TestAgentPlumbing:
         text = CheckItemsOutput.model_json_schema()["$defs"]["OptionDraft"]["properties"]["text"]
         assert "the answer alone" in text["description"]
 
+    def test_free_and_teachback_lines_restate_the_short_closing_sentence(self):
+        """A37 round 4: with each distractor stating its own misconception,
+        flash-lite wrote "Final answer:" on the mc_reason references only and
+        left it off every free and teachback reference in 24 of 44 direct
+        calls on the CS101 passages (8 of 44 with the round-3 draft), so those
+        drafts failed A34's containment rule. Reverting the prompt's wording
+        around the wrong-reason lists, the schema descriptions or the option
+        docstring did not move it (7 to 11 of 16 each); what did is each of
+        those two format lines restating the closing sentence, kept short:
+        6 of 32 on CS101, free and teachback stored 89% across four subjects
+        against 84% for the round-3 draft and 60% without the line. Without
+        "short", the history references closed with their whole last
+        sentence and failed the 20-token cap (51 of 96 dropped)."""
+        from agents.check_items import _PROMPT
+        from learning.params import CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS
+
+        closing = (
+            "Its reference_answer, like every item's, ends with `Final answer: <final_answer>.` "
+            f"— the short final answer (at most {CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens), "
+            "not the whole explanation again."
+        )
+        lines = {line.split(":")[0]: line for line in _PROMPT.splitlines() if line.startswith("- ")}
+        for fmt in ("- free", "- teachback"):
+            assert lines[fmt].endswith(closing), lines[fmt]
+
     def test_build_prompt_names_every_concept_and_marks_passages(self):
         from agents.check_items import build_prompt
 

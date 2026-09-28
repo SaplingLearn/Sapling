@@ -71,6 +71,16 @@ _EASY, _MID, _HARD = CHECK_ITEM_DIFFICULTIES
 _ORDER = ", ".join(f"{f} {d}" for f in CHECK_ITEM_FORMATS for d in CHECK_ITEM_DIFFICULTIES)
 _MC_OPTIONS = CHECK_ITEM_MC_OPTIONS
 _MC_DISTRACTORS = CHECK_ITEM_MC_OPTIONS - 1  # every option but the correct one
+# A37 round 4: once each distractor stated its own misconception, flash-lite
+# closed only the mc_reason references with "Final answer:" in about half of
+# the calls on one subject; restating the closing sentence on the free and
+# teachback lines (kept short: the whole last sentence broke the token cap)
+# brought it back (spec §13 A37).
+_CLOSING = (
+    " Its reference_answer, like every item's, ends with `Final answer: <final_answer>.` "
+    f"— the short final answer (at most {CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS} tokens), not "
+    "the whole explanation again."
+)
 
 _PROMPT = (
     "You write assessment items (check items) that a tutor will pose to "
@@ -82,9 +92,9 @@ _PROMPT = (
     "and never repeat one. Set `concept` to that concept's name exactly as "
     "listed.\n\n"
     "Formats:\n"
-    "- free: a short free-response question answerable in 1-3 sentences.\n"
+    f"- free: a short free-response question answerable in 1-3 sentences.{_CLOSING}\n"
     "- teachback: 'Explain to a classmate who missed the lecture ...' — the "
-    "student teaches the idea back in their own words.\n"
+    f"student teaches the idea back in their own words.{_CLOSING}\n"
     "- mc_reason: `prompt` is the question stem ONLY (never list the options in "
     "the prompt text, and never write the correct option's text in it — not "
     "even as a number inside an expression: for a computed answer the stem "
