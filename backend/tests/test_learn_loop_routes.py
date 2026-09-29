@@ -144,6 +144,9 @@ NO_MODEL_ROUTES = [
     "/probe/answer",
     "/plan",
     "/plan/approve",
+    # PKG-09: runs the close model only with evidence, past an INLINE A20 check
+    # after the gate (spec §9: inline where only some bodies run a model).
+    "/close",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
@@ -552,12 +555,20 @@ def test_failed_on_concept_counts_the_session_across_isomorphs():
 
 
 def test_load_loop_history_is_bounded():
-    from routes.learn_loop import _load_loop_history
+    """Rewritten by PKG-09 for spec §13 A19: brief + block-trimmed window. Read-only
+    (no user_id) with no stored brief, the history is the block-trimmed window."""
+    from routes.learn_loop import _history_window, _load_loop_history
 
     rows = [f"m{i}" for i in range(LOOP_HISTORY_MAX_MESSAGES + 7)]
-    with patch("routes.learn_loop._load_message_history", return_value=rows):
+    sessions = MagicMock()
+    sessions.select.return_value = [{"id": "s1", "loop_brief": None}]
+    with (
+        patch("routes.learn_loop._load_message_history", return_value=rows),
+        patch("routes.learn_loop.table", return_value=sessions),
+    ):
         got = _load_loop_history("s1")
-    assert got == rows[-LOOP_HISTORY_MAX_MESSAGES:]
+    assert got == rows[len(rows) - _history_window(len(rows)) :]
+    assert len(got) <= LOOP_HISTORY_MAX_MESSAGES
 
 
 def test_loop_state_adapters_go_through_the_cas_store(seams):
