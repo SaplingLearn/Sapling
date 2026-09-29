@@ -357,6 +357,12 @@ def _load_message_history(session_id: str) -> list:
 
     Empty/decrypt-failed content is skipped so we don't feed empty
     parts to the LLM.
+
+    The history carries NO system/instructions text. The tutor's rules
+    reach the model only because the chat tutor agents declare them as
+    `instructions=` (re-sent on every request); a `system_prompt=` would
+    be skipped whenever this history is non-empty, i.e. on every turn after
+    the opener. Pinned by tests/test_chat_tutor_prompt_every_turn.py.
     """
     rows = table("messages").select(
         "role,content",
@@ -375,8 +381,7 @@ def _load_message_history(session_id: str) -> list:
         elif raw_role in ("assistant", "model"):
             history.append(ModelResponse(parts=[TextPart(content=str(content))]))
         # else: drop (legacy 'system' rows have no equivalent in
-        # Pydantic AI's role taxonomy and the system prompt is supplied
-        # by the agent itself).
+        # Pydantic AI's role taxonomy).
     return history
 
 
