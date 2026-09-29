@@ -19,6 +19,7 @@ import {
   startLoopSession,
   streamLoopChat,
   streamLoopCheckAnswer,
+  submitLoopRating,
 } from './api';
 
 function sseBody(blocks: string[]): ReadableStream {
@@ -160,6 +161,14 @@ describe('loop JSON clients (routes/learn_loop.py shapes; no model_pref, spec §
     await expect(requestLoopHintTurn('s', 'u')).resolves.toMatchObject({ reply: 'a nudge' });
     expect(urlOf()).toContain('/api/learn/loop/action');
     expect(bodyOf()).toEqual({ session_id: 's', user_id: 'u', action_type: 'hint' });
+  });
+
+  it('submitLoopRating posts the session and the rating (the user is the cookie\'s)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ ok: true }));
+    await expect(submitLoopRating('s', 'too_hard')).resolves.toEqual({ ok: true });
+    expect(urlOf()).toContain('/api/learn/loop/rating');
+    expect(initOf().method).toBe('POST');
+    expect(bodyOf()).toEqual({ session_id: 's', rating: 'too_hard' });
   });
 
   it('closeLoopSession posts the session and returns the A60 shape', async () => {

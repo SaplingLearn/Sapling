@@ -535,6 +535,8 @@ screen otherwise. The chat log inside `loop-messages` is `ChatPanel`, whose own
 | `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
 | `loop-continue` | "Continue" after feedback — sends the next chat turn |
+| `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
+| `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
 | `loop-close-summary` | the close summary text |
 | `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |

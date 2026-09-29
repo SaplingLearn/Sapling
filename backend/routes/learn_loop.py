@@ -143,6 +143,7 @@ from learning.params import (
     PROBE_PLAN_READS_PER_MIN,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_SECONDS_PER_CHECK,
+    ZPD_RATING_EVERY_N_CHECKS,
 )
 from learning.policy import LearnerView, LoopState, StepState
 from learning.session_close import (
@@ -168,6 +169,7 @@ from models import (
     LoopCheckAnswerBody,
     LoopCheckNextBody,
     LoopHintBody,
+    LoopRatingBody,
     PlanApproveBody,
     ProbeAnswerBody,
     ProbeNextBody,
@@ -1734,13 +1736,16 @@ class _LoopTurn:
         """The check-answer response keys (A16) — only on a submission's turn."""
         if self.kind not in _SUBMISSION_KINDS:
             return {}
-        return {
+        extra = {
             "graded": self.kind == "feedback",
             "verdict": self.verdict,
             "unavailable": self.kind == "unavailable",  # the outage flag only
             "refused": self.refused,  # A33: a refusal, or the idk it became
             "answer_released": self.answer_released,
         }
+        if getattr(self, "ask_rating", False):  # PKG-14: present only when true, never false
+            extra["ask_rating"] = True
+        return extra
 
 
 class _LoopOpener(_LoopTurn):
@@ -2347,6 +2352,7 @@ class _Submission:
     scope: tuple[str, str]
     verdict: str | None = None
     refused: bool = False  # A33: refused, or the idk its CHECK_REFUSALS_AS_IDK-th refusal became
+    ask_rating: bool = False  # PKG-14: this graded check brought the counter to the rating cadence
 
 
 def _is_idk_phrase(text: str) -> bool:
@@ -2607,6 +2613,10 @@ async def _grade_submission(
         under(doc)
         if held["last"]:  # PKG-10: the attempt log + marker change, on the FRESH document
             carry(doc, diagnosis)
+            # PKG-14 (spec §3.4): one more flushed check toward the zpd.rating prompt,
+            # in this same write — only an evidence flush counts (A16, invariant 26)
+            doc["checks_since_rating"] = int(doc.get("checks_since_rating") or 0) + 1
+            held["checks"] = doc["checks_since_rating"]
 
     # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
     # conflict here is a 409 with the claim still held: the item is never
@@ -2617,7 +2627,8 @@ async def _grade_submission(
         # after the ONE flush and the save that recorded the grade under OUR
         # claim (a claim lost to another request writes nothing; never raises)
         _write_misconception(body.user_id, outcome, _item_like(item), answer)
-    return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
+    ask = held.get("checks", 0) >= ZPD_RATING_EVERY_N_CHECKS
+    return _Submission("feedback", state, rendered, scope, verdict, refused=refused, ask_rating=ask)
 
 
 def _requests_of(run_result) -> int:
@@ -2652,7 +2663,7 @@ def _submission_turn(
     sub: _Submission, body: LoopCheckAnswerBody, request: Request, *, loop_on: bool
 ) -> _LoopTurn:
     chat_body = ChatBody(session_id=body.session_id, user_id=body.user_id, message=sub.rendered)
-    return _LoopTurn(
+    turn = _LoopTurn(
         body=chat_body,
         request=request,
         message=sub.rendered,
@@ -2663,6 +2674,8 @@ def _submission_turn(
         loop_on=loop_on,
         refused=sub.refused,
     )
+    turn.ask_rating = sub.ask_rating
+    return turn
 
 
 @router.post("/check/answer", dependencies=_RATE_LIMITED)
@@ -2685,6 +2698,34 @@ async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
     return _sse(_submission_turn(sub, body, request, loop_on=loop_on))
+
+
+@router.post("/rating")
+def rating(body: LoopRatingBody, request: Request) -> dict:
+    """POST /api/learn/loop/rating (PKG-14; spec §3.4, §6): the student's
+    perceived difficulty, asked every ZPD_RATING_EVERY_N_CHECKS checks. Emits
+    zpd.rating {rating, checks_since_last} and resets the session's counter in
+    ONE compare-and-set write; the rating is stored nowhere else. No model runs
+    (no rate limit); require_self, the gate's 404 and the session owner check
+    run first."""
+    if not body.user_id:
+        body.user_id = get_session_user_id(request)
+    _gate(body.user_id, request)
+    _session_scope(body.session_id, body.user_id)
+    seen: dict = {}
+
+    def reset(state: dict) -> None:
+        seen["count"] = int(state.get("checks_since_rating") or 0)
+        state["checks_since_rating"] = 0
+
+    _update_loop_state(body.session_id, reset)
+    zpd_events.emit_zpd_rating(
+        user_id=body.user_id,
+        request_id=_request_id(request),
+        rating=body.rating,
+        checks_since_last=seen.get("count", 0),
+    )
+    return {"ok": True}
 
 
 # ── Attempt / hint / action / openers / end-session ───────────────────────

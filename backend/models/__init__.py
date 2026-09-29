@@ -35,6 +35,14 @@ class CloseBody(BaseModel):
     user_id: str = ""  # PKG-09: resolved from the session cookie when empty, like EndSessionBody
 
 
+class LoopRatingBody(BaseModel):
+    """PKG-14 /api/learn/loop/rating — the perceived-difficulty answer the loop
+    asks for every ZPD_RATING_EVERY_N_CHECKS checks (spec §3.4, §6 zpd.rating)."""
+    session_id: str
+    user_id: str = ""  # resolved from the session cookie when empty, like CloseBody
+    rating: Literal["too_easy", "appropriate", "too_hard"]
+
+
 class RenameSessionBody(BaseModel):
     user_id: str
     topic: str

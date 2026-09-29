@@ -1047,7 +1047,11 @@ export interface LoopTurnResult extends ChatResult {
   unavailable?: boolean;
   answer_released?: boolean;
   refused?: boolean;
+  /** PKG-14: present (true) on the graded check that reached ZPD_RATING_EVERY_N_CHECKS. */
+  ask_rating?: boolean;
 }
+/** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
+export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
 export interface LoopCheckNext {
   phase: LoopPhase;
   check: LoopCheckItem | null;
@@ -1205,6 +1209,14 @@ export const requestLoopHint = (sessionId: string, userId: string, questionHash:
 /** The hint's text: the `[ACTION: hint]` turn at the item's (new) rung (JSON; may 429). */
 export const requestLoopHintTurn = (sessionId: string, userId: string) =>
   loopPost<LoopTurnResult>('/action', { session_id: sessionId, user_id: userId, action_type: 'hint' });
+
+/** PKG-14: the perceived-difficulty rating the loop asks for every N checks; the
+ *  user is the session cookie's. Emits zpd.rating and resets the counter. */
+export const submitLoopRating = (sessionId: string, rating: LoopRating) =>
+  fetchJSON<{ ok: true }>('/api/learn/loop/rating', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, rating }),
+  });
 
 /** Ends the session with its close (idempotent; A60). 409 while a close or a grade is in flight. */
 export const closeLoopSession = (sessionId: string, userId: string) =>
