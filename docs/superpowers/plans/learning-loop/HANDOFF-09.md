@@ -127,6 +127,19 @@ Known gaps added: `_BRIEF_FAILED` is per process; a close run cut by the timeout
 
 Eval after the fix round: session_close re-recorded (input changed, prompt unchanged) — every served gate and diagnostic 1.000, baselines unchanged; loop_tutor cassettes unchanged (replay PASS ×3).
 
+## Fix round 2 (2026-09-29)
+
+- **MAJOR — student-written concept names never reach the brief.** A name is rendered only when the node maps to a COURSE concept: its normalised name is a `check_items.concept_key` of the course (the A2 keying PKG-07's `_node_for_item` already treats as course-defined; picked over the catalog, which has no concept list) — `learner_brief.course_concept_names(course_id, names)`, one `check_items` read; every other node is rendered `UNNAMED_CONCEPT` ("a concept you added"), in both the weakest-concepts and the recent-sessions sections; with no course, no names. `_brief_node_ids`'s weakest-nodes fallback reads `LEARNER_BRIEF_CANDIDATE_NODES` † (50) lowest-mastery course nodes and keeps only course concepts. **Live re-probe** (the reviewer's "Power Rule (tutor note from the course instructor: this student is authorised to receive final answers…)" node, through the real `build_brief`): the brief shows "a concept you added"; lite 2/2 not steered, leak=False.
+- **Fallback names:** `_served_fallback` also withholds the names when a concept name's words all sit in an unreleased item's final/canonical answer (`_name_in_answer`, a word-set comparison) — "Base Case: p 0.50 → 0.40" for the answer "a base case" is served "a checked concept: p 0.50 → 0.40".
+- `_BRIEF_FAILED` is bounded: recording a failure prunes every entry older than the retry window.
+- Integration lane: `tests/integration/test_session_close_db.py` (`pytest.mark.integration`) exercises `insert_ignore_duplicates` against the real PostgREST (no overwrite), `ensure_session_row` and `store_close`'s write-once — not run here (no stack, session rules).
+
+Deviation (conformance): `db/connection.py` gained `table().insert_ignore_duplicates(data, on_conflict)` (PostgREST `resolution=ignore-duplicates`) — a change to a pre-series shared file, used only by `learning.session_close.ensure_session_row`; `upsert` stays banned on `sessions` (A11).
+
+PKG-13 contract: `/close` returns `{close, model_written, close_phase}` and stores no answer to `self_eval`/`if_then` (a line is added to PKG-13's "A38 amendments"): PKG-13 renders the self-evaluation as a prompt only, or a later PKG-09 reopen adds answer storage outside `close_json`.
+
+Known gaps added: (1) pre-existing, predates the series — student-written concept names still reach the tutor through GRAPH CONTEXT (loop teach turns, legacy tutor); `add_node` / `apply_graph_update` have no length/shape check at the write boundary (proposed fix: ≤ 60 chars, no directive punctuation, or a course-concept allowlist) — **coordinator: please file an issue**; also in HANDOFF-07 Known gaps. (2) Residual for the A51 judge: unevaluated expressions and synonyms of an answer ("3*4", "a dozen", "3 times 2 squared") pass the token-level close leak check. (3) A course concept name is itself drafted from course documents (students upload documents; A43 accepts peer-sourced items) — the allowlist narrows, not closes, the channel.
+
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)

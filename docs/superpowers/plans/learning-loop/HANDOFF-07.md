@@ -115,6 +115,8 @@ The loop tutor exists as ONE agent with ONE system prompt (`agents/loop_tutor.py
 - m8 (rung-judge variance): the standard slot's 8 committed served texts re-judged 3× each into a scratch dir (committed cassettes untouched) — rungs identical every time (min = max per case: 2, 2, 1, 1, 6, 1, 3, 2), reveals identical; no case flips, so there is no floor input for PKG-14 from this measurement.
 - [SUPERSEDED — fix round 2: min-of-3 routing, both standard and deep 3/3] `LOOP_ROUTABLE_TIERS = {"standard", "deep"}` rests on ONE deep recording (standard passed two consecutive ones in this round); lite's first-attempt rate is 0.625 (every retry is a paid, now counted, request).
 
+- **Pre-existing exposure (recorded by PKG-09 review round 2; predates the series):** student-written concept names reach the tutor through GRAPH CONTEXT on loop teach turns (and on the legacy tutor): `POST /api/graph/{uid}/nodes` (`routes/graph.py` → `graph_service.add_node`) and `apply_graph_update` accept any `concept_name`, with no length or shape check. The learner brief no longer renders them (spec §13 A62), but GRAPH CONTEXT does. Needs a write-boundary fix (proposed: ≤ 60 chars and no directive punctuation, or a course-concept allowlist); for the coordinator to file as an issue.
+
 ## Verify commands
 
 ```
