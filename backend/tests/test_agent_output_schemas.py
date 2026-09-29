@@ -31,7 +31,9 @@ import importlib
 import pkgutil
 
 import pytest
-from pydantic import BaseModel
+from typing import is_typeddict
+
+from pydantic import BaseModel, TypeAdapter
 from pydantic_ai import Agent
 
 import agents as agents_pkg
@@ -81,6 +83,9 @@ EXPECTED_STRUCTURED_AGENTS = {
     "decision_agent",  # learning loop PKG-05b (flat 2-field yes/no default; pick output per run)
     "flashcard_agent",
     "grader_agent",  # learning loop PKG-05 (flat 4-field GraderOutput; grader + grader_second slots)
+    # learning loop PKG-07 unblock S1: the structured turn (flat 3-field LoopTurnOut
+    # TypedDict via PromptedOutput); its retries ARE the turn-shape validator's
+    "loop_tutor_agent",
     "note_concepts_agent",
     "note_summary_agent",
     "quiz_agent",
@@ -93,7 +98,6 @@ EXPECTED_STRUCTURED_AGENTS = {
 EXPECTED_TEXT_AGENTS = {
     "expository_agent",
     "health_probe_agent",
-    "loop_tutor_agent",  # learning loop PKG-07 (plain-text turns; three tier slots per run)
     "note_chat_agent",
     "ocr_vision_agent",
     "socratic_agent",
@@ -127,14 +131,17 @@ def _discover_agents() -> dict[str, Agent]:
 AGENTS = _discover_agents()
 
 
-def _output_model(agent: Agent) -> type[BaseModel] | None:
-    """The agent's declared output model, unwrapping PromptedOutput; None for
-    free-text (str) agents."""
+def _output_model(agent: Agent) -> type | None:
+    """The agent's declared output model (a BaseModel, or a TypedDict — the loop
+    tutor's LoopTurnOut, so pydantic's partial validation can stream it),
+    unwrapping PromptedOutput; None for free-text (str) agents."""
     output_type = agent.output_type
     # PromptedOutput wraps the model in `.outputs` (same attribute on 1.89
     # and 1.107).
     output_type = getattr(output_type, "outputs", output_type)
     if isinstance(output_type, type) and issubclass(output_type, BaseModel):
+        return output_type
+    if is_typeddict(output_type):
         return output_type
     assert output_type is str, (
         f"unexpected output_type {output_type!r} — extend this test's "
@@ -174,9 +181,15 @@ def _resolve(node: dict, defs: dict) -> dict:
     return node
 
 
-def schema_violations(model: type[BaseModel]) -> list[str]:
+def _json_schema(model: type) -> dict:
+    if isinstance(model, type) and issubclass(model, BaseModel):
+        return model.model_json_schema()
+    return TypeAdapter(model).json_schema()  # a TypedDict output
+
+
+def schema_violations(model: type) -> list[str]:
     """All budget violations for a model's JSON schema (empty = conforms)."""
-    schema = model.model_json_schema()
+    schema = _json_schema(model)
     defs = schema.get("$defs", {})
     violations: list[str] = []
     total_properties = 0
@@ -276,7 +289,7 @@ def test_per_object_exceptions_are_exact():
     that shrinks back under the default ceiling must drop its exception."""
     counts: dict[str, int] = {}
     for name in EXPECTED_STRUCTURED_AGENTS:
-        schema = _output_model(AGENTS[name]).model_json_schema()
+        schema = _json_schema(_output_model(AGENTS[name]))
         for node in [schema, *schema.get("$defs", {}).values()]:
             if node.get("title") in PER_OBJECT_EXCEPTIONS:
                 counts[node["title"]] = len(node.get("properties", {}))

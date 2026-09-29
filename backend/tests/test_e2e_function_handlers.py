@@ -665,7 +665,32 @@ def test_env_module_registers_loop_tutor_handler_on_dispatch(monkeypatch, slot):
     deps = _deps()
     result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
 
-    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_REPLY
+    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_REPLY, E2E_LOOP_TUTOR_TURN
+    from learning.turn_shape import render_turn
 
-    assert result.output == E2E_LOOP_TUTOR_REPLY
+    assert result.output == E2E_LOOP_TUTOR_TURN
+    assert render_turn(result.output) == E2E_LOOP_TUTOR_REPLY
     assert not deps.pending_evidence  # the handler scripts no tool call; the loop has no grader tool
+
+
+@pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
+@pytest.mark.parametrize("phase,ceiling,released", [
+    ("teach", 0, False), ("teach", 3, False), ("hint", 1, False), ("feedback", 6, True),
+])
+def test_e2e_loop_handler_returns_valid_turn(monkeypatch, slot, phase, ceiling, released):
+    """PKG-07 unblock S1: the E2E seam answers the structured output type with a
+    turn that passes the output validator at the TIGHTEST limits (a 1-sentence body
+    at H0/H1), so no E2E loop turn ever burns an output retry."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_TURN
+    from agents.loop_tutor import loop_tutor_agent
+    from learning.turn_shape import turn_limits, validate_turn
+
+    limits = turn_limits(phase, ceiling, released)
+    assert validate_turn(E2E_LOOP_TUTOR_TURN, limits) == []
+    deps = _deps()
+    deps.loop_turn = limits
+    result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
+    assert result.output == E2E_LOOP_TUTOR_TURN
+    assert result.usage().requests == 1  # no output retry
