@@ -95,7 +95,7 @@ from learning.evidence import PREREQ_RELATIONSHIP_TYPE, flush_pending
 from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
-from learning.leak import detect_leak, leak_spans
+from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.learner_brief import course_concept_names, store_brief
 from learning.learner_state import LearnerState, read_states
 from learning.misconceptions import (
@@ -1361,9 +1361,10 @@ class _LoopTurn:
         another concept than the marker's (fix round F2), or — the answer
         unreleased — a model ceiling below MISCONCEPTION_CONFRONT_MIN_RUNG. The
         text is model-written (item drafting), so while the active item's answer
-        is unreleased it must pass the strict leak check with NO provenance
-        (F3: number words anywhere, as close_states_answer reads close text); a
-        leaking text is withheld and its marker waits."""
+        is unreleased it must not state it — leak.confront_text_states_answer,
+        the strict check drafting also refuses with (F3, spec §13 A77: number
+        words anywhere; the one provenance is "the <value>" the active item's
+        prompt shows); a text that states it is withheld and its marker waits."""
         if self.phase == "check" or (self.phase == "feedback" and self.verdict == "correct"):
             return None
         marker = confront_of(self.state)
@@ -1378,10 +1379,12 @@ class _LoopTurn:
         line = confront_line_for(text) if text else None
         if line is None or self.item is None or self.answer_released:
             return line
-        # the item-drafted text is checked, not the route's own wording around it
-        leaked = detect_leak(
-            emitted=text, rung=self._leak_rung(), **_item_check_kwargs(**self._item_answer())
-        ).leaked
+        # the item-drafted text is checked, not the route's own wording around it —
+        # by the one function drafting also refuses with (spec §13 A77): stored ==
+        # servable. Answer unreleased here, so the rung is below H6.
+        answer = self._item_answer()
+        answer.pop("reference")
+        leaked = confront_text_states_answer(text, prompt=self.item.prompt, **answer)
         return None if leaked else line
 
     def _tier_phase(self) -> str:

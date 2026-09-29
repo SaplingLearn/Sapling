@@ -1429,129 +1429,35 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
     return reasons
 
 
-#: PKG-10 fix round 3 (R3-2). A single numeric/boolean token in a wrong reason
-#: is read as a STATED RESULT unless its position gives it a structural
-#: non-result role — the round-2 result-verb list ("gives 2", "gets 2") could
-#: never be complete ("concludes 2", "picks 2", "arrives at 2", "settles on 2").
-#: The roles, read off the characters and closed-class words around the hit:
-#: glued into an expression ("x^2", "2n+1", "2-step", "2's"); an operand ("by 2",
-#: "3 + 2", "2 and 3", "2 to both sides", "1 as a prime" — "as the answer" is
-#: excepted); a quantifier (the next word is a content word — "one step",
-#: "three sides", "one of the cases" — unless it is the prompt's own object,
-#: leak.quantifies_given). A token in answer position (leak.in_answer_position)
-#: is stated whatever follows.
-_GLUE_BEFORE = frozenset("^*/_.'\u2019")
-_GLUE_AFTER = frozenset("^*/_'\u2019")
-_OPERAND_BEFORE = re.compile(r"(?i)(?:\bby|[-+*/×÷^<>]|\d\s+(?:and|or|to))\s*$")
-_OPERAND_AFTER = re.compile(
-    r"(?i)\s*(?:[-+*/×÷^<>]|\s(?:and|or|to)\s+\d)"
-    r"|\s+(?:to|from|into|as)\b(?!(?:\s+[\w'-]+){0,3}?\s+(?:answers?|results?|solutions?)\b)"
-)
-_NEXT_WORD = re.compile(r"\s+([A-Za-z][A-Za-z'-]*)")
-#: Closed-class English words (determiners, pronouns, prepositions but the
-#: partitive "of", conjunctions, auxiliaries, sentence adverbs): a token
-#: followed by one of these is not quantifying a noun. Grammar, not vocabulary —
-#: the class is finite, unlike the verbs that can state a result.
-_FUNCTION_WORDS = frozenset(
-    """a an the this that these those each every some any no all both either neither
-    it its they them their he she him his her we us our you your i me my which who
-    whom whose what at by for to from with without into onto over under about after
-    before between through during per than as like via on in and or but nor so yet
-    because since although though while whereas if unless when whenever where until
-    is are was were be been being am has have had do does did will would can could
-    should may might must shall not only also just then instead too again even
-    still already here there now rather first""".split()
-)
-#: ...and a condition right after a BOOLEAN makes it part of a claim about when
-#: ("is true only for positive n"); a number with a condition is still stated
-#: ("gets 2 only by luck", "the limit is 2 for this function").
-_CONDITION_AFTER = re.compile(r"(?i)\s+(?:only|when|if|unless|except|for|whenever)\b")
-_BOOLEAN_ANSWERS = frozenset({"true", "false", "yes", "no"})
-
-
-def _structural_non_result(text: str, start: int, end: int, prompt: str) -> bool:
-    """The hit text[start:end] plays a structural non-result role (see
-    _GLUE_BEFORE…_FUNCTION_WORDS): part of an expression, an operand, or a
-    quantifier of a noun that is not the prompt's own object."""
-    from learning.leak import quantifies_given  # lazy: leak imports this module
-
-    before = text[start - 1] if start > 0 else ""
-    after = text[end] if end < len(text) else ""
-    after2 = text[end + 1] if end + 1 < len(text) else ""
-    if before.isalnum() or before in _GLUE_BEFORE:
-        return True
-    if after.isalnum() or after in _GLUE_AFTER:
-        return True
-    if (after == "-" and after2.isalnum()) or (after in ".," and after2.isdigit()):
-        return True  # a compound ("2-step") or a longer number ("2.5", "2,000")
-    if _OPERAND_BEFORE.search(text[:start]) or _OPERAND_AFTER.match(text, end):
-        return True
-    word = _NEXT_WORD.match(text, end)
-    if word is None or word.group(1).lower() in _FUNCTION_WORDS:
-        return False
-    return not quantifies_given(text, end, prompt)
-
-
-def _single_token_answer(run: tuple[str, ...]) -> bool:
-    """A final answer of one numeric or boolean token ("2", "1.5", "true")."""
-    if len(run) != 1:
-        return False
-    return run[0].casefold() in _BOOLEAN_ANSWERS or _finite_float(run[0]) is not None
-
-
 def _wrong_text_answer_reasons(draft: CheckItemDraft) -> list[str]:
-    """PKG-10 fix round (F3): a common wrong reason never states the final
-    answer. The confrontation line puts a stored wrong reason in front of the
-    tutor while the answer may still be unreleased. A multi-token answer is
-    checked strict with no provenance (number words, fractions, percentages).
-    A single numeric/boolean token (fix round 2, R2-4; fix round 3, R3-2) is
-    a STATED RESULT when it is in answer position (learning.leak.
-    in_answer_position: a copula, "=", "answer"/"result", a clause of its own)
-    or plays no structural non-result role (_structural_non_result: part of an
-    expression, an operand, a quantifier of a noun that is not the prompt's
-    object) — so "Concludes 2." and "Picks 2 because …" are caught whatever
-    the verb, while "Forgets to multiply by 2" and "Counts three sides" stay
-    honest misconceptions. A boolean before a condition ("true only for …")
-    is a claim about when, not a result; a number before one is still stated.
-    No stated final answer: _final_answer_reasons refuses the draft."""
-    run = answer_run(draft.final_answer)
-    if not run:
+    """PKG-10 fix round F3, decided in fix round 4 (spec §13 A77): a common
+    wrong reason never states the final answer. The confrontation line puts a
+    stored wrong reason in front of the tutor while the answer may still be
+    unreleased, and it withholds a text that states it — through
+    learning.leak.confront_text_states_answer, the SAME function this lint
+    calls, so a stored wrong reason is exactly one the line can serve (rounds 2
+    and 3 kept a drafting-only role heuristic that drifted from the serve check
+    in both directions). The drafter has no option letter yet (letters are
+    placed after validation, A37): the correct option's TEXT is checked, the
+    letter only at serve. No stated final answer: _final_answer_reasons
+    refuses the draft."""
+    if not answer_run(draft.final_answer):
         return []
     # lazy (learning.leak imports this module); drafting runs only with the loop on
-    from learning.leak import detect_leak, in_answer_position, leak_spans
+    from learning.leak import confront_text_states_answer
 
-    def states(text: str) -> bool:
-        if not _single_token_answer(run):
-            return detect_leak(
-                reference="",
-                emitted=text,
-                rung=0,  # H0: nothing of the answer may show (detect_leak takes Rung(rung))
-                final_answer=draft.final_answer,
-                canonical_answer=draft.canonical_answer,
-                strict=True,
-            ).leaked
-        spans = leak_spans(
-            emitted=text,
-            reference="",
-            final_answer=draft.final_answer,
-            canonical_answer=draft.canonical_answer,
-            strict=True,
-            given="",
-        )
-        boolean = run[0].casefold() in _BOOLEAN_ANSWERS
-        return any(
-            not (boolean and _CONDITION_AFTER.match(text, b))
-            and (
-                in_answer_position(text, a, b)
-                or not _structural_non_result(text, a, b, draft.prompt)
-            )
-            for a, b in spans
-        )
-
+    correct = next((o.text for o in draft.options if o.is_correct), None)
     return [
         f"wrong reason {w.key!r} states the final answer"
         for w in common_wrong(draft)
-        if w.text and states(w.text)
+        if w.text
+        and confront_text_states_answer(
+            w.text,
+            final_answer=draft.final_answer,
+            canonical_answer=draft.canonical_answer,
+            option_text=correct if draft.format == _MC_REASON else None,
+            prompt=draft.prompt,
+        )
     ]
 
 

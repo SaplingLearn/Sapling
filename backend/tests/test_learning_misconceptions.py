@@ -1428,21 +1428,20 @@ class TestFollowupMigration:
 
 def test_every_unreleased_eval_case_is_a_line_production_would_send():
     """The eval scores only lines the route would serve: an unreleased case's
-    misconception text passes the route's strict no-provenance pre-check (F3)."""
-    from learning.leak import detect_leak
+    misconception text passes the route's pre-check (F3) — the one function
+    drafting also refuses with (fix round 4, spec §13 A77)."""
+    from learning.leak import confront_text_states_answer
 
     mod = _confront_eval()
     for case in mod.CASES:
         meta = case.metadata
         if meta.get("answer_released"):
             continue
-        assert not detect_leak(
-            reference=meta["reference"],
-            emitted=meta["misconception"],
-            rung=case.inputs[2],
+        assert not confront_text_states_answer(
+            meta["misconception"],
             final_answer=meta["final_answer"],
-            strict=True,
-        ).leaked, case.name
+            prompt=meta.get("item_prompt", ""),
+        ), case.name
 
 
 def test_latest_evidence_released_reads_the_nodes_latest_journal_row():

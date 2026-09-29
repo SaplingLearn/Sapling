@@ -3545,12 +3545,12 @@ _PKG06_SANCTIONED_IMPORTS = {
     # PKG-10 fix round F3 (spec §13 A75): validate_draft refuses a drafted wrong reason
     # that states the final answer (strict detect_leak) — a lazy import inside
     # checks._wrong_text_answer_reasons; drafting runs only with LEARNING_LOOP_ENABLED.
-    # Fix round 2 (R2-4): a single-token answer counts only in answer position.
-    # Fix round 3 (R3-2): ...or outside a structural non-result role, where a count
-    # of the prompt's own object is still stated (quantifies_given).
+    # Fix round 4 (spec §13 A77): the lint is the serve-time confrontation check —
+    # confront_text_states_answer alone (rounds 2–3's detect_leak / leak_spans /
+    # in_answer_position / quantifies_given imports are gone with their heuristic).
     "learning/checks.py": (
         "learning.leak",
-        frozenset({"detect_leak", "in_answer_position", "leak_spans", "quantifies_given"}),
+        frozenset({"confront_text_states_answer"}),
     ),
     # PKG-10 fix round 3 (R3-1, spec §13 A76): recheck_after_release — the one
     # re-check decision every grader caller passes — reads the evidence journal
