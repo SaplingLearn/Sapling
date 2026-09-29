@@ -3,8 +3,8 @@
 Outside backend/learning/ (spec §2, §12): reads llm_usage, never calls a model. Every grader,
 grader_second, decision, loop_tutor* and session_close run site calls ``ai_budget.check(`` first
 (invariant 23) and turns ``level == "hard"`` into "no model call", never into a verdict (spec §3.5
-validity rule, invariant 28). ONE paged llm_usage read since the UTC month start, cached per request
-id — no lru_cache (CLAUDE.md #98); tests/conftest.py resets the module state around every test.
+validity rule, invariant 28). ONE paged llm_usage read since the UTC month start, cached per
+server-minted request key — no lru_cache (CLAUDE.md #98); tests/conftest.py resets the module state around every test.
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
 import config
-from db.connection import page_all, table
+from db.connection import page_all, rpc, table
 from learning import params
 from learning.policy import Band, BudgetLevel, Tier
 from services.auth_guard import get_session_user_id
 from services.events_service import log_event
-from services.request_context import current_request_id
+from services.request_context import current_request_id, current_request_key
 
 logger = logging.getLogger("sapling.ai_budget")
 
@@ -36,6 +36,7 @@ Scope = Literal[
     "daily_usd",
     "monthly_usd",
     "daily_tokens",
+    "daily_tutor_calls",
     "session_requests",
     "session_deep",
     "daily_grades",
@@ -49,9 +50,9 @@ BUDGET_REACHED_DETAIL = "ai budget reached"  # spec §3.5 / A20 429 body
 GRADE_TASKS = frozenset({"grader", "grader_second", "decision"})  # spec §3.5 STUDENT_DAILY_GRADES
 RATE_LIMIT_WINDOW_S = 60  # spec §3.5: LEARN_RATE_LIMIT_PER_MIN counts rows in the last 60 s
 _REQUEST_CACHE_MAX = 512  # entries; a memory bound, not a policy threshold
-# † How long one cached summary may serve its request id. RequestIDMiddleware trusts a
-# caller-supplied X-Request-ID, so a client re-sending one id on every request would otherwise
-# be judged forever on its first summary; a real request makes its checks within seconds.
+# † How long one cached summary may serve its request key. The key is server-minted per request
+# (request_context.current_request_key, owner decision 06b g), so a client can no longer share
+# one entry across requests; the expiry stays as a belt (a real request checks within seconds).
 _REQUEST_CACHE_TTL_S = 5.0
 _DECEMBER = 12
 _USAGE_COLUMNS = "id,cost_usd,total_tokens,task,created_at"
@@ -62,22 +63,32 @@ _HARD_ORDER: tuple[Scope, ...] = (
     "daily_usd",
     "monthly_usd",
     "daily_tokens",
+    "daily_tutor_calls",
     "session_requests",
     "rate_limit",
 )
 _USD_SCOPES: frozenset[str] = frozenset({"daily_usd", "monthly_usd"})
+# The tutor-call COUNT cap (owner decision A38): its own table, written directly — never through
+# events_service — so it holds when llm_usage cost reads wrong (#689) or no rows are written
+# (EVENTS_LOGGING_ENABLED=false). Migration 20260929050404_learning_ai_tutor_daily_calls.sql.
+_TUTOR_CALLS_TABLE = "ai_tutor_daily_calls"
+_TUTOR_CALLS_RPC = "ai_budget_bump_tutor_calls"
 
 
 @dataclass(frozen=True)
 class BudgetDecision:
     """spec §3.5. ``tier_ceiling`` caps what policy.model_tier may choose; ``pause_novice``
-    (tutor kind, hard level) = serve no check for a novice-band concept on any surface except the probe."""
+    (tutor kind, hard level) = serve no check for a novice-band concept on any surface except the probe.
+    ``session_capped`` = the session's tutor-request counter is at LOOP_SESSION_MAX_TUTOR_REQUESTS,
+    whatever ``scope`` reports: that session stays paused past ``reset_at``, so the banner says
+    "for this session" (owner decision 06b j; the copy is PKG-13's)."""
 
     level: BudgetLevel
     tier_ceiling: Tier
     scope: Scope | None = None
     reset_at: datetime | None = None
     pause_novice: bool = False
+    session_capped: bool = False
 
 
 _NORMAL = BudgetDecision(level="normal", tier_ceiling="deep")
@@ -106,6 +117,10 @@ _emitted: set[_EmitKey] = set()
 # checks fail open without another round trip
 _request_cache: dict[tuple[str, str], tuple[float, _Usage | None]] = {}
 _platform_checked_at: float | None = None
+# (user, UTC day iso) → this process's tutor calls: the fallback when the store fails, and a floor
+# under the store's count (a lost increment never lowers what this process has seen). Only
+# today's keys are kept.
+_tutor_calls_local: dict[tuple[str, str], int] = {}
 
 
 def _utcnow() -> datetime:
@@ -157,6 +172,7 @@ def reset_for_tests() -> None:
     with _lock:
         _emitted.clear()
         _request_cache.clear()
+        _tutor_calls_local.clear()
         _platform_checked_at = None
 
 
@@ -285,8 +301,9 @@ def _usage(user_id: str) -> _Usage | None:
     """One llm_usage read per (request, user); None on a read error (fail open). A failed read
     is cached like a summary: grade() checks up to three times, and each retry of a hanging
     PostgREST would block again for up to the client's timeout (one WARNING per read)."""
-    rid = current_request_id()
-    key = (rid, user_id) if rid else None
+    # the SERVER-minted key, never the client's X-Request-ID (owner decision 06b g)
+    rkey = current_request_key()
+    key = (rkey, user_id) if rkey else None
     if key is not None:
         with _lock:
             hit = _request_cache.get(key)
@@ -308,6 +325,66 @@ def _usage(user_id: str) -> _Usage | None:
                 _request_cache.pop(next(iter(_request_cache)))
             _request_cache[key] = (_clock(), summary)
     return summary
+
+
+# ── the tutor-call count (owner decision A38) ────────────────────────────────
+def _local_calls(user_id: str, day: str, bump: bool) -> int:
+    with _lock:
+        stale = [k for k in _tutor_calls_local if k[1] != day]
+        for k in stale:
+            del _tutor_calls_local[k]
+        key = (user_id, day)
+        if bump:
+            _tutor_calls_local[key] = _tutor_calls_local.get(key, 0) + 1
+        return _tutor_calls_local.get(key, 0)
+
+
+def _as_count(value: object) -> int:
+    """The RPC's scalar integer (PostgREST answers a bare JSON number); anything else raises."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"unexpected tutor call count {value!r}")
+    return value
+
+
+def count_tutor_call(user_id: str) -> int:
+    """Count one tutor model call for the student today (UTC) and return the new count. PKG-07
+    calls it once per tutor run; nothing else does. The store increment is one atomic statement
+    (cross-worker); if it fails, the in-process counter still counts (one WARNING), so the cap
+    is never blind. Never raises for a store failure; never creates or biases evidence."""
+    if not user_id:
+        return 0
+    day = _utcnow().date().isoformat()
+    local = _local_calls(user_id, day, bump=True)
+    try:
+        stored = _as_count(rpc(_TUTOR_CALLS_RPC, {"p_user_id": user_id, "p_day": day}))
+    except Exception as exc:
+        logger.warning(
+            "ai_budget: tutor call counter increment failed for %s, counting in-process: %s",
+            user_id,
+            exc,
+        )
+        return local
+    return max(stored, local)
+
+
+def _tutor_calls_today(user_id: str, now: datetime) -> int:
+    """Today's tutor calls: the store's count, never below this process's own; this process's
+    alone when the read fails (one WARNING per read)."""
+    day = now.date().isoformat()
+    local = _local_calls(user_id, day, bump=False)
+    try:
+        rows = table(_TUTOR_CALLS_TABLE).select(
+            "calls", filters={"user_id": f"eq.{user_id}", "day": f"eq.{day}"}
+        )
+        stored = _as_count(rows[0]["calls"]) if rows else 0
+    except Exception as exc:
+        logger.warning(
+            "ai_budget: tutor call counter read failed for %s, using the in-process count: %s",
+            user_id,
+            exc,
+        )
+        return local
+    return max(stored, local)
 
 
 # ── the ladder ────────────────────────────────────────────────────────────────
@@ -345,6 +422,7 @@ def _spend_decision(
     tutor_requests: int,
     deep_requests: int,
     arm_session: bool,
+    tutor_calls: int = 0,
 ) -> BudgetDecision:
     cap = _daily_cap(band)
     hard: dict[Scope, datetime | None] = {}
@@ -357,6 +435,8 @@ def _spend_decision(
             hard["daily_tokens"] = _next_day(now)
         if kind == "tutor" and usage.minute_rows >= config.LEARN_RATE_LIMIT_PER_MIN:
             hard["rate_limit"] = _rate_reset(usage, now)
+    if kind == "tutor" and tutor_calls >= config.STUDENT_DAILY_TUTOR_CALLS:
+        hard["daily_tutor_calls"] = _next_day(now)  # read outside llm_usage: holds when it fails
     if kind == "tutor" and tutor_requests >= params.LOOP_SESSION_MAX_TUTOR_REQUESTS:
         hard["session_requests"] = None
     if hard:
@@ -370,6 +450,7 @@ def _spend_decision(
             scope=scope,
             reset_at=hard[scope],
             pause_novice=kind == "tutor" and set(hard) != {"rate_limit"},
+            session_capped="session_requests" in hard,
         )
     if kind == "close":
         return _NORMAL  # one call, nothing to downgrade: the close has no soft level
@@ -395,6 +476,10 @@ def _spend_decision(
     # The $- and token-based soft level never downgrades novice deep turns; only the novice
     # deep-request cap does (spec §3.5 soft row, LOOP_MODEL_TIER).
     novice_keeps_deep = band == "novice" and "session_deep" not in soft
+    if band == "novice" and "session_deep" in soft:
+        # Owner decision 06b(k): report the scope that CAUSED the drop to standard. For a novice
+        # turn that is only ever the novice deep cap, whatever $/token soft scope came first.
+        scope = "session_deep"
     return BudgetDecision(
         level="soft",
         tier_ceiling="deep" if novice_keeps_deep else "standard",
@@ -415,7 +500,9 @@ def check(
     """The degradation ladder of spec §3.5. Call it module-qualified — ``ai_budget.check(`` —
     before every grader, grader_second, decision, loop_tutor* and session_close run
     (invariant 23). ``band`` is required for ``tutor`` and ignored for the grader cap; the
-    session counters are the ints PKG-07 keeps in sessions.loop_state."""
+    session counters are the ints PKG-07 keeps in sessions.loop_state. ``tutor`` also reads
+    today's tutor-call count (``count_tutor_call``; hard at STUDENT_DAILY_TUTOR_CALLS) — one
+    more read, outside llm_usage; the grader, decision and close kinds never read it."""
     if kind not in get_args(Kind):
         raise ValueError(f"ai_budget.check: unknown kind {kind!r}")
     if kind == "tutor" and band is None:
@@ -437,6 +524,7 @@ def check(
         tutor_requests=session_tutor_requests,
         deep_requests=session_deep_requests,
         arm_session=arm_session,
+        tutor_calls=_tutor_calls_today(user_id, now) if kind == "tutor" else 0,
     )
 
 
@@ -489,7 +577,7 @@ def enforce_rate_limit(request: Request) -> None:
 
 async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JSONResponse:
     """HTTP 429 {"detail": "ai budget reached", "reset_at": <iso or null>} (spec §3.5, A20), plus
-    the house request_id and the scope; Retry-After (≥ 1 s) when the reset is known, rounded UP
+    the house request_id, the scope and session_capped (06b j); Retry-After (≥ 1 s) when the reset is known, rounded UP
     so a client that obeys it never retries before reset_at."""
     rid = getattr(request.state, "request_id", None) or current_request_id()
     reset_at = exc.decision.reset_at
@@ -502,6 +590,7 @@ async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JS
         "detail": BUDGET_REACHED_DETAIL,
         "reset_at": reset_at.isoformat() if reset_at else None,
         "scope": exc.decision.scope,
+        "session_capped": exc.decision.session_capped,
         "request_id": rid,
     }
     return JSONResponse(
