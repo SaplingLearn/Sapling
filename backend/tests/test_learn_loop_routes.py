@@ -330,6 +330,8 @@ def seams():
         ns.grade = p("grade_answer", new_callable=AsyncMock, return_value=CORRECT)
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
+        # PKG-10 (A76): the evidence-journal half of the re-check rule
+        ns.journal_release = p("latest_evidence_released", return_value=None)
         ns.select_item = p("select_item", wraps=checks.select_item)
         ns.reserve = p("posttest_reserve_hash", return_value="qh-reserve")
         ns.concept_key = p("_concept_key_for_node", return_value="recursion")
@@ -3543,3 +3545,38 @@ def test_a_lost_claim_writes_no_misconception_row(gate_on, seams):
     ):
         client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
     rec.assert_not_called()
+
+
+def test_only_the_next_item_after_a_release_is_a_recheck(gate_on, seams):
+    """A76 (R2-3): the copy risk is the NEXT graded item on the concept after a
+    release; once another item on the concept was graded normally, later items
+    count as genuine learning again."""
+    later = {**_released_attempt("qh-2", correct=True)}
+    seams.store["doc"] = {**_state(), "attempts": [_released_attempt(), later]}
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
+    assert seams.grade.call_args.kwargs["same_session_recheck"] is False
+    seams.journal_release.assert_not_called()  # the session's own log answers first
+
+
+@pytest.mark.parametrize("journal,recheck", [(True, True), (False, False), (None, False)])
+def test_a_release_in_another_session_counts_within_the_window(gate_on, seams, journal, recheck):
+    """A76 (R2-2): a session hop does not bypass the rule — with no attempt on
+    the concept in this session, the evidence journal's latest row on the node
+    within RECHECK_RELEASE_WINDOW_HOURS decides (wrong in session A → the twin
+    in session B the same day is a re-check)."""
+    from datetime import datetime, timedelta, timezone
+
+    from learning.params import RECHECK_RELEASE_WINDOW_HOURS
+
+    seams.journal_release.return_value = journal
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
+    assert seams.grade.call_args.kwargs["same_session_recheck"] is recheck
+    (user, node), kw = seams.journal_release.call_args
+    since = datetime.fromtimestamp(NOW, tz=timezone.utc) - timedelta(
+        hours=RECHECK_RELEASE_WINDOW_HOURS
+    )
+    assert (user, node, kw["since"]) == ("u1", "node-1", since.isoformat())

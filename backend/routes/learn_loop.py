@@ -105,14 +105,15 @@ from learning.misconceptions import (
     confront_of,
     is_key,
     open_for,
+    last_release_on_node,
     record,
-    released_on_node,
     set_confront,
     slip_or_misconception,
 )
 from learning.loop_state_store import (
     LoopStateConflict,
     load_loop_state,
+    latest_evidence_released,
     revealed_hashes,
     seen_hashes,
     update_loop_state,
@@ -122,6 +123,7 @@ from learning.params import (
     BKT_L0,
     BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
+    RECHECK_RELEASE_WINDOW_HOURS,
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_PHASES,
@@ -2335,9 +2337,9 @@ async def _grade_submission(
         loop_state=copy.deepcopy(state),
     )
     rung = int(entry.get("rung") or 0)
-    # F1 (PKG-10 fix round): the reference of an earlier item on this concept was
-    # released this session — this answer is a re-check, never a first attempt
-    recheck = released_on_node(state, node_id)
+    # PKG-10 (spec §13 A76): the next graded item on a concept after a release
+    # is a re-check, never a full-weight unassisted first attempt
+    recheck = _recheck_after_release(body.user_id, node_id, state, now)
     claim = str(uuid.uuid4())
     _claim_grading(body.session_id, qh, claim, now)
     flushed = False
@@ -2453,6 +2455,21 @@ async def _grade_submission(
         # claim (a claim lost to another request writes nothing; never raises)
         _write_misconception(body.user_id, outcome, _item_like(item), answer)
     return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
+
+
+def _recheck_after_release(user_id: str, node_id: str, state: dict, now: float) -> bool:
+    """Spec §13 A76. The concept's latest attempt in THIS session decides when
+    there is one (released → this is the next item after a release; the one
+    after is normal again); otherwise the student's latest evidence row on the
+    node journaled within RECHECK_RELEASE_WINDOW_HOURS (a release in another
+    session the same day — a session hop never bypasses the rule)."""
+    last = last_release_on_node(state, node_id)
+    if last is not None:
+        return last
+    since = datetime.fromtimestamp(now, tz=timezone.utc) - timedelta(
+        hours=RECHECK_RELEASE_WINDOW_HOURS
+    )
+    return latest_evidence_released(user_id, node_id, since=since.isoformat()) is True
 
 
 def _requests_of(run_result) -> int:

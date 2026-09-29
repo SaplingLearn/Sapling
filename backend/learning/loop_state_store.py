@@ -159,6 +159,34 @@ def _evidence_rows(user_id: str) -> list[dict]:
     )
 
 
+def latest_evidence_released(user_id: str, node_id: str, *, since: str) -> bool | None:
+    """PKG-10 (spec §13 A76, the session-hop half of the re-check rule): whether
+    the student's LATEST evidence row on this node journaled since `since` was a
+    release by revealed_hashes' rule (a wrong/idk answer, or max_rung >=
+    RUNG_NO_CREDIT_MIN); None when there is no such row or the read failed
+    (never raises). One direct read, scoped to the node's owner like
+    _evidence_rows."""
+    try:
+        rows = table("node_mastery_events").select(
+            "correct,max_rung,graph_nodes!inner(user_id)",
+            filters={
+                "graph_nodes.user_id": f"eq.{user_id}",
+                "node_id": f"eq.{node_id}",
+                "event_type": "eq.evidence",
+                "created_at": f"gte.{since}",
+            },
+            order="created_at.desc,evidence_seq.desc",
+            limit=1,
+        )
+    except Exception as exc:
+        logger.warning("latest_evidence_released read failed: %s", type(exc).__name__)
+        return None
+    if not rows:
+        return None
+    row = rows[0]
+    return row.get("correct") is False or (row.get("max_rung") or 0) >= params.RUNG_NO_CREDIT_MIN
+
+
 def seen_hashes(user_id: str) -> set[str]:
     """Every question_hash the user has evidence on (A23)."""
     return {r["question_hash"] for r in _evidence_rows(user_id) if r.get("question_hash")}
