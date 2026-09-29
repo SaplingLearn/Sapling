@@ -137,6 +137,14 @@ _GRADER_FAILURES = (
 )
 
 
+class BudgetCapped(UsageLimitExceeded):
+    """_run_once's refusal when ai_budget.check says the student's grader cap is hard
+    (spec §3.5, A39): no model ran. A UsageLimitExceeded, so every _GRADER_FAILURES
+    handler still degrades on it; grade() maps it to budget_capped=True, so the seam's
+    decision.fallback says "budget". GRADER_LIMITS' own per-run UsageLimitExceeded is
+    not one: it stays an outage (both_failed)."""
+
+
 class GraderOutput(BaseModel):
     """Flat output (agents/__init__.py schema budget). The two reports come before
     the verdicts, so the model decides them first: `addresses_grader` (A33), then
@@ -704,8 +712,8 @@ async def _run_once(
     (`second_opinion`). `output_type=SpanVerdicts` makes it the span check (round
     a33) and `Withdrawals` the context check (A33 finish): the same agent and
     prompt, its own output type, chosen per run."""
-    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps this to unavailable
-        raise UsageLimitExceeded("ai budget: grader cap reached")
+    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps it to budget
+        raise BudgetCapped("ai budget: grader cap reached")
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
     # Passed in, so a run that raises still says what the provider billed: the
     # token cap is checked AFTER a response (pydantic-ai), and a validation
@@ -840,6 +848,12 @@ async def _run_check(
     return out
 
 
+def _unavailable_after(exc: BaseException) -> GradeResult:
+    """A run that failed (_GRADER_FAILURES): a cap hit inside _run_once is the budget
+    (A39: decision.fallback "budget"); anything else is an outage."""
+    return GradeResult(unavailable=True, budget_capped=isinstance(exc, BudgetCapped))
+
+
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
@@ -922,7 +936,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             backend = "gemini_second"
     except _GRADER_FAILURES as exc:
         logger.warning("grader unavailable for item %s: %s", item.id, exc)
-        return GradeResult(unavailable=True)
+        return _unavailable_after(exc)
     if screen.exempted and any(run.addresses_grader for run in runs):
         # A33 (ruling point 3; CONTINUE §4.1 (a)): the report refuses only beside
         # a screen flag — a directive or role/format marker the screen matched and
@@ -1001,7 +1015,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             logger.warning(
                 "grader unavailable for item %s: the span check failed: %s", item.id, exc
             )
-            return GradeResult(unavailable=True)
+            return _unavailable_after(exc)
         confirmed = parse_labelled(check.item_results, span_labels)
         asserted = parse_labelled(check.asserted, span_labels)
         confirmed = {rid: ok and asserted.get(rid, False) for rid, ok in confirmed.items()}
@@ -1030,7 +1044,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
                 logger.warning(
                     "grader unavailable for item %s: the context check failed: %s", item.id, exc
                 )
-                return GradeResult(unavailable=True)
+                return _unavailable_after(exc)
             # fail closed: only an explicit "no" keeps the credit, so each entry's
             # verdict is flipped and a missing or unreadable one reads as withdrawn
             standing = parse_labelled(

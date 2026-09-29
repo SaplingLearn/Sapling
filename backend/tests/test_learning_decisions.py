@@ -1206,3 +1206,65 @@ def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
     assert (out.unavailable, out.correct, out.grader_backend) == (False, True, "gemini")
     assert deps.pending_evidence[-1]["grader_backend"] == "gemini"
     assert [(et, kw["payload"]["backend"]) for et, kw in events] == [("decision.made", "function")]
+
+
+# ── A38 fix round (m3): a cap hit inside _run_once is "budget" too ───────────
+
+
+def _cap_after(monkeypatch, n_normal: int):
+    """ai_budget.check: `normal` for the first n_normal calls, then hard."""
+    from services import ai_budget
+
+    kinds: list[str] = []
+
+    def check(user_id, kind, *a, **k):
+        kinds.append(kind)
+        if len(kinds) <= n_normal:
+            return ai_budget._NORMAL
+        return ai_budget.BudgetDecision(level="hard", tier_ceiling="fast", scope="daily_grades")
+
+    monkeypatch.setattr(ai_budget, "check", check)
+    return kinds
+
+
+def test_a_cap_hit_inside_run_once_reports_budget(seam, monkeypatch, events):
+    """grade()'s own check passes, the one inside _run_once is hard (another request
+    spent the last grade meanwhile): BudgetCapped → budget_capped → fallback "budget"."""
+    from agents import grader
+
+    kinds = _cap_after(monkeypatch, 1)
+    monkeypatch.setattr(grader.grader_agent, "run", _must_not_run)
+    assert issubclass(grader.BudgetCapped, grader.UsageLimitExceeded)
+    capped = asyncio.run(
+        grader.grade(
+            seam.grader_item_from(_gstate(seam)), format="free", student_answer="x", deps=_deps()
+        )
+    )
+    assert capped.unavailable is True and capped.budget_capped is True
+    assert kinds == ["grader", "grader"]
+    _cap_after(monkeypatch, 1)
+    assert asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps())) is None
+    assert [kw["payload"]["reason"] for et, kw in events if et == "decision.fallback"] == ["budget"]
+
+
+def test_a_per_run_usage_limit_stays_both_failed(seam, monkeypatch, events):
+    """GRADER_LIMITS' own UsageLimitExceeded (the run's request/token bound) is an
+    outage of that run, not the student's budget: both_failed, budget_capped False."""
+    from pydantic_ai.exceptions import UsageLimitExceeded
+
+    from agents import grader
+
+    async def over_limit(*a, **k):
+        raise UsageLimitExceeded("request_limit of 3 exceeded")
+
+    monkeypatch.setattr(grader.grader_agent, "run", over_limit)
+    result = asyncio.run(
+        grader.grade(
+            seam.grader_item_from(_gstate(seam)), format="free", student_answer="x", deps=_deps()
+        )
+    )
+    assert result.unavailable is True and result.budget_capped is False
+    assert asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps())) is None
+    assert [kw["payload"]["reason"] for et, kw in events if et == "decision.fallback"] == [
+        "both_failed"
+    ]
