@@ -651,9 +651,15 @@ def test_inv_12_one_prompt_stack_per_series_agent():
             continue  # still the PKG-00 stub
         constructions = len(re.findall(r"\bAgent\s*[\[(]", text))
         assert constructions == 1, f"{name}: {constructions} Agent constructions (want 1)"
-        assert len(re.findall(r"\bsystem_prompt\s*=", text)) == 1, (
-            f"{name}: not exactly one system_prompt="
+        # A61 (PKG-09): the loop tutor carries its one prompt as `instructions=`
+        # (sent on every request, history turns included); every other series
+        # agent keeps exactly one `system_prompt=`. Exactly one prompt either way.
+        prompts = len(re.findall(r"\bsystem_prompt\s*=", text)) + len(
+            re.findall(r"\binstructions\s*=", text)
         )
+        assert prompts == 1, f"{name}: not exactly one system_prompt= / instructions="
+        if name == "loop_tutor.py":
+            assert re.search(r"\binstructions\s*=", text), f"{name}: must use instructions= (A61)"
         assert "_fallback_prompt" not in text, f"{name}: defines a fallback prompt"
     loop_text = (BACKEND / "agents" / "loop_tutor.py").read_text()
     assert re.search(r"\bAgent\s*[\[(]", loop_text), (

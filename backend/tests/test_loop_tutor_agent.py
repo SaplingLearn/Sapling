@@ -160,7 +160,9 @@ def test_system_prompt_is_the_only_prompt_and_is_stable():
     prefix is stable; the per-turn instructions ride the user message."""
     import agents.loop_tutor as lt
 
-    assert lt.loop_tutor_agent._system_prompts == (lt._LOOP_SYSTEM_PROMPT,)
+    # A61 (PKG-09 reopen): the prompt rides `instructions=` (every request of every run)
+    assert lt.loop_tutor_agent._system_prompts == ()
+    assert lt.loop_tutor_agent._instructions == [lt._LOOP_SYSTEM_PROMPT]
     assert lt._PROMPT_HASH == lt.loop_tutor_agent._metadata["prompt_version"]
     assert "[LOOP PHASE" in lt._LOOP_SYSTEM_PROMPT  # names the prefix it will receive
 

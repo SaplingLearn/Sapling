@@ -1754,19 +1754,18 @@ def test_guard_history_drops_a_brief_that_restates_a_withheld_item():
     assert out == []
 
 
-def test_the_loop_turn_serves_the_brief_after_the_system_prompt(monkeypatch):
-    """End to end through the turn assembly: system prompt, brief, window; the brief
-    is not in the assembled user message (spec §13 A19)."""
-    from pydantic_ai.messages import SystemPromptPart, UserPromptPart
+def test_the_loop_turn_serves_the_brief_first_and_unenveloped(monkeypatch):
+    """The brief leads the guarded history as built (the loop rules ride the agent's
+    `instructions=`, A61); it is not in the assembled user message (spec §13 A19)."""
+    from pydantic_ai.messages import UserPromptPart
 
     import routes.learn_loop as loop
 
     loop_brief = "LEARNER BRIEF (x):\nBRIEF-SENTINEL"
-    hist = [loop._brief_message(loop_brief)]
-    guarded = loop._with_system_prompt(loop._guard_history(hist, nonce=NONCE, withheld=None))
-    assert isinstance(guarded[0].parts[0], SystemPromptPart)
-    assert isinstance(guarded[1].parts[0], UserPromptPart)
-    assert guarded[1].parts[0].content == loop_brief
+    guarded = loop._guard_history([loop._brief_message(loop_brief)], nonce=NONCE, withheld=None)
+    assert isinstance(guarded[0].parts[0], UserPromptPart)
+    assert guarded[0].parts[0].content == loop_brief
+    assert not hasattr(loop, "_with_system_prompt")
 
 
 # ── end_session delegation ───────────────────────────────────────────────────

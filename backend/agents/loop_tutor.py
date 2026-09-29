@@ -638,7 +638,11 @@ loop_tutor_agent = Agent[SaplingDeps, LoopTurnOut](
     deps_type=SaplingDeps,
     output_type=PromptedOutput(LoopTurnOut, template=LOOP_OUTPUT_TEMPLATE),
     output_retries=LOOP_OUTPUT_RETRIES,
-    system_prompt=_LOOP_SYSTEM_PROMPT,
+    # Spec §13 A61: instructions, not a system prompt — pydantic-ai adds a
+    # system prompt only to a run with NO message history, and every loop turn
+    # after the opener has one; instructions ride every request of every run
+    # (history turns, output retries, the stream, the tool-less continuation).
+    instructions=_LOOP_SYSTEM_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "loop_tutor"},
     tools=_build_tools(learning_loop=True),
     capabilities=[PrepareTools(_tools_until_first_round)],

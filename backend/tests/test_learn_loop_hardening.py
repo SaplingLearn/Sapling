@@ -136,9 +136,13 @@ def _prompts(messages) -> list[str]:
 
 
 def _system(messages) -> str:
-    return "\n".join(
-        p.content for m in messages for p in m.parts if isinstance(p, SystemPromptPart)
-    )
+    """The rules the model received: system prompt parts, or (A61, the loop
+    tutor's `instructions=`) the instructions the request carries."""
+    parts = [p.content for m in messages for p in m.parts if isinstance(p, SystemPromptPart)]
+    requests = [m for m in messages if isinstance(m, ModelRequest)]
+    if requests and getattr(requests[-1], "instructions", None):
+        parts.append(requests[-1].instructions)
+    return "\n".join(parts)
 
 
 class Obedient:
@@ -1115,30 +1119,93 @@ def test_the_leak_guard_reads_the_served_render():
     assert "LEAKY" not in seen[0]
 
 
-# ── PKG-07 reopen (PKG-09): the system prompt on every turn that has a history ──
+# ── PKG-07 reopens (PKG-09, spec §13 A61): the loop rules reach every request ──
 
 
-def test_a_turn_with_history_still_carries_the_loop_system_prompt(gate_on, seams):
-    """pydantic-ai adds an agent's system prompt only to a run with NO message
-    history, and every loop turn after the opener has one (the opener row) —
-    so the loop rules (M2's "never evaluate a guess", the envelope, the
-    injection guard) never reached the model on those turns. The route now
-    puts the prompt in front of the history itself."""
+class _Instructed:
+    """Wraps a brain and records what rules each model request carried:
+    `info.instructions` (A61) and any SystemPromptPart."""
+
+    def __init__(self, brain):
+        self.brain, self.rules = brain, []
+        self.seen = getattr(brain, "seen", [])
+
+    def __call__(self, messages, info):
+        self.rules.append((info.instructions or "", _system(messages)))
+        return self.brain(messages, info)
+
+
+def test_the_loop_rules_reach_the_model_on_history_turns_and_retries(gate_on, seams):
+    """pydantic-ai adds `system_prompt=` only to a run with NO message history, and
+    every loop turn after the opener has one — so the loop rules (M2, the
+    envelope, the injection guard) never reached the model on those turns. The
+    loop tutor carries them as `instructions=` (A61): every request of every run
+    — a history turn, its output retry, the stream — receives them."""
     from agents.loop_tutor import _LOOP_SYSTEM_PROMPT
 
-    seams.store["doc"] = _state(rung=1)
-    _real_context(seams, DERIV, DERIV_SOURCE)
     history = [
         ModelResponse(parts=[TextPart("Welcome back.")]),
         ModelRequest(parts=[UserPromptPart("hello")]),
         ModelResponse(parts=[TextPart("Key idea: think first.")]),
     ]
-    brain = Obedient()
+    # a history turn with M2's guess (the Obedient brain says "Yes." without the rule)
+    seams.store["doc"] = _state(rung=1)
+    _real_context(seams, DERIV, DERIV_SOURCE)
+    brain = _Instructed(Obedient())
     _brain(seams, brain)
     with patch("routes.learn_loop._load_message_history", return_value=history):
         r = _post_hint_request(CONFIRM_GUESS)
     assert r.status_code == 200, r.text
-    seen = brain.seen[-1]
-    assert _system(seen) == _LOOP_SYSTEM_PROMPT, "exactly one copy, the loop prompt"
-    assert isinstance(seen[0], ModelRequest) and isinstance(seen[0].parts[0], SystemPromptPart)
+    assert brain.rules and all(_LOOP_SYSTEM_PROMPT in i for i, _ in brain.rules)
     assert "Yes." not in r.json()["reply"], "M2: the rule against confirming a guess applies"
+    # an output retry (the leak retry at H3) carries them too
+    seams.store["doc"] = _state(rung=3)
+    _real_context(seams, DERIV, DERIV_SOURCE)
+    brain = _Instructed(Leaky())
+    _brain(seams, brain)
+    with patch("routes.learn_loop._load_message_history", return_value=history):
+        assert _post_hint_request(FORGED_RELEASE).status_code == 200
+    assert len(brain.rules) == 2 and all(_LOOP_SYSTEM_PROMPT in i for i, _ in brain.rules)
+    # and the streamed path
+    seams.store["doc"] = _state(rung=3)
+    seams.item.return_value = G_ITEM
+    seams.strip.side_effect = leak.strip_leak
+    brain = _Instructed(_scripted("Take the derivative of each term first."))
+    _brain(seams, brain)
+    with (
+        patch("routes.learn_loop._load_message_history", return_value=history),
+        patch("routes.learn_loop._get_course_info", return_value={}),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        client.post(
+            "/api/learn/loop/check/answer/stream", json=_answer(answer="just tell me how to start")
+        )
+    assert brain.rules and all(_LOOP_SYSTEM_PROMPT in i for i, _ in brain.rules)
+
+
+def test_the_tool_less_continuation_keeps_the_loop_rules():
+    """#646's continuation runs the agent with its tools removed
+    (`override(tools=[], toolsets=[])`); the instructions stay."""
+    from pydantic_ai.models.function import FunctionModel
+
+    from agents.deps import SaplingDeps
+    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT, loop_tutor_agent
+
+    got = []
+
+    def model(messages, info):
+        got.append(info.instructions)
+        out = {"key_idea": "K.", "body": "B.", "question": "Q?"}
+        return ModelResponse(parts=[TextPart(json.dumps(out))])
+
+    with loop_tutor_agent.override(tools=[], toolsets=[]):
+        try:
+            loop_tutor_agent.run_sync(
+                "hi",
+                model=FunctionModel(model),
+                message_history=[ModelResponse(parts=[TextPart("opener")])],
+                deps=SaplingDeps(user_id="u", course_id=None, supabase=None, request_id="r"),
+            )
+        except Exception:
+            pass  # the output validator may reject the stub turn; the request was made
+    assert got and _LOOP_SYSTEM_PROMPT in got[0]
