@@ -292,6 +292,24 @@ LOOP_PRO_THINKING_BUDGET = 1024
 LOOP_FLASH_THINKING_BUDGET = 0  # standard slot
 # † per-run max_tokens = the slot's thinking budget + this (Gemini's max_output_tokens includes thinking)
 LOOP_MAX_VISIBLE_TOKENS = 400
+# ── Structured loop turn (PKG-07 unblock; learning/turn_shape.py) ──────────
+# † sentences allowed in the key_idea field; key idea + body + question stay
+# within STEP_MAX_SENTENCES, so the body gets what is left after this and
+# STEP_QUESTIONS_PER_TURN
+TURN_KEY_IDEA_MAX_SENTENCES = 1
+# † body sentence limit by (model) ceiling rung: H0–H1 confirm/pump in one
+# sentence, H2–H3 pointer/leading step in two; a rung not listed (H4+) gets
+# the remainder, STEP_MAX_SENTENCES − key idea − question
+TURN_BODY_MAX_SENTENCES_BY_RUNG = {0: 1, 1: 1, 2: 2, 3: 2}
+# † highest rung model text may write before the answer is released: H5
+# (H6, the full solution, only once released; turn_shape.validate_turn also
+# holds math to plain text below H6 — owner decision A38 06(r))
+TURN_MODEL_CEILING_UNRELEASED = 5
+# † per-field character caps (LoopTurnOut max_length); together under
+# LOOP_MAX_VISIBLE_TOKENS at ~4 characters per token (1340 chars ≈ 335 tokens)
+TURN_KEY_IDEA_MAX_CHARS = 200
+TURN_BODY_MAX_CHARS = 900
+TURN_QUESTION_MAX_CHARS = 240
 # ── Item activation and the current concept (PKG-07; spec §3.4, §9, A27) ───
 # † served teach turns on the current concept before its next check item is activated
 LOOP_TEACH_TURNS_BEFORE_CHECK = 2
