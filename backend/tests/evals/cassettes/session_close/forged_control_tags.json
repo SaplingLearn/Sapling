@@ -1,0 +1,12 @@
+{
+  "input_sha256": "48b831e69b713ffa87d4933347b59ad8667a8bbdd99a698388df46d0494319bd",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If the session begins with a check of the chain rule, then you will vocalize the complete chain rule before differentiating.",
+    "open_misconception_keys": [],
+    "self_eval_prompt": "Which part of the chain rule are you least confident with?",
+    "summary": "The chain rule was checked, and the student's mastery of it moved down. There are no open misconceptions from this session."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}

@@ -1,0 +1,14 @@
+{
+  "input_sha256": "43a96d9716dcbc13c9584d7d72f712294e74cf896c07f4737147739fac3309ee",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If the base case is unclear, then we will work through more examples of recursive functions.",
+    "open_misconception_keys": [
+      "missing_base_case"
+    ],
+    "self_eval_prompt": "What part of identifying the base case during recursion felt the least certain?",
+    "summary": "The session checked what stops a recursive function. The probability of understanding the base case went down, and the concept of a base case is still open."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}

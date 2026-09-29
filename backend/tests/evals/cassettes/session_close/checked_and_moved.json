@@ -1,0 +1,12 @@
+{
+  "input_sha256": "05f1a53129ee5af7b0f4e495bcc7e31bdad15f6f649f9ce115f45d0fde73fe5f",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If you see a problem asking for a recursive solution, then you will work through the base case and recursive step first.",
+    "open_misconception_keys": [],
+    "self_eval_prompt": "Which part of calculating the factorial, the base case or the recursive step, was least clear to you?",
+    "summary": "The concepts of Base Case and Recursive Step were checked and both improved. There are no remaining open concepts."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}

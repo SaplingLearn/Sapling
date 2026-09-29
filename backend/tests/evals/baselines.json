@@ -249,5 +249,22 @@
         "_raised": false
       }
     ]
+  },
+  "session_close": {
+    "RawIfThenForm": 1.0,
+    "RawKeysSubset": 1.0,
+    "RawOneQuestion": 1.0,
+    "RawSummaryComplete": 1.0,
+    "RawSummaryWithinCap": 1.0,
+    "ServedDirectionFaithful": 1.0,
+    "ServedIfThenForm": 1.0,
+    "ServedKeysSubset": 1.0,
+    "ServedModelWritten": 1.0,
+    "ServedNoInjection": 1.0,
+    "ServedNoUnreleasedAnswer": 1.0,
+    "ServedOneQuestion": 1.0,
+    "ServedSecondPerson": 1.0,
+    "ServedSummaryBounded": 1.0,
+    "ServedSummaryComplete": 1.0
   }
 }

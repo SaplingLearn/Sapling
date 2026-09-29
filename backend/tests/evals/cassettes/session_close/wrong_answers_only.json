@@ -1,0 +1,14 @@
+{
+  "input_sha256": "d67e2b0917ec47b9e5298baaf35ca0c1fe909e9d0b19b80c8d72a2ae21a12331",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If you see a composite function, then you will take the derivative of the outer function and multiply by the derivative of the inner function.",
+    "open_misconception_keys": [
+      "forgets_inner_derivative"
+    ],
+    "self_eval_prompt": "Which part of applying the chain rule did you feel least sure about?",
+    "summary": "We checked the chain rule for derivatives, where the probability of understanding decreased. The concept of the chain rule is still open."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}

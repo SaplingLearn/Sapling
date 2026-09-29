@@ -751,3 +751,29 @@ def test_e2e_loop_handler_returns_valid_turn(monkeypatch, slot, phase, ceiling, 
     result = loop_tutor_agent.run_sync("What is a base case?", deps=deps, model=model_for(slot))
     assert result.output == E2E_LOOP_TUTOR_TURN
     assert result.usage().requests == 1  # no output retry
+
+
+def test_env_module_serves_session_close(monkeypatch):
+    """PKG-09: the close agent is on the request path (POST /api/learn/loop/close
+    and the loop end_session), so the E2E lane needs its handler."""
+    from agents.session_close import session_close_agent
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+    with session_close_agent.override(model=model_for("session_close")):
+        result = session_close_agent.run_sync("close this session", deps=_deps())
+
+    from agents.function_handlers_e2e import (
+        E2E_CLOSE_IF_THEN,
+        E2E_CLOSE_MISCONCEPTIONS,
+        E2E_CLOSE_SELF_EVAL,
+        E2E_CLOSE_SUMMARY,
+    )
+
+    assert result.output.summary == E2E_CLOSE_SUMMARY
+    assert result.output.self_eval_prompt == E2E_CLOSE_SELF_EVAL
+    assert result.output.if_then_plan == E2E_CLOSE_IF_THEN
+    assert result.output.open_misconception_keys == E2E_CLOSE_MISCONCEPTIONS
+    assert E2E_CLOSE_IF_THEN.startswith("If ") and ", then " in E2E_CLOSE_IF_THEN
+    assert E2E_CLOSE_SELF_EVAL.endswith("?") and E2E_CLOSE_SELF_EVAL.count("?") == 1

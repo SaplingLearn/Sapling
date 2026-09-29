@@ -69,6 +69,7 @@ from sse_starlette.sse import EventSourceResponse
 import config
 from agents import CONTINUATION_LIMITS, LOOP_LIMITS
 from agents.deps import SaplingDeps
+from agents.session_close import shape_close
 from agents.loop_tutor import (
     ITEM_WITHHELD,
     LOOP_TIER_SLOTS,
@@ -123,6 +124,7 @@ from learning.params import (
     REVIEW_SECONDS_PER_CHECK,
 )
 from learning.policy import LearnerView, LoopState, StepState
+from learning.session_close import CloseRecord, fallback_close
 from learning.turn_shape import (
     FIELD_JOIN,
     clamp_model_ceiling,
@@ -810,6 +812,44 @@ def served_model_text(
     verdict = detect_leak(emitted=reply, rung=leak_rung, given=given, **item)
     text = LADDER_FALLBACK_LINES[int(Rung(leak_rung))] if verdict.leaked else reply
     return (released_lead(reference) + text if answer_released else text), verdict
+
+
+# ── The served session close (PKG-09; spec §13 A25, A51) ─────────────────
+
+
+def close_states_answer(text: str, item) -> bool:
+    """Strict, served-mode leak check of close text against one item the
+    session posed but never released (the item as posed is the given text).
+    Fails closed: an item the check cannot read (no final answer) is a leak."""
+    try:
+        return detect_leak(
+            emitted=text,
+            rung=Rung.H0,
+            given=item.prompt,
+            **_item_check_kwargs(
+                reference=item.reference_answer,
+                final_answer=item.final_answer,
+                canonical_answer=item.canonical_answer,
+                correct_option=item.correct_option,
+                option_text=option_text(item),
+            ),
+        ).leaked
+    except (ValueError, TypeError):
+        return True
+
+
+def served_close(output, draft, unreleased_items) -> CloseRecord:
+    """What the student is served (and `sessions.close_json` stores) for the
+    close agent's `output` — the path the session_close eval gates:
+    `agents.session_close.shape_close`, then the deterministic close when any
+    served text states the answer of an unreleased item (never masked in
+    place, A51 N1)."""
+    record = shape_close(output, draft)
+    served = "\n".join((record.summary, record.self_eval, record.if_then))
+    if record.model_written and any(close_states_answer(served, i) for i in unreleased_items):
+        logger.warning("session close stated an unreleased item's answer; storing fallback close")
+        return fallback_close(draft)
+    return record
 
 
 class _LeakGuard:

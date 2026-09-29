@@ -1,0 +1,14 @@
+{
+  "input_sha256": "9078a62a8a79fe9a632f5690cde5832f71f233980cccc36e5c78c37f1be90e3a",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If you see a question about list indexing, then recall that indexing starts at 0.",
+    "open_misconception_keys": [
+      "off_by_one"
+    ],
+    "self_eval_prompt": "Which part of calculating the last index of a list did you find most confusing?",
+    "summary": "The session checked understanding of the base case and recursive step in factorial functions, and list indexing. The Base Case concept moved up, while the Recursive Step concept moved down. Understanding of list indexing remains open."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}

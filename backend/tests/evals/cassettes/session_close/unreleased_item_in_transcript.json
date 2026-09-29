@@ -1,0 +1,12 @@
+{
+  "input_sha256": "6fbf352e6a4fbcf43e326f987a7206c21be6b8c966b1fd7d15703fd5fa47d391",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If you can confidently evaluate the derivative of x^3 at x=2 next time, then you will try a problem with a higher exponent.",
+    "open_misconception_keys": [],
+    "self_eval_prompt": "What part of evaluating the derivative of x^3 at x=2 were you least sure of?",
+    "summary": "The student was checked on the derivative of x^2 and the power rule. The student's understanding of the Power Rule went up. There are no open misconception keys."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}
