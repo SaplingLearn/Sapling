@@ -407,10 +407,10 @@ _TEACHING_CLOSED = {
 
 
 def _require_open(state: dict) -> None:
-    """PKG-09: the answer routes (/check/answer, /step/attempt) of a closed
-    session — its close is stored; evidence after it would sit outside it."""
-    if _loop_phase(state) == "close":
-        raise HTTPException(status_code=409, detail=_SESSION_CLOSED)
+    """PKG-09: the answer routes (/check/answer, /step/attempt) of a closed or
+    closing session — its close is stored (or being written); evidence after it
+    would sit outside it."""
+    _refuse_while_closing(state, _now_s())
 
 
 def _require_teaching(state: dict) -> None:
@@ -2552,6 +2552,34 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
 
 _CLOSE_IN_PROGRESS = "session close in progress"
 _CLOSE_STORE_FAILED = "Could not store the session close."
+_GRADING_IN_FLIGHT = "a check is being graded; close again in a moment"
+
+
+def _live(entry: dict, key: str, now: float) -> bool:
+    """`entry[key]` is a claim younger than LOOP_GRADING_CLAIM_STALE_S."""
+    return bool(entry.get(key)) and now - float(entry.get(f"{key}_at") or 0) <= (
+        LOOP_GRADING_CLAIM_STALE_S
+    )
+
+
+def _grading_in_flight(doc: dict, now: float) -> bool:
+    """A check or probe item is being graded under a live claim (A52/A55c): its
+    evidence is not written yet, so a close now would miss it."""
+    entries = [e for e in (doc.get("steps") or {}).values() if isinstance(e, dict)]
+    probe = doc.get("probe") if isinstance(doc.get("probe"), dict) else {}
+    if isinstance(probe.get("current"), dict):
+        entries.append(probe["current"])
+    return any(_live(e, "grading_claim", now) for e in entries)
+
+
+def _refuse_while_closing(doc: dict, now: float) -> None:
+    """Grading and closing exclude each other on the session document: a
+    grading claim is refused while the session is closed or a live close claim
+    holds it (the close refuses a live grading claim, `_claim_close`)."""
+    if _loop_phase(doc) == "close":
+        raise HTTPException(status_code=409, detail=_SESSION_CLOSED)
+    if _live(doc, "close_claim", now):
+        raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
 
 
 def _close_phase(doc: dict | None) -> str:
@@ -2600,15 +2628,16 @@ def _stored_close(row: dict) -> dict:
 
 def _claim_close(session_id: str, claim: str, now: float) -> str:
     """Take the session's close claim by compare-and-set (A38 06(q)); 409 while
-    another close holds a live one. Returns the phase the session stopped in,
+    another close holds a live one, or while a check is being graded (its
+    evidence is not written yet). Returns the phase the session stopped in,
     read from the same document."""
     out: dict = {}
 
     def take(doc: dict) -> None:
-        held = doc.get("close_claim")
-        at = doc.get("close_claim_at") or 0
-        if held and held != claim and now - float(at) < LOOP_GRADING_CLAIM_STALE_S:
+        if doc.get("close_claim") != claim and _live(doc, "close_claim", now):
             raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
+        if _grading_in_flight(doc, now):
+            raise HTTPException(status_code=409, detail=_GRADING_IN_FLIGHT)
         stripped = {k: v for k, v in doc.items() if k not in ("close_claim", "close_claim_at")}
         out["phase"] = _close_phase(stripped)
         doc["close_claim"], doc["close_claim_at"] = claim, now

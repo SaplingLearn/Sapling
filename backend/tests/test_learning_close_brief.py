@@ -526,6 +526,7 @@ def test_run_session_close_runs_under_close_limits_and_records_usage(monkeypatch
     assert asyncio.run(sc.run_session_close(_draft(), user_id="u", request_id="r")) == out
     assert seen["limits"] is CLOSE_LIMITS
     assert seen["deps"].feature == "session_close" and seen["deps"].user_id == "u"
+    assert seen["deps"].learning_loop is True
     assert "<<student_text " in seen["message"]
     assert billed == [{"feature": "session_close", "task": "session_close", "user_id": "u"}]
 
@@ -1907,3 +1908,87 @@ def test_a_closed_session_answers_409_on_every_teaching_route(monkeypatch, path,
         app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
     assert r.status_code == 409, r.text
     assert r.json()["detail"] == "this session is closed"
+
+
+# ── grading and closing exclude each other (A52 claims) ─────────────────────
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        {
+            "phase": "teach",
+            "current": "qh-1",
+            "steps": {
+                "qh-1": {
+                    "check_item_id": "ci-1",
+                    "first_shown_at": 1.0,
+                    "grading_claim": "g",
+                    "grading_claim_at": 1e18,
+                }
+            },
+        },
+        {
+            "phase": "probe",
+            "probe": {
+                "current": {"question_hash": "p1", "grading_claim": "g", "grading_claim_at": 1e18}
+            },
+        },
+    ],
+)
+def test_a_close_waits_for_a_check_being_graded(monkeypatch, doc):
+    import routes.learn_loop as loop
+
+    tables, events, store = _wire_close(monkeypatch, evidence=[EVIDENCE_N1], loop_state=doc)
+    monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out()))
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 409 and r.json()["detail"].startswith("a check is being graded")
+    assert events == [] and not tables.writes("update", "sessions")
+    assert "close_claim" not in store["doc"]
+
+
+def test_a_stale_grading_claim_does_not_block_the_close(monkeypatch):
+    _, events, _ = _wire_close(
+        monkeypatch,
+        loop_state={
+            "phase": "teach",
+            "current": "qh-1",
+            "steps": {
+                "qh-1": {
+                    "check_item_id": "ci-1",
+                    "first_shown_at": 1.0,
+                    "grading_claim": "g",
+                    "grading_claim_at": 1.0,
+                }
+            },
+        },
+    )
+    with patch("routes.learn_loop.get_check_item", return_value=None):
+        r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200 and len(events) == 1
+
+
+@pytest.mark.parametrize("path", ["/check/answer", "/step/attempt"])
+def test_answers_wait_while_a_close_is_being_written(monkeypatch, path):
+    from services import ai_budget
+
+    _wire_close(
+        monkeypatch,
+        loop_state={
+            "phase": "teach",
+            "current": "qh-1",
+            "close_claim": "c",
+            "close_claim_at": 1e18,
+            "steps": {"qh-1": {"check_item_id": "ci-1", "first_shown_at": 1.0}},
+        },
+    )
+    body = {"question_hash": "qh-1", "answer": "x", "attempt_text": "I tried n == 1 first"}
+    app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
+    try:
+        with patch("routes.learn_loop.get_check_item", return_value=_item()):
+            r = client.post(
+                f"/api/learn/loop{path}", json={"session_id": "s1", "user_id": UID, **body}
+            )
+    finally:
+        app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
+    assert r.status_code == 409 and r.json()["detail"] == "session close in progress"

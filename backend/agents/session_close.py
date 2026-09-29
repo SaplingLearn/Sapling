@@ -180,6 +180,9 @@ async def run_session_close(
         supabase=None,
         request_id=request_id,
         feature="session_close",
+        # reached only through routes.learn_loop.close_session, behind the gate
+        # read once at route entry (A38 00); the close agent has no tools
+        learning_loop=True,
     )
     usage = RunUsage()
     try:
