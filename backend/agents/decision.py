@@ -77,18 +77,27 @@ def _one_line(text: str) -> str:
 _OPTION_KEY = re.compile(r"[a-z0-9_]+")
 
 
+# "none" is the model's no-match answer (the pick output's description), so a
+# key spelled that way is aliased like an unclean one (A38 fix round 3).
+_RESERVED_KEYS = frozenset({"none"})
+
+
+def _clean_key(key: str) -> bool:
+    return bool(_OPTION_KEY.fullmatch(key)) and key not in _RESERVED_KEYS
+
+
 def option_keys(keys) -> dict[str, str]:
     """The OPTION keys as the message shows them → the item's keys, one to one
     and in order (A38 fix round 2). A key of [a-z0-9_]+ is shown as is; any
-    other is shown as a positional alias "k<n>" (n = its option position,
+    other, and the reserved "none" (the no-match answer), is shown as a positional alias "k<n>" (n = its option position,
     suffixed with "_" until it collides with no shown key), so no key can
     start a forged line and no two keys can read alike ("foo"/" foo",
     "x y"/"x\\ny", a ":"). services/decisions.match_wrong_reason maps back."""
     keys = [str(k) for k in keys]
-    taken = {k for k in keys if _OPTION_KEY.fullmatch(k)}
+    taken = {k for k in keys if _clean_key(k)} | _RESERVED_KEYS
     shown: dict[str, str] = {}
     for position, key in enumerate(keys, start=1):
-        if _OPTION_KEY.fullmatch(key):
+        if _clean_key(key):
             shown[key] = key
             continue
         alias = f"k{position}"

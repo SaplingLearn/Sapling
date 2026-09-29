@@ -1343,3 +1343,32 @@ def test_an_aliased_option_key_still_matches_its_wrong_reason(seam, monkeypatch)
         state = seam.WrongReasonState(question=QUESTION, answer="a loop", wrong=wrong)
         pick = asyncio.run(seam.match_wrong_reason(state, deps=_deps()))
         assert pick is not None and pick.value == expected, shown
+
+
+def test_a_key_named_none_is_aliased_so_it_never_reads_as_no_match(seam, monkeypatch):
+    """Fix round 3: "none" is the model's no-match answer, so a wrong-reason key
+    literally named "none" is shown as an alias, never as "none"."""
+    from agents.decision import DecisionPickOutput, option_keys
+
+    assert option_keys(["none", "w_loop"]) == {"k1": "none", "w_loop": "w_loop"}
+    wrong = {"none": "Thinks nothing is wrong.", "w_loop": "Thinks it loops."}
+    for shown, expected in (("k1", "none"), ("none", "none")):
+
+        async def fake_run(message, _choice=shown, **kw):
+            class _R:
+                output = DecisionPickOutput(choice=_choice, confidence=0.9)
+
+                def usage(self):
+                    from pydantic_ai.usage import RunUsage
+
+                    return RunUsage()
+
+            return _R()
+
+        monkeypatch.setattr("agents.decision.decision_agent.run", fake_run)
+        monkeypatch.setattr("services.decisions.record_agent_usage", lambda *a, **k: None)
+        state = seam.WrongReasonState(question=QUESTION, answer="a loop", wrong=wrong)
+        message, _ = seam.decision_request("match_wrong_reason", state)
+        assert "OPTION none:" not in message and "OPTION k1:" in message
+        pick = asyncio.run(seam.match_wrong_reason(state, deps=_deps()))
+        assert pick is not None and pick.value == expected, shown
