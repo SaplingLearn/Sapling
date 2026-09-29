@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
+  "output": {
+    "evidence": "This stopping condition is known as the base case. Without a base case, a recursive function would call itself indefinitely.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "5f49d064cf17498fabdbfdeef0cb93cceae6753074f22be5516dd2782c5883e8"
+}

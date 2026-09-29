@@ -46,6 +46,20 @@ SERIES_AGENT_MODULES = (
 )
 # PKG-00 stubs; decision.py (PKG-05b) and session_close.py (PKG-09) come later
 STUBBED_AGENT_MODULES = ("check_items.py", "grader.py", "loop_tutor.py")
+# PKG-07 (spec §3.5, §13 A15): the three loop tutor tier slots — REQUIRED in
+# AgentTask from PKG-07 on (inv_06), each with an E2E function handler.
+LOOP_TUTOR_SLOTS = ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep")
+LOOP_ROUTES = BACKEND / "routes" / "learn_loop.py"
+#: routes/learn_loop.py functions allowed to grade or persist evidence (spec §8 #26).
+#: PKG-08/12/14 add their explicit-submission helper; nothing else ever joins.
+EVIDENCE_WRITERS = {"_grade_submission"}
+#: The only route handlers allowed to reach an EVIDENCE_WRITERS function.
+EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream"}
+_EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
+#: Modules that WRITE check_items.source_chunk_ids at generation (PKG-04; HANDOFF-04
+#: §Symbols: services/check_item_service.py::_build_row copies the draft's chunk ids —
+#: agents/check_items.py only drafts them as `chunk_ids` and never names the column).
+CHECK_ITEM_WRITERS = {"services/check_item_service.py"}
 # spec §8.9: encrypted learning columns — never UNIQUE, never a PostgREST filter
 ENCRYPTED_LEARNING_COLUMNS = (
     "prompt",
@@ -488,6 +502,12 @@ def test_inv_06_series_agent_tasks_have_function_handlers(monkeypatch):
 
     import agents._providers as providers
 
+    # PKG-07 floor: from this package on the tier slots are REQUIRED, not optional —
+    # the intersection below would otherwise skip a missing slot silently.
+    missing_slots = [s for s in LOOP_TUTOR_SLOTS if s not in get_args(providers.AgentTask)]
+    assert not missing_slots, (
+        f"loop tutor tier slots missing from AgentTask: {missing_slots} (spec §3.5, A15)"
+    )
     present = [t for t in SERIES_AGENT_TASKS if t in get_args(providers.AgentTask)]
     assert present, "no series AgentTask literal exists yet — PKG-04 adds check_items"
     providers.clear_function_handlers()
@@ -617,6 +637,10 @@ def test_inv_12_one_prompt_stack_per_series_agent():
             f"{name}: not exactly one system_prompt="
         )
         assert "_fallback_prompt" not in text, f"{name}: defines a fallback prompt"
+    loop_text = (BACKEND / "agents" / "loop_tutor.py").read_text()
+    assert re.search(r"\bAgent\s*[\[(]", loop_text), (
+        "agents/loop_tutor.py is still the PKG-00 stub (PKG-07 builds it)"
+    )
 
 
 def test_inv_13_fsrs_weights_pinned():
@@ -1156,3 +1180,249 @@ def test_inv_23_ai_budget_checked_before_every_run():
         found, bad = found + n, bad + b
     assert found >= 2, f"expected at least the grader and decision run sites, found {found}"
     assert bad == [], f"agent run with no earlier ai_budget.check( in the same function: {bad}"
+
+    # PKG-07 (spec §8.23 extended): every loop-agent run in routes/learn_loop.py — the
+    # agent is reached through the turn object there (`turn.agent.run(`), so the by-name
+    # scan above cannot see it — has an earlier ai_budget.check( in the same scope.
+    offenders = _loop_run_sites_without_budget_check()
+    assert not offenders, (
+        f"loop tutor runs without a prior ai_budget.check in the same function: {offenders}"
+    )
+
+
+# ── PKG-07: loop routes (spec §8 #15, #22, #23, #26, #27, #29) ──────────────
+def _scopes(tree: ast.AST):
+    """The module and every def, lambda and class body: each its own scope (the
+    PKG-06b rule in `_own_nodes`), so a nested helper never lends its calls to the
+    enclosing function and a lambda is never covered by its parent's body."""
+    return (tree, *(n for n in ast.walk(tree) if isinstance(n, _SCAN_SCOPES)))
+
+
+def _dotted(node) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_dotted(node.value)}.{node.attr}"
+    return ""
+
+
+#: The chat_stream runners a loop turn streams through (PKG-07 lane B: the
+#: structured turn streams through stream_structured_turn).
+_STREAM_RUNNERS = frozenset({"stream_agent_turn", "stream_structured_turn"})
+
+
+def _loop_run_scan(source: str, label: str) -> tuple[int, list[str]]:
+    """(run sites, run sites with no earlier ``ai_budget.check(`` in the same scope)
+    for ONE module: a load of ``<anything>.<Agent runner>`` (the loop route holds the
+    agent on its turn object) or a ``stream_agent_turn(`` / ``stream_structured_turn(`` call."""
+    found, bad = 0, []
+    for scope in _scopes(ast.parse(source)):
+        runs, checks = [], []
+        for node in _own_nodes(scope):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Load)
+                and node.attr in AGENT_RUN_METHODS
+            ):
+                runs.append(node.lineno)
+            elif isinstance(node, ast.Call) and _last_name(node.func) in _STREAM_RUNNERS:
+                runs.append(node.lineno)
+            elif isinstance(node, ast.Call) and _dotted(node.func).endswith("ai_budget.check"):
+                checks.append(node.lineno)
+        found += len(runs)
+        bad += [
+            f"{label}:{_scope_name(scope)}:{line}"
+            for line in runs
+            if not any(c < line for c in checks)
+        ]
+    return found, bad
+
+
+def _loop_run_sites_without_budget_check() -> list[str]:
+    """Invariant 23, loop half: every loop-agent run in routes/learn_loop.py is
+    preceded by ai_budget.check( in the same function body."""
+    if not LOOP_ROUTES.exists():
+        return []
+    source = LOOP_ROUTES.read_text()
+    found, bad = _loop_run_scan(source, "learn_loop")
+    if "APIRouter" in source:  # the real module (not the PKG-00 stub): never vacuous
+        assert found >= 3, (
+            f"expected the JSON run, the stream and the continuation run sites, found {found}"
+        )
+    return bad
+
+
+def test_inv_23_loop_run_scan_self_test():
+    good = (
+        "async def run_json(turn):\n    d = ai_budget.check(turn.user_id, 'tutor', 'develop')\n"
+        "    return await turn.agent.run('m')\n"
+    )
+    late = (
+        "async def run_json(turn):\n    r = await turn.agent.run('m')\n"
+        "    ai_budget.check(turn.user_id, 'tutor', 'develop')\n    return r\n"
+    )
+    stream = "async def s(turn):\n    async for ev in stream_agent_turn(agent=turn.agent):\n        yield ev\n"
+    lam = (
+        "def f(turn):\n    ai_budget.check(turn.user_id, 'tutor', 'develop')\n"
+        "    return lambda: turn.agent.run('m')\n"
+    )
+    nested = (
+        "async def f(turn):\n    ai_budget.check(turn.user_id, 'tutor', 'develop')\n"
+        "    async def g():\n        return await turn.agent.run_stream_events('m')\n"
+        "    return g\n"
+    )
+    assert _loop_run_scan(good, "good") == (1, [])
+    assert _loop_run_scan(late, "late")[1] == ["late:run_json:2"]
+    assert _loop_run_scan(stream, "stream") == (1, ["stream:s:2"])
+    structured = stream.replace("stream_agent_turn", "stream_structured_turn")
+    assert _loop_run_scan(structured, "structured") == (1, ["structured:s:2"])
+    assert _loop_run_scan(lam, "lam") == (1, ["lam:<lambda>:3"])
+    assert _loop_run_scan(nested, "nested") == (1, ["nested:g:4"])
+
+
+def test_inv_15_gate_never_inside_chat_stream():
+    text = (BACKEND / "services" / "chat_stream.py").read_text()
+    for needle in ("learning_loop", "learning.gate", "learn_loop"):
+        assert needle not in text, (
+            f"chat_stream.py mentions {needle!r}: the gate lives at route entry (spec §7)"
+        )
+
+
+def test_inv_22_loop_routes_ignore_model_pref():
+    if LOOP_ROUTES.exists():
+        assert "model_pref" not in LOOP_ROUTES.read_text(), (
+            "routes/learn_loop.py names model_pref: the loop picks its tier in code (spec A15)"
+        )
+
+
+def _evidence_scan(source: str) -> list[str]:
+    """Invariant 26 offenders in ONE module: any load of grade_answer / flush_pending /
+    apply_graph_update (called, aliased or passed on) outside an EVIDENCE_WRITERS def,
+    and any load of an EVIDENCE_WRITERS name outside an EVIDENCE_WRITER_CALLERS def."""
+    offenders = []
+    for scope in _scopes(ast.parse(source)):
+        name = _scope_name(scope)
+        is_def = isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for node in _own_nodes(scope):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                leaf = node.id
+            elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                leaf = node.attr
+            else:
+                continue
+            if leaf in _EVIDENCE_CALLS and not (is_def and name in EVIDENCE_WRITERS):
+                offenders.append(f"{name}:{node.lineno} reaches {leaf}")
+            if leaf in EVIDENCE_WRITERS and not (is_def and name in EVIDENCE_WRITER_CALLERS):
+                offenders.append(f"{name}:{node.lineno} reaches the evidence writer {leaf}")
+    return offenders
+
+
+def test_inv_26_evidence_scan_self_test():
+    ok = (
+        "async def _grade_submission(b):\n    o = await grade_answer(1, 2)\n    flush_pending(d, c)\n"
+        "async def check_answer(b):\n    return await _grade_submission(b)\n"
+        "async def check_answer_stream(b):\n    return await x(_grade_submission(b))\n"
+    )
+    assert _evidence_scan(ok) == []
+    assert _evidence_scan("async def chat(b):\n    await grade_answer(1)\n") == [
+        "chat:2 reaches grade_answer"
+    ]
+    assert _evidence_scan("def action(b):\n    f = flush_pending\n    f(1)\n") == [
+        "action:2 reaches flush_pending"
+    ]
+    assert _evidence_scan("def c(b):\n    gs.apply_graph_update(u, {})\n") == [
+        "c:2 reaches apply_graph_update"
+    ]
+    assert _evidence_scan(
+        "async def _grade_submission(b):\n    return lambda: grade_answer(1)\n"
+    ) == ["<lambda>:2 reaches grade_answer"]
+    assert _evidence_scan("async def chat(b):\n    return await _grade_submission(b)\n") == [
+        "chat:2 reaches the evidence writer _grade_submission"
+    ]
+
+
+def test_inv_26_evidence_only_from_explicit_submission():
+    if LOOP_ROUTES.exists():
+        offenders = _evidence_scan(LOOP_ROUTES.read_text())
+        assert not offenders, (
+            f"learn_loop reaches an evidence writer outside the explicit-submission path "
+            f"(spec A16): {offenders}"
+        )
+
+
+def _deterministic_scan(source: str, label: str) -> list[str]:
+    """Invariant 27 offenders: a ``deterministic_content(`` call with no later
+    ``detect_leak(..., final_answer=...)`` call in the same scope (A17, A34)."""
+    offenders = []
+    for scope in _scopes(ast.parse(source)):
+        calls = [n for n in _own_nodes(scope) if isinstance(n, ast.Call)]
+        leak_lines = [
+            c.lineno
+            for c in calls
+            if _last_name(c.func) == "detect_leak"
+            and any(k.arg == "final_answer" for k in c.keywords)
+        ]
+        for c in calls:
+            if _last_name(c.func) == "deterministic_content" and not any(
+                line > c.lineno for line in leak_lines
+            ):
+                offenders.append(f"{label}:{_scope_name(scope)}:{c.lineno}")
+    return offenders
+
+
+def test_inv_27_deterministic_scan_self_test():
+    good = (
+        "def p(item):\n    pl = ladder.deterministic_content(2, item, [], [])\n"
+        "    v = detect_leak(r, pl.text, 2, final_answer=item.final_answer)\n    return pl, v\n"
+    )
+    no_kw = good.replace(", final_answer=item.final_answer", "")
+    before = (
+        "def p(item):\n    v = detect_leak(r, t, 2, final_answer=f)\n"
+        "    return ladder.deterministic_content(2, item, [], [])\n"
+    )
+    lam = "def p(item):\n    return lambda: deterministic_content(2, item, [], [])\n"
+    assert _deterministic_scan(good, "g") == []
+    assert _deterministic_scan(no_kw, "k") == ["k:p:2"]
+    assert _deterministic_scan(before, "b") == ["b:p:3"]
+    assert _deterministic_scan(lam, "l") == ["l:<lambda>:2"]
+
+
+def test_inv_27_deterministic_payloads_leak_checked():
+    offenders = []
+    for path in _backend_py_files():
+        rel = path.relative_to(BACKEND).as_posix()
+        if rel == "learning/ladder.py":
+            continue
+        text = path.read_text()
+        if "deterministic_content" not in text:
+            continue
+        offenders += _deterministic_scan(text, rel)
+    assert not offenders, (
+        "a deterministic payload is built without detect_leak(..., final_answer=...) after it "
+        f"in the same function (spec A17, A34): {offenders}"
+    )
+
+
+def test_inv_29_source_chunks_visibility_aware():
+    import inspect
+
+    from services.rag_service import chunks_for_ids
+
+    param = inspect.signature(chunks_for_ids).parameters["user_id"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert param.default is inspect.Parameter.empty
+    offenders = []
+    for path in _backend_py_files():
+        rel = path.relative_to(BACKEND).as_posix()
+        text = path.read_text()
+        if rel != "services/rag_service.py" and rel not in CHECK_ITEM_WRITERS:
+            if "source_chunk_ids" in text and "course_chunks" in text:
+                offenders.append(f"{rel}: reads course_chunks next to source_chunk_ids")
+        if "chunks_for_ids" in text:
+            for node in ast.walk(ast.parse(text)):
+                if isinstance(node, ast.Call) and _last_name(node.func) == "chunks_for_ids":
+                    if not any(k.arg == "user_id" for k in node.keywords):
+                        offenders.append(f"{rel}:{node.lineno}: chunks_for_ids without user_id=")
+    assert not offenders, (
+        f"source chunks must resolve through rag_service.chunks_for_ids(ids, user_id=...): {offenders}"
+    )

@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "ce4ceceb1026fdb9afeab3aae518f7c82a015961005d9b7f0024501c5ff32f1c",
+  "output": {
+    "evidence": "Let's work through a similar function first: sum_to(n) returns n + sum_to(n - 1), and when n is 0 it returns 0 directly without another call",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "da0dbcf57abd04c318c0ff25d5ad1ceb05a5178e160b34ef0cb4d8b9f1de53a4"
+}

@@ -1,0 +1,22 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"The derivative of a polynomial function can be found using the power rule and the constant multiple rule.\", \"body\": \"The power rule states that the derivative of x^n is nx^(n-1). The constant multiple rule states that the derivative of c*f(x) is c*f'(x), where c is a constant.\", \"question\": \"What is the derivative of 3x^2?\"}",
+    "{\"key_idea\": \"The power rule is used to find the derivative of polynomial functions.\", \"body\": \"The power rule states that the derivative of x to the power of n is n times x to the power of n-1. The constant multiple rule states that the derivative of c times f(x) is c times f'(x), where c is a constant.\", \"question\": \"How would you apply these rules to find the derivative of 3x^2?\"}",
+    "{\"key_idea\": \"The power rule and constant multiple rule help find polynomial derivatives.\", \"body\": \"The power rule states that the derivative of x^n is nx^(n-1). The constant multiple rule states that the derivative of c*f(x) is c*f'(x).\", \"question\": \"What is the derivative of 3x^2?\"}",
+    "{\n  \"key_idea\": \"Derivatives measure the rate of change of a function.\",\n  \"body\": \"The derivative of a function at a specific point tells us how steep the function is at that point. For polynomials, we use specific rules to find these rates of change.\",\n  \"question\": \"What is the first step in finding the derivative of a polynomial like x^2?\"\n}"
+  ],
+  "input_sha256": "1e3ccbb8361307433ddb678a5c77b0eb4adeeca0a8d4725a1d0318975f5888b5",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "body": "The derivative of a function at a specific point tells us how steep the function is at that point. For polynomials, we use specific rules to find these rates of change.",
+    "key_idea": "Derivatives measure the rate of change of a function.",
+    "question": "What is the first step in finding the derivative of a polynomial like x^2?"
+  },
+  "prompt_hash": "23e9d0b6402d",
+  "requests": 4,
+  "rescued": true,
+  "retries": 3,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

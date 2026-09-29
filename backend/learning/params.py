@@ -209,6 +209,21 @@ GRADER_SUPPORT_MIN_SHARE = 0.5
 # the same item (the tutor's check, PKG-07; the probe, PKG-08) records it as idk.
 CHECK_REFUSALS_AS_IDK = 2
 LEAK_NGRAM = 6
+# † PKG-06 reopen (PKG-07 review round 3, C1(c); fix round 2, n2): strict mode
+# folds simple inflections of a WORD answer ("mitochondria" for
+# "Mitochondrion"): two alphabetic answer tokens are one lemma when they share
+# a stem of at least LEAK_STEM_MIN_CHARS characters that is at least
+# LEAK_STEM_MIN_SHARE of the longer word ("less"/"lesson" and "heat"/"heater"
+# stay apart) (learning/leak.py `_same_lemma`). Not spec values.
+LEAK_STEM_MIN_CHARS = 4
+LEAK_STEM_MIN_SHARE = 0.75
+# † PKG-06 reopen (PKG-07 fix round 2, N1): in served mode a leak hit inside a
+# run of at least this many answer tokens the model copied verbatim from the
+# text it was given (and reaching past the hit) is no leak (learning/leak.py
+# `_copied_runs`).
+LEAK_PROVENANCE_MIN_TOKENS = 3
+# † served mode: how far before a hit (characters) answer position is read
+LEAK_POSITION_WINDOW_CHARS = 60
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
 CHECK_ITEM_MIN_RUBRIC = 2
@@ -335,6 +350,47 @@ LOOP_SESSION_MAX_DEEP_REQUESTS = 6  # † develop/profic: reaching it = soft (de
 # † novice: reaching it turns novice deep turns into standard (a trailing comment would wrap the name)
 LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE = 12
 
+# ── Loop tutor tiers (PKG-07; spec §3.5, A15/A18) ──────────────────────────
+# † deep slot thinking cap; 2.5 Pro cannot go below 128 — never send 0
+LOOP_PRO_THINKING_BUDGET = 1024
+LOOP_FLASH_THINKING_BUDGET = 0  # standard slot
+# † per-run max_tokens = the slot's thinking budget + this (Gemini's max_output_tokens includes thinking)
+LOOP_MAX_VISIBLE_TOKENS = 400
+# ── Structured loop turn (PKG-07 unblock; learning/turn_shape.py) ──────────
+# † sentences allowed in the key_idea field; key idea + body + question stay
+# within STEP_MAX_SENTENCES, so the body gets what is left after this and
+# STEP_QUESTIONS_PER_TURN
+TURN_KEY_IDEA_MAX_SENTENCES = 1
+# † body sentence limit by (model) ceiling rung: H0–H1 confirm/pump in one
+# sentence, H2–H3 pointer/leading step in two; a rung not listed (H4+) gets
+# the remainder, STEP_MAX_SENTENCES − key idea − question
+TURN_BODY_MAX_SENTENCES_BY_RUNG = {0: 1, 1: 1, 2: 2, 3: 2}
+# † highest rung model text may write before the answer is released: H5
+# (H6, the full solution, only once released; turn_shape.validate_turn also
+# holds math to plain text below H6 — owner decision A38 06(r))
+TURN_MODEL_CEILING_UNRELEASED = 5
+# † first rung at which model text may carry an example of its own — H4, the
+# isomorph worked example (spec §3.3); below it turn_shape.validate_turn retries
+# a math expression the model's inputs never wrote (review round 3)
+TURN_OWN_EXAMPLE_MIN_RUNG = 4
+# † per-field character caps (LoopTurnOut max_length); together under
+# LOOP_MAX_VISIBLE_TOKENS at ~4 characters per token (1340 chars ≈ 335 tokens)
+TURN_KEY_IDEA_MAX_CHARS = 200
+TURN_BODY_MAX_CHARS = 900
+TURN_QUESTION_MAX_CHARS = 240
+# ── Item activation and the current concept (PKG-07; spec §3.4, §9, A27) ───
+# † served teach turns on the current concept before its next check item is activated
+LOOP_TEACH_TURNS_BEFORE_CHECK = 2
+# † graded in-session checks per plan concept before the cursor advances
+LOOP_CHECKS_PER_CONCEPT = 2
+# † target difficulty of an activated check item; select_item falls back to the nearest
+LOOP_CHECK_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}
 # † Owner decision A38 06(q): update_loop_state's compare-and-set retries after
 # the first conflict on sessions.loop_state_rev; exhausted -> LoopStateConflict.
 LOOP_STATE_CAS_RETRIES = 3
+# † PKG-07 review round 3 (C2): /check/answer grades under a per-item claim in
+# loop_state (steps[qh].grading_claim); a claim is never re-taken, so an item
+# left claimed (a crash mid-grade, a conflict after the flush) is never graded
+# twice. Once its claim is older than this, /check/next treats the item as
+# closed and activates the next one (longer than any grader call).
+LOOP_GRADING_CLAIM_STALE_S = 120

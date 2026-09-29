@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
+  "output": {
+    "evidence": "The derivative of x^2 is 2x.",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "bd69c31d900a012238e4f7e99b486cd668c1ea187b80657df75196386d14180f"
+}

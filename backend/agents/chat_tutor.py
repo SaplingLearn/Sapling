@@ -149,9 +149,19 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # decide for itself which lookups are worth the round trip.
 
 
-def _build_tools() -> list:
+def _build_tools(learning_loop: bool = False) -> list:
     # Fresh Tool instances per agent (rather than one shared module-level
     # list) so no Tool object is registered on multiple agents.
+    if learning_loop:
+        # Learning loop (spec §7, A16/A18): exactly the two read tools,
+        # declared in EVERY phase so the cached prefix is stable; the loop
+        # route disables them outside teach with tool_choice='none'. No
+        # grader tool (grading is the explicit-submission route) and no
+        # graph writer (evidence is flushed by that route).
+        return [
+            Tool(search_course_materials_tool, name="search_course_materials", takes_ctx=True),
+            Tool(read_graph_neighborhood_tool, name="read_graph_neighborhood", takes_ctx=True),
+        ]
     return [
         # #135: register under the prompt-facing name — the bare callable
         # would derive the wire name "search_course_materials_tool".
