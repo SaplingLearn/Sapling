@@ -138,7 +138,7 @@ NO_MODEL_ROUTES = ["/status", "/hint", "/check/next"]
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
 #: PKG-12: no review route carries the dependency — /review/answer checks the rate
 #: limit inline for a check answer only (tests/test_learning_review.py).
-REVIEW_ROUTES = ["/review/next", "/review/answer", "/review/summary"]
+REVIEW_ROUTES = ["/review/next", "/review/answer", "/review/summary", "/review/active"]
 
 
 def _sse_events(text: str) -> list[dict]:

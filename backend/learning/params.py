@@ -93,6 +93,8 @@ MC_STABILITY_GAIN_CAP = 2.0
 FSRS_STABILITY_MIN = 0.001
 SR_INITIAL_CRITERION = 3
 SR_RELEARN_SESSIONS = 3
+# spec §3.2: each relearn (and done) session needs one correct recall (PKG-12)
+SR_RELEARN_SESSION_TARGET = 1
 # PKG-11 † — flashcard UI rating (1 forgot / 2 hard / 3 easy, routes/flashcards.py)
 # → FSRS rating (1 Again / 2 Hard / 3 Good; learning.fsrs.Rating, which this
 # module cannot import: fsrs imports params). Easy(4) is never emitted in v1

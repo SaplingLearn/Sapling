@@ -2327,6 +2327,7 @@ def end_session(body: EndSessionBody, request: Request) -> dict | None:
 
 from learning import review  # noqa: E402
 from models import ReviewAnswerBody  # noqa: E402
+from services.academics import user_offering_ids_for_course  # noqa: E402
 
 _REVIEW_NOT_FOUND = "review item not found"
 _REVIEW_EXPIRED = "review session expired"
@@ -2358,6 +2359,13 @@ def _review_deps(
     )
 
 
+def _review_course(user_id: str, course_id: str | None) -> None:
+    """A review scoped to a course is scoped to one the student is enrolled in
+    (404 otherwise, before any review read)."""
+    if course_id and not user_offering_ids_for_course(user_id, course_id):
+        raise HTTPException(status_code=404, detail="Course not found")
+
+
 def _review_session(user_id: str, course_id: str | None, now: datetime) -> tuple[str, dict]:
     try:
         return review.load_or_create_review_session(user_id, course_id, now)
@@ -2367,7 +2375,8 @@ def _review_session(user_id: str, course_id: str | None, now: datetime) -> tuple
 
 def _serve_review_item(user_id: str, item, loop_state: dict, session_id: str, now: datetime):
     """The client payload of `item`, re-loaded here (a check item withdrawn or a card
-    deleted since the queue was built → None, and the next item is served)."""
+    deleted since the queue was built → None, and the next item is served). An
+    item already open for its key is re-served without a write (review.serve)."""
     if item.kind == "check":
         check = get_check_item(item.id)
         if check is None:
@@ -2385,29 +2394,47 @@ def _serve_review_item(user_id: str, item, loop_state: dict, session_id: str, no
 def review_next(
     request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
 ) -> dict:
-    """The first item of today's review queue (or null), opened for answering."""
+    """The next item of today's review queue (or null). A served item stays the
+    answerable one until it is answered: a refresh re-serves it (no write, no
+    event) instead of choosing another — never item shopping. A new item is
+    opened for answering and `review.served` follows the successful serve.
+    `due_total` is everything due today; `in_budget` what the remaining budget
+    covers (null item + due_total > 0 = the budget is spent, not caught up)."""
     _gate(user_id, request)
+    _review_course(user_id, course_id)
     now = _review_now()
     sid, loop_state = _review_session(user_id, course_id, now)
     retention = review.review_retention(user_id, course_id)
-    queue, _ = review.due_queue_with_stats(
-        user_id, course_id, now, loop_state=loop_state, pause_novice=_pause_novice(user_id)
+    queue, stats = review.due_queue_with_stats(
+        user_id,
+        course_id,
+        now,
+        loop_state=loop_state,
+        pause_novice=lambda: _pause_novice(user_id),
     )
-    review.log_served(user_id, queue, retention=retention, request_id=_request_id(request))
+    # the item already open for its key first: a refresh never moves on
+    ordered = sorted(queue, key=lambda i: not review.is_open(loop_state, i, now))
     payload = None
     try:
-        for item in queue:
+        for item in ordered:
+            fresh = not review.is_open(loop_state, item, now)
             payload = _serve_review_item(user_id, item, loop_state, sid, now)
             if payload is not None:
+                if fresh:
+                    review.log_served(
+                        user_id, queue, retention=retention, request_id=_request_id(request)
+                    )
                 break
     except LoopStateConflict:
         raise _StateConflict() from None
+    due = stats.get("due") or {}
     return {
         "item": payload,
         "remaining_budget_s": review.remaining_budget_s(loop_state),
         "session_id": sid,
         "retention_target": retention,
-        "due_total": len(queue),
+        "due_total": sum(due.values()),
+        "in_budget": len(queue),
     }
 
 
@@ -2421,6 +2448,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
     loop_on = _gate(body.user_id, request)
     if body.kind == "check":  # the one review body that runs a model (the grader)
         ai_budget.enforce_rate_limit_for(body.user_id)
+    _review_course(body.user_id, body.course_id)
     now = _review_now()
     if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
         raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
@@ -2435,13 +2463,19 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
         if check.format != "mc_reason" and not body.answer:
             raise HTTPException(status_code=422, detail="a free answer needs answer")
-        item = review.item_for_check(body.user_id, check, node_id, now)
         deps = _review_deps(body.user_id, body.course_id, sid, _request_id(request), loop_on)
     else:
         card_row = review.load_card(body.user_id, body.item_id)
         if card_row is None:
             raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
-        item = review.item_for_card(card_row, body.course_id, now)
+    try:  # a stored fsrs_s that is not a finite positive number → 422 (InvalidStability)
+        item = (
+            review.item_for_check(body.user_id, check, node_id, now)
+            if check is not None
+            else review.item_for_card(card_row, body.course_id, now)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     retention = loop_state["review"].get("retention") or review.review_retention(
         body.user_id, body.course_id
     )
@@ -2488,13 +2522,27 @@ def review_summary(
     request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
 ) -> dict:
     """Today's due counts, budget and retention target. Read-only: it never creates
-    the review session. Also the frontend's loop probe (`getLoopStatus`: 404 → off)."""
+    the review session."""
     _gate(user_id, request)
+    _review_course(user_id, course_id)
     now = _review_now()
     try:
         loop_state = review.peek_review_session(user_id, course_id, now)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Session user mismatch") from None
     return review.summary(
-        user_id, course_id, now, loop_state=loop_state, pause_novice=_pause_novice(user_id)
+        user_id,
+        course_id,
+        now,
+        loop_state=loop_state,
+        pause_novice=lambda: _pause_novice(user_id),
     )
+
+
+@router.get("/review/active")
+def review_active(request: Request, user_id: str = Query(...)) -> dict:
+    """The frontend's cheap loop probe (`getLoopStatus`): 200 when the loop is on
+    for the student, the gate's 404 when it is off. Builds nothing (PKG-07's
+    GET /status needs a loop session id)."""
+    _gate(user_id, request)
+    return {"active": True}

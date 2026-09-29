@@ -390,20 +390,137 @@ def test_due_queue_respects_budget_and_session_progress(monkeypatch):
     assert review.due_queue(USER, None, NOW, loop_state=spent_all) == []
 
 
-def test_budget_prefix_mixes_check_and_flashcard_costs():
-    """budget_select (PKG-02) prices every item alike; review's own prefix
-    sums each item's cost_s and stops at the first that does not fit, so a
-    cheaper later item never jumps the DASH order."""
-    from learning.review import _budget_prefix
+def _mixed_queue(monkeypatch, *, reads=None):
+    """One due concept (R lowest → first in DASH order) and two due cards."""
+    from learning import review
+
+    past = (NOW - timedelta(days=3)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [_card("f1", past), _card("f2", past)],
+            "learner_state": [_due_row("n1", 0.5, past)],
+            "graph_nodes": [{"id": "n1", "course_id": COURSE, "concept_name": "N1"}],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    pool = [_check_item("n1", "q1", "mc_reason", 2)]
+
+    def list_items(course, key, **kw):
+        if reads is not None:
+            reads.append(key)
+        return pool
+
+    monkeypatch.setattr(review, "list_items", list_items)
+    monkeypatch.setattr(
+        review, "_order", lambda entries, now: sorted(entries, key=lambda e: e.stability)
+    )
+
+
+def test_budget_prefix_mixes_check_and_flashcard_costs(monkeypatch):
+    """budget_select (PKG-02) prices every item alike; the review walk sums each
+    item's own cost_s and stops at the first that does not fit, so a cheaper later
+    item never jumps the DASH order; `due` stays the true due count."""
+    from learning import review
 
     check = params.REVIEW_SECONDS_PER_CHECK
     card = params.REVIEW_SECONDS_PER_FLASHCARD
-    items = [_item("check", 0.3, id="c1"), _item("flashcard", 0.4, id="f1")]
-    items += [_item("check", 0.5, id="c2")]
-    assert [i.id for i in _budget_prefix(items, check + card + check)] == ["c1", "f1", "c2"]
-    assert [i.id for i in _budget_prefix(items, check + card)] == ["c1", "f1"]
-    assert [i.id for i in _budget_prefix(items, check - 1)] == []  # never skips ahead
-    assert _budget_prefix(items, -card) == []
+    budget = params.REVIEW_DAILY_BUDGET_MIN * 60
+    _mixed_queue(monkeypatch)
+    # every entry has the same stability here: the stable sort keeps cards first
+    for spent, kept in [
+        (budget - (2 * card + check), ["f1", "f2", "ci-q1"]),
+        (budget - 2 * card, ["f1", "f2"]),
+        (budget - (2 * card - 1), ["f1"]),
+        (budget - (card - 1), []),  # never skips ahead to a cheaper item
+    ]:
+        queue, stats = review.due_queue_with_stats(
+            USER, COURSE, NOW, loop_state={"review": {"spent_s": spent}}
+        )
+        assert [i.id for i in queue] == kept, spent
+        assert stats["due"] == {"flashcard": 2, "check": 1} and stats["in_budget"] == len(kept)
+
+
+def test_a_concept_past_the_budget_is_counted_but_never_read(monkeypatch):
+    """Cost: a concept's items are read only while it is inside the budget."""
+    from learning import review
+
+    reads = []
+    _mixed_queue(monkeypatch, reads=reads)
+    spent = params.REVIEW_DAILY_BUDGET_MIN * 60 - 2 * params.REVIEW_SECONDS_PER_FLASHCARD
+    queue, stats = review.due_queue_with_stats(
+        USER, COURSE, NOW, loop_state={"review": {"spent_s": spent}}
+    )
+    assert [i.id for i in queue] == ["f1", "f2"] and reads == []
+    assert stats["due"]["check"] == 1 and stats["in_budget"] == 2
+
+
+def test_the_tutor_budget_is_read_only_when_a_novice_concept_is_due(monkeypatch):
+    from learning import review
+
+    calls = []
+
+    def pause():
+        calls.append(1)
+        return True
+
+    _mixed_queue(monkeypatch)  # n1 at p_known 0.5: develop, not novice
+    review.due_queue_with_stats(USER, COURSE, NOW, loop_state={}, pause_novice=pause)
+    assert calls == []
+    past = (NOW - timedelta(days=3)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [],
+            "learner_state": [_due_row("n1", 0.01, past), _due_row("n2", 0.02, past)],
+            "graph_nodes": [
+                {"id": "n1", "course_id": COURSE, "concept_name": "N1"},
+                {"id": "n2", "course_id": COURSE, "concept_name": "N2"},
+            ],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    _, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state={}, pause_novice=pause)
+    assert calls == [1] and stats["paused"] == 2  # once, however many novice concepts
+
+
+@pytest.mark.parametrize("bad", [0, -1.0, float("nan"), float("inf"), "x", True])
+def test_an_invalid_stability_is_skipped_and_logged(monkeypatch, caplog, bad):
+    """One bad fsrs_s never 500s the queue, and 0 never silently becomes S0."""
+    from learning import review
+
+    past = (NOW - timedelta(days=3)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [_card("f-bad", past, fsrs_s=bad), _card("f-ok", past)],
+            "learner_state": [{**_due_row("n-bad", 0.5, past), "fsrs_s": bad}],
+            "graph_nodes": [{"id": "n-bad", "course_id": COURSE, "concept_name": "B"}],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "list_items", MagicMock(side_effect=AssertionError))
+    with caplog.at_level("WARNING", logger="sapling.learning.review"):
+        queue, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state={})
+    assert [i.id for i in queue] == ["f-ok"] and stats["due"] == {"flashcard": 1, "check": 0}
+    assert "f-bad" in caplog.text and "n-bad" in caplog.text
+    with pytest.raises(review.InvalidStability):
+        review.item_for_card(_card("f-bad", past, fsrs_s=bad), COURSE, NOW)
+
+
+def test_never_scheduled_rows_start_at_s0():
+    from learning import review
+
+    assert review._stability(None) == params.FSRS_S0_GOOD
+    assert review._stability(2.5) == 2.5
+
+
+def test_due_flashcards_filter_in_sql(monkeypatch):
+    from learning import review
+
+    factory, handles = _tables({"flashcards": [], "learner_state": []})
+    monkeypatch.setattr(review, "table", factory)
+    review.due_queue_with_stats(USER, None, NOW, loop_state={})
+    filters = handles["flashcards"].select.call_args.kwargs["filters"]
+    assert filters["or"] == f"(due_at.is.null,due_at.lte.{NOW.isoformat()})"
 
 
 def test_due_queue_skips_concepts_with_no_items(monkeypatch, caplog):
@@ -1234,6 +1351,7 @@ def test_summary_counts_due_unservable_paused_and_budget(monkeypatch):
     )
     assert out == {
         "due": {"flashcard": 2, "check": 0},
+        "in_budget": 2,
         "unservable": 1,
         "paused": 1,
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
@@ -1646,6 +1764,10 @@ def client(monkeypatch):
     # summary test cover the two seams themselves.
     monkeypatch.setattr("services.ai_budget.enforce_rate_limit_for", lambda user_id: None)
     monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: False)
+    monkeypatch.setattr(
+        "routes.learn_loop.user_offering_ids_for_course",
+        lambda uid, cid: ["off-1"] if cid == COURSE else [],
+    )
     return TestClient(app)
 
 
@@ -1672,6 +1794,11 @@ def _session(monkeypatch, loop_state=None, sid=None):
     from learning import review
 
     state = loop_state if loop_state is not None else {"sr": {}, "review": {"spent_s": 0}}
+    # the student is enrolled in COURSE (the routes 404 any other course)
+    monkeypatch.setattr(
+        "routes.learn_loop.user_offering_ids_for_course",
+        lambda uid, cid: ["off-1"] if cid == COURSE else [],
+    )
     monkeypatch.setattr(
         review, "load_or_create_review_session", lambda u, c, now: (sid or _sid(c), state)
     )
@@ -1748,7 +1875,7 @@ def test_review_next_serves_first_item_with_budget_and_events(client, monkeypatc
     assert body["retention_target"] == params.FSRS_RETENTION_DEFAULT
     assert body["item"]["kind"] == "check" and body["item"]["prompt"] == "Explain n-due"
     assert "REF-n-due" not in r.text and "FA-n-due" not in r.text
-    assert seen_kw["pause_novice"] is False
+    assert seen_kw["pause_novice"]() is False  # a thunk: read only if a novice concept is due
     served = {
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
         "retention_target": params.FSRS_RETENTION_DEFAULT,
@@ -1778,7 +1905,7 @@ def test_review_next_passes_the_tutor_hard_level(client, monkeypatch):
     monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: True)  # A20
     with _loop():
         r = client.get(f"{REVIEW}/next?user_id={USER}")
-    assert r.status_code == 200 and seen_kw["pause_novice"] is True
+    assert r.status_code == 200 and seen_kw["pause_novice"]() is True
 
 
 def test_review_next_empty_queue_is_null_item(client, monkeypatch, store):
@@ -2269,7 +2396,7 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
         seen_kw.update(kw)
         return (
             [_item("check", 0.4, id="c1", node_id="n1")],
-            {"unservable": 2, "paused": 1, "due": {"flashcard": 2, "check": 1}},
+            {"unservable": 2, "paused": 1, "due": {"flashcard": 2, "check": 1}, "in_budget": 1},
         )
 
     monkeypatch.setattr(review, "due_queue_with_stats", fake_queue)
@@ -2278,12 +2405,253 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
     with _loop(), patch.object(review, "load_or_create_review_session", side_effect=AssertionError):
         r = client.get(f"{REVIEW}/summary?user_id={USER}&course_id={COURSE}")
     assert r.status_code == 200, r.text
-    assert seen_kw["pause_novice"] is True
+    assert seen_kw["pause_novice"]() is True
     assert r.json() == {
         "due": {"flashcard": 2, "check": 1},
+        "in_budget": 1,
         "unservable": 2,
         "paused": 1,
         "budget_min": params.REVIEW_DAILY_BUDGET_MIN,
         "remaining_budget_s": params.REVIEW_DAILY_BUDGET_MIN * 60,
         "retention_target": params.FSRS_RETENTION_LARGE_SET,
     }
+
+
+# ── Fix round: stable open item, course scope, the cheap probe, event honesty ──
+
+
+def _real_session(monkeypatch, store):
+    """load_or_create_review_session over the in-memory CAS store: every GET sees
+    what the previous one wrote (the store IS the session's loop_state)."""
+    from learning import review
+
+    def load(u, c, now):
+        return _sid(c), review._session_view(copy.deepcopy(store.state.extra)) | {
+            "open": copy.deepcopy(store.state.extra.get("open") or {})
+        }
+
+    monkeypatch.setattr(review, "load_or_create_review_session", load)
+
+
+def test_refreshing_review_next_reserves_the_same_item_and_writes_once(client, monkeypatch, store):
+    """MAJOR 2: a refresh never shops for another item — the served, unanswered
+    item comes back, with no second write and no second review.served."""
+    from learning import review
+
+    past = (NOW - timedelta(days=3)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [],
+            "learner_state": [_due_row("n1", 0.5, past)],
+            "graph_nodes": [{"id": "n1", "course_id": COURSE, "concept_name": "N1"}],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q1", "q2", "q3")]
+    monkeypatch.setattr(review, "list_items", lambda course, key, **kw: pool)
+    monkeypatch.setattr(
+        "routes.learn_loop.get_check_item", lambda item_id: next(i for i in pool if i.id == item_id)
+    )
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    events = []
+    monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append(et))
+    _real_session(monkeypatch, store)
+    with _loop():
+        ids = [
+            client.get(f"{REVIEW}/next?user_id={USER}&course_id={COURSE}").json()["item"]["id"]
+            for _ in range(4)
+        ]
+    assert ids == ["ci-q1"] * 4
+    assert len(store.calls) == 1 and events == ["review.served"]
+    assert store.state.extra["review"]["served_hashes"] == ["q1"]
+
+    # answered (graded) → the next GET chooses a new item and opens it
+    store.state.extra["open"]["n1"]["graded_at"] = NOW.timestamp()
+    with _loop():
+        after = client.get(f"{REVIEW}/next?user_id={USER}&course_id={COURSE}").json()
+    assert after["item"]["id"] == "ci-q2" and len(store.calls) == 2
+
+
+def test_an_open_item_left_under_a_stale_claim_is_replaced(store):
+    from learning import review
+
+    stale = NOW.timestamp() - params.LOOP_GRADING_CLAIM_STALE_S - 1
+    state = {
+        "open": {"n1": {"item_id": "ci-q1", "served_at": 0.0, "claim": "c", "claim_at": stale}}
+    }
+    assert review.open_item_ids(state, NOW) == {}
+    state["open"]["n1"]["claim_at"] = NOW.timestamp()  # grading in flight: still the open one
+    assert review.open_item_ids(state, NOW) == {"n1": "ci-q1"}
+
+
+def test_review_served_follows_a_successful_serve_only(client, monkeypatch, store):
+    from learning import review
+
+    _session(monkeypatch)
+    gone = _item("check", 0.3, id="ci-gone", node_id="n1", question_hash="q-gone", format="free")
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: ([gone], {}))
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    events = []
+    monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append(et))
+    monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: None)
+    with _loop():
+        r = client.get(f"{REVIEW}/next?user_id={USER}")
+    assert r.json()["item"] is None and events == []
+
+
+def test_review_next_reports_the_true_due_count_past_the_budget(client, monkeypatch, store):
+    from learning import review
+
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": params.REVIEW_DAILY_BUDGET_MIN * 60}})
+    monkeypatch.setattr(
+        review,
+        "due_queue_with_stats",
+        lambda u, c, now, **kw: ([], {"due": {"flashcard": 2, "check": 3}, "in_budget": 0}),
+    )
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    with _loop():
+        body = client.get(f"{REVIEW}/next?user_id={USER}").json()
+    assert body["item"] is None and body["due_total"] == 5 and body["in_budget"] == 0
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("get", f"{REVIEW}/next?user_id={USER}&course_id=not-mine", None),
+        ("get", f"{REVIEW}/summary?user_id={USER}&course_id=not-mine", None),
+        (
+            "post",
+            f"{REVIEW}/answer",
+            {
+                "user_id": USER,
+                "session_id": "s",
+                "course_id": "not-mine",
+                "kind": "flashcard",
+                "item_id": "f1",
+                "rating": 3,
+            },
+        ),
+    ],
+)
+def test_a_course_the_student_is_not_enrolled_in_is_404(client, method, path, body):
+    with _loop(), patch("learning.review.table", side_effect=_no_table):
+        r = getattr(client, method)(path, json=body) if body else getattr(client, method)(path)
+    assert r.status_code == 404 and r.json()["detail"] == "Course not found"
+
+
+def test_review_active_is_the_cheap_gate_only_probe(client):
+    with _loop(), patch("learning.review.table", side_effect=_no_table):
+        on = client.get(f"{REVIEW}/active?user_id={USER}")
+    with _loop(False):
+        off = client.get(f"{REVIEW}/active?user_id={USER}")
+    assert on.status_code == 200 and on.json() == {"active": True}
+    assert off.status_code == 404 and off.json()["detail"] == "learning loop not enabled"
+
+
+def test_review_graded_is_emitted_only_when_the_record_was_saved(monkeypatch, store):
+    """m9: a claim no longer held (replaced by a later serve) records nothing and
+    emits nothing, though the evidence write already happened."""
+    from learning import review
+
+    calls, applied = _checked(monkeypatch)
+    events = []
+    monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append(et))
+    item = _serve_check(store)
+    review.claim_item("sess-1", "n1", "ci-q", "c1", NOW)
+    real = review.apply_graph_update
+
+    def apply_then_lose_claim(*a, **k):
+        store.state.extra["open"]["n1"] = {"item_id": "ci-other", "served_at": 0.0}
+        return real(*a, **k)
+
+    monkeypatch.setattr(review, "apply_graph_update", apply_then_lose_claim)
+    _grade_check(item, _check_item("n1", "q"), {"sr": {}}, answer="x", claim="c1")
+    assert len(applied) == 1 and "review.graded" not in events
+    assert store.state.extra["sr"]["n1"]["correct"] == 0  # serve's entry, never graded
+    assert "spent_s" not in store.state.extra["review"]
+
+
+def test_a_review_rated_flashcard_counts_for_the_achievement(monkeypatch, store):
+    """m8: the same check_achievements('flashcards_reviewed') rate_card dispatches;
+    a failing dispatch never fails the rating."""
+    from learning import review
+
+    factory, handles = _tables({"flashcards": [_card_row()]})
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    dispatched = []
+    monkeypatch.setattr(
+        review, "check_achievements", lambda uid, ev, data: dispatched.append((uid, ev))
+    )
+    _grade_card(3)
+    assert dispatched == [(USER, "flashcards_reviewed")]
+    monkeypatch.setattr(review, "check_achievements", MagicMock(side_effect=RuntimeError("x")))
+    assert _grade_card(2).correct is True
+
+
+def test_a_check_review_dispatches_no_flashcard_achievement(monkeypatch, store):
+    from learning import review
+
+    _checked(monkeypatch)
+    dispatched = []
+    monkeypatch.setattr(review, "check_achievements", lambda *a: dispatched.append(a))
+    item = _item("check", 0.4, id="ci-q", node_id="n1", question_hash="q", format="free")
+    _grade_check(item, _check_item("n1", "q"), {"sr": {}}, answer="x")
+    assert dispatched == []
+
+
+def test_review_answer_with_an_invalid_stored_stability_is_422(client, monkeypatch, store):
+    from learning import review
+
+    _session(monkeypatch)
+    monkeypatch.setattr(review, "load_card", lambda u, cid: _card_row(fsrs_s=float("nan")))
+    with _loop():
+        r = client.post(
+            f"{REVIEW}/answer",
+            json={
+                "user_id": USER,
+                "session_id": _sid(),
+                "course_id": COURSE,
+                "kind": "flashcard",
+                "item_id": "f1",
+                "rating": 3,
+            },
+        )
+    assert r.status_code == 422 and store.calls == []
+
+
+def test_fsrs_stability_check_migration():
+    hits = sorted(MIG_DIR.glob("*_learning_fsrs_stability_positive.sql"))
+    assert len(hits) == 1, hits
+    assert hits[0].name > "20260929081946_learning_sessions_mode_review.sql"
+    sql = hits[0].read_text()
+    for tbl in ("learner_state", "flashcards"):
+        assert re.search(
+            rf"ALTER TABLE {tbl} ADD CONSTRAINT {tbl}_fsrs_s_positive\s+CHECK \(fsrs_s IS NULL OR "
+            r"\(fsrs_s > 0 AND fsrs_s < 'Infinity'::double precision\)\);",
+            sql,
+        ), tbl
+
+
+def test_fsrs_writers_never_store_an_invalid_stability():
+    """The migration's claim about existing data: both fsrs_s writers go through
+    fsrs.next_state, which is finite and positive over the whole input domain the
+    writers can reach (first rating, every rating, same-day and long gaps, the
+    floor and very large stabilities)."""
+    import itertools
+    import math
+
+    from learning import fsrs
+    from learning.flashcard_fsrs import flashcard_fsrs_update
+
+    starts = [(None, None), (1.0, params.FSRS_STABILITY_MIN), (5.0, 1.0), (10.0, 36500.0)]
+    for (d, s), rating, days in itertools.product(
+        starts, list(fsrs.Rating), [0.0, 0.5, 3.0, 400.0]
+    ):
+        _, s_new = fsrs.next_state(d, s, rating, days, same_day=days < 1)
+        assert math.isfinite(s_new) and s_new > 0, (d, s, rating, days, s_new)
+    for rating in (1, 2, 3):
+        cols = flashcard_fsrs_update(
+            {"fsrs_d": None, "fsrs_s": None, "last_reviewed_at": None}, rating, now=NOW
+        )
+        assert math.isfinite(cols["fsrs_s"]) and cols["fsrs_s"] > 0

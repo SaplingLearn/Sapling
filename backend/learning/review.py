@@ -37,9 +37,12 @@ Imported only by routes/learn_loop.py (the /review/* routes), behind the loop ga
 
 from __future__ import annotations
 
+import copy
 import logging
+import math
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
@@ -49,7 +52,7 @@ from agents.tools.check import CheckAnswer, grade_answer  # PKG-05 — the ONLY 
 from db.connection import table
 from learning import fsrs, loop_state_store
 from learning.bkt import band, decayed_p
-from learning.checks import posttest_reserve_hash, select_item
+from learning.checks import is_servable, posttest_reserve_hash, select_item
 from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PKG-11
 from learning.loop_state_store import update_loop_state
 from learning.params import (
@@ -61,9 +64,11 @@ from learning.params import (
     REVIEW_SECONDS_PER_CHECK,
     REVIEW_SECONDS_PER_FLASHCARD,
     SR_INITIAL_CRITERION,
+    SR_RELEARN_SESSION_TARGET,
     SR_RELEARN_SESSIONS,
 )
 from services.academics import resolve_offering, user_offering_ids_for_course
+from services.achievement_service import check_achievements
 from services.check_item_service import list_items
 from services.encryption import decrypt_if_present
 from services.events_service import log_event
@@ -79,7 +84,6 @@ Stage = Literal["acquire", "relearn", "done"]
 
 _ONE_DAY = timedelta(days=1)
 _DAILY_BUDGET_S = int(timedelta(minutes=REVIEW_DAILY_BUDGET_MIN).total_seconds())
-_ONE_RECALL = 1  # the relearn/done target: one correct recall per session (spec §3.2)
 _REVIEW_TOPIC = "Daily review"
 _REVIEW_MODE = REVIEW_MODE
 _FLASHCARD_KEY_PREFIX = "fc:"
@@ -159,8 +163,8 @@ def sr_stage_for_concept(streak_unassisted: int) -> tuple[Stage, int]:
     if streak_unassisted < SR_INITIAL_CRITERION:
         return "acquire", SR_INITIAL_CRITERION
     if streak_unassisted < SR_INITIAL_CRITERION + SR_RELEARN_SESSIONS:
-        return "relearn", _ONE_RECALL
-    return "done", _ONE_RECALL
+        return "relearn", SR_RELEARN_SESSION_TARGET
+    return "done", SR_RELEARN_SESSION_TARGET
 
 
 def sr_stage_for_flashcard(reps: int, last_rating: int | None) -> tuple[Stage, int]:
@@ -170,8 +174,8 @@ def sr_stage_for_flashcard(reps: int, last_rating: int | None) -> tuple[Stage, i
     if reps < SR_INITIAL_CRITERION or last_rating == fsrs.Rating.AGAIN:
         return "acquire", SR_INITIAL_CRITERION
     if reps < SR_INITIAL_CRITERION + SR_RELEARN_SESSIONS:
-        return "relearn", _ONE_RECALL
-    return "done", _ONE_RECALL
+        return "relearn", SR_RELEARN_SESSION_TARGET
+    return "done", SR_RELEARN_SESSION_TARGET
 
 
 def review_session_id(user_id: str, course_id: str | None, now: datetime) -> str:
@@ -189,8 +193,13 @@ def _session_view(doc: dict | None = None) -> dict:
     return {"sr": dict(doc.get("sr") or {}), "review": review}
 
 
-def _read_session(sid: str) -> list[dict]:
-    return table("sessions").select("id,user_id,loop_state", filters={"id": f"eq.{sid}"}) or []
+def _read_session(sid: str, user_id: str) -> list[dict]:
+    return (
+        table("sessions").select(
+            "id,user_id,loop_state", filters={"id": f"eq.{sid}", "user_id": f"eq.{user_id}"}
+        )
+        or []
+    )
 
 
 def load_or_create_review_session(
@@ -203,7 +212,7 @@ def load_or_create_review_session(
     A concurrent first poll that loses the insert re-reads the winner's row.
     """
     sid = review_session_id(user_id, course_id, now)
-    rows = _read_session(sid)
+    rows = _read_session(sid, user_id)
     if not rows:
         data: dict[str, Any] = {"id": sid, "user_id": user_id}
         offering_id = resolve_offering(course_id) if course_id else None
@@ -213,7 +222,7 @@ def load_or_create_review_session(
         try:
             table("sessions").insert(data)
         except Exception:
-            rows = _read_session(sid)
+            rows = _read_session(sid, user_id)
             if not rows:
                 raise
         else:
@@ -233,7 +242,7 @@ def load_or_create_review_session(
 def peek_review_session(user_id: str, course_id: str | None, now: datetime) -> dict:
     """Today's review-session view WITHOUT creating the row (a read-only
     surface such as `/review/summary` never inserts a session)."""
-    rows = _read_session(review_session_id(user_id, course_id, now))
+    rows = _read_session(review_session_id(user_id, course_id, now), user_id)
     if not rows:
         return _session_view()
     if rows[0].get("user_id") not in (None, user_id):
@@ -279,26 +288,67 @@ def _retrievability(stability: float, last: datetime | None, now: datetime) -> f
     return fsrs.item_retrievability({"fsrs_s": stability, "fsrs_last_review_at": last}, now)
 
 
+class InvalidStability(ValueError):
+    """A stored `fsrs_s` that is not a finite positive number (0, negative, NaN,
+    ±inf, non-numeric). The queue skips the row with a WARNING; the answer route
+    answers 422. Migration 20260929111535_learning_fsrs_stability_positive
+    forbids new ones."""
+
+
+def _stability(raw: Any) -> float:
+    """A row's FSRS stability. `None` (never scheduled) is FSRS_S0_GOOD; a finite
+    positive number is itself; anything else raises InvalidStability — a stored 0
+    never silently becomes S0."""
+    if raw is None:
+        return FSRS_S0_GOOD
+    if isinstance(raw, bool):
+        raise InvalidStability(f"fsrs_s={raw!r}")
+    try:
+        s = float(raw)
+    except (TypeError, ValueError):
+        raise InvalidStability(f"fsrs_s={raw!r}") from None
+    if not math.isfinite(s) or s <= 0:
+        raise InvalidStability(f"fsrs_s={raw!r}")
+    return s
+
+
 def _due_flashcards(user_id: str, course_id: str | None, now: datetime) -> list[ReviewItem]:
-    rows = table("flashcards").select(_CARD_COLUMNS, filters={"user_id": f"eq.{user_id}"}) or []
+    """Cards due now: `due_at` null (never scheduled — it enters the pool at
+    S0, elapsed 0) or `due_at <= now`, filtered in SQL. A row with an invalid
+    stability is skipped and logged."""
+    rows = (
+        table("flashcards").select(
+            _CARD_COLUMNS,
+            filters={
+                "user_id": f"eq.{user_id}",
+                "or": f"(due_at.is.null,due_at.lte.{now.isoformat()})",
+            },
+        )
+        or []
+    )
     due = []
     for row in rows:
         due_at = parse_ts(row.get("due_at"))
-        if due_at is None or due_at <= now:  # never scheduled → enters the pool
-            due.append((row, due_at))
+        if due_at is None or due_at <= now:
+            due.append(row)
     if course_id and due:  # get_flashcards' rule: term-less cards are never stranded
         offerings = set(user_offering_ids_for_course(user_id, course_id))
-        due = [
-            (r, d) for r, d in due if r.get("offering_id") is None or r["offering_id"] in offerings
-        ]
-    return [item_for_card(row, course_id, now) for row, _ in due]
+        due = [r for r in due if r.get("offering_id") is None or r["offering_id"] in offerings]
+    items = []
+    for row in due:
+        try:
+            items.append(item_for_card(row, course_id, now))
+        except InvalidStability as exc:
+            logger.warning("review: skipped flashcard %s (%s)", row.get("id"), exc)
+    return items
 
 
 def item_for_card(row: dict, course_id: str | None, now: datetime) -> ReviewItem:
     """The ReviewItem of one `flashcards` row — the queue's, and `/review/answer`'s
-    (which re-loads the row by id: the client never supplies its state)."""
+    (which re-loads the row by id: the client never supplies its state).
+    InvalidStability on a bad `fsrs_s`."""
     last = parse_ts(row.get("last_reviewed_at"))
-    stability = row.get("fsrs_s") or FSRS_S0_GOOD
+    stability = _stability(row.get("fsrs_s"))
     reps = row.get("reps") or 0
     last_rating = row.get("last_rating")
     stage, target = sr_stage_for_flashcard(reps, last_rating)
@@ -329,13 +379,14 @@ def load_card(user_id: str, card_id: str) -> dict | None:
 def item_for_check(user_id: str, check_item, node_id: str, now: datetime) -> ReviewItem:
     """The ReviewItem of a check item answered on `/review/answer`: its SR stage
     and R come from the student's `learner_state` row for `node_id` (resolved
-    server-side, A2), never from the client. One read."""
+    server-side, A2), never from the client. One read. InvalidStability on a
+    bad `fsrs_s`."""
     rows = table("learner_state").select(
         _CONCEPT_COLUMNS, filters={"user_id": f"eq.{user_id}", "node_id": f"eq.{node_id}"}
     )
     row = rows[0] if rows else {}
     last = parse_ts(row.get("fsrs_last_review_at"))
-    stability = row.get("fsrs_s") or FSRS_S0_GOOD
+    stability = _stability(row.get("fsrs_s"))
     streak = row.get("streak_unassisted") or 0
     stage, target = sr_stage_for_concept(streak)
     return ReviewItem(
@@ -377,15 +428,41 @@ def _pick_item(pool, band_name: str, strict: set[str], fallback: set[str]):
     return None
 
 
+@dataclass
+class _Concept:
+    """A due concept before its check item is chosen (the item read is deferred
+    until the concept is inside the budget)."""
+
+    row: dict
+    node: dict
+    last_review_at: datetime | None
+    stability: float
+    band: str
+
+
+def _pause_check(pause_novice: bool | Callable[[], bool]) -> Callable[[], bool]:
+    """`pause_novice` as a once-evaluated thunk: the route passes a callable, so
+    the tutor-budget read happens only when a novice concept is actually due."""
+    if not callable(pause_novice):
+        return lambda: bool(pause_novice)
+    cache: list[bool] = []
+
+    def read() -> bool:
+        if not cache:
+            cache.append(bool(pause_novice()))
+        return cache[0]
+
+    return read
+
+
 def _due_concepts(
     user_id: str,
     course_id: str | None,
     now: datetime,
     *,
-    served_today: set[str],
-    pause_novice: bool,
+    pause: Callable[[], bool],
     stats: dict,
-) -> list[ReviewItem]:
+) -> list[_Concept]:
     rows = table("learner_state").select(
         _CONCEPT_COLUMNS,
         filters={"user_id": f"eq.{user_id}", "fsrs_due_at": f"lte.{now.isoformat()}"},
@@ -400,78 +477,104 @@ def _due_concepts(
     by_id = {
         n["id"]: n for n in nodes or [] if course_id is None or n.get("course_id") == course_id
     }
-    history: dict[str, set[str]] = {}
-    items = []
+    concepts = []
     for row in rows:
         node = by_id.get(row["node_id"])
         if node is None:
             continue
+        try:
+            stability = _stability(row.get("fsrs_s"))
+        except InvalidStability as exc:
+            logger.warning("review: skipped concept node=%s (%s)", node["id"], exc)
+            continue
         last = parse_ts(row.get("fsrs_last_review_at"))
-        stability = row.get("fsrs_s") or FSRS_S0_GOOD
         band_name = band(decayed_p(row.get("p_known") or 0.0, _elapsed_days(last, now), stability))
-        if pause_novice and band_name == "novice":  # A20: before any item read
+        if band_name == "novice" and pause():  # A20: before any item read
             stats["paused"] += 1
             logger.info("review: paused novice concept node=%s (tutor hard level)", node["id"])
             continue
-        pool = list_items(node["course_id"], _normalize_concept(node.get("concept_name") or ""))
-        if not history:  # read once per queue build, only when a concept is due
-            history["seen"] = set(seen_hashes(user_id))
-            history["revealed"] = set(revealed_hashes(user_id))
-        reserve = posttest_reserve_hash(pool)
-        fallback = history["revealed"] | ({reserve} if reserve is not None else set())
-        strict = served_today | history["seen"] | fallback
-        item = _pick_item(pool, band_name, strict, fallback)
-        if item is None:
-            stats["unservable"] += 1
-            logger.info("review: unservable concept node=%s (no servable item left)", node["id"])
+        concepts.append(_Concept(row, node, last, stability, band_name))
+    return concepts
+
+
+def open_item_ids(loop_state: dict | None, now: datetime) -> dict[str, str]:
+    """{key: item_id} of every served item still awaiting its answer: never
+    graded, and not left under a claim older than LOOP_GRADING_CLAIM_STALE_S. The
+    queue re-serves exactly these (a refresh never shops for another item)."""
+    now_s = now.timestamp()
+    out = {}
+    for key, entry in ((loop_state or {}).get("open") or {}).items():
+        if not isinstance(entry, dict) or entry.get("graded_at") is not None:
             continue
-        streak = row.get("streak_unassisted") or 0
+        if entry.get("claim") and not _live_claim(entry, now_s):
+            continue
+        if entry.get("item_id"):
+            out[key] = entry["item_id"]
+    return out
+
+
+def is_open(loop_state: dict | None, item: ReviewItem, now: datetime) -> bool:
+    """`item` is the one this session served for its key and it awaits its answer
+    (re-serving it writes nothing and emits nothing)."""
+    return open_item_ids(loop_state, now).get(sr_key(item)) == item.id
+
+
+class _Selector:
+    """Chooses a due concept's check item (rule 1, A23) — or re-uses the item the
+    session already opened for it. The seen/revealed reads happen once, on the
+    first concept that needs an item."""
+
+    def __init__(self, user_id: str, served_today: set[str], opened: dict[str, str]):
+        self.user_id, self.served_today, self.opened = user_id, served_today, opened
+        self.history: dict[str, set[str]] = {}
+
+    def item(self, c: _Concept, now: datetime) -> ReviewItem | None:
+        node = c.node
+        pool = list_items(node["course_id"], _normalize_concept(node.get("concept_name") or ""))
+        chosen = None
+        open_id = self.opened.get(node["id"])
+        if open_id is not None:
+            chosen = next((i for i in pool if i.id == open_id and is_servable(i)), None)
+        if chosen is None:
+            if not self.history:
+                self.history["seen"] = set(seen_hashes(self.user_id))
+                self.history["revealed"] = set(revealed_hashes(self.user_id))
+            reserve = posttest_reserve_hash(pool)
+            fallback = self.history["revealed"] | ({reserve} if reserve is not None else set())
+            strict = self.served_today | self.history["seen"] | fallback
+            chosen = _pick_item(pool, c.band, strict, fallback)
+        if chosen is None:
+            return None
+        streak = c.row.get("streak_unassisted") or 0
         stage, target = sr_stage_for_concept(streak)
-        items.append(
-            ReviewItem(
-                kind="check",
-                id=item.id,
-                node_id=node["id"],
-                course_id=node.get("course_id"),
-                question_hash=item.question_hash,
-                due_at=parse_ts(row.get("fsrs_due_at")),
-                last_review_at=last,
-                r=_retrievability(stability, last, now),
-                stability=stability,
-                format=item.format,
-                difficulty=item.difficulty,
-                cost_s=REVIEW_SECONDS_PER_CHECK,
-                sr_stage=stage,
-                sr_target=target,
-                sr_count=streak,
-                concept_name=node.get("concept_name"),
-            )
+        return ReviewItem(
+            kind="check",
+            id=chosen.id,
+            node_id=node["id"],
+            course_id=node.get("course_id"),
+            question_hash=chosen.question_hash,
+            due_at=parse_ts(c.row.get("fsrs_due_at")),
+            last_review_at=c.last_review_at,
+            r=_retrievability(c.stability, c.last_review_at, now),
+            stability=c.stability,
+            format=chosen.format,
+            difficulty=chosen.difficulty,
+            cost_s=REVIEW_SECONDS_PER_CHECK,
+            sr_stage=stage,
+            sr_target=target,
+            sr_count=streak,
+            concept_name=node.get("concept_name"),
         )
-    return items
 
 
-def _order(items: list[ReviewItem], now: datetime) -> list[ReviewItem]:
-    """fsrs.order_due sorts mappings; wrap each item in the mapping its R came from."""
+def _order(entries: list, now: datetime) -> list:
+    """fsrs.order_due sorts mappings; wrap each entry (a ReviewItem or a _Concept)
+    in the mapping its R comes from."""
     rows = [
-        {"fsrs_s": i.stability, "fsrs_last_review_at": i.last_review_at, "item": i} for i in items
+        {"fsrs_s": e.stability, "fsrs_last_review_at": e.last_review_at, "entry": e}
+        for e in entries
     ]
-    return [row["item"] for row in fsrs.order_due(rows, now)]
-
-
-def _budget_prefix(ordered: Iterable[ReviewItem], remaining_s: float) -> list[ReviewItem]:
-    """The longest prefix whose summed cost_s fits the remaining budget.
-    fsrs.budget_select prices every item at one cost; the review queue mixes
-    checks and flashcards, so it sums each item's own cost (Deviation). It
-    stops at the first item that does not fit, so a cheaper later item never
-    jumps the DASH order."""
-    chosen: list[ReviewItem] = []
-    spent = 0
-    for item in ordered:
-        if spent + item.cost_s > remaining_s:
-            break
-        chosen.append(item)
-        spent += item.cost_s
-    return chosen
+    return [row["entry"] for row in fsrs.order_due(rows, now)]
 
 
 def remaining_budget_s(loop_state: dict | None) -> int:
@@ -490,27 +593,66 @@ def due_queue_with_stats(
     now: datetime,
     *,
     loop_state: dict | None = None,
-    pause_novice: bool = False,
+    pause_novice: bool | Callable[[], bool] = False,
 ) -> tuple[list[ReviewItem], dict]:
-    """Rule 1. Returns (the ordered, budgeted queue, stats) with stats =
-    {"unservable": int, "paused": int, "due": {"flashcard": n, "check": n}};
-    `due` counts what is due this session before the budget cut."""
+    """Rule 1. Returns (the ordered, budgeted queue, stats).
+
+    Due cards and due concepts are merged in DASH order and walked once: the
+    queue is the longest prefix whose summed `cost_s` fits the remaining daily
+    budget (fsrs.budget_select prices every item at one cost; the queue mixes
+    checks and cards, so it sums each item's own cost — Deviation). It stops at
+    the first item that does not fit, so a cheaper later item never jumps the
+    order; a concept's check item is read only while the concept is inside the
+    budget, and a concept whose key has an open item re-uses it.
+
+    stats = {"due": {"flashcard": n, "check": n}, "in_budget": n, "unservable": n,
+    "paused": n}: `due` counts everything due this session (a concept past the
+    budget is counted without its item read — its servability is unknown),
+    `in_budget` the queue, `unservable` the concepts examined that had no
+    servable item, `paused` the novice concepts held back (A20)."""
     state = loop_state or {}
     sr = state.get("sr") or {}
     served_today = set((state.get("review") or {}).get("served_hashes") or [])
     stats: dict[str, Any] = {"unservable": 0, "paused": 0}
-    items = _due_flashcards(user_id, course_id, now)
-    items += _due_concepts(
-        user_id,
-        course_id,
-        now,
-        served_today=served_today,
-        pause_novice=pause_novice,
-        stats=stats,
-    )
-    items = [i for i in items if not _target_met(sr.get(sr_key(i)))]
-    stats["due"] = {kind: sum(i.kind == kind for i in items) for kind in _KINDS}
-    return _budget_prefix(_order(items, now), remaining_budget_s(state)), stats
+    cards = [
+        c for c in _due_flashcards(user_id, course_id, now) if not _target_met(sr.get(sr_key(c)))
+    ]
+    concepts = [
+        c
+        for c in _due_concepts(
+            user_id, course_id, now, pause=_pause_check(pause_novice), stats=stats
+        )
+        if not _target_met(sr.get(c.node["id"]))
+    ]
+    selector = _Selector(user_id, served_today, open_item_ids(state, now))
+    remaining = remaining_budget_s(state)
+    queue: list[ReviewItem] = []
+    due = dict.fromkeys(_KINDS, 0)
+    spent, full = 0, False
+    for entry in _order(cards + concepts, now):
+        cost = REVIEW_SECONDS_PER_CHECK if isinstance(entry, _Concept) else entry.cost_s
+        full = full or spent + cost > remaining
+        if isinstance(entry, _Concept):
+            if full:  # past the budget: counted, never read
+                due["check"] += 1
+                continue
+            item = selector.item(entry, now)
+            if item is None:
+                stats["unservable"] += 1
+                logger.info(
+                    "review: unservable concept node=%s (no servable item left)",
+                    entry.node["id"],
+                )
+                continue
+        else:
+            item = entry
+        due[item.kind] += 1
+        if not full:
+            queue.append(item)
+            spent += item.cost_s
+    stats["due"] = due
+    stats["in_budget"] = len(queue)
+    return queue, stats
 
 
 def due_queue(
@@ -519,7 +661,7 @@ def due_queue(
     now: datetime,
     *,
     loop_state: dict | None = None,
-    pause_novice: bool = False,
+    pause_novice: bool | Callable[[], bool] = False,
 ) -> list[ReviewItem]:
     return due_queue_with_stats(
         user_id, course_id, now, loop_state=loop_state, pause_novice=pause_novice
@@ -553,11 +695,12 @@ def summary(
     now: datetime,
     *,
     loop_state: dict | None,
-    pause_novice: bool = False,
+    pause_novice: bool | Callable[[], bool] = False,
     retention: float | None = None,
 ) -> dict:
     """The `/review/summary` body (`paused` = novice concepts held back at the
-    tutor hard level)."""
+    tutor hard level; `due` everything due today, `in_budget` what today's
+    remaining budget covers)."""
     _, stats = due_queue_with_stats(
         user_id, course_id, now, loop_state=loop_state, pause_novice=pause_novice
     )
@@ -565,6 +708,7 @@ def summary(
         retention = review_retention(user_id, course_id)
     return {
         "due": stats["due"],
+        "in_budget": stats["in_budget"],
         "unservable": stats["unservable"],
         "paused": stats["paused"],
         "budget_min": REVIEW_DAILY_BUDGET_MIN,
@@ -584,7 +728,8 @@ def _seed_relearning(item: ReviewItem) -> fsrs.SuccessiveRelearning:
     if item.sr_stage == "acquire":
         return fsrs.SuccessiveRelearning()
     if item.sr_stage == "relearn":
-        done = min(max(item.sr_count - SR_INITIAL_CRITERION, 0), SR_RELEARN_SESSIONS - _ONE_RECALL)
+        # sessions done so far, below SR_RELEARN_SESSIONS (the last one completes it)
+        done = min(max(item.sr_count - SR_INITIAL_CRITERION, 0), SR_RELEARN_SESSIONS - 1)
         phase = fsrs.SR_RELEARN
     else:
         done, phase = SR_RELEARN_SESSIONS, fsrs.SR_DONE
@@ -712,7 +857,11 @@ def _apply_grade(
         entry["correct"] += 1
         machine = machine.advance(True, session_id=session_id)
     else:
-        entry["correct"] = 0  # the item stays due and re-enters the queue next poll
+        # The session's consecutive count restarts. The item is NOT re-served in
+        # this session unless FSRS makes it due again before the day ends (a
+        # lapse's short interval can): within-session relearning is not
+        # scheduled here (HANDOFF-12 Known gaps).
+        entry["correct"] = 0
         if machine.phase == fsrs.SR_ACQUISITION:  # the session criterion is consecutive
             machine = fsrs.SuccessiveRelearning()
     entry["relearning"] = machine.as_dict()
@@ -723,16 +872,20 @@ def _apply_grade(
     return entry
 
 
-def _persist_loop_state(session_id: str, apply: Callable[[dict], Any]) -> None:
+def _persist_loop_state(session_id: str, apply: Callable[[dict], Any]) -> Any:
     """Re-apply this call's delta to the freshly loaded sessions.loop_state
     (its "sr"/"review" keys ride in LoopState.extra) under compare-and-set.
-    LoopStateConflict propagates."""
+    Returns what `apply` returned on the SAVED application (None when the row is
+    missing). LoopStateConflict propagates."""
+    result: list[Any] = [None]
 
     def mutate(state) -> None:
-        apply(state.extra)
+        result[0] = apply(state.extra)
 
     if update_loop_state(session_id, mutate) is None:
         logger.warning("review: sessions row %s missing; loop_state not saved", session_id)
+        return None
+    return result[0]
 
 
 # ── serve / grade ─────────────────────────────────────────────────────────────
@@ -752,11 +905,15 @@ def serve(
     any option's wrong_key; an mc_reason check carries its STORED options
     (letter + text, stored order; A22). With `session_id` the served counter
     and served hash are persisted too; with `now` the item is opened for
-    answering (`claim_item`)."""
+    answering (`claim_item`) — unless it is already the open item for its key
+    (`is_open`): a re-serve writes nothing and changes no counter."""
     now_s = now.timestamp() if now is not None else None
-    entry = _apply_serve(loop_state, item, now_s)
-    if session_id is not None:
-        _persist_loop_state(session_id, lambda doc: _apply_serve(doc, item, now_s))
+    if now is not None and is_open(loop_state, item, now):
+        entry = _entry(copy.deepcopy(loop_state), item)
+    else:
+        entry = _apply_serve(loop_state, item, now_s)
+        if session_id is not None:
+            _persist_loop_state(session_id, lambda doc: _apply_serve(doc, item, now_s))
     sr = _sr_view(entry)
     if item.kind == "flashcard":
         row = card_row or {}
@@ -806,12 +963,14 @@ def _record(
     now: datetime | None = None,
 ) -> dict:
     """Both kinds, after the grade is written: SR + budget, persisted (under the
-    answer claim, which this write closes), event."""
+    answer claim, which this write closes), then `review.graded` — only when the
+    record was saved (a claim no longer held, or a missing row, records nothing
+    and emits nothing)."""
     entry = _apply_grade(
         loop_state, item, correct=correct, session_id=session_id, retention=retention
     )
     now_s = now.timestamp() if now is not None else None
-    _persist_loop_state(
+    saved = _persist_loop_state(
         session_id,
         lambda doc: _apply_grade(
             doc,
@@ -823,6 +982,9 @@ def _record(
             now_s=now_s,
         ),
     )
+    if saved is None:
+        logger.warning("review: record of %s not saved (claim lost or row missing)", item.id)
+        return _sr_view(entry)
     log_event(
         "review.graded",
         category="usage",
@@ -942,4 +1104,11 @@ async def grade_review(
         claim=claim,
         now=now,
     )
+    if item.kind == "flashcard":  # the same achievement rate_card dispatches
+        try:
+            check_achievements(user_id, "flashcards_reviewed", {})
+        except Exception:
+            logger.exception(
+                "review: achievement dispatch failed user=%s card=%s", user_id, item.id
+            )
     return ReviewOutcome(correct=correct, hint=hint, next_due_at=next_due, rating=rating_out, sr=sr)
