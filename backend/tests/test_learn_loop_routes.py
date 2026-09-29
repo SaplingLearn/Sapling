@@ -1317,6 +1317,7 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
         slot="loop_tutor",
         agent=agent,
         assembled="PREFIX\n\nhi",
+        render=render_turn,  # the turn's served render (fix round 2: the H2 hint question)
         run_kwargs={
             "deps": SimpleNamespace(user_id="u1"),
             "model": "M",

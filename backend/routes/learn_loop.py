@@ -113,7 +113,13 @@ from learning.params import (
     LOOP_TEACH_TURNS_BEFORE_CHECK,
 )
 from learning.policy import LearnerView, LoopState, StepState
-from learning.turn_shape import FIELD_JOIN, clamp_model_ceiling, render_turn, turn_limits
+from learning.turn_shape import (
+    FIELD_JOIN,
+    clamp_model_ceiling,
+    render_partial,
+    render_turn,
+    turn_limits,
+)
 from models import (
     ActionBody,
     ChatBody,
@@ -636,7 +642,7 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
             task=turn.slot,
             user_id=turn.user_id,
         )
-    return render_turn(result.output)
+    return turn.render(result.output)
 
 
 # ── The served text (route + tests/evals/loop_tutor.py) ────────────────────
@@ -671,6 +677,40 @@ LADDER_FALLBACK_LINES: dict[int, str] = {
     4: "Which step of the item would you try next?",
     5: "Which part of the item would you fill in next?",
 }
+
+
+#: Fix round 2: the served key idea of an item turn at H0/H1 — those rungs add
+#: no content (RUNG_INTENT), so the key idea is the verdict (feedback) or the
+#: focus of a hint, from code; recorded model key ideas there stated a
+#: definition (judged H2).
+LOW_RUNG_KEY_IDEAS: dict[str, str] = {
+    "feedback_correct": "Your answer was graded correct.",
+    "hint": "Start by pinning down what the item asks you to find.",
+}
+
+
+def _served_fields(out, *, phase: str, rung: Rung, verdict: str | None = None):
+    """The structured turn as served (fix round 2). The ladder fixes what the
+    lowest rungs may say, so code serves those fields: at an H2 hint the
+    question is the ladder's (H2 is a concept pointer: reread the definition —
+    recorded model questions named the item's own objects, judged H3); at
+    H0/H1 the key idea of a hint or a correct-verdict feedback turn is
+    LOW_RUNG_KEY_IDEAS'. The model writes everything else."""
+    at = int(rung)
+    served = dict(out)
+    if phase == "hint" and at == int(Rung.H2) and "question" in out:
+        served["question"] = LADDER_FALLBACK_LINES[at]
+    if at <= int(Rung.H1) and "key_idea" in out:
+        if phase == "hint":
+            served["key_idea"] = LOW_RUNG_KEY_IDEAS["hint"]
+        elif phase == "feedback" and verdict == "correct":
+            served["key_idea"] = LOW_RUNG_KEY_IDEAS["feedback_correct"]
+    return served
+
+
+def served_render(out, *, phase: str, rung: Rung, verdict: str | None = None) -> str:
+    """`render_turn` of the turn as served (`_served_fields`)."""
+    return render_turn(_served_fields(out, phase=phase, rung=rung, verdict=verdict))
 
 
 def _item_check_kwargs(
@@ -1089,6 +1129,16 @@ class _LoopTurn:
             emitted=text, given=self.given, **_item_check_kwargs(**self._item_answer())
         )
         return _cut_before_leak(text, spans) if spans else text
+
+    def render(self, out) -> str:
+        """The served render of the model's structured turn (`served_render`)."""
+        return served_render(out, phase=self.phase, rung=self._leak_rung(), verdict=self.verdict)
+
+    def render_partial(self, partial) -> str:
+        """The streamed partial as served (the same field override)."""
+        return render_partial(
+            _served_fields(partial, phase=self.phase, rung=self._leak_rung(), verdict=self.verdict)
+        )
 
     def serve(self, text: str) -> str:
         """stream_structured_turn's `transform_final`: the served text of the
@@ -1516,7 +1566,7 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
             turn.record_usage(UnfinishedRun(usage))
         else:
             turn.record_usage(result)
-            reply = render_turn(result.output)
+            reply = turn.render(result.output)
     if reply is None:
         reply = await _continue_turn(turn, list(messages))
     return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
@@ -1618,6 +1668,8 @@ async def _stream_turn(turn: _LoopTurn):
         request_id=turn.request_id,
         transform=turn.redact,
         transform_final=turn.serve,
+        render_final=turn.render,
+        render_partial=turn.render_partial,
     ):
         if ev.type == "done":
             for extra_ev in _pre_done_events(ev.data or {}):

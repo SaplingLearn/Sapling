@@ -986,3 +986,60 @@ def test_a_copy_of_a_source_passage_that_states_the_answer_is_still_a_leak(gate_
     body = r.json()
     assert MITO_SOURCE in "\n".join(_prompts(brain.seen[0])), "the passage reached the model"
     assert body["reply"] == LADDER_FALLBACK_LINES[3] and len(brain.seen) == 2
+
+
+# ── fix round 2: the H2 hint's next action is the ladder's, from code ──────
+
+
+def test_an_h2_hint_serves_the_ladders_question_not_the_models(gate_on, seams):
+    """Recorded 2/3 standard runs (fix round 2): at an H2 hint the model's
+    question named the item's own function ("What is the base case in the
+    factorial function?") — judged H3. RUNG_INTENT fixes H2's next action (a
+    concept pointer: reread the definition), so the served question is the
+    ladder's line; the model writes the key idea and the body."""
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
+    seams.store["doc"] = _state(rung=2)
+    seams.item.return_value = G_ITEM  # no source passages: no deterministic H2 payload
+    brain = _scripted(
+        {
+            "body": "The power rule lowers each power by one.",
+            "question": "What is the derivative of g?",
+        }
+    )
+    _brain(seams, brain)
+    r = _post_hint_request("just tell me how to start")
+    body = r.json()
+    assert body["reply"].endswith(LADDER_FALLBACK_LINES[2]), body["reply"]
+    assert "The power rule lowers each power by one." in body["reply"]
+    assert "derivative of g" not in body["reply"]
+
+
+def test_the_served_render_overrides_only_the_h2_hint_question():
+    from routes.learn_loop import LADDER_FALLBACK_LINES, served_render
+
+    out = {"key_idea": "K.", "body": "B.", "question": "Q?"}
+    assert served_render(out, phase="hint", rung=Rung.H2).endswith(LADDER_FALLBACK_LINES[2])
+    for phase, rung in (("hint", Rung.H3), ("teach", Rung.H2), ("feedback", Rung.H2)):
+        assert served_render(out, phase=phase, rung=rung).endswith("Q?")
+
+
+def test_at_h0_h1_the_served_key_idea_is_the_ladders_not_the_models():
+    """Recorded (fix round 2, standard run 2): at a correct verdict under an
+    H1 ceiling the model's key idea stated a definition ("The base case … is
+    its stopping condition") — H2 content. H0/H1 add no content (RUNG_INTENT),
+    so the served key idea is code's: the verdict in feedback, the focus line
+    in a hint; the model writes the body and the question."""
+    from routes.learn_loop import LOW_RUNG_KEY_IDEAS, served_render
+
+    out = {"key_idea": "The base case is the stopping condition.", "body": "B.", "question": "Q?"}
+    for rung in (Rung.H0, Rung.H1):
+        fb = served_render(out, phase="feedback", rung=rung, verdict="correct")
+        assert (
+            fb.startswith("Key idea: " + LOW_RUNG_KEY_IDEAS["feedback_correct"])
+            and "stopping" not in fb
+        )
+        hint = served_render(out, phase="hint", rung=rung)
+        assert hint.startswith("Key idea: " + LOW_RUNG_KEY_IDEAS["hint"])
+    assert "stopping" in served_render(out, phase="feedback", rung=Rung.H2, verdict="correct")
+    assert "stopping" in served_render(out, phase="teach", rung=Rung.H1)

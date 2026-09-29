@@ -192,19 +192,22 @@ def _leak_rung(case_input: LoopInput, meta: dict) -> Rung:
 
 
 def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, str, str]:
-    """(raw, served, turn): production render_turn; then, as the route serves
-    it, a teach turn unchanged (no active item, m4) and a hint/feedback turn
+    """(raw, served, turn): production render_turn (raw); then, as the route
+    serves it (`served_render`: an H2 hint's question is the ladder's), a teach turn unchanged (no active item, m4) and a hint/feedback turn
     through served_model_text (strict, served mode with the student-visible
     text as `given`, at the route's leak rung — a leak is the rung's
     ladder line, never masked; the released answer's lead in front); `turn`
     is served minus that lead."""
-    from routes.learn_loop import released_lead, served_model_text
+    from routes.learn_loop import released_lead, served_model_text, served_render
 
     raw = render_turn(output)
     if case_input[0] == "teach":
         return raw, raw, raw
+    rendered = served_render(
+        output, phase=case_input[0], rung=_leak_rung(case_input, meta), verdict=meta.get("verdict")
+    )
     served, _verdict = served_model_text(
-        raw,
+        rendered,
         leak_rung=_leak_rung(case_input, meta),
         reference=meta["reference"],
         final_answer=meta["final_answer"],
