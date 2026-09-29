@@ -574,7 +574,8 @@ EDGES = [
 ]
 
 
-def _apply(payload, nodes=NODES, edges=EDGES, states=(), now=None):
+def _apply(payload, nodes=NODES, edges=EDGES, states=(), now=None, **kwargs):
+    """`kwargs` are apply_graph_update's keyword options (PKG-12: `retention`)."""
     from services.graph_service import apply_graph_update
 
     factory, mocks = _evidence_factory(nodes, edges, states)
@@ -589,7 +590,7 @@ def _apply(payload, nodes=NODES, edges=EDGES, states=(), now=None):
         clock as fake_dt,
     ):
         fake_dt.now.return_value = now or NOW
-        result = apply_graph_update("u1", payload, course_id="c1")
+        result = apply_graph_update("u1", payload, course_id="c1", **kwargs)
     return result, mocks, streak
 
 
@@ -941,6 +942,33 @@ class TestApplyEvidence:
         assert s < fsrs.next_state(2.1181, 2.3065, fsrs.Rating.GOOD, 30.0)[1]
         due = NOW + timedelta(days=fsrs.interval(FSRS_RETENTION_DEFAULT, s))
         assert st["fsrs_due_at"] == due.isoformat()
+
+    def test_retention_keyword_schedules_the_due_date(self):
+        """PKG-12 reopen: a review passes its retention target (spec §3.2,
+        exam window → FSRS_RETENTION_EXAM); omitted or None keeps
+        FSRS_RETENTION_DEFAULT. A higher target is a shorter interval for the
+        same state; D and S are untouched by it."""
+        from learning import fsrs
+        from learning.params import FSRS_RETENTION_DEFAULT, FSRS_RETENTION_EXAM
+
+        payload = {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": True}]}
+        writes = {}
+        for label, kwargs in (
+            ("omitted", {}),
+            ("none", {"retention": None}),
+            ("exam", {"retention": FSRS_RETENTION_EXAM}),
+        ):
+            _, mocks, _ = _apply(payload, edges=[], **kwargs)
+            [writes[label]] = _state_writes(mocks)
+        s0 = fsrs.initial_stability(fsrs.Rating.GOOD)
+        for label in ("omitted", "none"):
+            due = NOW + timedelta(days=fsrs.interval(FSRS_RETENTION_DEFAULT, s0))
+            assert writes[label]["fsrs_due_at"] == due.isoformat(), label
+        exam_due = NOW + timedelta(days=fsrs.interval(FSRS_RETENTION_EXAM, s0))
+        assert writes["exam"]["fsrs_due_at"] == exam_due.isoformat()
+        assert writes["exam"]["fsrs_due_at"] < writes["omitted"]["fsrs_due_at"]
+        assert writes["exam"]["fsrs_s"] == writes["omitted"]["fsrs_s"]
+        assert writes["exam"]["fsrs_d"] == writes["omitted"]["fsrs_d"]
 
     def test_review_within_a_day_takes_the_same_day_branch(self):
         from learning import fsrs
@@ -1476,7 +1504,12 @@ def test_gated_evidence_call_detector(source, expected):
 # flush_pending, which sends a pure {"evidence": ...} literal. No route calls it
 # yet; the package that adds the first route caller (PKG-07's /check/answer)
 # retires this scan, its detectors and both sanctioned sets.
-SANCTIONED_EVIDENCE_PERSISTERS = frozenset({("learning/evidence.py", "flush_pending")})
+# PKG-12 (a PKG-03 reopen): learning/review.py::grade_review persists the one
+# Evidence dict grade_answer returned with ONE apply_graph_update call, because
+# flush_pending cannot carry the review's retention target (spec §3.2).
+SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
+    {("learning/evidence.py", "flush_pending"), ("learning/review.py", "grade_review")}
+)
 
 
 def _evidence_persister_calls(source: str) -> list[tuple[int, str]]:
