@@ -3350,3 +3350,42 @@ def test_no_misconception_row_without_a_marked_record(gate_on, seams):
     with agent_p, usage_p, patch("routes.learn_loop.record") as rec:
         client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
     rec.assert_not_called()
+
+
+def _released_attempt(qh="qh-0", *, correct=False) -> dict:
+    return {
+        "question_hash": qh,
+        "node_id": "node-1",
+        "correct": correct,
+        "wrong_key": None,
+        "confidence": None,
+        "difficulty": 2,
+        "idk": False,
+        "isomorph_of": None,
+        "released": not correct,
+        "after_release": False,
+    }
+
+
+@pytest.mark.parametrize("earlier_correct,recheck", [(False, True), (True, False)])
+def test_an_item_after_a_released_answer_is_graded_as_a_recheck(
+    gate_on, seams, earlier_correct, recheck
+):
+    """F1 (fix round): wrong → the feedback turn released the reference → the
+    next item on the same concept (the isomorph re-ask) is graded as a
+    same-session re-check, never a full-weight unassisted first attempt. A twin
+    after a CORRECT answer is unaffected."""
+    seams.store["doc"] = {**_state(), "attempts": [_released_attempt(correct=earlier_correct)]}
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
+    assert seams.grade.call_args.kwargs["same_session_recheck"] is recheck
+
+
+def test_a_release_on_another_concept_is_no_recheck(gate_on, seams):
+    other = {**_released_attempt(), "node_id": "node-9"}
+    seams.store["doc"] = {**_state(), "attempts": [other]}
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
+    assert seams.grade.call_args.kwargs["same_session_recheck"] is False

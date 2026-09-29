@@ -106,6 +106,7 @@ from learning.misconceptions import (
     is_key,
     open_for,
     record,
+    released_on_node,
     set_confront,
     slip_or_misconception,
 )
@@ -2316,6 +2317,9 @@ async def _grade_submission(
         loop_state=copy.deepcopy(state),
     )
     rung = int(entry.get("rung") or 0)
+    # F1 (PKG-10 fix round): the reference of an earlier item on this concept was
+    # released this session — this answer is a re-check, never a first attempt
+    recheck = released_on_node(state, node_id)
     claim = str(uuid.uuid4())
     _claim_grading(body.session_id, qh, claim, now)
     flushed = False
@@ -2333,6 +2337,7 @@ async def _grade_submission(
             deps=deps,
             node_id=node_id,
             max_rung=rung,
+            same_session_recheck=recheck,
         )
         refused = bool(outcome.refused)
         if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
@@ -2358,6 +2363,7 @@ async def _grade_submission(
                 deps=deps,
                 node_id=node_id,
                 max_rung=rung,
+                same_session_recheck=recheck,
             )
         if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
 
@@ -2861,7 +2867,8 @@ def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
         "role,content", filters={"session_id": f"eq.{session_id}"}, order="created_at.asc"
     )
     transcript = [
-        {"role": m.get("role"), "content": decrypt_if_present(m.get("content"))} for m in msgs or []
+        {"role": m.get("role"), "content": decrypt_if_present(m.get("content"))}
+        for m in msgs or []
     ]
     evidence = table("node_mastery_events").select(
         "node_id,p_before,p_after,correct,channel",
@@ -3044,11 +3051,7 @@ async def close_session(
             "model_written": record.model_written,
         },
     )
-    return {
-        "close": record.model_dump(),
-        "model_written": record.model_written,
-        "close_phase": phase,
-    }
+    return {"close": record.model_dump(), "model_written": record.model_written, "close_phase": phase}
 
 
 @router.post("/close")
