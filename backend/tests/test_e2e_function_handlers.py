@@ -68,9 +68,7 @@ def test_env_module_registers_chat_tutor_handler_on_dispatch(monkeypatch):
     real chat_tutor agent run the module's fixed deterministic reply — through
     the real agent wiring, with no handler registered by the test itself."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         result = socratic_agent.run_sync("What is recursion?", deps=_deps())
@@ -129,9 +127,7 @@ def test_explicit_registration_wins_over_env_module(monkeypatch):
     from pydantic_ai.messages import ModelResponse, TextPart
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     providers.register_function_handler(
         "chat_tutor",
         lambda m, i: ModelResponse(parts=[TextPart(content="explicit wins")]),
@@ -158,9 +154,7 @@ def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypa
     from routes.learn import PENDING_SESSIONS
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     PENDING_SESSIONS.clear()
     client = TestClient(app)
@@ -170,9 +164,14 @@ def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypa
             patch("routes.learn._get_course_id_for_topic", return_value=""),
             patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
         ):
-            r = client.post("/api/learn/start-session", json={
-                "user_id": "e2e-user", "topic": "Recursion", "mode": "socratic",
-            })
+            r = client.post(
+                "/api/learn/start-session",
+                json={
+                    "user_id": "e2e-user",
+                    "topic": "Recursion",
+                    "mode": "socratic",
+                },
+            )
 
         from agents.function_handlers_e2e import E2E_TUTOR_REPLY
 
@@ -222,9 +221,7 @@ def test_env_module_quiz_handler_produces_the_scripted_quiz(monkeypatch):
     module give a real quiz_agent run the fixed three-question quiz, with no
     handler registered by the test itself."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with quiz_agent.override(model=model_for("quiz")):
         result = quiz_agent.run_sync("Generate 5 medium questions.", deps=_deps())
@@ -242,9 +239,7 @@ def test_quiz_handler_wire_labels_match_the_browser_spec(monkeypatch):
     hardcodes. Changing the ordering means updating the spec in the same PR
     (testids are API, and so is this sequence)."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with quiz_agent.override(model=model_for("quiz")):
         result = quiz_agent.run_sync("Generate 5 medium questions.", deps=_deps())
@@ -288,9 +283,7 @@ def test_env_module_registers_upload_pipeline_handlers_on_dispatch(monkeypatch):
     schema validated it — and that single import also registered the
     parallel workers (summary, concepts) and the post-roll course_summary."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with classifier_agent.override(model=model_for("classifier")):
         result = classifier_agent.run_sync("week 3 lecture notes", deps=_deps())
@@ -314,9 +307,7 @@ def test_env_module_summary_handler_passes_real_output_schema(monkeypatch):
     module constants and the schema fails here, in the hermetic lane, not
     three phases into a browser run."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with summary_agent.override(model=model_for("summary")):
         result = summary_agent.run_sync("some document text", deps=_deps())
@@ -344,14 +335,10 @@ def test_env_module_registers_concept_describe_handler_on_dispatch(monkeypatch):
     fixed description — through the REAL structured output tool, with no
     handler registered by the test itself."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with concept_describe_agent.override(model=model_for("concept_describe")):
-        result = concept_describe_agent.run_sync(
-            build_message("Recursion", "CS 101"), deps=_deps()
-        )
+        result = concept_describe_agent.run_sync(build_message("Recursion", "CS 101"), deps=_deps())
 
     from agents.function_handlers_e2e import E2E_CONCEPT_DESCRIPTION
 
@@ -364,14 +351,10 @@ def test_concept_describe_handler_passes_real_output_schema(monkeypatch):
     (max_length=400) — drift between the module constant and the schema fails
     here, in the hermetic lane, not mid-browser-run."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with concept_describe_agent.override(model=model_for("concept_describe")):
-        result = concept_describe_agent.run_sync(
-            build_message("Recursion", None), deps=_deps()
-        )
+        result = concept_describe_agent.run_sync(build_message("Recursion", None), deps=_deps())
 
     from agents.function_handlers_e2e import E2E_CONCEPT_DESCRIPTION
 
@@ -397,9 +380,7 @@ def test_env_module_registers_concept_scan_handler_on_dispatch(monkeypatch):
     names — through the REAL structured output tool (NewConcepts caps the
     list at 15), with no handler registered by the test itself."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with concept_scan_agent.override(model=model_for("concept_scan")):
         result = concept_scan_agent.run_sync(
@@ -430,9 +411,7 @@ def test_env_module_registers_note_summary_handler_on_dispatch(monkeypatch):
     run gets the module's fixed summary through the REAL output tool, with no
     handler registered by the test itself."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with note_summary_agent.override(model=model_for("note_summary")):
         result = note_summary_agent.run_sync(
@@ -451,9 +430,7 @@ def test_env_module_registers_note_concepts_handler_on_dispatch(monkeypatch):
     Title-Case names, 0–15 entries): the real agent returns the module's fixed
     list through the REAL output tool, and it satisfies that schema bound."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with note_concepts_agent.override(model=model_for("note_concepts")):
         result = note_concepts_agent.run_sync(
@@ -474,9 +451,7 @@ def test_env_module_registers_note_chat_handler_on_dispatch(monkeypatch):
     (like chat_tutor): the real agent run yields the module's fixed reply with
     none of its function tools (read_active_note, ...) fired."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with note_chat_agent.override(model=model_for("note_chat")):
         result = note_chat_agent.run_sync("What is a base case?", deps=_deps())
@@ -497,9 +472,7 @@ def test_e2e_tutor_handler_makes_no_tool_calls_and_no_graph_writes(monkeypatch):
     mastery_changes) stay empty — the browser journeys' graph oracles
     depend on tutor turns not mutating the graph."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     deps = _deps()
     with socratic_agent.override(model=model_for("chat_tutor")):
@@ -532,9 +505,7 @@ def test_env_module_slow_trigger_returns_slow_reply(monkeypatch):
     """A tutor turn whose message carries the trigger gets the long slow-lane
     constant — through the real agent wiring via the env-autoloaded module."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         result = socratic_agent.run_sync(
@@ -550,9 +521,7 @@ def test_env_module_default_reply_unchanged_by_trigger_support(monkeypatch):
     """Regression guard: a normal message (no trigger) still gets the fixed
     E2E_TUTOR_REPLY — the slow lane must never hijack the default journey."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         result = socratic_agent.run_sync("What is recursion?", deps=_deps())
@@ -568,9 +537,7 @@ def test_env_module_import_sets_stream_pacing(monkeypatch):
     In-process tests stay unpaced: the autouse registry reset
     (clear_function_handlers) zeroes the knob again after each case."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setenv(
-        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
-    )
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
 
     with socratic_agent.override(model=model_for("chat_tutor")):
         socratic_agent.run_sync("What is recursion?", deps=_deps())
@@ -595,8 +562,11 @@ def test_env_module_registers_check_items_handler_on_dispatch(monkeypatch):
     from agents.check_items import check_items_agent
     from learning.checks import validate_draft
     from learning.params import CHECK_ITEM_FORMATS
+
     with check_items_agent.override(model=model_for("check_items")):
-        result = check_items_agent.run_sync("Concepts: Gradient Descent; Learning Rate", deps=_deps())
+        result = check_items_agent.run_sync(
+            "Concepts: Gradient Descent; Learning Rate", deps=_deps()
+        )
 
     from agents.function_handlers_e2e import (
         E2E_CHECK_ITEM_FINAL_ANSWER,
@@ -727,13 +697,21 @@ def test_env_module_registers_loop_tutor_handler_on_dispatch(monkeypatch, slot):
 
     assert result.output == E2E_LOOP_TUTOR_TURN
     assert render_turn(result.output) == E2E_LOOP_TUTOR_REPLY
-    assert not deps.pending_evidence  # the handler scripts no tool call; the loop has no grader tool
+    assert (
+        not deps.pending_evidence
+    )  # the handler scripts no tool call; the loop has no grader tool
 
 
 @pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
-@pytest.mark.parametrize("phase,ceiling,released", [
-    ("teach", 0, False), ("teach", 3, False), ("hint", 1, False), ("feedback", 6, True),
-])
+@pytest.mark.parametrize(
+    "phase,ceiling,released",
+    [
+        ("teach", 0, False),
+        ("teach", 3, False),
+        ("hint", 1, False),
+        ("feedback", 6, True),
+    ],
+)
 def test_e2e_loop_handler_returns_valid_turn(monkeypatch, slot, phase, ceiling, released):
     """PKG-07 unblock S1: the E2E seam answers the structured output type with a
     turn that passes the output validator at the TIGHTEST limits (a 1-sentence body
@@ -777,3 +755,83 @@ def test_env_module_serves_session_close(monkeypatch):
     assert result.output.open_misconception_keys == E2E_CLOSE_MISCONCEPTIONS
     assert E2E_CLOSE_IF_THEN.startswith("If ") and ", then " in E2E_CLOSE_IF_THEN
     assert E2E_CLOSE_SELF_EVAL.endswith("?") and E2E_CLOSE_SELF_EVAL.count("?") == 1
+
+
+# ── PKG-10: the misconception path on the E2E lane ─────────────────────────
+
+
+def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch):
+    """PKG-10 wires decisions.match_wrong_reason on the request path (with the
+    grader's result as `prior`, so no decision-agent run). The E2E lane makes
+    the matched key deterministic: an answer holding
+    E2E_GRADER_WRONG_REASON_TOKEN is graded wrong with the item's FIRST listed
+    common wrong reason matched; two such answers on two isomorphs of one
+    concept are a misconception (PKG-13's journey types the token)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from agents.grader import grader_agent
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+    from learning.misconceptions import confront_of
+    from learning.policy import LoopState
+    from services import decisions
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.function_handlers_e2e import (
+        E2E_GRADER_CORRECT_TOKEN,
+        E2E_GRADER_WRONG_REASON_TOKEN,
+    )
+    from tests.test_learning_check_tool import _item
+    from learning.checks import WrongReason
+
+    wrong = [WrongReason(key="w_loop", text="loops"), WrongReason(key="w_speed", text="speed")]
+    items = [
+        _item(id=f"ci-{qh}", question_hash=qh, difficulty=2, common_wrong=wrong)
+        for qh in ("h1", "h2")
+    ]
+    deps = SaplingDeps(
+        user_id="e2e-user",
+        course_id="e2e-course",
+        supabase=None,
+        request_id="e2e-req",
+        session_id="e2e-session",
+        learning_loop=True,
+        loop_state=LoopState().to_json(),
+    )
+    with (
+        grader_agent.override(model=model_for("grader")),
+        patch.object(check_mod, "record", return_value={}) as rec,
+        patch.object(decisions, "_run_decision") as run,
+    ):
+        outs = [
+            asyncio.run(
+                grade_answer(
+                    it,
+                    CheckAnswer(
+                        question_hash=it.question_hash,
+                        answer_text=f"{E2E_GRADER_WRONG_REASON_TOKEN}: it just loops",
+                    ),
+                    deps=deps,
+                    node_id="n1",
+                )
+            )
+            for it in items
+        ]
+        right = asyncio.run(
+            grade_answer(
+                items[0],
+                CheckAnswer(question_hash="h1", answer_text=f"{E2E_GRADER_CORRECT_TOKEN} stops"),
+                deps=deps,
+                node_id="n2",
+            )
+        )
+    run.assert_not_called()
+    assert [(o.correct, o.wrong_key, o.verdict) for o in outs] == [
+        (False, "w_loop", "unknown"),
+        (False, "w_loop", "misconception"),
+    ]
+    rec.assert_called_once()
+    assert confront_of(deps.loop_state)["wrong_key"] == "w_loop"
+    assert right.correct is True and right.wrong_key is None and right.matched_wrong_key is None
