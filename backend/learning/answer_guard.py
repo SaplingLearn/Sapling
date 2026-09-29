@@ -1390,6 +1390,10 @@ def suspicion(
 # a span that makes no claim about the answer; never a connective, a
 # quantifier, an article, a copula, a preposition or a pronoun, which almost
 # every item's text uses (review round 4: "Mark each.", "Done and done.").
+# A whole answer made only of function words, with no claim and no score, is a
+# terse answer ("It does.", "It can't.", "Not at all."), never a claim about
+# one: the span check decides it. "Yes." stays a verdict word unless the item
+# uses it. A negation reads the same however it is spelled ("can't", "cannot").
 #
 # What is verified, and what the span check sees, is the answer's own words:
 # the longest run of the quote's words that the answer holds, cut from the
@@ -1407,8 +1411,11 @@ def suspicion(
 # run cut from a quote supports nothing a verbatim quote of the same words
 # would not.
 _WORD = re.compile(r"[^\W_]+")
-# A score the answer gives itself: "2/2", "3 out of 3", "100%".
-_SCORE_CLAIM = re.compile(r"(?<![\w.])(\d+)\s*(?:/|out\s+of|of)\s*\1(?![\w.])|(?<![\w.])100\s*%")
+# A score the answer gives itself: "2/2", "3 out of 3", "100%", "100 percent".
+_SCORE_CLAIM = re.compile(
+    r"(?<![\w.])(\d+)\s*(?:/|out\s+of|of)\s*\1(?![\w.])"
+    r"|(?<![\w.])100\s*(?:%|percent\b|per\s+cent\b)"
+)
 # Words that talk about an answer — its parts, whether it is complete, covered
 # or right, whether to credit it — rather than about a question. A quote made
 # only of these and function words is a claim about the answer, never an answer.
@@ -1577,16 +1584,20 @@ def support_span(
         answer, origin[words[start].start()], origin[words[start + n - 1].end() - 1] + 1
     )
     span = answer[lo:hi]
-    return span if _says_more_than_a_claim(span, context) else None
+    whole = start == 0 and n == len(text)
+    return span if _says_more_than_a_claim(span, context, whole=whole) else None
 
 
-def _says_more_than_a_claim(span: str, context: str) -> bool:
+def _says_more_than_a_claim(span: str, context: str, *, whole: bool = False) -> bool:
     """The claim filter (above): a word of `span` beyond the function words and
     the talk about an answer that `context` (the item's own text) does not use;
     or, in a span that makes no such claim and gives itself no score, a polarity
-    or a modal the item's text uses ("No." on an item keyed "No. …")."""
+    or a modal the item's text uses ("No." on an item keyed "No. …") — or any
+    function words at all when the span is the `whole` answer: a terse answer
+    ("It does.", "It can't.") is no claim about one, and the span check decides
+    it (review round 4)."""
     keyed_text = normalise(context)
-    keyed = set(_word_list(keyed_text))
+    keyed = set(_word_list(_spelled_out(keyed_text)))
     scores = {_score_key(m) for m in _SCORE_CLAIM.finditer(keyed_text)}
     claimed = False
 
@@ -1597,14 +1608,34 @@ def _says_more_than_a_claim(span: str, context: str) -> bool:
         claimed = True
         return " "
 
-    said = _word_list(_AT_ALL.sub("at", _SCORE_CLAIM.sub(unkeyed_score, normalise(span))))
+    said = _word_list(
+        _spelled_out(_AT_ALL.sub("at", _SCORE_CLAIM.sub(unkeyed_score, normalise(span))))
+    )
     grammar = _ENGLISH_FUNCTION_WORDS | _FILLER_WORDS
     if any(w not in grammar and (w not in _ANSWER_TALK or w in keyed) for w in said):
         return True
-    if claimed or any(w in _ANSWER_TALK and w not in keyed for w in said):
+    if claimed or not said or any(w in _ANSWER_TALK and w not in keyed for w in said):
         return False
-    return any(w in _ANSWERING_WORDS and w in keyed for w in said)
+    return whole or any(w in _ANSWERING_WORDS and w in keyed for w in said)
 
 
 def _score_key(match: re.Match[str]) -> str:
-    return "".join(match.group().split())
+    """One key per score whatever its spelling: "3 out of 3" is "3/3", "100
+    percent" is "100%"."""
+    return f"{match[1]}/{match[1]}" if match[1] else "100%"
+
+
+# A negation reads the same however it is spelled (review round 4: "It cannot."
+# passed where "It can't." failed): the auxiliary, then "not".
+_NEGATIONS = (
+    (re.compile(r"\bcan(?:not|'t)\b"), "can not"),
+    (re.compile(r"\bwon't\b"), "will not"),
+    (re.compile(r"\bshan't\b"), "shall not"),
+    (re.compile(r"\b(\w+)n't\b"), r"\1 not"),
+)
+
+
+def _spelled_out(folded: str) -> str:
+    for pattern, spelled in _NEGATIONS:
+        folded = pattern.sub(spelled, folded)
+    return folded

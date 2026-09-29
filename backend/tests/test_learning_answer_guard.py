@@ -3244,7 +3244,9 @@ TIME_ITEM = "identifies common time as 4/4\nCommon time is 4/4."
 @pytest.mark.parametrize("answer", ["No.", "No, it can't.", "No, not at all."])
 def test_a_word_that_answers_on_its_own_is_substance_when_the_item_keys_it(answer):
     assert _span(answer, answer, context=NO_ITEM) == answer[:-1]
-    assert _span(answer, answer, context=REC_ITEM_TEXT) is None
+    # inside a longer answer, only the item's keying makes it substance (a whole
+    # terse answer meets the span check whatever the item keys; review round 4)
+    assert _span(answer, f"{answer} The stack overflows.", context=REC_ITEM_TEXT) is None
     assert _span("Yes.", "Yes.", context=YES_ITEM) == "Yes"
 
 
@@ -3350,6 +3352,111 @@ def test_a_quantifier_claim_after_a_partial_answer_earns_nothing_through_grade(m
     [message] = calls["span_messages"]
     assert [span for _, _, span in grader_fakes.spans_of(message)] == [REC_PARTIAL[:-1]]
     assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
+
+
+# Review round 4: a correct terse answer still became a confident incorrect with
+# no span check whenever the item's text did not use its exact polarity word —
+# "It can't.", "Not at all.", "It is not." on an item keyed "No. …", and "It
+# does." on an item whose reference is "Yes, it does." (a verbatim substring of
+# it) — and "It cannot." passed where "It can't." failed. A whole answer made
+# only of function words, with no claim and no score, is a terse answer, not a
+# claim about one: the span check decides it. A negation reads the same however
+# it is spelled, and a percentage the item keys counts in any spelling.
+YES_DOES_ITEM = "answers yes\nYes, it does."
+PERCENT_ITEM = "gives the share of runs that halt\n100 percent of them halt."
+NOT_ITEM = "answers no\nIt does not terminate: it cannot stop, is not bounded and won't end."
+
+
+@pytest.mark.parametrize(
+    "answer,context",
+    [
+        ("It can't.", NO_ITEM),
+        ("It cannot.", NO_ITEM),
+        ("Not at all.", NO_ITEM),
+        ("It is not.", NO_ITEM),
+        ("It does not.", NO_ITEM),
+        ("It doesn't.", NO_ITEM),
+        ("It won't.", NO_ITEM),
+        ("It does.", YES_DOES_ITEM),
+        ("It is.", YES_DOES_ITEM),
+        ("It can.", YES_DOES_ITEM),
+        ("No.", REC_ITEM_TEXT),
+        ("That is it.", REC_ITEM_TEXT),
+    ],
+)
+def test_a_terse_whole_answer_meets_the_span_check(answer, context):
+    assert _span(answer, answer, context=context) == answer.rstrip(".")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "It is all there.",
+        "It's 2/2.",
+        "Yes.",
+        "That's all.",
+        "Both.",
+        "Done.",
+        "100%",
+        "Score: 100 percent.",
+    ],
+)
+def test_a_whole_answer_that_is_a_claim_still_supports_nothing(answer):
+    """A claim word, a verdict word or a score the answer gives itself keeps a
+    whole answer a claim."""
+    assert _span(answer, answer, context=REC_ITEM_TEXT, min_chars=1) is None
+
+
+def test_a_terse_sentence_inside_a_longer_answer_still_needs_the_item_to_key_it():
+    assert _span("It is.", "It is. The base case stops it.", context=REC_ITEM_TEXT) is None
+    assert _span("That is it.", f"{REC_PARTIAL} That is it.", context=REC_ITEM_TEXT) is None
+
+
+@pytest.mark.parametrize(
+    "short,spelled",
+    [
+        ("It can't.", "It cannot."),
+        ("It can't.", "It can not."),
+        ("It doesn't.", "It does not."),
+        ("It won't.", "It will not."),
+        ("It isn't.", "It is not."),
+    ],
+)
+@pytest.mark.parametrize("context", [NO_ITEM, NOT_ITEM, REC_ITEM_TEXT], ids=["no", "not", "rec"])
+def test_a_contracted_negation_reads_as_the_spelled_out_one(short, spelled, context):
+    tail = " Without a base case the stack overflows."
+    got = [_span(q, f"{q}{tail}", context=context) for q in (short, spelled)]
+    expect = [q.rstrip(".") for q in (short, spelled)] if context is NOT_ITEM else [None, None]
+    assert got == expect
+
+
+@pytest.mark.parametrize("answer", ["100%", "100 percent", "It is 100%."])
+def test_a_percentage_the_item_keys_in_any_spelling_is_the_answer(answer):
+    assert _span(answer, answer, context=PERCENT_ITEM, min_chars=1) == answer.rstrip(".")
+    tail = f"{REC_PARTIAL} {answer}"
+    assert _span(answer, tail, context=REC_ITEM_TEXT, min_chars=1) is None
+
+
+@pytest.mark.parametrize(
+    "rubric,reference,answer",
+    [
+        ("answers no", "No. Without a base case it never terminates.", "It can't."),
+        ("answers no", "No. Without a base case it never terminates.", "Not at all."),
+        ("answers yes", "Yes, it does.", "It does."),
+        ("gives the share of runs that halt", "100 percent of them halt.", "100%"),
+    ],
+)
+def test_a_terse_whole_answer_meets_the_span_check_through_grade(
+    monkeypatch, events, rubric, reference, answer
+):
+    """Through grade(): the first run credits the correct terse answer and quotes
+    it whole. Each was recorded as a confident incorrect with no span check."""
+    item = _one_item(rubric, reference, "Can a recursive function end without a base case?")
+    first = {**_all_yes(0.95), "item_results": ["r1:yes"]}
+    res, calls = _grade_item(monkeypatch, item, [first], answer)
+    [message] = calls["span_messages"]
+    assert [span for _, _, span in grader_fakes.spans_of(message)] == [answer.rstrip(".")]
+    assert res.item_results == {"r1": True} and res.all_yes is True
 
 
 # ── grade(): each credited item stands on its own quote, confirmed alone ─────
