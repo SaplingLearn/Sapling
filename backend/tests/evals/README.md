@@ -54,6 +54,25 @@ git commit -m "evals: refresh cassettes + baselines for <change>"
 Never hand-edit an existing case to make it pass; add a new case when
 production surfaces a miss (see each dataset's module docstring).
 
+### Floors from three recordings (spec §13 A40 06(s), PKG-14)
+
+A floor set from ONE recording is not accepted. Record the dataset three
+times with a run log, then let `floors.py` write the minimum per evaluator
+(and, for a routed dataset, the per-run routing block the tier pins read):
+
+```bash
+cd backend
+for i in 1 2 3; do
+  SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/runs.jsonl python tests/evals/loop_tutor.py
+done
+python tests/evals/floors.py --log /tmp/runs.jsonl --runs 3 \
+    --datasets loop_tutor_lite,loop_tutor,loop_tutor_deep --routing loop_tutor_routing
+```
+
+The committed cassettes are the last run's, so replay scores are always at or
+above the floor. `floors.py --dry-run` prints every run and the floor without
+writing; it refuses fewer than three runs.
+
 ## Coverage
 
 Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
