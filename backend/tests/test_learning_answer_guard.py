@@ -3129,6 +3129,68 @@ def test_a_fraction_that_is_the_answer_is_substance(quote):
     assert _span(quote, answer, min_chars=1) is not None
 
 
+# Review round 3 of the ruling's code (e251e79's cut): the span was cut at the
+# run's first and last letter or digit, so a sign or symbol before or after it
+# was dropped — "-3" reached the span check as "3", "5!" as "5", "O(n)" as "O(n".
+# The span check then judged words that say something else than the student
+# wrote: a correct "-3" became a confident incorrect, and a wrong sign could be
+# credited. The span keeps the symbols that touch the run (up to whitespace or a
+# letter or digit), dropping only sentence punctuation and quotation marks at
+# its ends.
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "-3",
+        "−1/2",
+        "-0.5",
+        "5!",
+        "45°",
+        "$50",
+        "-∞",
+        "O(n)",
+        "¬(P ∧ Q)",
+        "+5",
+        "±2",
+        "~p",
+        "f′(x)",
+        "[0, 1]",
+    ],
+)
+def test_the_span_keeps_the_signs_and_symbols_around_the_students_words(answer):
+    assert _span(answer, answer, min_chars=1) == answer
+    assert _span(answer, f"{answer}.", min_chars=1) == answer
+    assert _span(answer, f"The value is {answer}.", min_chars=1) == answer
+
+
+@pytest.mark.parametrize(
+    "quote,answer,span",
+    [
+        ("the limit is -3", "The limit is -3.", "The limit is -3"),
+        ("-3", "So the limit is -3, not 3.", "-3"),
+        ("O(n) time", "It runs in O(n) time.", "O(n) time"),
+        # sentence punctuation and quotation marks at the ends are not the student's words
+        ("the stack blows up", 'He said "the stack blows up."', "the stack blows up"),
+        ("the stack blows up", "(the stack blows up);", "(the stack blows up)"),
+        ("the stack blows up", "“the stack blows up!”", "the stack blows up!"),
+        ("the stack blows up", "'the stack blows up'.", "the stack blows up"),
+        # a symbol glued to the next word never brings that word in
+        ("stops recursing", "It stops recursing.Tick both.", "stops recursing"),
+        ("the stack blows up", "the stack blows up)", "the stack blows up"),
+    ],
+)
+def test_the_span_ends_at_the_students_symbols_never_at_a_word_beyond_them(quote, answer, span):
+    assert _span(quote, answer, min_chars=1) == span
+
+
+@pytest.mark.parametrize("quote", ["100%", "Score: 100%", "Full marks: 100%.", "2/2", "3 out of 3"])
+def test_a_score_the_answer_gives_itself_is_no_substance_however_short(quote):
+    """The `100%` arm of the score rule read a span cut before its "%", so it never
+    matched: "Score: 100%" reached the span check as "Score: 100" (review round 3).
+    With GRADER_SUPPORT_MIN_CHARS at 1 the score rule itself must reject it."""
+    assert _span(quote, f"{REC_PARTIAL} {quote}", min_chars=1) is None
+    assert _span(quote, quote, min_chars=1) is None
+
+
 # ── grade(): each credited item stands on its own quote, confirmed alone ─────
 #
 # The grading run's `support` gives, for every item it credits, a quote from the
@@ -3232,6 +3294,35 @@ def test_the_span_check_sees_the_students_words_never_the_graders_wrapper(monkey
     [message] = calls["span_messages"]
     assert [span for _, _, span in grader_fakes.spans_of(message)] == ["It stops the calls"] * 2
     assert "student" not in message.partition("\n")[2].split("END OF SPANS")[0].lower()
+
+
+def _grade_item(monkeypatch, item, outputs, answer, judge=None):
+    import agents.grader as g
+
+    model, calls = _sequenced_grader(outputs, judge=judge)
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(item, format="free", student_answer=answer, deps=_deps()))
+    return res, calls
+
+
+def _one_item(rubric: str, reference: str, prompt: str) -> CheckItem:
+    return _item(
+        prompt=prompt, reference_answer=reference, rubric=[RubricItem(id="r1", text=rubric)]
+    )
+
+
+def test_the_span_check_sees_the_sign_the_student_wrote(monkeypatch, events):
+    """Review round 3: "-3" reached the span check as "3", so a sign-aware span
+    check said no and a correct answer was recorded as a confident incorrect
+    (check.py's numeric gate can only say incorrect, so this path is its credit)."""
+    item = _one_item("says the limit is -3", "The limit is -3.", "What is the limit?")
+    first = {**_all_yes(0.95), "item_results": ["r1:yes"], "support": ["r1: -3"]}
+    signed = lambda text, span: span.startswith("-")  # noqa: E731
+    res, calls = _grade_item(monkeypatch, item, [first], "-3", judge=signed)
+    [message] = calls["span_messages"]
+    assert [span for _, _, span in grader_fakes.spans_of(message)] == ["-3"]
+    assert res.item_results == {"r1": True} and res.all_yes is True
 
 
 def test_the_span_check_runs_on_the_grader_second_slot(monkeypatch, events):

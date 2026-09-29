@@ -1436,6 +1436,56 @@ def _word_list(folded: str) -> list[str]:
     return _WORD.findall(folded)
 
 
+# The span's ends (review round 3 of the ruling's code): cut at the run's first
+# and last letter or digit, "-3" reached the span check as "3", "5!" as "5" and
+# "O(n)" as "O(n" — words that say something else than the student wrote. So a
+# span takes in the symbols that touch its run (a sign, a unit, a bracket, a
+# prime: up to whitespace or a letter or digit, so never a word beyond them),
+# and drops only what is no part of the words at its ends: sentence punctuation
+# and quotation marks, and a bracket its span never opens or closes.
+_SPAN_HEAD_QUOTES = "\"'“„‟«‘"
+_SPAN_TAIL_MARKS = '.,;:?…"”»’'
+_CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
+_OPENING_BRACKETS = {v: k for k, v in _CLOSING_BRACKETS.items()}
+
+
+def _touching(ch: str) -> bool:
+    return not ch.isspace() and not ch.isalnum()
+
+
+def _span_ends(answer: str, start: int, end: int) -> tuple[int, int]:
+    """`answer[start:end]` (a run, from its first to its last letter or digit)
+    widened over the symbols that touch it, less the sentence punctuation,
+    quotation marks and unmatched brackets at the widened ends."""
+    lo, hi = start, end
+    while lo > 0 and _touching(answer[lo - 1]):
+        lo -= 1
+    while hi < len(answer) and _touching(answer[hi]):
+        hi += 1
+    single = "'" in answer[lo:start]  # a straight quotation mark opened it
+    while lo < start and answer[lo] in _SPAN_HEAD_QUOTES:
+        lo += 1
+    tail_marks = _SPAN_TAIL_MARKS + ("'" if single else "")
+    while True:
+        span = answer[lo:hi]
+        if hi > end and answer[hi - 1] in tail_marks:
+            hi -= 1
+        elif (
+            hi > end
+            and (opener := _CLOSING_BRACKETS.get(answer[hi - 1]))
+            and (span.count(answer[hi - 1]) > span.count(opener))
+        ):
+            hi -= 1
+        elif (
+            lo < start
+            and (closer := _OPENING_BRACKETS.get(answer[lo]))
+            and (span.count(answer[lo]) > span.count(closer))
+        ):
+            lo += 1
+        else:
+            return lo, hi
+
+
 def _longest_run(said: list[str], text: list[str]) -> tuple[int, int]:
     """(start in `text`, length) of the longest run of consecutive words of
     `said` that `text` holds consecutively; the first such run in `text`."""
@@ -1503,7 +1553,10 @@ def support_span(
     run_words = text[start : start + n]
     if sum(map(len, run_words)) < min(min_chars, sum(map(len, text))):
         return None
-    span = answer[origin[words[start].start()] : origin[words[start + n - 1].end() - 1] + 1]
+    lo, hi = _span_ends(
+        answer, origin[words[start].start()], origin[words[start + n - 1].end() - 1] + 1
+    )
+    span = answer[lo:hi]
     filler = _ENGLISH_FUNCTION_WORDS | _FILLER_WORDS
     talk = (_ANSWER_TALK - set(_word_list(normalise(context)))) | filler
     claimless = _word_list(_SCORE_CLAIM.sub(" ", normalise(span)))
