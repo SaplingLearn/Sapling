@@ -4,7 +4,7 @@
 // probe → plan → teach ⇄ check → feedback → close, and the phase is
 // SERVER-DRIVEN: every change comes from a loop route's response, a stream
 // event or a listed session (`reduceLoopEvent` never advances it on its own).
-// No model toggle and no model_pref (A15/A26). Resume before probe: a reload
+// No model toggle and no tier preference is sent (A15/A26). Resume before probe: a reload
 // of /learn never starts a probe while an open loop session exists (§11.3).
 // The attempt box grades only through /check/answer/stream, never as a chat
 // turn (A16). Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md
