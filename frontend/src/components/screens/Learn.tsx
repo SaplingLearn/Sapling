@@ -20,6 +20,9 @@ import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
+import { LoopLearn } from "../learn/LoopLearn";
+import { useLoopStatus } from "../learn/useLoopStatus";
+import { readResumeParam } from "../learn/resumeParam";
 import {
   startSession,
   startSessionStream,
@@ -299,12 +302,10 @@ export function applyGraphDeltaAssembly(
   setGraphEdges(prev => mergeGraphEdges(prev, edges));
 }
 
-// #164: Dashboard's "Where you left off" cards push /learn?resume=<id>; Tree's
-// session rows used ?session=<id> before both callers unified on ?resume=.
-// Accept both so any bookmarked/legacy link keeps working.
-export function readResumeParam(params: { get(name: string): string | null }): string | null {
-  return params.get("resume") ?? params.get("session");
-}
+// #164: ?resume=<id> (and the legacy ?session=<id>). Moved to
+// components/learn/resumeParam.ts so LoopLearn reads the same deep link
+// without importing this screen (PKG-13); re-exported for its callers.
+export { readResumeParam };
 
 // ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
 // directly before it — the user bubble of the same turn, so the re-send
@@ -325,6 +326,13 @@ export function removeInterruptedTurn(
 }
 
 export function Learn() {
+  const { userId, userReady } = useUser();
+  // Learning loop (PKG-13): one GET decides the tree — the loop status probe is
+  // the only input (never learning_loop_beta; the server gate decides, spec §7).
+  // null → the same fallback the legacy Suspense shows; false / 404 / error → legacy.
+  const loop = useLoopStatus(userId, userReady);
+  if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
+  if (loop) return <LoopLearn />;
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
       <LearnInner />

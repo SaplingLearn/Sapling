@@ -23,6 +23,7 @@ export type LoopUiEvent =
   | { type: "phase"; phase: string }
   | { type: "check"; item: LoopCheckItem | null }
   | { type: "hint_offer"; rung: number }
+  | { type: "hint_taken" }
   | { type: "learner_state"; state: LoopLearnerState }
   | { type: "done"; leakRedacted: boolean }
   | { type: "budget"; level: string; resetAt: string | null; sessionCapped?: boolean }
@@ -73,6 +74,8 @@ export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiStat
     }
     case "hint_offer":
       return { ...state, hintOffer: Number.isFinite(ev.rung) ? ev.rung : null };
+    case "hint_taken":
+      return state.hintOffer === null ? state : { ...state, hintOffer: null };
     case "learner_state":
       return {
         ...state,

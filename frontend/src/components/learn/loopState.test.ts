@@ -43,8 +43,10 @@ describe('reduceLoopEvent', () => {
     expect(reduceLoopEvent({ ...initialLoopState(), item }, { type: 'check', item: null }).item).toBeNull();
   });
 
-  it('hint_offer records the rung', () => {
-    expect(reduceLoopEvent(initialLoopState(), { type: 'hint_offer', rung: 1 }).hintOffer).toBe(1);
+  it('hint_offer records the rung; hint_taken clears it', () => {
+    const offered = reduceLoopEvent(initialLoopState(), { type: 'hint_offer', rung: 1 });
+    expect(offered.hintOffer).toBe(1);
+    expect(reduceLoopEvent(offered, { type: 'hint_taken' }).hintOffer).toBeNull();
   });
 
   it('learner_state is keyed by node_id, overwrites, and focuses the node', () => {
