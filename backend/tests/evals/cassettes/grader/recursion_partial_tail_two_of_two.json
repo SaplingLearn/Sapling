@@ -1,0 +1,25 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "",
+      "item_results": [
+        "41891:yes",
+        "87525:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "41891: It's the case where the function stops recursing."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "41891:yes"
+      ]
+    }
+  ]
+}

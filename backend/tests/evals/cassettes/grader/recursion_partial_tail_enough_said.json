@@ -1,0 +1,26 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "",
+      "item_results": [
+        "65700:yes",
+        "92027:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "65700: It's the case where the function stops recursing.",
+        "92027: without it calls never end / stack overflows"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "65700:yes"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "",
+      "item_results": [
+        "43645:yes",
+        "65459:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "43645: The base case is what stops it",
+        "65459: otherwise it keeps calling itself and the stack blows up"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "43645:yes",
+        "65459:yes"
+      ]
+    }
+  ]
+}

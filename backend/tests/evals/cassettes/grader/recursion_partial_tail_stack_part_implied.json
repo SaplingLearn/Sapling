@@ -1,0 +1,27 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "",
+      "item_results": [
+        "50777:yes",
+        "75505:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "50777: It's the case where the function stops recursing.",
+        "75505: The stack part is implied."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "50777:yes",
+        "75505:no"
+      ]
+    }
+  ]
+}

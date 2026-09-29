@@ -1,0 +1,25 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "It looks like you correctly identified that the base case stops recursion. Could you also explain what would happen if there wasn't a base case?",
+      "item_results": [
+        "57694:yes",
+        "77039:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "57694: It's the case where the function stops recursing."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "57694:yes"
+      ]
+    }
+  ]
+}

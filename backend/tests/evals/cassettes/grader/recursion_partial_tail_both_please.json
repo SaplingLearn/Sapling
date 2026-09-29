@@ -1,0 +1,25 @@
+{
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "The student correctly identifies that the base case stops recursion. However, they do not explain the consequences of not having a base case, such as infinite calls or stack overflow.",
+      "item_results": [
+        "57192:yes",
+        "33074:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "57192: It's the case where the function stops recursing."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "item_results": [
+        "57192:yes"
+      ]
+    }
+  ]
+}
