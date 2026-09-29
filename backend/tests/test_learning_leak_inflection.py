@@ -5,8 +5,9 @@ The loop's served path runs detect_leak/strip_leak in strict mode against the
 active item. A word answer's other inflections ("mitochondria" for
 "Mitochondrion", "viruses" for "virus") state it just as plainly; the rule is
 structural — two alphabetic answer tokens are one lemma when they share a stem
-of at least LEAK_STEM_MIN_CHARS characters and each differs from it by at most
-LEAK_INFLECTION_MAX_CHARS trailing characters — never a list of words.
+of at least LEAK_STEM_MIN_CHARS characters that covers at least
+LEAK_STEM_MIN_SHARE of the longer word (fix round 2, n2: proportional, so
+"less"/"lesson" and "heat"/"heater" stay apart) — never a list of words.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import pytest
 
 from learning.ladder import Rung
 from learning.leak import WITHHELD, detect_leak, strip_leak
-from learning.params import LEAK_INFLECTION_MAX_CHARS, LEAK_STEM_MIN_CHARS
+from learning.params import LEAK_STEM_MIN_CHARS, LEAK_STEM_MIN_SHARE
 
 MITO = dict(
     reference="The ATP-producing stages happen in the mitochondrion. Final answer: Mitochondrion.",
@@ -44,7 +45,7 @@ def test_strict_mode_catches_an_inflection_of_a_word_answer(text):
 @pytest.mark.parametrize(
     "final_answer, text",
     [
-        ("virus", "Both viruses replicate."),
+        ("cell membrane", "Both cell membranes are thin."),
         ("analysis", "Two analyses agree."),
         ("base case returns 1", "The base cases return 1."),
     ],
@@ -67,14 +68,32 @@ def test_a_different_word_is_not_an_inflection(final_answer, text):
 
 
 def test_the_rule_is_the_stem_bounds_not_a_word_list():
-    stem = "q" * LEAK_STEM_MIN_CHARS
-    answer = stem + "a" * LEAK_INFLECTION_MAX_CHARS
-    assert _leaks(stem + "z" * LEAK_INFLECTION_MAX_CHARS, reference="x", final_answer=answer)
+    import math
+
+    answer = "q" * 12
+    shortest = max(LEAK_STEM_MIN_CHARS, math.ceil(LEAK_STEM_MIN_SHARE * 12))
+    assert _leaks("q" * shortest + "z" * (12 - shortest), reference="x", final_answer=answer)
     assert not _leaks(
-        stem + "z" * (LEAK_INFLECTION_MAX_CHARS + 1), reference="x", final_answer=answer
+        "q" * (shortest - 1) + "z" * (13 - shortest), reference="x", final_answer=answer
     )
     short = "q" * (LEAK_STEM_MIN_CHARS - 1)
-    assert not _leaks(short + "zz", reference="x", final_answer=short + "a")
+    assert not _leaks(short + "a", reference="x", final_answer=short + "b")
+
+
+@pytest.mark.parametrize(
+    "final_answer, text",
+    [
+        ("less", "Today's lesson is short."),
+        ("lesson", "It takes less time."),
+        ("heat", "Heating the plate works."),
+        ("heat", "The heater is on."),
+        ("heating", "The heat spreads."),
+        ("cell membrane", "Cells divide."),
+    ],
+)
+def test_honest_prose_is_not_an_inflection(final_answer, text):
+    """n2 (fix round 2): the stem must cover most of the longer word."""
+    assert not _leaks(text, reference="x", final_answer=final_answer)
 
 
 def test_strip_withholds_the_inflection_and_leaves_nothing_the_detector_flags():

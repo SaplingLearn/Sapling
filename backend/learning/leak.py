@@ -60,10 +60,19 @@ the supervisor architecture's deterministic solution stripper). Three rules:
   0.5 when the final answer is itself a percentage) or an equivalent fraction
   ("5/10"); and a simple inflection of a word answer or of the option text
   ("mitochondria" for "Mitochondrion": a shared stem of at least
-  LEAK_STEM_MIN_CHARS characters, each ending at most LEAK_INFLECTION_MAX_CHARS
-  past it — PKG-07 review round 3, which serves loop tutor text through strict
-  mode). A verbal paraphrase ("linear time" for O(n)) is no token rule's
+  LEAK_STEM_MIN_CHARS characters covering at least LEAK_STEM_MIN_SHARE of the
+  longer word — PKG-07 review round 3 / fix round 2). A verbal paraphrase ("linear time" for O(n)) is no token rule's
   to catch: the residual is judge_leak's.
+
+SERVED MODE (`given=`, PKG-07 fix round 2, N1/n2): the loop tutor's served
+path passes the text the model was GIVEN this turn. (1) A hit inside a run of
+at least LEAK_PROVENANCE_MIN_TOKENS answer tokens copied verbatim from `given`
+(the run reaching past the hit) is no leak: it reveals nothing the student
+cannot see already ("3x^2" copied from the item holds a "2"). (2) Strict
+mode's number-word and standalone-letter rules count only in ANSWER POSITION:
+right after an answer/result/equals construction (or an option keyword), a
+copula or an "=" / ":" / arrow, or standing alone as a clause ("Two.").
+`leak_spans` returns the served-mode hits. Default mode ignores both.
 
 The reference is never parsed for a final answer (A34): extracting one from
 free text is an unbounded heuristic, and the generator knows the answer, so
@@ -81,6 +90,7 @@ the two, so "10^(-3)" or "$6x^{2}$" leaves no stray ")" or "}".
 from __future__ import annotations
 
 import bisect
+import math
 import os
 import re
 import unicodedata
@@ -287,7 +297,7 @@ def _folded_token_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _option_hits(
-    text: str, option: _OptionRule | None, *, strict: bool = False
+    text: str, option: _OptionRule | None, *, strict: bool = False, gate=None
 ) -> list[tuple[int, int]]:
     """The spans (in `text`) of the key letter in an option context — any
     standalone key letter too when `strict` — read on the folded copy, where
@@ -313,6 +323,8 @@ def _option_hits(
             # (a keyword context was flagged above, whatever follows it)
             if option.article and _ARTICLE_AFTER[m.group().isupper()].match(folded, m.end()):
                 continue
+            if gate is not None and not gate(folded, m.start(), m.end()):
+                continue  # served mode: a standalone letter counts only in answer position
             found.append(m.span())
         if option.position is not None:
             found += [m.span() for m in option.position.finditer(folded)]
@@ -499,15 +511,23 @@ def _number_word_values(text: str) -> list[tuple[Fraction, int, int]]:
     return out
 
 
+def _number_word_hits(text: str, numeric: _Numeric | None) -> list[tuple[int, int]]:
+    """Strict mode: the spans where `text` writes the numeric answer's value in words."""
+    if numeric is None:
+        return []
+    return [(a, b) for value, a, b in _number_word_values(text) if value == numeric.value]
+
+
 def _numeric_hits(
-    text: str, toks: list[AnswerToken], numeric: _Numeric | None
+    text: str, toks: list[AnswerToken], numeric: _Numeric | None, *, words: bool = True
 ) -> list[tuple[int, int]]:
     """Strict mode: the spans where `text` writes the numeric answer's value
-    as a number word, a LaTeX fraction, a percentage or a fraction a/b."""
+    as a number word (unless `words` is False), a LaTeX fraction, a percentage
+    or a fraction a/b."""
     if numeric is None:
         return []
     target = numeric.value
-    hits = [(a, b) for value, a, b in _number_word_values(text) if value == target]
+    hits = _number_word_hits(text, numeric) if words else []
     for m in _LATEX_FRACTION.finditer(text):
         denominator = Fraction(m.group("den"))
         if denominator and Fraction(m.group("num")) / denominator == target:
@@ -558,20 +578,17 @@ def _rules(
 def _same_lemma(token: str, answer: str) -> bool:
     """Strict mode (PKG-07 review round 3, C1(c)): `token` states the answer
     token `answer` — equal, or, both alphabetic, one lemma: a shared stem of at
-    least LEAK_STEM_MIN_CHARS characters that each extends by at most
-    LEAK_INFLECTION_MAX_CHARS ("mitochondria"/"mitochondrion", "viruses"/"virus",
-    "returns"/"return"). A structural bound on the endings, never a word list;
+    least LEAK_STEM_MIN_CHARS characters covering at least LEAK_STEM_MIN_SHARE
+    of the longer word ("mitochondria"/"mitochondrion", "returns"/"return";
+    never "less"/"lesson"). A structural bound on the endings, never a word list;
     numbers and symbols are compared exactly (by value, as answer tokens are)."""
     if token == answer:
         return True
     if not (token.isalpha() and answer.isalpha()):
         return False
     stem = len(os.path.commonprefix((token, answer)))
-    return (
-        stem >= params.LEAK_STEM_MIN_CHARS
-        and len(token) - stem <= params.LEAK_INFLECTION_MAX_CHARS
-        and len(answer) - stem <= params.LEAK_INFLECTION_MAX_CHARS
-    )
+    longer = max(len(token), len(answer))
+    return stem >= max(params.LEAK_STEM_MIN_CHARS, math.ceil(params.LEAK_STEM_MIN_SHARE * longer))
 
 
 def _lemma_run_hits(toks: list[AnswerToken], run: tuple[str, ...]) -> list[tuple[int, int]]:
@@ -612,6 +629,110 @@ def _reference_grams(reference: str) -> tuple[int, set[tuple[str, ...]]]:
     return n, _ngrams(ref, n)
 
 
+# ── served mode (PKG-07 fix round 2, N1/n2) ─────────────────────────────────
+
+# Answer position, read on the text before a hit: an answer/result/equals
+# construction or an option keyword (a copula allowed after it), a bare copula,
+# or "=", ":" or an arrow — then separators and opening markup, then the hit.
+_ANSWER_LEAD = re.compile(
+    rf"(?:(?i:{_NOT_ALNUM_BEFORE}(?:answers?|results?|equals?|{_WEAK_KEYWORDS}|{_STRONG_KEYWORDS})"
+    rf"(?:{_COPULA})?)|(?i:{_COPULA})|[=:]|{_ARROW}){_SEPARATORS}{_OPENING}$"
+)
+# Or the hit is a clause on its own: a clause start before it (the text's
+# start or clause punctuation), a clause break after it.
+_CLAUSE_OPEN = re.compile(rf"(?:^|[.;:!?\n—–])\s{{0,4}}{_OPENING}$")
+_CLAUSE_CLOSE = re.compile(rf"{_CLOSING}{_CLAUSE_BREAK}")
+_POSITION_WINDOW = params.LEAK_POSITION_WINDOW_CHARS
+
+
+def _answer_position(text: str, start: int, end: int) -> bool:
+    """The hit at text[start:end] is where an answer goes (served mode)."""
+    before = text[max(0, start - _POSITION_WINDOW) : start]
+    if _ANSWER_LEAD.search(before):
+        return True
+    clause_start = (
+        _CLAUSE_OPEN.search(before)
+        if start > _POSITION_WINDOW
+        else re.search(rf"(?:(?<![\s\S])|[.;:!?\n—–])\s{{0,4}}{_OPENING}$", before)
+    )
+    return bool(clause_start and _CLAUSE_CLOSE.match(text, end))
+
+
+def _copied_runs(text: str, given: str) -> list[tuple[int, int]]:
+    """The spans of `text` it copied verbatim from `given`: unions of runs of
+    LEAK_PROVENANCE_MIN_TOKENS consecutive answer tokens that `given` also
+    holds consecutively (numbers compared by value)."""
+    n = params.LEAK_PROVENANCE_MIN_TOKENS
+    toks = answer_tokens(text)
+    theirs = [t.value for t in answer_tokens(given)]
+    grams = {tuple(theirs[i : i + n]) for i in range(len(theirs) - n + 1)}
+    values = [t.value for t in toks]
+    runs: list[tuple[int, int]] = []
+    for i in range(len(toks) - n + 1):
+        if tuple(values[i : i + n]) in grams:
+            a, b = toks[i].start, toks[i + n - 1].end
+            if runs and a <= runs[-1][1]:
+                runs[-1] = (runs[-1][0], max(runs[-1][1], b))
+            else:
+                runs.append((a, b))
+    return runs
+
+
+def _inside_copy(span: tuple[int, int], runs: list[tuple[int, int]]) -> bool:
+    """The hit lies inside a copied run that reaches past it."""
+    a, b = span
+    return any(ra <= a and b <= rb and (ra < a or b < rb) for ra, rb in runs)
+
+
+def _served_hits(text: str, rules: _Rules, given: str) -> list[tuple[int, int, Detector]]:
+    """Every rule's hits in served mode, labelled with their detector: copies
+    of `given` dropped, strict number words and standalone letters kept only
+    in answer position."""
+    hits: list[tuple[int, int, Detector]] = []
+    ascii_spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
+    words = [text[a:b].lower() for a, b in ascii_spans]
+    n = rules.n
+    hits += [
+        (ascii_spans[i][0], ascii_spans[i + n - 1][1], "ngram")
+        for i in range(len(words) - n + 1)
+        if rules.grams and tuple(words[i : i + n]) in rules.grams
+    ]
+    toks = answer_tokens(text)
+    final = _answer_hits(toks, rules.answer)
+    if rules.strict:
+        final += _numeric_hits(text, toks, rules.numeric, words=False)
+        final += _lemma_run_hits(toks, rules.answer.run)
+        final += [
+            (a, b)
+            for a, b in _number_word_hits(text, rules.numeric)
+            if _answer_position(text, a, b)
+        ]
+    hits += [(a, b, "final_answer") for a, b in final]
+    option = _option_hits(text, rules.option, strict=rules.strict, gate=_answer_position)
+    option += _option_text_hits(toks, rules)
+    hits += [(a, b, "option") for a, b in option]
+    runs = _copied_runs(text, given)
+    return [h for h in hits if not _inside_copy((h[0], h[1]), runs)]
+
+
+def leak_spans(
+    *,
+    emitted: str,
+    reference: str,
+    final_answer: str,
+    given: str,
+    canonical_answer: str | None = None,
+    correct_option: str | None = None,
+    strict: bool = False,
+    option_text: str | None = None,
+) -> list[tuple[int, int]]:
+    """Served mode: the sorted spans of `emitted` that state the item's answer
+    — every rule's hits, minus copies of `given` and (strict) number words and
+    standalone letters outside answer position."""
+    rules = _rules(reference, final_answer, canonical_answer, correct_option, strict, option_text)
+    return sorted({(a, b) for a, b, _ in _served_hits(emitted, rules, given)})
+
+
 def detect_leak(
     *,
     reference: str,
@@ -622,6 +743,7 @@ def detect_leak(
     correct_option: str | None = None,
     strict: bool = False,
     option_text: str | None = None,
+    given: str | None = None,
 ) -> LeakVerdict:
     """Every parameter is keyword-only (A38 fix round, m6): detect_leak and
     strip_leak name `reference` and `emitted` in opposite orders, so a
@@ -634,10 +756,17 @@ def detect_leak(
     the option rule is off). `strict` is the grader hint's mode (see the
     module docstring): any standalone key letter, `option_text` (the correct
     option's text; ignored unless strict) and a numeric answer's other
-    notations leak too. ValueError on a missing or empty final_answer, or a
-    correct_option that is not one letter, at every rung."""
+    notations leak too. `given` switches on served mode (the module docstring:
+    provenance and answer position). ValueError on a missing or empty
+    final_answer, or a correct_option that is not one letter, at every rung."""
     rules = _rules(reference, final_answer, canonical_answer, correct_option, strict, option_text)
     if Rung(rung) >= Rung.H6:
+        return LeakVerdict(False, "none")
+    if given is not None:  # served mode (module docstring)
+        found = {d for _, _, d in _served_hits(emitted, rules, given)}
+        for detector in ("ngram", "final_answer", "option"):
+            if detector in found:
+                return LeakVerdict(True, detector)
         return LeakVerdict(False, "none")
     if rules.grams & _ngrams(tokens(emitted), rules.n):
         return LeakVerdict(True, "ngram")
