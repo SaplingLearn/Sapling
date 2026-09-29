@@ -66,7 +66,14 @@ LOOP_ROUTES = BACKEND / "routes" / "learn_loop.py"
 #: flush_pending, under a grading claim), reached only from POST /probe/answer.
 #: PKG-12: learning/review.py::grade_review (a review's one evidence write, reached as
 #: `review.grade_review`), reached only from POST /review/answer.
-EVIDENCE_WRITERS = {"_grade_submission", "_probe_submission", "grade_review"}
+EVIDENCE_WRITERS = {
+    "_grade_submission",
+    "_probe_submission",
+    "grade_review",
+    # PKG-14: the tool-removed post-test's answer handler (spec §10 rung 3) — an
+    # explicit submission route that grades and flushes itself, once per answer
+    "posttest_answer",
+}
 #: The only route handlers allowed to reach an EVIDENCE_WRITERS function.
 EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream", "probe_answer", "review_answer"}
 _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}

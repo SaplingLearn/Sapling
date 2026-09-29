@@ -53,6 +53,7 @@ from datetime import datetime, timedelta, timezone
 
 from collections import Counter
 from collections.abc import Callable
+from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic_ai import capture_run_messages
@@ -97,7 +98,7 @@ from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.learner_brief import course_concept_names, store_brief
-from learning.learner_state import LearnerState, read_states
+from learning.learner_state import LearnerState, read_states, states_last_evidence_before
 from learning.misconceptions import (
     attempts_for_node,
     attempts_of,
@@ -122,6 +123,7 @@ from learning.params import (
     BKT_L0,
     BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
+    CHECK_ITEM_DIFFICULTIES,
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_PHASES,
@@ -139,6 +141,8 @@ from learning.params import (
     LOOP_SOURCE_CHUNKS_MAX,
     LOOP_TEACH_TURNS_BEFORE_CHECK,
     PLAN_ORDER,
+    POSTTEST_MAX_ITEMS,
+    POSTTEST_MIN_AGE_DAYS,
     PROBE_MAX_SKILLS,
     PROBE_PLAN_READS_PER_MIN,
     REVIEW_DAILY_BUDGET_MIN,
@@ -171,6 +175,8 @@ from models import (
     LoopHintBody,
     LoopRatingBody,
     PlanApproveBody,
+    PosttestAnswerBody,
+    PosttestStartBody,
     ProbeAnswerBody,
     ProbeNextBody,
     ReviewAnswerBody,
@@ -2726,6 +2732,219 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
         checks_since_last=seen.get("count", 0),
     )
     return {"ok": True}
+
+
+# ── Tool-removed post-test (PKG-14; spec §10 rung 3, A16, A23) ─────────────
+
+#: Every value `zpd.step.phase` may carry (PKG-06's Phase; spec §13 A8 adds
+#: "posttest"). The `sessions.close_phase` CHECK is NOT widened: posttest is a
+#: step phase only.
+STEP_PHASES: tuple[str, ...] = get_args(zpd_events.Phase)
+_NOT_A_POSTTEST_ITEM = "not a post-test item"
+#: One post-test answer per (student, item) at a time, held across the eligibility
+#: check, the grade and the ONE flush: the flushed evidence makes the item seen, so
+#: a double submit finds it no longer a post-test item (409) and never flushes
+#: twice. The backend serves from ONE process (backend/Dockerfile's CMD), so an
+#: in-process lock serialises every submission of the deployment.
+_POSTTEST_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+
+
+def _posttest_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _posttest_cutoff(now: datetime) -> datetime:
+    return now - timedelta(days=POSTTEST_MIN_AGE_DAYS)
+
+
+def _due_for_posttest(last_evidence_at, cutoff: datetime) -> bool:
+    """Taught long enough ago: the last evidence is at or before the cutoff. A
+    concept with no evidence, or an unreadable timestamp, is never due."""
+    if not last_evidence_at:
+        return False
+    try:
+        ts = datetime.fromisoformat(str(last_evidence_at).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    ts = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    return ts <= cutoff
+
+
+def posttest_item(items: list, excluded: set[str]):
+    """The concept's post-test item (A23): its reserve when that is neither seen
+    nor revealed; else the free item nearest CHECK_ITEM_DIFFICULTIES[1] outside
+    `excluded`; else (†) the lowest-hash servable item outside it; else None.
+    Never a seen or revealed item."""
+    reserve = posttest_reserve_hash(items)
+    if reserve is not None and reserve not in excluded:
+        return next(i for i in items if i.question_hash == reserve)
+    chosen = select_item(
+        items, format="free", difficulty=CHECK_ITEM_DIFFICULTIES[1], exclude_hashes=excluded
+    )
+    if chosen is not None:
+        return chosen
+    rest = [i for i in items if i.question_hash not in excluded and is_servable(i)]
+    return min(rest, key=lambda i: i.question_hash) if rest else None
+
+
+def _posttest_excluded(user_id: str) -> set[str]:
+    """seen ∪ revealed (A23), read once per request."""
+    return set(seen_hashes(user_id)) | set(revealed_hashes(user_id))
+
+
+@router.post("/posttest/start")
+def posttest_start(body: PosttestStartBody, request: Request) -> dict:
+    """Rung 3 (spec §10): this student's post-test items for one course — one
+    per concept whose last evidence is at least POSTTEST_MIN_AGE_DAYS old, its
+    reserve item unless seen or revealed (A23), oldest evidence first, at most
+    POSTTEST_MAX_ITEMS. The pose only: the prompt verbatim and an mc_reason
+    item's options, never a key or a reference. No brief, no RAG, no tutor, no
+    session row, no model call, no write."""
+    if not body.user_id:
+        body.user_id = get_session_user_id(request)
+    _gate(body.user_id, request)
+    cutoff = _posttest_cutoff(_posttest_now())
+    due = [
+        r
+        for r in states_last_evidence_before(body.user_id, cutoff)
+        if r.get("node_id") and _due_for_posttest(r.get("last_evidence_at"), cutoff)
+    ]
+    if not due:
+        return {"items": []}
+    nodes = {
+        row["id"]: _normalize_concept(row.get("concept_name") or "")
+        for row in table("graph_nodes").select(
+            "id,concept_name",
+            filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{body.course_id}"},
+        )
+        or []
+        if row.get("id")
+    }
+    due = [r for r in due if nodes.get(r["node_id"])]
+    if not due:
+        return {"items": []}
+    by_key = items_for_concepts(body.course_id, [nodes[r["node_id"]] for r in due])
+    excluded = _posttest_excluded(body.user_id)
+    out: list[dict] = []
+    for r in sorted(due, key=lambda r: (str(r.get("last_evidence_at")), r["node_id"])):
+        item = posttest_item(by_key.get(nodes[r["node_id"]]) or [], excluded)
+        if item is None:
+            continue  # nothing unseen left for this concept: skipped
+        out.append({"node_id": r["node_id"], **_pose_payload(item)})
+        if len(out) >= POSTTEST_MAX_ITEMS:
+            break
+    return {"items": out}
+
+
+def _posttest_node(user_id: str, node_id: str) -> dict:
+    rows = (
+        table("graph_nodes").select(
+            "id,course_id,concept_name",
+            filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"},
+            limit=1,
+        )
+        or []
+    )
+    if not rows or not rows[0].get("course_id"):
+        raise HTTPException(status_code=404, detail="Node not found")
+    return rows[0]
+
+
+def _posttest_eligible(user_id: str, node_id: str, cutoff: datetime) -> bool:
+    return any(
+        r.get("node_id") == node_id and _due_for_posttest(r.get("last_evidence_at"), cutoff)
+        for r in states_last_evidence_before(user_id, cutoff)
+    )
+
+
+@router.post("/posttest/answer", dependencies=_RATE_LIMITED)
+async def posttest_answer(body: PosttestAnswerBody, request: Request):
+    """Grade one post-test answer through grade_answer (A16), unassisted: the
+    ceiling is H0, max_rung 0, no session. The item must be the node's CURRENT
+    post-test item (a concept taught long enough ago, never a seen or revealed
+    item) — else 409, so an answered item is never graded twice. A refusal (A33)
+    records nothing and asks again (never an idk here); an outage or the grade
+    cap is a 503 with nothing recorded for either outcome (invariant 28)."""
+    if not body.user_id:
+        body.user_id = get_session_user_id(request)
+    loop_on = _gate(body.user_id, request)
+    node = _posttest_node(body.user_id, body.node_id)
+    course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
+    items = items_for_concepts(course_id, [key]).get(key) or []
+    item = next((i for i in items if i.question_hash == body.question_hash), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="check item not found")
+    if not body.idk:
+        if item.format == "mc_reason" and not body.selected_option:
+            raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
+        if item.format != "mc_reason" and not body.answer:
+            raise HTTPException(status_code=422, detail="a free answer needs answer")
+    lock = _POSTTEST_LOCKS.setdefault((body.user_id, item.question_hash), asyncio.Lock())
+    async with lock:
+        cutoff = _posttest_cutoff(_posttest_now())
+        current = posttest_item(items, _posttest_excluded(body.user_id))
+        if (
+            current is None
+            or current.question_hash != item.question_hash
+            or not _posttest_eligible(body.user_id, body.node_id, cutoff)
+        ):
+            raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
+        band, p_before = _band_for(body.user_id, body.node_id)
+        deps = SaplingDeps(
+            user_id=body.user_id,
+            course_id=course_id,
+            supabase=None,
+            request_id=_request_id(request),
+            session_id=None,
+            feature="loop_posttest",
+            learning_loop=loop_on,
+        )
+        answer = CheckAnswer(
+            question_hash=item.question_hash,
+            answer_text=body.answer,
+            selected_option=body.selected_option,
+            reason=body.reason,
+            idk=body.idk,
+        )
+        outcome = await grade_answer(
+            _item_like(item), answer, deps=deps, node_id=body.node_id, max_rung=int(Rung.H0)
+        )
+        if outcome.refused:  # A33: checked first — a refused outcome is also unavailable
+            return {"graded": False, "refused": True}
+        if outcome.unavailable:
+            raise HTTPException(status_code=503, detail="grader unavailable")
+        changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
+    correct = bool(outcome.correct)
+    evidence = outcome.evidence or {}
+    after = next((c.get("after") for c in changes or [] if isinstance(c, dict)), None)
+    zpd_events.emit_zpd_step(
+        user_id=body.user_id,
+        request_id=_request_id(request),
+        concept_id=body.node_id,
+        question_hash=item.question_hash,
+        phase="posttest",
+        channel=evidence.get("channel") or CHANNEL_FOR_FORMAT[item.format],
+        band=band,
+        ceiling=Rung.H0,
+        ceiling_reason=policy.CeilingReason.POSTTEST,
+        first_attempt_correct=correct,
+        n_attempts=1,
+        max_rung_used=Rung.H0,
+        rungs=[],
+        time_to_first_attempt_ms=None,
+        time_to_correct_ms=None,
+        independent_time_ms=None,
+        assisted=False,
+        confidence=outcome.confidence,
+        fsrs_rating=policy.evidence_for_rung(correct, Rung.H0).fsrs_rating,
+        p_known_before=p_before,
+        p_known_after=after,
+        r_before=None,
+        item_difficulty=item.difficulty,
+        grader_backend=outcome.grader_backend,
+        variant=arms.variant_for(body.user_id, body.node_id, _arm_for(body.user_id, request)),
+    )  # no tier: no tutor turn ran (omitted, never zeroed)
+    return {"correct": correct, "confidence": outcome.confidence}
 
 
 # ── Attempt / hint / action / openers / end-session ───────────────────────

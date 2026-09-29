@@ -132,6 +132,8 @@ MODEL_ROUTES = [
     "/start-session",
     "/start-session/stream",
     "/action",
+    # PKG-14: the post-test answer runs the grader (tests/test_learning_posttest.py).
+    "/posttest/answer",
 ]
 #: No rate-limit DEPENDENCY. /probe/answer runs the grader but checks the rate
 #: limit inline, after the gate (PKG-08 fix round; PKG-12's pattern), pinned in
@@ -151,6 +153,8 @@ NO_MODEL_ROUTES = [
     "/sessions",
     # PKG-14: the zpd.rating answer (no model run; tests/test_learn_loop_rating.py).
     "/rating",
+    # PKG-14: the post-test items (reads only; tests/test_learning_posttest.py).
+    "/posttest/start",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]

@@ -35,6 +35,25 @@ class CloseBody(BaseModel):
     user_id: str = ""  # PKG-09: resolved from the session cookie when empty, like EndSessionBody
 
 
+class PosttestStartBody(BaseModel):
+    """PKG-14 /api/learn/loop/posttest/start — rung 3 of the evaluation ladder
+    (spec §10): the tool-removed, delayed post-test items of one course."""
+    course_id: str
+    user_id: str = ""  # resolved from the session cookie when empty, like CloseBody
+
+
+class PosttestAnswerBody(BaseModel):
+    """PKG-14 /api/learn/loop/posttest/answer — one post-test answer, graded
+    through grade_answer with the ceiling forced to H0 (A16, A33 length bound)."""
+    node_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    idk: bool = False
+    user_id: str = ""
+
+
 class LoopRatingBody(BaseModel):
     """PKG-14 /api/learn/loop/rating — the perceived-difficulty answer the loop
     asks for every ZPD_RATING_EVERY_N_CHECKS checks (spec §3.4, §6 zpd.rating)."""

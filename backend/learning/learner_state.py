@@ -181,6 +181,19 @@ def opportunity_states(user_id: str | None = None) -> list[dict]:
     )
 
 
+def states_last_evidence_before(user_id: str, cutoff: datetime) -> list[dict]:
+    """One student's (node_id, last_evidence_at) rows whose last evidence is at
+    or before `cutoff`, oldest first, paged (PKG-14's post-test selection)."""
+    return list(
+        page_all(
+            _LearnerStateRead(),
+            "node_id,last_evidence_at",
+            filters={"user_id": f"eq.{user_id}", "last_evidence_at": f"lte.{_iso(cutoff)}"},
+            order="last_evidence_at,node_id",
+        )
+    )
+
+
 class _LearnerStateRead:
     """A read-only `page_all` handle over learner_state (invariant 1's ast half
     allows `table("learner_state")` only as a direct read, so the handle is never
