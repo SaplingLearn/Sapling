@@ -1083,7 +1083,7 @@ async def grade_review(
                 # spec §13 A76 (fix round 3): a due item right after a release on
                 # its concept (a wrong loop answer this morning) is the re-check
                 same_session_recheck=recheck_after_release(
-                    user_id, item.node_id, loop_state, now=now
+                    user_id, item.node_id, loop_state, now=now, item=check_item
                 ),
             )
             if outcome.refused is not None or outcome.unavailable:

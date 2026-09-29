@@ -1444,54 +1444,95 @@ def test_every_unreleased_eval_case_is_a_line_production_would_send():
         ), case.name
 
 
-def test_latest_evidence_released_reads_the_nodes_latest_journal_row():
-    """A76 (R2-2): one direct node_mastery_events read — the student's node,
-    evidence rows since the window, newest first, one row — judged by the
-    revealed_hashes rule (wrong, or max_rung >= RUNG_NO_CREDIT_MIN)."""
+class _FakeJournal:
+    """node_mastery_events + check_items as recent_evidence reads them."""
+
+    def __init__(self, rows, items):
+        self.rows, self.items, self.calls = rows, items, []
+
+    def __call__(self, name):
+        fake = MagicMock()
+        if name == "node_mastery_events":
+            fake.select.side_effect = lambda cols, **kw: (
+                self.calls.append((name, cols, kw)) or [dict(r) for r in self.rows]
+            )
+        else:
+            assert name == "check_items", name
+            fake.select.side_effect = lambda cols, **kw: (
+                self.calls.append((name, cols, kw)) or [dict(i) for i in self.items]
+            )
+        return fake
+
+
+def test_recent_evidence_reads_the_nodes_rows_and_their_isomorph_classes():
+    """A76 (R2-2, R4-1): the student's evidence rows on the node since the
+    window, oldest first, each judged by revealed_hashes' rule and tagged with
+    its item's (format, difficulty) from ONE check_items read."""
     from learning import loop_state_store as store
     from learning.params import RUNG_NO_CREDIT_MIN
 
-    for row, expected in (
-        ({"correct": False, "max_rung": 0}, True),
-        ({"correct": True, "max_rung": RUNG_NO_CREDIT_MIN}, True),
-        ({"correct": True, "max_rung": 1}, False),
-        (None, None),
-    ):
-        t = MagicMock()
-        t.select.return_value = [row] if row else []
-        with patch.object(store, "table", return_value=t) as tbl:
-            assert (
-                store.latest_evidence_released("u1", "n1", since="2026-09-28T00:00:00+00:00")
-                is expected
-            )
-        tbl.assert_called_with("node_mastery_events")
-        (cols,), kw = t.select.call_args
-        assert "graph_nodes!inner(user_id)" in cols
-        assert kw["filters"] == {
-            "graph_nodes.user_id": "eq.u1",
-            "node_id": "eq.n1",
-            "event_type": "eq.evidence",
-            "created_at": "gte.2026-09-28T00:00:00+00:00",
-        }
-        assert kw["order"] == "created_at.desc,evidence_seq.desc" and kw["limit"] == 1
+    fake = _FakeJournal(
+        [
+            {"check_item_id": "ci-a", "question_hash": "a", "correct": False, "max_rung": 0},
+            {"check_item_id": "ci-b", "question_hash": "b", "correct": True, "max_rung": 1},
+            {
+                "check_item_id": "ci-c",
+                "question_hash": "c",
+                "correct": True,
+                "max_rung": RUNG_NO_CREDIT_MIN,
+            },
+            {"check_item_id": "ci-gone", "question_hash": "d", "correct": True, "max_rung": 0},
+        ],
+        [
+            {"id": "ci-a", "format": "free", "difficulty": 2},
+            {"id": "ci-b", "format": "mc_reason", "difficulty": 1},
+            {"id": "ci-c", "format": "free", "difficulty": 2},
+        ],
+    )
+    with patch.object(store, "table", side_effect=fake):
+        rows = store.recent_evidence("u1", "n1", since="2026-09-28T00:00:00+00:00")
+    assert rows == [
+        {"question_hash": "a", "released": True, "shape": ("free", 2)},
+        {"question_hash": "b", "released": False, "shape": ("mc_reason", 1)},
+        {"question_hash": "c", "released": True, "shape": ("free", 2)},
+        {"question_hash": "d", "released": False, "shape": None},
+    ]
+    (_, cols, kw), (name, icols, ikw) = fake.calls
+    assert "graph_nodes!inner(user_id)" in cols
+    assert kw["filters"] == {
+        "graph_nodes.user_id": "eq.u1",
+        "node_id": "eq.n1",
+        "event_type": "eq.evidence",
+        "created_at": "gte.2026-09-28T00:00:00+00:00",
+    }
+    assert kw["order"] == "created_at.asc,evidence_seq.asc"
+    assert name == "check_items" and icols == "id,format,difficulty"
+    assert ikw["filters"]["id"].startswith("in.(")
 
 
-def test_latest_evidence_released_never_raises():
-    """A failed read cannot decide: None (the route then grades normally) with a WARNING."""
+def test_recent_evidence_never_raises():
+    """A failed read cannot decide: None (graded normally) with a WARNING."""
     from learning import loop_state_store as store
 
     t = MagicMock()
     t.select.side_effect = RuntimeError("pg down")
     with patch.object(store, "table", return_value=t):
-        assert store.latest_evidence_released("u1", "n1", since="x") is None
+        assert store.recent_evidence("u1", "n1", since="x") is None
 
 
 # ── fix round 3 (R3-1): ONE re-check decision for every grading caller ──────
 
 
+_ITEM = MagicMock(question_hash="h9", format="free", difficulty=2)
+
+
+def _row(qh, released, shape=("mc_reason", 1)):
+    return {"question_hash": qh, "released": released, "shape": shape}
+
+
 def test_recheck_after_release_reads_the_session_log_then_the_journal():
-    """A76: the concept's latest attempt in the session decides when there is
-    one; otherwise the journal's latest row on the node within
+    """A76: the concept's latest attempt in the session decides "next item"
+    when there is one; otherwise the journal's newest row on the node within
     RECHECK_RELEASE_WINDOW_HOURS of `now`. A failed read (None) is no re-check."""
     from datetime import datetime, timedelta, timezone
 
@@ -1501,13 +1542,13 @@ def test_recheck_after_release_reads_the_session_log_then_the_journal():
 
     now = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
     released = {"attempts": [{**_prior_attempt("h1"), "released": True}]}
-    with patch.object(store, "latest_evidence_released", return_value=False) as journal:
-        assert recheck_after_release("u1", "n1", released, now=now) is True
+    with patch.object(store, "recent_evidence", return_value=[]) as journal:
+        assert recheck_after_release("u1", "n1", released, now=now, item=_ITEM) is True
         journal.assert_not_called()  # the session's own log answers first
-    for answer, expected in ((True, True), (False, False), (None, False)):
-        with patch.object(store, "latest_evidence_released", return_value=answer) as journal:
-            assert recheck_after_release("u1", "n1", {}, now=now) is expected
-            assert recheck_after_release("u1", "n1", None, now=now) is expected
+    for rows, expected in (([_row("a", True)], True), ([_row("a", False)], False), (None, False)):
+        with patch.object(store, "recent_evidence", return_value=rows) as journal:
+            assert recheck_after_release("u1", "n1", {}, now=now, item=_ITEM) is expected
+            assert recheck_after_release("u1", "n1", None, now=now, item=_ITEM) is expected
         since = (now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)).isoformat()
         journal.assert_called_with("u1", "n1", since=since)
 
@@ -1519,8 +1560,8 @@ def test_recheck_after_release_never_mutates_the_loop_state():
     from learning.misconceptions import last_release_on_node, recheck_after_release
 
     doc: dict = {"review": {}}
-    with patch.object(store, "latest_evidence_released", return_value=None):
-        recheck_after_release("u1", "n1", doc, now=_utc_now())
+    with patch.object(store, "recent_evidence", return_value=None):
+        recheck_after_release("u1", "n1", doc, now=_utc_now(), item=_ITEM)
     assert last_release_on_node(doc, "n1") is None
     assert doc == {"review": {}}
 
@@ -1574,26 +1615,55 @@ def test_every_grading_caller_decides_the_recheck_through_the_one_helper():
     }, callers
 
 
-def test_the_review_after_a_release_is_the_recheck_and_the_twin_after_it_is_not():
-    """R3-1 sequence (A76 'only the next item'): wrong in session A (a released
-    journal row) → a due review item on the concept is THE re-check (down-
-    weighted); its own row (correct, no worked answer) is now the newest, so a
-    session-B twin after it is graded normally — exactly as a check-route twin
-    after a graded re-check is. Nothing is full weight right after a release."""
+@pytest.mark.parametrize(
+    "rows,expected",
+    [
+        ([], False),
+        ([_row("x", True, ("free", 2))], True),
+        # R4-1: an intermediate item of another class pays nothing
+        ([_row("x", True, ("free", 2)), _row("p", False)], True),
+        ([_row("x", True, ("free", 2)), _row("p", False), _row("r", False, ("free", 3))], True),
+        # an item of the class graded since the release pays the debt
+        ([_row("x", True, ("free", 2)), _row("y", False, ("free", 2))], False),
+        # ...and a released one of the class opens a new debt
+        ([_row("x", True, ("free", 2)), _row("y", True, ("free", 2))], True),
+        ([_row("x", True, None), _row("p", False)], False),  # an unreadable item: no class
+    ],
+)
+def test_owed_isomorph_pays_only_on_an_item_of_the_released_class(rows, expected):
+    from learning.misconceptions import owed_isomorph
+
+    assert owed_isomorph(rows, ("free", 2)) is expected
+
+
+def test_the_twin_after_an_intermediate_probe_or_review_is_still_a_recheck():
+    """R4-1 sequence, through the real journal read: session A — X (free, d2)
+    graded wrong, released. Session B — a probe/review item P (mc_reason, d1)
+    on the node takes the "next item" re-check; its correct row becomes the
+    newest. X's twin Y (free, d2) is still a re-check (down-weighted, no
+    streak). Then Y's own row pays the debt: the next free/d2 item is normal."""
     from learning import loop_state_store as store
     from learning.misconceptions import recheck_after_release
     from learning.params import WEIGHT_SAME_SESSION_RECHECK
 
-    journal: list[dict] = [{"correct": False, "max_rung": 0}]  # session A: wrong
-
-    class _Journal:
-        def select(self, *_a, **_k):
-            return journal[-1:]
-
-    with patch.object(store, "table", return_value=_Journal()):
-        review_recheck = recheck_after_release("u1", "n1", {"review": {}}, now=_utc_now())
-        assert review_recheck is True
-        review_row = _twin_evidence(review_recheck)
-        assert review_row["weight"] == WEIGHT_SAME_SESSION_RECHECK
-        journal.append({"correct": review_row["correct"], "max_rung": review_row["max_rung"]})
-        assert recheck_after_release("u1", "n1", {}, now=_utc_now()) is False
+    items = [
+        {"id": "ci-x", "format": "free", "difficulty": 2},
+        {"id": "ci-p", "format": "mc_reason", "difficulty": 1},
+        {"id": "ci-y", "format": "free", "difficulty": 2},
+    ]
+    journal = [{"check_item_id": "ci-x", "question_hash": "x", "correct": False, "max_rung": 0}]
+    fake = _FakeJournal(journal, items)
+    probe = MagicMock(question_hash="p", format="mc_reason", difficulty=1)
+    twin = MagicMock(question_hash="y", format="free", difficulty=2)
+    later = MagicMock(question_hash="z", format="free", difficulty=2)
+    with patch.object(store, "table", side_effect=fake):
+        assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=probe) is True
+        journal.append(
+            {"check_item_id": "ci-p", "question_hash": "p", "correct": True, "max_rung": 0}
+        )
+        assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=twin) is True
+        assert _twin_evidence(True)["weight"] == WEIGHT_SAME_SESSION_RECHECK
+        journal.append(
+            {"check_item_id": "ci-y", "question_hash": "y", "correct": True, "max_rung": 0}
+        )
+        assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=later) is False

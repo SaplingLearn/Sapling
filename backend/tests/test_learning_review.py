@@ -2711,8 +2711,15 @@ def test_a_review_after_a_release_is_graded_as_a_recheck(monkeypatch, journal, r
     reads = []
     monkeypatch.setattr(
         misconceptions,
-        "latest_evidence_released",
-        lambda user, node, *, since: reads.append((user, node, since)) or journal,
+        "recent_evidence",
+        lambda user, node, *, since: (
+            reads.append((user, node, since))
+            or (
+                []
+                if journal is None
+                else [{"question_hash": "q", "released": journal, "shape": None}]
+            )
+        ),
     )
     item = _item("check", 0.4, id="ci-qh-1", node_id="n-due", question_hash="qh-1", format="free")
     loop_state = {

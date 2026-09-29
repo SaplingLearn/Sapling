@@ -3558,7 +3558,7 @@ _PKG06_SANCTIONED_IMPORTS = {
     # module is reached only by the loop surfaces (inv 17's importer list).
     "learning/misconceptions.py": (
         "learning.loop_state_store",
-        frozenset({"latest_evidence_released"}),
+        frozenset({"recent_evidence"}),
     ),
 }
 # PKG-07 (spec §7, §9): the loop route WIRES the layer — gates, ladder, policy, leak,

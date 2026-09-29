@@ -38,7 +38,7 @@ import logging
 from collections.abc import Callable
 from typing import NamedTuple
 
-from db.connection import page_all, table
+from db.connection import page_all, pg_quote_value, table
 from learning import params
 from learning.policy import LoopState
 
@@ -159,32 +159,50 @@ def _evidence_rows(user_id: str) -> list[dict]:
     )
 
 
-def latest_evidence_released(user_id: str, node_id: str, *, since: str) -> bool | None:
-    """PKG-10 (spec §13 A76, the session-hop half of the re-check rule): whether
-    the student's LATEST evidence row on this node journaled since `since` was a
-    release by revealed_hashes' rule (a wrong/idk answer, or max_rung >=
-    RUNG_NO_CREDIT_MIN); None when there is no such row or the read failed
-    (never raises). One direct read, scoped to the node's owner like
-    _evidence_rows."""
+def _released(row: dict) -> bool:
+    """revealed_hashes' rule on one evidence row: a wrong/idk answer, or a
+    worked answer shown on the way (max_rung >= RUNG_NO_CREDIT_MIN)."""
+    return row.get("correct") is False or (row.get("max_rung") or 0) >= params.RUNG_NO_CREDIT_MIN
+
+
+def recent_evidence(user_id: str, node_id: str, *, since: str) -> list[dict] | None:
+    """PKG-10 (spec §13 A76): the student's evidence rows on this node
+    journaled since `since`, oldest first, each as {question_hash, released,
+    shape} — `released` by revealed_hashes' rule, `shape` the item's isomorph
+    class (format, difficulty; None when the item cannot be read). Two
+    owner-scoped reads (the node's rows like _evidence_rows, then the rows'
+    items' plaintext format/difficulty in one `in.(...)` select); None when a
+    read failed (never raises)."""
     try:
         rows = table("node_mastery_events").select(
-            "correct,max_rung,graph_nodes!inner(user_id)",
+            "check_item_id,question_hash,correct,max_rung,graph_nodes!inner(user_id)",
             filters={
                 "graph_nodes.user_id": f"eq.{user_id}",
                 "node_id": f"eq.{node_id}",
                 "event_type": "eq.evidence",
                 "created_at": f"gte.{since}",
             },
-            order="created_at.desc,evidence_seq.desc",
-            limit=1,
+            order="created_at.asc,evidence_seq.asc",
         )
+        ids = sorted({r["check_item_id"] for r in rows or [] if r.get("check_item_id")})
+        shapes: dict[str, tuple] = {}
+        if ids:
+            for item in table("check_items").select(
+                "id,format,difficulty",
+                filters={"id": f"in.({','.join(pg_quote_value(i) for i in ids)})"},
+            ):
+                shapes[item["id"]] = (item.get("format"), item.get("difficulty"))
     except Exception as exc:
-        logger.warning("latest_evidence_released read failed: %s", type(exc).__name__)
+        logger.warning("recent_evidence read failed: %s", type(exc).__name__)
         return None
-    if not rows:
-        return None
-    row = rows[0]
-    return row.get("correct") is False or (row.get("max_rung") or 0) >= params.RUNG_NO_CREDIT_MIN
+    return [
+        {
+            "question_hash": row.get("question_hash"),
+            "released": _released(row),
+            "shape": shapes.get(row.get("check_item_id")),
+        }
+        for row in rows or []
+    ]
 
 
 def seen_hashes(user_id: str) -> set[str]:

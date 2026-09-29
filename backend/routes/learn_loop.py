@@ -2341,7 +2341,11 @@ async def _grade_submission(
     # PKG-10 (spec §13 A76): the next graded item on a concept after a release
     # is a re-check, never a full-weight unassisted first attempt
     recheck = recheck_after_release(
-        body.user_id, node_id, state, now=datetime.fromtimestamp(now, tz=timezone.utc)
+        body.user_id,
+        node_id,
+        state,
+        now=datetime.fromtimestamp(now, tz=timezone.utc),
+        item=item,
     )
     claim = str(uuid.uuid4())
     _claim_grading(body.session_id, qh, claim, now)
@@ -3583,7 +3587,11 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     # PKG-10 (spec §13 A76, fix round 3): a probe item is the next graded item
     # on its concept after a release too — the same rule as the check route
     recheck = recheck_after_release(
-        body.user_id, node_id, state, now=datetime.fromtimestamp(now, tz=timezone.utc)
+        body.user_id,
+        node_id,
+        state,
+        now=datetime.fromtimestamp(now, tz=timezone.utc),
+        item=item.item,
     )
     written = False
     try:

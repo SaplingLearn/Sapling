@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from db.connection import pg_quote_value, rpc, table
 from learning.evidence import MisconceptionVerdict
-from learning.loop_state_store import latest_evidence_released  # A76's journal half
+from learning.loop_state_store import recent_evidence  # A76's journal half
 from learning.params import (
     GAP_CONFIDENCE_MAX,
     MISCONCEPTION_CONFIDENCE,
@@ -159,25 +159,53 @@ def last_release_on_node(loop_state: dict, node_id: str) -> bool | None:
     return tail[-1].released if tail else None
 
 
+def owed_isomorph(rows: list[dict], shape: tuple) -> bool:
+    """Spec §13 A76 (fix round 4, R4-1): whether a released item of this
+    isomorph class (`shape` = format, difficulty on this node, A27/next_isomorph)
+    is still owed its re-check in the journal rows (oldest first, as
+    loop_state_store.recent_evidence reads them). A release opens a debt for its
+    class; the next graded item OF THAT CLASS pays it — whatever came between on
+    the node (a probe or review item of another class pays nothing). Pure."""
+    owed: set[tuple] = set()
+    for row in rows:
+        cls = row.get("shape")
+        if cls is None:
+            continue
+        owed.discard(cls)  # an isomorph graded after the release pays it
+        if row.get("released"):
+            owed.add(cls)
+    return shape in owed
+
+
 def recheck_after_release(
-    user_id: str, node_id: str, loop_state: dict | None, *, now: datetime
+    user_id: str, node_id: str, loop_state: dict | None, *, now: datetime, item
 ) -> bool:
     """Spec §13 A76 — the ONE re-check decision every grading caller passes to
     grade_answer as `same_session_recheck` (the check route, the probe and the
-    review; fix round 3 R3-1: a caller that did not ask graded the next item
-    after a release at full weight, and its row reset the journal's answer).
-    The concept's latest attempt in THIS session's log decides when there is
-    one (released → this is the next item after a release; the one after is
-    normal again); otherwise the student's latest evidence row on the node
-    journaled within RECHECK_RELEASE_WINDOW_HOURS of `now` (a release in
-    another session the same day — a session hop never bypasses the rule). A
-    failed read decides nothing (False). Reads only: `loop_state` is never
-    changed."""
+    review). `item` is the item being graded (question_hash, format,
+    difficulty). A re-check when EITHER
+      • it is the next graded item on the concept after a release: the
+        concept's latest attempt in THIS session's log when there is one, else
+        the node's newest journal row within RECHECK_RELEASE_WINDOW_HOURS of
+        `now` (a session hop never bypasses it; R2-2/R2-3); or
+      • its isomorph class is still owed a re-check: an item of the same
+        format and difficulty on the node was released within the window and
+        no item of that class was graded since (R4-1: an intermediate probe or
+        review item of another class takes the first rule's re-check, yet the
+        released item's twin is still the copy risk).
+    A failed journal read decides nothing (False). Reads only: `loop_state` is
+    never changed."""
     last = last_release_on_node(loop_state or {}, node_id)
-    if last is not None:
-        return last
+    if last:
+        return True
     since = now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)
-    return latest_evidence_released(user_id, node_id, since=since.isoformat()) is True
+    rows = recent_evidence(user_id, node_id, since=since.isoformat())
+    if not rows:
+        return False
+    if last is None and rows[-1]["released"]:
+        return True
+    shape = (getattr(item, "format", None), getattr(item, "difficulty", None))
+    return None not in shape and owed_isomorph(rows, shape)
 
 
 def attempts_for_node(log: list, node_id: str) -> list[Attempt]:

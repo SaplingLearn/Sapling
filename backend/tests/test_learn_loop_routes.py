@@ -331,8 +331,8 @@ def seams():
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
         # PKG-10 (A76): the evidence-journal half of the re-check rule
-        ns.journal_release = stack.enter_context(
-            patch("learning.misconceptions.latest_evidence_released", return_value=None)
+        ns.journal = stack.enter_context(
+            patch("learning.misconceptions.recent_evidence", return_value=[])
         )
         ns.select_item = p("select_item", wraps=checks.select_item)
         ns.reserve = p("posttest_reserve_hash", return_value="qh-reserve")
@@ -3559,7 +3559,15 @@ def test_only_the_next_item_after_a_release_is_a_recheck(gate_on, seams):
     with agent_p, usage_p:
         client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
     assert seams.grade.call_args.kwargs["same_session_recheck"] is False
-    seams.journal_release.assert_not_called()  # the session's own log answers first
+    # the session's own log answers "next item"; the journal is read only for an
+    # isomorph class still owed its re-check (R4-1) — none here
+
+
+def _journal_rows(released):
+    """recent_evidence's rows: one row on the node (another class), or none."""
+    if released is None:
+        return []
+    return [{"question_hash": "qh-a", "released": released, "shape": ("mc_reason", 9)}]
 
 
 @pytest.mark.parametrize("journal,recheck", [(True, True), (False, False), (None, False)])
@@ -3572,13 +3580,42 @@ def test_a_release_in_another_session_counts_within_the_window(gate_on, seams, j
 
     from learning.params import RECHECK_RELEASE_WINDOW_HOURS
 
-    seams.journal_release.return_value = journal
+    seams.journal.return_value = _journal_rows(journal)
     agent_p, usage_p, _ = _feedback_agent()
     with agent_p, usage_p:
         client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
     assert seams.grade.call_args.kwargs["same_session_recheck"] is recheck
-    (user, node), kw = seams.journal_release.call_args
+    (user, node), kw = seams.journal.call_args
     since = datetime.fromtimestamp(NOW, tz=timezone.utc) - timedelta(
         hours=RECHECK_RELEASE_WINDOW_HOURS
     )
     assert (user, node, kw["since"]) == ("u1", "node-1", since.isoformat())
+
+
+@pytest.mark.parametrize(
+    "between,recheck",
+    [
+        ([], True),  # the released item's twin comes next: the "next item" rule
+        ([("qh-p", False, ("mc_reason", 1))], True),  # R4-1: a probe item of ANOTHER class between
+        ([("qh-r", False, ("mc_reason", 1)), ("qh-s", False, ("teachback", 3))], True),
+        ([("qh-t", False, "SAME")], False),  # a twin of that class was graded since: paid
+    ],
+)
+def test_a_released_items_twin_is_a_recheck_whatever_came_between(gate_on, seams, between, recheck):
+    """R4-1 (spec §13 A76): wrong in session A releases item X; in session B an
+    intermediate probe/review item on the node (another format or difficulty)
+    takes the "next item" re-check and its correct row becomes the journal's
+    newest — yet X's isomorph twin (same format and difficulty) is still the
+    copy risk: it is graded as a re-check until an item of X's class is graded
+    after the release."""
+    same = (ITEM.format, ITEM.difficulty)
+    rows = [{"question_hash": "qh-x", "released": True, "shape": same}]
+    rows += [
+        {"question_hash": qh, "released": rel, "shape": same if shape == "SAME" else shape}
+        for qh, rel, shape in between
+    ]
+    seams.journal.return_value = rows
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p:
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
+    assert seams.grade.call_args.kwargs["same_session_recheck"] is recheck
