@@ -119,6 +119,7 @@ from learning.params import (
     BAND_DEVELOP_MAX,
     BKT_L0,
     BKT_PROFICIENT,
+    MISCONCEPTION_CONFRONT_MIN_RUNG,
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_PHASES,
@@ -1330,12 +1331,18 @@ class _LoopTurn:
 
     def _confront_line(self) -> str | None:
         """The confrontation line this turn may carry (PKG-10), or None. Not on
-        a check pose (no model) nor a correct-answer feedback turn. The text is
+        a check pose (no model), a correct-answer feedback turn, or — the
+        answer unreleased — a model ceiling below MISCONCEPTION_CONFRONT_MIN_RUNG. The text is
         model-written (item drafting), so while the active item's answer is
         unreleased it must pass the strict served leak check, provenance = the
         item as posed; a leaking text is withheld and its marker waits."""
         if self.phase == "check" or (self.phase == "feedback" and self.verdict == "correct"):
             return None
+        ceiling = clamp_model_ceiling(
+            self.rung if self.phase == "hint" else self.ceiling, self.answer_released
+        )
+        if not self.answer_released and ceiling < MISCONCEPTION_CONFRONT_MIN_RUNG:
+            return None  # the ceiling wins: a contradiction names specifics (H3+)
         line = _confrontation_line(self.state)
         if line is None or self.item is None or self.answer_released:
             return line

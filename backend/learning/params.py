@@ -136,6 +136,11 @@ GAP_CONFIDENCE_MAX = 0.4
 # PKG-10: the longest wrong_key the misconception store keeps and the learner
 # brief renders (an identifier: [a-z0-9][a-z0-9_]*; PKG-09's brief pattern).
 MISCONCEPTION_KEY_MAX_CHARS = 64
+# PKG-10: the lowest model ceiling a confrontation turn may run at while the
+# answer is unreleased. A contradiction names specifics of the concept — above
+# H1 ("names no concept") and H2 ("without applying it"), ladder.RUNG_INTENT —
+# so below H3 the ceiling wins and the confrontation marker waits.
+MISCONCEPTION_CONFRONT_MIN_RUNG = 3
 # Spec §3.2 rating map / §3.3 evidence mapping: correct after H1..H3 is "assisted"
 # (FSRS Hard, WEIGHT_ASSISTED); correct after H4..H6 is FSRS Again. Name from
 # §13 A6, added by PKG-02 (fsrs.rating_for); PKG-03 Evidence.assisted and

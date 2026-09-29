@@ -3131,7 +3131,8 @@ def test_confrontation_line_is_withheld_when_it_states_the_unreleased_answer(gat
         }
     )
     seams.item.return_value = leaky
-    seams.store["doc"] = {**_state(rung=1), "confront": dict(CONFRONT)}
+    # H3: room for a confrontation (MISCONCEPTION_CONFRONT_MIN_RUNG), so only the leak withholds it
+    seams.store["doc"] = {**_state(rung=3), "confront": dict(CONFRONT)}
     agent, seen = _json_agent("What is n when it stops?")
     with (
         patch("routes.learn_loop.loop_tutor_agent", agent),
@@ -3234,3 +3235,27 @@ def test_confront_line_for_and_with_confrontation_are_the_one_assembly():
         "[LOOP PHASE: feedback]\n" + CONFRONT_LINE
     )
     assert with_confrontation("P", None) == "P"
+
+
+@pytest.mark.parametrize("rung,confronts", [(1, False), (2, False), (3, True)])
+def test_a_confrontation_needs_room_under_the_ceiling(gate_on, seams, rung, confronts):
+    """A contradiction names specifics of the concept — content above H1/H2
+    (ladder.RUNG_INTENT). Below MISCONCEPTION_CONFRONT_MIN_RUNG, with the
+    answer unreleased, the ceiling wins: no line, not deep for it, the marker
+    waits."""
+    from learning.params import MISCONCEPTION_CONFRONT_MIN_RUNG
+
+    assert (rung >= MISCONCEPTION_CONFRONT_MIN_RUNG) is confronts
+    seams.store["doc"] = {**_state(rung=rung), "confront": dict(CONFRONT)}
+    agent, seen = _json_agent("What is n when it stops?")
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        client.post(
+            "/api/learn/loop/action",
+            json={"session_id": "s1", "user_id": "u1", "action_type": "hint"},
+        )
+    assert ("holds misconception" in seen.get("msg", "")) is confronts
+    assert seams.model_tier.call_args.args[4] is confronts
+    assert (seams.store["doc"].get("confront") is None) is confronts
