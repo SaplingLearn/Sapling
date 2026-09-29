@@ -474,9 +474,12 @@ _LETTER_REF = re.compile(
 # deliberation, and 0 of 114 free or teachback ones. "Let us write …" and
 # "Let x be …" are a derivation's idiom and do not count. The words the rule
 # reads (the named group: "let's", "I will") are not working when they lie
-# inside a verbatim quote of the final answer or of an option's text: A37's
-# closing "Final answer: I will visit Paris." quotes a language item's answer,
-# and "I think, therefore I am" is a quotation (`_working`).
+# inside a verbatim quote of the final answer, of an option's text or of a
+# line the stem puts in quote marks: A37's closing "Final answer: I will visit
+# Paris." quotes a language item's answer, and "I think, therefore I am" is a
+# quotation (`_working`). A quote is compared with ' and ’ as one character
+# and without the quote marks that wrap it, as A34's final-answer check reads
+# the closing sentence.
 _DELIBERATION = re.compile(
     r"\b(?P<let>(?i:let['’]s|let\s+me))\b"
     r"|(?:^|[.!?:;,]\s+|\b(?i:so|and|but|then|now|here|first|next)\s+)"
@@ -498,26 +501,54 @@ def _option_form(text: str) -> str:
     return normalize(text).rstrip(_OPTION_END).rstrip()
 
 
+# Curly quote marks and apostrophes, folded to straight ones one character
+# for one, so a folded text keeps every offset of the original.
+_QUOTE_FOLD = str.maketrans("\u2018\u2019\u201c\u201d", "''\"\"")
+_QUOTE_MARKS = "\"'"
+# A line the stem puts in quote marks (on folded text). A single quote mark
+# opens only where no letter precedes it and closes only where none follows,
+# so a possessive or a contraction ("Descartes' view", "isn't") opens none.
+_STEM_QUOTE = re.compile(r'"([^"]+)"|(?<!\w)\'(.+?)\'(?!\w)')
+
+
+def _stem_quotes(prompt: str | None) -> list[str]:
+    """The lines `prompt` puts in quote marks."""
+    return [a or b for a, b in _STEM_QUOTE.findall((prompt or "").translate(_QUOTE_FOLD))]
+
+
 def _quoted_spans(reference: str, texts: Iterable[str]) -> list[tuple[int, int]]:
     """Where `reference` quotes one of `texts` verbatim: whole words, case
-    and whitespace runs aside, closing punctuation dropped."""
+    and whitespace runs aside, ' and ’ (and " and “ ”) as one character, the
+    text's wrapping quote marks and closing punctuation dropped."""
+    folded = reference.translate(_QUOTE_FOLD)
     spans: list[tuple[int, int]] = []
     for text in texts:
-        words = (text or "").strip().rstrip(_OPTION_END).split()
+        bare = (text or "").translate(_QUOTE_FOLD).strip()
+        words = (
+            bare.lstrip(_QUOTE_MARKS).rstrip(_QUOTE_MARKS + _OPTION_END + string.whitespace).split()
+        )
         if not words:
             continue
         quote = r"(?<!\w)" + r"\s+".join(map(re.escape, words)) + r"(?!\w)"
-        spans.extend(m.span() for m in re.finditer(quote, reference, re.IGNORECASE))
+        spans.extend(m.span() for m in re.finditer(quote, folded, re.IGNORECASE))
     return spans
 
 
 def _working(draft: CheckItemDraft) -> re.Match | None:
     """The first `_DELIBERATION` match in an mc_reason reference whose words
-    do not lie wholly inside a quote of the final answer or an option's text.
-    Only a quote that holds the whole match hides it, so an option "I" never
-    hides "So I think", and working beside a quote is still found."""
+    do not lie wholly inside a quote of the final answer, an option's text or
+    a line the stem puts in quote marks. Only a quote that holds the whole
+    match hides it, so an option "I" never hides "So I think", and working
+    beside a quote is still found."""
     reference = draft.reference_answer
-    quoted = _quoted_spans(reference, [draft.final_answer, *(o.text for o in draft.options or ())])
+    quoted = _quoted_spans(
+        reference,
+        [
+            draft.final_answer,
+            *(o.text for o in draft.options or ()),
+            *_stem_quotes(draft.prompt),
+        ],
+    )
     for match in _DELIBERATION.finditer(reference):
         start, end = match.span("let") if match.group("let") else match.span("i")
         if not any(q_start <= start and end <= q_end for q_start, q_end in quoted):

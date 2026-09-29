@@ -1865,6 +1865,114 @@ class TestDeliberation:
 
         assert validate_draft(self._future(reference, options=options)) == []
 
+    _CONTRACTED = (
+        ("I'll visit Paris", True, None),
+        ("I visited Paris", False, "past_for_future", "Confuses the past with the future."),
+        ("I must visit Paris", False, "modal_of_duty", "Reads a modal of duty as the future."),
+        ("I am visit Paris", False, "be_as_auxiliary", "Uses be where will is needed."),
+    )
+
+    @staticmethod
+    def _as_correct(text, options):
+        return ((text, True, None), *(o for o in options if not o[1]))
+
+    @pytest.mark.parametrize(
+        "correct,closing",
+        [
+            # A34 reads ' and ’ as one character, and so does the quote (review
+            # of the ruling's review): a straight option, a curly closing
+            ("I'll visit Paris", "Final answer: I’ll visit Paris."),
+            ("I’ll visit Paris", "Final answer: I'll visit Paris."),
+            ("Let's", "Final answer: Let’s."),
+            ("Let’s", "Final answer: Let's."),
+            # an option and final answer written inside quote marks, quoted
+            # without them in the closing sentence
+            ('"I will visit Paris"', "Final answer: I will visit Paris."),
+            ("“I will visit Paris”", "Final answer: I will visit Paris."),
+            ("'I will visit Paris.'", "Final answer: I will visit Paris."),
+            ("I will visit Paris", "Final answer: “I will visit Paris.”"),
+        ],
+    )
+    def test_a_quote_differing_only_in_quote_marks_or_apostrophes_is_not_working(
+        self, correct, closing
+    ):
+        from learning.checks import validate_draft
+
+        options = self._as_correct(correct, self._CONTRACTED)
+        draft = self._future(
+            "The modal marks a plan the lecture names. " + closing, options=options
+        )
+        assert validate_draft(draft) == []
+
+    _PHILOSOPHERS = (
+        ("Descartes", True, None),
+        ("Hume", False, "empiricist", "Confuses him with the empiricist sceptic."),
+        ("Kant", False, "critique", "Confuses him with the critical philosopher."),
+        ("Locke", False, "tabula_rasa", "Confuses him with the blank-slate theorist."),
+    )
+
+    @pytest.mark.parametrize(
+        "stem",
+        [
+            'Which philosopher wrote "I think, therefore I am"? Pick one and give your reason.',
+            "Which philosopher wrote “I think, therefore I am”? Pick one and give your reason.",
+            "Which philosopher wrote 'I think, therefore I am'? Pick one and give your reason.",
+            "Which philosopher wrote ‘I think, therefore I am’? Pick one and give your reason.",
+        ],
+    )
+    def test_a_line_the_stem_quotes_repeated_in_the_reference_is_not_working(self, stem):
+        from learning.checks import validate_draft
+
+        draft = _mc_draft(
+            concept="Cogito",
+            prompt=stem,
+            reference_answer=(
+                "The Discourse on Method reaches certainty by doubt: I think, therefore I am. "
+                "Final answer: Descartes."
+            ),
+            final_answer="Descartes",
+            options=_opts(*self._PHILOSOPHERS),
+        )
+        assert validate_draft(draft) == []
+
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            "So I think Descartes wrote it. Final answer: Descartes.",
+            # the stem's quote and the model's own working in one reference
+            "The line is I think, therefore I am. Then I think of who wrote it. "
+            "Final answer: Descartes.",
+        ],
+    )
+    def test_working_beside_a_line_the_stem_quotes_is_still_dropped(self, reference):
+        from learning.checks import validate_draft
+
+        draft = _mc_draft(
+            concept="Cogito",
+            prompt='Which philosopher wrote "I think, therefore I am"? Give your reason.',
+            reference_answer=reference,
+            final_answer="Descartes",
+            options=_opts(*self._PHILOSOPHERS),
+        )
+        reasons = validate_draft(draft)
+        assert [r.split(":")[0] for r in reasons] == ["deliberation"], reasons
+
+    def test_an_apostrophe_in_the_stem_opens_no_quote(self):
+        """A possessive or a contraction in the stem is not a quote mark: the
+        stem "The author's view isn't 'I think'" quotes only "I think", so
+        "I will" in the reference stays working."""
+        from learning.checks import validate_draft
+
+        draft = _mc_draft(
+            concept="Cogito",
+            prompt="The author's view isn't 'I think' alone. Who wrote the line? Give your reason.",
+            reference_answer="Now I will name the author of the line. Final answer: Descartes.",
+            final_answer="Descartes",
+            options=_opts(*self._PHILOSOPHERS),
+        )
+        reasons = validate_draft(draft)
+        assert [r.split(":")[0] for r in reasons] == ["deliberation"], reasons
+
     @pytest.mark.parametrize(
         "working",
         [
