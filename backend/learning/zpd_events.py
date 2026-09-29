@@ -21,6 +21,7 @@ from learning import params
 from learning.evidence import Channel
 from learning.ladder import Rung
 from learning.leak import Detector
+from learning.arms import Variant
 from learning.policy import Band, BandAction, CeilingReason, Tier
 from services.events_service import log_event
 
@@ -99,6 +100,7 @@ def emit_zpd_step(
     item_difficulty: int,
     tier: Tier | None = None,
     grader_backend: GraderBackend | None = None,
+    variant: Variant | None = None,
 ) -> None:
     def build() -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -129,6 +131,9 @@ def emit_zpd_step(
             payload["tier"] = tier
         if grader_backend is not None:
             payload["grader_backend"] = grader_backend
+        # PKG-14 (A8): the concept's within-student arm variant, as the route knew it
+        if variant is not None:
+            payload["variant"] = variant
         return payload
 
     _emit("zpd.step", "usage", user_id, request_id, build)

@@ -24,7 +24,7 @@ import re
 from typing import get_args
 
 from learning import params
-from learning.policy import Band, StepState
+from learning.policy import Band, StepState, independent_gate
 
 NON_ATTEMPT_PATTERNS: tuple[str, ...] = (
     "just tell me",
@@ -300,8 +300,11 @@ def is_genuine_attempt(
     band: Band,
     *,
     time_scale: float = 1.0,
+    variant: str = "A",
 ) -> bool:
-    """Whether an attempt counts toward hint unlocking (spec §3.3). It never
+    """Whether an attempt counts toward hint unlocking (spec §3.3). `variant` is
+    the concept's within-student arm (PKG-14, `policy.variant_for`); "A" — every
+    concept while `loop_arm` is NULL — keeps the §3.3 thresholds. It never
     blocks grading an explicit submission (A16). `matched_non_attempt` is
     DEFINED as `has_non_attempt_phrase(text)` (never `matches_non_attempt`):
     a phrase or plea anywhere vetoes the attempt, even beside an answer or a
@@ -315,7 +318,7 @@ def is_genuine_attempt(
         return False
     if text_len_chars <= 0 and not has_shown_work:
         return False
-    gate = "GATE_INDEPENDENT_MIN_S_NOVICE" if band == "novice" else "GATE_INDEPENDENT_MIN_S"
+    gate = independent_gate(band, variant)  # PKG-14: variant B moves the develop/profic gate
     return independent_seconds >= params.gate_seconds(gate, time_scale)
 
 

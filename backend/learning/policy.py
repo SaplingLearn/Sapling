@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any, Literal, NamedTuple, Sequence, get_args
 
 from learning import params
+from learning.arms import Variant
 from learning.ladder import ItemLike, Rung
 
 Band = Literal["novice", "develop", "profic"]
@@ -516,3 +517,26 @@ def next_isomorph(item: ItemLike, items: Sequence[ItemLike]) -> ItemLike | None:
         ):
             return cand
     return None
+
+
+# ── within-student arms (PKG-14; spec §3.3, §10 rung 2) ─────────────────────
+# `variant_for` (ids + the arm label in, variant out) lives in learning/arms.py:
+# invariant 4 holds this module to typed, text-free parameters.
+
+
+def independent_gate(band: Band, variant: Variant) -> str:
+    """The name of the `GATE_*` independent-time constant for a band and the
+    concept's variant (a name, so `params.gate_seconds` applies the A5 time
+    scale to it). Variant B changes only the develop/profic gate; novice keeps
+    GATE_INDEPENDENT_MIN_S_NOVICE for both."""
+    if variant not in get_args(Variant):
+        raise ValueError(f"unknown variant {variant!r}")
+    if band == "novice":
+        return "GATE_INDEPENDENT_MIN_S_NOVICE"
+    return "GATE_INDEPENDENT_MIN_S_VARIANT_B" if variant == "B" else "GATE_INDEPENDENT_MIN_S"
+
+
+def independent_min_s(band: Band, variant: Variant) -> int:
+    """Seconds of independent work before an attempt is genuine (spec §3.3),
+    unscaled, for a band and the concept's variant."""
+    return getattr(params, independent_gate(band, variant))
