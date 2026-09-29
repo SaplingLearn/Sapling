@@ -107,6 +107,9 @@ GATE_RUNG_DWELL_MIN_S = 8  # †
 H6_MIN_GENUINE_ATTEMPTS = 2
 OFFER_BANDS = frozenset({"novice"})
 BAND_WINDOW = 8
+# † Owner decision A38 06(m): band_control moves difficulty up (HARDER) only on
+# at least this many first attempts in the window; fewer high ones HOLD.
+BAND_CONTROL_HARDER_MIN_ATTEMPTS = 4
 PROBE_TARGET_LO = 0.50
 PROBE_TARGET_HI = 0.62
 ACQ_TARGET_LO = 0.75
@@ -164,8 +167,9 @@ GRADER_SECOND_OPINION_SLOT = "grader_second"
 FEEDBACK_HINT_MAX_SENTENCES = 2  # † PKG-05 grader brief: the hint is short; not a spec value
 GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guard; not a spec value
 # † PKG-05: the student answer is the one unbounded part of a grader message;
-# past this many characters grade() degrades to unavailable before any call, so
-# an oversized answer is never sent or billed. A size guard on the RAW answer,
+# past this many characters grade() refuses it (`too_long`, spec §13 A33 — the
+# length is the student's choice, so never an outage) before any call, so an
+# oversized answer is never sent or billed. A size guard on the RAW answer,
 # not a token guarantee: at roughly one token per character the answer alone,
 # on both requests a run may make, stays under GRADER_LIMITS' token cap, but
 # the "> " quote on every answer line (up to 3x for a newline-heavy answer), the
@@ -178,6 +182,32 @@ GRADER_ANSWER_MAX_CHARS = 4_000
 # the operands' magnitude still counts as on the edge. Not a spec value: orders
 # of magnitude above double-precision error (~1e-16), below any tolerance.
 NUMERIC_GATE_EDGE_SLACK = 1e-12
+# † PKG-05 reopen (CodeRabbit PR #673; spec §13 A33): the digits in the fresh
+# random label each rubric item is shown under in one grading call
+# (agents/grader.rubric_labels): the first 2-9, 80,000 labels. Made after the
+# answer is submitted and never shown to the student, so no verdict in an answer
+# can name one; a label the message's text holds is drawn again, and at this
+# length a GRADER_ANSWER_MAX_CHARS answer holds under 5% of them, so a redraw
+# stays rare. Not a spec value.
+GRADER_RUBRIC_LABEL_CHARS = 5
+# † PKG-a33 (grader-guard round a33, the coordinator's ruling; spec §13 A33): a
+# credited rubric item needs a quote from the answer (GraderOutput.support) whose
+# words in the answer have at least this many letters and digits — or are the
+# whole answer, when that is shorter ("12") — before the span check may confirm
+# it (learning/answer_guard.support_span). A lone "2/2" or "r1" supports
+# nothing; "is 12" and "slope" do. Not a spec value.
+GRADER_SUPPORT_MIN_CHARS = 4
+# † PKG-a33 (the ruling's re-measure; spec §13 A33): the answer's words behind a
+# quote are the longest run of the quote's words that the answer holds, and that
+# run must be at least this share of the quote's words (or of a passage the quote
+# sets in quotation marks): the student's words inside the grader's own framing
+# ("The student's answer says …") count, the reference answer or a paraphrase
+# sharing a word or two does not (answer_guard.support_span). Not a spec value.
+GRADER_SUPPORT_MIN_SHARE = 0.5
+# † PKG-05 reopen (spec §3.4, §13 A33): a refusal is never a skip, and never the
+# first answer an honest student loses. The route asks again; the Nth refusal of
+# the same item (the tutor's check, PKG-07; the probe, PKG-08) records it as idk.
+CHECK_REFUSALS_AS_IDK = 2
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
@@ -201,11 +231,30 @@ CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec la
 CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
 CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
 CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
+# † bounded redrafting of concepts whose drafts always fail (owner decision A38 low-severity 2)
+CHECK_ITEM_REDRAFT_MAX_FAILURES = 3
+# † how long a stalled concept stays skipped: past this many days since its
+# last recorded failure it is drafted once more (A38 fix round, M2 expiry)
+CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS = 14
+# † leak.py (A38 fix round 4): how far back the option rule looks for the
+# enumeration a letter continues ("A, B", "b or c") — a letter (or a masked
+# "[withheld]"), markup, a separator and markup
+LEAK_ENUM_LOOKBACK_CHARS = 26
 # † A34 (PKG-06's reopen): the most tokens (checks.answer_tokens) a check item's
 # structured final_answer may hold — the decisive core the leak check matches,
 # never the whole reference, yet room for a number with its unit, an
 # expression, an mc_reason option's text or a teachback claim.
 CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS = 20
+# † A37: options per mc_reason item — A22's four (A–D). The agent writes them as
+# objects; code letters them and places the correct one (checks.lettered_options).
+CHECK_ITEM_MC_OPTIONS = 4
+# A37 (series coordinator's ruling, 2026-09-28): a generation pass leaves every
+# concept it drafted with at least this many stored mc_reason items, or tops it
+# up (services/check_item_service.py; agents/check_items_topup.py).
+CHECK_ITEM_MC_MIN_PER_CONCEPT = 2
+# † focused mc_reason-only top-up calls per concept per pass, each for exactly
+# the missing count; a concept still below is left to the next run or backfill.
+CHECK_ITEM_MC_TOPUP_CALLS = 1
 
 # ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
 # FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating
@@ -317,3 +366,6 @@ LOOP_TEACH_TURNS_BEFORE_CHECK = 2
 LOOP_CHECKS_PER_CONCEPT = 2
 # † target difficulty of an activated check item; select_item falls back to the nearest
 LOOP_CHECK_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}
+# † Owner decision A38 06(q): update_loop_state's compare-and-set retries after
+# the first conflict on sessions.loop_state_rev; exhausted -> LoopStateConflict.
+LOOP_STATE_CAS_RETRIES = 3

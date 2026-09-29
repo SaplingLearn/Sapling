@@ -30,7 +30,12 @@ agent `output_type` must therefore stay small and flat:
 
 `tests/test_agent_output_schemas.py` walks every registered agent and
 fails CI when an output schema exceeds the budget, so the next rich
-schema dies in review, not against Gemini's 400s.
+schema dies in review, not against Gemini's 400s. Its deliberate,
+evidenced exceptions are pinned there by exact count
+(`PER_OBJECT_EXCEPTIONS`, `DEPTH_EXCEPTIONS`): check_items' draft, and
+its one list of four-scalar option objects one level deeper (learning
+loop spec §13 A37 — parallel option arrays let the model drift a key off
+its option, so each distractor states its own misconception).
 
 Validation-retry policy (#153): idempotent structured-output generation
 agents run with an output-retry budget of 2 (`retries=2` on tool-less

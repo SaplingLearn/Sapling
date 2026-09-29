@@ -32,11 +32,18 @@ NON_ATTEMPT_PATTERNS: tuple[str, ...] = (
     "idk",
     "i don't know",
     "what's the answer",
+    # Owner decision A38 06(b): two idk variants beyond the spec's five, so a
+    # bare "no idea" / "dunno" routes as idk (it already vetoed the attempt
+    # through _PLEA).
+    "no idea",
+    "dunno",
 )
 # The request phrases: the rest of their clause is what is asked for ("just
-# tell me the steps"), never an answer. The other two ("idk", "i don't know")
-# are idk phrases (A16).
+# tell me the steps"), never an answer. The others ("idk", "i don't know",
+# "no idea", "dunno") are idk phrases (A16): IDK_PATTERNS is what the route
+# checks first.
 _REQUEST_PATTERNS = frozenset({"just tell me", "give me the answer", "what's the answer"})
+IDK_PATTERNS = frozenset(NON_ATTEMPT_PATTERNS) - _REQUEST_PATTERNS
 
 _NON_ALNUM = re.compile(r"[^a-z0-9 ]+")
 _APOSTROPHES = re.compile(r"['’‘ʼ`´]")
@@ -160,6 +167,10 @@ def _norm(text: str) -> str:
 
 
 _PATTERN_WORDS = tuple((p, tuple(_norm(p).split())) for p in NON_ATTEMPT_PATTERNS)
+# The patterns that are also _PLEA pleas ("no idea", "dunno"): non_attempt_phrases
+# records them but leaves their words in the clause for the plea rules, so a
+# part holding one is never a bare answer ("idk, I have no idea" stays idk).
+_PLEA_PATTERNS = frozenset(p for p in NON_ATTEMPT_PATTERNS if _PLEA.fullmatch(_norm(p)))
 
 
 def _phrase_spans(words: list[str]) -> list[tuple[str, int, int]]:
@@ -229,9 +240,10 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
       clause is its object, never an answer. Such a message gets no evidence
       and is never graded ("just tell me, is it 7?" is graded: a digit;
       "what's the answer to part 2" is a request).
-    - An idk phrase ("idk", "i don't know") is returned only when the residue
-      is empty: once the phrases, request objects, _PLEA pleas and _NON_ANSWER
-      filler are set aside, no word is left, and no part of a clause's
+    - An idk phrase (IDK_PATTERNS: "idk", "i don't know", "no idea",
+      "dunno") is returned only when the residue is empty: once the phrases,
+      request objects, _PLEA pleas and _NON_ANSWER filler are set aside, no
+      word is left, and no part of a clause's
       residue is a bare function-word answer (_BARE_ANSWER, with at most a
       subject, a hedge, an intensifier or chat slang: "it isn't", "or", "I
       think it is", "not really", "it isnt lol", "I think so"; a
@@ -256,6 +268,8 @@ def non_attempt_phrases(text: str) -> tuple[str, ...]:
         keep = [True] * len(words)
         for pattern, start, end in _phrase_spans(words):
             found.add(pattern)
+            if pattern in _PLEA_PATTERNS:
+                continue
             if pattern in _REQUEST_PATTERNS:
                 end = len(words)
             keep[start:end] = [False] * (end - start)

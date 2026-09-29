@@ -65,6 +65,15 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+learn.answer_refused          audit     reason (grader_directive / role_marker /
+                                        addresses_grader / too_long), format,
+                                        check_item_id, request_id, rubric_items, directives,
+                                        role_markers, verdict_tokens, exempted, answer_chars
+                                        — a check answer that addressed the grader, or was
+                                        longer than GRADER_ANSWER_MAX_CHARS, was not graded
+                                        (PKG-05 reopen, spec §6, §13 A33; addresses_grader
+                                        only beside an exempted screen flag since the A33
+                                        finish); counts only, never the answer
 zpd.step                      usage     concept_id, question_hash, phase, channel, band, ceiling,
                                         ceiling_reason, first_attempt_correct, n_attempts,
                                         max_rung_used, rungs[{rung, dwell_ms}],
@@ -87,7 +96,8 @@ decision.shadow               usage     decision, request_id, primary_value, sha
                                         shadow_latency_ms, shadow_input_tokens, error_code —
                                         PKG-15 plumbing, never fired in the series; enums only
 decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
-                                        / both_failed; PKG-15 adds the Jev error enums), request_id
+                                        / both_failed / budget = the AI budget cap refused the
+                                        call; PKG-15 adds the Jev error enums), request_id
 ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
 ============================  ========  =====================================================
 
@@ -195,6 +205,21 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # withdrawal that failed after the response (reason WithdrawalError,
     # document_id and course_id null). Never any item text.
     "learn.check_items_failed",
+    # Learning loop PKG-05 reopen (spec §6, §13 A33; CodeRabbit PR #673): the
+    # pre-grader guard refused a check answer that addressed the grader (grading
+    # directives, role/format markers: no grader run), or the grader reported one
+    # (addresses_grader) after its run, or it was over GRADER_ANSWER_MAX_CHARS
+    # (too_long) — no evidence for either outcome. category="audit"; payload
+    # reason enum, format, check_item_id, request_id and counts (verdict_tokens is
+    # a count of a suspicion signal, never a reason). Never the answer text.
+    "learn.answer_refused",
+    # Learning loop spec §13 A37 (series coordinator's ruling, 2026-09-28): one
+    # mc_reason top-up call — a concept a generation pass left below
+    # CHECK_ITEM_MC_MIN_PER_CONCEPT stored mc_reason items. category="usage":
+    # it counts a designed call, not a failure (a failed call also emits
+    # learn.check_items_failed). Payload ids and counts only: document_id,
+    # course_id, requested, returned, stored, mc_reason_items. Never item text.
+    "learn.check_items_topup",
     # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
     # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
     # the loop tutor. Payloads are ids/counts/enums — the question_hash is a
@@ -209,7 +234,8 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
     # (services/decisions.py). `made` = one answered decision, with the backend
     # that answered; `fallback` = served by another backend (reason jev_absent)
-    # or by none (both_failed: nothing is recorded for either outcome);
+    # or by none (both_failed: nothing is recorded for either outcome; budget: the AI
+    # budget cap refused the call before any run, spec §13 A39);
     # `shadow` = PKG-15 plumbing, never fired in the series. Payloads carry
     # ids, enums and numbers only — never state text.
     "decision.made",

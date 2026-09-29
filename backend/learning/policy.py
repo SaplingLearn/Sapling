@@ -183,7 +183,10 @@ def band_control(
     concept's evidence rows, and `p_known` is that concept's (spec §3.3; the ZPD
     report's STATE block). Never a per-session or cross-concept list: loop_state
     keeps no window. STOP_PRACTICE needs BAND_CONTROL_STOP_WINDOWS FULL windows
-    each above BAND_CONTROL_HI; a partial window never counts."""
+    each above BAND_CONTROL_HI; a partial window never counts. HARDER needs at
+    least BAND_CONTROL_HARDER_MIN_ATTEMPTS outcomes in the window (owner
+    decision A38 06(m): one correct answer is not evidence to move up); a
+    shorter high window HOLDs. EASIER_CHECK_PREREQS acts on any window."""
     if wheelspin:
         return BandAction.WHEELSPIN
     outcomes = list(window)[-WINDOW_KEEP:]
@@ -198,6 +201,8 @@ def band_control(
         )
         if all_high and p_known >= params.BKT_PROFICIENT and stable:
             return BandAction.STOP_PRACTICE
+        if len(outcomes[-params.BAND_WINDOW :]) < params.BAND_CONTROL_HARDER_MIN_ATTEMPTS:
+            return BandAction.HOLD
         return BandAction.HARDER
     if rate < params.PRACTICE_TARGET_LO:
         return BandAction.EASIER_CHECK_PREREQS

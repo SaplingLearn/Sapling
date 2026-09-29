@@ -1,9 +1,18 @@
 {
-  "confidence": 0.9,
-  "feedback_hint": "Consider what the derivative measures at a single point, not over a range. Think about how a tangent line relates to the function's behavior right at that specific location.",
-  "item_results": [
-    "r1:no",
-    "r2:no"
+  "context_checks": [],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": true,
+      "feedback_hint": "The student's answer describes the area under the curve, which is related to integration, not differentiation. The derivative represents the rate of change or slope at a specific point.",
+      "item_results": [
+        "52743:no",
+        "57647:no"
+      ],
+      "matched_wrong_key": "w_area",
+      "support": []
+    }
   ],
-  "matched_wrong_key": "w_area"
+  "span_checks": []
 }

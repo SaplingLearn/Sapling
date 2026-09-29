@@ -13,9 +13,21 @@ edit an existing one to make it pass.
 Evaluators score the contracts the service enforces in code
 (learning/checks.py::validate_draft) plus grounding: every item has a
 reference answer, >= CHECK_ITEM_MIN_RUBRIC rubric items and >=
-CHECK_ITEM_MIN_WRONG paired, unique wrong reasons, cites only input chunk ids,
-never leaks its reference into the prompt, and passes validate_draft (the A22
-option / numeric / stepwise rules and the A34 final_answer rules included).
+CHECK_ITEM_MIN_WRONG paired, unique wrong reasons (for mc_reason, its
+distractors' own misconceptions — spec §13 A37), cites only input chunk ids,
+never leaks its reference into the prompt, and is stored — valid under
+validate_draft once repair_draft has made the repairs that need no guess,
+exactly as check_item_service.create_items stores it (the A22 / A37 option,
+numeric and stepwise rules and the A34 final_answer rules included).
+McOptionsValid (spec §13 A37) is required at 1.0: every mc_reason draft's
+options pass every A37 option rule (each distractor stating its own
+misconception, under a key of its own, once repaired), and a case with no
+mc_reason draft scores 0.0 — the live sequence test of 2026-09-27 stored 0 of
+12 when the options were parallel arrays. McReasonValid is the share of
+mc_reason drafts stored (the A34
+final_answer rules included), gated at its recorded rate.
+McCorrectNotLongest (review of A37) is the share of stored mc_reason drafts
+whose correct option is not strictly the longest, gated at its recorded rate.
 FinalAnswerValid (spec §13 A34) is required at 1.0: every accepted draft states
 a final_answer copied character for character from its reference_answer (a
 substring, surrounding whitespace and a closing period aside) that is not in
@@ -40,7 +52,14 @@ from pydantic_evals import Case, Dataset  # noqa: E402
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext  # noqa: E402
 
 from agents.check_items import CheckItemsOutput, build_prompt, check_items_agent  # noqa: E402
-from learning.checks import answer_in, leak_in_prompt, validate_draft  # noqa: E402
+from learning.checks import (  # noqa: E402
+    MC_OPTION_RULES,
+    answer_in,
+    common_wrong,
+    leak_in_prompt,
+    repair_draft,
+    validate_draft,
+)
 from learning.params import CHECK_ITEM_MIN_RUBRIC, CHECK_ITEM_MIN_WRONG  # noqa: E402
 from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     MODE,
@@ -109,18 +128,31 @@ class RubricCountEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return _every(ctx, lambda i: len(i.rubric) >= CHECK_ITEM_MIN_RUBRIC)
 
 
+def _wrong_reasons_ok(draft) -> bool:
+    """>= CHECK_ITEM_MIN_WRONG reasons, unique keys, keys and texts paired.
+    An mc_reason item's reasons are its distractors' misconceptions (spec §13
+    A37, round 4: checks.common_wrong after repair_draft, as create_items
+    stores them) — each stated, under a distinct key — and its own
+    wrong_keys / wrong_texts are not read."""
+    if draft.format == "mc_reason":
+        wrong = common_wrong(repair_draft(draft)[0])
+        keys = [w.key for w in wrong]
+        return (
+            len(wrong) >= CHECK_ITEM_MIN_WRONG
+            and len(set(keys)) == len(keys)
+            and all(w.key.strip() and w.text.strip() for w in wrong)
+            and len({" ".join(w.text.split()).casefold() for w in wrong}) == len(wrong)
+        )
+    keys, texts = draft.wrong_keys, draft.wrong_texts
+    return len(keys) >= CHECK_ITEM_MIN_WRONG and len(set(keys)) == len(keys) == len(texts)
+
+
 @dataclass
 class WrongReasonCountEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
-    """>= CHECK_ITEM_MIN_WRONG reasons, unique keys, keys and texts paired."""
+    """Every item's wrong reasons are well formed (_wrong_reasons_ok)."""
 
     def evaluate(self, ctx: _Ctx) -> float:
-        return _every(
-            ctx,
-            lambda i: (
-                len(i.wrong_keys) >= CHECK_ITEM_MIN_WRONG
-                and len(set(i.wrong_keys)) == len(i.wrong_keys) == len(i.wrong_texts)
-            ),
-        )
+        return _every(ctx, _wrong_reasons_ok)
 
 
 @dataclass
@@ -138,14 +170,72 @@ class NoLeakInPromptEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
         return _every(ctx, lambda i: not leak_in_prompt(i.prompt, i.reference_answer))
 
 
+def _stored(draft) -> bool:
+    """Whether create_items would store `draft`: valid once repaired (A37)."""
+    return validate_draft(repair_draft(draft)[0]) == []
+
+
 @dataclass
 class DraftValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
-    """Share of items passing validate_draft — the A22 option / numeric /
-    stepwise rules included (partial credit)."""
+    """Share of items that would be stored — the A22 / A37 option, numeric
+    and stepwise rules included, after repair_draft (partial credit)."""
 
     def evaluate(self, ctx: _Ctx) -> float:
         items = ctx.output.items
-        return sum(validate_draft(i) == [] for i in items) / len(items) if items else 0.0
+        return sum(_stored(i) for i in items) / len(items) if items else 0.0
+
+
+def _mc_share(ctx: _Ctx, pred) -> float:
+    """The share of the case's mc_reason drafts satisfying pred; 0.0 when it
+    has none (the mc_reasoned channel would have no items)."""
+    mc = [i for i in ctx.output.items if i.format == "mc_reason"]
+    return sum(pred(i) for i in mc) / len(mc) if mc else 0.0
+
+
+@dataclass
+class McReasonValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37: the share of the case's mc_reason drafts that would be stored."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        return _mc_share(ctx, _stored)
+
+
+@dataclass
+class McOptionsValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37, required 1.0: the share of the case's mc_reason drafts whose
+    options pass every A37 option rule (MC_OPTION_RULES) once repaired — the
+    structure the parallel arrays broke; the A34 rules are McReasonValid's."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        def options_ok(draft) -> bool:
+            reasons = validate_draft(repair_draft(draft)[0])
+            return not any(r.startswith(f"{rule}:") for r in reasons for rule in MC_OPTION_RULES)
+
+        return _mc_share(ctx, options_ok)
+
+
+def _correct_is_longest(draft) -> bool:
+    """Whether the option marked correct is STRICTLY the longest by
+    characters (whitespace runs collapsed): a student who picks the longest
+    option finds it. A tie hides it."""
+    lengths = [(len(" ".join(o.text.split())), o.is_correct) for o in draft.options]
+    right = [n for n, correct in lengths if correct]
+    others = [n for n, correct in lengths if not correct]
+    return len(right) == 1 and bool(others) and right[0] > max(others)
+
+
+@dataclass
+class McCorrectNotLongestEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
+    """A37 review: the share of the case's STORED mc_reason drafts whose
+    correct option is not strictly the longest — the length cue that let
+    "pick the longest" find the answer in 10 of 12 live HIST200 items. Gated
+    at its recorded rate (the prompt asks for options alike in length; code
+    cannot shorten an option, and a drop rule cost most of the yield); 0.0
+    when the case stores no mc_reason draft."""
+
+    def evaluate(self, ctx: _Ctx) -> float:
+        stored = [i for i in ctx.output.items if i.format == "mc_reason" and _stored(i)]
+        return sum(not _correct_is_longest(i) for i in stored) / len(stored) if stored else 0.0
 
 
 def _copied(final_answer: str, text: str) -> bool:
@@ -157,12 +247,12 @@ def _copied(final_answer: str, text: str) -> bool:
 
 @dataclass
 class FinalAnswerValidEvaluator(Evaluator[CheckItemsInput, CheckItemsOutput]):
-    """A34, required 1.0: every accepted draft (validate_draft == []) states a
-    final_answer copied verbatim from its reference_answer and not in its
-    prompt; 0.0 when no draft is accepted."""
+    """A34, required 1.0: every accepted draft (one create_items would
+    store) states a final_answer copied verbatim from its reference_answer and
+    not in its prompt; 0.0 when no draft is accepted."""
 
     def evaluate(self, ctx: _Ctx) -> float:
-        accepted = [i for i in ctx.output.items if validate_draft(i) == []]
+        accepted = [i for i in ctx.output.items if _stored(i)]
         ok = all(
             _copied(i.final_answer, i.reference_answer) and not answer_in(i.prompt, i.final_answer)
             for i in accepted
@@ -200,6 +290,9 @@ def make_dataset() -> Dataset[CheckItemsInput, CheckItemsOutput]:
             CitesChunkEvaluator(),
             NoLeakInPromptEvaluator(),
             DraftValidEvaluator(),
+            McReasonValidEvaluator(),
+            McOptionsValidEvaluator(),
+            McCorrectNotLongestEvaluator(),
             FinalAnswerValidEvaluator(),
         ],
     )

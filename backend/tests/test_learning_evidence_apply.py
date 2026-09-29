@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import get_args
 from unittest.mock import MagicMock, patch
 
@@ -1761,6 +1762,214 @@ class TestGraderBackend:
         first, second = _event_rows(mocks)
         assert first["grader_backend"] == "gemini"
         assert "grader_backend" in second and second["grader_backend"] is None
+
+
+# ── the journal on an environment a migration has not reached (CodeRabbit PR #673) ──
+
+
+def _apply_with_unknown_columns(unknown: set[str], payload=None, caplog=None, errors=()):
+    """One evidence row whose node_mastery_events insert 400s (PGRST204) while it
+    names any column in `unknown`, as PostgREST does before the migration that
+    adds it is applied — naming the first one, as PostgREST does. `errors` are
+    raised first, one per attempt. Returns (attempted rows, learner_state writes)."""
+    from services.graph_service import apply_graph_update
+
+    factory, mocks = _evidence_factory(NODES, [], ())
+    attempts: list[dict] = []
+    queued = list(errors)
+
+    def _insert(row):
+        attempts.append(dict(row))
+        if queued:
+            raise queued.pop(0)
+        missing = sorted(unknown & set(row))
+        if missing:
+            raise RuntimeError(
+                f"PGRST204 Could not find the '{missing[0]}' column of "
+                "'node_mastery_events' in the schema cache"
+            )
+        return []
+
+    factory("node_mastery_events").insert.side_effect = _insert
+    clock = patch("services.graph_service.datetime", wraps=datetime)
+    with (
+        patch("services.graph_service.table", side_effect=factory),
+        patch("learning.learner_state.table", side_effect=factory),
+        patch("services.graph_service.touch_streak_safe"),
+        patch("services.course_context_service.update_course_context"),
+        patch("services.academics.user_offering_ids_for_course", return_value=[]),
+        patch("services.achievement_service.check_achievements"),
+        clock as fake_dt,
+    ):
+        fake_dt.now.return_value = NOW
+        apply_graph_update(
+            "u1",
+            payload
+            or {
+                "evidence": [
+                    {
+                        "node_id": "n1",
+                        "channel": "free_response",
+                        "correct": True,
+                        "grader_backend": "gemini",
+                    }
+                ]
+            },
+            course_id="c1",
+        )
+    return attempts, _state_writes(mocks)
+
+
+class TestJournalBeforeAMigration:
+    """A route that runs before 20260927182054_learning_mastery_event_seq.sql or
+    20260927093149_learning_grader_backend.sql (or the older 20260814051517
+    event_type migration) must still journal the evidence:
+    learner_state and graph_nodes are already written when the journal insert
+    runs, so a lost row is a silent gap in the replayable history."""
+
+    def test_a_missing_grader_backend_column_keeps_the_row_and_its_event_type(self, caplog):
+        from learning.evidence import EVIDENCE_EVENT_TYPE
+
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, writes = _apply_with_unknown_columns({"grader_backend"})
+        assert len(writes) == 1  # learner_state was written before the journal
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (False, True),
+        ]
+        landed = attempts[-1]
+        assert landed["event_type"] == EVIDENCE_EVENT_TYPE and landed["channel"] == "free_response"
+        assert landed["correct"] is True and landed["p_after"] > landed["p_before"]
+        assert any(
+            "grader_backend" in r.getMessage() and "20260927093149" in r.getMessage()
+            for r in caplog.records
+            if r.levelname == "WARNING"
+        )
+
+    def test_a_missing_evidence_seq_column_keeps_the_row_and_the_older_columns(self, caplog):
+        """A36's evidence_seq (20260927182054) postdates the learner_state migration
+        the evidence path needs, like grader_backend: a code-first deploy degrades
+        the row to a NULL evidence_seq (as the migration's own header describes
+        rows written before it) instead of losing it (a33 verification)."""
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, writes = _apply_with_unknown_columns({"evidence_seq"})
+        assert len(writes) == 1
+        assert [("evidence_seq" in a, "grader_backend" in a) for a in attempts] == [
+            (True, True),
+            (False, True),
+        ]
+        assert attempts[-1]["event_type"] and attempts[-1]["channel"] == "free_response"
+        assert any("20260927182054" in r.getMessage() for r in caplog.records)
+
+    def test_both_optional_columns_missing_still_lands_the_row(self):
+        attempts, _ = _apply_with_unknown_columns({"grader_backend", "event_type"})
+        assert len(attempts) == 3
+        landed = attempts[-1]
+        assert "grader_backend" not in landed and "event_type" not in landed
+        # everything the PKG-03 migration added is kept: it is applied whenever
+        # the evidence path runs at all (read_states needs learner_state first)
+        assert {"channel", "correct", "weight", "p_before", "p_after", "reason"} <= set(landed)
+        assert landed["reason"] == "evidence:free_response"
+
+    def test_the_ladder_follows_migration_order_newest_first(self):
+        """Each retry drops one more migration's columns, newest first. Migrations
+        apply in timestamp order, so an environment that lacks a column also lacks
+        every newer one: the ladder never drops a column the environment has."""
+        from services.graph_service import _JOURNAL_OPTIONAL_COLUMNS
+
+        migrations = [m for m, _ in _JOURNAL_OPTIONAL_COLUMNS]
+        assert migrations == sorted(migrations, reverse=True)
+        migrations_dir = Path(__file__).resolve().parents[1] / "db" / "migrations"
+        assert set(migrations) <= {p.name for p in migrations_dir.glob("*.sql")}
+        for migration, columns in _JOURNAL_OPTIONAL_COLUMNS:
+            ddl = (migrations_dir / migration).read_text()
+            for column in columns:
+                assert re.search(rf"ADD COLUMN IF NOT EXISTS {column}\b", ddl), (migration, column)
+
+    def test_only_the_column_the_error_names_is_dropped(self):
+        """PostgREST names the unknown column; only that one is dropped, so a
+        column the environment has is never lost to a rung it did not need."""
+        attempts, _ = _apply_with_unknown_columns({"event_type"})
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (True, False),
+        ]
+
+    def test_a_dead_journal_still_never_raises(self, caplog):
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, writes = _apply_with_unknown_columns(
+                {"grader_backend", "event_type", "node_id"}
+            )
+        # event_type, then grader_backend, are named and dropped; node_id is no
+        # optional column, so that error gets one unchanged retry and is logged
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (True, False),
+            (False, False),
+            (False, False),
+        ]
+        assert len(writes) == 1
+        [lost] = [r for r in caplog.records if "journal row is lost" in r.getMessage()]
+        assert lost.levelname == "ERROR" and lost.exc_info and "node_id" in str(lost.exc_info[1])
+
+    def test_every_retry_logs_the_error_it_follows(self, caplog):
+        """A retry never hides the failure before it: each warning carries the
+        exception, whatever the next attempt does."""
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            _apply_with_unknown_columns({"grader_backend"})
+        [warning] = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warning.exc_info and "PGRST204" in str(warning.exc_info[1])
+
+    def test_a_check_violation_keeps_the_column_and_is_logged(self, caplog):
+        """A non-schema error (a CHECK violation, a transient 5xx) never drops a
+        column: the row is retried once unchanged and the error is logged — the
+        constraint name mentions grader_backend, but it is not an unknown column."""
+        violation = RuntimeError(
+            '23514 new row for relation "node_mastery_events" violates check '
+            'constraint "node_mastery_events_grader_backend_check"'
+        )
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, _ = _apply_with_unknown_columns(set(), errors=[violation])
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (True, True),
+        ]
+        [warning] = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert (
+            warning.exc_info[1] is violation and "retrying once unchanged" in warning.getMessage()
+        )
+
+    def test_a_repeated_check_violation_loses_the_row_loudly(self, caplog):
+        violation = RuntimeError(
+            '23514 violates check constraint "node_mastery_events_grader_backend_check"'
+        )
+        with caplog.at_level("WARNING", logger="services.graph_service"):
+            attempts, writes = _apply_with_unknown_columns(set(), errors=[violation, violation])
+        assert len(attempts) == 2 and all("grader_backend" in a for a in attempts)
+        assert len(writes) == 1  # learner_state was written before the journal
+        [lost] = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert lost.exc_info[1] is violation and "journal row is lost" in lost.getMessage()
+
+    def test_the_http_error_body_names_the_column(self):
+        """db.connection raises httpx.HTTPStatusError, whose message omits the
+        PostgREST body: the column name is read off the response body too."""
+        import httpx
+
+        request = httpx.Request("POST", "http://db/rest/v1/node_mastery_events")
+        body = (
+            '{"code":"PGRST204","message":"Could not find the \'grader_backend\' column of '
+            "'node_mastery_events' in the schema cache\"}"
+        )
+        error = httpx.HTTPStatusError(
+            "Client error '400 Bad Request'",
+            request=request,
+            response=httpx.Response(400, request=request, text=body),
+        )
+        attempts, _ = _apply_with_unknown_columns(set(), errors=[error])
+        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
+            (True, True),
+            (False, True),
+        ]
 
 
 # ── evidence_seq (reopened for the live sequence-test finding; spec §4, §13 A36) ──

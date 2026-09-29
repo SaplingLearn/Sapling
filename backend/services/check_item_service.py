@@ -20,16 +20,20 @@ here — and only from its SHARED chunks.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 import threading
+from collections import deque
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 import config
 from agents._run import run_agent_sync
 from agents.check_items import CheckItemsUnavailable, draft_items
+from agents.check_items_topup import draft_mc_topup
 from agents.deps import SaplingDeps
 from db.connection import page_all, pg_quote_value, table
 from learning.checks import (
@@ -39,22 +43,36 @@ from learning.checks import (
     RubricItem,
     WrongReason,
     clean_chunk_ids,
+    common_wrong,
     item_id,
+    lettered_options,
     parse_tolerance,
     question_hash,
     rank_chunks_for_concept,
+    repair_draft,
+    stored_rubric,
     validate_draft,
 )
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
+    CHECK_ITEM_DIFFICULTIES,
     CHECK_ITEM_DRAFT_WORKERS,
     CHECK_ITEM_INITIAL_PER_CONCEPT,
     CHECK_ITEM_MAX_CHUNKS,
     CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
+    CHECK_ITEM_MC_MIN_PER_CONCEPT,
+    CHECK_ITEM_MC_TOPUP_CALLS,
+    CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS,
+    CHECK_ITEM_REDRAFT_MAX_FAILURES,
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
-from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json
+from services.encryption import (
+    decrypt_if_present,
+    derive_key,
+    encrypt_if_present,
+    encrypt_json,
+)
 from services.events_service import log_event
 from services.graph_service import _normalize_concept
 from services.request_context import current_request_id
@@ -71,6 +89,11 @@ _COLUMNS = (
     "canonical_answer,tolerance,canonical_verified,stepwise,source_chunk_ids,"
     "source_document_ids,question_hash,graded,created_at,final_answer"
 )
+
+#: What derive_key names the secret the correct mc_reason option's slot is
+#: keyed with (A37): the client is sent each item's question_hash, so the slot
+#: must not be computable from it alone.
+OPTION_SLOT_PURPOSE = "check_items.option_slot.v1"
 
 #: A24 stub for services/decisions.py::item_answerable (PKG-05b): "is this item
 #: answerable from these passages?". Nothing in the series sets it and nothing
@@ -96,27 +119,20 @@ def _build_row(
     source_docs: list[str],
 ) -> dict:
     qh = question_hash(draft.prompt)  # PLAINTEXT, before encryption
-    rubric = [
-        {"id": f"r{i}", "text": text}
-        for i, text in enumerate((t for t in draft.rubric if t.strip()), start=1)
-    ]
-    wrong = [{"key": k, "text": t} for k, t in zip(draft.wrong_keys, draft.wrong_texts)]
+    # A37 review: an mc_reason rubric ends with code's reason criterion.
+    rubric = [r.model_dump() for r in stored_rubric(draft)]
+    # A37: an mc_reason item's wrong reasons are its distractors' misconceptions,
+    # the keys its stored options carry; free and teachback pair their lists.
+    wrong = [w.model_dump() for w in common_wrong(draft)]
     options = None
     correct_option = None
     if draft.format == _MC_REASON:
-        options = encrypt_json(
-            [
-                {
-                    "letter": letter,
-                    "text": text,
-                    "wrong_key": None if letter == draft.correct_option else (key_ or None),
-                }
-                for letter, text, key_ in zip(
-                    draft.option_letters, draft.option_texts, draft.option_wrong_keys
-                )
-            ]
-        )
-        correct_option = encrypt_if_present(draft.correct_option)
+        # A37: code letters the options and places the correct one at a slot
+        # keyed by the server secret; the stored shape ([{letter, text,
+        # wrong_key}] + the letter) is what the grader and the routes read.
+        lettered, letter = lettered_options(draft, slot_key=derive_key(OPTION_SLOT_PURPOSE))
+        options = encrypt_json([o.model_dump() for o in lettered])
+        correct_option = encrypt_if_present(letter)
     numeric = draft.answer_kind == _NUMERIC
     return {
         "id": item_id(course_id, key, qh),
@@ -148,7 +164,19 @@ def _build_row(
     }
 
 
-def create_items(
+# A top-up draft whose prompt a stored item of the concept already has (A37).
+_REPEAT = "repeat: the prompt is a stored item's"
+
+
+class _ConceptWrite(NamedTuple):
+    """What one concept's write stored and dropped."""
+
+    ids: list[str]  # the rows upserted
+    mc_reason: dict[str, int]  # of those, the mc_reason rows: id -> difficulty
+    mc_drops: list[str]  # each dropped mc_reason draft's reasons, "; "-joined
+
+
+def _store_drafts(
     course_id: str,
     concept_key: str,
     document_id: str | None,
@@ -156,17 +184,34 @@ def create_items(
     *,
     allowed_chunk_ids: Iterable[str] = (),
     source_document_ids: Iterable[str] = (),
-) -> list[str]:
-    """Validate each draft (invalid → dropped + WARNING), then upsert every
-    valid row in ONE call on (course_id, concept_key, question_hash). Returns
-    the stored ids. Raises on a PostgREST failure (the caller logs it)."""
+    limit: int | None = None,
+    exclude_ids: Iterable[str] = (),
+) -> _ConceptWrite:
+    """create_items, saying what it stored and why each mc_reason draft was
+    dropped (the A37 top-up feeds those reasons back). `limit` caps the valid
+    rows stored (the top-up's missing count); the rest are logged, not stored.
+    A draft whose row id is in `exclude_ids` (the top-up's stored items: the
+    id is the prompt's question_hash) is a repeat: dropped before `limit`
+    counts it, so it never rewrites the stored item or takes a new one's slot."""
     allowed = set(allowed_chunk_ids)
+    exclude = set(exclude_ids)
     source_docs = sorted({d for d in source_document_ids if d})
     if not source_docs and document_id:
         source_docs = [document_id]
     rows: list[dict] = []
     seen: set[str] = set()
+    mc_drops: list[str] = []
+    surplus = repeats = 0
     for draft in drafts:
+        draft, repairs = repair_draft(draft)
+        if repairs:
+            logger.info(
+                "check item draft repaired (course=%s concept=%s format=%s): %s",
+                course_id,
+                concept_key,
+                draft.format,
+                "; ".join(repairs),
+            )
         reasons = validate_draft(draft)
         if reasons:
             logger.warning(
@@ -176,6 +221,8 @@ def create_items(
                 draft.format,
                 "; ".join(reasons),
             )
+            if draft.format == _MC_REASON:
+                mc_drops.append("; ".join(reasons))
             continue
         row = _build_row(
             course_id, concept_key, document_id, draft, allowed=allowed, source_docs=source_docs
@@ -184,12 +231,64 @@ def create_items(
             # Same normalized prompt twice in one batch: one upsert may not
             # name a row twice (PostgREST rejects it), and it is one item.
             continue
+        if row["id"] in exclude:
+            repeats += 1
+            if draft.format == _MC_REASON:
+                mc_drops.append(_REPEAT)
+            continue
+        if limit is not None and len(rows) >= limit:
+            surplus += 1
+            continue
         seen.add(row["id"])
         rows.append(row)
-    if not rows:
-        return []
-    table(_TABLE).upsert(rows, on_conflict=_ON_CONFLICT)
-    return [r["id"] for r in rows]
+    if repeats:
+        logger.info(
+            "check items: %d draft(s) repeat a stored item's prompt; not stored "
+            "(course=%s concept=%s)",
+            repeats,
+            course_id,
+            concept_key,
+        )
+    if surplus:
+        logger.info(
+            "check items: %d valid draft(s) beyond the %d asked for; not stored "
+            "(course=%s concept=%s)",
+            surplus,
+            limit,
+            course_id,
+            concept_key,
+        )
+    if rows:
+        table(_TABLE).upsert(rows, on_conflict=_ON_CONFLICT)
+    return _ConceptWrite(
+        [r["id"] for r in rows],
+        {r["id"]: r["difficulty"] for r in rows if r["format"] == _MC_REASON},
+        mc_drops,
+    )
+
+
+def create_items(
+    course_id: str,
+    concept_key: str,
+    document_id: str | None,
+    drafts: Iterable[CheckItemDraft],
+    *,
+    allowed_chunk_ids: Iterable[str] = (),
+    source_document_ids: Iterable[str] = (),
+) -> list[str]:
+    """Repair each draft where no guess is needed (A37; logged at INFO by
+    rule), validate it (invalid → dropped + WARNING naming every rule), then
+    upsert every valid row in ONE call on (course_id, concept_key,
+    question_hash). Returns the stored ids. Raises on a PostgREST failure (the
+    caller logs it)."""
+    return _store_drafts(
+        course_id,
+        concept_key,
+        document_id,
+        drafts,
+        allowed_chunk_ids=allowed_chunk_ids,
+        source_document_ids=source_document_ids,
+    ).ids
 
 
 # ── read ───────────────────────────────────────────────────────────────────
@@ -568,6 +667,7 @@ class GenerationOutcome(NamedTuple):
 
 _NOTHING = GenerationOutcome(0, 0, 0, 0)
 _FAILED_EVENT = "learn.check_items_failed"
+_TOPUP_EVENT = "learn.check_items_topup"
 _STORAGE_ERROR = "StorageError"
 _WITHDRAWAL_ERROR = "WithdrawalError"
 
@@ -608,6 +708,442 @@ def _passage_key(chunk: dict):
     return chunk.get("id") or ("fallback", chunk.get("doc_id"), chunk.get("chunk_index"))
 
 
+class _CallSources(NamedTuple):
+    """What one agent call is shown, and the A23 provenance that follows."""
+
+    passages: list[dict]  # [{id, text}] as the agent reads them
+    allowed: set[str]  # chunk ids a draft may cite
+    source_docs: list[str]  # every document whose passages the call showed
+
+
+def _call_sources(ranked_lists: Iterable[list[dict]]) -> _CallSources:
+    """The union of the given concepts' ranked passages, de-duplicated. A23
+    provenance is the CALL's, not one concept's: the model sees every passage
+    of the call, so any item may be drafted from (and cite) any of them. Every
+    concept of the call records every document it showed, and citations are
+    kept only for passages it showed — so withdrawing any of those documents
+    reaches every item of the call."""
+    passages: list[dict] = []
+    seen: set = set()
+    shown_docs: set[str] = set()
+    allowed: set[str] = set()
+    for ranked in ranked_lists:
+        for chunk in ranked:
+            pkey = _passage_key(chunk)
+            if pkey in seen:
+                continue
+            seen.add(pkey)
+            passages.append({"id": chunk.get("id"), "text": chunk.get("chunk_text") or ""})
+            if chunk.get("doc_id"):
+                shown_docs.add(chunk["doc_id"])
+            if chunk.get("id"):
+                allowed.add(chunk["id"])
+    return _CallSources(passages, allowed, sorted(shown_docs))
+
+
+class _CallWrite(NamedTuple):
+    stored: dict[str, _ConceptWrite]  # per concept whose write ran
+    recheck_failed: bool = False  # the pre-write re-check failed: drafts dropped
+    withdrawn: bool = False  # a source was withdrawn: drafts dropped, or items retired
+
+
+def _write_checked(
+    drafts_by_key: dict[str, list[CheckItemDraft]],
+    sources: _CallSources,
+    *,
+    gone: set[str],
+    user_id: str | None,
+    document_id: str | None,
+    course_id: str,
+    limit: int | None = None,
+    exclude_ids: Iterable[str] = (),
+) -> _CallWrite:
+    """One call's write, with A23's source re-check on both sides of it. A
+    concept whose write fails is reported (StorageError) and left out of
+    `stored`; a withdrawn source is added to `gone`."""
+    # A23: the sources were read before a call that can take minutes. A
+    # document deleted or opted out meanwhile had its items retired while
+    # these did not exist yet, so re-check right before writing...
+    recheck = {"user_id": user_id, "document_id": document_id, "course_id": course_id}
+    withdrawn = _recheck_sources(sources.source_docs, **recheck)
+    if withdrawn is None:
+        return _CallWrite({}, recheck_failed=True)
+    if withdrawn:
+        gone.update(withdrawn)
+        logger.info(
+            "check items: %d source document(s) withdrawn while drafting; "
+            "the call's drafts are dropped (course=%s)",
+            len(withdrawn),
+            course_id,
+        )
+        return _CallWrite({}, withdrawn=True)
+    stored: dict[str, _ConceptWrite] = {}
+    for key, drafts in drafts_by_key.items():
+        try:
+            stored[key] = _store_drafts(
+                course_id,
+                key,
+                document_id,
+                drafts,
+                allowed_chunk_ids=sources.allowed,
+                source_document_ids=sources.source_docs,
+                limit=limit,
+                exclude_ids=exclude_ids,
+            )
+        except Exception:
+            logger.warning(
+                "check items write failed (course=%s concept=%s)", course_id, key, exc_info=True
+            )
+            _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
+    # ...and once more after it: a withdrawal that landed between that
+    # read and the upsert found nothing to delete, so retire it here. A
+    # failure here is reported, never answered by deleting: the sources
+    # were live a moment ago, and retiring on a blip would also delete
+    # every older item citing them.
+    retired = False
+    if any(w.ids for w in stored.values()):
+        try:
+            withdrawn = _withdrawn_sources(sources.source_docs)
+            if withdrawn:
+                gone.update(withdrawn)
+                retire_items_for_documents(withdrawn)
+                retired = True
+        except Exception:
+            logger.error(
+                "check items: post-write source re-check failed (course=%s)",
+                course_id,
+                exc_info=True,
+            )
+            _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
+    return _CallWrite(stored, withdrawn=retired)
+
+
+def _stored_items(course_id: str, key: str) -> dict[str, tuple[str | None, int | None]]:
+    """The concept's stored items, id -> (format, difficulty) (plaintext
+    columns only, invariant 9)."""
+    rows = table(_TABLE).select(
+        "id,format,difficulty",
+        filters={"course_id": f"eq.{course_id}", "concept_key": f"eq.{key}"},
+    )
+    return {r["id"]: (r.get("format"), r.get("difficulty")) for r in rows or [] if r.get("id")}
+
+
+def _report_topup(
+    user_id: str | None,
+    document_id: str | None,
+    course_id: str,
+    *,
+    requested: int,
+    returned: int,
+    stored: int,
+    mc_reason_items: int,
+) -> None:
+    """One `learn.check_items_topup` per top-up call: ids and counts only."""
+    log_event(
+        _TOPUP_EVENT,
+        category="usage",
+        user_id=user_id,
+        payload={
+            "document_id": document_id,
+            "course_id": course_id,
+            "requested": requested,
+            "returned": returned,
+            "stored": stored,
+            "mc_reason_items": mc_reason_items,
+        },
+    )
+
+
+def _top_up_mc_reason(
+    key: str,
+    name: str,
+    ranked: list[dict],
+    first: _ConceptWrite,
+    *,
+    deps: SaplingDeps,
+    flex: bool,
+    gone: set[str],
+    user_id: str | None,
+    document_id: str | None,
+    course_id: str,
+) -> int:
+    """A37 (series coordinator's ruling, 2026-09-28): a concept this pass
+    drafted that ends it with fewer than CHECK_ITEM_MC_MIN_PER_CONCEPT stored
+    mc_reason items gets up to CHECK_ITEM_MC_TOPUP_CALLS focused calls, each
+    for exactly the missing count at difficulties the concept lacks, shown
+    the concept's own passages and told why its mc_reason drafts were
+    dropped. The drafts pass the same repair and validation (no rule is
+    relaxed), the write the same A23 re-checks. The count is the one read
+    after the pass's write, which alone says what the concept holds (a pass
+    item retired meanwhile is not counted); a top-up draft whose prompt a
+    stored item already has is a repeat, not stored. Each call is billed by
+    the agent (llm_usage feature check_items_topup) and counted here
+    (`learn.check_items_topup`). A concept still below is logged with its drop
+    reasons and left to a later generation run or backfill, which drafts it
+    again only while it has fewer than CHECK_ITEM_INITIAL_PER_CONCEPT items.
+    Returns the items the top-up stored."""
+    if len(first.mc_reason) >= CHECK_ITEM_MC_MIN_PER_CONCEPT:
+        return 0  # this pass alone stored enough: no read, no call
+    try:
+        stored_items = _stored_items(course_id, key)
+    except Exception:
+        logger.warning(
+            "check items: mc_reason count read failed (course=%s concept=%s); no top-up",
+            course_id,
+            key,
+            exc_info=True,
+        )
+        _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
+        return 0
+    have = {i: d for i, (fmt, d) in stored_items.items() if fmt == _MC_REASON}
+    exclude = set(stored_items)
+    drops = list(first.mc_drops)
+    created = calls = 0
+    recheck = {"user_id": user_id, "document_id": document_id, "course_id": course_id}
+    while calls < CHECK_ITEM_MC_TOPUP_CALLS:
+        missing = CHECK_ITEM_MC_MIN_PER_CONCEPT - len(have)
+        live = [c for c in ranked if c.get("doc_id") not in gone]
+        if missing <= 0 or not live:
+            break
+        calls += 1
+        lacking = [d for d in CHECK_ITEM_DIFFICULTIES if d not in set(have.values())]
+        difficulties = (lacking + list(CHECK_ITEM_DIFFICULTIES))[:missing]
+        sources = _call_sources([live])
+        out = run_agent_sync(
+            draft_mc_topup(
+                name,
+                sources.passages,
+                difficulties=difficulties,
+                drop_reasons=drops,
+                deps=deps,
+                flex=flex,
+            )
+        )
+        if isinstance(out, CheckItemsUnavailable):
+            _report_failure(user_id, document_id, course_id, out.reason)
+            _report_topup(
+                user_id,
+                document_id,
+                course_id,
+                requested=missing,
+                returned=0,
+                stored=0,
+                mc_reason_items=len(have),
+            )
+            continue
+        mine = [d for d in out.items if concept_key(d.concept) == key and d.format == _MC_REASON]
+        if len(mine) < len(out.items):
+            logger.info(
+                "check items: %d top-up draft(s) not mc_reason for %r; dropped",
+                len(out.items) - len(mine),
+                name,
+            )
+        write = _write_checked(
+            {key: mine}, sources, gone=gone, limit=missing, exclude_ids=exclude, **recheck
+        )
+        result = write.stored.get(key)
+        stored = len(result.ids) if result is not None else 0
+        created += stored  # as the pass counts its own: written, even if retired right after
+        if result is not None and not write.withdrawn:
+            have.update(result.mc_reason)
+            exclude.update(result.ids)
+            drops += result.mc_drops
+        _report_topup(
+            user_id,
+            document_id,
+            course_id,
+            requested=missing,
+            returned=len(mine),
+            stored=stored,
+            mc_reason_items=len(have),
+        )
+    if len(have) < CHECK_ITEM_MC_MIN_PER_CONCEPT:
+        logger.warning(
+            "check items: concept %r ends the pass with %d mc_reason item(s), below %d, "
+            "after %d top-up call(s) (course=%s); a later run drafts it again only while "
+            "it has fewer than %d items; drop reasons: %s",
+            key,
+            len(have),
+            CHECK_ITEM_MC_MIN_PER_CONCEPT,
+            calls,
+            course_id,
+            CHECK_ITEM_INITIAL_PER_CONCEPT,
+            " | ".join(drops) or "none (too few mc_reason drafts returned)",
+        )
+    return created
+
+
+# ── bounded redrafting (owner decision A38, low-severity 2) ─────────────────
+#
+# A concept whose drafts always fail was redrafted on every upload and every
+# backfill. check_item_draft_failures counts its consecutive failed passes
+# against a fingerprint of what it is drafted from (its passages, the drafting
+# prompts' versions and the model); at CHECK_ITEM_REDRAFT_MAX_FAILURES on an
+# unchanged source it is skipped for CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS after
+# its last failure, then drafted once more. A pass that stores an item resets
+# the count; a changed source (or prompt, or model) starts it over. The
+# bookkeeping fails open: an error reading or writing it drafts as before.
+#
+# What counts (A38 fix round, M2) is an ALLOWLIST of the concept's OWN
+# outcomes: a one-concept call whose output never validated
+# (_CONCEPT_FAILURE_REASONS), or a call that answered but stored nothing for
+# that concept. A timeout, a transport or API error, a usage limit, any other
+# exception count for no concept. A multi-concept call whose output never
+# validated is split and each concept re-run alone once (A38 fix round 2), so
+# only the concept that fails on its own is counted.
+
+_FAILURES_TABLE = "check_item_draft_failures"
+_FAILURES_ON_CONFLICT = "course_id,concept_key"
+# The only Unavailable reason that is the drafts' fault: the output failed
+# validation on every retry (pydantic-ai raises UnexpectedModelBehavior).
+_CONCEPT_FAILURE_REASONS = frozenset({"UnexpectedModelBehavior"})
+
+
+def _drafting_version() -> str:
+    """The drafting prompts' versions and the model: a change to either is a
+    new source, so a concept stalled under the old one is drafted again."""
+    from agents import check_items, check_items_topup
+    from agents._providers import model_name_for
+
+    return "|".join(
+        (check_items._PROMPT_HASH, check_items_topup._PROMPT_HASH, model_name_for("check_items"))
+    )
+
+
+def _source_fingerprint(ranked: Iterable[dict]) -> str:
+    """What a concept is drafted from: its ranked passages' ids and texts,
+    order-free (a re-rank of the same passages is the same source), and the
+    drafting version (_drafting_version)."""
+    parts = sorted(
+        f"{chunk.get('id') or ''}\x1f"
+        + hashlib.sha256((chunk.get("chunk_text") or "").encode("utf-8")).hexdigest()
+        for chunk in ranked
+    )
+    parts.append("version\x1f" + _drafting_version())
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def _utcnow() -> datetime:
+    """The clock the expiry reads; tests monkeypatch it."""
+    return datetime.now(UTC)
+
+
+def _parse_stamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
+
+
+class _DraftFailures:
+    """One run's view of check_item_draft_failures for its candidate concepts:
+    ONE read up front, a write per concept whose count changes. Every error
+    is a WARNING and leaves the concept draftable (fail open)."""
+
+    def __init__(self, course_id: str, keys: list[str]):
+        self.course_id = course_id
+        self.rows: dict[str, dict] = {}
+        if not keys:
+            return
+        try:
+            rows = table(_FAILURES_TABLE).select(
+                "concept_key,failures,source_fp,updated_at,solo",
+                filters={
+                    "course_id": f"eq.{course_id}",
+                    "concept_key": f"in.({','.join(pg_quote_value(k) for k in keys)})",
+                },
+            )
+        except Exception:
+            logger.warning(
+                "check items: draft-failure read failed (course=%s); drafting every concept",
+                course_id,
+                exc_info=True,
+            )
+            return
+        self.rows = {r["concept_key"]: r for r in rows or [] if r.get("concept_key")}
+
+    def _fresh(self, row: dict) -> bool:
+        stamp = _parse_stamp(row.get("updated_at"))
+        ttl = timedelta(days=CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS)
+        return stamp is not None and _utcnow() - stamp < ttl
+
+    def solo(self, key: str, fp: str) -> bool:
+        """Drafted alone: a split rescued it and every batch-mate on an
+        unchanged source, within the TTL (A38 fix round 3)."""
+        row = self.rows.get(key)
+        return bool(row and row.get("solo") and row.get("source_fp") == fp and self._fresh(row))
+
+    def stalled(self, key: str, fp: str) -> bool:
+        """At the bound on an unchanged source, within the TTL of the last
+        failure. A row with no readable updated_at is not stalled (fail open)."""
+        row = self.rows.get(key)
+        if not (
+            row
+            and row.get("source_fp") == fp
+            and (row.get("failures") or 0) >= CHECK_ITEM_REDRAFT_MAX_FAILURES
+        ):
+            return False
+        return self._fresh(row)
+
+    def _write(self, key: str, failures: int, fp: str, *, solo: bool | None = None) -> None:
+        old = self.rows.get(key) or {}
+        if solo is None:  # kept while the source is unchanged
+            solo = bool(old.get("solo")) and old.get("source_fp") == fp
+        row = {
+            "course_id": self.course_id,
+            "concept_key": key,
+            "failures": failures,
+            "source_fp": fp,
+            "solo": solo,
+            "updated_at": _utcnow().isoformat(),
+        }
+        try:
+            table(_FAILURES_TABLE).upsert([row], on_conflict=_FAILURES_ON_CONFLICT)
+        except Exception:
+            logger.warning(
+                "check items: draft-failure write failed (course=%s concept=%s)",
+                self.course_id,
+                key,
+                exc_info=True,
+            )
+            return
+        self.rows[key] = row
+
+    def failed(self, key: str, fp: str) -> None:
+        row = self.rows.get(key)
+        before = (row.get("failures") or 0) if row and row.get("source_fp") == fp else 0
+        self._write(key, before + 1, fp)
+
+    def succeeded(self, key: str, fp: str) -> None:
+        row = self.rows.get(key)
+        if row and (row.get("failures") or 0) > 0:  # no record, nothing to reset
+            self._write(key, 0, fp)
+
+    def mark_solo(self, key: str, fp: str) -> None:
+        self._write(key, 0, fp, solo=True)
+
+
+class _SplitGroup:
+    """The concepts of one split batch, as their solo re-runs settle. When the
+    last one settles and every one stored items alone, the failure was the
+    combination's: each is marked solo (A38 fix round 3)."""
+
+    def __init__(self, batch: list):
+        self.fps = {key: _source_fingerprint(ranked) for key, _, ranked in batch}
+        self.ok: dict[str, bool] = {}
+
+    def settle(self, key: str, *, ok: bool, ledger: _DraftFailures) -> None:
+        if key not in self.fps or key in self.ok:
+            return
+        self.ok[key] = ok
+        if len(self.ok) == len(self.fps) and all(self.ok.values()):
+            for k, fp in self.fps.items():
+                ledger.mark_solo(k, fp)
+
+
 def generate_for_concepts(
     *,
     user_id: str | None,
@@ -628,9 +1164,15 @@ def generate_for_concepts(
     call, every key no passage scores >= `min_chunk_score` for dropped
     (A23 relevance floor), the rest drafted CHECK_ITEM_CONCEPTS_PER_CALL per
     agent call. Each call's sources are re-checked around its write (A23);
-    a source found withdrawn leaves every later call of the run.
+    a source found withdrawn leaves every later call of the run. A concept a
+    call left below CHECK_ITEM_MC_MIN_PER_CONCEPT stored mc_reason items is
+    topped up right after it (`_top_up_mc_reason`, A37); `items_created`
+    counts the top-up's items too.
     Synchronous: it runs in a worker thread with no event loop.
-    `user_id=None` (the backfill) records usage against the system actor."""
+    `user_id=None` (the backfill) records usage against the system actor.
+    A concept at CHECK_ITEM_REDRAFT_MAX_FAILURES failed passes on an unchanged
+    source is skipped too, within CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS of its
+    last failure (counted in concepts_skipped; `_DraftFailures`)."""
     if not config.LEARNING_LOOP_ENABLED:
         return _NOTHING
     if not chunks:
@@ -659,6 +1201,19 @@ def generate_for_concepts(
             unmatched += 1
             continue
         todo.append((key, names_by_key[key], ranked))
+    ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
+    stalled = [key for key, _, ranked in todo if ledger.stalled(key, _source_fingerprint(ranked))]
+    if stalled:
+        logger.info(
+            "check items: %d concept(s) skipped after %d failed drafting passes on an "
+            "unchanged source (course=%s): %s",
+            len(stalled),
+            CHECK_ITEM_REDRAFT_MAX_FAILURES,
+            course_id,
+            stalled,
+        )
+        skipped += len(stalled)
+        todo = [t for t in todo if t[0] not in stalled]
 
     deps = SaplingDeps(
         user_id=user_id or "",
@@ -674,8 +1229,25 @@ def generate_for_concepts(
     # concept they alone covered counts unmatched instead of costing a call
     # whose drafts would be dropped.
     gone: set[str] = set()
-    for start in range(0, len(todo), CHECK_ITEM_CONCEPTS_PER_CALL):
-        batch = todo[start : start + CHECK_ITEM_CONCEPTS_PER_CALL]
+    # (batch, split): a multi-concept call whose output never validated is
+    # re-run one concept at a time, once, so the failure lands on the concept
+    # that caused it and its batch-mates still get items this pass (A38 fix
+    # round 2). At most 1 + CHECK_ITEM_CONCEPTS_PER_CALL calls per batch.
+    # A concept whose last split rescued its whole batch (it and its mates
+    # each drafted fine alone) is drafted alone while that holds (A38 fix
+    # round 3), so a combination-only failure does not cost 1 + N calls a pass.
+    solo = [t for t in todo if ledger.solo(t[0], _source_fingerprint(t[2]))]
+    rest = [t for t in todo if t not in solo]
+    queue: deque[tuple[list, _SplitGroup | None]] = deque(
+        [([t], None) for t in solo]
+        + [
+            (rest[start : start + CHECK_ITEM_CONCEPTS_PER_CALL], None)
+            for start in range(0, len(rest), CHECK_ITEM_CONCEPTS_PER_CALL)
+        ]
+    )
+    while queue:
+        batch, group = queue.popleft()
+        split = group is not None
         if gone:
             remaining = [c for c in chunks if c.get("doc_id") not in gone]
             kept = []
@@ -691,33 +1263,25 @@ def generate_for_concepts(
             if not batch:
                 continue
         names = [name for _, name, _ in batch]
-        passages: list[dict] = []
-        seen: set = set()
-        # A23 provenance is the CALL's, not one concept's: the model sees the
-        # union of the batch's passages, so any item may be drafted from (and
-        # cite) any of them. Every concept of the call records every document
-        # it showed, and citations are kept only for passages it showed — so
-        # withdrawing any of those documents reaches every item of the call.
-        shown_docs: set[str] = set()
-        allowed: set[str] = set()
-        for _, _, ranked in batch:
-            for chunk in ranked:
-                pkey = _passage_key(chunk)
-                if pkey in seen:
-                    continue
-                seen.add(pkey)
-                passages.append({"id": chunk.get("id"), "text": chunk.get("chunk_text") or ""})
-                if chunk.get("doc_id"):
-                    shown_docs.add(chunk["doc_id"])
-                if chunk.get("id"):
-                    allowed.add(chunk["id"])
-        source_docs = sorted(shown_docs)
+        sources = _call_sources(ranked for _, _, ranked in batch)
 
-        out = run_agent_sync(draft_items(names, passages, deps=deps, flex=flex))
-        attempted += len(batch)
+        out = run_agent_sync(draft_items(names, sources.passages, deps=deps, flex=flex))
+        if not split:  # a split re-run is the same concepts' same attempt
+            attempted += len(batch)
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
+            if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
+                new_group = _SplitGroup(list(batch))
+                queue.extendleft(([concept], new_group) for concept in reversed(batch))
+                continue
+            if group is not None:
+                group.settle(batch[0][0], ok=False, ledger=ledger)
             unavailable += len(batch)
+            # Only a one-concept call's validation failure is that concept's
+            # own outcome; anything else is no concept's fault (M2 allowlist).
+            if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
+                key, _, ranked = batch[0]
+                ledger.failed(key, _source_fingerprint(ranked))
             continue
 
         drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
@@ -732,60 +1296,47 @@ def generate_for_concepts(
                     names,
                 )
 
-        # A23: the sources were read before a call that can take minutes. A
-        # document deleted or opted out meanwhile had its items retired while
-        # these did not exist yet, so re-check right before writing...
-        recheck = {"user_id": user_id, "document_id": document_id, "course_id": course_id}
-        withdrawn = _recheck_sources(source_docs, **recheck)
-        if withdrawn is None:
+        write = _write_checked(
+            drafts_by_key,
+            sources,
+            gone=gone,
+            user_id=user_id,
+            document_id=document_id,
+            course_id=course_id,
+        )
+        if write.recheck_failed:
             unavailable += len(batch)
             continue
-        if withdrawn:
-            gone.update(withdrawn)
-            logger.info(
-                "check items: %d source document(s) withdrawn while drafting; "
-                "the call's drafts are dropped (course=%s)",
-                len(withdrawn),
-                course_id,
-            )
-            continue
-        written = 0
-        for key, _, _ in batch:
-            try:
-                written += len(
-                    create_items(
-                        course_id,
-                        key,
-                        document_id,
-                        drafts_by_key[key],
-                        allowed_chunk_ids=allowed,
-                        source_document_ids=source_docs,
-                    )
+        created += sum(len(w.ids) for w in write.stored.values())
+        if write.withdrawn:
+            continue  # the call's drafts were dropped, or its items retired
+        # A37: a concept this call left below the mc_reason floor is topped up.
+        for key, name, ranked in batch:
+            if key in write.stored:
+                topped = _top_up_mc_reason(
+                    key,
+                    name,
+                    ranked,
+                    write.stored[key],
+                    deps=deps,
+                    flex=flex,
+                    gone=gone,
+                    user_id=user_id,
+                    document_id=document_id,
+                    course_id=course_id,
                 )
-            except Exception:
-                logger.warning(
-                    "check items write failed (course=%s concept=%s)", course_id, key, exc_info=True
-                )
-                _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
-        created += written
-        # ...and once more after it: a withdrawal that landed between that
-        # read and the upsert found nothing to delete, so retire it here. A
-        # failure here is reported, never answered by deleting: the sources
-        # were live a moment ago, and retiring on a blip would also delete
-        # every older item citing them.
-        if written:
-            try:
-                withdrawn = _withdrawn_sources(source_docs)
-                if withdrawn:
-                    gone.update(withdrawn)
-                    retire_items_for_documents(withdrawn)
-            except Exception:
-                logger.error(
-                    "check items: post-write source re-check failed (course=%s)",
-                    course_id,
-                    exc_info=True,
-                )
-                _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
+                created += topped
+                # A write that failed (StorageError) is not the drafts' fault:
+                # only a concept whose write ran is counted either way.
+                fp = _source_fingerprint(ranked)
+                if write.stored[key].ids or topped:
+                    ledger.succeeded(key, fp)
+                else:
+                    ledger.failed(key, fp)
+                if group is not None:
+                    group.settle(key, ok=bool(write.stored[key].ids or topped), ledger=ledger)
+            elif group is not None:
+                group.settle(key, ok=False, ledger=ledger)
 
     outcome = GenerationOutcome(created, attempted, unavailable, skipped, unmatched)
     logger.info(
@@ -836,17 +1387,22 @@ def generate_for_document(
 # ── upload-time drafting pool ──────────────────────────────────────────────
 #
 # One upload's drafting is up to ceil(CHECK_ITEM_MAX_CONCEPTS_PER_DOC /
-# CHECK_ITEM_CONCEPTS_PER_CALL) sequential Flex runs, each up to FLEX_TIMEOUT_S
-# x (CHECK_ITEM_FLEX_RETRIES + 1): a thread held for minutes, hours at worst.
+# CHECK_ITEM_CONCEPTS_PER_CALL) = 4 sequential generation runs plus at most
+# CHECK_ITEM_MAX_CONCEPTS_PER_DOC x CHECK_ITEM_MC_TOPUP_CALLS = 10 one-concept
+# mc_reason top-up runs (A37), all on Flex and on this one thread, each up to
+# FLEX_TIMEOUT_S x (CHECK_ITEM_FLEX_RETRIES + 1): a thread held for minutes,
+# hours at worst.
 # On the event loop's default executor or Starlette's request threadpool a few
 # concurrent uploads would starve every other threaded call in the process
 # (the next upload's extraction and persist among them), so real-mode drafting
 # runs HERE, CHECK_ITEM_DRAFT_WORKERS at a time; the rest wait in the queue.
 # The workers are not daemons: concurrent.futures joins them at interpreter
-# exit after they drain the queue, so a graceful shutdown (a deploy's SIGTERM,
-# a `reload=True` restart) waits for every queued drafting to finish, and only
-# the platform's kill after its grace period drops what is still queued or in
-# flight. The nightly `--all-courses` backfill (spec §11.7) drafts that then.
+# exit. So the app's shutdown hook (main.py's lifespan) calls
+# `shutdown_draft_pool`, which drops every QUEUED drafting (owner decision A38,
+# low-severity 4) instead of letting a deploy's SIGTERM wait for the whole
+# queue; a run already in flight still finishes or dies with the platform's
+# kill after its grace period. The nightly `--all-courses` backfill (spec
+# §11.7) drafts what was dropped.
 
 _draft_pool_instance: ThreadPoolExecutor | None = None
 _draft_pool_lock = threading.Lock()
@@ -860,6 +1416,17 @@ def _draft_pool() -> ThreadPoolExecutor:
                 max_workers=CHECK_ITEM_DRAFT_WORKERS, thread_name_prefix="check-items"
             )
         return _draft_pool_instance
+
+
+def shutdown_draft_pool() -> None:
+    """Drop the queued drafting and let the pool go without waiting (the app's
+    shutdown hook). Idempotent; a later upload builds a new pool."""
+    global _draft_pool_instance
+    with _draft_pool_lock:
+        pool, _draft_pool_instance = _draft_pool_instance, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+        logger.info("check items: drafting pool shut down; queued drafting dropped")
 
 
 def _generate_for_document_logged(document_id: str, **kwargs) -> None:

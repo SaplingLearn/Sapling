@@ -1,9 +1,10 @@
 {
+  "addresses_grader": false,
   "confidence": 1.0,
-  "feedback_hint": "Your explanation correctly identifies both the instantaneous rate of change and the slope of the tangent line, satisfying all rubric items.",
+  "feedback_hint": "",
   "item_results": [
-    "r1:yes",
-    "r2:yes"
+    "65476:yes",
+    "36230:yes"
   ],
   "matched_wrong_key": ""
 }

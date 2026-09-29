@@ -19,12 +19,42 @@ first run is therefore scored here as served. None of the 8 recorded cassettes i
 below the floor, so today the two agree; a candidate compared through
 `promotion_checks` must be measured the same first-run way, or the baseline
 re-recorded through grade(), so the gates compare like with like.
+
+The grader message is built as grade() builds it, with the rubric items under
+fresh labels (spec §13 A33); here those labels come from a generator seeded by
+the case name, so a recording and its replays agree, and the verdicts are read
+back per label.
+
+The same holds for the pre-grader screen (spec §13 A33): grade() refuses both
+injection rows before any model run, so they never reach a model in production.
+Here they measure the raw model's own robustness, the number a PKG-15
+candidate's raw runs are compared against. The item verdicts alone are scored;
+the run's `addresses_grader` report, which grade() refuses on, is not. With the
+A33 grader prompt the four grading rows were re-recorded (their GraderOutput
+gained that required field): the raw model now judges both injection rows no
+and reports both (InjectionHeld 0.750 → 1.000); before it, it credited both.
+The served path's injection handling is gated in tests/evals/grader.py, which
+runs grade() on both rows with InjectionHeld at baseline 1.0.
+
+Grader-guard round a33 changed the grader's prompt and added the required
+`contradicts_reference` report (spec §13 A33). By the owner's decision (PR #673,
+CONTINUE 3.5) this eval stays the raw-model baseline a PKG-15 candidate is
+compared against, and only the grader dataset was re-recorded: these four
+grading cassettes are the A33-prompt recordings made before that round, and
+replay reads them through `_RecordedGraderOutput`, which lets the new field be
+absent. The owner's note cites InjectionHeld 0.750, the figure before the A33
+prompt; the raw model recorded with it holds both rows (1.000). The coordinator's
+ruling on that round's open question (g) added the required `support` quotes,
+which grade() verifies and has a span check confirm before it credits an item;
+the same model lets them be absent too. This raw-model eval scores the item
+verdicts only, never the served credit.
 """
 
 # No `from __future__ import annotations`: the suite loads this file by path, outside
 # sys.modules, where dataclasses cannot resolve string annotations.
 import asyncio
 import json
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,7 +80,8 @@ from agents.grader import (  # noqa: E402
     GraderOutput,
     build_grader_message,
     grader_agent,
-    parse_item_results,
+    parse_labelled,
+    rubric_labels,
 )
 from learning import bkt  # noqa: E402
 from learning.params import BKT_L0  # noqa: E402
@@ -67,6 +98,19 @@ GATE_TOLERANCE = 1e-9
 GRADING_CHANNEL = {"grade_rubric_items": "free_response", "reason_is_correct": "mc_reasoned"}
 _RECORD_RETRIES = 4  # transient provider errors while recording (the _replay posture)
 _RECORD_BACKOFF_S = 3.0
+
+
+class _RecordedGraderOutput(GraderOutput):
+    """The four grading cassettes were recorded before `contradicts_reference`
+    and `support` (spec §13 A33, grader-guard round a33 and the coordinator's
+    ruling that closed its open question (g)). The owner kept this eval's
+    raw-model baseline (PR #673, CONTINUE 3.5) and those rounds re-recorded the
+    grader dataset only, so replay reads them with both fields absent. Only the
+    item verdicts are scored here; grade() reads the fields, and the served path
+    is gated in tests/evals/grader.py."""
+
+    contradicts_reference: bool = False
+    support: list[str] = []
 
 
 class GoldProvenanceError(ValueError):
@@ -140,21 +184,25 @@ async def _run(case: DecisionCase) -> DecisionEvalOutput:
     state = seam.STATE_FOR_DECISION[case.decision](**case.state)
     if case.decision in GRADING_CHANNEL:
         reason = case.decision == "reason_is_correct"
+        item = seam.grader_item_from(state)
+        answer = (
+            seam.mc_reason_answer(state.selected_option, state.reason) if reason else state.answer
+        )
+        labels = rubric_labels(item, answer, rng=random.Random(f"{DATASET}/{name}"))
         message = build_grader_message(
-            seam.grader_item_from(state),
+            item,
             format="mc_reason" if reason else state.format,
-            student_answer=seam.mc_reason_answer(state.selected_option, state.reason)
-            if reason
-            else state.answer,
+            student_answer=answer,
+            labels=labels,
         )
         out = await run_with_cassette(
             dataset=DATASET,
             case_name=name,
             agent=grader_agent,
             case_input=message,
-            output_model=GraderOutput,
+            output_model=_RecordedGraderOutput,
         )
-        got = parse_item_results(out.item_results, list(state.rubric))
+        got = parse_labelled(out.item_results, labels)
         answers = (
             {"answer": "yes" if got and all(got.values()) else "no"}
             if reason

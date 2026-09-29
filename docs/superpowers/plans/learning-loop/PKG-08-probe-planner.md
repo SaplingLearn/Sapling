@@ -82,7 +82,8 @@ Rule: any red row → STOP. Diagnose, repair on this branch as commit `fix(learn
 
 9. Every route below first calls PKG-07's gate helper (the one that returns 404 `{"detail": "learning loop not enabled"}` when `learning_loop_active(user_id)` is false — spec §7) and `require_self(body.user_id, request)`. With the gate false no `table()` call happens. **Budget (A20):** no PKG-08 route calls `ai_budget.check` — the probe keeps running at the tutor hard cap and keeps serving novice-band concepts (spec §3.5: the probe is the one surface where novice concepts are still checked at the hard level); grading has its own cap, enforced inside `grade()` (PKG-06b), which surfaces here as an `unavailable` grade (Behaviour 11). `/probe/answer` — the only PKG-08 route that can run a model (the grader) — carries PKG-06b's rate limit (`enforce_rate_limit`, spec §9), attached exactly as PKG-07 attaches it to `/check/answer`; `/probe/next`, `GET /plan` and `/plan/approve` run no model and carry none. No body model carries `model_pref` (invariant 22).
 10. `POST /probe/next` body `ProbeNextBody(session_id, user_id, course_id)`. Phase must be `probe` (a fresh loop session's phase, per PKG-07; if PKG-07 starts sessions in another phase, this route accepts `probe` and the PKG-07 initial phase, and records that in the hand-off) else 409 `{"detail": "phase is <phase>"}`. **No check items (A23):** before the skill set is fixed (first call), when `check_item_service.course_has_items(course_id)` is False (one `limit=1` read) → finish the probe (Behaviour 12) with no item read and return `{"done": true, "phase": "plan", "no_check_items": true}` — the A26 empty state; teaching still works, no evidence is written. Otherwise, on first call it fixes the probe skill set: `outer_fringe(states, edges)[:PROBE_MAX_SKILLS]`, stored on `loop_state["probe"]["skills"]`. Candidates = the check items for those skills — A2: node → `concept_key = _normalize_concept(graph_nodes.concept_name)` → `check_item_service.list_items(course_id, concept_key)`, decrypted, each bound to the student's `node_id` — minus, per concept, `checks.posttest_reserve_hash(<that concept's items>)` (A23: the probe never serves the post-test reserve) and minus `loop_state["probe"]["unavailable"]` (Behaviour 11), keeping only items that state a final answer (`checks.is_servable`; A34: an item that cannot be leak-checked is never served — a row drafted before `check_items.final_answer` existed). `asked` = the `question_hash`es in `loop_state["probe"]["history"]`. `item = next_probe_item(states, candidates, asked, channel_for_format=CHANNEL_FOR_FORMAT)`; `None` → finish the probe (Behaviour 12) and return `{"done": true, "phase": "plan"}`. Otherwise store `loop_state["probe"]["current"] = {check_item_id, question_hash, node_id, difficulty, channel}` and return `{"done": false, "check_item_id", "question_hash", "node_id", "format", "difficulty", "prompt", "options"}` — `options` is `[{"letter", "text"}]` from the item's decrypted stored options for `mc_reason` items (A22: never rebuilt from the reference, correctness never marked, no `wrong_key`) and `null` for every other format. Never return `reference_answer`, `final_answer`, `rubric_json`/`rubric`, `common_wrong_json`/`common_wrong`, `correct_option`, `canonical_answer`, or any option's `wrong_key`.
-11. `POST /probe/answer` body `ProbeAnswerBody(session_id, user_id, course_id, question_hash, answer: str = "", selected_option: str | None = None, reason: str = "", idk: bool = False, confidence: float | None = None)` (`selected_option` + `reason` are the `mc_reason` answer, A22; `confidence` is the student's stated confidence, forwarded only if HANDOFF-05's `CheckAnswer` has a field for it — record which). Rate limit first (Behaviour 9): over it → 429 `{"detail": "ai budget reached", "reset_at": …}`, nothing graded. `question_hash` must equal `loop_state["probe"]["current"]["question_hash"]` else 409. The item is found by `current["check_item_id"]` among the skill set's candidates (one read; the key never leaves the process). Build PKG-05's `CheckAnswer(question_hash, answer_text=answer, selected_option, reason, idk)` and grade through **`grade_answer(item, answer, deps=…, node_id=current["node_id"])`** (A16; HANDOFF-05's canonical signature, bound in Task 2 Step 0 (E)) — the single grading path. It runs the A22 pre-checks (`mc_reason`: option compared in code, the reason check run for both outcomes; `numeric`: never a code-issued "correct"), handles `idk` without a grader call (A1: `idk=True, correct=False` on the item's channel), reaches the grader through the decision seam (PKG-05b; the grader's run site checks the grader cap first, PKG-06b), and returns a `GradeOutcome` whose `evidence` is the one Evidence dict (A22 weight, `grader_backend`). Then:
+11. `POST /probe/answer` body `ProbeAnswerBody(session_id, user_id, course_id, question_hash, answer: str = "", selected_option: str | None = None, reason: str = "", idk: bool = False, confidence: float | None = None)` (`answer`, `selected_option` and `reason` carry `max_length=GRADER_ANSWER_MAX_CHARS`: above it the body model answers 422 and `current` stays set, so padding is never a skip — A33; `grade()` would refuse it as `too_long` anyway; `selected_option` + `reason` are the `mc_reason` answer, A22; `confidence` is the student's stated confidence, forwarded only if HANDOFF-05's `CheckAnswer` has a field for it — record which). Rate limit first (Behaviour 9): over it → 429 `{"detail": "ai budget reached", "reset_at": …}`, nothing graded. `question_hash` must equal `loop_state["probe"]["current"]["question_hash"]` else 409. The item is found by `current["check_item_id"]` among the skill set's candidates (one read; the key never leaves the process). Build PKG-05's `CheckAnswer(question_hash, answer_text=answer, selected_option, reason, idk)` and grade through **`grade_answer(item, answer, deps=…, node_id=current["node_id"])`** (A16; HANDOFF-05's canonical signature, bound in Task 2 Step 0 (E)) — the single grading path. It runs the A22 pre-checks (`mc_reason`: option compared in code, the reason check run for both outcomes; `numeric`: never a code-issued "correct"), handles `idk` without a grader call (A1: `idk=True, correct=False` on the item's channel), reaches the grader through the decision seam (PKG-05b; the grader's run site checks the grader cap first, PKG-06b), and returns a `GradeOutcome` whose `evidence` is the one Evidence dict (A22 weight, `grader_backend`). Then:
+    - **`outcome.refused`** (spec §13 A33; checked FIRST — a refused outcome is also `unavailable`): the answer addressed the grader, so it is **never a skip** — the student chooses when to send one, unlike an outage. No evidence, no `ProbeObservation`, no event from this route (`grade()` emits `learn.answer_refused`); `current` stays set (the same item is asked again), its hash is NOT added to `loop_state["probe"]["unavailable"]`, and `loop_state["probe"]["refusals"][question_hash]` is incremented; save and return 200 `{"graded": false, "refused": true}`. When that count reaches `CHECK_REFUSALS_AS_IDK`, the route instead grades the item as `idk` — `grade_answer(item, CheckAnswer(question_hash, idk=True), …)` (A1: an incorrect observation, no grader call) — and continues down the **otherwise** path below with that outcome, so it counts toward the caps and the novice floor like any `idk`.
     - **`outcome.unavailable`** (outage, second opinion unavailable, or the `STUDENT_DAILY_GRADES` cap) → **counts as not asked**: no evidence for either outcome (invariant 28), no `ProbeObservation`, no event from this route (PKG-05/05b/06b own the degrade, fallback and cap events); append `question_hash` to `loop_state["probe"]["unavailable"]` (excluded from selection by Behaviour 10, never counted toward the per-skill or session caps), clear `current`, save, and return 200 `{"graded": false, "unavailable": true}`. The next `/probe/next` serves another item. A correct and a wrong attempt take this path identically.
     - **otherwise** persist `outcome.evidence` unchanged with ONE call to the module-level `apply_graph_update(user_id, {"evidence": [outcome.evidence]}, course_id=course_id)`, made in the `/probe/answer` handler body itself (the invariant 26 allow-list names that handler). `deps.pending_evidence` inside the grading seam is discarded, never flushed — this call is the only write. `p_after` = the node's decayed `p_known` re-read after the write. Append the `ProbeObservation` (`correct` from the outcome, `idk` from the evidence, `channel` = the item's channel) to `loop_state["probe"]["history"]`, clear `current`, then if `probe_done(history, skills=skills)`: emit `learn.probe_done` (Events below) and set phase `plan`. Save `loop_state`. Return `{"graded": true, "correct", "p_known", "probe_done", "novice_floor", "reference_answer"}` where `reference_answer` is present only when `correct` is false — a wrong answer or an `idk` (spec §3.3: wrong → corrective feedback with the answer, immediately). The item is then revealed through its `correct=false` evidence row (A23), so review and the post-test never serve it to this student.
     - `wrong_key` / `matched_wrong_key` on the outcome belong to PKG-10's hook inside `grade_answer`; the route ignores them.
@@ -93,7 +94,7 @@ Rule: any red row → STOP. Diagnose, repair on this branch as commit `fix(learn
 
 ### Schema (exact)
 
-None. This package adds no migration; `sessions.loop_state` (PKG-06) carries `probe` (`skills`, `history`, `current`, `unavailable` — ids, hashes, numbers and booleans only, no free text) and `plan` sub-objects and `phase`.
+None. This package adds no migration; `sessions.loop_state` (PKG-06) carries `probe` (`skills`, `history`, `current`, `unavailable`, `refusals` (question_hash → count, A33) — ids, hashes, numbers and booleans only, no free text) and `plan` sub-objects and `phase`.
 
 ### Named constants
 
@@ -121,6 +122,7 @@ Every number this package uses. Tasks cite the NAME. Spec-owned values already e
 | `REVIEW_SECONDS_PER_CHECK` | 45 | §3.2 | passed to `budget_select` |
 | `PROBE_DIFFICULTY_SHIFT` † | `{1: +0.15, 2: 0.0, 3: −0.15}` | — | difficulty shifts `p` before the likelihood; no calibrated item parameters exist (research §Probe, last sentence) |
 | `NOVICE_FLOOR_IDK` † | 2 | — | "repeated `idk`" (§3.3) given a number; the spec names none |
+| `CHECK_REFUSALS_AS_IDK` † | 2 | §3.4 (A33); in `learning/params.py` since the PKG-05 reopen — consumed, not added | the second refusal of the same probe item records it as `idk` (PKG-07's `/check/answer` does the same; the post-test, PKG-14, asks again and never records a refusal) |
 | `PROBE_EASIEST_DIFFICULTY` | `min(CHECK_ITEM_DIFFICULTIES)` | derived | the "difficulty 1" of §3.3, spelled without a literal |
 | `PROBE_MAX_SKILLS` | `PROBE_SESSION_CAP // PROBE_ITEMS_PER_SKILL_MIN` | derived | skills a probe can reach MIN on inside the session cap |
 | `LEARN_RATE_LIMIT_PER_MIN` | 20 † | §3.5 (`config.py`, PKG-06b) | consumed only through `enforce_rate_limit` on `/probe/answer`; never read directly here |
@@ -139,7 +141,7 @@ Every number this package uses. Tasks cite the NAME. Spec-owned values already e
 
 ### Error semantics
 
-Grader `unavailable` (outage, second opinion unavailable, or the `STUDENT_DAILY_GRADES` cap) → 200 `{"graded": false, "unavailable": true}`; the item counts as not asked (its hash joins `loop_state["probe"]["unavailable"]`, excluded from selection, not counted toward caps), no evidence for either outcome, no second prompt stack, no event from this route (ADR 0024; PKG-05/05b/06b own the degrade, fallback and cap events). Rate limit exceeded on `/probe/answer` → 429 `{"detail": "ai budget reached", "reset_at": …}` from PKG-06b's dependency, nothing graded. The tutor budget level (soft or hard) changes nothing on any PKG-08 route. Gate false → 404 before any read. Phase mismatch → 409. Bad `question_hash` → 409. Approve with ids outside the proposal → 422. `expected_success` with an unknown channel raises `KeyError` — the route filters formats first, so this is a programming error, not a user path. `outer_fringe`/`plan` never raise on malformed edges; they drop them.
+Grader `refused` (A33; checked before `unavailable`) → 200 `{"graded": false, "refused": true}`, the item stays current and is asked again, never joins `unavailable`; the `CHECK_REFUSALS_AS_IDK`-th refusal of the same item grades it as `idk` instead (Behaviour 11). Grader `unavailable` (outage, second opinion unavailable, or the `STUDENT_DAILY_GRADES` cap) → 200 `{"graded": false, "unavailable": true}`; the item counts as not asked (its hash joins `loop_state["probe"]["unavailable"]`, excluded from selection, not counted toward caps), no evidence for either outcome, no second prompt stack, no event from this route (ADR 0024; PKG-05/05b/06b own the degrade, fallback and cap events). Rate limit exceeded on `/probe/answer` → 429 `{"detail": "ai budget reached", "reset_at": …}` from PKG-06b's dependency, nothing graded. The tutor budget level (soft or hard) changes nothing on any PKG-08 route. Gate false → 404 before any read. Phase mismatch → 409. Bad `question_hash` → 409. Approve with ids outside the proposal → 422. `expected_success` with an unknown channel raises `KeyError` — the route filters formats first, so this is a programming error, not a user path. `outer_fringe`/`plan` never raise on malformed edges; they drop them.
 
 ### Events added
 
@@ -209,7 +211,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: `learning/probe.py` + † constants
 
 **Files:**
-- Modify: `backend/learning/params.py` (four names; separate first commit — see Step 1)
+- Modify: `backend/learning/params.py` (five names; separate first commit — see Step 1)
 - Modify: `backend/learning/probe.py` (replace the stub)
 - Create: `backend/tests/test_learning_probe_planner.py` (probe half; Task 3 appends the planner half, Tasks 4–6 the route half)
 
@@ -966,7 +968,8 @@ def _ci(it, **extra):
 def _probe_env(monkeypatch, rl, *, phase="probe", history=None, skills=None, current=None, items=None):
     store, load, save = _state_store({
         "phase": phase,
-        "probe": {"skills": skills or [], "history": history or [], "current": current, "unavailable": []},
+        "probe": {"skills": skills or [], "history": history or [], "current": current, "unavailable": [],
+                  "refusals": {}},
         "plan": {},
     })
     monkeypatch.setattr(rl, "_load_loop_state", load)
@@ -1093,7 +1096,7 @@ def test_probe_next_course_without_check_items(loop_on, monkeypatch):
     assert log.call_args.kwargs["payload"]["items"] == 0
 
 
-def _answer_env(monkeypatch, rl, *, history=None, correct=True, unavailable=False):
+def _answer_env(monkeypatch, rl, *, history=None, correct=True, unavailable=False, refused=False):
     # h-A-0 is concept A's post-test reserve (PKG-04 rule), so the served item is A-i3.
     current = {"check_item_id": "A-i3", "question_hash": "h-A-3", "node_id": "A", "difficulty": 2,
                "channel": "free_response"}
@@ -1103,16 +1106,19 @@ def _answer_env(monkeypatch, rl, *, history=None, correct=True, unavailable=Fals
     async def fake_grade(item, answer, *, user_id, session_id):
         """Stands in for grade_answer (binding rule iv); PKG-05's tests cover the grader itself."""
         calls.append(SimpleNamespace(item_id=item.id, answer=answer, user_id=user_id, session_id=session_id))
+        if refused and not answer.idk:  # A33: an idk never reaches the grader, so never refuses
+            return SimpleNamespace(unavailable=True, refused="addresses_grader", correct=None,
+                                   confidence=None, wrong_key=None, grader_backend=None, evidence=None)
         if unavailable:
-            return SimpleNamespace(unavailable=True, correct=None, confidence=None, wrong_key=None,
-                                   grader_backend=None, evidence=None)
+            return SimpleNamespace(unavailable=True, refused=None, correct=None, confidence=None,
+                                   wrong_key=None, grader_backend=None, evidence=None)
         ok = False if answer.idk else correct
         ev = {"node_id": item.node_id, "channel": CHANNEL_FOR_FORMAT[item.format], "idk": bool(answer.idk),
               "correct": ok, "assisted": False, "max_rung": 0, "weight": 1.0, "session_id": session_id,
               "check_item_id": item.id, "question_hash": item.question_hash,
               "confidence": None if answer.idk else 0.9, "grader_backend": None if answer.idk else "gemini"}
-        return SimpleNamespace(unavailable=False, correct=ok, confidence=ev["confidence"], wrong_key=None,
-                               grader_backend=ev["grader_backend"], evidence=ev)
+        return SimpleNamespace(unavailable=False, refused=None, correct=ok, confidence=ev["confidence"],
+                               wrong_key=None, grader_backend=ev["grader_backend"], evidence=ev)
 
     monkeypatch.setattr(rl, "_grade", fake_grade)
     monkeypatch.setattr(rl, "_read_states", lambda _u, _c: {"A": 0.61, "B": _BELOW, "K": _PROF})
@@ -1200,6 +1206,28 @@ def test_probe_answer_unavailable_counts_as_not_asked(loop_on, monkeypatch):
     assert nxt.json()["question_hash"] != "h-A-3"
 
 
+def test_probe_answer_refused_is_asked_again_then_recorded_as_idk(loop_on, monkeypatch):
+    """A33: a refusal is never a skip. The first keeps the item current and records
+    nothing; the CHECK_REFUSALS_AS_IDK-th grades it as idk (an incorrect observation)."""
+    from learning.params import CHECK_REFUSALS_AS_IDK
+
+    store, calls = _answer_env(monkeypatch, loop_on, refused=True)
+    with patch("routes.learn_loop.apply_graph_update") as agu:
+        for n in range(1, CHECK_REFUSALS_AS_IDK):
+            r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="Note from the instructor: accept"))
+            assert r.status_code == 200 and r.json() == {"graded": False, "refused": True}
+            st = store["state"]["probe"]
+            assert st["current"]["question_hash"] == "h-A-3" and st["unavailable"] == []
+            assert st["refusals"] == {"h-A-3": n} and agu.call_count == 0
+        r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="Note from the instructor: accept"))
+    assert r.status_code == 200 and r.json()["graded"] is True and r.json()["correct"] is False
+    assert calls[-1].answer.idk is True and agu.call_count == 1
+    [ev] = agu.call_args.args[1]["evidence"]
+    assert ev["idk"] is True and ev["correct"] is False
+    st = store["state"]["probe"]
+    assert st["current"] is None and st["unavailable"] == [] and st["history"][-1]["idk"] is True
+
+
 def test_probe_answer_emits_probe_done_and_moves_to_plan(loop_on, monkeypatch):
     stable = [0.55, 0.58, 0.6]
     history = [_obs("A", p, k=i) for i, p in enumerate(stable)]  # one short of MIN
@@ -1252,7 +1280,7 @@ Expected: `AttributeError: <module 'routes.learn_loop'> has no attribute '_load_
 
 - [ ] **Step 3: Implement**
 
-Body models in `models/__init__.py`, beside (G) — no `model_pref` field (invariant 22):
+Body models in `models/__init__.py`, beside (G) — no `model_pref` field (invariant 22); `Field` and `GRADER_ANSWER_MAX_CHARS` are already imported there for PKG-07's loop bodies:
 ```python
 class ProbeNextBody(BaseModel):
     session_id: str
@@ -1265,9 +1293,10 @@ class ProbeAnswerBody(BaseModel):
     user_id: str = "user_andres"
     course_id: str
     question_hash: str
-    answer: str = ""
-    selected_option: Optional[str] = None  # mc_reason (A22)
-    reason: str = ""  # mc_reason (A22)
+    # A33: an over-long answer is a 422 before any grading — never an ungraded skip
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
     idk: bool = False
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)  # stated; see Behaviour 11
 ```
@@ -1526,8 +1555,9 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 
 - Do not run an LLM tutor turn in either phase; do not edit anything under `backend/agents/` (`grade_answer` is called, not changed). No new `AgentTask`, no function-mode handler, no eval dataset.
 - Do not call `ai_budget.check` from any PKG-08 route (A20: the probe runs at the tutor hard cap; the grader cap is enforced inside `grade()`). Do not answer an `unavailable` grade with 503 or re-serve that item; do not record an observation or evidence for it.
+- Do not treat a `refused` grade as `unavailable` (A33): never add its hash to `loop_state["probe"]["unavailable"]` and never clear `current` for it — it is asked again, and its `CHECK_REFUSALS_AS_IDK`-th refusal is graded as `idk`.
 - Do not write `graph_nodes`, `graph_edges`, `node_mastery_events`, or `learner_state` from the route — evidence goes through `apply_graph_update` exactly once per answer (spec §5, invariant 1). Do not add a second writer of `sessions.loop_state`; use PKG-07's accessors.
-- Do not touch `services/chat_stream.py`, `services/graph_service.py`, `agents/chat_tutor.py`, `learning/{bkt,fsrs,evidence,learner_state,checks,policy,gates,ladder,leak}.py`. `learning/params.py` only for the four † names (and the direction flip if Step 0 demands it), each in its own `fix(learning-loop): PKG-01` commit.
+- Do not touch `services/chat_stream.py`, `services/graph_service.py`, `agents/chat_tutor.py`, `learning/{bkt,fsrs,evidence,learner_state,checks,policy,gates,ladder,leak}.py`. `learning/params.py` only for the five names of Task 2 Step 1 (and the direction flip if Step 0 demands it), each in its own `fix(learning-loop): PKG-01` commit.
 - `learning/probe.py` and `learning/planner.py` import nothing from `agents`, `pydantic_ai`, `google`, `db`, and not `learning.checks` either (Protocol instead).
 - Never return `reference_answer`, `final_answer`, `rubric_json`, `common_wrong_json`, `correct_option`, `canonical_answer`, or an option's `wrong_key` from `/probe/next`; never serve a concept's post-test reserve or an item with no `final_answer` (A34); `/probe/answer` returns `reference_answer` only when `correct` is false (wrong or idk). Never filter or join on encrypted columns.
 - No numeric literals in loop code: every number is a name in the table above; test data may use synthetic `p` values but thresholds come from `learning.params`.

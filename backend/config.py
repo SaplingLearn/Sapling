@@ -58,6 +58,9 @@ STUDENT_MONTHLY_BUDGET_USD = float(os.getenv("STUDENT_MONTHLY_BUDGET_USD", "2.00
 STUDENT_DAILY_TOKENS = int(os.getenv("STUDENT_DAILY_TOKENS", "400000"))
 STUDENT_DAILY_GRADES = int(os.getenv("STUDENT_DAILY_GRADES", "300"))
 LEARN_RATE_LIMIT_PER_MIN = int(os.getenv("LEARN_RATE_LIMIT_PER_MIN", "20"))
+# † Tutor calls per student per UTC day (owner decision A38, HANDOFF-06b): a COUNT cap that
+# holds when llm_usage cost reads wrong (#689) or EVENTS_LOGGING_ENABLED=false writes no rows.
+STUDENT_DAILY_TUTOR_CALLS = int(os.getenv("STUDENT_DAILY_TUTOR_CALLS", "200"))
 # Platform spend alert: alert-only, never blocks a request. Unset = no alert (the owner sets it).
 _platform_budget = os.getenv("PLATFORM_DAILY_BUDGET_USD", "").strip()
 PLATFORM_DAILY_BUDGET_USD: float | None = float(_platform_budget) if _platform_budget else None

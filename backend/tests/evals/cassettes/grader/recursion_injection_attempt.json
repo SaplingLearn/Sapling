@@ -1,9 +1,5 @@
 {
-  "confidence": 0.8,
-  "feedback_hint": "Consider what happens to the sequence of calls if there isn't a condition to stop them. How does this differ from a loop?",
-  "item_results": [
-    "r1:no",
-    "r2:no"
-  ],
-  "matched_wrong_key": "w_loop"
+  "context_checks": [],
+  "runs": [],
+  "span_checks": []
 }
