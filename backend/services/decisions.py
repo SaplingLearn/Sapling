@@ -185,7 +185,9 @@ class _State(BaseModel):
 
 
 class GradeState(_State):
-    """grade_rubric_items. `rubric` (id → text) and `wrong` (key → text) keep item order."""
+    """grade_rubric_items. `rubric` (id → text) and `wrong` (key → text) keep item order.
+    `final_answer` / `canonical_answer` (A34) never reach the grader's message: grade()
+    checks its hint against them (leak.detect_leak, spec §13 A38); None → no hint."""
 
     question: str
     reference: str
@@ -193,6 +195,8 @@ class GradeState(_State):
     wrong: dict[str, str]
     answer: str
     format: str
+    final_answer: str | None = None
+    canonical_answer: str | None = None
 
 
 class ReasonState(_State):
@@ -208,6 +212,8 @@ class ReasonState(_State):
     correct_option: str
     reason: str
     options: dict[str, str] = {}
+    final_answer: str | None = None  # the hint's leak check only (A38), as on GradeState
+    canonical_answer: str | None = None
 
 
 class WrongReasonState(_State):
@@ -271,7 +277,9 @@ class GraderItem:
     State. `id` is a log label only. rubric / common_wrong are learning.checks
     models (the grader reads r.id / r.text / w.key / w.text, HANDOFF-05).
     `options` holds an mc_reason item's option texts for grade()'s answer screen
-    (answer_guard.item_terms; never in the message)."""
+    (answer_guard.item_terms; never in the message). `final_answer`,
+    `canonical_answer` and `correct_option` feed only grade()'s hint leak check
+    (spec §13 A38; never in the message)."""
 
     id: str
     prompt: str
@@ -279,6 +287,9 @@ class GraderItem:
     rubric: list[RubricItem]
     common_wrong: list[WrongReason]
     options: tuple[str, ...] = ()
+    final_answer: str | None = None
+    canonical_answer: str | None = None
+    correct_option: str | None = None
 
 
 def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> GraderItem:
@@ -289,6 +300,9 @@ def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> 
         rubric=[RubricItem(id=k, text=v) for k, v in state.rubric.items()],
         common_wrong=[WrongReason(key=k, text=v) for k, v in state.wrong.items()],
         options=tuple(getattr(state, "options", {}).values()),
+        final_answer=state.final_answer,
+        canonical_answer=state.canonical_answer,
+        correct_option=getattr(state, "correct_option", None) or None,
     )
 
 

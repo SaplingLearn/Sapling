@@ -3333,6 +3333,10 @@ _PKG06_MODULES = ("policy", "gates", "leak", "ladder", "loop_state_store", "zpd_
 # PKG-06 name there (model_tier, a gates helper) are still offenders.
 _PKG06_SANCTIONED_IMPORTS = {
     "services/ai_budget.py": ("learning.policy", frozenset({"Band", "BudgetLevel", "Tier"})),
+    # Spec §13 A38 (the grader-hint owner decision): grade() runs every hint through
+    # leak.detect_leak before serving it. detect_leak alone: pure, no model, no DB; grade()
+    # itself runs only behind the learning-loop gate (grade_answer returns first when off).
+    "agents/grader.py": ("learning.leak", frozenset({"detect_leak"})),
 }
 
 
@@ -3472,6 +3476,25 @@ def _inertness_offenders(root) -> list[str]:
         if _pkg06_imports(text, package=package, skip=_sanctioned_import(name)):
             offenders.append(name)
     return offenders
+
+
+def test_inertness_scan_sanctions_only_the_grader_hint_leak_check(tmp_path):
+    """A38 (the grader-hint owner decision): agents/grader.py may import exactly
+    detect_leak from learning.leak; the bare module, any other PKG-06 name there, or
+    the same import in any other file is still flagged."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "grader.py").write_text("from learning.leak import detect_leak\n")
+    (tmp_path / "agents" / "other.py").write_text("from learning.leak import detect_leak\n")
+    assert _inertness_offenders(tmp_path) == ["agents/other.py"]
+    for extra in (
+        "from learning.leak import detect_leak, strip_leak\n",
+        "from learning import leak\n",
+        "import learning.leak\n",
+        "from learning.ladder import Rung\n",
+        "from learning.leak import detect_leak\nfrom learning import gates\n",
+    ):
+        (tmp_path / "agents" / "grader.py").write_text(extra)
+        assert _inertness_offenders(tmp_path) == ["agents/grader.py", "agents/other.py"], extra
 
 
 def test_inertness_scan_sanctions_only_the_budget_alias_import(tmp_path):

@@ -66,6 +66,7 @@ def _item(**over) -> CheckItem:
         stepwise=False,
         source_chunk_ids=[],
         question_hash="qh-1",
+        final_answer="the stack grows until overflow",  # A34, verbatim from REFERENCE
     )
     base.update(over)
     return CheckItem(**base)
@@ -84,6 +85,7 @@ def _mc_item(**over) -> CheckItem:
         format="mc_reason",
         options=options,
         correct_option="A",
+        final_answer="It stops the recursion",  # A37: the correct option's text
         common_wrong=[
             WrongReason(key="w_loop", text="confuses recursion with a loop"),
             WrongReason(key="w_speed", text="says the base case is only for speed"),
@@ -1177,6 +1179,92 @@ def test_a_short_reference_echoed_whole_is_dropped(monkeypatch):
             g.grade(_item(reference_answer="9.81"), format="free", student_answer="x", deps=_deps())
         )
     assert res.feedback_hint == ""
+
+
+_ON_REF = "A linear scan visits every element once, so its running time is O(n) overall."
+_SEVEN_REF = "Adding three apples to four apples gives 7 apples, since addition counts both."
+
+
+@pytest.mark.parametrize(
+    "reference,final_answer,hint",
+    [
+        (_ON_REF, "O(n)", "Is the running time O(n)?"),
+        (_ON_REF, "O(n)", "Compare it with O( n ) for a scan."),
+        (_SEVEN_REF, "7", "Could the total be 7?"),
+        (_SEVEN_REF, "7", "Count again: seven is 7."),
+    ],
+)
+def test_a_hint_stating_a_short_final_answer_is_dropped(reference, final_answer, hint):
+    """Spec §13 A38 (the grader-hint owner decision; HANDOFF-05 (b), invariant 27):
+    the LEAK_NGRAM reference check misses a short final answer, so every grader
+    hint also goes through leak.detect_leak(final_answer=…) at H0 and is dropped
+    when it leaks — through grade() and through grade_answer (the seam threads the
+    item's final_answer)."""
+    import agents.grader as g
+    import agents.tools.check as c
+
+    assert not g._echoes_reference(hint, reference)  # the 6-gram check alone misses it
+    item = _item(reference_answer=reference, final_answer=final_answer)
+    model, _ = _billed_grader([{**_good(), "feedback_hint": hint}])
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(item, format="free", student_answer="x", deps=_deps()))
+        out = asyncio.run(c.grade_answer(item, _answer(), deps=_deps(), node_id=NODE))
+    assert res.feedback_hint == "" and res.all_yes is True
+    assert out.feedback_hint == "" and out.correct is True
+
+
+def test_an_innocuous_hint_is_kept_past_the_final_answer_check():
+    import agents.grader as g
+    import agents.tools.check as c
+
+    hint = "Think about how many elements the scan visits."
+    item = _item(reference_answer=_ON_REF, final_answer="O(n)")
+    model, _ = _billed_grader([{**_good(), "feedback_hint": hint}])
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(item, format="free", student_answer="x", deps=_deps()))
+        out = asyncio.run(c.grade_answer(item, _answer(), deps=_deps(), node_id=NODE))
+    assert res.feedback_hint == hint and out.feedback_hint == hint
+
+
+@pytest.mark.parametrize(
+    "hint,kept",
+    [
+        ("Look again at option A.", False),  # the key letter in an option context
+        ("Why is (A) better than the others?", False),
+        ("Why did you rule out option C?", True),  # another letter is no leak
+        ("A base case is what ends the calls.", True),  # a bare capital never counts
+    ],
+)
+def test_an_mc_reason_hint_naming_the_correct_option_is_dropped(hint, kept):
+    """mc_reason: the check passes the item's correct_option, so a hint that names
+    the key letter in an option context is dropped (A38, detector "option")."""
+    import agents.grader as g
+    import agents.tools.check as c
+
+    item = _mc_item()
+    model, _ = _billed_grader([{**_good(), "feedback_hint": hint}])
+    answer = _answer(answer_text="", selected_option="A", reason="It stops the calls.")
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(item, format="mc_reason", student_answer="x", deps=_deps()))
+        out = asyncio.run(c.grade_answer(item, answer, deps=_deps(), node_id=NODE))
+    assert res.feedback_hint == (hint if kept else "")
+    assert out.feedback_hint == (hint if kept else "")
+
+
+@pytest.mark.parametrize("final_answer", [None, "", "  ?  "])
+def test_a_hint_is_dropped_when_the_item_has_no_final_answer(final_answer):
+    """Fail closed: without a final answer the leak detector cannot vouch for the
+    hint (detect_leak raises), so it is dropped; the grade itself stands."""
+    import agents.grader as g
+    import agents.tools.check as c
+
+    item = _item(final_answer=final_answer)
+    model, _ = _billed_grader([{**_good(), "feedback_hint": "Think about what stops the calls."}])
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(item, format="free", student_answer="x", deps=_deps()))
+        out = asyncio.run(c.grade_answer(item, _answer(), deps=_deps(), node_id=NODE))
+    assert res.feedback_hint == "" and res.all_yes is True and res.unavailable is False
+    assert out.feedback_hint == "" and out.correct is True
 
 
 def test_grade_answer_never_reaches_the_database(check, monkeypatch):

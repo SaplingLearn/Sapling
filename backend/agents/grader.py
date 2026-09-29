@@ -95,6 +95,7 @@ from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from learning import answer_guard
 from learning.answer_guard import Refusal
+from learning.leak import detect_leak  # the one sanctioned PKG-06 import here (A38)
 from learning.params import (
     FEEDBACK_HINT_MAX_SENTENCES,
     GRADER_ANSWER_MAX_CHARS,
@@ -603,6 +604,36 @@ def _echoes_reference(hint: str, reference: str) -> bool:
     return any(tuple(got[i : i + n]) in windows for i in range(len(got) - n + 1))
 
 
+# The rung a grader hint is checked at: H0, the strictest (learning.ladder.Rung.H0; an
+# int, since the PKG-06 inertness scan sanctions detect_leak alone here).
+_HINT_RUNG = 0
+
+
+def _hint_leaks(item, hint: str, *, format: str) -> bool:
+    """Spec §13 A38 (the grader-hint owner decision; HANDOFF-05 (b), invariant 27):
+    True when leak.detect_leak flags `hint` at H0 — the reference's LEAK_NGRAM
+    windows, the item's structured final_answer (and canonical_answer), and on an
+    mc_reason item the correct option letter in an option context. The 6-gram
+    check alone misses a short final answer such as "O(n)" or "7". Fail closed:
+    an item with no final_answer (or an mc_reason item with no correct_option)
+    cannot be vouched for, so its hint counts as leaking."""
+    correct_option = getattr(item, "correct_option", None) or None
+    if format == "mc_reason" and correct_option is None:
+        return True
+    try:
+        verdict = detect_leak(
+            item.reference_answer,
+            hint,
+            _HINT_RUNG,
+            final_answer=getattr(item, "final_answer", None),
+            canonical_answer=getattr(item, "canonical_answer", None),
+            correct_option=correct_option if format == "mc_reason" else None,
+        )
+    except ValueError:  # no final_answer (A34), or a correct_option that is not one letter
+        return True
+    return verdict.leaked
+
+
 def _refuse(
     item,
     *,
@@ -1026,6 +1057,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         hint = ""
     if _echoes_reference(hint, item.reference_answer):  # the prompt forbids it; code enforces it
         logger.warning("grader hint for item %s repeated the reference; dropped", item.id)
+        hint = ""
+    if hint and _hint_leaks(item, hint, format=format):  # A38: the final answer, the key letter
+        logger.warning("grader hint for item %s failed the leak check; dropped", item.id)
         hint = ""
     return GradeResult(
         item_results=results,

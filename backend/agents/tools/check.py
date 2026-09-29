@@ -142,6 +142,9 @@ def _maps(item) -> dict:
         reference=item.reference_answer,
         rubric={r.id: r.text for r in item.rubric},
         wrong={w.key: w.text for w in item.common_wrong},
+        # grade()'s hint leak check only (spec §13 A38); never in the message
+        final_answer=getattr(item, "final_answer", None),
+        canonical_answer=getattr(item, "canonical_answer", None),
     )
 
 
