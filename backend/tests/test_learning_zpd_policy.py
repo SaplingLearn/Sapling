@@ -375,6 +375,32 @@ def test_band_control_edges_are_the_spec_inequalities():
     )
 
 
+def test_band_control_needs_min_attempts_before_harder():
+    """Owner decision A38 06(m): one (or three) correct first attempts never
+    move difficulty up; HARDER needs BAND_CONTROL_HARDER_MIN_ATTEMPTS in the
+    window. EASIER is unchanged on a short window."""
+    from learning.policy import BandAction, band_control
+
+    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS == 4
+    for n in (1, 3):
+        assert band_control([True] * n, 0.5, True) is BandAction.HOLD, n
+        assert band_control([True] * n, params.BKT_PROFICIENT, True) is BandAction.HOLD, n
+    assert band_control([True] * 4, 0.5, True) is BandAction.HARDER
+    assert band_control([False], 0.5, True) is BandAction.EASIER_CHECK_PREREQS
+    assert band_control([True, False, False], 0.5, True) is BandAction.EASIER_CHECK_PREREQS
+    assert band_control([True], 0.5, True, wheelspin=True) is BandAction.WHEELSPIN
+
+
+def test_owner_decision_a38_params_are_pinned():
+    """Constants PKG-a38 lanes consume (added here to keep params.py edits in
+    one lane): the CAS retries (06(q)), the HARDER floor (06(m)) and lane D's
+    bounded redrafting (A38 low-severity 2)."""
+    assert params.LOOP_STATE_CAS_RETRIES == 3
+    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS == 4
+    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS <= params.BAND_WINDOW
+    assert params.CHECK_ITEM_REDRAFT_MAX_FAILURES == 3
+
+
 def test_unassisted_rate_uses_last_window_only():
     from learning.policy import unassisted_rate
 
@@ -820,7 +846,7 @@ IND, IND_N, DWELL = (
 def test_matches_non_attempt(text, expected):
     from learning.gates import NON_ATTEMPT_PATTERNS, matches_non_attempt
 
-    assert len(NON_ATTEMPT_PATTERNS) == 5
+    assert len(NON_ATTEMPT_PATTERNS) == 7  # the spec's five + "no idea", "dunno" (A38 06(b))
     assert matches_non_attempt(text) is expected
 
 
@@ -1079,8 +1105,9 @@ def test_a_non_attempt_may_carry_filler_and_names_its_phrases(text, phrases):
 
 _PLEAS = (
     ("I don't know. Where do I start?", ("i don't know",)),
-    ("idk, no idea", ("idk",)),
-    ("no idea, just tell me", ("just tell me",)),
+    # "no idea" / "dunno" are idk phrases since owner decision A38 06(b)
+    ("idk, no idea", ("idk", "no idea")),
+    ("no idea, just tell me", ("just tell me", "no idea")),
     ("give me the answer, I give up", ("give me the answer",)),
     ("What's the answer? I have no clue", ("what's the answer",)),
     ("Can you just tell me? I really don't get it", ("just tell me",)),
@@ -1088,11 +1115,11 @@ _PLEAS = (
     ("I don't get it, just tell me", ("just tell me",)),
     ("I give up. What's the answer?", ("what's the answer",)),
     ("this is too hard, give me the answer", ("give me the answer",)),
-    ("I have no idea what to do, idk", ("idk",)),
+    ("I have no idea what to do, idk", ("idk", "no idea")),
     ("I'm tired, just tell me", ("just tell me",)),
     ("no clue, just tell me the answer", ("just tell me",)),
     ("Just tell me. I've spent an hour on this", ("just tell me",)),
-    ("i dunno, idk", ("idk",)),
+    ("i dunno, idk", ("idk", "dunno")),
     ("idk, what do I do?", ("idk",)),
     ("I don't know, can you give me a hint?", ("i don't know",)),
     ("idk. where do I start?", ("idk",)),
@@ -1234,15 +1261,64 @@ def test_a_hedged_answer_is_graded_but_never_unlocks_hints(text):
 
 @pytest.mark.parametrize(
     "text",
-    ["no idea", "Where do I start?", "I really don't know", "dunno", "not sure", "I give up",
+    ["Where do I start?", "I really don't know", "not sure", "I give up",
      "this is too hard", "I'm lost", "I've been at this for hours"],
 )  # fmt: skip
 def test_a_plea_without_a_pattern_phrase_is_graded_but_no_attempt(text):
-    """NON_ATTEMPT_PATTERNS is exactly the spec's five, so a plea without one
-    routes to grading (Known gaps); a _PLEA plea still vetoes the attempt."""
+    """NON_ATTEMPT_PATTERNS is the spec's five plus "no idea" / "dunno"
+    (owner decision A38 06(b)), so any other plea without one routes to
+    grading (Known gaps); a _PLEA plea still vetoes the attempt."""
     from learning.gates import has_non_attempt_phrase, non_attempt_phrases
 
     assert non_attempt_phrases(text) == ()
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "text,phrases",
+    [
+        ("dunno", ("dunno",)),
+        ("no idea", ("no idea",)),
+        ("no idea lol", ("no idea",)),
+        ("No idea!", ("no idea",)),
+        ("i dunno man", ("dunno",)),
+        ("idk, no idea", ("idk", "no idea")),
+    ],
+)
+def test_no_idea_and_dunno_route_as_idk(text, phrases):
+    """Owner decision A38 06(b): "no idea" / "dunno" are idk phrases for
+    A16 routing (non_attempt_phrases), and still veto the attempt
+    (has_non_attempt_phrase, fail closed)."""
+    from learning.gates import (
+        IDK_PATTERNS,
+        has_non_attempt_phrase,
+        matches_non_attempt,
+        non_attempt_phrases,
+    )
+
+    assert non_attempt_phrases(text) == phrases
+    assert set(phrases) <= IDK_PATTERNS
+    assert matches_non_attempt(text) is True
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "dunno, 7",
+        "no idea, maybe x = 3",
+        "It diverges by the ratio test, no idea if that is right",
+        "no idea if the mitochondria is right",
+        "the mitochondria? dunno",
+    ],
+)
+def test_no_idea_or_dunno_beside_an_answer_is_graded(text):
+    """The mixed-answer rule is the idk phrases' (decision (B)): a digit, a
+    relation or a content word beside the phrase is an answer; it is graded
+    and still no genuine attempt."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == (), text
     assert has_non_attempt_phrase(text) is True
 
 
@@ -1437,6 +1513,8 @@ def test_non_attempt_patterns_are_exactly_the_spec_list():
         "idk",
         "i don't know",
         "what's the answer",
+        "no idea",  # owner decision A38 06(b)
+        "dunno",
     )
 
 
@@ -1759,6 +1837,101 @@ def test_an_mc_reason_items_correct_option_text_leaks():
         assert detect_leak(MC_REF, clean, Rung.H3, final_answer=MC_FINAL) == (False, "none")
 
 
+# Owner decision A38 06 gap: an mc_reason item's correct option LETTER leaks
+# when the caller passes correct_option — only in an option context.
+_LETTER_LEAKS = [
+    "The answer is C.",
+    "(C)",
+    "Look again at (C) - it is right.",
+    "C) is the one.",
+    "Is it option C?",
+    "Choice C is right.",
+    "Think about letter C.",
+    "The correct answer: C",
+    "Pick C.",
+    "I would go with C here.",
+    "ANSWER IS C",
+    "It's option (C).",
+]
+_LETTER_CLEAN = [
+    "option B fails because it has a base case.",
+    "Option D is tempting, but why?",
+    "(B) and (D) share a flaw.",
+    "Can you see why it might be C-like?",  # no option context
+    "Compare the calls: C stands for calls here.",  # a bare capital
+    "option c",  # the letter must be a capital in context
+    "ABC) is not a label.",
+    "optionC is one token.",
+]
+
+
+@pytest.mark.parametrize("rung", [0, 1, 2, 3])
+@pytest.mark.parametrize("hint", _LETTER_LEAKS)
+def test_the_correct_option_letter_leaks_in_an_option_context_below_h6(hint, rung):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "C"}
+    assert detect_leak(MC_REF, hint, Rung(rung), **kw) == (True, "option"), hint
+    # without correct_option the letter is not checked (the pinned residual)
+    assert detect_leak(MC_REF, hint, Rung(rung), final_answer=MC_FINAL) == (False, "none")
+    # at H6 the answer is the content
+    assert detect_leak(MC_REF, hint, Rung.H6, **kw) == (False, "none")
+
+
+@pytest.mark.parametrize("hint", _LETTER_CLEAN)
+def test_another_letter_or_a_bare_capital_is_not_an_option_leak(hint):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "C"}
+    assert detect_leak(MC_REF, hint, Rung.H3, **kw) == (False, "none"), hint
+    assert strip_leak(hint, MC_REF, **kw) == hint
+
+
+def test_the_article_a_is_never_an_option_leak_for_key_a():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "A"}
+    for hint in (
+        "A derivative is a rate of change.",
+        "A base case stops a recursion. Is there a base case?",
+        "Answer a smaller question first.",
+    ):
+        assert detect_leak(MC_REF, hint, Rung.H1, **kw) == (False, "none"), hint
+        assert strip_leak(hint, MC_REF, **kw) == hint
+    assert detect_leak(MC_REF, "The answer is A.", Rung.H1, **kw) == (True, "option")
+
+
+@pytest.mark.parametrize("hint", _LETTER_LEAKS)
+def test_strip_leak_withholds_the_option_letter_and_is_idempotent(hint):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "C"}
+    once = strip_leak(hint, MC_REF, **kw)
+    assert "[withheld]" in once, once
+    assert detect_leak(MC_REF, once, Rung.H0, **kw) == (False, "none"), once
+    assert strip_leak(once, MC_REF, **kw) == once
+    assert strip_leak("The answer is C.", MC_REF, **kw) == "The answer is [withheld]."
+    assert strip_leak("Look again at (C) now.", MC_REF, **kw) == "Look again at [withheld] now."
+
+
+def test_correct_option_must_be_one_letter():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    for bad in ("", "CD", "3", "option C"):
+        with pytest.raises(ValueError):
+            detect_leak(MC_REF, "hi", Rung.H1, final_answer=MC_FINAL, correct_option=bad)
+        with pytest.raises(ValueError):
+            strip_leak("hi", MC_REF, final_answer=MC_FINAL, correct_option=bad)
+    # a lowercase key is the same letter
+    lower = detect_leak(MC_REF, "Pick C.", Rung.H1, final_answer=MC_FINAL, correct_option="c")
+    assert lower == (True, "option")
+
+
 TB_REF = (
     "Recursion works because a function calls itself on smaller inputs until a base case stops it."
 )
@@ -1920,8 +2093,10 @@ FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
 @pytest.mark.parametrize(
     "reference,final,canonical,hint",
     [
-        # (a) an mc_reason item's correct option LETTER: the final answer is the
-        # option's text (A34), and the n-gram rule never matches one letter
+        # (a) an mc_reason item's correct option LETTER when the caller passes
+        # no correct_option: the final answer is the option's text (A34), and
+        # the n-gram rule never matches one letter (with correct_option the
+        # "option" detector flags these — owner decision A38, 06 gap)
         (MC_REF, MC_FINAL, None, "The answer is C."),
         (MC_REF, MC_FINAL, None, "Is it option C?"),
         (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
@@ -2248,6 +2423,8 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
     numbers += ["3x^2", "6x²", "6*x**2", "6", "x", "10^23", "m/s²", "−3", "14.0"]
     numbers += ["2.5e-3", "0.0025", "25", "10⁻³", "10^-4", "e", "10", "1000", "1e3"]
     numbers += ["10^(-3)", "10^{-3}", "(10^-3)", "{2}", "(x-3)^2", "$6x^{2}$", "[", "}"]
+    # option-letter contexts (owner decision A38, 06 gap)
+    numbers += ["(C)", "C)", "option", "answer is", "A", "C", "(A)", "pick", "Choice", "letter"]
     for reference, final, canonical in _PROPERTY_CASES:
         words = reference.split() + final.split() + numbers
         for _ in range(200):
@@ -2258,7 +2435,11 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
             text = ""
             for w in picked:
                 text += (w.upper() if rng.random() < 0.2 else w) + rng.choice(seps)
-            kw = {"final_answer": final, "canonical_answer": canonical}
+            kw = {
+                "final_answer": final,
+                "canonical_answer": canonical,
+                "correct_option": rng.choice([None, "A", "C"]),
+            }
             once = strip_leak(text, reference, **kw)
             verdict = detect_leak(reference, once, Rung.H0, **kw)
             assert verdict.leaked is False, (reference, text, once)
@@ -2284,6 +2465,7 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
     alphabet += list("\u00d7\u00b7\u2212\u2013\ufb01\uff11\u212a\u0663\n")
     alphabet += ["**", "1,250", "0.5", ".5", WITHHELD, "e", "10"]
     alphabet += ["{", "}", "[", "]", "10^(-3)", "10^{-3}", "( ", " )"]
+    alphabet += ["A", "C", "option ", "answer is ", "Pick ", ": ", '"']
     checked = 0
     for _ in range(5000):
         text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 40)))
@@ -2296,6 +2478,7 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
             "canonical_answer": rng.choice(
                 [None, "1", "0.5", "-3", "1250", "6.022e23", "0.0025", "2.5e-3", "1e3", "0.1"]
             ),
+            "correct_option": rng.choice([None, "A", "C"]),
         }
         once = strip_leak(text, reference, **kw)
         assert detect_leak(reference, once, Rung.H0, **kw).leaked is False, (text, once, kw)
@@ -2322,10 +2505,12 @@ def test_leak_check_runs_in_linear_time():
         ("( " * (big // 4) + ") " * (big // 4), "a"),
         ("(1" * (big // 2) + " )" * (big // 2), "1"),  # a run holding every opener
         ("( " * (big // 2) + "1)" * (big // 2), "1"),  # and every closer
+        ("answer " + " " * big + "is", "a"),  # option keywords and whitespace
+        ("option " * (big // 7) + "(C)", "a"),
     ):
         start = time.perf_counter()
-        detect_leak(text, text, Rung.H3, final_answer=final)
-        strip_leak(text, text, final_answer=final, canonical_answer="1")
+        detect_leak(text, text, Rung.H3, final_answer=final, correct_option="C")
+        strip_leak(text, text, final_answer=final, canonical_answer="1", correct_option="C")
         assert time.perf_counter() - start < 1.0, text[:20]
 
 
@@ -2538,10 +2723,10 @@ def test_load_loop_state_reads_by_session_id_and_round_trips(monkeypatch):
 
     state = LoopState(current="q" * 64, checks_since_rating=4)
     state.steps[state.current] = _step(fails=1, attempts=(1001.0,))
-    t = _sessions_table(select_rows=[{"loop_state": state.to_json()}])
+    t = _sessions_table(select_rows=[{"loop_state": state.to_json(), "loop_state_rev": 5}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t if name == "sessions" else None)
-    assert loop_state_store.load_loop_state("s1") == state
-    t.select.assert_called_once_with("loop_state", filters={"id": "eq.s1"}, limit=1)
+    assert loop_state_store.load_loop_state("s1") == (state, 5)
+    t.select.assert_called_once_with("loop_state,loop_state_rev", filters={"id": "eq.s1"}, limit=1)
 
 
 def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
@@ -2549,14 +2734,14 @@ def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
     from learning.policy import LoopState
 
     monkeypatch.setattr(loop_state_store, "table", lambda name: _sessions_table(select_rows=[]))
-    assert loop_state_store.load_loop_state("s1") == LoopState()
+    assert loop_state_store.load_loop_state("s1") == (LoopState(), 0)
     monkeypatch.setattr(
         loop_state_store,
         "table",
         lambda name: _sessions_table(select_rows=[{"loop_state": {"steps": 5}}]),
     )
     with caplog.at_level(logging.WARNING):
-        assert loop_state_store.load_loop_state("s1") == LoopState()
+        assert loop_state_store.load_loop_state("s1").state == LoopState()
     assert any("loop_state" in r.getMessage() for r in caplog.records)
     for garbage in (None, [], "text", 7):
         monkeypatch.setattr(
@@ -2564,7 +2749,7 @@ def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
             "table",
             lambda name, g=garbage: _sessions_table(select_rows=[{"loop_state": g}]),
         )
-        assert loop_state_store.load_loop_state("s1") == LoopState()
+        assert loop_state_store.load_loop_state("s1").state == LoopState()
 
 
 def test_a_malformed_pkg06_field_never_erases_other_packages_keys(monkeypatch, caplog):
@@ -2592,14 +2777,15 @@ def test_a_malformed_pkg06_field_never_erases_other_packages_keys(monkeypatch, c
     t = _sessions_table(select_rows=[{"loop_state": stored}], update_rows=[{"id": "s1"}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
     with caplog.at_level(logging.WARNING):
-        state = loop_state_store.load_loop_state("s1")
+        state, rev = loop_state_store.load_loop_state("s1")
+    assert rev == 0  # a stored row without the column (a pre-migration mock) reads as 0
     assert any("malformed" in r.getMessage() for r in caplog.records)
     assert state.current is None and state.checks_since_rating == 4
     assert list(state.steps) == ["q", "r" * 64] and int(state.steps["r" * 64].rung) == 3
     assert state.steps["r" * 64].extra == {"node_id": "node-1"}
     assert state.steps["q"].genuine_attempts == 0 and state.steps["q"].first_shown_at == 1.0
     assert state.steps["q"].extra == {"check_item_id": "ci-1"}
-    assert loop_state_store.save_loop_state("s1", state) is True
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=rev) == "saved"
     written = t.update.call_args.args[0]["loop_state"]
     assert written["revealed"] == ["b" * 64]
     assert (written["tutor_requests"], written["deep_requests"]) == (39, 6)
@@ -2620,21 +2806,26 @@ def test_load_loop_state_propagates_a_read_failure(monkeypatch):
         loop_state_store.load_loop_state("s1")
 
 
-def test_save_loop_state_updates_by_id_and_reports_missing_row(monkeypatch, caplog):
+def test_save_loop_state_updates_by_id_and_rev_and_reports_missing_row(monkeypatch, caplog):
     from learning import loop_state_store
+    from learning.loop_state_store import SaveOutcome
     from learning.policy import LoopState
 
     state = LoopState(checks_since_rating=1)
     t = _sessions_table(update_rows=[{"id": "s1"}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
-    assert loop_state_store.save_loop_state("s1", state) is True
-    t.update.assert_called_once_with({"loop_state": state.to_json()}, filters={"id": "eq.s1"})
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=3) is SaveOutcome.SAVED
+    t.update.assert_called_once_with(
+        {"loop_state": state.to_json(), "loop_state_rev": 4},
+        filters={"id": "eq.s1", "loop_state_rev": "eq.3"},
+    )
     t.upsert.assert_not_called()
 
-    lazy = _sessions_table(update_rows=[])
+    lazy = _sessions_table(update_rows=[], select_rows=[])
     monkeypatch.setattr(loop_state_store, "table", lambda name: lazy)
     with caplog.at_level(logging.WARNING):
-        assert loop_state_store.save_loop_state("s1", state) is False
+        outcome = loop_state_store.save_loop_state("s1", state, expected_rev=0)
+    assert outcome is SaveOutcome.MISSING
     assert any("not materialised" in r.getMessage() for r in caplog.records)
 
 
@@ -2647,13 +2838,13 @@ def test_save_loop_state_never_inserts_or_upserts_sessions(monkeypatch):
     from learning import loop_state_store
     from learning.policy import LoopState
 
-    assert list(inspect.signature(loop_state_store.save_loop_state).parameters) == [
-        "session_id",
-        "state",
-    ]
+    sig = inspect.signature(loop_state_store.save_loop_state)
+    assert list(sig.parameters) == ["session_id", "state", "expected_rev"]
+    assert sig.parameters["expected_rev"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["expected_rev"].default is inspect.Parameter.empty
     t = _sessions_table(update_rows=[])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
-    assert loop_state_store.save_loop_state("s1", LoopState()) is False
+    assert loop_state_store.save_loop_state("s1", LoopState(), expected_rev=0) == "missing"
     t.upsert.assert_not_called()
     t.insert.assert_not_called()
     src = inspect.getsource(loop_state_store)
@@ -2667,12 +2858,147 @@ def test_load_save_round_trip_keeps_later_packages_keys(monkeypatch):
     stored = {"v": 1, "steps": {}, "revealed": ["b" * 64], "active": "a" * 64}
     t = _sessions_table(select_rows=[{"loop_state": stored}], update_rows=[{"id": "s1"}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
-    state = loop_state_store.load_loop_state("s1")
+    state, rev = loop_state_store.load_loop_state("s1")
     state.checks_since_rating += 1
-    assert loop_state_store.save_loop_state("s1", state) is True
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=rev) == "saved"
     written = t.update.call_args.args[0]["loop_state"]
     assert written["revealed"] == ["b" * 64] and written["active"] == "a" * 64
     assert written["checks_since_rating"] == 1
+
+
+# ── loop_state compare-and-set (owner decision A38 06(q)) ────────────────────
+
+
+class _FakeSessions:
+    """An in-memory `sessions` table honouring the eq filters PostgREST would:
+    an update matches only rows whose every filtered column equals the value.
+    `before_update` runs first on each update (a concurrent writer)."""
+
+    def __init__(self, rows=None, before_update=None):
+        self.rows = {r["id"]: dict(r) for r in (rows or [])}
+        self.before_update = before_update
+        self.updates = 0
+
+    def _match(self, row, filters):
+        return all(str(row.get(col)) == val.removeprefix("eq.") for col, val in filters.items())
+
+    def select(self, columns, filters=None, limit=None):
+        hits = [r for r in self.rows.values() if self._match(r, filters or {})]
+        return [{c: r.get(c) for c in columns.split(",")} for r in hits][:limit]
+
+    def update(self, data, filters, **_):
+        self.updates += 1
+        if self.before_update:
+            self.before_update(self)
+        hits = [r for r in self.rows.values() if self._match(r, filters)]
+        for r in hits:
+            r.update(data)
+        return [dict(r) for r in hits]
+
+
+def _bump(counter_key="tutor_requests"):
+    """A concurrent writer: bumps a counter and the revision, as a real save."""
+
+    def writer(fake):
+        row = fake.rows["s1"]
+        doc = dict(row["loop_state"])
+        doc[counter_key] = doc.get(counter_key, 0) + 1
+        row["loop_state"], row["loop_state_rev"] = doc, row["loop_state_rev"] + 1
+
+    return writer
+
+
+def test_a_stale_rev_save_is_a_conflict_and_leaves_the_stored_doc(monkeypatch):
+    from learning import loop_state_store
+    from learning.loop_state_store import SaveOutcome
+    from learning.policy import LoopState
+
+    stored = {"v": 1, "steps": {}, "checks_since_rating": 2}
+    fake = _FakeSessions([{"id": "s1", "loop_state": stored, "loop_state_rev": 7}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    outcome = loop_state_store.save_loop_state(
+        "s1", LoopState(checks_since_rating=9), expected_rev=6
+    )
+    assert outcome is SaveOutcome.CONFLICT
+    assert fake.rows["s1"]["loop_state"] == stored and fake.rows["s1"]["loop_state_rev"] == 7
+    # the fresh revision saves and bumps it
+    state, rev = loop_state_store.load_loop_state("s1")
+    state.checks_since_rating = 9
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=rev) is SaveOutcome.SAVED
+    assert fake.rows["s1"]["loop_state_rev"] == 8
+    assert fake.rows["s1"]["loop_state"]["checks_since_rating"] == 9
+
+
+def test_a_missing_row_is_missing_not_conflict(monkeypatch):
+    from learning import loop_state_store
+    from learning.loop_state_store import SaveOutcome
+    from learning.policy import LoopState
+
+    fake = _FakeSessions([])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    outcome = loop_state_store.save_loop_state("s1", LoopState(), expected_rev=0)
+    assert outcome is SaveOutcome.MISSING
+    assert loop_state_store.update_loop_state("s1", lambda st: None) is None
+
+
+def test_update_loop_state_reapplies_the_change_after_a_conflict(monkeypatch):
+    """The caller's change is re-applied to the FRESH state: the concurrent
+    writer's change survives and so does ours (never a silent loss)."""
+    from learning import loop_state_store
+
+    stored = {"v": 1, "steps": {}, "checks_since_rating": 0, "tutor_requests": 0}
+    writers = iter([_bump(), None])
+
+    def once(fake):
+        hook = next(writers)
+        if hook:
+            hook(fake)
+
+    fake = _FakeSessions(
+        [{"id": "s1", "loop_state": stored, "loop_state_rev": 0}], before_update=once
+    )
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    calls = []
+
+    def mutate(state):
+        calls.append(state.checks_since_rating)
+        state.checks_since_rating += 1
+
+    result = loop_state_store.update_loop_state("s1", mutate)
+    assert calls == [0, 0]  # applied twice, each time to a freshly loaded state
+    assert fake.updates == 2
+    row = fake.rows["s1"]
+    assert row["loop_state_rev"] == 2
+    assert row["loop_state"]["checks_since_rating"] == 1
+    assert row["loop_state"]["tutor_requests"] == 1  # the other writer's change kept
+    assert result.rev == 2 and result.state.checks_since_rating == 1
+
+
+def test_update_loop_state_raises_after_the_retries_are_exhausted(monkeypatch):
+    from learning import loop_state_store, params
+    from learning.loop_state_store import LoopStateConflict
+
+    assert params.LOOP_STATE_CAS_RETRIES == 3
+    stored = {"v": 1, "steps": {}}
+    fake = _FakeSessions(
+        [{"id": "s1", "loop_state": stored, "loop_state_rev": 0}], before_update=_bump()
+    )
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    with pytest.raises(LoopStateConflict):
+        loop_state_store.update_loop_state("s1", lambda st: None)
+    assert fake.updates == 1 + params.LOOP_STATE_CAS_RETRIES
+    # every write the other writer made survives; none was overwritten
+    assert fake.rows["s1"]["loop_state"]["tutor_requests"] == fake.updates
+
+
+def test_update_loop_state_accepts_a_returned_state(monkeypatch):
+    from learning import loop_state_store
+    from learning.policy import LoopState
+
+    fake = _FakeSessions([{"id": "s1", "loop_state": {"v": 1, "steps": {}}, "loop_state_rev": 4}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    result = loop_state_store.update_loop_state("s1", lambda st: LoopState(checks_since_rating=3))
+    assert result.rev == 5 and fake.rows["s1"]["loop_state"]["checks_since_rating"] == 3
 
 
 # ── zpd.* events (spec §6) ────────────────────────────────────────────────────
