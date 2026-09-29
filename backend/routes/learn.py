@@ -16,7 +16,7 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
-from services.session_modes import NOT_REVIEW
+from services.session_modes import NOT_REVIEW, REVIEW_MODE
 from learning.gate import learning_loop_for_request
 from services import ai_budget, events_service
 from services.academics import offering_course_id, resolve_offering
@@ -1192,7 +1192,8 @@ def end_session(body: EndSessionBody, request: Request):
 
     session_rows = table("sessions").select(
         "user_id,started_at",
-        filters={"id": f"eq.{body.session_id}"},
+        # a daily review session is never ended here: no XP, streak or summary (A73)
+        filters={"id": f"eq.{body.session_id}", **NOT_REVIEW},
     )
     if not session_rows:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1340,7 +1341,7 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
         return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
     owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
+        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
     )
     if not owner_rows:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1366,10 +1367,13 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
             raise HTTPException(status_code=403, detail="Session user mismatch")
         PENDING_SESSIONS.pop(session_id, None)
         return {"deleted": True}
-    # Verify the session belongs to the authenticated user before deleting
+    # Verify the session belongs to the authenticated user before deleting. A daily
+    # review session is never deleted here: that would wipe today's review state (A73).
     owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
+        "user_id,mode", filters={"id": f"eq.{session_id}"}, limit=1
     )
+    if owner_rows and owner_rows[0].get("mode") == REVIEW_MODE:
+        raise HTTPException(status_code=404, detail="Session not found")
     if owner_rows and owner_rows[0].get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="Session user mismatch")
     table("messages").delete({"session_id": f"eq.{session_id}"})
@@ -1531,8 +1535,10 @@ def mode_switch(body: ModeSwitchBody, request: Request):
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     session_rows = table("sessions").select(
-        "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
+        "topic,mode", filters={"id": f"eq.{body.session_id}"}, limit=1
     )
+    if session_rows and session_rows[0].get("mode") == REVIEW_MODE:  # never a tutor session (A73)
+        raise HTTPException(status_code=404, detail="Session not found")
     topic = session_rows[0]["topic"] if session_rows else "this topic"
     
     mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)

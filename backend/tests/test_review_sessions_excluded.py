@@ -233,3 +233,119 @@ def test_a_phase_less_review_document_still_serves(monkeypatch):
         )
         payload = review.serve(item, card_row={"front": "Q", "back": "A"}, loop_state=doc)
         assert payload["kind"] == "flashcard"
+
+
+# ── Round 2: legacy id-keyed tutor routes refuse a review session ─────────────
+# /review/next returns the review session id, so a client holds it. Ending it would
+# award session XP and write summary_json; deleting it would wipe today's review
+# state (an unlimited daily budget); renaming or mode-switching would treat it as a
+# tutor session. Each route's id read excludes mode='review' → 404, nothing written.
+
+
+class _Recorder(_Spy):
+    """The review session's row on any read that does not exclude mode=review;
+    every write recorded."""
+
+    def __init__(self):
+        super().__init__()
+        self.writes: list[tuple[str, str]] = []
+
+    def __call__(self, name):
+        handle = super().__call__(name)
+        inner = handle.select.side_effect
+
+        def select(columns="*", filters=None, **kw):
+            inner(columns, filters, **kw)
+            if name == "sessions" and (filters or {}).get("mode") != "neq.review":
+                return [
+                    {
+                        "user_id": USER,
+                        "topic": "Daily review",
+                        "mode": "review",
+                        "started_at": "2026-09-29T00:00:00+00:00",
+                        "offering_id": None,
+                    }
+                ]
+            return []
+
+        handle.select.side_effect = select
+        for op in ("insert", "update", "upsert", "delete"):
+            getattr(handle, op).side_effect = lambda *a, _op=op, _n=name, **k: (
+                self.writes.append((_n, _op)) or []
+            )
+        return handle
+
+
+@pytest.fixture
+def legacy(monkeypatch):
+    from routes import learn
+
+    rec = _Recorder()
+    monkeypatch.setattr(learn, "table", rec)
+    monkeypatch.setattr(learn, "require_self", lambda *a, **k: None)
+    monkeypatch.setattr(learn, "learning_loop_for_request", lambda uid: False)
+    monkeypatch.setattr(
+        learn, "save_message", lambda *a, **k: rec.writes.append(("messages", "insert"))
+    )
+    monkeypatch.setattr(learn, "get_user_name", lambda uid: "Andres")
+    monkeypatch.setattr(learn, "_consume_pending", lambda *a, **k: None)
+    return learn, rec
+
+
+def _refused(call, rec, *, filtered=True):
+    """404 and no write. `filtered`: the id read excludes mode=review; otherwise
+    (delete, mode-switch — which keep their tolerance of a missing row) the read
+    selects `mode` and the route refuses a review row itself."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        call()
+    assert exc.value.status_code == 404, exc.value.detail
+    assert rec.writes == []
+    if filtered:
+        assert rec.filters and rec.filters[-1].get("mode") == "neq.review"
+
+
+def test_end_session_refuses_a_review_session(legacy):
+    from models import EndSessionBody
+
+    learn, rec = legacy
+    _refused(
+        lambda: learn.end_session(
+            EndSessionBody(session_id="sess-review", user_id=USER), MagicMock()
+        ),
+        rec,
+    )
+
+
+def test_delete_session_refuses_a_review_session(legacy):
+    learn, rec = legacy
+    _refused(
+        lambda: learn.delete_session("sess-review", MagicMock(), user_id=USER), rec, filtered=False
+    )
+
+
+def test_rename_session_refuses_a_review_session(legacy):
+    from models import RenameSessionBody
+
+    learn, rec = legacy
+    _refused(
+        lambda: learn.rename_session(
+            "sess-review", RenameSessionBody(user_id=USER, topic="x"), MagicMock()
+        ),
+        rec,
+    )
+
+
+def test_mode_switch_refuses_a_review_session(legacy):
+    from models import ModeSwitchBody
+
+    learn, rec = legacy
+    _refused(
+        lambda: learn.mode_switch(
+            ModeSwitchBody(session_id="sess-review", user_id=USER, new_mode="expository"),
+            MagicMock(),
+        ),
+        rec,
+        filtered=False,
+    )
