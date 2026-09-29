@@ -1363,8 +1363,8 @@ class _LoopTurn:
         text is model-written (item drafting), so while the active item's answer
         is unreleased it must not state it — leak.confront_text_states_answer,
         the strict check drafting also refuses with (F3, spec §13 A77: number
-        words anywhere; the one provenance is "the <value>" the active item's
-        prompt shows); a text that states it is withheld and its marker waits."""
+        words anywhere, no provenance — fix round 5); a text that states it is
+        withheld and its marker waits."""
         if self.phase == "check" or (self.phase == "feedback" and self.verdict == "correct"):
             return None
         marker = confront_of(self.state)
@@ -1384,7 +1384,7 @@ class _LoopTurn:
         # servable. Answer unreleased here, so the rung is below H6.
         answer = self._item_answer()
         answer.pop("reference")
-        leaked = confront_text_states_answer(text, prompt=self.item.prompt, **answer)
+        leaked = confront_text_states_answer(text, **answer)
         return None if leaked else line
 
     def _tier_phase(self) -> str:

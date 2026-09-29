@@ -1440,7 +1440,6 @@ def test_every_unreleased_eval_case_is_a_line_production_would_send():
         assert not confront_text_states_answer(
             meta["misconception"],
             final_answer=meta["final_answer"],
-            prompt=meta.get("item_prompt", ""),
         ), case.name
 
 

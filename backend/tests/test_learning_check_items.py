@@ -6014,14 +6014,26 @@ _STATED = [
     ("2", _P2, "Takes 2 as the limit."),
 ]
 
-#: Honest texts that refer, with "the", to a number the PROMPT itself shows
-#: (the provenance rule): stored, and servable.
+#: Texts that refer, with "the", to a number the PROMPT itself shows. Round 4
+#: stored them (a "the <prompt value>" provenance); round 5 (R5-1) removed that
+#: exemption — the same shape primes the answer ("Treats the 2 as the final
+#: value.") — so every one is refused and re-drafted: fail closed.
 _PROMPT_ANAPHORS = [
     ("2", _P2, "Cancels the 2 in the numerator with the x."),
     ("2", _P2, "Drops the 2 because it is a constant."),
     ("2", _P2, "Ignores the 2."),
     ("2", _P2, "Uses the 2 from the denominator twice."),
     ("2", _P2, "Adds the two limits instead of dividing."),
+    # the round-5 review's primers (lint5.py): stored in round 4
+    ("2", _P2, "Misses that only the 2 survives the limit."),
+    ("2", _P2, "Treats the 2 as the final value."),
+    ("2", _P2, "Thinks the limit tends to the 2 in the argument, not 1."),
+    ("2", _P2, "Doesn't see that the 2 comes out in front and is what remains."),
+    ("2", _P2, "Forgets the 2 is all that is left."),
+    ("2", _P2, "Pulls the 2 out, leaving the 2 as what the limit tends to."),
+    ("2", "What is the derivative of x^2 at x = 1?", "Forgets to bring down the 2."),
+    ("2", "What is the derivative of x^2 at x = 1?", "Forgets the 2 multiplies to give the slope."),
+    ("2", _P2, "Leaves the 2 as the answer."),
 ]
 
 #: Honest texts with no answer token at all: stored, and servable.
@@ -6040,6 +6052,8 @@ _NO_TOKEN = [
     ),
     ("False", "Is 1 prime?", "Believes 1 is prime because it divides only by itself."),
     ("4", "How many moles...?", "Divides by 2 instead of multiplying, halving the ratio."),
+    # lint5.py: names the OTHER boolean, never the answer
+    ("False", "Is 1 prime? (true/false)", "Treats the true in the prompt as its conclusion."),
 ]
 
 #: Honest by intent, but they name the answer's value where the prompt does not
@@ -6066,7 +6080,7 @@ _UNSERVABLE_HONEST = [
 def _serve_withholds(final_answer, prompt, text) -> bool:
     from learning.leak import confront_text_states_answer
 
-    return confront_text_states_answer(text, final_answer=final_answer, prompt=prompt)
+    return confront_text_states_answer(text, final_answer=final_answer)
 
 
 @pytest.mark.parametrize(
@@ -6083,7 +6097,13 @@ def test_a_stated_answer_is_refused_whatever_the_wording(final_answer, prompt, t
     assert _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
 
 
-@pytest.mark.parametrize("final_answer,prompt,text", _PROMPT_ANAPHORS + _NO_TOKEN)
+@pytest.mark.parametrize("final_answer,prompt,text", _PROMPT_ANAPHORS)
+def test_a_reason_naming_the_prompt_s_value_is_refused_too(final_answer, prompt, text):
+    """R5-1: no provenance exemption — the answer's value in any form is refused."""
+    assert _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
+
+
+@pytest.mark.parametrize("final_answer,prompt,text", _NO_TOKEN)
 def test_an_honest_reason_the_confrontation_can_serve_is_stored(final_answer, prompt, text):
     assert not _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
 
@@ -6091,13 +6111,6 @@ def test_an_honest_reason_the_confrontation_can_serve_is_stored(final_answer, pr
 @pytest.mark.parametrize("final_answer,prompt,text", _UNSERVABLE_HONEST)
 def test_a_reason_the_confrontation_could_never_serve_is_not_stored(final_answer, prompt, text):
     assert _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
-
-
-def test_the_anaphor_rule_needs_the_prompt_to_show_the_value():
-    """The "the 2" provenance holds only when the prompt itself shows a 2."""
-    text = "Ignores the 2."
-    assert not _states_answer(_wrong_reason_draft("2", text, prompt=_P2))
-    assert _states_answer(_wrong_reason_draft("2", text, prompt="Evaluate the limit of f."))
 
 
 @pytest.mark.parametrize(

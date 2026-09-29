@@ -1456,7 +1456,6 @@ def _wrong_text_answer_reasons(draft: CheckItemDraft) -> list[str]:
             final_answer=draft.final_answer,
             canonical_answer=draft.canonical_answer,
             option_text=correct if draft.format == _MC_REASON else None,
-            prompt=draft.prompt,
         )
     ]
 

@@ -677,20 +677,6 @@ def _quantifies_given(text: str, end: int, given_words: set[str]) -> bool:
     return bool(m and m.group(1).lower() in given_words)
 
 
-_THE_BEFORE = re.compile(r"(?i)(?<![A-Za-z])the\s+$")
-
-
-def _prompt_anaphor(text: str, start: int, end: int, prompt_shows: bool) -> bool:
-    """The hit text[start:end] is "the <token>" referring back to a value the
-    PROMPT itself shows ("Cancels the 2 in the numerator" for a prompt with
-    sin(2x)) — provenance, not a stated result — unless the determiner phrase
-    stands where an answer goes ("the limit is the 2 …")."""
-    if not prompt_shows:
-        return False
-    det = _THE_BEFORE.search(text[:start])
-    return det is not None and not _answer_position(text, det.start(), end)
-
-
 def confront_text_states_answer(
     text: str,
     *,
@@ -698,7 +684,6 @@ def confront_text_states_answer(
     canonical_answer: str | None = None,
     correct_option: str | None = None,
     option_text: str | None = None,
-    prompt: str = "",
 ) -> bool:
     """PKG-10 fix round 4 (spec §13 A77): whether an item-drafted wrong-reason
     text states the answer — the ONE decision behind both the drafting lint
@@ -707,23 +692,19 @@ def confront_text_states_answer(
     answer is unreleased), so what is stored is exactly what can be served.
 
     detect_leak's strict final-answer and option rules with no reference and no
-    served-mode provenance: the answer anywhere, number words, fractions and
-    other notations included, and the correct option's letter / text. One
-    provenance: a hit written "the <token>" whose value the item's PROMPT shows
-    ("Ignores the 2." for a prompt with sin(2x)) refers back to the prompt, not
-    to a result — unless the phrase is in answer position. The reference's
-    n-grams are not read: a wrong reason shares the concept's vocabulary with
-    the reference ("the derivative of the inner function") without stating the
-    answer, and the tutor reply the line primes is leak-checked on its own."""
+    provenance of any kind: the answer anywhere, number words, fractions and
+    other notations included, and the correct option's letter / text — fail
+    closed. Round 4's "the <value the prompt shows>" exemption was removed in
+    round 5 (R5-1): the same shape primes the answer ("Treats the 2 as the
+    final value."), so such a reason is re-drafted. The reference's n-grams are not read:
+    a wrong reason shares the concept's vocabulary with the reference ("the
+    derivative of the inner function") without stating the answer, and the
+    tutor reply the line primes is leak-checked on its own."""
     rules = _rules("", final_answer, canonical_answer, correct_option, True, option_text)
     toks = answer_tokens(text)
     if _option_hits(text, rules.option, strict=True) or _option_text_hits(toks, rules):
         return True
-    hits = _final_hits(text, toks, rules)
-    if not hits:
-        return False
-    prompt_shows = bool(prompt) and bool(_final_hits(prompt, answer_tokens(prompt), rules))
-    return any(not _prompt_anaphor(text, a, b, prompt_shows) for a, b in hits)
+    return bool(_final_hits(text, toks, rules))
 
 
 def _copied_runs(text: str, given: str) -> list[tuple[int, int]]:
