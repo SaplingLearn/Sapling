@@ -37,13 +37,21 @@ class _Db:
     services.academics.course_offering_ids) and `sessions`, filtered like PostgREST
     by user and offering. Any write is a test failure."""
 
-    def __init__(self, rows, offerings=(OFF_ENROLLED, OFF_CURRENT), offerings_fail=False):
+    def __init__(
+        self,
+        rows,
+        offerings=(OFF_ENROLLED, OFF_CURRENT),
+        offerings_fail=False,
+        offering_courses=None,
+    ):
         self.rows, self.offerings, self.offerings_fail, self.calls = (
             rows,
             list(offerings),
             offerings_fail,
             [],
         )
+        #: offering → abstract course (services.academics.offering_course_id)
+        self.offering_courses = offering_courses or {o: COURSE for o in self.offerings}
 
     def __call__(self, name):
         outer = self
@@ -57,19 +65,29 @@ class _Db:
                 return [{"id": o} for o in outer.offerings], len(outer.offerings)
 
             def select(self, cols, filters=None, order=None, limit=None):
-                assert name == "sessions", f"GET /sessions reads sessions, not {name}"
                 f = dict(filters or {})
                 outer.calls.append(
                     {"table": name, "cols": cols, "filters": f, "order": order, "limit": limit}
                 )
-                wanted = f["offering_id"].removeprefix("in.(").removesuffix(")").split(",")
+                if name == "course_offerings":  # offering_course_id
+                    course = outer.offering_courses.get(f["id"].removeprefix("eq."))
+                    return [{"course_id": course}] if course else []
+                assert name == "sessions", f"GET /sessions reads sessions, not {name}"
+                open_ = {"close_json": "is.null", "ended_at": "is.null", "mode": "neq.review"}
+                assert {k: f.get(k) for k in open_} == open_, f  # every read: open rows only
+                wanted = (
+                    f["offering_id"].removeprefix("in.(").removesuffix(")").split(",")
+                    if "offering_id" in f
+                    else None
+                )
                 return [
                     r
                     for r in outer.rows
                     if f["user_id"] == f"eq.{r.get('user_id', UID)}"
-                    and r.get("offering_id", OFF_CURRENT) in wanted
+                    and (wanted is None or r.get("offering_id", OFF_CURRENT) in wanted)
+                    and ("id" not in f or f["id"] == f"eq.{r['id']}")
                     and not (f.get("loop_state") == "neq.{}" and r.get("loop_state") == {})
-                ]
+                ][: limit or None]
 
             def __getattr__(self, attr):
                 raise AssertionError(f"GET /sessions must not call {name}.{attr}")
@@ -274,3 +292,86 @@ def test_never_rate_limited(gate_on):
     (route,) = [r for r in learn_loop.router.routes if r.path == "/sessions"]
     assert ai_budget.enforce_rate_limit not in {d.call for d in route.dependant.dependencies}
     assert route.methods == {"GET"}
+
+
+# ── ?resume=<id>: the deep-linked session, wherever it lives (PKG-13 fix round) ──
+# The Dashboard / Tree deep links (`/learn?resume=<id>`) name ONE session. The
+# picker lists one course's newest LOOP_OPEN_SESSIONS_LIMIT, so a deep link to an
+# open loop session in another course, or beyond the limit, was opened READ-ONLY
+# as if it were a legacy chat. `resume` answers the question with the row itself.
+
+
+def _get_resume(db, sid):
+    import services.academics as academics
+
+    with patch("routes.learn_loop.table", db), patch.object(academics, "table", db):
+        return client.get(f"{URL}&resume={sid}")
+
+
+def test_no_resume_param_keeps_the_response_shape(gate_on):
+    r = _get(_Db([_row("s1")]))
+    assert set(r.json()) == {"sessions"}
+
+
+def test_a_listed_resume_is_answered_from_the_list_with_no_second_read(gate_on):
+    db = _Db([_row("s2", started="2026-09-21T10:00:00Z"), _row("s1")])
+    body = _get_resume(db, "s1").json()
+    assert body["resume"] == {
+        "session_id": "s1",
+        "topic": "topic s1",
+        "started_at": "2026-09-20T10:00:00Z",
+        "phase": "probe",
+        "course_id": COURSE,
+    }
+    assert len(db.reads("sessions")) == 1
+
+
+def test_a_resume_in_another_course_names_that_course(gate_on):
+    other_off = "off-other"
+    db = _Db(
+        [_row("s1"), _row("s-other", offering=other_off)],
+        offering_courses={OFF_ENROLLED: COURSE, OFF_CURRENT: COURSE, other_off: "c2"},
+    )
+    body = _get_resume(db, "s-other").json()
+    assert [s["session_id"] for s in body["sessions"]] == ["s1"]  # the picker stays per course
+    assert body["resume"]["session_id"] == "s-other" and body["resume"]["course_id"] == "c2"
+    _, lookup = db.reads("sessions")
+    assert lookup["filters"] == {
+        "id": "eq.s-other",
+        "user_id": f"eq.{UID}",  # never another student's session
+        "close_json": "is.null",
+        "ended_at": "is.null",
+        "loop_state": "neq.{}",
+        "mode": "neq.review",
+    }
+    assert lookup["limit"] == 1 and "close_json" not in lookup["cols"]
+
+
+def test_a_resume_beyond_the_list_limit_is_found(gate_on):
+    rows = [
+        _row(f"s{i:02d}", started=f"2026-09-{i + 1:02d}T10:00:00Z")
+        for i in range(ll.LOOP_OPEN_SESSIONS_LIMIT + 2)
+    ]
+    rows.sort(key=lambda r: r["started_at"], reverse=True)
+    body = _get_resume(_Db(rows), "s00").json()
+    assert len(body["sessions"]) == ll.LOOP_OPEN_SESSIONS_LIMIT
+    assert "s00" not in [s["session_id"] for s in body["sessions"]]
+    assert body["resume"]["session_id"] == "s00" and body["resume"]["course_id"] == COURSE
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [],  # not the student's, closed, ended or a review session (filtered by the read)
+        [_row("s1", state={})],  # a legacy tutor chat: no loop state
+        [_row("s1", state={"phase": "close"})],  # its close is being stored
+    ],
+)
+def test_a_resume_that_is_not_an_open_loop_session_is_null(gate_on, rows):
+    body = _get_resume(_Db(rows), "s1").json()
+    assert body["resume"] is None
+
+
+def test_a_resume_whose_course_cannot_be_resolved_is_null(gate_on):
+    db = _Db([_row("s-x", offering="off-gone")])
+    assert _get_resume(db, "s-x").json()["resume"] is None

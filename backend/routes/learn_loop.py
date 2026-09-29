@@ -2196,49 +2196,85 @@ LOOP_OPEN_SESSIONS_LIMIT = 10  # † picker length; mirrors the legacy getSessio
 _OFFERINGS_UNKNOWN = "course offerings unavailable, retry"
 
 
+def _open_loop_filters(user_id: str) -> dict:
+    """An open loop session of this student: no close record, no end, loop state,
+    not a review session."""
+    return {
+        "user_id": f"eq.{user_id}",
+        "close_json": "is.null",  # never an equality on the ciphertext (invariant 9)
+        "ended_at": "is.null",
+        "loop_state": "neq.{}",
+        **NOT_REVIEW,
+    }
+
+
+def _open_session_entry(row: dict) -> dict | None:
+    """The listed shape of one open row, or None when it is not resumable."""
+    state = row.get("loop_state")
+    if not isinstance(state, dict) or not state:
+        return None
+    loop_phase = _loop_phase(state)
+    if loop_phase == "close":
+        return None
+    return {
+        "session_id": row["id"],
+        "topic": row.get("topic") or "",
+        "started_at": row.get("started_at"),
+        "phase": _phase_for(state) if loop_phase == "teach" else loop_phase,
+    }
+
+
+def _resume_entry(user_id: str, session_id: str) -> dict | None:
+    """`?resume=<id>` outside the list (another course, or past the limit): ONE
+    read of that row under the same open-loop filters, its course from the
+    offering. None when it is not this student's open loop session — the client
+    then shows it read-only (a legacy chat) — or its course cannot be told."""
+    rows = (
+        table("sessions").select(
+            "id,topic,started_at,loop_state,offering_id",
+            filters={"id": f"eq.{session_id}", **_open_loop_filters(user_id)},
+            limit=1,
+        )
+        or []
+    )
+    entry = _open_session_entry(rows[0]) if rows else None
+    course = offering_course_id(rows[0].get("offering_id") or "") if entry else None
+    return {**entry, "course_id": course} if entry and course else None
+
+
 @router.get("/sessions")
 def list_open_sessions(
-    request: Request, user_id: str = Query(...), course_id: str = Query(...)
+    request: Request,
+    user_id: str = Query(...),
+    course_id: str = Query(...),
+    resume: str | None = Query(None),
 ) -> dict:
+    """PKG-13 fix round: `resume` (the `/learn?resume=<id>` deep link) adds
+    `"resume": {…, course_id} | null` — the named session when it is the
+    student's open loop session in ANY course, even past the list limit."""
     _gate(user_id, request)  # require_self, then the spec §7 404
     offering_ids = course_offering_ids(course_id)
     if offering_ids is None:
         raise HTTPException(status_code=503, detail=_OFFERINGS_UNKNOWN)
-    if not offering_ids:
-        return {"sessions": []}
     rows = (
         table("sessions").select(
             "id,topic,started_at,loop_state",
             filters={
-                "user_id": f"eq.{user_id}",
+                **_open_loop_filters(user_id),
                 "offering_id": f"in.({','.join(offering_ids)})",
-                "close_json": "is.null",  # never an equality on the ciphertext (invariant 9)
-                "ended_at": "is.null",
-                "loop_state": "neq.{}",
-                **NOT_REVIEW,
             },
             order="started_at.desc",
             limit=LOOP_OPEN_SESSIONS_LIMIT,
         )
-        or []
-    )
-    sessions = []
-    for row in rows:
-        state = row.get("loop_state")
-        if not isinstance(state, dict) or not state:
-            continue
-        loop_phase = _loop_phase(state)
-        if loop_phase == "close":
-            continue
-        sessions.append(
-            {
-                "session_id": row["id"],
-                "topic": row.get("topic") or "",
-                "started_at": row.get("started_at"),
-                "phase": _phase_for(state) if loop_phase == "teach" else loop_phase,
-            }
-        )
-    return {"sessions": sessions}
+        if offering_ids
+        else []
+    ) or []
+    sessions = [e for e in map(_open_session_entry, rows) if e is not None]
+    if resume is None:
+        return {"sessions": sessions}
+    listed = next((s for s in sessions if s["session_id"] == resume), None)
+    found = {**listed, "course_id": course_id} if listed else _resume_entry(user_id, resume)
+    return {"sessions": sessions, "resume": found}
 
 
 @router.post("/chat", dependencies=_RATE_LIMITED)
