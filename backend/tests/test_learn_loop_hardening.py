@@ -1113,3 +1113,32 @@ def test_the_leak_guard_reads_the_served_render():
     out = {"key_idea": "A concept.", "body": "Reread it.", "question": "Is it LEAKY?"}
     assert _validate_loop_turn(ctx, out) == out and not guard.retried
     assert "LEAKY" not in seen[0]
+
+
+# ── PKG-07 reopen (PKG-09): the system prompt on every turn that has a history ──
+
+
+def test_a_turn_with_history_still_carries_the_loop_system_prompt(gate_on, seams):
+    """pydantic-ai adds an agent's system prompt only to a run with NO message
+    history, and every loop turn after the opener has one (the opener row) —
+    so the loop rules (M2's "never evaluate a guess", the envelope, the
+    injection guard) never reached the model on those turns. The route now
+    puts the prompt in front of the history itself."""
+    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT
+
+    seams.store["doc"] = _state(rung=1)
+    _real_context(seams, DERIV, DERIV_SOURCE)
+    history = [
+        ModelResponse(parts=[TextPart("Welcome back.")]),
+        ModelRequest(parts=[UserPromptPart("hello")]),
+        ModelResponse(parts=[TextPart("Key idea: think first.")]),
+    ]
+    brain = Obedient()
+    _brain(seams, brain)
+    with patch("routes.learn_loop._load_message_history", return_value=history):
+        r = _post_hint_request(CONFIRM_GUESS)
+    assert r.status_code == 200, r.text
+    seen = brain.seen[-1]
+    assert _system(seen) == _LOOP_SYSTEM_PROMPT, "exactly one copy, the loop prompt"
+    assert isinstance(seen[0], ModelRequest) and isinstance(seen[0].parts[0], SystemPromptPart)
+    assert "Yes." not in r.json()["reply"], "M2: the rule against confirming a guess applies"

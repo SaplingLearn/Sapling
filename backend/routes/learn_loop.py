@@ -59,6 +59,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     ToolReturnPart,
     UserPromptPart,
@@ -71,6 +72,7 @@ from agents import CONTINUATION_LIMITS, LOOP_LIMITS
 from agents.deps import SaplingDeps
 from agents.session_close import shape_close
 from agents.loop_tutor import (
+    _LOOP_SYSTEM_PROMPT,  # PKG-09 reopen: the prompt pydantic-ai drops once there is history
     ITEM_WITHHELD,
     LOOP_TIER_SLOTS,
     assemble_turn_message,
@@ -935,6 +937,23 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
     return out
 
 
+def _with_system_prompt(messages: list) -> list:
+    """PKG-07 reopen (PKG-09): pydantic-ai adds an agent's system prompt only to
+    a run with NO message history, and every loop turn after the opener has one
+    (the opener row), so without this the loop rules, the envelope and the
+    injection guard never reached the model after the first turn. The prompt
+    leads the history as its own request — the first block of the stable,
+    cacheable prefix (A19). A history that already leads with it is unchanged."""
+    if not messages:
+        return messages
+    first = messages[0]
+    if isinstance(first, ModelRequest) and any(
+        isinstance(p, SystemPromptPart) for p in first.parts
+    ):
+        return messages
+    return [ModelRequest(parts=[SystemPromptPart(content=_LOOP_SYSTEM_PROMPT)]), *messages]
+
+
 # ── The turn ───────────────────────────────────────────────────────────────
 
 
@@ -1089,8 +1108,10 @@ class _LoopTurn:
             session_id=self.session_id,
             course_id=self.course_id,
             user_message=self.message,
-            message_history=_guard_history(
-                history, nonce=nonce, withheld=self.item.prompt if withhold else None
+            message_history=_with_system_prompt(
+                _guard_history(
+                    history, nonce=nonce, withheld=self.item.prompt if withhold else None
+                )
             ),
             request_id=self.request_id,
             prefix=self.prefix,
