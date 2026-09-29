@@ -571,3 +571,564 @@ def test_rollup_degrades_to_empty(caplog):
         caplog.at_level("WARNING"),
     ):
         assert misconceptions.rollup("c1") == []
+
+
+# ── the grade_answer hook (post-hoc PKG-05) ─────────────────────────────────
+
+
+def _loop_deps(state=None, **over):
+    from agents.deps import SaplingDeps
+
+    kw = dict(
+        user_id="u1",
+        course_id="c1",
+        supabase=None,
+        request_id="r",
+        session_id="s1",
+        learning_loop=True,
+        loop_state=_fresh_loop_state() if state is None else state,
+    )
+    kw.update(over)
+    return SaplingDeps(**kw)
+
+
+def _prior_attempt(qh="h1", key="k1"):
+    return dict(
+        question_hash=qh,
+        node_id="n1",
+        correct=False,
+        wrong_key=key,
+        confidence=None,
+        difficulty=2,
+        idk=False,
+        isomorph_of=None,
+    )
+
+
+def _ev(correct, **kw):
+    from learning.evidence import Evidence
+
+    return Evidence(node_id="n1", channel="free_response", correct=correct, **kw)
+
+
+def _run(coro):
+    import asyncio
+
+    return asyncio.run(coro)
+
+
+def test_hook_records_on_misconception_and_sets_confront():
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+    from learning.misconceptions import attempts_of, confront_of
+
+    deps = _loop_deps()
+    attempts_of(deps.loop_state).append(_prior_attempt())
+    item = MagicMock(id="ci2", question_hash="h2", difficulty=2)
+    grade = GradeOutcome(correct=False, confidence=0.9, matched_wrong_key="k1", wrong_key="k1")
+    with patch.object(check_mod, "record", return_value={"id": "m1"}) as rec:
+        verdict = _run(
+            check_mod.apply_misconception_rule(
+                deps, item=item, grade=grade, evidence=_ev(False), answer_text="x is 2"
+            )
+        )
+    assert verdict == "misconception"
+    rec.assert_called_once_with("u1", "n1", "ci2", "k1", "x is 2")
+    assert attempts_of(deps.loop_state)[-1]["isomorph_of"] == "h1"
+    marker = {"node_id": "n1", "wrong_key": "k1", "check_item_id": "ci2"}
+    assert confront_of(deps.loop_state) == marker
+    # the change the route re-applies to its fresh CAS document
+    assert grade.diagnosis == {"attempt": attempts_of(deps.loop_state)[-1], "confront": marker}
+
+
+def test_hook_slip_records_nothing():
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+    from learning.misconceptions import attempts_of, confront_of
+
+    deps = _loop_deps()
+    attempts_of(deps.loop_state).append(_prior_attempt())
+    item = MagicMock(id="ci2", question_hash="h2", difficulty=2)
+    grade = GradeOutcome(correct=True, confidence=0.9)
+    with patch.object(check_mod, "record") as rec:
+        verdict = _run(
+            check_mod.apply_misconception_rule(
+                deps, item=item, grade=grade, evidence=_ev(True), answer_text="4"
+            )
+        )
+    assert verdict == "slip"
+    rec.assert_not_called()
+    assert confront_of(deps.loop_state) is None
+    assert grade.diagnosis["confront"] is None and grade.diagnosis["attempt"]["correct"] is True
+
+
+def test_hook_is_inert_without_loop_or_loop_state():
+    from agents.deps import SaplingDeps
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+
+    off = SaplingDeps(user_id="u1", course_id="c1", supabase=None, request_id="r")
+    no_state = SaplingDeps(
+        user_id="u1", course_id="c1", supabase=None, request_id="r", learning_loop=True
+    )
+    off_with_state = _loop_deps(learning_loop=False)
+    item = MagicMock(id="ci1", question_hash="h1", difficulty=1)
+    with patch.object(check_mod, "record") as rec:
+        for deps in (off, no_state, off_with_state):
+            grade = GradeOutcome(correct=False, confidence=0.9, wrong_key="k1")
+            verdict = _run(
+                check_mod.apply_misconception_rule(
+                    deps, item=item, grade=grade, evidence=_ev(False), answer_text="?"
+                )
+            )
+            assert verdict is None and grade.diagnosis is None
+    assert no_state.loop_state is None and "attempts" not in off_with_state.loop_state
+    rec.assert_not_called()
+
+
+def test_hook_uses_student_confidence_not_grader_confidence():
+    """Spec §3.3: the grader's confidence is diagnosis-only and never enters the
+    rule. A grader-confident wrong answer with no student confidence is `unknown`."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+    from learning.misconceptions import attempts_of
+
+    deps = _loop_deps()
+    grade = GradeOutcome(correct=False, confidence=0.99, matched_wrong_key="k1", wrong_key="k1")
+    with patch.object(check_mod, "record") as rec:
+        verdict = _run(
+            check_mod.apply_misconception_rule(
+                deps,
+                item=MagicMock(id="ci1", question_hash="h1", difficulty=2),
+                grade=grade,
+                evidence=_ev(False, confidence=0.99),
+                answer_text="x",
+            )
+        )
+    assert verdict == "unknown"
+    assert attempts_of(deps.loop_state)[-1]["confidence"] is None
+    rec.assert_not_called()
+
+
+def test_hook_keeps_the_attempt_log_free_of_student_text():
+    """spec §4: sessions.loop_state holds no free text — the answer goes to the
+    encrypted store only."""
+    import json
+
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+
+    deps = _loop_deps()
+    attempts = [_prior_attempt()]
+    deps.loop_state["attempts"] = attempts
+    grade = GradeOutcome(correct=False, confidence=0.9, wrong_key="k1")
+    with patch.object(check_mod, "record", return_value={}):
+        _run(
+            check_mod.apply_misconception_rule(
+                deps,
+                item=MagicMock(id="ci2", question_hash="h2", difficulty=2),
+                grade=grade,
+                evidence=_ev(False),
+                answer_text="MY SECRET ANSWER TEXT",
+            )
+        )
+    assert "MY SECRET ANSWER TEXT" not in json.dumps(deps.loop_state)
+    assert "MY SECRET ANSWER TEXT" not in json.dumps(grade.diagnosis)
+
+
+def test_hook_a_misconception_without_a_key_records_nothing():
+    """The stated-confidence path (unreachable until a confidence field exists)
+    stamps the verdict but records nothing: the store keys on wrong_key."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+
+    deps = _loop_deps()
+    with (
+        patch.object(check_mod, "record") as rec,
+        patch.object(check_mod, "slip_or_misconception", return_value="misconception"),
+    ):
+        grade = GradeOutcome(correct=False, confidence=0.9, wrong_key=None)
+        verdict = _run(
+            check_mod.apply_misconception_rule(
+                deps,
+                item=MagicMock(id="ci1", question_hash="h1", difficulty=2),
+                grade=grade,
+                evidence=_ev(False),
+                answer_text="x",
+            )
+        )
+    assert verdict == "misconception" and grade.diagnosis["confront"] is None
+    rec.assert_not_called()
+
+
+# ── the key comes only from the decision seam (A22/A24) ────────────────────
+
+
+def _wrong_item(keys=("k1",)):
+    from learning.checks import WrongReason
+
+    return MagicMock(
+        id="ci1",
+        prompt="What is d/dx x^2?",
+        question_hash="h1",
+        difficulty=2,
+        common_wrong=[WrongReason(key=k, text=f"text of {k}") for k in keys],
+    )
+
+
+def test_match_wrong_key_calls_the_seam_with_prior():
+    from unittest.mock import AsyncMock
+
+    from agents.tools import check as check_mod
+
+    prior = MagicMock(matched_wrong_key="k1")
+    seam = AsyncMock(return_value=MagicMock(value="k1"))
+    with patch.object(check_mod.decisions, "match_wrong_reason", seam):
+        got = _run(
+            check_mod.match_wrong_key(
+                _wrong_item(), prior=prior, answer_text="it is x", deps=_loop_deps()
+            )
+        )
+    assert got == "k1"
+    (state,), kwargs = seam.call_args
+    assert kwargs["prior"] is prior
+    assert state.question == "What is d/dx x^2?" and state.answer == "it is x"
+    assert state.wrong == {"k1": "text of k1"}
+
+
+@pytest.mark.parametrize("value", [None, "none", "", "zz_not_listed"])
+def test_match_wrong_key_rejects_unavailable_none_and_unlisted_keys(value):
+    """None = the seam reported the prior unavailable (PKG-05b); "none" = NO_MATCH."""
+    from unittest.mock import AsyncMock
+
+    from agents.tools import check as check_mod
+
+    seam = AsyncMock(return_value=None if value is None else MagicMock(value=value))
+    with patch.object(check_mod.decisions, "match_wrong_reason", seam):
+        got = _run(
+            check_mod.match_wrong_key(
+                _wrong_item(), prior=MagicMock(), answer_text="a", deps=_loop_deps()
+            )
+        )
+    assert got is None
+
+
+def test_match_wrong_key_rejects_a_listed_key_that_is_not_identifier_shaped():
+    """A legacy item may list a key outside wrong_key_form: it is never stored or rendered."""
+    from unittest.mock import AsyncMock
+
+    from agents.tools import check as check_mod
+
+    seam = AsyncMock(return_value=MagicMock(value="Mixed Key"))
+    with patch.object(check_mod.decisions, "match_wrong_reason", seam):
+        got = _run(
+            check_mod.match_wrong_key(
+                _wrong_item(keys=("Mixed Key",)),
+                prior=MagicMock(),
+                answer_text="a",
+                deps=_loop_deps(),
+            )
+        )
+    assert got is None
+
+
+def test_match_wrong_key_no_listed_keys_no_prior_no_call_and_seam_failure_is_none(caplog):
+    from unittest.mock import AsyncMock
+
+    from agents.tools import check as check_mod
+
+    seam = AsyncMock(side_effect=RuntimeError("seam down"))
+    with (
+        patch.object(check_mod.decisions, "match_wrong_reason", seam),
+        caplog.at_level("WARNING"),
+    ):
+        no_keys = check_mod.match_wrong_key(
+            _wrong_item(keys=()), prior=MagicMock(), answer_text="a", deps=_loop_deps()
+        )
+        assert _run(no_keys) is None
+        no_prior = check_mod.match_wrong_key(
+            _wrong_item(), prior=None, answer_text="a", deps=_loop_deps()
+        )
+        assert _run(no_prior) is None, "never a decision run of its own (A24, the grade cap)"
+        seam.assert_not_called()
+        failing = check_mod.match_wrong_key(
+            _wrong_item(), prior=MagicMock(), answer_text="a", deps=_loop_deps()
+        )
+        assert _run(failing) is None
+    assert any("match_wrong_reason" in r.getMessage() for r in caplog.records)
+
+
+# ── through the real grade_answer (the grader stubbed, the seam real) ───────
+
+
+@pytest.fixture
+def graded(monkeypatch):
+    """grade_answer with its one model seam stubbed (agents.grader.grade, as
+    tests/test_learning_check_tool.py's `check` fixture does); the decision
+    seam — match_wrong_reason with the grader's result as `prior` — runs for
+    real and makes no model call."""
+    import agents.grader
+    from tests.test_learning_check_tool import _result
+
+    state = {"result": _result(), "calls": 0}
+
+    async def _grade(item, *, format, student_answer, deps):
+        state["calls"] += 1
+        return state["result"]
+
+    def set_result(**over):
+        state["result"] = _result(**over)
+
+    monkeypatch.setattr(agents.grader, "grade", _grade)
+    state["set"] = set_result
+    return state
+
+
+def _free(qh, qid=None):
+    from tests.test_learning_check_tool import _item
+
+    return _item(id=qid or f"ci-{qh}", question_hash=qh, difficulty=2)
+
+
+def _mc(qh):
+    from tests.test_learning_check_tool import _mc_item
+
+    return _mc_item(id=f"ci-{qh}", question_hash=qh, difficulty=2)
+
+
+def test_grade_answer_two_isomorphs_same_matched_key_records_once(graded):
+    """Two wrong free answers on two isomorphs whose reasons the grader matched
+    to w_loop: the second is a misconception, recorded once; the Evidence
+    dicts carry verdict and wrong_key; the store gets the student's answer."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+    from learning.misconceptions import confront_of
+
+    deps = _loop_deps()
+    graded["set"](item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
+    with patch.object(check_mod, "record", return_value={"id": "m1"}) as rec:
+        first = _run(
+            grade_answer(
+                _free("h1"),
+                CheckAnswer(question_hash="h1", answer_text="x"),
+                deps=deps,
+                node_id="n1",
+            )
+        )
+        second = _run(
+            grade_answer(
+                _free("h2"),
+                CheckAnswer(question_hash="h2", answer_text="x again"),
+                deps=deps,
+                node_id="n1",
+            )
+        )
+    assert (first.verdict, second.verdict) == ("unknown", "misconception")
+    assert first.wrong_key == second.wrong_key == "w_loop"
+    ev = deps.pending_evidence
+    assert [e["verdict"] for e in ev] == ["unknown", "misconception"]
+    assert [e["wrong_key"] for e in ev] == ["w_loop", "w_loop"]
+    rec.assert_called_once_with("u1", "n1", "ci-h2", "w_loop", "x again")
+    assert confront_of(deps.loop_state)["wrong_key"] == "w_loop"
+
+
+def test_grade_answer_takes_the_key_from_the_seam_with_the_graders_result(graded):
+    """A22/A24: the key is decisions.match_wrong_reason's, called with the
+    grader's own GradeResult as `prior` (no model call)."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+    from services import decisions
+
+    graded["set"](
+        item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
+    )
+    seen = {}
+    real = decisions.match_wrong_reason
+
+    async def spy(state, *, deps, prior=None):
+        seen["prior"], seen["state"] = prior, state
+        return await real(state, deps=deps, prior=prior)
+
+    with (
+        patch.object(check_mod.decisions, "match_wrong_reason", spy),
+        patch.object(check_mod, "record", return_value={}),
+        patch.object(decisions, "_run_decision") as run,
+    ):
+        out = _run(
+            grade_answer(
+                _free("h1"),
+                CheckAnswer(question_hash="h1", answer_text="it loops"),
+                deps=_loop_deps(),
+                node_id="n1",
+            )
+        )
+    run.assert_not_called()
+    assert seen["prior"] is graded["result"] and seen["state"].answer == "it loops"
+    assert seen["state"].wrong == {"w_loop": "confuses recursion with a loop"}
+    assert out.wrong_key == "w_loop" and graded["calls"] == 1
+
+
+def test_option_prior_alone_never_records(graded):
+    """A22: an mc_reason wrong option keyed w_loop whose reason matched nothing
+    carries no key — twice, on two isomorphs, is still not a misconception."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+
+    deps = _loop_deps()
+    graded["set"](item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="")
+    with patch.object(check_mod, "record") as rec:
+        for qh in ("h1", "h2"):
+            out = _run(
+                grade_answer(
+                    _mc(qh),
+                    CheckAnswer(question_hash=qh, selected_option="C", reason="because"),
+                    deps=deps,
+                    node_id="n1",
+                )
+            )
+            assert out.wrong_key is None and out.verdict == "unknown"
+    rec.assert_not_called()
+
+
+def test_a_reason_matched_to_another_options_key_never_records(graded):
+    """The chosen option C is keyed w_loop; the reason matched w_speed: no key (A22)."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+
+    deps = _loop_deps()
+    graded["set"](
+        item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_speed"
+    )
+    with patch.object(check_mod, "record") as rec:
+        for qh in ("h1", "h2"):
+            out = _run(
+                grade_answer(
+                    _mc(qh),
+                    CheckAnswer(question_hash=qh, selected_option="C", reason="it is faster"),
+                    deps=deps,
+                    node_id="n1",
+                )
+            )
+            assert out.wrong_key is None
+    rec.assert_not_called()
+
+
+def test_a_matched_mc_reason_on_two_isomorphs_records_the_graders_answer_text(graded):
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+
+    deps = _loop_deps()
+    graded["set"](
+        item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
+    )
+    with patch.object(check_mod, "record", return_value={}) as rec:
+        outs = [
+            _run(
+                grade_answer(
+                    _mc(qh),
+                    CheckAnswer(question_hash=qh, selected_option="C", reason="it ends itself"),
+                    deps=deps,
+                    node_id="n1",
+                )
+            )
+            for qh in ("h1", "h2")
+        ]
+    assert [o.verdict for o in outs] == ["unknown", "misconception"]
+    rec.assert_called_once_with(
+        "u1", "n1", "ci-h2", "w_loop", "Selected option: C\nReason: it ends itself"
+    )
+
+
+def test_unavailable_or_refused_grade_logs_no_attempt_for_either_outcome(graded):
+    """Invariant 28: no grade → no attempt, no verdict, no record — for a
+    would-be-correct and a would-be-wrong answer alike (A33 refusals too)."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+    from learning.misconceptions import attempts_of
+
+    deps = _loop_deps()
+    with patch.object(check_mod, "record") as rec:
+        for over in ({"unavailable": True}, {"unavailable": True, "refused": "grader_directive"}):
+            for all_yes in (True, False):
+                graded["set"](all_yes=all_yes, matched_wrong_key="w_loop", **over)
+                out = _run(
+                    grade_answer(
+                        _free("h1"),
+                        CheckAnswer(question_hash="h1", answer_text="text"),
+                        deps=deps,
+                        node_id="n1",
+                    )
+                )
+                assert out.unavailable and out.verdict is None and out.diagnosis is None
+    assert attempts_of(deps.loop_state) == [] and deps.pending_evidence == []
+    rec.assert_not_called()
+
+
+def test_idk_is_an_attempt_with_no_key_and_no_grader_call(graded):
+    from agents.tools.check import CheckAnswer, grade_answer
+    from learning.misconceptions import attempts_of
+
+    deps = _loop_deps()
+    out = _run(
+        grade_answer(
+            _free("h1"), CheckAnswer(question_hash="h1", idk=True), deps=deps, node_id="n1"
+        )
+    )
+    assert graded["calls"] == 0 and out.verdict == "unknown" and out.wrong_key is None
+    [attempt] = attempts_of(deps.loop_state)
+    assert attempt["idk"] is True and attempt["correct"] is False
+    assert deps.pending_evidence[-1]["verdict"] == "unknown"
+
+
+def test_grade_answer_without_loop_state_is_unchanged(graded):
+    """The probe and the review pass no loop state: no rule, no attempt, no
+    record; the Evidence carries the matched key and no verdict."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+
+    graded["set"](item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
+    deps = _loop_deps()
+    deps.loop_state = None
+    with patch.object(check_mod, "record") as rec:
+        out = _run(
+            grade_answer(
+                _free("h1"),
+                CheckAnswer(question_hash="h1", answer_text="x"),
+                deps=deps,
+                node_id="n1",
+            )
+        )
+    assert out.verdict is None and out.diagnosis is None and out.wrong_key == "w_loop"
+    assert deps.pending_evidence[-1]["verdict"] is None
+    assert deps.pending_evidence[-1]["wrong_key"] == "w_loop"
+    rec.assert_not_called()
+
+
+def test_the_store_write_runs_off_the_event_loop(graded):
+    """record() is sync I/O: the hook hands it to a worker thread."""
+    import threading
+
+    from agents.tools import check as check_mod
+    from agents.tools.check import CheckAnswer, grade_answer
+
+    graded["set"](
+        item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
+    )
+    deps = _loop_deps(state={"attempts": [_prior_attempt(qh="h0", key="w_loop")]})
+    main = threading.get_ident()
+    seen = {}
+
+    def _record(*a):
+        seen["thread"] = threading.get_ident()
+        return {}
+
+    with patch.object(check_mod, "record", side_effect=_record):
+        _run(
+            grade_answer(
+                _free("h1"),
+                CheckAnswer(question_hash="h1", answer_text="x"),
+                deps=deps,
+                node_id="n1",
+            )
+        )
+    assert seen["thread"] != main

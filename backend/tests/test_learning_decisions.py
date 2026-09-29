@@ -889,8 +889,11 @@ def test_grade_answer_numeric_mismatch_is_stamped_deterministic(seam, monkeypatc
     )
     assert len(calls) == 1
     assert (out.correct, out.grader_backend) == (False, "deterministic")
-    assert [(et, kw["payload"]["backend"]) for et, kw in events] == [
-        ("decision.made", "deterministic")
+    # PKG-10: grade_answer takes the wrong key from match_wrong_reason, handed the
+    # grader's result as `prior` (no model call, latency 0) — one more decision.made.
+    assert [(et, kw["payload"]["decision"], kw["payload"]["backend"]) for et, kw in events] == [
+        ("decision.made", "match_wrong_reason", "gemini"),
+        ("decision.made", "numeric_gate", "deterministic"),
     ]
 
 
@@ -1205,7 +1208,12 @@ def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
         out = asyncio.run(c.grade_answer(_pkg05("_item"), answer, deps=deps, node_id=NODE))
     assert (out.unavailable, out.correct, out.grader_backend) == (False, True, "gemini")
     assert deps.pending_evidence[-1]["grader_backend"] == "gemini"
-    assert [(et, kw["payload"]["backend"]) for et, kw in events] == [("decision.made", "function")]
+    # PKG-10: the wrong-key match rides the grader's result (`prior`): no run of its own.
+    assert [(et, kw["payload"]["decision"], kw["payload"]["backend"]) for et, kw in events] == [
+        ("decision.made", "grade_rubric_items", "function"),
+        ("decision.made", "match_wrong_reason", "function"),
+    ]
+    assert events[1][1]["payload"]["latency_ms"] == 0
 
 
 # ── A38 fix round (m3): a cap hit inside _run_once is "budget" too ───────────
