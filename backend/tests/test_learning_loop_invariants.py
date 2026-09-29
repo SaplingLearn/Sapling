@@ -519,6 +519,11 @@ def test_inv_06_series_agent_tasks_have_function_handlers(monkeypatch):
     assert not missing_slots, (
         f"loop tutor tier slots missing from AgentTask: {missing_slots} (spec §3.5, A15)"
     )
+    # PKG-09 floor: the session-close slot is REQUIRED from this package on (spec §2,
+    # §13 A12) — the intersection below would otherwise skip it silently.
+    assert "session_close" in get_args(providers.AgentTask), (
+        "session_close missing from AgentTask (PKG-09, spec §13 A12)"
+    )
     present = [t for t in SERIES_AGENT_TASKS if t in get_args(providers.AgentTask)]
     assert present, "no series AgentTask literal exists yet — PKG-04 adds check_items"
     providers.clear_function_handlers()
@@ -651,6 +656,11 @@ def test_inv_12_one_prompt_stack_per_series_agent():
     loop_text = (BACKEND / "agents" / "loop_tutor.py").read_text()
     assert re.search(r"\bAgent\s*[\[(]", loop_text), (
         "agents/loop_tutor.py is still the PKG-00 stub (PKG-07 builds it)"
+    )
+    # PKG-09 floor: agents/session_close.py exists and defines its one agent.
+    close_path = BACKEND / "agents" / "session_close.py"
+    assert close_path.exists() and re.search(r"\bAgent\s*[\[(]", close_path.read_text()), (
+        "agents/session_close.py missing or without its Agent (PKG-09 builds it)"
     )
 
 
@@ -1190,6 +1200,13 @@ def test_inv_23_ai_budget_checked_before_every_run():
         n, b = _budget_scan(path.read_text(), names, str(path.relative_to(BACKEND)))
         found, bad = found + n, bad + b
     assert found >= 2, f"expected at least the grader and decision run sites, found {found}"
+    # PKG-09 (spec §8.23 extended, §13 A20/A25): the session-close run site is scanned
+    # too — its agent is a budgeted name and agents/session_close.py holds a run site.
+    assert "session_close_agent" in names, "session_close_agent is not a budgeted agent name"
+    close_src = (BACKEND / "agents" / "session_close.py").read_text()
+    assert _budget_scan(close_src, names, "agents/session_close.py")[0] >= 1, (
+        "no session_close_agent run site in agents/session_close.py: the scan would be vacuous"
+    )
     assert bad == [], f"agent run with no earlier ai_budget.check( in the same function: {bad}"
 
     # PKG-07 (spec §8.23 extended): every loop-agent run in routes/learn_loop.py — the
