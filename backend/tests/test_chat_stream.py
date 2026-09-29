@@ -1045,3 +1045,354 @@ def test_continuation_is_not_attempted_when_nothing_was_written():
         assert events[-1].type == "done"
 
     asyncio.run(run())
+
+
+# ── stream_structured_turn (PKG-07 unblock S1) ──────────────────────────────
+#
+# Driven through a REAL pydantic-ai run (agent.iter + node.stream) against a
+# FunctionModel that streams the turn's JSON in small chunks: the structured
+# path dispatches on pydantic-ai's graph nodes, not on event class names, so a
+# fake would only test itself.
+
+import json  # noqa: E402
+
+import pytest  # noqa: E402
+from pydantic_ai import Agent, PromptedOutput  # noqa: E402
+from pydantic_ai.models.function import DeltaToolCall, FunctionModel  # noqa: E402
+
+from learning.ladder import Rung  # noqa: E402
+from learning.turn_shape import LoopTurnOut, render_turn, turn_limits  # noqa: E402
+from services.chat_stream import stream_structured_turn  # noqa: E402
+
+_TURN = {
+    "key_idea": "A base case is where a recursive function stops.",
+    "body": "Without one, every call makes another call and the stack overflows.",
+    "question": "Which input should make factorial stop?",
+}
+_BAD_TURN = {  # two questions: the loop tutor's output validator retries it
+    "key_idea": "A base case is where a recursive function stops.",
+    "body": "Without one, every call makes another call and the stack overflows.",
+    "question": "Which input stops it? Or is there none?",
+}
+
+
+def _streamed_model(turns, *, fail_at=None, chunk=6, tool_first=None):
+    """One FunctionModel request per entry of `turns` (a dict → its JSON), each
+    streamed in `chunk`-char deltas. fail_at=(request, delta) raises there;
+    tool_first=<name> makes the FIRST request a call to that tool."""
+    calls = {"n": 0}
+
+    async def stream_fn(messages, info):
+        i = calls["n"]
+        calls["n"] += 1
+        if tool_first and i == 0:
+            yield {0: DeltaToolCall(name=tool_first, json_args="{}", tool_call_id="t1")}
+            return
+        body = turns[i - (1 if tool_first else 0)]
+        text = body if isinstance(body, str) else json.dumps(body)
+        for j in range(0, len(text), chunk):
+            if fail_at is not None and (i, j // chunk) == fail_at:
+                raise RuntimeError("model blew up")
+            yield text[j : j + chunk]
+
+    def fn(messages, info):  # the non-stream path is never used here
+        raise AssertionError("stream_structured_turn must stream")
+
+    return FunctionModel(fn, stream_function=stream_fn), calls
+
+
+def _loop_deps(limits=None):
+    deps = make_deps()
+    deps.loop_turn = limits or turn_limits("teach", Rung.H3, False)
+    return deps
+
+
+async def collect_structured(
+    agent, deps, model, on_complete, *, nonstream_fallback=None, on_usage=None, transform=None
+):
+    events = []
+    async for ev in stream_structured_turn(
+        agent=agent,
+        user_message="hi",
+        run_kwargs={"deps": deps, "model": model},
+        deps=deps,
+        on_complete=on_complete,
+        nonstream_fallback=nonstream_fallback,
+        on_usage=on_usage,
+        request_id="r1",
+        transform=transform,
+    ):
+        events.append(ev)
+    return events
+
+
+def _tokens(events):
+    return "".join(e.data["delta"] for e in events if e.type == "token")
+
+
+def _loop_agent():
+    from agents.loop_tutor import loop_tutor_agent
+
+    return loop_tutor_agent
+
+
+def test_structured_stream_emits_rendered_sentences_not_json():
+    model, _ = _streamed_model([_TURN])
+    persisted, usage = [], []
+    deps = _loop_deps()
+
+    def on_complete(reply, gu, mc):
+        persisted.append(reply)
+        return {"message_id": "m1"}
+
+    events = asyncio.run(
+        collect_structured(_loop_agent(), deps, model, on_complete, on_usage=usage.append)
+    )
+    types = [e.type for e in events]
+    assert types[0] == "status" and types[-1] == "done"
+    assert "error" not in types and "retract" not in types
+    tokens = [e.data["delta"] for e in events if e.type == "token"]
+    assert len(tokens) >= 3  # streamed sentence by sentence, not one blob at the end
+    assert _tokens(events) == render_turn(_TURN)
+    for t in tokens:  # never the raw JSON
+        assert "{" not in t and '"key_idea"' not in t and '"body"' not in t
+    # the first token is the completed key idea sentence, before the body finished
+    assert tokens[0].startswith("Key idea: A base case")
+    assert persisted == [render_turn(_TURN)]
+    done = events[-1]
+    assert done.data["reply"] == render_turn(_TURN) and done.data["message_id"] == "m1"
+    assert len(usage) == 1 and usage[0].output == _TURN  # on_usage gets run.result
+
+
+def test_structured_stream_retract_on_retry():
+    model, calls = _streamed_model([_BAD_TURN, _TURN])
+    persisted = []
+    events = asyncio.run(
+        collect_structured(
+            _loop_agent(), _loop_deps(), model, lambda r, g, m: persisted.append(r) or {}
+        )
+    )
+    types = [e.type for e in events]
+    assert calls["n"] == 2
+    assert types.count("retract") == 1
+    at = types.index("retract")
+    assert "token" in types[:at]  # the bad turn had streamed before it was superseded
+    assert events[at].data["reason"] == "retry"
+    after = "".join(e.data["delta"] for e in events[at + 1 :] if e.type == "token")
+    assert after == render_turn(_TURN)
+    assert types[-1] == "done" and events[-1].data["reply"] == render_turn(_TURN)
+    assert persisted == [render_turn(_TURN)]
+
+
+def test_structured_stream_fallback_before_first_token():
+    model, _ = _streamed_model([_TURN], fail_at=(0, 0))
+    persisted, fallback_calls, usage = [], [], []
+
+    async def fallback():
+        fallback_calls.append(1)
+        return {"reply": "Fallback reply.", "message_id": "fb"}
+
+    events = asyncio.run(
+        collect_structured(
+            _loop_agent(),
+            _loop_deps(),
+            model,
+            lambda r, g, m: persisted.append(r) or {},
+            nonstream_fallback=fallback,
+            on_usage=usage.append,
+        )
+    )
+    assert [e.type for e in events] == ["status", "token", "done"]
+    assert events[1].data["delta"] == "Fallback reply."
+    assert events[-1].data["message_id"] == "fb"
+    assert fallback_calls == [1] and persisted == [] and usage == []
+
+
+def test_structured_stream_fallback_before_first_token_without_fallback_errors():
+    model, _ = _streamed_model([_TURN], fail_at=(0, 0))
+    events = asyncio.run(
+        collect_structured(_loop_agent(), _loop_deps(), model, lambda r, g, m: {})
+    )
+    assert [e.type for e in events] == ["status", "error"]
+    assert events[-1].data["retryable"] is True
+
+
+def test_structured_stream_error_after_tokens():
+    text = json.dumps(_TURN)
+    late = (len(text) // 6) - 2  # well after the key idea sentence completed
+    model, _ = _streamed_model([_TURN], fail_at=(0, late))
+    persisted, fallback_calls = [], []
+
+    async def fallback():
+        fallback_calls.append(1)
+        return {"reply": "x"}
+
+    events = asyncio.run(
+        collect_structured(
+            _loop_agent(),
+            _loop_deps(),
+            model,
+            lambda r, g, m: persisted.append(r) or {},
+            nonstream_fallback=fallback,
+        )
+    )
+    types = [e.type for e in events]
+    assert "token" in types
+    assert types[-1] == "error" and "done" not in types
+    assert events[-1].message == "The tutor was interrupted. Please retry."
+    assert events[-1].data == {"request_id": "r1", "retryable": True}
+    assert fallback_calls == [] and persisted == []  # never re-run, never persisted
+
+
+def test_structured_stream_applies_transform_before_emit():
+    """The caller's transform (the loop route passes strip_leak) runs on the
+    CUMULATIVE text before anything is emitted: the raw span never reaches a
+    token, and done.reply is the transformed render. on_complete gets the RAW
+    render so the route's own leak accounting still sees what the model wrote."""
+    model, _ = _streamed_model([_TURN])
+    persisted = []
+
+    def transform(text):
+        return text.replace("stack overflows", "[withheld]")
+
+    events = asyncio.run(
+        collect_structured(
+            _loop_agent(),
+            _loop_deps(),
+            model,
+            lambda r, g, m: persisted.append(r) or {"reply": "route text"},
+            transform=transform,
+        )
+    )
+    assert all("stack overflows" not in e.data["delta"] for e in events if e.type == "token")
+    assert _tokens(events) == transform(render_turn(_TURN))
+    assert events[-1].type == "done"
+    assert events[-1].data["reply"] == transform(render_turn(_TURN))
+    assert persisted == [render_turn(_TURN)]
+
+
+def test_structured_stream_retracts_when_the_transform_rewrites_shown_text():
+    """A transform that changes text it already let through (a leak only
+    detectable once more text arrived) retracts and re-sends the whole text."""
+    model, _ = _streamed_model([_TURN])
+
+    def transform(text):  # rewrites the KEY IDEA only once the question exists
+        return text.replace("A base case", "[withheld]") if "factorial" in text else text
+
+    events = asyncio.run(
+        collect_structured(_loop_agent(), _loop_deps(), model, lambda r, g, m: {}, transform=transform)
+    )
+    types = [e.type for e in events]
+    assert "retract" in types
+    at = len(types) - 1 - types[::-1].index("retract")
+    assert events[at].data["reason"] == "transform"
+    after = "".join(e.data["delta"] for e in events[at + 1 :] if e.type == "token")
+    assert after == transform(render_turn(_TURN))
+    assert events[-1].data["reply"] == transform(render_turn(_TURN))
+
+
+def test_structured_stream_tool_round_emits_progress():
+    agent = Agent(output_type=PromptedOutput(LoopTurnOut), deps_type=SaplingDeps)
+
+    @agent.tool_plain
+    def search_course_materials() -> str:
+        return "Base cases stop recursion."
+
+    model, calls = _streamed_model([_TURN], tool_first="search_course_materials")
+    events = asyncio.run(collect_structured(agent, _loop_deps(), model, lambda r, g, m: {}))
+    types = [e.type for e in events]
+    assert calls["n"] == 2
+    assert "progress" in types and events[types.index("progress")].step == "search_course_materials"
+    assert types.index("progress") < types.index("token")
+    assert "retract" not in types  # the tool round streamed no text
+    assert _tokens(events) == render_turn(_TURN)
+
+
+def test_structured_stream_cancel_persists_nothing():
+    model, _ = _streamed_model([_TURN])
+    persisted = []
+
+    async def run():
+        gen = stream_structured_turn(
+            agent=_loop_agent(),
+            user_message="hi",
+            run_kwargs={"deps": _loop_deps(), "model": model},
+            deps=_loop_deps(),
+            on_complete=lambda r, g, m: persisted.append(r) or {},
+        )
+        async for ev in gen:
+            if ev.type == "token":
+                break
+        await gen.aclose()
+
+    asyncio.run(run())
+    assert persisted == []
+
+
+def test_structured_stream_consumer_cancel_stops_the_run():
+    """A disconnect cancels the consuming task: the cancellation propagates,
+    the producer task running the agent is cancelled with it, nothing persists."""
+    persisted, gate = [], {}
+
+    async def stream_fn(messages, info):
+        text = json.dumps(_TURN)
+        for j in range(0, len(text), 6):
+            if j > len(text) // 2:
+                gate["waiting"] = True
+                await asyncio.sleep(3600)  # the model stalls mid-turn
+            yield text[j : j + 6]
+
+    def fn(messages, info):
+        raise AssertionError
+
+    model = FunctionModel(fn, stream_function=stream_fn)
+
+    async def run():
+        deps = _loop_deps()
+
+        async def consume():
+            async for _ev in stream_structured_turn(
+                agent=_loop_agent(),
+                user_message="hi",
+                run_kwargs={"deps": deps, "model": model},
+                deps=deps,
+                on_complete=lambda r, g, m: persisted.append(r) or {},
+            ):
+                pass
+
+        task = asyncio.create_task(consume())
+        while not gate.get("waiting"):
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        assert all(t.done() for t in others)
+
+    asyncio.run(run())
+    assert persisted == []
+
+
+def test_stream_agent_turn_is_untouched_by_the_structured_path():
+    """stream_agent_turn keeps its run_stream_events contract byte-identical."""
+    import inspect
+
+    from services import chat_stream
+
+    src = inspect.getsource(chat_stream.stream_agent_turn)
+    assert "run_stream_events" in src and "transform" not in src and "retract" not in src
+
+
+@pytest.mark.parametrize("bad", ['{"key_idea": "x"', "not json at all"])
+def test_structured_stream_invalid_output_after_retries_is_a_terminal_error(bad):
+    """Output retries exhausted: text had streamed from the first bad attempt
+    (or not) — either way no fallback re-run after tokens, never a persist."""
+    model, _ = _streamed_model([bad, bad, bad])
+    persisted = []
+    events = asyncio.run(
+        collect_structured(
+            _loop_agent(), _loop_deps(), model, lambda r, g, m: persisted.append(r) or {}
+        )
+    )
+    assert events[-1].type == "error" and persisted == []
