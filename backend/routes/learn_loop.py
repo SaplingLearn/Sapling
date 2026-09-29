@@ -70,7 +70,8 @@ from sse_starlette.sse import EventSourceResponse
 import config
 from agents import CONTINUATION_LIMITS, LOOP_LIMITS
 from agents.deps import SaplingDeps
-from agents.session_close import shape_close
+from agents._run import run_agent_sync
+from agents.session_close import run_session_close, shape_close
 from agents.loop_tutor import (
     _LOOP_SYSTEM_PROMPT,  # PKG-09 reopen: the prompt pydantic-ai drops once there is history
     ITEM_WITHHELD,
@@ -111,11 +112,13 @@ from learning.params import (
     BKT_PROFICIENT,
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
+    CLOSE_PHASES,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     LOOP_CHECKS_PER_CONCEPT,
     LOOP_GRADING_CLAIM_STALE_S,
-    LOOP_HISTORY_MAX_MESSAGES,
+    LEARNER_BRIEF_TOP_STATES,
+    LOOP_HISTORY_TRIM_BLOCK,
     LOOP_SESSION_MAX_DEEP_REQUESTS,
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     LOOP_SOURCE_CHUNKS_MAX,
@@ -127,7 +130,12 @@ from learning.params import (
     REVIEW_SECONDS_PER_CHECK,
 )
 from learning.policy import LearnerView, LoopState, StepState
-from learning.session_close import CloseRecord, fallback_close
+from learning.session_close import (
+    CloseRecord,
+    build_close,
+    fallback_close,
+    store_close,
+)
 from learning.turn_shape import (
     FIELD_JOIN,
     clamp_model_ceiling,
@@ -138,6 +146,7 @@ from learning.turn_shape import (
 from models import (
     ActionBody,
     ChatBody,
+    CloseBody,
     EndSessionBody,
     LoopAttemptBody,
     LoopCheckAnswerBody,
@@ -164,7 +173,8 @@ from services import ai_budget, events_service
 from services.academics import offering_course_id, resolve_offering
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
-from services.auth_guard import require_self
+from services.auth_guard import get_session_user_id, require_self
+from services.encryption import decrypt_if_present, decrypt_json_column
 from services.chat_stream import stream_structured_turn
 from services.check_item_service import (
     course_has_items,
@@ -416,10 +426,88 @@ def _turn_phase(kind: str, state_phase: str) -> str:
     return state_phase
 
 
-def _load_loop_history(session_id: str) -> list:
-    """The bounded loop history (spec §3.4 LOOP_HISTORY_MAX_MESSAGES; PKG-09
-    prepends the brief and block-trims here, A19)."""
-    return _load_message_history(session_id)[-LOOP_HISTORY_MAX_MESSAGES:]
+@dataclass(repr=False)
+class _BriefRequest(ModelRequest):
+    """The learner brief as the loop history's synthetic first message (spec §13
+    A19). A type, not a text marker: a student row can never pose as the brief.
+    It is server-assembled with its own untrusted envelope (tags neutralised at
+    build), so `_guard_history` never re-wraps it as the student's words — whose
+    per-call nonce would change the stable prefix every turn."""
+
+
+def _brief_message(brief: str) -> _BriefRequest:
+    return _BriefRequest(parts=[UserPromptPart(content=brief)])
+
+
+def _history_window(n: int) -> int:
+    """How many of the last `n` history messages a loop turn keeps (spec §13 A19):
+    all of them below LOOP_HISTORY_TRIM_BLOCK, else the block plus the remainder
+    (10–19), so the window start moves only in whole blocks and consecutive
+    turns share their prefix."""
+    if n < LOOP_HISTORY_TRIM_BLOCK:
+        return n
+    return LOOP_HISTORY_TRIM_BLOCK + n % LOOP_HISTORY_TRIM_BLOCK
+
+
+def _brief_node_ids(loop_state: dict, user_id: str, course_id: str | None) -> list[str]:
+    """The concepts a brief built on a loop turn covers: the approved plan
+    (PKG-08, A27) when there is one, else the course's weakest nodes. Runs only
+    when a brief is being built — once per session."""
+    plan = loop_state.get("plan") if isinstance(loop_state.get("plan"), dict) else {}
+    approved = [n for n in plan.get("approved") or [] if isinstance(n, str) and n]
+    if approved:
+        return approved
+    if not course_id:
+        return []
+    rows = table("graph_nodes").select(
+        "id",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        order="mastery_score.asc",
+        limit=LEARNER_BRIEF_TOP_STATES,
+    )
+    return [r["id"] for r in rows or [] if r.get("id")]
+
+
+def _load_loop_history(
+    session_id: str,
+    *,
+    user_id: str | None = None,
+    course_id: str | None = None,
+    loop_state: dict | None = None,
+) -> list:
+    """The loop history (spec §13 A19): the session's learner brief as a
+    synthetic first message, then a block-trimmed window of the legacy history
+    (`_history_window`; ≤ LOOP_HISTORY_MAX_MESSAGES in all). The brief is read
+    from `sessions.loop_brief` — never rebuilt once stored; when it is not
+    built yet and `user_id` is given (a loop turn), it is built and stored here
+    (a failure logs and the turn runs without it; the next turn retries). No
+    row yet (a lazy session), or `user_id=None`, reads only. Leading assistant
+    messages are kept: dropping them would move the window every turn."""
+    rows = table("sessions").select(
+        "id,loop_brief", filters={"id": f"eq.{session_id}"}, limit=1
+    )
+    brief = ""
+    if rows:
+        stored = rows[0].get("loop_brief")
+        if stored is not None:
+            brief = decrypt_if_present(stored) or ""
+        elif user_id:
+            try:
+                brief = store_brief(
+                    session_id,
+                    user_id,
+                    course_id or None,
+                    _brief_node_ids(loop_state or {}, user_id, course_id),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "learner brief not built for this turn (%s); the next turn retries",
+                    type(exc).__name__,
+                )
+                brief = ""
+    msgs = _load_message_history(session_id)
+    window = msgs[len(msgs) - _history_window(len(msgs)) :]
+    return ([_brief_message(brief)] if brief else []) + window
 
 
 # ── Learner state, band, ceiling ───────────────────────────────────────────
@@ -913,9 +1001,16 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
     """The history as the model may see it (review round 3, C1): every user row
     is the student's own words, so it rides the same nonce envelope as this
     turn's; and below H2 (`withheld` = the active item's prompt) any row that
-    restates the item — its pose — is replaced by ITEM_WITHHELD."""
+    restates the item — its pose — is replaced by ITEM_WITHHELD. The learner
+    brief (`_BriefRequest`, A19) is not the student's: it passes as built, and
+    is dropped for the turn when it restates the withheld item."""
     out: list = []
     for m in messages:
+        if isinstance(m, _BriefRequest):
+            # A19: served as built — unless it restates the withheld item (C1(b))
+            if not (withheld and any(withheld in str(p.content) for p in m.parts)):
+                out.append(m)
+            continue
         if isinstance(m, ModelRequest):
             parts = []
             for p in m.parts:
@@ -1041,7 +1136,12 @@ class _LoopTurn:
         }
 
     def history(self) -> list:
-        return _load_loop_history(self.session_id)
+        return _load_loop_history(
+            self.session_id,
+            user_id=self.user_id,
+            course_id=self.course_id,
+            loop_state=self.state,
+        )
 
     def plan(self, decision) -> None:
         """Tier + run assembly for `decision`, the ai_budget verdict the calling
@@ -2428,9 +2528,249 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     return {"phase": "check", "check": pose}
 
 
-def end_session(body: EndSessionBody, request: Request) -> dict | None:
-    """PKG-07 pass-through: the legacy end_session body runs unchanged.
-    PKG-09 returns the close payload (summary + brief) from here."""
+# ── The session close (PKG-09; spec §4, §6, §9, §13 A11/A19/A20/A25) ────────
+#
+# One close per session, stored encrypted on `sessions.close_json` with the
+# phase it stopped in (`close_phase`); `loop_state["phase"]` becomes "close".
+# A close is claimed first (`close_claim` in loop_state, compare-and-set) so two
+# concurrent closes never both run the model; a stored close is returned as is.
+
+_CLOSE_IN_PROGRESS = "session close in progress"
+_CLOSE_STORE_FAILED = "Could not store the session close."
+
+
+def _close_phase(doc: dict | None) -> str:
+    """Where the session stopped (spec §9): PKG-08's probe/plan, or — once
+    teaching — PKG-07's teach / check / feedback for the active item; a
+    session with no loop state at all closes as `close`."""
+    if not doc:
+        return "close"
+    phase = _loop_phase(doc)
+    if phase == "teach":
+        phase = _phase_for(doc)
+    return phase if phase in CLOSE_PHASES else "close"
+
+
+def _unreleased_items(doc: dict | None) -> list:
+    """The items the session posed (PKG-07's steps) whose answer the student
+    has not been shown: never graded and not revealed by a hint payload. The
+    probe's items never reach the transcript, so the close cannot see them."""
+    if not doc:
+        return []
+    revealed = set(doc.get("revealed") or [])
+    out = []
+    for qh, entry in (doc.get("steps") or {}).items():
+        if not isinstance(entry, dict) or qh in revealed or entry.get("graded_at") is not None:
+            continue
+        if entry.get("check_item_id"):
+            item = get_check_item(entry["check_item_id"])
+            if item is not None:
+                out.append(item)
+    return out
+
+
+def _close_misconception_keys(user_id: str, session_id: str) -> list[str]:
+    """PKG-10 repoints this at the session's matched wrong keys. Empty until then."""
+    return []
+
+
+def _stored_close(row: dict) -> dict:
+    record = decrypt_json_column(row.get("close_json")) or {}
+    return {
+        "close": record,
+        "model_written": bool(record.get("model_written")),
+        "close_phase": row.get("close_phase"),
+    }
+
+
+def _claim_close(session_id: str, claim: str, now: float) -> str:
+    """Take the session's close claim by compare-and-set (A38 06(q)); 409 while
+    another close holds a live one. Returns the phase the session stopped in,
+    read from the same document."""
+    out: dict = {}
+
+    def take(doc: dict) -> None:
+        held = doc.get("close_claim")
+        at = doc.get("close_claim_at") or 0
+        if held and held != claim and now - float(at) < LOOP_GRADING_CLAIM_STALE_S:
+            raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
+        stripped = {k: v for k, v in doc.items() if k not in ("close_claim", "close_claim_at")}
+        out["phase"] = _close_phase(stripped)
+        doc["close_claim"], doc["close_claim_at"] = claim, now
+
+    _update_loop_state(session_id, take)
+    return out.get("phase", "close")
+
+
+def _finish_close(session_id: str, claim: str, *, closed: bool) -> None:
+    """Release the claim; a stored close also moves the phase to `close`.
+    Best effort after the store: `close_json` is the record of truth."""
+
+    def finish(doc: dict) -> None:
+        if doc.get("close_claim") == claim:
+            doc.pop("close_claim", None)
+            doc.pop("close_claim_at", None)
+        if closed:
+            doc["phase"] = "close"
+
+    try:
+        _update_loop_state(session_id, finish)
+    except Exception as exc:
+        logger.warning("session close: loop state not updated (%s)", type(exc).__name__)
+
+
+def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
+    """The decrypted transcript and this session's evidence journal rows."""
+    msgs = table("messages").select(
+        "role,content", filters={"session_id": f"eq.{session_id}"}, order="created_at.asc"
+    )
+    transcript = [
+        {"role": m.get("role"), "content": decrypt_if_present(m.get("content"))}
+        for m in msgs or []
+    ]
+    evidence = table("node_mastery_events").select(
+        "node_id,p_before,p_after,correct,channel",
+        filters={"session_id": f"eq.{session_id}", "event_type": "eq.evidence"},
+        order="created_at.asc,evidence_seq.asc",
+    )
+    return transcript, list(evidence or [])
+
+
+def _concept_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
+    ids = list(dict.fromkeys(n for n in node_ids if n))
+    if not ids:
+        return {}
+    rows = table("graph_nodes").select(
+        "id,concept_name", filters={"user_id": f"eq.{user_id}", "id": f"in.({','.join(ids)})"}
+    )
+    return {r["id"]: r["concept_name"] for r in rows or [] if r.get("id") and r.get("concept_name")}
+
+
+async def close_session(
+    session_id: str,
+    user_id: str,
+    *,
+    request_id: str | None = None,
+    rate_limit: bool = False,
+) -> dict:
+    """Close a loop session (Behaviour 10). A pending (never-materialised)
+    session has no transcript or evidence: its deterministic close is stored
+    on the row the A11 helper creates. A materialised one is claimed, read,
+    closed — the model only when it has evidence (A25; `run_session_close`
+    itself returns None at the hard budget level) and, with `rate_limit`, only
+    past the inline A20 check — then stored, the phase moved to `close`, and
+    `learn.session_closed` emitted. A stored close is returned as it is."""
+    request_id = request_id or current_request_id() or str(uuid.uuid4())
+    pending = PENDING_SESSIONS.get(session_id)
+    claim = None
+    if pending is not None:
+        if pending.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Session user mismatch")
+        PENDING_SESSIONS.pop(session_id, None)
+        phase, doc = "close", None
+        record = fallback_close(build_close([], [], [], {}))
+        row_defaults = {
+            "mode": pending.get("mode"),
+            "topic": pending.get("topic"),
+            "offering_id": pending.get("offering_id"),
+        }
+    else:
+        rows = table("sessions").select(
+            "id,user_id,loop_state,close_json,close_phase",
+            filters={"id": f"eq.{session_id}"},
+            limit=1,
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if rows[0].get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Session user mismatch")
+        if rows[0].get("close_json") is not None:
+            return _stored_close(rows[0])
+        doc = rows[0].get("loop_state") or None
+        claim = uuid.uuid4().hex
+        claimed_phase = _claim_close(session_id, claim, _now_s())
+        phase = claimed_phase if doc else "close"
+        row_defaults = None
+        try:
+            transcript, evidence = _session_record(session_id)
+            draft = build_close(
+                transcript,
+                evidence,
+                _close_misconception_keys(user_id, session_id),
+                {},
+                concept_names=_concept_names(user_id, [e.get("node_id") for e in evidence]),
+            )
+            record = fallback_close(draft)
+            if evidence:  # A25: no model without graded evidence
+                if rate_limit:
+                    ai_budget.enforce_rate_limit_for(user_id)  # A20 inline: a model may run
+                out = await run_session_close(draft, user_id=user_id, request_id=request_id)
+                if out is not None:
+                    record = served_close(out, draft, _unreleased_items(doc))
+        except BaseException:
+            _finish_close(session_id, claim, closed=False)
+            raise
+    try:
+        store_close(session_id, user_id, record, phase, row_defaults=row_defaults)
+    except Exception as exc:
+        if claim:
+            _finish_close(session_id, claim, closed=False)
+        logger.warning("session close not stored (%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail=_CLOSE_STORE_FAILED) from None
+    if claim:
+        _finish_close(session_id, claim, closed=True)
+    events_service.log_event(
+        "learn.session_closed",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "session_id": session_id,
+            "concepts": len(record.concepts),
+            "misconceptions": len(record.misconceptions),
+            "has_if_then": bool(record.if_then),
+            "model_written": record.model_written,
+        },
+    )
+    return {"close": record.model_dump(), "model_written": record.model_written, "close_phase": phase}
+
+
+@router.post("/close")
+async def close(body: CloseBody, request: Request) -> dict:
+    """POST /api/learn/loop/close (spec §9): require_self + the gate's 404; the
+    A20 rate limit is checked inline, only when this close would run the model
+    (spec §9: "inline where only some bodies run one"), so a gate-off student
+    gets the 404 and a zero-evidence close always works."""
+    if not body.user_id:
+        body.user_id = get_session_user_id(request)
+    _gate(body.user_id, request)
+    return await close_session(
+        body.session_id, body.user_id, request_id=_request_id(request), rate_limit=True
+    )
+
+
+def end_session(body: EndSessionBody, request: Request) -> None:
+    """The legacy end_session's loop delegate (PKG-07's pass-through, filled by
+    PKG-09): a materialised session with loop state gets its real close first;
+    the legacy body then runs unchanged (ended_at, XP, the `summary_json`
+    `flashcards._get_session_summary` reads, achievements). A pending session
+    keeps the legacy early return. A close failure never fails the legacy end.
+    The legacy handler is sync (a worker thread), so the async close runs
+    through the sanctioned `run_agent_sync` seam. Always returns None."""
+    if body.session_id in PENDING_SESSIONS:
+        return None
+    try:
+        rows = table("sessions").select(
+            "loop_state", filters={"id": f"eq.{body.session_id}"}, limit=1
+        )
+        if rows and rows[0].get("loop_state"):
+            run_agent_sync(
+                close_session(body.session_id, body.user_id, request_id=_request_id(request))
+            )
+    except Exception as exc:
+        logger.warning(
+            "loop close failed at session end (%s); the legacy end continues", type(exc).__name__
+        )
     return None
 
 

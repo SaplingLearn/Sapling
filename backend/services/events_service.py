@@ -104,6 +104,9 @@ learn.probe_done              usage     items, misses (not-correct incl. idk), n
                                         loop PKG-08, spec §6)
 learn.plan_approved           usage     concept_ids, n_reviews_first — the student approved a
                                         plan (PKG-08, spec §6)
+learn.session_closed          usage     session_id, concepts, misconceptions, has_if_then,
+                                        model_written — a loop session's close was stored
+                                        (PKG-09, spec §6, §13 A8); counts and bools only
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -255,6 +258,9 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # lives in test_learning_probe_planner.py.
     "learn.probe_done",
     "learn.plan_approved",
+    # PKG-09: a loop session's close was stored. Counts and bools only (never the
+    # summary text); model_written is the ADR 0024 degrade signal (spec §13 A8).
+    "learn.session_closed",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

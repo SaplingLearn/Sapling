@@ -30,6 +30,11 @@ class EndSessionBody(BaseModel):
     user_id: str = ""  # Required to discard a lazy (not-yet-persisted) session safely
 
 
+class CloseBody(BaseModel):
+    session_id: str
+    user_id: str = ""  # PKG-09: resolved from the session cookie when empty, like EndSessionBody
+
+
 class RenameSessionBody(BaseModel):
     user_id: str
     topic: str
