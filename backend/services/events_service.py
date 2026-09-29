@@ -99,6 +99,8 @@ decision.fallback             error     decision, from_backend, to_backend, reas
                                         / both_failed / budget = the AI budget cap refused the
                                         call; PKG-15 adds the Jev error enums), request_id
 ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
+review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
+review.graded                 usage     kind, correct, rating
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -245,6 +247,11 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # most once per user/scope/level/day, but for many students at once near a price change;
     # the /errors feed must not drown in it.
     "ai.budget_capped",
+    # Learning loop PKG-12: the daily review queue. `served` once per kind in
+    # a built queue (n = how many), `graded` per answer. Reviews are evidence,
+    # so `graded` is the countable twin of the node_mastery_events row.
+    "review.served",
+    "review.graded",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

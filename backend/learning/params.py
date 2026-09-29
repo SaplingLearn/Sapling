@@ -338,3 +338,8 @@ LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE = 12
 # † Owner decision A38 06(q): update_loop_state's compare-and-set retries after
 # the first conflict on sessions.loop_state_rev; exhausted -> LoopStateConflict.
 LOOP_STATE_CAS_RETRIES = 3
+
+# ── PKG-12 review surfaces (spec §3.2; † = engineering choice, see HANDOFF-12) ──
+REVIEW_SECONDS_PER_FLASHCARD = 15  # † budget cost of one self-rated card
+REVIEW_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}  # †
+REVIEW_FORMAT_BY_BAND = {"novice": "mc_reason", "develop": "mc_reason", "profic": "free"}  # †
