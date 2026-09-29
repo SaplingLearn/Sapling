@@ -249,8 +249,11 @@ def test_grade_rubric_items_sends_the_grader_the_identical_message(seam, grader_
     v = asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps(), item_id="ci-1"))
     [(passed, fmt, answer)] = grader_spy["calls"]
     assert (fmt, answer, passed.id) == ("free", "It stops the calls.", "ci-1")
-    assert build_grader_message(passed, format=fmt, student_answer=answer) == build_grader_message(
-        item, format="free", student_answer="It stops the calls."
+    labels = {"r1": "48213", "r2": "73920"}  # grade() draws fresh ones per call (A33)
+    assert build_grader_message(
+        passed, format=fmt, student_answer=answer, labels=labels
+    ) == build_grader_message(
+        item, format="free", student_answer="It stops the calls.", labels=labels
     )
     assert v.items["r1"].value is True and v.items["r1"].p_yes == pytest.approx(0.9)
     assert v.result.all_yes is True and v.backend == "gemini"
@@ -287,6 +290,34 @@ def test_reason_is_correct_runs_the_grader_as_mc_reason(seam, grader_spy):
     [(_, fmt, answer)] = grader_spy["calls"]
     assert (fmt, answer) == ("mc_reason", "Selected option: B\nReason: because it stops")
     assert v.value is True and v.result.all_yes is True
+
+
+def test_reason_is_correct_hands_grade_the_option_texts_never_the_message(seam, grader_spy):
+    """Spec §13 A33 (red team round 3): an mc_reason item's option texts are course
+    vocabulary for grade()'s answer screen, so the rebuilt item carries them — in
+    item order — while the grader's message stays byte-identical (no options)."""
+    from agents.grader import build_grader_message
+
+    options = {"A": "It stops the recursion", "B": "It makes recursion faster"}
+    st = seam.ReasonState(
+        question=QUESTION,
+        reference=REFERENCE,
+        rubric=RUBRIC,
+        wrong=WRONG,
+        selected_option="A",
+        correct_option="A",
+        reason="because it stops",
+        options=options,
+    )
+    asyncio.run(seam.reason_is_correct(st, deps=_deps(), item_id="ci-1"))
+    [(item, _, answer)] = grader_spy["calls"]
+    assert item.options == tuple(options.values())
+    labels = {"r1": "48213", "r2": "73920"}
+    without = seam.grader_item_from(st.model_copy(update={"options": {}}))
+    assert without.options == ()
+    assert build_grader_message(
+        item, format="mc_reason", student_answer=answer, labels=labels
+    ) == build_grader_message(without, format="mc_reason", student_answer=answer, labels=labels)
 
 
 def test_match_wrong_reason_with_prior_makes_no_call(seam, monkeypatch, events):
@@ -670,9 +701,14 @@ def test_grade_answer_sends_the_grader_the_same_messages(seam, monkeypatch):
     import agents.tools.check as c
 
     seen = []
+    labels = {"r1": "48213", "r2": "73920"}  # grade() draws fresh ones per call (A33)
 
     async def _grade(item, *, format, student_answer, deps):
-        seen.append(g.build_grader_message(item, format=format, student_answer=student_answer))
+        seen.append(
+            g.build_grader_message(
+                item, format=format, student_answer=student_answer, labels=labels
+            )
+        )
         return _grade_result(True, backend="gemini")
 
     monkeypatch.setattr(g, "grade", _grade)
@@ -688,11 +724,14 @@ def test_grade_answer_sends_the_grader_the_same_messages(seam, monkeypatch):
         )
     )
     assert seen == [
-        g.build_grader_message(free_item, format="free", student_answer=free_answer.answer_text),
+        g.build_grader_message(
+            free_item, format="free", student_answer=free_answer.answer_text, labels=labels
+        ),
         g.build_grader_message(
             mc_item,
             format="mc_reason",
             student_answer="Selected option: B\nReason: because it stops",
+            labels=labels,
         ),
     ]
 
@@ -881,6 +920,31 @@ def test_eval_caps_each_gold_file_not_the_whole_dataset(tmp_path):
     finally:
         sys.path[:] = saved
     assert per_file <= mod.DECISION_EVAL_MAX_CASES < len(mod.CASES) == 2 * per_file
+
+
+def test_the_decisions_eval_replays_its_raw_model_grading_cassettes_as_recorded(ev):
+    """Owner decision (PR #673, CONTINUE 3.5): this eval keeps its raw-model
+    baseline, and grader-guard round a33 re-recorded the grader dataset only. The
+    four grading cassettes predate `GraderOutput.contradicts_reference` and
+    `support` (spec §13 A33), so replay reads them through a model that lets those
+    fields be absent — the item verdicts, which are all this eval scores, stay as
+    recorded."""
+    from agents.grader import GraderOutput
+
+    model = ev._RecordedGraderOutput
+    assert (
+        issubclass(model, GraderOutput)
+        and model.model_fields["contradicts_reference"].default is False
+        and model.model_fields["support"].default == []
+    )
+    folder = BACKEND / "tests" / "evals" / "cassettes" / "decisions"
+    grading = [
+        p for p in sorted(folder.glob("*.json")) if p.stem.split("__")[0] in ev.GRADING_CHANNEL
+    ]
+    assert len(grading) == 4
+    for path in grading:
+        body = json.loads(path.read_text())
+        assert model.model_validate(body).item_results == body["item_results"]
 
 
 def test_promotion_checks_pass_an_identical_candidate_and_catch_a_worse_one(ev):

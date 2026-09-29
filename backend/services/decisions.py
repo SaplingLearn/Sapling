@@ -23,6 +23,13 @@ Selection (`select_backend`): function mode → `function`; else env
 → gemini + WARNING), and `JEV_ENABLED` false (the default) overrides every one of
 them to gemini.
 
+A refused answer (agents.grader.grade() refused it, spec §13 A33: addressed to
+the grader — caught by the screen before any model run, or reported by the
+grader itself after one — or longer than GRADER_ANSWER_MAX_CHARS) comes back as
+a `Refused` verdict from the `deterministic` backend: no model verdict is used,
+nothing may be recorded for either outcome, and grade_answer turns it into
+GradeOutcome.refused.
+
 The seam reads no learning-loop gate: its only caller, grade_answer, returns
 before any seam call when `deps.learning_loop` is False. Nothing under
 backend/learning/ imports this module (spec §12: no LLM inside learning/).
@@ -53,6 +60,7 @@ from agents.decision import (
 )
 from agents.grader import GradeResult
 from agents.usage import record_agent_usage
+from learning.answer_guard import Refusal
 from learning.checks import RubricItem, WrongReason
 from learning.evidence import GraderBackend
 from services import ai_budget, events_service
@@ -145,6 +153,17 @@ class ReasonVerdict(YesNo):
     result: GradeResult
 
 
+class Refused(Verdict):
+    """A grading decision grade() refused (spec §13 A33): the answer addressed the
+    grader or was longer than GRADER_ANSWER_MAX_CHARS, so no model verdict is
+    used. `result` is the delegate's GradeResult (`unavailable` and `refused`
+    set); nothing is recorded for either outcome. Served by `deterministic` (code
+    decided); `reason` is the refusal enum."""
+
+    reason: Refusal
+    result: GradeResult
+
+
 # ── states: text only, no identifiers (invariant 25) ─────────────────────────
 class _State(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -162,7 +181,9 @@ class GradeState(_State):
 
 
 class ReasonState(_State):
-    """reason_is_correct (mc_reason). The option is compared by grade_answer, never here."""
+    """reason_is_correct (mc_reason). The option is compared by grade_answer, never here.
+    `options` (letter → text, item order) never reaches the grader's message: the
+    answer screen reads the option texts as the item's own course vocabulary (A33)."""
 
     question: str
     reference: str
@@ -171,6 +192,7 @@ class ReasonState(_State):
     selected_option: str
     correct_option: str
     reason: str
+    options: dict[str, str] = {}
 
 
 class WrongReasonState(_State):
@@ -232,13 +254,16 @@ STATE_FOR_DECISION: dict[str, type[_State]] = {
 class GraderItem:
     """What agents.grader.build_grader_message (and grade()) read, rebuilt from a
     State. `id` is a log label only. rubric / common_wrong are learning.checks
-    models (the grader reads r.id / r.text / w.key / w.text, HANDOFF-05)."""
+    models (the grader reads r.id / r.text / w.key / w.text, HANDOFF-05).
+    `options` holds an mc_reason item's option texts for grade()'s answer screen
+    (answer_guard.item_terms; never in the message)."""
 
     id: str
     prompt: str
     reference_answer: str
     rubric: list[RubricItem]
     common_wrong: list[WrongReason]
+    options: tuple[str, ...] = ()
 
 
 def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> GraderItem:
@@ -248,6 +273,7 @@ def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> 
         reference_answer=state.reference,
         rubric=[RubricItem(id=k, text=v) for k, v in state.rubric.items()],
         common_wrong=[WrongReason(key=k, text=v) for k, v in state.wrong.items()],
+        options=tuple(getattr(state, "options", {}).values()),
     )
 
 
@@ -343,6 +369,21 @@ def _ms(t0: float) -> int:
     return round((time.monotonic() - t0) * _MS_PER_S)
 
 
+def _refused(decision: str, sel: Selection, result: GradeResult, t0: float, deps) -> Refused:
+    """grade() refused the answer (A33): a code decision, reported as decision.made
+    from `deterministic`. The refusal's own event (learn.answer_refused) is grade()'s."""
+    verdict = Refused(
+        backend="deterministic",
+        confidence=1.0,
+        latency_ms=_ms(t0),
+        fallback=sel.fallback_reason is not None,
+        reason=result.refused,
+        result=result,
+    )
+    _made(decision, verdict, deps)
+    return verdict
+
+
 def _yes_no(value: bool, conf: float, sel: Selection, ms: int) -> YesNo:
     return YesNo(
         backend=sel.served,
@@ -357,8 +398,9 @@ def _yes_no(value: bool, conf: float, sel: Selection, ms: int) -> YesNo:
 # ── grading (delegates to agents.grader.grade, resolved at call time) ────────
 async def grade_rubric_items(
     state: GradeState, *, deps, item_id: str = "-"
-) -> RubricVerdict | None:
-    """ONE agents.grader.grade() call; grade() writes its own llm_usage rows (none added here)."""
+) -> RubricVerdict | Refused | None:
+    """ONE agents.grader.grade() call; grade() writes its own llm_usage rows (none added here).
+    A refused answer (A33) → `Refused`, checked before `unavailable` (a refusal is both)."""
     sel, t0 = _select("grade_rubric_items", deps), time.monotonic()
     result = await grader.grade(
         grader_item_from(state, item_id=item_id),
@@ -366,6 +408,8 @@ async def grade_rubric_items(
         student_answer=state.answer,
         deps=deps,
     )
+    if result.refused:
+        return _refused("grade_rubric_items", sel, result, t0, deps)
     if result.unavailable:
         return _unavailable("grade_rubric_items", sel, deps)
     ms = _ms(t0)
@@ -385,9 +429,10 @@ async def grade_rubric_items(
 
 async def reason_is_correct(
     state: ReasonState, *, deps, item_id: str = "-"
-) -> ReasonVerdict | None:
+) -> ReasonVerdict | Refused | None:
     """ONE grade() call as format mc_reason on the byte-identical PKG-05 answer.
-    The option itself is compared by grade_answer, never here."""
+    The option itself is compared by grade_answer, never here. A refused answer
+    (A33; the screen reads the option and the reason alike) → `Refused`."""
     sel, t0 = _select("reason_is_correct", deps), time.monotonic()
     result = await grader.grade(
         grader_item_from(state, item_id=item_id),
@@ -395,6 +440,8 @@ async def reason_is_correct(
         student_answer=mc_reason_answer(state.selected_option, state.reason),
         deps=deps,
     )
+    if result.refused:
+        return _refused("reason_is_correct", sel, result, t0, deps)
     if result.unavailable:
         return _unavailable("reason_is_correct", sel, deps)
     ms = _ms(t0)
@@ -418,7 +465,7 @@ async def match_wrong_reason(
 ) -> Pick | None:
     """A22: only a matched key may become a misconception record; with `prior` gemini reuses its key (no call)."""
     if prior is not None and prior.unavailable:
-        return None  # the grade already reported the outage
+        return None  # the grade already reported the outage (or the A33 refusal)
     sel, t0 = _select("match_wrong_reason", deps), time.monotonic()
     if prior is not None:
         key, conf, ms = prior.matched_wrong_key, prior.confidence, 0

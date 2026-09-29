@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -656,50 +657,108 @@ def add_node(
     return {"node": node, "already_existed": already_existed}
 
 
+# Columns a later migration added to node_mastery_events, newest migration
+# first. A deploy that takes the code before the migration gets a PostgREST
+# 400 (PGRST204) naming the unknown column, and the retry drops exactly the
+# column the error names, so the row still lands with every column the
+# environment has. The PKG-03 evidence columns (channel … confidence,
+# 20260927024349_learning_learner_state.sql) are not listed: the evidence
+# path reads learner_state, which that same migration creates, before it ever
+# reaches this insert. Every later evidence column is listed (A36's
+# evidence_seq: a row written before its migration has it NULL, as that
+# migration's header says of rows written before it).
+_JOURNAL_OPTIONAL_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("20260927182054_learning_mastery_event_seq.sql", ("evidence_seq",)),
+    ("20260927093149_learning_grader_backend.sql", ("grader_backend",)),
+    ("20260814051517_node_mastery_events_event_type.sql", ("event_type",)),
+)
+_JOURNAL_COLUMN_MIGRATION = {
+    column: migration for migration, columns in _JOURNAL_OPTIONAL_COLUMNS for column in columns
+}
+
+
+def _error_text(exc: Exception) -> str:
+    """The exception's message plus, for db.connection's httpx.HTTPStatusError
+    (whose message omits the body), the PostgREST error body that names the column."""
+    text = str(exc)
+    try:
+        body = exc.response.text  # type: ignore[attr-defined]
+    except Exception:
+        return text
+    return f"{text} {body}" if isinstance(body, str) else text
+
+
+def _unknown_columns(exc: Exception, row: dict) -> list[str]:
+    """The optional columns in `row` that the error reports as unknown —
+    PostgREST's "Could not find the 'x' column" (PGRST204) or Postgres's
+    `column "x" … does not exist` (42703). A CHECK violation whose constraint
+    name contains a column (node_mastery_events_grader_backend_check) names no
+    unknown column."""
+    text = _error_text(exc)
+    return [
+        column
+        for column in _JOURNAL_COLUMN_MIGRATION
+        if column in row
+        and re.search(
+            rf"['\"]{column}['\"]\s+column\b|\bcolumn\s+['\"]?{column}['\"]?(?!\w)", text
+        )
+    ]
+
+
 def _insert_mastery_event(event_row: dict) -> None:
     """Append one node_mastery_events row without ever taking the caller down.
 
-    The scalar mastery on graph_nodes is already written by the time this
-    runs; this table is the JOURNAL, and nothing replays it. Losing a journal
-    row is a small, observable loss. Letting the insert raise is not: quiz
-    submit calls apply_graph_update AFTER its atomic completed_at claim and
-    BEFORE it writes score/answers_json, and does not wrap the call — so an
+    The scalar mastery on graph_nodes (and, for evidence, learner_state) is
+    already written by the time this runs; this table is the JOURNAL. Losing a
+    journal row is a small, observable loss. Letting the insert raise is not:
+    quiz submit calls apply_graph_update AFTER its atomic completed_at claim
+    and BEFORE it writes score/answers_json, and does not wrap the call — so an
     exception here permanently loses the student's graded attempt, and the
     retry 409s because the claim already landed.
 
-    The one-shot retry without `event_type` targets the specific ordering
-    hazard E7 introduces: a deploy that takes this code before migration
-    20260814051517 is applied gets a PostgREST 400 for the unknown column.
-    Retrying without it degrades to the pre-E7 row rather than costing a
-    quiz. Both failures are logged loudly — a silently-dropped write is the
-    bug class this whole batch exists to end, so this must never be quiet.
+    Two retries, each logged with the error it follows. An error that reports
+    an optional column (`_JOURNAL_OPTIONAL_COLUMNS`) as unknown — a deploy ahead
+    of that migration — drops exactly that column and tries again, so the row
+    degrades to what the environment can store (E7's event_type; PKG-05's
+    grader_backend, CodeRabbit PR #673; A36's evidence_seq). Any other error (a CHECK violation, a
+    transient 5xx) keeps every column and is retried once unchanged; if it
+    fails again the row is lost and the error is logged. Every failure is
+    logged loudly — a silently-dropped write is the bug class this whole batch
+    exists to end, so this must never be quiet.
     """
-    try:
-        table("node_mastery_events").insert(event_row)
-        return
-    except Exception:
-        if "event_type" not in event_row:
-            logger.exception(
-                "graph: mastery-event insert failed node=%s; the scalar "
-                "mastery is written but the journal row is lost",
-                event_row.get("node_id"),
+    row = dict(event_row)
+    retried_unchanged = False
+    while True:
+        try:
+            table("node_mastery_events").insert(row)
+            return
+        except Exception as exc:
+            unknown = _unknown_columns(exc, row)
+            if unknown:
+                logger.warning(
+                    "graph: mastery-event insert failed node=%s; retrying without %s "
+                    "(is migration %s applied?)",
+                    event_row.get("node_id"),
+                    ", ".join(unknown),
+                    ", ".join(sorted({_JOURNAL_COLUMN_MIGRATION[c] for c in unknown})),
+                    exc_info=exc,
+                )
+                row = {k: v for k, v in row.items() if k not in unknown}
+                continue
+            if not retried_unchanged:
+                logger.warning(
+                    "graph: mastery-event insert failed node=%s; retrying once unchanged",
+                    event_row.get("node_id"),
+                    exc_info=exc,
+                )
+                retried_unchanged = True
+                continue
+            logger.error(
+                "graph: mastery-event insert failed node=%s; the scalar mastery is "
+                "written but the journal row is lost", event_row.get("node_id"),
+                exc_info=exc,
             )
             return
-        logger.warning(
-            "graph: mastery-event insert failed with event_type=%r node=%s; "
-            "retrying without it (is migration "
-            "20260814051517_node_mastery_events_event_type.sql applied?)",
-            event_row.get("event_type"), event_row.get("node_id"),
-        )
-    fallback = {k: v for k, v in event_row.items() if k != "event_type"}
-    try:
-        table("node_mastery_events").insert(fallback)
-    except Exception:
-        logger.exception(
-            "graph: mastery-event insert failed node=%s even without "
-            "event_type; the scalar mastery is written but the journal row "
-            "is lost", event_row.get("node_id"),
-        )
 
 
 # ── PKG-03: the evidence path (spec §5) ──────────────────────────────────────

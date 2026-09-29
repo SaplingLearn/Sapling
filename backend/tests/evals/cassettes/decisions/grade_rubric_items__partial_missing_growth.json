@@ -1,9 +1,10 @@
 {
+  "addresses_grader": false,
   "confidence": 1.0,
-  "feedback_hint": "You mentioned that the base case stops the recursion, but can you elaborate on what happens if it doesn",
+  "feedback_hint": "The student correctly identified that the base case stops the recursion. However, the explanation of what happens if there isn't a base case could be more complete.",
   "item_results": [
-    "r1:yes",
-    "r2:yes"
+    "46291:yes",
+    "50603:no"
   ],
   "matched_wrong_key": ""
 }

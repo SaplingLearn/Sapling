@@ -1,9 +1,18 @@
 {
-  "confidence": 0.8,
-  "feedback_hint": "The student's answer describes the average rate of change, but the question asks for the instantaneous rate of change. Consider the difference between an average over an interval and the behavior at a single, specific point.",
-  "item_results": [
-    "r1:no",
-    "r2:no"
+  "context_checks": [],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": true,
+      "feedback_hint": "The student describes the slope between two points, which is an average rate of change, not the instantaneous rate of change at a single point.",
+      "item_results": [
+        "93687:no",
+        "43272:no"
+      ],
+      "matched_wrong_key": "w_avg",
+      "support": []
+    }
   ],
-  "matched_wrong_key": "w_avg"
+  "span_checks": []
 }

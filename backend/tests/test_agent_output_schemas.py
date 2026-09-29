@@ -95,7 +95,8 @@ EXPECTED_STRUCTURED_AGENTS = {
     "course_summary_agent",
     "decision_agent",  # learning loop PKG-05b (flat 2-field yes/no default; pick output per run)
     "flashcard_agent",
-    "grader_agent",  # learning loop PKG-05 (flat 4-field GraderOutput; grader + grader_second slots)
+    "grader_agent",  # learning loop PKG-05 (flat 7-field GraderOutput; grader + grader_second
+    # slots; the span check's one-field SpanVerdicts is chosen per run, below)
     "note_concepts_agent",
     "note_summary_agent",
     "quiz_agent",
@@ -283,6 +284,15 @@ def test_output_schema_within_budget(name):
         f"{name} output schema exceeds the structured-output budget "
         f"(agents/__init__.py):\n- " + "\n- ".join(violations)
     )
+
+
+def test_the_grader_span_checks_per_run_output_is_within_budget():
+    """grader-guard round a33: grade()'s span check runs grader_agent with its
+    own output type (agents.grader.SpanVerdicts), which the roster walk above
+    never sees, so it is held to the same budget here."""
+    from agents.grader import SpanVerdicts
+
+    assert schema_violations(SpanVerdicts) == []
 
 
 def test_per_object_exceptions_are_exact():

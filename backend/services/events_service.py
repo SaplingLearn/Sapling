@@ -65,6 +65,15 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+learn.answer_refused          audit     reason (grader_directive / role_marker /
+                                        addresses_grader / too_long), format,
+                                        check_item_id, request_id, rubric_items, directives,
+                                        role_markers, verdict_tokens, exempted, answer_chars
+                                        — a check answer that addressed the grader, or was
+                                        longer than GRADER_ANSWER_MAX_CHARS, was not graded
+                                        (PKG-05 reopen, spec §6, §13 A33; addresses_grader
+                                        only beside an exempted screen flag since the A33
+                                        finish); counts only, never the answer
 zpd.step                      usage     concept_id, question_hash, phase, channel, band, ceiling,
                                         ceiling_reason, first_attempt_correct, n_attempts,
                                         max_rung_used, rungs[{rung, dwell_ms}],
@@ -195,6 +204,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # withdrawal that failed after the response (reason WithdrawalError,
     # document_id and course_id null). Never any item text.
     "learn.check_items_failed",
+    # Learning loop PKG-05 reopen (spec §6, §13 A33; CodeRabbit PR #673): the
+    # pre-grader guard refused a check answer that addressed the grader (grading
+    # directives, role/format markers: no grader run), or the grader reported one
+    # (addresses_grader) after its run, or it was over GRADER_ANSWER_MAX_CHARS
+    # (too_long) — no evidence for either outcome. category="audit"; payload
+    # reason enum, format, check_item_id, request_id and counts (verdict_tokens is
+    # a count of a suspicion signal, never a reason). Never the answer text.
+    "learn.answer_refused",
     # Learning loop spec §13 A37 (series coordinator's ruling, 2026-09-28): one
     # mc_reason top-up call — a concept a generation pass left below
     # CHECK_ITEM_MC_MIN_PER_CONCEPT stored mc_reason items. category="usage":

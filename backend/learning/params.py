@@ -167,8 +167,9 @@ GRADER_SECOND_OPINION_SLOT = "grader_second"
 FEEDBACK_HINT_MAX_SENTENCES = 2  # † PKG-05 grader brief: the hint is short; not a spec value
 GRADER_HINT_MAX_CHARS = 300  # † PKG-05 GraderOutput.feedback_hint schema guard; not a spec value
 # † PKG-05: the student answer is the one unbounded part of a grader message;
-# past this many characters grade() degrades to unavailable before any call, so
-# an oversized answer is never sent or billed. A size guard on the RAW answer,
+# past this many characters grade() refuses it (`too_long`, spec §13 A33 — the
+# length is the student's choice, so never an outage) before any call, so an
+# oversized answer is never sent or billed. A size guard on the RAW answer,
 # not a token guarantee: at roughly one token per character the answer alone,
 # on both requests a run may make, stays under GRADER_LIMITS' token cap, but
 # the "> " quote on every answer line (up to 3x for a newline-heavy answer), the
@@ -181,6 +182,32 @@ GRADER_ANSWER_MAX_CHARS = 4_000
 # the operands' magnitude still counts as on the edge. Not a spec value: orders
 # of magnitude above double-precision error (~1e-16), below any tolerance.
 NUMERIC_GATE_EDGE_SLACK = 1e-12
+# † PKG-05 reopen (CodeRabbit PR #673; spec §13 A33): the digits in the fresh
+# random label each rubric item is shown under in one grading call
+# (agents/grader.rubric_labels): the first 2-9, 80,000 labels. Made after the
+# answer is submitted and never shown to the student, so no verdict in an answer
+# can name one; a label the message's text holds is drawn again, and at this
+# length a GRADER_ANSWER_MAX_CHARS answer holds under 5% of them, so a redraw
+# stays rare. Not a spec value.
+GRADER_RUBRIC_LABEL_CHARS = 5
+# † PKG-a33 (grader-guard round a33, the coordinator's ruling; spec §13 A33): a
+# credited rubric item needs a quote from the answer (GraderOutput.support) whose
+# words in the answer have at least this many letters and digits — or are the
+# whole answer, when that is shorter ("12") — before the span check may confirm
+# it (learning/answer_guard.support_span). A lone "2/2" or "r1" supports
+# nothing; "is 12" and "slope" do. Not a spec value.
+GRADER_SUPPORT_MIN_CHARS = 4
+# † PKG-a33 (the ruling's re-measure; spec §13 A33): the answer's words behind a
+# quote are the longest run of the quote's words that the answer holds, and that
+# run must be at least this share of the quote's words (or of a passage the quote
+# sets in quotation marks): the student's words inside the grader's own framing
+# ("The student's answer says …") count, the reference answer or a paraphrase
+# sharing a word or two does not (answer_guard.support_span). Not a spec value.
+GRADER_SUPPORT_MIN_SHARE = 0.5
+# † PKG-05 reopen (spec §3.4, §13 A33): a refusal is never a skip, and never the
+# first answer an honest student loses. The route asks again; the Nth refusal of
+# the same item (the tutor's check, PKG-07; the probe, PKG-08) records it as idk.
+CHECK_REFUSALS_AS_IDK = 2
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)

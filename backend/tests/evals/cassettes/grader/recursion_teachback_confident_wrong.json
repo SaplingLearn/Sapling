@@ -1,9 +1,20 @@
 {
-  "confidence": 0.9,
-  "feedback_hint": "Consider what happens when a recursive function does not have a condition to stop its calls. How does this differ from a loop, and what is the consequence of endlessly repeating calls?",
-  "item_results": [
-    "r1:no",
-    "r2:no"
+  "context_checks": [],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 0.9,
+      "contradicts_reference": true,
+      "feedback_hint": "The student claims the base case is an optimization for speed, but it's essential for stopping the recursion. Think about what happens if a recursive function never stops calling itself.",
+      "item_results": [
+        "27895:no",
+        "93888:no"
+      ],
+      "matched_wrong_key": "w_speed",
+      "support": [
+        "27895: "
+      ]
+    }
   ],
-  "matched_wrong_key": "w_speed"
+  "span_checks": []
 }
