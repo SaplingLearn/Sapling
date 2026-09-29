@@ -735,11 +735,12 @@ export function LoopLearn() {
       // The grade lands BEFORE the feedback stream starts: a submission that did
       // not settle (409 already graded, a mid-stream error, Stop) re-reads the
       // session so the answer box never sticks on a graded item.
-      if (submission && sid) void reconcile(sid, g);
+      const { status, detail } = extractErrorDetail(err);
+      const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
+      if (submission && sid && !closed) void reconcile(sid, g);
       if (controller.signal.aborted) return null;
       // At the hard level the stream ends with no `done`: that is the pause, not an error.
       if (hardSeen) return null;
-      const { status, detail } = extractErrorDetail(err);
       if (submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return null;
       reportError(err, "The tutor couldn't answer. Try again.");
       return null;

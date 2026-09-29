@@ -838,3 +838,14 @@ describe("LoopLearn — PKG-13 fix round", () => {
     expect(screen.queryByTestId("loop-check-prompt")).toBeNull();
   });
 });
+
+it("a closed-session 409 on a submission shows the stored close once (one /close call)", async () => {
+  api.streamLoopCheckAnswer.mockRejectedValue(Object.assign(new Error(JSON.stringify({ detail: "this session is closed" })), { status: 409 }));
+  api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+  await withCheckItem();
+  fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+  fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+  expect(await screen.findByTestId("loop-close-summary")).toBeTruthy();
+  expect(api.closeLoopSession).toHaveBeenCalledTimes(1);
+  expect(api.getLoopSessionStatus).not.toHaveBeenCalled();
+});

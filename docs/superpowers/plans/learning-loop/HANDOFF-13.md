@@ -82,7 +82,7 @@ Frontend:
 - `docs/frontend-testids.md`: the `Learning loop | loop` row, the `### loop` inventory, the `### review` owner line + `review-budget-paused`.
 - Testids — `loop`: `loop-phase`, `loop-session-picker`, `loop-session-{sessionId}`, `loop-new-session`, `loop-course-select` (+ `-option-{courseId}`), `loop-sessions-error`, `loop-sessions-retry`, `loop-no-course`, `loop-no-course-link`, `loop-start-error`, `loop-start-retry`, `loop-topic-offer`, `loop-topic-start`, `loop-readonly-transcript`, `loop-readonly-new-session`, `loop-budget-paused`, `loop-budget-study-link`, `loop-no-check-items`, `loop-tree-link`, `loop-rail`, `loop-learner-state`, `loop-probe-item`, `loop-probe-input`, `loop-probe-option-{letter}`, `loop-probe-reason`, `loop-probe-submit`, `loop-probe-idk`, `loop-probe-reference`, `loop-probe-retry`, `loop-probe-next`, `loop-plan-concept-{nodeId}`, `loop-plan-retry`, `loop-plan-approve`, `loop-messages`, `loop-teach-start`, `loop-check-me`, `loop-check-prompt`, `loop-attempt-input`, `loop-attempt-option-{letter}`, `loop-attempt-reason`, `loop-attempt-submit`, `loop-attempt-idk`, `loop-hint-button`, `loop-hint-denied`, `loop-hint-reply`, `loop-continue`, `loop-close-button`, `loop-close-summary`, `loop-close-self-eval`, `loop-close-if-then`, `loop-close-done`, `loop-close-study-link`. `review`: `review-budget-paused`. (`loop-hint-offer` was removed; see Deviations.)
 - E2E: `frontend/e2e/learn-loop.spec.ts` (4 tests), `frontend/e2e/support/params.ts::learningParams(names)`, `frontend/e2e/support/oracle.ts::runOracle(args) -> {code, count, findings, stderr}`, `frontend/e2e/support/stack.ts::USER_LOOP`, `USER_CAPPED`.
-- Tests: `src/lib/api.loop.test.ts` (31), `src/components/learn/loopState.test.ts` (15), `src/components/learn/LoopLearn.test.tsx` (62), `src/components/learn/useLoopStatus.test.tsx` (6), `src/components/learn/LearnBranch.test.tsx` (3), `src/components/learn/DueQueue.test.tsx` (+9).
+- Tests: `src/lib/api.loop.test.ts` (31), `src/components/learn/loopState.test.ts` (15), `src/components/learn/LoopLearn.test.tsx` (63), `src/components/learn/useLoopStatus.test.tsx` (6), `src/components/learn/LearnBranch.test.tsx` (3), `src/components/learn/DueQueue.test.tsx` (+9).
 
 Seeded ids the frontend and the journeys use:
 
@@ -209,7 +209,7 @@ Acceptance 7, corrected (the prompt's bare `pytest tests/ -q` collects the OCR/e
 cd backend && env -u SAPLING_MODEL_MODE -u SAPLING_FUNCTION_HANDLERS venv/bin/python -m pytest tests/ -q -p no:cacheprovider --ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py → 0 failed; venv/bin/ruff check . → All checks passed!
 ```
 
-Observed at the end of the fix round (no stack): hermetic suite **7986 passed, 140 skipped, 0 failed**; `ruff check .` clean; `SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/run_all.py` → 16/16 PASS; `-k "inv_13a or inv_13b"` → 3 passed (13a, its scan self-test, 13b); `npx tsc --noEmit` clean; `npx vitest run` → 112 files, 1254 passed, 2 skipped; `npx eslint` on every changed file → clean.
+Observed at the end of the fix round (no stack): hermetic suite **7986 passed, 140 skipped, 0 failed**; `ruff check .` clean; `SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/run_all.py` → 16/16 PASS; `-k "inv_13a or inv_13b"` → 3 passed (13a, its scan self-test, 13b); `npx tsc --noEmit` clean; `npx vitest run` → 112 files, 1255 passed, 2 skipped; `npx eslint` on every changed file → clean.
 
 ## Open questions for the series owner
 
