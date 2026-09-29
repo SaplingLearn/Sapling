@@ -38,6 +38,12 @@ DATASETS = [
     "syllabus_extraction",
     "quiz_generation",
     "chat_tutor",
+    # PKG-07: one dataset per loop tutor tier slot, exposed as the module's VARIANTS
+    # (loop_tutor_lite / loop_tutor / loop_tutor_deep; baselines key on the slot).
+    "loop_tutor",
+    # PKG-07 Task 9: calibration of the eval-side rung judge (_rung_judge.py) that
+    # scores the loop tutor's ceiling; gated at 1.0.
+    "loop_rung_judge",
     "check_items",
     "grader",
     "decisions",
@@ -51,11 +57,15 @@ def main() -> None:
     results: list[tuple[str, bool]] = []
     for name in DATASETS:
         mod = importlib.import_module(name)
-        print(f"\n{'=' * 78}\n{name}\n{'=' * 78}")
-        # Suppress the giant per-case rich table here; the per-task accuracy
-        # summary and any regression lines still print.
-        ok = evaluate_dataset(mod.make_dataset, mod._run, update=update, print_report=False)
-        results.append((name, ok))
+        # A module with VARIANTS (loop_tutor: one dataset per tier slot) runs each;
+        # every other dataset runs exactly as before.
+        variants = getattr(mod, "VARIANTS", None) or {name: (mod.make_dataset, mod._run)}
+        for variant, (make, run) in variants.items():
+            print(f"\n{'=' * 78}\n{variant}\n{'=' * 78}")
+            # Suppress the giant per-case rich table here; the per-task accuracy
+            # summary and any regression lines still print.
+            ok = evaluate_dataset(make, run, update=update, print_report=False)
+            results.append((variant, ok))
 
     print(f"\n{'=' * 78}\nSummary\n{'=' * 78}")
     for name, ok in results:

@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
+  "output": {
+    "evidence": "Given the power rule, how would you apply it to find the derivative of x^2?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "f8ba61b926780e1782c4c7356fb79897b9d3294c761adcb17f41b93d91e86210"
+}

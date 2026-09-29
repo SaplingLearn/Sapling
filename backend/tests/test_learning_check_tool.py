@@ -1394,12 +1394,16 @@ def test_grade_answer_then_flush_pending_reaches_the_single_writer(check, monkey
 # tests/test_learning_decisions.py::test_seam_callers_are_only_grade_answer).
 GRADING_MODULES = ("agents.grader", "agents.tools.check")
 GRADING_HELPER_CALLS = frozenset({"grade_answer", "flush_pending"})
+# PKG-07: routes/learn_loop.py — the explicit-submission check route (A16). Inside
+# the file, only `_grade_submission` may reach grade_answer / flush_pending, and only
+# the two check-answer handlers may reach it (tests/test_learning_loop_invariants.py
+# ::test_inv_26_evidence_only_from_explicit_submission, a per-function allow-list).
 # PKG-12 (a PKG-05 reopen): learning/review.py::grade_review grades a review
 # through grade_answer (spec §13 A16); it is reached only from the gated
 # /review/answer route (invariant 19 pins that it never reaches the grader
 # or the decision seam itself).
 SANCTIONED_GRADING_CALLERS = frozenset(
-    {"agents/tools/check.py", "services/decisions.py", "learning/review.py"}
+    {"agents/tools/check.py", "services/decisions.py", "routes/learn_loop.py", "learning/review.py"}
 )
 
 

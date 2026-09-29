@@ -16,7 +16,8 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
-from services import events_service
+from learning.gate import learning_loop_for_request
+from services import ai_budget, events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
@@ -57,6 +58,13 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 # stream; 2048 tokens is enough for the agent to plan a multi-step
 # explanation without burning latency the student can feel.
 _PRO_THINKING_BUDGET = 2048
+
+
+def _loop_delegate(name: str):
+    """Loop handler by name, resolved lazily: routes.learn_loop imports THIS
+    module's helpers, so a top-level import would be circular."""
+    from routes import learn_loop
+    return getattr(learn_loop, name)
 
 
 def _resolve_model_pref(model_pref: str | None):
@@ -627,6 +635,12 @@ async def _start_session_agent(
 @router.post("/start-session")
 async def start_session(body: StartSessionBody, request: Request):
     require_self(body.user_id, request)
+    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        # the loop route's rate-limit dependency does not run on a delegated call
+        ai_budget.enforce_rate_limit_for(body.user_id)
+        return await _loop_delegate("start_session")(body, request)
     result = await _agent_turn_or_http_error(
         _start_session_agent(body), what="start-session agent"
     )
@@ -917,6 +931,12 @@ async def _chat_turn_json(
 @router.post("/chat")
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
+    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        # the loop route's rate-limit dependency does not run on a delegated call
+        ai_budget.enforce_rate_limit_for(body.user_id)
+        return await _loop_delegate("chat")(body, request)
     _consume_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _chat_turn_json(body, request), what="chat agent"
@@ -934,6 +954,12 @@ async def chat_stream(body: ChatBody, request: Request):
     (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
     """
     require_self(body.user_id, request)
+    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        # the loop route's rate-limit dependency does not run on a delegated call
+        ai_budget.enforce_rate_limit_for(body.user_id)
+        return await _loop_delegate("chat_stream")(body, request)
     _consume_pending(body.session_id, body.user_id)
 
     request_id = (
@@ -1043,6 +1069,12 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     a fresh session.
     """
     require_self(body.user_id, request)
+    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        # the loop route's rate-limit dependency does not run on a delegated call
+        ai_budget.enforce_rate_limit_for(body.user_id)
+        return await _loop_delegate("start_session_stream")(body, request)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
@@ -1137,6 +1169,12 @@ def end_session(body: EndSessionBody, request: Request):
         require_self(body.user_id, request)
     else:
         body.user_id = get_session_user_id(request)
+    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        loop = _loop_delegate("end_session")(body, request)
+        if loop is not None:
+            return loop
     if body.session_id in PENDING_SESSIONS:
         pending = PENDING_SESSIONS[body.session_id]
         if body.user_id and pending["user_id"] != body.user_id:
@@ -1474,6 +1512,12 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 @router.post("/action")
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
+    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        # the loop route's rate-limit dependency does not run on a delegated call
+        ai_budget.enforce_rate_limit_for(body.user_id)
+        return await _loop_delegate("action")(body, request)
     _ensure_session_ready(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"

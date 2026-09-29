@@ -54,6 +54,8 @@ AgentTask = Literal[
     "grader", "grader_second",
     # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
     "decision",
+    # The loop tutor's three tier slots — ONE agent, slot chosen per run (PKG-07; spec §3.5, A15).
+    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
 ]
 
 
@@ -74,6 +76,12 @@ _DEFAULTS: dict[AgentTask, str] = {
     # (`feat(learn): use gemini-2.5-pro for tutor chat`) and PR #74
     # (`fix(learn): allow thinking on gemini-2.5-pro multiturn calls`).
     "chat_tutor": "gemini-2.5-pro",
+    # Loop tutor tier slots (PKG-07, spec §3.5, A15): ONE loop_tutor_agent;
+    # routes/learn_loop.py picks the slot per run from learning.policy.model_tier
+    # and never reads model_pref, so these defaults ARE the routing.
+    "loop_tutor_lite": "gemini-2.5-flash-lite",
+    "loop_tutor": "gemini-2.5-flash",
+    "loop_tutor_deep": "gemini-2.5-pro",
     "note_summary": "gemini-2.5-flash-lite",
     "note_concepts": "gemini-2.5-flash-lite",
     "note_chat": "gemini-2.5-flash",
