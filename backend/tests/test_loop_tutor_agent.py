@@ -474,8 +474,9 @@ def test_loop_eval_serves_through_the_production_path():
     from routes.learn_loop import released_lead
 
     case = next(c for c in mod.CASES if c.name == "hint_develop_h1_pump")
-    raw, served, turn = mod.served_texts(out, case.inputs, case.metadata)
-    assert raw == render_turn(out)
+    leaky = {**out, "body": "At n == 0 the function returns 1."}
+    raw, served, turn = mod.served_texts(leaky, case.inputs, case.metadata)
+    assert raw == render_turn(leaky)
     from routes.learn_loop import LADDER_FALLBACK_LINES
 
     assert served == LADDER_FALLBACK_LINES[1] and WITHHELD not in served and turn == served, (
@@ -539,21 +540,30 @@ LOOP_TIER_PASS_SCORE = 1.0  # spec §10, A15: a tier routes only when it passes 
 
 
 def test_loop_routable_tiers_match_baselines():
-    """LOOP_ROUTABLE_TIERS is exactly the tiers whose committed baselines score
-    1.0 on EVERY served gate (diagnostics — RawAnswerLeak, RetriesUsed — never
-    route), and at least one tier routes."""
+    """LOOP_ROUTABLE_TIERS is exactly the tiers whose LOOP_ROUTING_RUNS fresh
+    recordings (baselines.json `loop_tutor_routing`, one score block per run)
+    ALL score 1.0 on EVERY served gate with no case raised — min-of-N, PKG-14's
+    floor direction (PKG-07 fix round 2; spec §13 A49). Diagnostics
+    (RawAnswerLeak, RetriesUsed) never route; at least one tier routes."""
     import json
     from pathlib import Path
 
-    from agents.loop_tutor import LOOP_ROUTABLE_TIERS, LOOP_TIER_SLOTS
+    from agents.loop_tutor import LOOP_ROUTABLE_TIERS, LOOP_ROUTING_RUNS, LOOP_TIER_SLOTS
 
     mod = _loop_eval_module()
     baselines = json.loads((Path(__file__).parent / "evals" / "baselines.json").read_text())
+    routing = baselines["loop_tutor_routing"]
+    assert routing["runs"] == LOOP_ROUTING_RUNS >= 3
     passing = set()
     for tier, slot in LOOP_TIER_SLOTS.items():
-        block = baselines[slot]
-        assert set(block) == set(mod.SERVED_GATES) | set(mod.DIAGNOSTICS), slot
-        if all(block[g] >= LOOP_TIER_PASS_SCORE for g in mod.SERVED_GATES):
+        assert set(baselines[slot]) == set(mod.SERVED_GATES) | set(mod.DIAGNOSTICS), slot
+        runs = routing.get(slot) or []
+        for run in runs:
+            assert set(run) == set(mod.SERVED_GATES) | set(mod.DIAGNOSTICS) | {"_raised"}, slot
+        if len(runs) >= LOOP_ROUTING_RUNS and all(
+            not run["_raised"] and all(run[g] >= LOOP_TIER_PASS_SCORE for g in mod.SERVED_GATES)
+            for run in runs
+        ):
             passing.add(tier)
     assert passing, "no tier passes every served gate (spec §10: STOP)"
     assert set(LOOP_ROUTABLE_TIERS) == passing

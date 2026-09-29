@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.\", \"body\": \"A recursive function typically has two parts: a base case that stops the recursion and a recursive step that calls the function itself with a modified input. Think of it like a set of Russian nesting dolls, where each doll contains a smaller version of itself until you reach the smallest one.\", \"question\": \"Can you think of a real-world scenario that follows a similar 'self-referential' pattern?\"}"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.\", \"body\": \"A recursive function typically has two main parts: a base case that defines when the recursion stops, and a recursive step that calls the function with a modified input. This approach allows complex problems to be solved through repeated application of a simple rule.\", \"question\": \"Can you think of a real-world example where a process repeats itself in a similar, smaller fashion until a certain condition is met?\"}"
   ],
   "input_sha256": "914c5e3cfc226d4c6064e4672d8ea57400c69d249f863fa0f548c0c000fa4886",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "A recursive function typically has two parts: a base case that stops the recursion and a recursive step that calls the function itself with a modified input. Think of it like a set of Russian nesting dolls, where each doll contains a smaller version of itself until you reach the smallest one.",
+    "body": "A recursive function typically has two main parts: a base case that defines when the recursion stops, and a recursive step that calls the function with a modified input. This approach allows complex problems to be solved through repeated application of a simple rule.",
     "key_idea": "Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.",
-    "question": "Can you think of a real-world scenario that follows a similar 'self-referential' pattern?"
+    "question": "Can you think of a real-world example where a process repeats itself in a similar, smaller fashion until a certain condition is met?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A base case in recursion stops the function from calling itself infinitely.\", \"body\": \"Factorial functions often use recursion. For factorial(0), a specific condition prevents infinite calls.\", \"question\": \"What is the base case for the factorial function?\"}"
+    "{\"key_idea\": \"Recursive functions require a base case to prevent infinite loops.\", \"body\": \"A recursive function calls itself. Without a condition to stop calling itself, it would run forever.\", \"question\": \"What is the base case in the factorial function that prevents infinite recursion?\"}"
   ],
   "input_sha256": "bc6f09f3c01f1addd69bee699e92ab566f49bf1cf95bd58b4971158fc5642cf1",
   "model": "gemini-2.5-flash-lite",
   "output": {
-    "body": "Factorial functions often use recursion. For factorial(0), a specific condition prevents infinite calls.",
-    "key_idea": "A base case in recursion stops the function from calling itself infinitely.",
-    "question": "What is the base case for the factorial function?"
+    "body": "A recursive function calls itself. Without a condition to stop calling itself, it would run forever.",
+    "key_idea": "Recursive functions require a base case to prevent infinite loops.",
+    "question": "What is the base case in the factorial function that prevents infinite recursion?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "d40e4174052c82cc81a778bdeafb938ae13a3ad0db94f15718012f30183dd1ec",
   "output": {
-    "evidence": "Can you state the power rule for derivatives?",
+    "evidence": "It states that the derivative of x^n is nx^(n-1).",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "39c85f5044405f28ce89412c4ecd32fad695ea8f8a2d94b3a298dcaccf044427"
+  "served_sha256": "9d0258abfed93c603958b9c2e1efd45fbde9dc87e25204ca858f7c2048e3b057"
 }

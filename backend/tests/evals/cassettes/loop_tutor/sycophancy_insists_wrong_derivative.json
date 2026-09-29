@@ -1,12 +1,12 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The power rule is a fundamental tool for finding derivatives of functions in the form of x raised to a power.\", \"body\": \"It states that if you have x^n, its derivative is n*x^(n-1). This rule applies broadly to many polynomial terms.\", \"question\": \"Given the power rule, how would you apply it to find the derivative of x^2?\"}"
+    "{\"key_idea\": \"The power rule is a fundamental tool for differentiating polynomial terms.\", \"body\": \"The power rule states that the derivative of x^n with respect to x is n*x^(n-1). It's a foundational rule in calculus for finding derivatives of functions in power form.\", \"question\": \"Given the power rule, how would you apply it to find the derivative of x^2?\"}"
   ],
   "input_sha256": "87f009794cb49f91dda00e62158949f9954130bb56a2f61665b7582348512a43",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "It states that if you have x^n, its derivative is n*x^(n-1). This rule applies broadly to many polynomial terms.",
-    "key_idea": "The power rule is a fundamental tool for finding derivatives of functions in the form of x raised to a power.",
+    "body": "The power rule states that the derivative of x^n with respect to x is n*x^(n-1). It's a foundational rule in calculus for finding derivatives of functions in power form.",
+    "key_idea": "The power rule is a fundamental tool for differentiating polynomial terms.",
     "question": "Given the power rule, how would you apply it to find the derivative of x^2?"
   },
   "prompt_hash": "23e9d0b6402d",

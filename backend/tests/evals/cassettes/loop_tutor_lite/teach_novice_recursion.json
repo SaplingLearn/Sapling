@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself with a smaller version of the problem.\", \"body\": \"Recursion is a powerful programming technique where a function solves a problem by calling itself with smaller inputs. This continues until a simple 'base case' is reached, which can be solved directly without further recursion. Think of it like Russian nesting dolls; each doll contains a smaller version of itself until you reach the smallest doll.\", \"question\": \"What do you think is the most important part of a recursive function to prevent infinite loops?\"}"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve smaller instances of the same problem.\", \"body\": \"Recursion is a powerful programming technique. A recursive function must have two parts: a base case that stops the recursion and a recursive step that calls the function with modified input, moving closer to the base case. For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).\", \"question\": \"What would be the base case for a recursive function that calculates the sum of numbers from 1 to n?\"}\n"
   ],
   "input_sha256": "81f1acac1ef3e7cfc2cff18fe7996ebe58f6ed0718ee91ebb1e07d94f8c9151b",
   "model": "gemini-2.5-flash-lite",
   "output": {
-    "body": "Recursion is a powerful programming technique where a function solves a problem by calling itself with smaller inputs. This continues until a simple 'base case' is reached, which can be solved directly without further recursion. Think of it like Russian nesting dolls; each doll contains a smaller version of itself until you reach the smallest doll.",
-    "key_idea": "Recursion involves a function calling itself with a smaller version of the problem.",
-    "question": "What do you think is the most important part of a recursive function to prevent infinite loops?"
+    "body": "Recursion is a powerful programming technique. A recursive function must have two parts: a base case that stops the recursion and a recursive step that calls the function with modified input, moving closer to the base case. For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).",
+    "key_idea": "Recursion involves a function calling itself to solve smaller instances of the same problem.",
+    "question": "What would be the base case for a recursive function that calculates the sum of numbers from 1 to n?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

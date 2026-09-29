@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "d40e4174052c82cc81a778bdeafb938ae13a3ad0db94f15718012f30183dd1ec",
   "output": {
-    "evidence": "How would you write the general derivative of a term x^n using that rule?",
+    "evidence": "For any term in the form `a*x^n`, its derivative is found by multiplying the coefficient `a` by the exponent `n`, and then subtracting one from the exponent.",
     "reveals_final_answer": false,
-    "rung": 3
+    "rung": 2
   },
-  "served_sha256": "04b8ea76dbb2928dc82cd79637ee74bbdb2ca5653c8ba6343c0e8a8f22e6c62c"
+  "served_sha256": "c0f125a11efba04c7c1113a47fb5e4037c00db40c1907709252d3c79c28839f6"
 }

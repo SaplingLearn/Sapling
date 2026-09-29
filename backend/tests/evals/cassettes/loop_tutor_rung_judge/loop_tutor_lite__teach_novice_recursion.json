@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Recursion is a powerful programming technique where a function solves a problem by calling itself with smaller inputs. This continues until a simple 'base case' is reached",
+    "evidence": "For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 4
   },
-  "served_sha256": "564dbc9fbc4842037b9415279cb62804106390959798ce43a9439a519c30ca09"
+  "served_sha256": "24fcba5b475e2b1f36698cb5cbc8da62181104a6c3ce234fb1313e288b34b2e3"
 }

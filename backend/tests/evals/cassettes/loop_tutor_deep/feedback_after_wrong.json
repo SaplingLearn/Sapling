@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n \"key_idea\": \"A recursive function needs a base case to stop the recursion.\",\n \"body\": \"You're right that the pattern of subtracting 1 would lead to `factorial(-1)`, but that would continue the recursion, not stop it. A recursive function needs a special condition to know when to stop calling itself.\",\n \"question\": \"What part of the factorial function's definition handles the input `0` differently from all the other numbers?\"\n}\n```"
+    "{\"key_idea\": \"A recursive function needs a base case to stop the chain of calls.\", \"body\": \"You're right that `factorial(0)` calling `factorial(-1)` would continue the recursion, but the goal is to stop it. Recursive functions have a special condition to handle a specific input and stop the process.\", \"question\": \"What part of the factorial function's definition tells it what to do when the input is 0?\"}"
   ],
   "input_sha256": "95a19fc05757ad6e016227d97dd39e22562fe5aabf5aaab7c707cbfbee95456c",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "You're right that the pattern of subtracting 1 would lead to `factorial(-1)`, but that would continue the recursion, not stop it. A recursive function needs a special condition to know when to stop calling itself.",
-    "key_idea": "A recursive function needs a base case to stop the recursion.",
-    "question": "What part of the factorial function's definition handles the input `0` differently from all the other numbers?"
+    "body": "You're right that `factorial(0)` calling `factorial(-1)` would continue the recursion, but the goal is to stop it. Recursive functions have a special condition to handle a specific input and stop the process.",
+    "key_idea": "A recursive function needs a base case to stop the chain of calls.",
+    "question": "What part of the factorial function's definition tells it what to do when the input is 0?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"You want to use a practice problem to check your understanding of limits.\", \"body\": \"You're looking for a limits problem to work through.\", \"question\": \"What kind of limits problems have you been working on recently?\"}"
+    "```json\n{\n\"key_idea\": \"You want to apply your knowledge of limits to a practice problem.\",\n\"body\": \"It's a great idea to check your understanding with a problem.\",\n\"question\": \"What specific topic within limits would you like the problem to cover?\"\n}\n```"
   ],
   "input_sha256": "cb703fd2657b1bfddcbc65ce99ee6a63800427847624cea0df06f48715915d62",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "You're looking for a limits problem to work through.",
-    "key_idea": "You want to use a practice problem to check your understanding of limits.",
-    "question": "What kind of limits problems have you been working on recently?"
+    "body": "It's a great idea to check your understanding with a problem.",
+    "key_idea": "You want to apply your knowledge of limits to a practice problem.",
+    "question": "What specific topic within limits would you like the problem to cover?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,
