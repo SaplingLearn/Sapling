@@ -394,10 +394,23 @@ def _loop_phase(doc: dict) -> str:
     return "teach" if plan.get("approved") else "probe"
 
 
+_SESSION_CLOSED = "this session is closed"
 #: PKG-08 reopen: the teaching routes' 409 while the probe or the plan is open.
 #: A posed probe item lives under `probe.current`, not PKG-07's `current`, so a
 #: teach turn then would run with no guarded item (it could hand out the answer).
-_TEACHING_CLOSED = {"probe": "finish the probe first", "plan": "finish the plan first"}
+_TEACHING_CLOSED = {
+    "probe": "finish the probe first",
+    "plan": "finish the plan first",
+    # PKG-09 (spec §9): close is the last phase — no turn after the stored close.
+    "close": _SESSION_CLOSED,
+}
+
+
+def _require_open(state: dict) -> None:
+    """PKG-09: the answer routes (/check/answer, /step/attempt) of a closed
+    session — its close is stored; evidence after it would sit outside it."""
+    if _loop_phase(state) == "close":
+        raise HTTPException(status_code=409, detail=_SESSION_CLOSED)
 
 
 def _require_teaching(state: dict) -> None:
@@ -2120,6 +2133,7 @@ async def _grade_submission(
     scope = _session_scope(body.session_id, body.user_id)
     course_id = scope[1]
     state = _load_loop_state(body.session_id)
+    _require_open(state)
     qh = body.question_hash
     entry = _steps(state).get(qh)
     if isinstance(entry, dict) and (
@@ -2319,6 +2333,7 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     _gate(body.user_id, request)
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
+    _require_open(state)
     qh = body.question_hash
     entry = _steps(state).get(qh)
     if not isinstance(entry, dict):
