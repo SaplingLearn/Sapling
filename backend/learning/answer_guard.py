@@ -1469,11 +1469,21 @@ def _word_list(folded: str) -> list[str]:
 # span takes in the symbols that touch its run (a sign, a unit, a bracket, a
 # prime: up to whitespace or a letter or digit, so never a word beyond them),
 # and drops only what is no part of the words at its ends: sentence punctuation
-# and quotation marks, and a bracket its span never opens or closes.
+# and quotation marks, and a bracket its span never opens or closes. A bracket
+# of either kind pairs with one of the other: a half-open interval's "[0, 1)"
+# and "(0, 1]" say different things through their mixed brackets (review round
+# 4: both were cut to "0, 1").
 _SPAN_HEAD_QUOTES = "\"'“„‟«‘"
 _SPAN_TAIL_MARKS = '.,;:?…"”»’'
-_CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
-_OPENING_BRACKETS = {v: k for k, v in _CLOSING_BRACKETS.items()}
+_OPENING_BRACKETS = "([{"
+_CLOSING_BRACKETS = ")]}"
+
+
+def _bracket_balance(span: str) -> int:
+    """Openers of any kind less closers of any kind."""
+    return sum(span.count(c) for c in _OPENING_BRACKETS) - sum(
+        span.count(c) for c in _CLOSING_BRACKETS
+    )
 
 
 def _touching(ch: str) -> bool:
@@ -1497,17 +1507,9 @@ def _span_ends(answer: str, start: int, end: int) -> tuple[int, int]:
         span = answer[lo:hi]
         if hi > end and answer[hi - 1] in tail_marks:
             hi -= 1
-        elif (
-            hi > end
-            and (opener := _CLOSING_BRACKETS.get(answer[hi - 1]))
-            and (span.count(answer[hi - 1]) > span.count(opener))
-        ):
+        elif hi > end and answer[hi - 1] in _CLOSING_BRACKETS and _bracket_balance(span) < 0:
             hi -= 1
-        elif (
-            lo < start
-            and (closer := _OPENING_BRACKETS.get(answer[lo]))
-            and (span.count(answer[lo]) > span.count(closer))
-        ):
+        elif lo < start and answer[lo] in _OPENING_BRACKETS and _bracket_balance(span) > 0:
             lo += 1
         else:
             return lo, hi

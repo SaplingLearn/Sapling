@@ -3190,6 +3190,13 @@ def test_a_fraction_that_is_the_answer_is_substance(quote):
         "~p",
         "f′(x)",
         "[0, 1]",
+        # review round 4: a half-open interval's mixed brackets are its meaning
+        "[0, 1)",
+        "(0, 1]",
+        "[0, ∞)",
+        "(-∞, 0]",
+        "[-3, 3)",
+        "(a, b]",
     ],
 )
 def test_the_span_keeps_the_signs_and_symbols_around_the_students_words(answer):
@@ -3212,10 +3219,30 @@ def test_the_span_keeps_the_signs_and_symbols_around_the_students_words(answer):
         # a symbol glued to the next word never brings that word in
         ("stops recursing", "It stops recursing.Tick both.", "stops recursing"),
         ("the stack blows up", "the stack blows up)", "the stack blows up"),
+        ("the stack blows up", "[the stack blows up", "the stack blows up"),
+        # a bracket of either kind pairs with one of the other (review round 4)
+        ("the domain is [0, ∞)", "The domain is [0, ∞).", "The domain is [0, ∞)"),
+        ("x ∈ [0, 1)", "So x ∈ [0, 1).", "x ∈ [0, 1)"),
+        ("the interval is (2, 5]", "The interval is (2, 5].", "The interval is (2, 5]"),
     ],
 )
 def test_the_span_ends_at_the_students_symbols_never_at_a_word_beyond_them(quote, answer, span):
     assert _span(quote, answer, min_chars=1) == span
+
+
+@pytest.mark.parametrize("answer", ["[0, 1)", "(0, 1]"])
+def test_a_half_open_interval_reaches_the_span_check_as_written(monkeypatch, events, answer):
+    """Review round 4, through grade(): both brackets of a half-open interval were
+    cut, so "[0, 1)" and its wrong mirror "(0, 1]" reached the span check as the
+    same words "0, 1", and a bracket-aware span check could tell them apart only
+    on words the student did not write."""
+    item = _one_item("gives the domain as [0, 1)", "The domain is [0, 1).", "What is the domain?")
+    first = {**_all_yes(0.95), "item_results": ["r1:yes"], "support": [f"r1: {answer}"]}
+    exact = lambda text, span: span == "[0, 1)"  # noqa: E731
+    res, calls = _grade_item(monkeypatch, item, [first], answer, judge=exact)
+    [message] = calls["span_messages"]
+    assert [span for _, _, span in grader_fakes.spans_of(message)] == [answer]
+    assert res.item_results == {"r1": answer == "[0, 1)"}
 
 
 @pytest.mark.parametrize("quote", ["100%", "Score: 100%", "Full marks: 100%.", "2/2", "3 out of 3"])
