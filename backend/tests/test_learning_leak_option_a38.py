@@ -271,6 +271,7 @@ def test_random_texts_strip_clean_and_idempotent_in_both_modes():
     pieces = [
         "option", "opt.", "choice", "answer", "answer is", "correct:", "it's", "It is",
         "the third one", "second choice", "#", "++", ", b or", "Plan", "(A, B, C)", "x",
+        "I", "because", "here", "is", "over", "base case", "It's", "go with", "fits",
         "pick", "is right", "was the answer", "→", "=>", "->", "—", "–", ":", "-",
         "(", ")", "[", "]", "**", "*", "_", "`", "'", '"', "“", "”",
         "A", "a", "B", "c", "C", "Ｃ", "С", "D", "​", "́", "part", "see",
@@ -387,3 +388,69 @@ def test_numeric_paraphrases_are_strict_mode_only():
 def test_a_verbal_paraphrase_is_a_documented_residual():
     """ "linear time" for O(n) is no token the checker reads: judge_leak's job."""
     assert _num("It grows in linear time.", "O(n)") == (False, "none")
+
+
+# ── A38 fix round 3 (MAJOR): a keyword context beats the article reading ────
+
+KEY_A_LEAKS = [
+    "The answer is A because it grows",
+    "Option A is correct",
+    "the correct option is A and not B",
+    "pick A since it grows",
+    "It's A because",
+    "go with A here",
+    "choose A over B",
+    "answer A works",
+    "The answer is a because it grows",
+]
+KEY_I_LEAKS = [
+    "Option I is correct",
+    "The answer is I because it grows",
+    "It's I, since it grows",
+    "I is correct",
+    "go with I here",
+]
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("hint", KEY_A_LEAKS)
+def test_key_a_in_a_keyword_context_leaks_in_both_modes(hint, strict):
+    assert _detect(hint, key="A", strict=strict) == (True, "option"), hint
+    once = _strip(hint, key="A", strict=strict)
+    assert _detect(once, key="A", strict=strict) == (False, "none"), once
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("hint", KEY_I_LEAKS)
+def test_key_i_in_a_keyword_context_leaks_in_both_modes(hint, strict):
+    assert _detect(hint, key="I", strict=strict) == (True, "option"), hint
+
+
+def test_a_fits_best_is_flagged_in_strict_and_clean_in_default():
+    """Decision (fix round 3): a sentence-initial capital before a predicate word
+    ("fits", "is", "works", "because", …) is the letter in strict mode; default
+    mode reads no option context there (a bare letter), so it stays clean."""
+    assert _detect("A fits best.", key="A", strict=True) == (True, "option")
+    assert _detect("A fits best.", key="A") == (False, "none")
+
+
+@pytest.mark.parametrize(
+    "hint, key",
+    [
+        ("A base case is what ends the calls.", "A"),
+        ("Check whether a stopping rule exists.", "A"),
+        ("What would I expect after one call?", "I"),
+        ("Answer: A function maps each input to one output.", "A"),
+        ("A student might try a loop.", "A"),
+        ("It's A good idea", "A"),
+        ("the answer I gave", "I"),
+    ],
+)
+@pytest.mark.parametrize("strict", [False, True])
+def test_the_article_and_pronoun_stay_clean_in_both_modes(hint, key, strict):
+    if strict and hint == "It's A good idea":
+        # decision: strict mode exempts a capital "A" only where it starts a
+        # sentence, so a mid-sentence one drops the hint (over-dropping is fine)
+        assert _detect(hint, key=key, strict=True) == (True, "option")
+        return
+    assert _detect(hint, key=key, strict=strict) == (False, "none"), (hint, strict)

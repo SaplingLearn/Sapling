@@ -36,13 +36,20 @@ the supervisor architecture's deterministic solution stripper). Three rules:
   "C#"), one of an enumeration ("(A, B, C)", "a, b or c"), the article or
   pronoun (a lowercase "a"/"i" before any word, a capital "A"/"I" before a
   lowercase word: "choose a function", "It's A good idea", "the answer I
-  gave"). A bare letter never counts in this default mode (tutor prose:
+  gave") — unless that word is a predicate (_PREDICATE_WORDS: "is",
+  "because", "over", "here", "fits", …), which makes it the letter even
+  after a keyword ("pick A because", "Option A is correct", "go with A
+  here"; A38 fix round 3). A bare letter never counts in this default mode (tutor prose:
   "vitamin C", "grade C", "C.", "Ｃ", an unclosed "(C" — by design).
 
   `strict=True` (the grader hint, A38 fix round M1(b)/(d) and m7, where a
   false positive only drops a hint) adds: ANY standalone key letter but the
-  article/pronoun reading above (so "vitamin C", "C++", "A." and "(a)" drop
-  the hint, "A base case" and "I think" do not); the key's ordinal position
+  article/pronoun reading — a lowercase "a"/"i" before a non-predicate word,
+  a capital "I" before a lowercase non-predicate word, and a capital "A"
+  only where it also STARTS a sentence (so "vitamin C", "C++", "A.", "(a)",
+  "A fits best" and a mid-sentence "It's A good idea" drop the hint; "A base
+  case …", "Check whether a stopping rule exists." and "What would I
+  expect …" do not); the key's ordinal position
   ("the third one", "second choice", "the 3rd option" for C);
   the correct option's text (`option_text`) as a run of answer tokens; and,
   when the answer is numeric (its canonical_answer, else the value its
@@ -136,10 +143,11 @@ def _folded(text: str) -> tuple[str, list[int]]:
 
 
 # Keywords before the letter (any case, whole words).
+_COPULA = r"(?:\s{1,4}(?:is|was|would\s+be|should\s+be|must\s+be|has\s+to\s+be))?"
 _OPTION_KEYWORDS = (
-    r"options?|opt\.?|choices?|letters?|keys?"
+    r"(?:options?|opt\.?|choices?|letters?|keys?"
     r"|correct(?:\s+(?:one|option|choice|answer|letter))?"
-    r"|answers?(?:\s+(?:is|was|would\s+be|should\s+be|must\s+be|has\s+to\s+be))?"
+    rf"|answers?){_COPULA}"
     r"|pick|choose|select|go\s+with"
 )
 _NOT_ALNUM_BEFORE = r"(?<![A-Za-z0-9])"
@@ -163,6 +171,32 @@ _CLAUSE_START = r"(?:(?<![\s\S])|(?<=[^\sA-Za-z0-9\"'`(\[*_#)\]}]))\s{0,4}"
 # A list of option letters before an arrow ("A/B/C/D → C").
 _LETTER_LIST = r"(?<![A-Za-z0-9])[A-Z](?:\s{0,2}[/,|]\s{0,2}[A-Z]){1,25}(?![A-Za-z0-9])\s{0,4}"
 _POSITION_NOUNS = r"one|option|choice|answer|letter"
+# Words that make a following capital "A"/"I" the subject or object of a pick
+# rather than an article or pronoun: "A is right", "pick A because", "choose A
+# over B", "A fits best" (A38 fix round 3). A lowercase word NOT listed here
+# after the letter reads as the article/pronoun ("A base case", "I think").
+_PREDICATE_WORDS = (
+    r"is|was|are|were|'s|be|would|should|must|might|could|can|will|does|did|do|has|had"
+    r"|fits|fit|works|work|wins|matches|holds|seems|looks|gives|stands|remains|goes"
+    r"|because|since|as|and|or|but|nor|not|over|than|then|here|there|instead|rather"
+    r"|too|also|so|for|with|vs|versus|now|again|only|obviously|clearly|definitely"
+)
+# The letter reads as the article/pronoun: a word follows that is no
+# predicate (any case after a lowercase letter, lowercase after a capital).
+_ARTICLE_AFTER_LOWER = rf"\s{{1,8}}(?!(?:{_PREDICATE_WORDS})(?![A-Za-z]))[A-Za-z]"
+_ARTICLE_AFTER_UPPER = rf"\s{{1,8}}(?!(?:{_PREDICATE_WORDS})(?![A-Za-z]))[a-z]"
+_ARTICLE_UPPER = re.compile(_ARTICLE_AFTER_UPPER)
+_SENTENCE_BREAKS = frozenset(".:!?\n")
+_SENTENCE_MARKUP = frozenset(" \t\"'`([*_#")
+
+
+def _starts_sentence(text: str, pos: int) -> bool:
+    """Only spaces and opening markup between `pos` and the text's start or a
+    sentence break (. : ! ? or a line break)."""
+    i = pos
+    while i > 0 and text[i - 1] in _SENTENCE_MARKUP:
+        i -= 1
+    return i == 0 or text[i - 1] in _SENTENCE_BREAKS
 
 
 class _OptionRule(NamedTuple):
@@ -192,12 +226,12 @@ def _option_rule(correct_option: str | None) -> _OptionRule | None:
         raise ValueError(f"correct_option {correct_option!r} is not one option letter")
     lower = upper.lower()
     any_case = f"[{upper}{lower}]"
-    # The article "a"/"A" and the pronoun "i"/"I" before a word: a lowercase
-    # one before any word, a capital one before a lowercase word ("A base
-    # case", "I think"); an option letter is followed by punctuation or a
-    # capitalised word, or it is the subject of "is/was …" (its own rule).
+    # The article "a"/"A" and the pronoun "i"/"I": a lowercase one before any
+    # word, a capital one before a lowercase word — unless that word is a
+    # predicate ("because", "is", "over", "here", …): then it is the letter,
+    # the more so after a keyword ("pick A because", "go with A here").
     if upper in "AI":
-        guarded = rf"(?:{upper}(?!\s{{1,8}}[a-z])|{lower}(?!\s{{1,8}}[A-Za-z]))"
+        guarded = rf"(?:{upper}(?!{_ARTICLE_AFTER_UPPER})|{lower}(?!{_ARTICLE_AFTER_LOWER}))"
     else:
         guarded = any_case
     b, a, e = _NOT_ALNUM_BEFORE, _NOT_ALNUM_AFTER, _NOT_ENUM_AFTER
@@ -230,7 +264,10 @@ def _option_rule(correct_option: str | None) -> _OptionRule | None:
     )
     # a list label: "C)" first on its line or right after a sentence's end
     label = re.compile(rf"(?:(?<=[\n.;:!?])|(?<![\s\S]))[ \t]{{0,4}}(?P<span>{upper}\))")
-    standalone = re.compile(rf"{b}{guarded}(?![A-Za-z0-9])")
+    # strict: every key letter; a capital "A"/"I" read as the article or
+    # pronoun is dropped in _option_hits ("A" only where it starts a sentence)
+    loose = rf"(?:{upper}|{lower}(?!{_ARTICLE_AFTER_LOWER}))" if upper in "AI" else any_case
+    standalone = re.compile(rf"{b}{loose}(?![A-Za-z0-9])")
     position = _position_pattern(ord(upper) - ord("A"))
     return _OptionRule(context, label, standalone, position)
 
@@ -265,7 +302,15 @@ def _option_hits(
             found.append(m.span("span") if "span" in pattern.groupindex else m.span())
     found += [m.span("span") for m in option.label.finditer(folded)]
     if strict:
-        found += [m.span() for m in option.standalone.finditer(folded)]
+        for m in option.standalone.finditer(folded):
+            letter = m.group()
+            if letter in "AI" and _ARTICLE_UPPER.match(folded, m.end()):
+                # "I" before a non-predicate word is the pronoun anywhere
+                # ("What would I expect"); "A" the article only where it
+                # starts a sentence ("A base case …"; "the model A fits" drops)
+                if letter == "I" or _starts_sentence(folded, m.start()):
+                    continue
+            found.append(m.span())
         if option.position is not None:
             found += [m.span() for m in option.position.finditer(folded)]
     return [(origin[start], origin[end - 1] + 1) for start, end in found if end > start]
