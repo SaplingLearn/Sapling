@@ -72,7 +72,11 @@ _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
 #: Modules that WRITE check_items.source_chunk_ids at generation (PKG-04; HANDOFF-04
 #: §Symbols: services/check_item_service.py::_build_row copies the draft's chunk ids —
 #: agents/check_items.py only drafts them as `chunk_ids` and never names the column).
-CHECK_ITEM_WRITERS = {"services/check_item_service.py"}
+#: PKG-13: the local rich seed writes its seeded items' source_chunk_ids beside the
+#: course_chunks rows it seeds, through db/seed_helpers only — it never reads a chunk
+#: back (tests/test_learning_seed_loop_user.py pins that seed_learning_loop has no
+#: select of its own).
+CHECK_ITEM_WRITERS = {"services/check_item_service.py", "db/seed_local_rich.py"}
 # spec §8.9: encrypted learning columns — never UNIQUE, never a PostgREST filter
 ENCRYPTED_LEARNING_COLUMNS = (
     "prompt",
@@ -1555,3 +1559,97 @@ def test_inv_17_scan_self_test():
     assert pat.search("import learning.misconceptions as m\n")
     assert pat.search("from learning import gates, misconceptions\n")
     assert not pat.search("from learning import gates\n")
+
+
+# ── PKG-13: spec/handler sync + the build-phase staff/QA toggle ─────────────
+
+FRONTEND_E2E = BACKEND.parent / "frontend" / "e2e"
+SEED = BACKEND / "db" / "seed_local_rich.py"
+#: The stub marker PKG-00 left in frontend/e2e/learn-loop.spec.ts. PKG-13 Task 9
+#: replaces the stub with the journeys; from then on inv_13a requires the spec
+#: to cite at least one E2E_ constant (the skip below can no longer fire).
+LEARN_LOOP_SPEC_STUB_MARKER = "Contains no tests yet."
+
+# `/** Must match backend/agents/function_handlers_e2e.py::E2E_X */` followed by
+# `const NAME = "..." + "...";` — the house shape (tutor.spec.ts).
+_SYNC_RX = re.compile(
+    r"Must match backend/agents/function_handlers_e2e\.py::(E2E_[A-Z0-9_]+)\.?\s*\*/\s*"
+    r"const\s+\w+\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*\+?\s*)+);",
+)
+
+
+def _ts_string(expr: str) -> str:
+    import json
+
+    return "".join(json.loads(piece) for piece in re.findall(r"\"(?:[^\"\\]|\\.)*\"", expr))
+
+
+def test_inv_13a_sync_scan_self_test():
+    """The scan reads the house shape, joins `+` pieces and decodes escapes."""
+    src = (
+        "/** Must match backend/agents/function_handlers_e2e.py::E2E_X_REPLY */\n"
+        'const X_REPLY =\n  "Key idea: a \\"b\\"" +\n  " c?";\n'
+    )
+    ((name, expr),) = _SYNC_RX.findall(src)
+    assert name == "E2E_X_REPLY"
+    assert _ts_string(expr) == 'Key idea: a "b" c?'
+    # tutor.spec.ts's shape ends the comment with a period
+    dotted = src.replace("E2E_X_REPLY */", "E2E_X_REPLY. */")
+    assert [n for n, _ in _SYNC_RX.findall(dotted)] == ["E2E_X_REPLY"]
+
+
+def test_inv_13a_spec_constants_match_function_handlers():
+    import sys
+
+    import agents._providers as providers
+
+    providers.clear_function_handlers()
+    sys.modules.pop("agents.function_handlers_e2e", None)
+    try:
+        handlers = importlib.import_module("agents.function_handlers_e2e")
+        pairs = []
+        for spec in sorted(FRONTEND_E2E.glob("*.spec.ts")):
+            for name, expr in _SYNC_RX.findall(spec.read_text()):
+                pairs.append((spec.name, name, _ts_string(expr)))
+        for spec, name, ts_value in pairs:
+            assert hasattr(handlers, name), f"{spec} cites {name}, not in function_handlers_e2e"
+            assert getattr(handlers, name) == ts_value, (
+                f"{spec}: {name} drifted from the backend constant"
+            )
+        loop_spec = (FRONTEND_E2E / "learn-loop.spec.ts").read_text()
+        if LEARN_LOOP_SPEC_STUB_MARKER in loop_spec:
+            pytest.skip(
+                "learn-loop.spec.ts is still the PKG-00 stub; PKG-13 Task 9 writes the journeys"
+            )
+        assert any(spec == "learn-loop.spec.ts" for spec, _, _ in pairs), (
+            "learn-loop.spec.ts cites no E2E_ constant"
+        )
+    finally:
+        providers.clear_function_handlers()
+        sys.modules.pop("agents.function_handlers_e2e", None)
+
+
+def test_inv_13b_seed_opts_in_exactly_the_loop_users():
+    """Build phase (spec §13 A14): user_settings.learning_loop_beta is a staff/QA
+    toggle, and the seed sets it only for the loop users {rich-user-loop,
+    rich-user-capped}. PKG-14b rewrites this test in place (name kept) to "no
+    journey depends on learning_loop_beta" (spec §8, §11.2)."""
+    text = SEED.read_text()
+    assert 'USER_LOOP = "rich-user-loop"' in text, "seed has no loop user"
+    assert 'USER_CAPPED = "rich-user-capped"' in text, "seed has no capped user"
+    assert re.search(r"^LOOP_USERS = \(USER_LOOP, USER_CAPPED\)$", text, re.M), (
+        "the toggle's allowed set changed"
+    )
+    # Lines that WRITE the column carry the quoted dict key; comments do not.
+    toggle_lines = [ln for ln in text.splitlines() if '"learning_loop_beta"' in ln]
+    assert toggle_lines, "seed never sets learning_loop_beta"
+    assert all("True" in ln for ln in toggle_lines), toggle_lines
+    for legacy in (
+        "USER_ACTIVE",
+        "USER_SECOND",
+        "USER_NEW",
+        "rich-user-active",
+        "rich-user-second",
+        "rich-user-new",
+    ):
+        assert not any(legacy in ln for ln in toggle_lines), f"{legacy} must stay legacy"

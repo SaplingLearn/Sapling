@@ -147,6 +147,8 @@ NO_MODEL_ROUTES = [
     # PKG-09: runs the close model only with evidence, past an INLINE A20 check
     # after the gate (spec §9: inline where only some bodies run a model).
     "/close",
+    # PKG-13: the open loop sessions (read-only; never rate-limited, spec §13 A20).
+    "/sessions",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
@@ -784,6 +786,39 @@ def test_status_payload(gate_on, seams):
         body
     )
     seams.ai_budget.check.assert_not_called()
+
+
+def test_status_carries_the_open_items_pose_and_writes_nothing(gate_on, seams):
+    """PKG-13 reopen: a client resuming a `check` session restores the pose from
+    GET /status — read-only — instead of POST /check/next, which may activate
+    (write) another item. The pose is `_pose_payload`'s: the prompt, never the
+    reference or the final answer."""
+    from learning.ladder import check_pose
+
+    body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
+    assert body["check"] == {
+        "question_hash": "qh-1",
+        "format": "free",
+        "difficulty": 2,
+        "prompt": check_pose(ITEM.prompt),
+        "options": None,
+    }
+    assert ITEM.final_answer not in json.dumps(body)
+    seams.save.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        {"phase": "teach"},  # no item current
+        _graded("not_yet"),  # graded, feedback pending: the item takes no answer
+    ],
+)
+def test_status_has_no_pose_when_no_item_is_open(gate_on, seams, doc):
+    seams.store["doc"] = doc
+    body = client.get("/api/learn/loop/status?user_id=u1&session_id=s1").json()
+    assert body["check"] is None
+    seams.save.assert_not_called()
 
 
 def test_status_of_a_lazy_session_is_a_fresh_state(gate_on, seams):

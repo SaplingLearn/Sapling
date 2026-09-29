@@ -2241,7 +2241,7 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 4. `grep -c "E2E_LOOP_" backend/agents/function_handlers_e2e.py` → ≥ 3
 5. `grep -c '"/sessions"' backend/routes/learn_loop.py` → ≥ 1; `cd backend && venv/bin/python -m pytest tests/test_learn_loop_sessions.py -q` → all passed
 6. `cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k "inv_13a or inv_13b"` → `2 passed`
-7. `cd backend && venv/bin/python -m pytest tests/ -q` → zero failures; `venv/bin/ruff check .` → `All checks passed!`
+7. `cd backend && venv/bin/python -m pytest tests/ -q -p no:cacheprovider --ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py` (no `SAPLING_MODEL_MODE` / `SAPLING_FUNCTION_HANDLERS` in the env; CI's ignore set — corrected in the PKG-13 fix round) → zero failures; `venv/bin/ruff check .` → `All checks passed!`
 8. `cd frontend && npm test && npm run lint` → all passed; lint clean
 9. `grep -n "LEARNING_LOOP_ENABLED" scripts/e2e-up.sh .github/workflows/e2e.yml scripts/explore.sh` → ≥ 1 hit each
 10. `grep -c '"learn_loop"' backend/e2e_oracles/__main__.py` → 1

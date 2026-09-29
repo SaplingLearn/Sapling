@@ -5,8 +5,9 @@ Invocation (from `backend/`):
     venv/bin/python -m e2e_oracles [--json] [--check NAME]... [--user ID] \\
         [--base-url URL] [--log PATH]
 
-Check names: `graph`, `counts`, `ciphertext`, `logscan`, `orphans`, `ragstore` — default
-is all five, in that (sorted) order. `--check` may repeat to select a subset.
+Check names: `graph`, `counts`, `ciphertext`, `logscan`, `orphans`, `ragstore`,
+`learn_loop` (PKG-13: the learning loop's write invariants, table-wide) — default
+is all of them. `--check` may repeat to select a subset.
 
 Exit codes: 0 clean / 1 findings / 2 infra error — ANY `Finding(oracle=
 "oracle-error", ...)` FORCES exit 2, even if every other check came back
@@ -45,6 +46,7 @@ CHECKS: dict[str, Callable[[argparse.Namespace], tuple[list[Finding], int]]] = {
     "logscan": lambda args: gather.run_logscan(args),
     "orphans": lambda args: gather.run_orphans(args),
     "ragstore": lambda args: gather.run_ragstore(args),
+    "learn_loop": lambda args: gather.run_learn_loop(args),
 }
 
 
@@ -59,13 +61,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="append",
         dest="checks",
         choices=sorted(CHECKS),
-        help="check to run (repeatable); default: all five",
+        help="check to run (repeatable); default: all",
     )
     parser.add_argument("--user", default="rich-user-active", help="user id to check")
     parser.add_argument(
         "--base-url", default="http://localhost:5000", help="local backend base URL"
     )
     parser.add_argument("--log", default=str(_DEFAULT_LOG), help="backend log path for logscan")
+    parser.add_argument(
+        "--expect-loop-activity",
+        action="store_true",
+        help=(
+            "learn_loop: no loop user or no graded check step is a finding (the loop "
+            "journey passes it right after its walk; the per-test truncate leaves an "
+            "idle stack after a full suite, so the default run does not)"
+        ),
+    )
     return parser.parse_args(argv)
 
 

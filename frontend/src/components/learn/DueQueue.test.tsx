@@ -15,16 +15,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { mockNext, mockAnswer } = vi.hoisted(() => ({
+const { mockNext, mockAnswer, mockSummary } = vi.hoisted(() => ({
   mockNext: vi.fn(),
   mockAnswer: vi.fn(),
+  mockSummary: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({
+// The real module for everything else (budgetPauseOf, ApiError); the three
+// review clients are mocked.
+vi.mock("@/lib/api", async (orig) => ({
+  ...(await orig<typeof import("@/lib/api")>()),
   getReviewNext: mockNext,
   answerReview: mockAnswer,
+  getReviewSummary: mockSummary,
 }));
 
+import { ApiError } from "@/lib/api";
 import { DueQueue } from "./DueQueue";
 
 const SR = { stage: "acquire", correct: 0, target: 3 } as const;
@@ -52,8 +58,14 @@ const graded = (over: object = {}) => ({
   remaining_budget_s: 555, sr: SR, unavailable: false, refused: false, ...over,
 });
 
+const summary = (over: object = {}) => ({
+  due: { flashcard: 0, check: 0 }, in_budget: 0, unservable: 0, paused: 0, budget_min: 12,
+  remaining_budget_s: 720, retention_target: 0.9, ...over,
+});
+
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
+  mockSummary.mockResolvedValue(summary());
 });
 
 afterEach(() => {
@@ -223,5 +235,108 @@ describe("DueQueue", () => {
     expect(screen.queryByTestId("review-submit")).toBeNull();
     expect(screen.getByTestId("review-next")).toBeTruthy();
     expect(mockNext).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DueQueue launch polish (PKG-13; spec §11.3, §3.5)", () => {
+  it("shows 'All caught up' when nothing is due", async () => {
+    mockNext.mockResolvedValue(next(null, 600, 0));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    expect((await screen.findByTestId("review-empty")).textContent).toContain("All caught up");
+    expect(screen.queryByTestId("review-item")).toBeNull();
+    expect(screen.queryByTestId("review-budget-paused")).toBeNull();
+  });
+
+  it("a 429 'ai budget reached' shows the pause banner and review keeps working", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));
+    mockAnswer.mockRejectedValue(
+      new ApiError("ai budget reached", 429, { body: { detail: "ai budget reached", reset_at: "2026-09-27T00:00:00Z" } }),
+    );
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "x");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
+    expect(banner.getAttribute("role")).toBe("status");
+    expect(banner.textContent).toContain("Flashcards and review keep working");
+    expect(screen.queryByText(/Couldn't send that answer/)).toBeNull(); // not an error
+    await userEvent.click(screen.getByTestId("review-next"));
+    await waitFor(() => expect(mockNext).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Q?")).toBeTruthy();
+  });
+
+  it("paused novice concepts show the banner with the count", async () => {
+    mockNext.mockResolvedValue(next(CARD));
+    mockSummary.mockResolvedValue(summary({ paused: 2 }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    const banner = await screen.findByTestId("review-budget-paused");
+    expect(banner.textContent).toContain("2 concepts paused until your daily AI budget resets");
+    expect(banner.textContent).toContain("Flashcards and other reviews keep working");
+    expect(mockSummary).toHaveBeenCalledWith("u1", "c1");
+  });
+
+  it("one paused concept reads in the singular", async () => {
+    mockNext.mockResolvedValue(next(null));
+    mockSummary.mockResolvedValue(summary({ paused: 1 }));
+    render(<DueQueue userId="u1" />);
+    expect((await screen.findByTestId("review-budget-paused")).textContent).toContain("1 concept paused");
+  });
+
+  it("a failed summary is ignored (it only feeds the banner)", async () => {
+    mockNext.mockResolvedValue(next(null));
+    mockSummary.mockRejectedValue(new Error("boom"));
+    render(<DueQueue userId="u1" />);
+    expect(await screen.findByTestId("review-empty")).toBeTruthy();
+    expect(screen.queryByTestId("review-budget-paused")).toBeNull();
+  });
+
+  it("a flashcard is served, flipped and rated", async () => {
+    mockNext.mockResolvedValue(next(CARD));
+    mockAnswer.mockResolvedValue(graded({ hint: null }));
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    expect(mockAnswer).toHaveBeenCalledTimes(1);
+    expect(mockAnswer).toHaveBeenCalledWith(expect.objectContaining({ kind: "flashcard", rating: 3 }));
+  });
+
+  it("the summary is re-read with every load, so the pause count is never stale", async () => {
+    mockNext.mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(next(null, 600, 0));
+    mockAnswer.mockResolvedValue(graded({ hint: null }));
+    mockSummary.mockResolvedValueOnce(summary({ paused: 2 })).mockResolvedValue(summary({ paused: 0 }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    expect((await screen.findByTestId("review-budget-paused")).textContent).toContain("2 concepts");
+    await userEvent.click(screen.getByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await screen.findByTestId("review-empty");
+    await waitFor(() => expect(mockSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("review-budget-paused")).toBeNull());
+  });
+
+  it("'All caught up' makes no 'more due later' claim from a mount-time count", async () => {
+    // summary.due counts what is due TODAY (as of that read) — never "later";
+    // with nothing served and due_total 0 there is nothing more due today.
+    mockNext.mockResolvedValue(next(null, 600, 0));
+    mockSummary.mockResolvedValue(summary({ due: { flashcard: 3, check: 2 } }));
+    render(<DueQueue userId="u1" />);
+    const empty = await screen.findByTestId("review-empty");
+    await waitFor(() => expect(mockSummary).toHaveBeenCalled());
+    expect(empty.textContent).not.toMatch(/due later/i);
+    expect(empty.textContent).toContain("All caught up — nothing is due right now.");
+  });
+
+  it("a failed reload never leaves the previous item on screen", async () => {
+    mockNext.mockResolvedValueOnce(next(CARD)).mockRejectedValueOnce(new Error("down"));
+    mockAnswer.mockResolvedValue(graded({ hint: null }));
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    expect(await screen.findByText(/Couldn't load your review queue/)).toBeTruthy();
+    expect(screen.queryByTestId("review-item")).toBeNull();
   });
 });
