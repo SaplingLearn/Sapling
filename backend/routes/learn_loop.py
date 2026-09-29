@@ -177,6 +177,7 @@ from services.graph_service import _normalize_concept, _prerequisite_edges, get_
 from services.prompt_safety import wrap_untrusted
 from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks
 from services.request_context import current_request_id
+from services.session_modes import NOT_REVIEW
 from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -256,9 +257,12 @@ def _session_scope(session_id: str, user_id: str) -> tuple[str, str]:
     """(offering_id, abstract course_id) of a materialised session the requesting
     student owns. The loop-state store keys on the session id alone, so this
     ownership check is the route's (HANDOFF-06 Known gaps): 404 when no row
-    exists, 403 when it is another student's. One `sessions` read."""
+    exists, 403 when it is another student's. One `sessions` read. A daily
+    review session (mode 'review', PKG-12) is never a loop session: its
+    phase-less document would read as probing (`_loop_phase`), so it is a 404
+    here and every probe/plan/teach/check route refuses it (A73)."""
     rows = table("sessions").select(
-        "user_id,offering_id", filters={"id": f"eq.{session_id}"}, limit=1
+        "user_id,offering_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Session not found")

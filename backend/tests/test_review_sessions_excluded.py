@@ -122,3 +122,114 @@ def test_review_session_started_is_in_the_taxonomy():
     from services.events_service import EVENT_TAXONOMY
 
     assert "review.session_started" in EVENT_TAXONOMY
+
+
+# ── PKG-08's phase lock and review sessions ───────────────────────────────────
+# A review session's loop_state has no `phase` (its keys are sr/review/open), and
+# `_loop_phase` reads a phase-less document as "probe". So a review session must never
+# reach a loop-session route: `_session_scope` (every probe/plan/teach/check route's
+# ownership read) excludes mode='review' rows — a review session id is a 404 there —
+# and the review routes never consult the phase.
+
+
+def test_loop_session_scope_never_resolves_a_review_session(monkeypatch):
+    from fastapi import HTTPException
+
+    from routes import learn_loop
+
+    spy = _Spy()
+    monkeypatch.setattr(learn_loop, "table", spy)
+    with pytest.raises(HTTPException) as exc:
+        learn_loop._session_scope("sess-review", USER)
+    assert exc.value.status_code == 404
+    assert spy.filters[-1].get("mode") == "neq.review"
+
+
+def test_probe_next_on_a_review_session_id_writes_nothing(monkeypatch):
+    """The failure the scope guard prevents: /probe/next would read the phase-less
+    review document as probing and write a probe into it."""
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+
+    from main import app
+
+    class _ReviewRow(_Spy):
+        """The review session's row — returned unless the read excludes mode=review."""
+
+        def __call__(self, name):
+            handle = super().__call__(name)
+            inner = handle.select.side_effect
+
+            def select(columns="*", filters=None, **kw):
+                inner(columns, filters, **kw)
+                if name == "sessions" and (filters or {}).get("mode") != "neq.review":
+                    return [{"user_id": USER, "offering_id": "off-1", "mode": "review"}]
+                return []
+
+            handle.select.side_effect = select
+            return handle
+
+    monkeypatch.setattr("routes.learn_loop.table", _ReviewRow())
+    monkeypatch.setattr("routes.learn_loop._load_loop_state", lambda sid: {"sr": {}, "review": {}})
+    monkeypatch.setattr("routes.learn_loop._probe_course_has_items", lambda cid: False)
+    monkeypatch.setattr("routes.learn_loop.offering_course_id", lambda oid: "c1")
+    writes = []
+    monkeypatch.setattr(
+        "routes.learn_loop._update_loop_state", lambda *a, **k: writes.append(a) or {}
+    )
+    with (
+        patch("routes.learn_loop.require_self", return_value=None),
+        patch("routes.learn_loop.learning_loop_for_request", return_value=True),
+        patch("routes.learn_loop._probe_plan_read_limit", return_value=None),
+        patch("routes.learn_loop._consume_pending", return_value=None),
+    ):
+        r = TestClient(app).post(
+            "/api/learn/loop/probe/next", json={"session_id": "sess-review", "user_id": USER}
+        )
+    assert r.status_code == 404 and writes == []
+
+
+def test_review_routes_never_consult_the_loop_phase():
+    """Review is its own session and mode: no /review/* handler (nor learning/review.py)
+    reads the probe/plan/teach phase or the teaching lock."""
+    import ast
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    tree = ast.parse((root / "routes" / "learn_loop.py").read_text())
+    handlers = {"review_next", "review_answer", "review_summary", "review_active"}
+    lock = {
+        "_loop_phase",
+        "_require_teaching",
+        "_teaching_open",
+        "_require_phase",
+        "_session_scope",
+    }
+    found = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name in handlers:
+            found.add(fn.name)
+            names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+            assert not names & lock, (fn.name, names & lock)
+    assert found == handlers
+    review_src = (root / "learning" / "review.py").read_text()
+    assert '"phase"' not in review_src and "_loop_phase" not in review_src
+
+
+def test_a_phase_less_review_document_still_serves(monkeypatch):
+    """The review queue works on a document with no `phase` (what _loop_phase would
+    read as probing) — and on one that somehow carries phase=probe."""
+    from learning import review
+
+    for doc in ({"sr": {}, "review": {}}, {"phase": "probe", "sr": {}, "review": {}}):
+        item = review.ReviewItem(
+            kind="flashcard",
+            id="f1",
+            r=0.5,
+            stability=1.0,
+            cost_s=15,
+            sr_stage="acquire",
+            sr_target=3,
+        )
+        payload = review.serve(item, card_row={"front": "Q", "back": "A"}, loop_state=doc)
+        assert payload["kind"] == "flashcard"
