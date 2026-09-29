@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import threading
+from collections import deque
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -975,7 +976,9 @@ def _top_up_mc_reason(
 # outcomes: a one-concept call whose output never validated
 # (_CONCEPT_FAILURE_REASONS), or a call that answered but stored nothing for
 # that concept. A timeout, a transport or API error, a usage limit, any other
-# exception, and every failure of a multi-concept call count for no concept.
+# exception count for no concept. A multi-concept call whose output never
+# validated is split and each concept re-run alone once (A38 fix round 2), so
+# only the concept that fails on its own is counted.
 
 _FAILURES_TABLE = "check_item_draft_failures"
 _FAILURES_ON_CONFLICT = "course_id,concept_key"
@@ -1180,8 +1183,16 @@ def generate_for_concepts(
     # concept they alone covered counts unmatched instead of costing a call
     # whose drafts would be dropped.
     gone: set[str] = set()
-    for start in range(0, len(todo), CHECK_ITEM_CONCEPTS_PER_CALL):
-        batch = todo[start : start + CHECK_ITEM_CONCEPTS_PER_CALL]
+    # (batch, split): a multi-concept call whose output never validated is
+    # re-run one concept at a time, once, so the failure lands on the concept
+    # that caused it and its batch-mates still get items this pass (A38 fix
+    # round 2). At most 1 + CHECK_ITEM_CONCEPTS_PER_CALL calls per batch.
+    queue: deque[tuple[list, bool]] = deque(
+        (todo[start : start + CHECK_ITEM_CONCEPTS_PER_CALL], False)
+        for start in range(0, len(todo), CHECK_ITEM_CONCEPTS_PER_CALL)
+    )
+    while queue:
+        batch, split = queue.popleft()
         if gone:
             remaining = [c for c in chunks if c.get("doc_id") not in gone]
             kept = []
@@ -1200,13 +1211,16 @@ def generate_for_concepts(
         sources = _call_sources(ranked for _, _, ranked in batch)
 
         out = run_agent_sync(draft_items(names, sources.passages, deps=deps, flex=flex))
-        attempted += len(batch)
+        if not split:  # a split re-run is the same concepts' same attempt
+            attempted += len(batch)
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
+            if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
+                queue.extendleft(([concept], True) for concept in reversed(batch))
+                continue
             unavailable += len(batch)
             # Only a one-concept call's validation failure is that concept's
-            # own outcome; anything else, or any multi-concept call, is no
-            # concept's fault (M2 allowlist).
+            # own outcome; anything else is no concept's fault (M2 allowlist).
             if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
                 key, _, ranked = batch[0]
                 ledger.failed(key, _source_fingerprint(ranked))

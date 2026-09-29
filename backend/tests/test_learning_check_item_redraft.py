@@ -332,13 +332,16 @@ class TestRedraftAllowlist:
             assert calls == 1, reason
         assert failures.rows == {}, reason
 
-    def test_a_batch_level_failure_is_charged_to_no_concept(self, env):
+    def test_a_batch_level_failure_is_charged_only_after_a_split(self, env):
+        """A38 fix round 2: a multi-concept validation failure is nobody's by
+        itself; the split re-runs each concept alone, and only a concept that
+        fails ALONE is counted."""
         failures = _Failures()
         names = ["Learning Rate", "Momentum", "Batch Size"]
-        for _ in range(5):
-            out, calls = _run_many(env, failures, _invalid(), names)
-            assert calls == 1 and out.concepts_attempted == 3
-        assert failures.rows == {}, "a multi-concept validation failure is nobody's"
+        out, calls = _run_many(env, failures, _invalid(), names)
+        assert calls == 1 + len(names) and out.concepts_attempted == 3
+        assert {r["failures"] for r in failures.rows.values()} == {1}
+        assert len(failures.rows) == 3
 
     def test_a_good_co_batched_concept_is_never_stalled(self, env):
         from agents.check_items import CheckItemsOutput
@@ -434,3 +437,84 @@ def test_the_draft_failures_table_is_backend_only():
     assert "rolname = 'service_role'" in ddl
     assert f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {t} TO service_role" in ddl
     assert "CREATE POLICY" not in ddl.upper()
+
+
+# ── A38 fix round 2 (MAJOR 1): a failing multi-concept call is split ────────
+
+
+def _split_run(svc, failures, bad: str, names):
+    """One pass where any call that includes `bad` fails validation; a call
+    without it drafts one valid item per concept. Returns (outcome, calls, items)."""
+    from agents.check_items import CheckItemsOutput, CheckItemsUnavailable
+
+    items = _Items()
+    calls: list = []
+
+    def factory(name):
+        return {"check_items": items, "check_item_draft_failures": failures}[name]
+
+    async def fake_draft(concepts, passages, *, deps, flex):
+        calls.append(list(concepts))
+        if bad in concepts:
+            return CheckItemsUnavailable(reason="UnexpectedModelBehavior")
+        return CheckItemsOutput(
+            items=[_draft(concept=c, chunk_ids=[passages[0]["id"]]) for c in concepts]
+        )
+
+    chunks = [
+        {"id": f"c{i}", "chunk_index": i, "chunk_text": f"{n} text", "doc_id": "doc-1"}
+        for i, n in enumerate(names)
+    ]
+    with (
+        patch.object(svc, "table", side_effect=factory),
+        patch.object(svc, "draft_items", side_effect=fake_draft),
+    ):
+        out = svc.generate_for_concepts(
+            user_id="u1", course_id="course-1", concept_names=names, chunks=chunks, flex=True
+        )
+    return out, calls, items
+
+
+class TestSplitOnValidationFailure:
+    NAMES = ["Learning Rate", "Momentum", "Batch Size"]
+
+    def test_batch_mates_are_rescued_and_only_the_bad_concept_counts(self, env):
+        failures = _Failures()
+        out, calls, items = _split_run(env, failures, "Momentum", self.NAMES)
+        assert calls[0] == self.NAMES
+        assert sorted(map(tuple, calls[1:])) == [(n,) for n in sorted(self.NAMES)]
+        stored = {r["concept_key"] for rows in items.upserts for r in rows}
+        assert stored == {"learning rate", "batch size"}, "the batch-mates get items this pass"
+        assert out.concepts_attempted == 3 and out.unavailable == 1
+        assert {k for (_, k), r in failures.rows.items() if r["failures"]} == {"momentum"}
+        assert failures.rows[("course-1", "momentum")]["failures"] == 1
+
+    def test_cost_is_at_most_one_plus_n_calls_per_failing_batch(self, env):
+        from learning.params import CHECK_ITEM_CONCEPTS_PER_CALL as per_call
+
+        failures = _Failures()
+        _, calls, _ = _split_run(env, failures, "Momentum", self.NAMES)
+        assert len(calls) <= 1 + per_call
+        # every concept failing: still one split per batch, never a second
+        _, calls, _ = _split_run(env, _Failures(), "*", ["*"] + self.NAMES[1:])
+        assert len(calls) <= 1 + per_call
+
+    def test_the_bad_concept_is_skipped_after_the_bound(self, env):
+        from learning.params import CHECK_ITEM_REDRAFT_MAX_FAILURES as n
+
+        failures = _Failures()
+        for _ in range(n):
+            _split_run(env, failures, "Momentum", self.NAMES)
+        assert failures.rows[("course-1", "momentum")]["failures"] == n
+        out, calls, _ = _split_run(env, failures, "Momentum", self.NAMES)
+        assert all("Momentum" not in c for c in calls)
+        assert out.concepts_skipped >= 1
+
+    def test_a_transient_batch_failure_is_not_split(self, env):
+        from agents.check_items import CheckItemsUnavailable
+
+        failures = _Failures()
+        out, calls = _run_many(
+            env, failures, CheckItemsUnavailable(reason="ReadTimeout"), self.NAMES
+        )
+        assert calls == 1 and failures.rows == {}
