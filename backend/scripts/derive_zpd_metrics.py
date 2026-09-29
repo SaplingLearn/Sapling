@@ -21,8 +21,10 @@ those columns only (spec §13 A79; invariants 1 and 20). The values are a pure
 function of the journal, so a re-run writes the same values.
 
 Every run, --dry-run included, also prints one read-only `REPORT <json>` line
-(spec §10; A15/A20/A21/A22): cost per band, per session (or per user-day when
-not every loop request maps to a session), the check_items total, the tier and
+(spec §10; A15/A20/A21/A22): cost per band; cost per session for every loop
+request an event maps to its session (zpd.step carries the session id, A82;
+learn.session_closed and chat.message_sent too), and per user-day for the rows
+that carry none (older rows); the check_items total, the tier and
 grader_backend mix, cap hits, and each course's check-item coverage.
 
 Run from backend/:
@@ -78,7 +80,9 @@ _EVIDENCE_COLS = "id,created_at,correct,assisted,max_rung,question_hash,channel"
 _EVIDENCE_ORDER = "created_at.desc,evidence_seq.desc.nullslast,id.desc"
 _USAGE_COLS = "id,user_id,request_id,task,cost_usd,created_at"
 _EVENT_COLS = "id,event_type,user_id,request_id,payload,created_at"
-_REPORT_EVENTS = ("zpd.step", "ai.budget_capped", "learn.session_closed")
+# zpd.step / learn.session_closed / chat.message_sent carry the loop session id
+# (A82), which maps a request's llm_usage rows to their session
+_REPORT_EVENTS = ("zpd.step", "ai.budget_capped", "learn.session_closed", "chat.message_sent")
 SERIES_SLOTS = (  # spec §8 invariant 6
     "check_items",
     "grader",
@@ -216,18 +220,29 @@ def report(
             f"{p.get('scope')}/{p.get('level')}" for p in ((c.get("payload") or {}) for c in caps)
         ),
     }
-    if loop_rows and all(r.get("request_id") in sessions_by_request for r in loop_rows):
-        per_session: dict[str, float] = defaultdict(float)
-        for r in loop_rows:
-            per_session[sessions_by_request[r["request_id"]]] += _usd(r.get("cost_usd"))
-        out["cost_per_session"] = dict(sorted(per_session.items()))
-    else:
-        per_user_day: dict[str, float] = defaultdict(float)
-        for r in loop_rows:
+    # A82: per session wherever the row's request maps to one; a row with no
+    # session key (older rows) falls back to its user-day — never a guessed session
+    per_session: dict[str, float] = defaultdict(float)
+    per_user_day: dict[str, float] = defaultdict(float)
+    for r in loop_rows:
+        session = sessions_by_request.get(r.get("request_id") or "")
+        if session:
+            per_session[session] += _usd(r.get("cost_usd"))
+        else:
             key = f"{r.get('user_id') or _UNKNOWN}/{_day(r.get('created_at'))}"
             per_user_day[key] += _usd(r.get("cost_usd"))
-        out["cost_per_user_day"] = dict(sorted(per_user_day.items()))
+    out["cost_per_session"] = dict(sorted(per_session.items()))
+    out["cost_per_user_day"] = dict(sorted(per_user_day.items()))
     return out
+
+
+def sessions_by_request(events: list[dict]) -> dict[str, str]:
+    """request_id → the session id any event of that request carries in its payload."""
+    return {
+        e["request_id"]: (e.get("payload") or {})["session_id"]
+        for e in events
+        if e.get("request_id") and (e.get("payload") or {}).get("session_id")
+    }
 
 
 # ── the reads ────────────────────────────────────────────────────────────────
@@ -274,16 +289,11 @@ def _report_line(frm: str, to: str) -> tuple[dict, bool]:
     except Exception as exc:
         print(f"REPORT_FAIL events {type(exc).__name__}")
         failed = True
-    sessions_by_request = {
-        e["request_id"]: (e.get("payload") or {})["session_id"]
-        for e in events
-        if e.get("request_id") and (e.get("payload") or {}).get("session_id")
-    }
     out = report(
         usage,
         [e for e in events if e.get("event_type") == "zpd.step"],
         [e for e in events if e.get("event_type") == "ai.budget_capped"],
-        sessions_by_request=sessions_by_request,
+        sessions_by_request=sessions_by_request(events),
     )
     out["window"] = {"from": frm, "to": to}
     try:

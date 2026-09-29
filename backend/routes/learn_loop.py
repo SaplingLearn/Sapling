@@ -1665,6 +1665,7 @@ class _LoopTurn:
                 variant=arms.variant_for(
                     self.user_id, entry.get("node_id") or self.node_id or "", self.arm
                 ),
+                session_id=self.session_id,  # A82: per-session cost attribution
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("zpd.step not emitted for %s: incomplete step record", self.active)
