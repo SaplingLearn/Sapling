@@ -295,3 +295,7 @@ LOOP_SESSION_MAX_TUTOR_REQUESTS = 40  # † reaching it = hard (an optimized 10-
 LOOP_SESSION_MAX_DEEP_REQUESTS = 6  # † develop/profic: reaching it = soft (deep → standard)
 # † novice: reaching it turns novice deep turns into standard (a trailing comment would wrap the name)
 LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE = 12
+
+# † Owner decision A38 06(q): update_loop_state's compare-and-set retries after
+# the first conflict on sessions.loop_state_rev; exhausted -> LoopStateConflict.
+LOOP_STATE_CAS_RETRIES = 3

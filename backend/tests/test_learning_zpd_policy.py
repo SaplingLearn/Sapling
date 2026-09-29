@@ -2645,10 +2645,10 @@ def test_load_loop_state_reads_by_session_id_and_round_trips(monkeypatch):
 
     state = LoopState(current="q" * 64, checks_since_rating=4)
     state.steps[state.current] = _step(fails=1, attempts=(1001.0,))
-    t = _sessions_table(select_rows=[{"loop_state": state.to_json()}])
+    t = _sessions_table(select_rows=[{"loop_state": state.to_json(), "loop_state_rev": 5}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t if name == "sessions" else None)
-    assert loop_state_store.load_loop_state("s1") == state
-    t.select.assert_called_once_with("loop_state", filters={"id": "eq.s1"}, limit=1)
+    assert loop_state_store.load_loop_state("s1") == (state, 5)
+    t.select.assert_called_once_with("loop_state,loop_state_rev", filters={"id": "eq.s1"}, limit=1)
 
 
 def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
@@ -2656,14 +2656,14 @@ def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
     from learning.policy import LoopState
 
     monkeypatch.setattr(loop_state_store, "table", lambda name: _sessions_table(select_rows=[]))
-    assert loop_state_store.load_loop_state("s1") == LoopState()
+    assert loop_state_store.load_loop_state("s1") == (LoopState(), 0)
     monkeypatch.setattr(
         loop_state_store,
         "table",
         lambda name: _sessions_table(select_rows=[{"loop_state": {"steps": 5}}]),
     )
     with caplog.at_level(logging.WARNING):
-        assert loop_state_store.load_loop_state("s1") == LoopState()
+        assert loop_state_store.load_loop_state("s1").state == LoopState()
     assert any("loop_state" in r.getMessage() for r in caplog.records)
     for garbage in (None, [], "text", 7):
         monkeypatch.setattr(
@@ -2671,7 +2671,7 @@ def test_load_loop_state_missing_row_or_garbage_is_fresh(monkeypatch, caplog):
             "table",
             lambda name, g=garbage: _sessions_table(select_rows=[{"loop_state": g}]),
         )
-        assert loop_state_store.load_loop_state("s1") == LoopState()
+        assert loop_state_store.load_loop_state("s1").state == LoopState()
 
 
 def test_a_malformed_pkg06_field_never_erases_other_packages_keys(monkeypatch, caplog):
@@ -2699,14 +2699,15 @@ def test_a_malformed_pkg06_field_never_erases_other_packages_keys(monkeypatch, c
     t = _sessions_table(select_rows=[{"loop_state": stored}], update_rows=[{"id": "s1"}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
     with caplog.at_level(logging.WARNING):
-        state = loop_state_store.load_loop_state("s1")
+        state, rev = loop_state_store.load_loop_state("s1")
+    assert rev == 0  # a stored row without the column (a pre-migration mock) reads as 0
     assert any("malformed" in r.getMessage() for r in caplog.records)
     assert state.current is None and state.checks_since_rating == 4
     assert list(state.steps) == ["q", "r" * 64] and int(state.steps["r" * 64].rung) == 3
     assert state.steps["r" * 64].extra == {"node_id": "node-1"}
     assert state.steps["q"].genuine_attempts == 0 and state.steps["q"].first_shown_at == 1.0
     assert state.steps["q"].extra == {"check_item_id": "ci-1"}
-    assert loop_state_store.save_loop_state("s1", state) is True
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=rev) == "saved"
     written = t.update.call_args.args[0]["loop_state"]
     assert written["revealed"] == ["b" * 64]
     assert (written["tutor_requests"], written["deep_requests"]) == (39, 6)
@@ -2727,21 +2728,26 @@ def test_load_loop_state_propagates_a_read_failure(monkeypatch):
         loop_state_store.load_loop_state("s1")
 
 
-def test_save_loop_state_updates_by_id_and_reports_missing_row(monkeypatch, caplog):
+def test_save_loop_state_updates_by_id_and_rev_and_reports_missing_row(monkeypatch, caplog):
     from learning import loop_state_store
+    from learning.loop_state_store import SaveOutcome
     from learning.policy import LoopState
 
     state = LoopState(checks_since_rating=1)
     t = _sessions_table(update_rows=[{"id": "s1"}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
-    assert loop_state_store.save_loop_state("s1", state) is True
-    t.update.assert_called_once_with({"loop_state": state.to_json()}, filters={"id": "eq.s1"})
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=3) is SaveOutcome.SAVED
+    t.update.assert_called_once_with(
+        {"loop_state": state.to_json(), "loop_state_rev": 4},
+        filters={"id": "eq.s1", "loop_state_rev": "eq.3"},
+    )
     t.upsert.assert_not_called()
 
-    lazy = _sessions_table(update_rows=[])
+    lazy = _sessions_table(update_rows=[], select_rows=[])
     monkeypatch.setattr(loop_state_store, "table", lambda name: lazy)
     with caplog.at_level(logging.WARNING):
-        assert loop_state_store.save_loop_state("s1", state) is False
+        outcome = loop_state_store.save_loop_state("s1", state, expected_rev=0)
+    assert outcome is SaveOutcome.MISSING
     assert any("not materialised" in r.getMessage() for r in caplog.records)
 
 
@@ -2754,13 +2760,13 @@ def test_save_loop_state_never_inserts_or_upserts_sessions(monkeypatch):
     from learning import loop_state_store
     from learning.policy import LoopState
 
-    assert list(inspect.signature(loop_state_store.save_loop_state).parameters) == [
-        "session_id",
-        "state",
-    ]
+    sig = inspect.signature(loop_state_store.save_loop_state)
+    assert list(sig.parameters) == ["session_id", "state", "expected_rev"]
+    assert sig.parameters["expected_rev"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["expected_rev"].default is inspect.Parameter.empty
     t = _sessions_table(update_rows=[])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
-    assert loop_state_store.save_loop_state("s1", LoopState()) is False
+    assert loop_state_store.save_loop_state("s1", LoopState(), expected_rev=0) == "missing"
     t.upsert.assert_not_called()
     t.insert.assert_not_called()
     src = inspect.getsource(loop_state_store)
@@ -2774,12 +2780,147 @@ def test_load_save_round_trip_keeps_later_packages_keys(monkeypatch):
     stored = {"v": 1, "steps": {}, "revealed": ["b" * 64], "active": "a" * 64}
     t = _sessions_table(select_rows=[{"loop_state": stored}], update_rows=[{"id": "s1"}])
     monkeypatch.setattr(loop_state_store, "table", lambda name: t)
-    state = loop_state_store.load_loop_state("s1")
+    state, rev = loop_state_store.load_loop_state("s1")
     state.checks_since_rating += 1
-    assert loop_state_store.save_loop_state("s1", state) is True
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=rev) == "saved"
     written = t.update.call_args.args[0]["loop_state"]
     assert written["revealed"] == ["b" * 64] and written["active"] == "a" * 64
     assert written["checks_since_rating"] == 1
+
+
+# ── loop_state compare-and-set (owner decision A38 06(q)) ────────────────────
+
+
+class _FakeSessions:
+    """An in-memory `sessions` table honouring the eq filters PostgREST would:
+    an update matches only rows whose every filtered column equals the value.
+    `before_update` runs first on each update (a concurrent writer)."""
+
+    def __init__(self, rows=None, before_update=None):
+        self.rows = {r["id"]: dict(r) for r in (rows or [])}
+        self.before_update = before_update
+        self.updates = 0
+
+    def _match(self, row, filters):
+        return all(str(row.get(col)) == val.removeprefix("eq.") for col, val in filters.items())
+
+    def select(self, columns, filters=None, limit=None):
+        hits = [r for r in self.rows.values() if self._match(r, filters or {})]
+        return [{c: r.get(c) for c in columns.split(",")} for r in hits][:limit]
+
+    def update(self, data, filters, **_):
+        self.updates += 1
+        if self.before_update:
+            self.before_update(self)
+        hits = [r for r in self.rows.values() if self._match(r, filters)]
+        for r in hits:
+            r.update(data)
+        return [dict(r) for r in hits]
+
+
+def _bump(counter_key="tutor_requests"):
+    """A concurrent writer: bumps a counter and the revision, as a real save."""
+
+    def writer(fake):
+        row = fake.rows["s1"]
+        doc = dict(row["loop_state"])
+        doc[counter_key] = doc.get(counter_key, 0) + 1
+        row["loop_state"], row["loop_state_rev"] = doc, row["loop_state_rev"] + 1
+
+    return writer
+
+
+def test_a_stale_rev_save_is_a_conflict_and_leaves_the_stored_doc(monkeypatch):
+    from learning import loop_state_store
+    from learning.loop_state_store import SaveOutcome
+    from learning.policy import LoopState
+
+    stored = {"v": 1, "steps": {}, "checks_since_rating": 2}
+    fake = _FakeSessions([{"id": "s1", "loop_state": stored, "loop_state_rev": 7}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    outcome = loop_state_store.save_loop_state(
+        "s1", LoopState(checks_since_rating=9), expected_rev=6
+    )
+    assert outcome is SaveOutcome.CONFLICT
+    assert fake.rows["s1"]["loop_state"] == stored and fake.rows["s1"]["loop_state_rev"] == 7
+    # the fresh revision saves and bumps it
+    state, rev = loop_state_store.load_loop_state("s1")
+    state.checks_since_rating = 9
+    assert loop_state_store.save_loop_state("s1", state, expected_rev=rev) is SaveOutcome.SAVED
+    assert fake.rows["s1"]["loop_state_rev"] == 8
+    assert fake.rows["s1"]["loop_state"]["checks_since_rating"] == 9
+
+
+def test_a_missing_row_is_missing_not_conflict(monkeypatch):
+    from learning import loop_state_store
+    from learning.loop_state_store import SaveOutcome
+    from learning.policy import LoopState
+
+    fake = _FakeSessions([])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    outcome = loop_state_store.save_loop_state("s1", LoopState(), expected_rev=0)
+    assert outcome is SaveOutcome.MISSING
+    assert loop_state_store.update_loop_state("s1", lambda st: None) is None
+
+
+def test_update_loop_state_reapplies_the_change_after_a_conflict(monkeypatch):
+    """The caller's change is re-applied to the FRESH state: the concurrent
+    writer's change survives and so does ours (never a silent loss)."""
+    from learning import loop_state_store
+
+    stored = {"v": 1, "steps": {}, "checks_since_rating": 0, "tutor_requests": 0}
+    writers = iter([_bump(), None])
+
+    def once(fake):
+        hook = next(writers)
+        if hook:
+            hook(fake)
+
+    fake = _FakeSessions(
+        [{"id": "s1", "loop_state": stored, "loop_state_rev": 0}], before_update=once
+    )
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    calls = []
+
+    def mutate(state):
+        calls.append(state.checks_since_rating)
+        state.checks_since_rating += 1
+
+    result = loop_state_store.update_loop_state("s1", mutate)
+    assert calls == [0, 0]  # applied twice, each time to a freshly loaded state
+    assert fake.updates == 2
+    row = fake.rows["s1"]
+    assert row["loop_state_rev"] == 2
+    assert row["loop_state"]["checks_since_rating"] == 1
+    assert row["loop_state"]["tutor_requests"] == 1  # the other writer's change kept
+    assert result.rev == 2 and result.state.checks_since_rating == 1
+
+
+def test_update_loop_state_raises_after_the_retries_are_exhausted(monkeypatch):
+    from learning import loop_state_store, params
+    from learning.loop_state_store import LoopStateConflict
+
+    assert params.LOOP_STATE_CAS_RETRIES == 3
+    stored = {"v": 1, "steps": {}}
+    fake = _FakeSessions(
+        [{"id": "s1", "loop_state": stored, "loop_state_rev": 0}], before_update=_bump()
+    )
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    with pytest.raises(LoopStateConflict):
+        loop_state_store.update_loop_state("s1", lambda st: None)
+    assert fake.updates == 1 + params.LOOP_STATE_CAS_RETRIES
+    # every write the other writer made survives; none was overwritten
+    assert fake.rows["s1"]["loop_state"]["tutor_requests"] == fake.updates
+
+
+def test_update_loop_state_accepts_a_returned_state(monkeypatch):
+    from learning import loop_state_store
+    from learning.policy import LoopState
+
+    fake = _FakeSessions([{"id": "s1", "loop_state": {"v": 1, "steps": {}}, "loop_state_rev": 4}])
+    monkeypatch.setattr(loop_state_store, "table", lambda name: fake)
+    result = loop_state_store.update_loop_state("s1", lambda st: LoopState(checks_since_rating=3))
+    assert result.rev == 5 and fake.rows["s1"]["loop_state"]["checks_since_rating"] == 3
 
 
 # ── zpd.* events (spec §6) ────────────────────────────────────────────────────
