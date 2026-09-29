@@ -291,7 +291,6 @@ def test_ai_budget_reaches_the_store_only_through_db_connection():
     assert "import httpx" not in src
 
 
-
 # ── C2 (06b j): the session-capped flag ──────────────────────────────────────
 
 
@@ -406,9 +405,7 @@ def _middleware_app(seen: list):
 
     @app.post("/grade")
     def grade():
-        seen.append(
-            (request_context.current_request_id(), request_context.current_request_key())
-        )
+        seen.append((request_context.current_request_id(), request_context.current_request_key()))
         ai_budget.check(UID, "grader")  # a request's checks share its one read
         ai_budget.check(UID, "grader")
         return {"ok": True}
@@ -443,3 +440,43 @@ def test_the_request_key_is_server_minted_and_scoped_to_its_request():
     client.post("/grade", headers={"X-Request-ID": "k" * 20})
     assert seen[0][1] != "k" * 20
     assert request_context.current_request_key() is None, "reset when the request ends"
+
+
+# ── A38 fix round (m2): the tutor-call read shares the request cache ─────────
+
+
+def test_the_tutor_call_read_is_cached_per_request_key_and_ttl(store, monkeypatch):
+    from services import request_context
+
+    clock = [1000.0]
+    monkeypatch.setattr(ai_budget, "_clock", lambda: clock[0])
+    fake = store([])
+    token = request_context._REQUEST_KEY_CTX.set("server-key-1")
+    try:
+        for _ in range(3):
+            assert ai_budget.check(UID, "tutor", "develop").level == "normal"
+        assert fake.tables.count(_TUTOR_TABLE) == 1, "one counter read per request key"
+        clock[0] += ai_budget._REQUEST_CACHE_TTL_S  # the same key, past the TTL
+        ai_budget.check(UID, "tutor", "develop")
+        assert fake.tables.count(_TUTOR_TABLE) == 2
+    finally:
+        request_context._REQUEST_KEY_CTX.reset(token)
+    # no request key: every check reads (nothing to scope a cache to)
+    ai_budget.check(UID, "tutor", "develop")
+    ai_budget.check(UID, "tutor", "develop")
+    assert fake.tables.count(_TUTOR_TABLE) == 4
+
+
+def test_a_cached_tutor_call_read_sees_this_requests_own_increments(store, monkeypatch):
+    from services import request_context
+
+    fake = store([])
+    fake.calls[(UID, NOW.date().isoformat())] = config.STUDENT_DAILY_TUTOR_CALLS - 1
+    token = request_context._REQUEST_KEY_CTX.set("server-key-2")
+    try:
+        assert ai_budget.check(UID, "tutor", "develop").level == "normal"
+        ai_budget.count_tutor_call(UID)  # another worker's count + this one = the cap
+        assert ai_budget.check(UID, "tutor", "develop").scope == "daily_tutor_calls"
+        assert fake.tables.count(_TUTOR_TABLE) == 1
+    finally:
+        request_context._REQUEST_KEY_CTX.reset(token)

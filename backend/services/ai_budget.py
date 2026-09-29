@@ -121,6 +121,9 @@ _platform_checked_at: float | None = None
 # under the store's count (a lost increment never lowers what this process has seen). Only
 # today's keys are kept.
 _tutor_calls_local: dict[tuple[str, str], int] = {}
+# (request key, user, UTC day) → (stamped at, the store's count or None on a failed read): the
+# tutor-call read shares _usage's per-request key and TTL (A38 fix round, m2)
+_tutor_calls_cache: dict[tuple[str, str, str], tuple[float, int | None]] = {}
 
 
 def _utcnow() -> datetime:
@@ -173,6 +176,7 @@ def reset_for_tests() -> None:
         _emitted.clear()
         _request_cache.clear()
         _tutor_calls_local.clear()
+        _tutor_calls_cache.clear()
         _platform_checked_at = None
 
 
@@ -364,14 +368,40 @@ def count_tutor_call(user_id: str) -> int:
             exc,
         )
         return local
+    _cache_tutor_calls(user_id, day, stored)  # the request's later checks see this call
     return max(stored, local)
+
+
+def _tutor_calls_key(user_id: str, day: str) -> tuple[str, str, str] | None:
+    rkey = current_request_key()
+    return (rkey, user_id, day) if rkey else None
+
+
+def _cache_tutor_calls(user_id: str, day: str, stored: int | None) -> None:
+    key = _tutor_calls_key(user_id, day)
+    if key is None:
+        return
+    with _lock:
+        _tutor_calls_cache.pop(key, None)  # a refreshed key moves to the back of the FIFO
+        if len(_tutor_calls_cache) >= _REQUEST_CACHE_MAX:
+            _tutor_calls_cache.pop(next(iter(_tutor_calls_cache)))
+        _tutor_calls_cache[key] = (_clock(), stored)
 
 
 def _tutor_calls_today(user_id: str, now: datetime) -> int:
     """Today's tutor calls: the store's count, never below this process's own; this process's
-    alone when the read fails (one WARNING per read)."""
+    alone when the read fails (one WARNING per read). The store read is cached like _usage's:
+    one per (server-minted request key, user, day) for at most _REQUEST_CACHE_TTL_S, a failed
+    read included; count_tutor_call refreshes the entry with the count it wrote."""
     day = now.date().isoformat()
     local = _local_calls(user_id, day, bump=False)
+    key = _tutor_calls_key(user_id, day)
+    if key is not None:
+        with _lock:
+            hit = _tutor_calls_cache.get(key)
+        if hit is not None and _clock() - hit[0] < _REQUEST_CACHE_TTL_S:
+            return local if hit[1] is None else max(hit[1], local)
+    stored: int | None
     try:
         rows = table(_TUTOR_CALLS_TABLE).select(
             "calls", filters={"user_id": f"eq.{user_id}", "day": f"eq.{day}"}
@@ -383,8 +413,9 @@ def _tutor_calls_today(user_id: str, now: datetime) -> int:
             user_id,
             exc,
         )
-        return local
-    return max(stored, local)
+        stored = None
+    _cache_tutor_calls(user_id, day, stored)
+    return local if stored is None else max(stored, local)
 
 
 # ── the ladder ────────────────────────────────────────────────────────────────
