@@ -2953,7 +2953,12 @@ def _misconception_diagnosis() -> dict:
         "idk": False,
         "isomorph_of": "qh-0",
     }
-    return {"attempt": attempt, "confront": dict(CONFRONT), "cleared": None}
+    return {
+        "attempt": attempt,
+        "confront": dict(CONFRONT),
+        "cleared": None,
+        "record": dict(CONFRONT),
+    }
 
 
 def test_confrontation_line_resolves_text_without_clearing(seams):
@@ -3310,3 +3315,38 @@ def test_a_develop_teach_turn_below_h4_leaves_the_marker_waiting(gate_on, seams)
     assert seams.model_tier.call_args.args[4] is False
     assert "holds misconception" not in seen["msg"]
     assert seams.store["doc"]["confront"] == CONFRONT
+
+
+def test_the_route_writes_the_misconception_row_after_its_one_flush(gate_on, seams):
+    """Spec §13 A75: grade_answer only marks the row; the check route writes it
+    with learning.misconceptions.record AFTER flush_pending, under the claim,
+    with the text the grader saw as the (encrypted) evidence_text."""
+    order = []
+    seams.grade.return_value = _wrong_with(_misconception_diagnosis())
+    seams.flush.side_effect = lambda *a, **k: order.append("flush") or []
+    agent_p, usage_p, _ = _feedback_agent()
+    with (
+        agent_p,
+        usage_p,
+        patch("routes.learn_loop.record", side_effect=lambda *a: order.append(("record", a)) or {}),
+    ):
+        r = client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
+    assert r.status_code == 200
+    assert order == ["flush", ("record", ("u1", "node-1", "item-1", "no_base", "it just stops"))]
+
+
+def test_no_misconception_row_when_the_flush_fails(gate_on, seams):
+    seams.grade.return_value = _wrong_with(_misconception_diagnosis())
+    seams.flush.side_effect = RuntimeError("pg down")
+    with patch("routes.learn_loop.record") as rec:
+        r = client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
+    assert r.status_code >= 500
+    rec.assert_not_called()
+
+
+def test_no_misconception_row_without_a_marked_record(gate_on, seams):
+    seams.grade.return_value = WRONG  # a grade with no diagnosis (the rule did not mark one)
+    agent_p, usage_p, _ = _feedback_agent()
+    with agent_p, usage_p, patch("routes.learn_loop.record") as rec:
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
+    rec.assert_not_called()

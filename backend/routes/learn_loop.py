@@ -84,7 +84,7 @@ from agents.loop_tutor import (
     student_envelope,
     tier_run_kwargs,
 )
-from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer
+from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage
 from db.connection import table
 from learning import answer_guard, gates, ladder, planner, policy, review, zpd_events
@@ -105,6 +105,7 @@ from learning.misconceptions import (
     confront_of,
     is_key,
     open_for,
+    record,
     set_confront,
     slip_or_misconception,
 )
@@ -2318,16 +2319,17 @@ async def _grade_submission(
     claim = str(uuid.uuid4())
     _claim_grading(body.session_id, qh, claim, now)
     flushed = False
+    answer = CheckAnswer(
+        question_hash=qh,
+        answer_text=body.answer,
+        selected_option=body.option,
+        reason=body.reason,
+        idk=idk,
+    )
     try:
         outcome = await grade_answer(
             _item_like(item),
-            CheckAnswer(
-                question_hash=qh,
-                answer_text=body.answer,
-                selected_option=body.option,
-                reason=body.reason,
-                idk=idk,
-            ),
+            answer,
             deps=deps,
             node_id=node_id,
             max_rung=rung,
@@ -2349,9 +2351,10 @@ async def _grade_submission(
                 return _Submission("refused", state, rendered, scope, refused=True)
             # never a skip: the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
             idk, genuine = True, False
+            answer = CheckAnswer(question_hash=qh, idk=True)
             outcome = await grade_answer(
                 _item_like(item),
-                CheckAnswer(question_hash=qh, idk=True),
+                answer,
                 deps=deps,
                 node_id=node_id,
                 max_rung=rung,
@@ -2377,6 +2380,9 @@ async def _grade_submission(
             except Exception:
                 logger.warning("grading claim for %s not released", qh, exc_info=True)
         raise
+    # PKG-10 (spec §13 A75): the misconception row grade_answer marked, written
+    # only now — after the ONE flush, under the claim (never raises)
+    _write_misconception(body.user_id, outcome, _item_like(item), answer)
     correct = bool(outcome.correct)
     verdict = "idk" if idk else ("correct" if correct else "not_yet")
     evidence = outcome.evidence or {}
@@ -2419,6 +2425,23 @@ async def _grade_submission(
     # flushed again (it closes via /check/next once the claim is stale).
     state = _update_loop_state(body.session_id, record_grade_and_diagnosis)
     return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
+
+
+def _write_misconception(user_id: str, outcome, item, answer: CheckAnswer) -> None:
+    """PKG-10: write the misconceptions row the grade marked
+    (`outcome.diagnosis["record"]`), its evidence_text the text the grader saw
+    (encrypted by learning.misconceptions.record). Nothing marked, nothing
+    written; the store never raises."""
+    mark = (getattr(outcome, "diagnosis", None) or {}).get("record")
+    if not mark:
+        return
+    record(
+        user_id,
+        mark["node_id"],
+        mark["check_item_id"],
+        mark["wrong_key"],
+        grader_answer_text(item, answer),
+    )
 
 
 def _submission_turn(
