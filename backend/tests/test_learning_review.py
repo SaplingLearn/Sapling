@@ -1090,7 +1090,8 @@ def test_successive_relearning_machine_rides_in_the_sr_entry(monkeypatch, store)
 
 
 def test_load_or_create_review_session_inserts_once(monkeypatch):
-    """A11: insert-if-missing, never upsert; session.started on the insert only."""
+    """A11: insert-if-missing, never upsert; review.session_started (never the tutor's
+    session.started) on the insert only."""
     from learning import review
 
     factory, handles = _tables({"sessions": []})
@@ -1113,8 +1114,8 @@ def test_load_or_create_review_session_inserts_once(monkeypatch):
     handles["sessions"].upsert.assert_not_called()
     assert state == {"sr": {}, "review": {"spent_s": 0, "served_hashes": []}}
     ((et, kw),) = events
-    assert et == "session.started" and kw["content"] == "Daily review"
-    assert kw["payload"] == {"session_id": sid, "mode": "review", "offering_id": "off-1"}
+    assert et == "review.session_started" and "content" not in kw
+    assert kw["payload"] == {"session_id": sid, "offering_id": "off-1"}
 
     # existing row: no insert, no event, its state comes back
     stored = {"sr": {"n1": {"correct": 1, "target": 3, "served": 1}}, "review": {"spent_s": 45}}

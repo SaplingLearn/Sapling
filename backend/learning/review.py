@@ -69,6 +69,7 @@ from services.encryption import decrypt_if_present
 from services.events_service import log_event
 from services.exam_proximity import days_until_next_exam
 from services.graph_service import _normalize_concept, apply_graph_update
+from services.session_modes import REVIEW_MODE
 from services.timestamps import parse_ts
 
 logger = logging.getLogger("sapling.learning.review")
@@ -80,7 +81,7 @@ _ONE_DAY = timedelta(days=1)
 _DAILY_BUDGET_S = int(timedelta(minutes=REVIEW_DAILY_BUDGET_MIN).total_seconds())
 _ONE_RECALL = 1  # the relearn/done target: one correct recall per session (spec §3.2)
 _REVIEW_TOPIC = "Daily review"
-_REVIEW_MODE = "review"
+_REVIEW_MODE = REVIEW_MODE
 _FLASHCARD_KEY_PREFIX = "fc:"
 _KINDS: tuple[Kind, ...] = ("flashcard", "check")
 _CARD_COLUMNS = "id,topic,offering_id,fsrs_d,fsrs_s,due_at,reps,lapses,last_rating,last_reviewed_at"
@@ -216,12 +217,11 @@ def load_or_create_review_session(
             if not rows:
                 raise
         else:
-            log_event(
-                "session.started",
+            log_event(  # never session.started: a review session is not a tutor session
+                "review.session_started",
                 category="usage",
                 user_id=user_id,
-                payload={"session_id": sid, "mode": _REVIEW_MODE, "offering_id": offering_id},
-                content=_REVIEW_TOPIC,
+                payload={"session_id": sid, "offering_id": offering_id},
             )
             return sid, _session_view()
     row = rows[0]

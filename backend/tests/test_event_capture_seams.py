@@ -139,6 +139,7 @@ def test_event_taxonomy_is_pinned():
         "decision.shadow",
         "decision.fallback",
         "ai.budget_capped",           # PKG-06b: a per-student AI cap was hit
+        "review.session_started",     # PKG-12: a daily review session row (not session.started)
         "review.served",              # PKG-12: one per kind in a built review queue
         "review.graded",              # PKG-12: one per graded review answer
     })

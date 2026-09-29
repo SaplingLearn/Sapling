@@ -16,6 +16,7 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
+from services.session_modes import NOT_REVIEW
 from learning.gate import learning_loop_for_request
 from services import ai_budget, events_service
 from services.academics import offering_course_id, resolve_offering
@@ -1298,7 +1299,7 @@ def list_sessions(user_id: str, request: Request, limit: int = 10):
     require_self(user_id, request)
     sessions = table("sessions").select(
         "id,user_id,topic,mode,offering_id,started_at,ended_at",
-        filters={"user_id": f"eq.{user_id}"},
+        filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},  # review queue rows are not tutor sessions
         order="started_at.desc",
         limit=limit,
     )
@@ -1406,7 +1407,7 @@ def resume_session(session_id: str, request: Request):
 
     session_rows = table("sessions").select(
         "id,user_id,topic,mode,started_at,ended_at,offering_id",
-        filters={"id": f"eq.{session_id}"},
+        filters={"id": f"eq.{session_id}", **NOT_REVIEW},  # a review session is never resumed
     )
     if not session_rows:
         raise HTTPException(status_code=404, detail="Session not found")
