@@ -58,7 +58,11 @@ the supervisor architecture's deterministic solution stripper). Three rules:
   hundred and five", "one half", "three quarters"), a LaTeX fraction
   ("\\frac{1}{2}"), a percentage ("50%" or "fifty percent" for 0.5; a plain
   0.5 when the final answer is itself a percentage) or an equivalent fraction
-  ("5/10"). A verbal paraphrase ("linear time" for O(n)) is no token rule's
+  ("5/10"); and a simple inflection of a word answer or of the option text
+  ("mitochondria" for "Mitochondrion": a shared stem of at least
+  LEAK_STEM_MIN_CHARS characters, each ending at most LEAK_INFLECTION_MAX_CHARS
+  past it — PKG-07 review round 3, which serves loop tutor text through strict
+  mode). A verbal paraphrase ("linear time" for O(n)) is no token rule's
   to catch: the residual is judge_leak's.
 
 The reference is never parsed for a final answer (A34): extracting one from
@@ -77,6 +81,7 @@ the two, so "10^(-3)" or "$6x^{2}$" leaves no stray ")" or "}".
 from __future__ import annotations
 
 import bisect
+import os
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
@@ -550,20 +555,49 @@ def _rules(
     return _Rules(grams, n, answer, option, strict, option_run, numeric)
 
 
+def _same_lemma(token: str, answer: str) -> bool:
+    """Strict mode (PKG-07 review round 3, C1(c)): `token` states the answer
+    token `answer` — equal, or, both alphabetic, one lemma: a shared stem of at
+    least LEAK_STEM_MIN_CHARS characters that each extends by at most
+    LEAK_INFLECTION_MAX_CHARS ("mitochondria"/"mitochondrion", "viruses"/"virus",
+    "returns"/"return"). A structural bound on the endings, never a word list;
+    numbers and symbols are compared exactly (by value, as answer tokens are)."""
+    if token == answer:
+        return True
+    if not (token.isalpha() and answer.isalpha()):
+        return False
+    stem = len(os.path.commonprefix((token, answer)))
+    return (
+        stem >= params.LEAK_STEM_MIN_CHARS
+        and len(token) - stem <= params.LEAK_INFLECTION_MAX_CHARS
+        and len(answer) - stem <= params.LEAK_INFLECTION_MAX_CHARS
+    )
+
+
+def _lemma_run_hits(toks: list[AnswerToken], run: tuple[str, ...]) -> list[tuple[int, int]]:
+    """The spans where `toks` hold `run` token by token up to inflection
+    (`_same_lemma`)."""
+    k = len(run)
+    if not k:
+        return []
+    return [
+        (toks[i].start, toks[i + k - 1].end)
+        for i in range(len(toks) - k + 1)
+        if all(_same_lemma(toks[i + j].value, run[j]) for j in range(k))
+    ]
+
+
 def _final_hits(text: str, toks: list[AnswerToken], rules: _Rules) -> list[tuple[int, int]]:
     hits = _answer_hits(toks, rules.answer)
     if rules.strict:
         hits += _numeric_hits(text, toks, rules.numeric)
+        hits += _lemma_run_hits(toks, rules.answer.run)
     return hits
 
 
 def _option_text_hits(toks: list[AnswerToken], rules: _Rules) -> list[tuple[int, int]]:
-    hits: list[tuple[int, int]] = []
-    if rules.option_run:
-        k = len(rules.option_run)
-        values = [t.value for t in toks]
-        hits += [(toks[i].start, toks[i + k - 1].end) for i in find_runs(values, rules.option_run)]
-    return hits
+    # option_run is set in strict mode only, so its inflections count too
+    return _lemma_run_hits(toks, rules.option_run)
 
 
 def _ngrams(seq: list[str], n: int) -> set[tuple[str, ...]]:

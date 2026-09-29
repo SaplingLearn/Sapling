@@ -209,6 +209,13 @@ GRADER_SUPPORT_MIN_SHARE = 0.5
 # the same item (the tutor's check, PKG-07; the probe, PKG-08) records it as idk.
 CHECK_REFUSALS_AS_IDK = 2
 LEAK_NGRAM = 6
+# † PKG-06 reopen (PKG-07 review round 3, C1(c)): strict mode folds simple
+# inflections of a WORD answer ("mitochondria" for "Mitochondrion"): two
+# alphabetic answer tokens are one lemma when they share a stem of at least
+# LEAK_STEM_MIN_CHARS characters and each ends at most LEAK_INFLECTION_MAX_CHARS
+# characters past it (learning/leak.py `_same_lemma`). Not spec values.
+LEAK_STEM_MIN_CHARS = 4
+LEAK_INFLECTION_MAX_CHARS = 3
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
 CHECK_ITEM_MIN_RUBRIC = 2
