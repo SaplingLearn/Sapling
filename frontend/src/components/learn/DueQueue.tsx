@@ -16,10 +16,14 @@ import {
 } from "@/lib/api";
 import { extractErrorDetail } from "@/lib/errorMessage";
 
-// The backend 409 that means "a concurrent write won; submit again" (routes/learn_loop.py
-// _STATE_CONFLICT). Every other review 409 — already graded, not served, a new day —
-// means the queue moved on, so the panel re-polls instead.
+// Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
+// won; it can come BEFORE the grade (nothing recorded) or AFTER it (the record lost its
+// compare-and-set), so the copy stays neutral and a resend is offered. "already graded"
+// — this answer is recorded (e.g. that resend after a post-write retry): show it as
+// done, never as an error. Any other 409 (not served, a new day) means the queue moved
+// on, so the panel re-polls.
 const RETRY_DETAIL = /retry/i;
+const GRADED_DETAIL = /already graded/i;
 
 const RATINGS: { n: number; label: string }[] = [
   { n: 1, label: "forgot" },
@@ -34,6 +38,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const [reason, setReason] = React.useState("");
   const [flipped, setFlipped] = React.useState(false);
   const [result, setResult] = React.useState<ReviewAnswerResponse | null>(null);
+  const [alreadyGraded, setAlreadyGraded] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   // Every load bumps the sequence; a response for an older sequence (a slow poll, or
@@ -55,6 +60,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setReason("");
       setFlipped(false);
       setResult(null);
+      setAlreadyGraded(false);
     } catch (err) {
       if (mine !== seq.current) return;
       console.error("review next failed", err);
@@ -97,10 +103,12 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       if (mine !== seq.current) return;
       const { status, detail } = extractErrorDetail(err);
       if (status === 409 && detail && RETRY_DETAIL.test(detail)) {
-        // nothing was recorded: keep what the student typed and let them resend
-        setError("That didn't go through — please submit again.");
+        // keep what the student typed and let them resend
+        setError("Something changed — try again.");
+      } else if (status === 409 && detail && GRADED_DETAIL.test(detail)) {
+        setAlreadyGraded(true);
       } else if (status === 409) {
-        // already graded, not served or a new day began — the queue moved on
+        // not served or a new day began — the queue moved on
         await load();
         return;
       } else {
@@ -113,7 +121,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
   // After a refusal or an outage nothing was recorded: the item stays answerable.
   const retryable = result !== null && result.unavailable;
-  const answered = result !== null && !result.unavailable;
+  const answered = alreadyGraded || (result !== null && !result.unavailable);
   const canSubmit =
     !busy &&
     !answered &&
@@ -254,6 +262,12 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
                       {result.hint ? ` ${result.hint}` : ""}
                     </>
                   )}
+            </div>
+          )}
+
+          {alreadyGraded && !result && (
+            <div data-testid="review-graded" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+              Your answer is already recorded.
             </div>
           )}
 

@@ -474,6 +474,7 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-flip` | "Show answer" on a flashcard |
 | `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
 | `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
+| `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
 | `review-next` | "Next" — polls `/review/next` after a graded answer |
 
 ### `landing-graph`

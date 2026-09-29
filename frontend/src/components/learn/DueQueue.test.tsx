@@ -142,9 +142,9 @@ describe("DueQueue", () => {
     expect((await screen.findByTestId("review-hint")).textContent).toContain("Correct.");
   });
 
-  it("re-polls the queue on a 409 instead of showing an error", async () => {
+  it("re-polls the queue on a moved-on 409 (not served / expired) instead of showing an error", async () => {
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(null));
-    mockAnswer.mockRejectedValue(conflict("already graded"));
+    mockAnswer.mockRejectedValue(conflict("review item not served"));
     render(<DueQueue userId="u1" />);
     await screen.findByTestId("review-item");
     await userEvent.type(screen.getByTestId("review-answer-input"), "x");
@@ -160,7 +160,7 @@ describe("DueQueue", () => {
     await screen.findByTestId("review-item");
     await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
     await userEvent.click(screen.getByTestId("review-submit"));
-    expect(await screen.findByText(/please submit again/i)).toBeTruthy();
+    expect(await screen.findByText(/something changed — try again/i)).toBeTruthy();
     expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
     expect(mockNext).toHaveBeenCalledTimes(1); // no re-poll: the item is still this one
     await userEvent.click(screen.getByTestId("review-submit"));
@@ -203,5 +203,25 @@ describe("DueQueue", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.getByText("Q?")).toBeTruthy();
     expect(screen.queryByText("What stops factorial(0)?")).toBeNull();
+  });
+
+  it("shows the answer as recorded when a resend after a retry 409 is already graded", async () => {
+    // the retry 409 can follow the evidence write (the record lost its CAS): the
+    // resend then meets "already graded" — the answer counted, so it is no error
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer
+      .mockRejectedValueOnce(conflict("loop state changed, retry"))
+      .mockRejectedValueOnce(conflict("already graded"));
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await screen.findByText(/something changed — try again/i);
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect((await screen.findByTestId("review-graded")).textContent).toMatch(/already recorded/i);
+    expect(screen.queryByText(/something changed/i)).toBeNull();
+    expect(screen.queryByTestId("review-submit")).toBeNull();
+    expect(screen.getByTestId("review-next")).toBeTruthy();
+    expect(mockNext).toHaveBeenCalledTimes(1);
   });
 });
