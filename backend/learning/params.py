@@ -148,6 +148,11 @@ MISCONCEPTION_CONFRONT_MIN_RUNG = 4
 # caller yet (PKG-12 / PKG-14), so without a window an old misconception would
 # re-list forever. A/B candidate.
 MISCONCEPTION_RECENT_DAYS = 30
+# PKG-10 (spec §13 A76) †: a release (a wrong/idk answer, or a worked answer
+# shown) on a concept in ANOTHER session makes the next graded item on that
+# concept a re-check when it was journaled within this many hours (the
+# session-hop half of the copy-risk rule).
+RECHECK_RELEASE_WINDOW_HOURS = 24
 # Spec §3.2 rating map / §3.3 evidence mapping: correct after H1..H3 is "assisted"
 # (FSRS Hard, WEIGHT_ASSISTED); correct after H4..H6 is FSRS Again. Name from
 # §13 A6, added by PKG-02 (fsrs.rating_for); PKG-03 Evidence.assisted and

@@ -77,10 +77,12 @@ class Attempt(BaseModel):
     difficulty: int
     idk: bool = False
     isomorph_of: str | None = None  # the question_hash this attempt re-asks
-    # the reference was released after this attempt (a wrong or idk grade, A16)
+    # the reference was released after this attempt: a wrong or idk grade (A16),
+    # or a worked answer shown on the way (max_rung >= RUNG_NO_CREDIT_MIN) — the
+    # loop_state_store.revealed_hashes rule (A76)
     released: bool = False
-    # graded as a same-session re-check: served after a released answer on
-    # this concept (fix round F1: never a full-weight unassisted first attempt)
+    # graded as a re-check: the next item on this concept after a release
+    # (A76: never a full-weight unassisted first attempt)
     after_release: bool = False
 
 
@@ -143,13 +145,15 @@ def attempts_of(loop_state: dict) -> list:
     return log
 
 
-def released_on_node(loop_state: dict, node_id: str) -> bool:
-    """True when an earlier attempt on this concept in this session had its
-    reference released (a wrong or idk grade). An item graded after it is a
-    same-session re-check: the student has just read a worked answer of the
-    concept, so its correct answer is neither full-weight nor a streak (the
-    check route passes `same_session_recheck=True`, graph_service's rule)."""
-    return any(a.released for a in attempts_for_node(attempts_of(loop_state), node_id))
+def last_release_on_node(loop_state: dict, node_id: str) -> bool | None:
+    """Spec §13 A76: whether the concept's LATEST attempt in this session had
+    its reference released (True / False), or None when the session has no
+    attempt on the concept. Only the next graded item on a concept after a
+    release is a re-check — the copy risk — so an older release no longer
+    counts once another item on the concept was graded. None: the check route
+    reads the evidence journal (a release in another session, R2-2)."""
+    tail = attempts_for_node(attempts_of(loop_state), node_id)
+    return tail[-1].released if tail else None
 
 
 def attempts_for_node(log: list, node_id: str) -> list[Attempt]:

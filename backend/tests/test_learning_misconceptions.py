@@ -1251,19 +1251,56 @@ def test_every_confrontation_cassette_is_fresh():
 # ── fix round F1: an item served after a released answer is a re-check ──────
 
 
-def test_released_on_node_reads_the_attempt_log():
-    """The attempt log records whether the reference was released after each
-    attempt (a wrong or idk grade releases it, A16); `released_on_node` says a
-    concept had one earlier in this session."""
-    from learning.misconceptions import released_on_node
+def test_last_release_on_node_reads_only_the_concepts_latest_attempt():
+    """Spec §13 A76: only the NEXT graded item on a concept after a release is a
+    re-check (the copy risk). `last_release_on_node` reads the concept's latest
+    attempt in this session: True when its reference was released, False when
+    not, None when the session has no attempt on the concept (the route then
+    reads the evidence journal, R2-2)."""
+    from learning.misconceptions import last_release_on_node
 
     wrong = {**_prior_attempt("h1"), "released": True}
     right = {**_prior_attempt("h2"), "correct": True, "wrong_key": None, "released": False}
-    assert released_on_node({"attempts": [wrong]}, "n1") is True
-    assert released_on_node({"attempts": [right]}, "n1") is False
-    assert released_on_node({"attempts": [wrong]}, "n2") is False
-    assert released_on_node({}, "n1") is False
-    assert released_on_node({"attempts": ["junk", {"node_id": "n1"}]}, "n1") is False
+    assert last_release_on_node({"attempts": [wrong]}, "n1") is True
+    assert last_release_on_node({"attempts": [wrong, right]}, "n1") is False, "the one after"
+    assert last_release_on_node({"attempts": [right, wrong]}, "n1") is True
+    assert last_release_on_node({"attempts": [wrong]}, "n2") is None
+    assert last_release_on_node({}, "n1") is None
+    assert last_release_on_node({"attempts": ["junk", {"node_id": "n1"}]}, "n1") is None
+
+
+@pytest.mark.parametrize(
+    "correct,idk,max_rung,released",
+    [
+        (False, False, 0, True),  # a wrong answer releases the reference (A16)
+        (False, True, 0, True),  # idk too
+        (True, False, 0, False),
+        (True, False, 3, False),  # H1–H3 show no worked answer
+        (True, False, 4, True),  # R2-1: an H4 worked sibling was shown
+        (True, False, 6, True),  # R2-1: the H6 worked answer was shown
+    ],
+)
+def test_released_is_the_codebase_s_revealed_rule(correct, idk, max_rung, released):
+    """R2-1: `released` = not correct, idk, or max_rung >= RUNG_NO_CREDIT_MIN —
+    loop_state_store.revealed_hashes' definition."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+    from learning.evidence import Evidence
+    from learning.misconceptions import attempts_of
+
+    deps = _loop_deps()
+    ev = Evidence(
+        node_id="n1", channel="free_response", correct=correct, idk=idk, max_rung=max_rung
+    )
+    _run(
+        check_mod.apply_misconception_rule(
+            deps,
+            item=MagicMock(id="ci1", question_hash="h1", difficulty=2),
+            grade=GradeOutcome(correct=correct, confidence=0.9),
+            evidence=ev,
+        )
+    )
+    assert attempts_of(deps.loop_state)[-1]["released"] is released
 
 
 def test_hook_marks_released_and_after_release_on_the_attempt():
@@ -1406,3 +1443,45 @@ def test_every_unreleased_eval_case_is_a_line_production_would_send():
             final_answer=meta["final_answer"],
             strict=True,
         ).leaked, case.name
+
+
+def test_latest_evidence_released_reads_the_nodes_latest_journal_row():
+    """A76 (R2-2): one direct node_mastery_events read — the student's node,
+    evidence rows since the window, newest first, one row — judged by the
+    revealed_hashes rule (wrong, or max_rung >= RUNG_NO_CREDIT_MIN)."""
+    from learning import loop_state_store as store
+    from learning.params import RUNG_NO_CREDIT_MIN
+
+    for row, expected in (
+        ({"correct": False, "max_rung": 0}, True),
+        ({"correct": True, "max_rung": RUNG_NO_CREDIT_MIN}, True),
+        ({"correct": True, "max_rung": 1}, False),
+        (None, None),
+    ):
+        t = MagicMock()
+        t.select.return_value = [row] if row else []
+        with patch.object(store, "table", return_value=t) as tbl:
+            assert (
+                store.latest_evidence_released("u1", "n1", since="2026-09-28T00:00:00+00:00")
+                is expected
+            )
+        tbl.assert_called_with("node_mastery_events")
+        (cols,), kw = t.select.call_args
+        assert "graph_nodes!inner(user_id)" in cols
+        assert kw["filters"] == {
+            "graph_nodes.user_id": "eq.u1",
+            "node_id": "eq.n1",
+            "event_type": "eq.evidence",
+            "created_at": "gte.2026-09-28T00:00:00+00:00",
+        }
+        assert kw["order"] == "created_at.desc,evidence_seq.desc" and kw["limit"] == 1
+
+
+def test_latest_evidence_released_never_raises():
+    """A failed read cannot decide: None (the route then grades normally) with a WARNING."""
+    from learning import loop_state_store as store
+
+    t = MagicMock()
+    t.select.side_effect = RuntimeError("pg down")
+    with patch.object(store, "table", return_value=t):
+        assert store.latest_evidence_released("u1", "n1", since="x") is None
