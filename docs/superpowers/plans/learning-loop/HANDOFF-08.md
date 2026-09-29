@@ -67,6 +67,14 @@ A loop session now opens with a *probe* and moves into a *plan* the student appr
 
 ## Known gaps
 
+- Review round 2 residuals (2026-09-29, recorded by the coordinator):
+  - `/probe/answer`'s inline rate limit (after `_gate`) overrides spec §9's "inline only where some bodies run a model" and A20's dependency form for this route, so a gate-off student gets 404, never 429 (A55(e)).
+  - Until PKG-13's UI exists, a beta/staff student on the legacy UI (`/api/learn/chat`, `/chat/stream`, `/action` delegate to the loop routes) gets 409 "finish the probe first" on every chat after the opener greeting.
+  - `/start-session(/stream)` (and `/api/notes/chat`) open a fresh unguarded surface: a student mid-probe can ask for the posed item's answer there. Blocking routes cannot close an answer sourced from another surface; the probe is a prior estimate, not proof. Mitigation for later: run `detect_leak` on opener replies against the student's open posed probe items.
+  - The probe's seen-item fallback (only once no unseen item is servable) re-credits previously correct items at full weight: slow drift, not student-steerable. Option: record the observation but skip or down-weight the flush for fallback items.
+  - `PROBE_PLAN_READS_PER_MIN` is per worker process (×workers, lost on restart); move it to `services/cache` (Redis) when that is on.
+  - A loop_state document from before PKG-08 (no `phase`, no `plan.approved`) reads as `probe`: harmless while dark, but a PKG-07 teach session resumed after launch would be sent back to the probe.
+
 - `goal_filter=None`: nothing maps a syllabus week or an assignment to concept ids.
 - `wrong_key` / `matched_wrong_key` ignored by the route (PKG-10's hook lives inside `grade_answer`).
 - No frontend (PKG-13). `/status` exposes `loop_phase` (probe | plan | teach) beside PKG-07's `phase` (fix round, PKG-07 reopen).
