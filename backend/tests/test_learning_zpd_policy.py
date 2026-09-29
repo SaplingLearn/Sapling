@@ -375,6 +375,22 @@ def test_band_control_edges_are_the_spec_inequalities():
     )
 
 
+def test_band_control_needs_min_attempts_before_harder():
+    """Owner decision A38 06(m): one (or three) correct first attempts never
+    move difficulty up; HARDER needs BAND_CONTROL_HARDER_MIN_ATTEMPTS in the
+    window. EASIER is unchanged on a short window."""
+    from learning.policy import BandAction, band_control
+
+    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS == 4
+    for n in (1, 3):
+        assert band_control([True] * n, 0.5, True) is BandAction.HOLD, n
+        assert band_control([True] * n, params.BKT_PROFICIENT, True) is BandAction.HOLD, n
+    assert band_control([True] * 4, 0.5, True) is BandAction.HARDER
+    assert band_control([False], 0.5, True) is BandAction.EASIER_CHECK_PREREQS
+    assert band_control([True, False, False], 0.5, True) is BandAction.EASIER_CHECK_PREREQS
+    assert band_control([True], 0.5, True, wheelspin=True) is BandAction.WHEELSPIN
+
+
 def test_unassisted_rate_uses_last_window_only():
     from learning.policy import unassisted_rate
 

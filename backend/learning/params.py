@@ -107,6 +107,9 @@ GATE_RUNG_DWELL_MIN_S = 8  # †
 H6_MIN_GENUINE_ATTEMPTS = 2
 OFFER_BANDS = frozenset({"novice"})
 BAND_WINDOW = 8
+# † Owner decision A38 06(m): band_control moves difficulty up (HARDER) only on
+# at least this many first attempts in the window; fewer high ones HOLD.
+BAND_CONTROL_HARDER_MIN_ATTEMPTS = 4
 PROBE_TARGET_LO = 0.50
 PROBE_TARGET_HI = 0.62
 ACQ_TARGET_LO = 0.75
