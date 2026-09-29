@@ -2454,7 +2454,7 @@ async def _grade_submission(
 def _requests_of(run_result) -> int:
     """Model requests a run reports (RunResult.usage / UnfinishedRun.usage()); 0 unknown."""
     usage = getattr(run_result, "usage", None)
-    if callable(usage):
+    if not hasattr(usage, "requests") and callable(usage):  # UnfinishedRun.usage()
         usage = usage()
     try:
         return int(getattr(usage, "requests", 0) or 0)
