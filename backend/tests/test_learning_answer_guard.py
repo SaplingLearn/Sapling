@@ -3230,6 +3230,44 @@ def test_the_span_ends_at_the_students_symbols_never_at_a_word_beyond_them(quote
     assert _span(quote, answer, min_chars=1) == span
 
 
+# Review round 4: the span took in any symbol run touching its run, up to
+# whitespace or a letter or digit, so a joiner glued between two words was read
+# as a sign or a unit of the quoted one: "15 ms" in "10-15 ms" became "-15 ms",
+# "3 as n grows" in "5-3 as n grows" became "-3 as n grows", and "zero" in
+# "non-zero" became "-zero". A joiner glued to another word brings in that
+# whole token, as the student wrote it; sentence punctuation glued to the next
+# word ("recursing.Tick") still ends the span.
+@pytest.mark.parametrize(
+    "quote,answer,span",
+    [
+        ("15 ms", "The latency is 10-15 ms.", "10-15 ms"),
+        ("3 as n grows", "It goes from 5-3 as n grows", "5-3 as n grows"),
+        ("3 apples", "I had 7-3 apples", "7-3 apples"),
+        ("zero", "The determinant is non-zero.", "non-zero"),
+        ("the latency is 10", "The latency is 10-15 ms.", "The latency is 10-15"),
+        ("the 14 digits", "It is 3.14 digits long", "3.14 digits"),
+        ("stops recursing", "It stops recursing.Tick both.", "stops recursing"),
+        ("stops recursing", "It stops recursing,and that is it.", "stops recursing"),
+        ("the limit is -3", "So the limit is -3.", "the limit is -3"),
+    ],
+)
+def test_a_joiner_glued_to_another_word_brings_in_the_whole_token(quote, answer, span):
+    assert _span(quote, answer, min_chars=1) == span
+
+
+def test_the_span_check_never_sees_a_sign_the_student_did_not_write(monkeypatch, events):
+    """Through grade(), with the sign-aware judge of the test above: "5-3" was
+    handed to the span check as "-3 as n grows", which credited it."""
+    item = _one_item("says the limit is -3", "The limit is -3.", "What is the limit?")
+    first = {**_all_yes(0.95), "item_results": ["r1:yes"], "support": ["r1: 3 as n grows"]}
+    signed = lambda text, span: span.startswith("-")  # noqa: E731
+    answer = "It goes from 5-3 as n grows"
+    res, calls = _grade_item(monkeypatch, item, [first], answer, judge=signed)
+    [message] = calls["span_messages"]
+    assert [span for _, _, span in grader_fakes.spans_of(message)] == ["5-3 as n grows"]
+    assert res.item_results == {"r1": False} and res.all_yes is False
+
+
 @pytest.mark.parametrize("answer", ["[0, 1)", "(0, 1]"])
 def test_a_half_open_interval_reaches_the_span_check_as_written(monkeypatch, events, answer):
     """Review round 4, through grade(): both brackets of a half-open interval were

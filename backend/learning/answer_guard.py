@@ -1467,8 +1467,9 @@ def _word_list(folded: str) -> list[str]:
 # and last letter or digit, "-3" reached the span check as "3", "5!" as "5" and
 # "O(n)" as "O(n" — words that say something else than the student wrote. So a
 # span takes in the symbols that touch its run (a sign, a unit, a bracket, a
-# prime: up to whitespace or a letter or digit, so never a word beyond them),
-# and drops only what is no part of the words at its ends: sentence punctuation
+# prime: up to whitespace or a letter or digit, so never a word beyond them
+# unless a joiner glues it into the same token, below), and drops only what is
+# no part of the words at its ends: sentence punctuation
 # and quotation marks, and a bracket its span never opens or closes. A bracket
 # of either kind pairs with one of the other: a half-open interval's "[0, 1)"
 # and "(0, 1]" say different things through their mixed brackets (review round
@@ -1490,16 +1491,48 @@ def _touching(ch: str) -> bool:
     return not ch.isspace() and not ch.isalnum()
 
 
+# A symbol run glued between two words either joins them into one token
+# ("10-15", "non-zero", "3.14", "and/or") or ends a sentence ("recursing.Tick").
+# Review round 4: taken in as a sign or a unit of the quoted word, a joiner sent
+# "10-15 ms" to the span check as "-15 ms" and "non-zero" as "-zero"; so the
+# span brings in the whole token a joiner glues on, as the student wrote it.
+_SENTENCE_GLUE = frozenset(".,;:!?…")
+
+
+def _joins(answer: str, i: int, j: int) -> bool:
+    """`answer[i:j]`, symbols between two letters or digits, joins them into one
+    token: anything but sentence punctuation, or a lone ".", "," or ":" between
+    digits (a decimal point, a thousands separator, a ratio)."""
+    glue = answer[i:j]
+    if not set(glue) <= _SENTENCE_GLUE:
+        return True
+    return glue in ".,:" and answer[i - 1].isdigit() and answer[j].isdigit()
+
+
 def _span_ends(answer: str, start: int, end: int) -> tuple[int, int]:
     """`answer[start:end]` (a run, from its first to its last letter or digit)
     widened over the symbols that touch it, less the sentence punctuation,
-    quotation marks and unmatched brackets at the widened ends."""
+    quotation marks and unmatched brackets at the widened ends. Symbols glued to
+    another word on their far side join the run to it (the whole token comes in)
+    or end a sentence (none of them does)."""
     lo, hi = start, end
     while lo > 0 and _touching(answer[lo - 1]):
         lo -= 1
+    glued = start > lo > 0 and answer[lo - 1].isalnum()
+    if glued and _joins(answer, lo, start):
+        while lo > 0 and not answer[lo - 1].isspace():
+            lo -= 1
+    elif glued:
+        lo = start
     while hi < len(answer) and _touching(answer[hi]):
         hi += 1
-    single = "'" in answer[lo:start]  # a straight quotation mark opened it
+    if end < hi < len(answer) and answer[hi].isalnum():
+        if _joins(answer, end, hi):
+            while hi < len(answer) and not answer[hi].isspace():
+                hi += 1
+        else:
+            hi = end
+    single = not glued and "'" in answer[lo:start]  # a straight quotation mark opened it
     while lo < start and answer[lo] in _SPAN_HEAD_QUOTES:
         lo += 1
     tail_marks = _SPAN_TAIL_MARKS + ("'" if single else "")
