@@ -599,13 +599,80 @@ E2E_LOOP_TUTOR_TURN = {
 E2E_LOOP_TUTOR_REPLY = render_turn(E2E_LOOP_TUTOR_TURN)
 
 
+
+# ── Learning loop tutor by phase (PKG-13) ──────────────────────────────────
+#
+# One handler, three fixed turns keyed on the PHASE of the run: the hint turn,
+# the feedback turn, and everything else (teach, the opener) the PKG-07 turn
+# above. The phase is read off THIS run's user prompt — the prefix
+# routes/learn_loop.py assembles with agents.loop_tutor.phase_prefix — never off
+# the history, where an earlier hint turn's prefix would answer a later teach
+# turn with the hint reply. The pattern values are copied verbatim from
+# agents/loop_tutor.py::_PHASE_RULES; tests/test_e2e_function_handlers.py pins
+# that each is real prompt source, sits in its own phase's prefix only, and is
+# absent from the system prompt. Every turn is valid at the tightest limits
+# (H0, a one-sentence body, nothing given), so no E2E loop turn burns an output
+# retry. The served text can differ from the *_REPLY render: at H0/H1 the route
+# serves the key idea of a hint or a correct-verdict feedback from code, at H2
+# the hint question, and a released feedback leads with "The answer: …"
+# (routes/learn_loop.py::served_render / released_lead). Asserted verbatim by
+# frontend/e2e/learn-loop.spec.ts. Keep in sync.
+E2E_LOOP_PHASE_PATTERNS: dict[str, str] = {
+    "hint": "the student asked for help with the check item below",
+    "feedback": "the student has just submitted an answer to the check",
+}
+E2E_LOOP_HINT_TURN = {
+    "key_idea": (
+        "[e2e-function-model] Deterministic loop hint: start from what the check "
+        "item asks for."
+    ),
+    "body": "Reread the item and name the one thing it wants you to state.",
+    "question": "What is the first thing you need before you can answer this?",
+}
+E2E_LOOP_HINT_REPLY = render_turn(E2E_LOOP_HINT_TURN)
+E2E_LOOP_FEEDBACK_TURN = {
+    "key_idea": (
+        "[e2e-function-model] Deterministic loop feedback: compare your answer "
+        "with what the check item asks for."
+    ),
+    "body": "Look at which part of the item your answer addressed.",
+    "question": "How would you check that part yourself next time?",
+}
+E2E_LOOP_FEEDBACK_REPLY = render_turn(E2E_LOOP_FEEDBACK_TURN)
+
+# The seeded loop check items (db/seed_local_rich.py::seed_learning_loop imports
+# these). Every item's PLAINTEXT prompt starts with E2E_LOOP_PROBE_PROMPT (the
+# journey asserts the probe card and the check pose show it); the reference
+# closes with "Final answer: <E2E_LOOP_FINAL_ANSWER>." (spec §13 A34: the final
+# answer is copied verbatim from the reference and never printed by the
+# prompt). The E2E grader above grades on E2E_GRADER_CORRECT_TOKEN anywhere in
+# its message, which quotes the prompt AND the reference — so neither may hold
+# the token, or every answer (a wrong one, an idk) would be graded correct.
+E2E_LOOP_PROBE_PROMPT = (
+    "[e2e-loop] Check item: type the e2e grader's correct token to be marked correct."
+)
+E2E_LOOP_FINAL_ANSWER = "the kilo sentinel phrase"
+E2E_LOOP_REFERENCE = (
+    "A seeded loop item is closed by its fixed sentinel wording. "
+    f"Final answer: {E2E_LOOP_FINAL_ANSWER}."
+)
+
+
 def _loop_tutor_handler(messages, info) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(content=json.dumps(E2E_LOOP_TUTOR_TURN))])
+    prompt = _last_user_prompt_text(messages)
+    if E2E_LOOP_PHASE_PATTERNS["hint"] in prompt:
+        turn = E2E_LOOP_HINT_TURN
+    elif E2E_LOOP_PHASE_PATTERNS["feedback"] in prompt:
+        turn = E2E_LOOP_FEEDBACK_TURN
+    else:
+        turn = E2E_LOOP_TUTOR_TURN
+    return ModelResponse(parts=[TextPart(content=json.dumps(turn))])
 
 
-register_function_handler("loop_tutor_lite", _loop_tutor_handler)
-register_function_handler("loop_tutor", _loop_tutor_handler)
-register_function_handler("loop_tutor_deep", _loop_tutor_handler)
+# One handler for the three tier slots (spec §13 A15): the tier is chosen in
+# code per run, so the scripted reply never depends on it.
+for _slot in ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep"):
+    register_function_handler(_slot, _loop_tutor_handler)
 
 
 # ── Session close (PKG-09) ─────────────────────────────────────────────────

@@ -861,3 +861,181 @@ def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch)
     }
     assert confront_of(deps.loop_state)["wrong_key"] == "w_loop"
     assert right.correct is True and right.wrong_key is None and right.matched_wrong_key is None
+
+
+# ── Learning loop, PKG-13: the phase-aware loop_tutor handler ──────────────
+#
+# The loop_tutor handler answers by PHASE so frontend/e2e/learn-loop.spec.ts
+# can tell a hint turn from a feedback turn from a teach turn. It reads the
+# phase off THIS run's user prompt — the prefix routes/learn_loop.py assembles
+# with agents.loop_tutor.phase_prefix — never off the history, where an earlier
+# turn's prefix would answer a later teach turn with the hint reply. The
+# pattern values are copied from agents/loop_tutor.py's phase rules, so a
+# prompt rewrite that drops them fails these tests, not the browser lane.
+
+_LOOP_SLOTS = ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"]
+#: (phase, ceiling, answer_released, verdict) — one real prefix per model phase.
+_LOOP_PHASE_CASES = {
+    "teach": ("teach", 1, False, None),
+    "hint": ("hint", 1, False, None),
+    "feedback": ("feedback", 6, True, "not_yet"),
+}
+
+
+def _loop_turn_message(phase_key: str, student_text: str = "help me") -> tuple[str, object]:
+    """The user message a real loop run carries for `phase_key`, and its limits."""
+    from agents.loop_tutor import assemble_turn_message, new_nonce, phase_prefix
+    from learning.turn_shape import clamp_model_ceiling, turn_limits
+
+    phase, ceiling, released, verdict = _LOOP_PHASE_CASES[phase_key]
+    prefix = phase_prefix(
+        phase=phase,
+        band="novice",
+        ceiling=ceiling,
+        item_prompt=None if phase == "teach" else "[e2e-loop] A seeded check item.",
+        item_format=None if phase == "teach" else "free",
+        answer_released=released,
+        verdict=verdict,
+    )
+    message = assemble_turn_message(
+        prefix=prefix, blocks=[], nonce=new_nonce(), student_text=student_text
+    )
+    return message, turn_limits(phase, clamp_model_ceiling(ceiling, released), released)
+
+
+def _loop_turn_for(phase_key: str) -> dict:
+    import agents.function_handlers_e2e as m
+
+    return {
+        "teach": m.E2E_LOOP_TUTOR_TURN,
+        "hint": m.E2E_LOOP_HINT_TURN,
+        "feedback": m.E2E_LOOP_FEEDBACK_TURN,
+    }[phase_key]
+
+
+@pytest.mark.parametrize("slot", _LOOP_SLOTS)
+@pytest.mark.parametrize("phase_key", ["teach", "hint", "feedback"])
+def test_loop_tutor_handler_answers_by_phase_on_every_tier_slot(monkeypatch, slot, phase_key):
+    """Spec §13 A15: code picks the tier slot per run (feedback after a correct
+    answer runs on loop_tutor_lite), so the scripted reply depends on the PHASE
+    of the real prefix, never on the slot — and no turn burns an output retry."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.loop_tutor import loop_tutor_agent
+    from learning.turn_shape import render_turn
+
+    message, limits = _loop_turn_message(phase_key)
+    deps = _deps()
+    deps.loop_turn = limits
+    result = loop_tutor_agent.run_sync(message, deps=deps, model=model_for(slot))
+    turn = _loop_turn_for(phase_key)
+    assert result.output == turn
+    assert result.usage().requests == 1  # no output retry
+    assert not deps.pending_evidence  # no tool call
+
+    import agents.function_handlers_e2e as m
+
+    reply = {
+        "teach": m.E2E_LOOP_TUTOR_REPLY,
+        "hint": m.E2E_LOOP_HINT_REPLY,
+        "feedback": m.E2E_LOOP_FEEDBACK_REPLY,
+    }[phase_key]
+    assert render_turn(result.output) == reply
+
+
+def test_loop_tutor_handler_reads_this_runs_prompt_not_the_history(monkeypatch):
+    """A teach turn after a hint turn carries the hint prefix in its HISTORY;
+    the handler must still answer it with the teach reply."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    from agents.function_handlers_e2e import E2E_LOOP_HINT_REPLY, E2E_LOOP_TUTOR_TURN
+    from agents.loop_tutor import loop_tutor_agent
+
+    hint_message, _ = _loop_turn_message("hint")
+    teach_message, limits = _loop_turn_message("teach")
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=hint_message)]),
+        ModelResponse(parts=[TextPart(content=E2E_LOOP_HINT_REPLY)]),
+    ]
+    deps = _deps()
+    deps.loop_turn = limits
+    result = loop_tutor_agent.run_sync(
+        teach_message, deps=deps, model=model_for("loop_tutor"), message_history=history
+    )
+    assert result.output == E2E_LOOP_TUTOR_TURN
+
+
+def test_loop_phase_patterns_are_real_and_unique_phase_prompt_text():
+    """Each pattern is verbatim prompt source, appears in its own phase's real
+    prefix, and in no other phase's prefix nor the system prompt — so it can
+    neither be invented nor misfire."""
+    import pathlib
+
+    from agents.function_handlers_e2e import E2E_LOOP_PHASE_PATTERNS
+    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT, LOOP_OUTPUT_TEMPLATE
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "agents" / "loop_tutor.py").read_text()
+    assert set(E2E_LOOP_PHASE_PATTERNS) == {"hint", "feedback"}
+    for phase, pattern in E2E_LOOP_PHASE_PATTERNS.items():
+        assert len(pattern) >= 12, (phase, pattern)
+        assert pattern in src, f"{phase!r} pattern {pattern!r} is not in agents/loop_tutor.py"
+        assert pattern not in _LOOP_SYSTEM_PROMPT + LOOP_OUTPUT_TEMPLATE
+        for other in _LOOP_PHASE_CASES:
+            message, _ = _loop_turn_message(other)
+            assert (pattern in message) == (other == phase), (phase, other)
+
+
+def test_loop_turn_constants_are_valid_turns_at_the_tightest_limits():
+    """Every scripted loop turn passes the output validator — shape, control
+    tags, LaTeX and the below-H4 invented-math provenance check — at H0 (a
+    one-sentence body), with nothing given, so the served path never retries."""
+    from agents.function_handlers_e2e import (
+        E2E_LOOP_FEEDBACK_TURN,
+        E2E_LOOP_HINT_TURN,
+        E2E_LOOP_TUTOR_TURN,
+    )
+    from learning.turn_shape import turn_limits, validate_turn
+
+    for phase, turn in (
+        ("teach", E2E_LOOP_TUTOR_TURN),
+        ("hint", E2E_LOOP_HINT_TURN),
+        ("feedback", E2E_LOOP_FEEDBACK_TURN),
+    ):
+        for ceiling in (0, 1, 2, 3):
+            assert validate_turn(turn, turn_limits(phase, ceiling, False), source="") == [], (
+                phase,
+                ceiling,
+            )
+
+
+def test_loop_constants_do_not_state_a_seeded_answer():
+    """A hint or feedback reply carrying the grader's correct token would let the
+    journey pass a check it never answered; one carrying the seeded items' final
+    answer (or a 6-gram of their reference) would be a real leak."""
+    import agents.function_handlers_e2e as m
+    from learning.checks import answer_run, find_runs
+    from learning.params import LEAK_NGRAM
+
+    texts = (
+        m.E2E_LOOP_TUTOR_REPLY,
+        m.E2E_LOOP_HINT_REPLY,
+        m.E2E_LOOP_FEEDBACK_REPLY,
+        m.E2E_LOOP_PROBE_PROMPT,
+    )
+    reference = answer_run(m.E2E_LOOP_REFERENCE)
+    grams = {reference[i : i + LEAK_NGRAM] for i in range(len(reference) - LEAK_NGRAM + 1)}
+    for text in texts:
+        run = answer_run(text)
+        assert m.E2E_GRADER_CORRECT_TOKEN not in text
+        assert m.E2E_GRADER_WRONG_REASON_TOKEN not in text
+        assert not find_runs(run, answer_run(m.E2E_LOOP_FINAL_ANSWER)), text
+        assert not {run[i : i + LEAK_NGRAM] for i in range(len(run) - LEAK_NGRAM + 1)} & grams
+    # A34: the final answer is copied verbatim from the reference and absent from the prompt.
+    assert m.E2E_LOOP_FINAL_ANSWER in m.E2E_LOOP_REFERENCE
+    assert not find_runs(answer_run(m.E2E_LOOP_PROBE_PROMPT), answer_run(m.E2E_LOOP_FINAL_ANSWER))
+    # The E2E grader grades on the token anywhere in its message, which quotes the
+    # reference and the prompt: a token there would grade EVERY answer correct.
+    assert m.E2E_GRADER_CORRECT_TOKEN not in m.E2E_LOOP_REFERENCE
+    assert m.E2E_LOOP_PROBE_PROMPT.startswith("[e2e-loop]")
