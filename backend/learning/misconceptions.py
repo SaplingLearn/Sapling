@@ -160,21 +160,21 @@ def last_release_on_node(loop_state: dict, node_id: str) -> bool | None:
 
 
 def owed_isomorph(rows: list[dict], shape: tuple) -> bool:
-    """Spec §13 A76 (fix round 4, R4-1): whether a released item of this
-    isomorph class (`shape` = format, difficulty on this node, A27/next_isomorph)
-    is still owed its re-check in the journal rows (oldest first, as
-    loop_state_store.recent_evidence reads them). A release opens a debt for its
-    class; the next graded item OF THAT CLASS pays it — whatever came between on
-    the node (a probe or review item of another class pays nothing). Pure."""
-    owed: set[tuple] = set()
-    for row in rows:
-        cls = row.get("shape")
-        if cls is None:
-            continue
-        owed.discard(cls)  # an isomorph graded after the release pays it
-        if row.get("released"):
-            owed.add(cls)
-    return shape in owed
+    """Spec §13 A76 (fix rounds 4–5): whether an item of isomorph class `shape`
+    (format, difficulty on this node, A27/next_isomorph) is a re-check given the
+    node's journal rows in the window (loop_state_store.recent_evidence). A
+    release makes EVERY item of the released item's class a re-check for the
+    window — no item "pays" the debt (R5-2: every class-mate carries the copy
+    risk; the cost is slower credit on that class alone for
+    RECHECK_RELEASE_WINDOW_HOURS). Fail closed (R5-3): a released row whose
+    item cannot be read (withdrawn, deleted) owes on EVERY class of the node,
+    and so does any release when the graded item's own class is unknown. Pure."""
+    released = [row for row in rows if row.get("released")]
+    if not released:
+        return False
+    if None in shape or any(row.get("shape") is None for row in released):
+        return True
+    return shape in {row["shape"] for row in released}
 
 
 def recheck_after_release(
@@ -188,11 +188,10 @@ def recheck_after_release(
         concept's latest attempt in THIS session's log when there is one, else
         the node's newest journal row within RECHECK_RELEASE_WINDOW_HOURS of
         `now` (a session hop never bypasses it; R2-2/R2-3); or
-      • its isomorph class is still owed a re-check: an item of the same
-        format and difficulty on the node was released within the window and
-        no item of that class was graded since (R4-1: an intermediate probe or
-        review item of another class takes the first rule's re-check, yet the
-        released item's twin is still the copy risk).
+      • an item of its isomorph class (same format and difficulty on the
+        node) was released within the window — every class-mate, whatever was
+        graded since (R4-1/R5-2), and every class when the released item cannot
+        be read (R5-3; owed_isomorph).
     A failed journal read decides nothing (False). Reads only: `loop_state` is
     never changed."""
     last = last_release_on_node(loop_state or {}, node_id)
@@ -205,7 +204,7 @@ def recheck_after_release(
     if last is None and rows[-1]["released"]:
         return True
     shape = (getattr(item, "format", None), getattr(item, "difficulty", None))
-    return None not in shape and owed_isomorph(rows, shape)
+    return owed_isomorph(rows, shape)
 
 
 def attempts_for_node(log: list, node_id: str) -> list[Attempt]:

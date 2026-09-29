@@ -3598,7 +3598,10 @@ def test_a_release_in_another_session_counts_within_the_window(gate_on, seams, j
         ([], True),  # the released item's twin comes next: the "next item" rule
         ([("qh-p", False, ("mc_reason", 1))], True),  # R4-1: a probe item of ANOTHER class between
         ([("qh-r", False, ("mc_reason", 1)), ("qh-s", False, ("teachback", 3))], True),
-        ([("qh-t", False, "SAME")], False),  # a twin of that class was graded since: paid
+        # R5-2: a class-mate graded since (a due review item) pays nothing
+        ([("qh-t", False, "SAME")], True),
+        # R5-3: the released item's row is unreadable → every class owes
+        ([("qh-u", False, ("mc_reason", 1))], True),
     ],
 )
 def test_a_released_items_twin_is_a_recheck_whatever_came_between(gate_on, seams, between, recheck):
@@ -3606,10 +3609,11 @@ def test_a_released_items_twin_is_a_recheck_whatever_came_between(gate_on, seams
     intermediate probe/review item on the node (another format or difficulty)
     takes the "next item" re-check and its correct row becomes the journal's
     newest — yet X's isomorph twin (same format and difficulty) is still the
-    copy risk: it is graded as a re-check until an item of X's class is graded
-    after the release."""
+    copy risk: every item of X's class is a re-check for the window (R5-2),
+    and every item on the node when X's row is unreadable (R5-3)."""
     same = (ITEM.format, ITEM.difficulty)
-    rows = [{"question_hash": "qh-x", "released": True, "shape": same}]
+    released_shape = None if any(qh == "qh-u" for qh, *_ in between) else same
+    rows = [{"question_hash": "qh-x", "released": True, "shape": released_shape}]
     rows += [
         {"question_hash": qh, "released": rel, "shape": same if shape == "SAME" else shape}
         for qh, rel, shape in between

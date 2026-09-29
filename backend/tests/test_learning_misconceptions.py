@@ -1619,28 +1619,41 @@ def test_every_grading_caller_decides_the_recheck_through_the_one_helper():
     [
         ([], False),
         ([_row("x", True, ("free", 2))], True),
-        # R4-1: an intermediate item of another class pays nothing
+        # R4-1: an intermediate item of another class changes nothing
         ([_row("x", True, ("free", 2)), _row("p", False)], True),
         ([_row("x", True, ("free", 2)), _row("p", False), _row("r", False, ("free", 3))], True),
-        # an item of the class graded since the release pays the debt
-        ([_row("x", True, ("free", 2)), _row("y", False, ("free", 2))], False),
-        # ...and a released one of the class opens a new debt
+        # R5-2: no "paid" state — a class-mate graded since (a due review item)
+        # leaves the next class-mate (the loop twin) a re-check too
+        ([_row("x", True, ("free", 2)), _row("y", False, ("free", 2))], True),
         ([_row("x", True, ("free", 2)), _row("y", True, ("free", 2))], True),
-        ([_row("x", True, None), _row("p", False)], False),  # an unreadable item: no class
+        # a release of ANOTHER class owes nothing to this one
+        ([_row("x", True, ("free", 3)), _row("p", False)], False),
+        # R5-3: an unreadable released item owes on every class of the node
+        ([_row("x", True, None), _row("p", False)], True),
+        # ...but an unreadable UNRELEASED row opens nothing
+        ([_row("x", False, None)], False),
     ],
 )
-def test_owed_isomorph_pays_only_on_an_item_of_the_released_class(rows, expected):
+def test_owed_isomorph_every_class_mate_in_the_window_is_a_recheck(rows, expected):
     from learning.misconceptions import owed_isomorph
 
     assert owed_isomorph(rows, ("free", 2)) is expected
 
 
+def test_owed_isomorph_fails_closed_on_an_unreadable_graded_item():
+    """R5-3: the graded item's own class unknown → any release on the node owes."""
+    from learning.misconceptions import owed_isomorph
+
+    assert owed_isomorph([_row("x", True, ("mc_reason", 1))], (None, None)) is True
+    assert owed_isomorph([_row("x", False, ("mc_reason", 1))], (None, None)) is False
+
+
 def test_the_twin_after_an_intermediate_probe_or_review_is_still_a_recheck():
-    """R4-1 sequence, through the real journal read: session A — X (free, d2)
-    graded wrong, released. Session B — a probe/review item P (mc_reason, d1)
-    on the node takes the "next item" re-check; its correct row becomes the
-    newest. X's twin Y (free, d2) is still a re-check (down-weighted, no
-    streak). Then Y's own row pays the debt: the next free/d2 item is normal."""
+    """R4-1/R5-2 sequence, through the real journal read: session A — X (free,
+    d2) graded wrong, released. Session B — a probe item P (mc_reason, d1)
+    takes the "next item" re-check; a due review item R of X's class (free, d2)
+    is a re-check; the loop twin Y (free, d2) after R is STILL a re-check (no
+    paid state); an item of another class after them is normal."""
     from learning import loop_state_store as store
     from learning.misconceptions import recheck_after_release
     from learning.params import WEIGHT_SAME_SESSION_RECHECK
@@ -1648,21 +1661,40 @@ def test_the_twin_after_an_intermediate_probe_or_review_is_still_a_recheck():
     items = [
         {"id": "ci-x", "format": "free", "difficulty": 2},
         {"id": "ci-p", "format": "mc_reason", "difficulty": 1},
-        {"id": "ci-y", "format": "free", "difficulty": 2},
+        {"id": "ci-r", "format": "free", "difficulty": 2},
     ]
     journal = [{"check_item_id": "ci-x", "question_hash": "x", "correct": False, "max_rung": 0}]
     fake = _FakeJournal(journal, items)
     probe = MagicMock(question_hash="p", format="mc_reason", difficulty=1)
+    review_item = MagicMock(question_hash="r", format="free", difficulty=2)
     twin = MagicMock(question_hash="y", format="free", difficulty=2)
-    later = MagicMock(question_hash="z", format="free", difficulty=2)
+    other = MagicMock(question_hash="o", format="teachback", difficulty=3)
     with patch.object(store, "table", side_effect=fake):
         assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=probe) is True
         journal.append(
             {"check_item_id": "ci-p", "question_hash": "p", "correct": True, "max_rung": 0}
         )
+        assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=review_item) is True
+        journal.append(
+            {"check_item_id": "ci-r", "question_hash": "r", "correct": True, "max_rung": 0}
+        )
         assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=twin) is True
         assert _twin_evidence(True)["weight"] == WEIGHT_SAME_SESSION_RECHECK
-        journal.append(
-            {"check_item_id": "ci-y", "question_hash": "y", "correct": True, "max_rung": 0}
-        )
-        assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=later) is False
+        assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=other) is False
+
+
+def test_a_withdrawn_released_item_owes_on_every_class_of_the_node():
+    """R5-3 sequence: X is released, then its check_items row is withdrawn —
+    every item on the node is a re-check for the window (fail closed)."""
+    from learning import loop_state_store as store
+    from learning.misconceptions import recheck_after_release
+
+    journal = [
+        {"check_item_id": "ci-gone", "question_hash": "x", "correct": False, "max_rung": 0},
+        {"check_item_id": "ci-p", "question_hash": "p", "correct": True, "max_rung": 0},
+    ]
+    fake = _FakeJournal(journal, [{"id": "ci-p", "format": "mc_reason", "difficulty": 1}])
+    for fmt, diff in (("free", 2), ("teachback", 3), ("mc_reason", 1)):
+        item = MagicMock(question_hash="q", format=fmt, difficulty=diff)
+        with patch.object(store, "table", side_effect=fake):
+            assert recheck_after_release("u1", "n1", {}, now=_utc_now(), item=item) is True
