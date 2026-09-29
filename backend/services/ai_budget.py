@@ -475,6 +475,10 @@ def _spend_decision(
     # The $- and token-based soft level never downgrades novice deep turns; only the novice
     # deep-request cap does (spec §3.5 soft row, LOOP_MODEL_TIER).
     novice_keeps_deep = band == "novice" and "session_deep" not in soft
+    if band == "novice" and "session_deep" in soft:
+        # Owner decision 06b(k): report the scope that CAUSED the drop to standard. For a novice
+        # turn that is only ever the novice deep cap, whatever $/token soft scope came first.
+        scope = "session_deep"
     return BudgetDecision(
         level="soft",
         tier_ceiling="deep" if novice_keeps_deep else "standard",

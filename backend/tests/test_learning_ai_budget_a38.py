@@ -349,3 +349,45 @@ def test_the_429_body_carries_session_capped(store):
     assert (capped.json()["scope"], capped.json()["session_capped"]) == ("rate_limit", True)
     plain = TestClient(_raising_app(lambda: ai_budget.check(UID, "tutor", "develop"))).post("/turn")
     assert (plain.json()["scope"], plain.json()["session_capped"]) == ("rate_limit", False)
+
+
+# ── C3 (06b k): the soft scope is the one that caused the downgrade ──────────
+
+
+def test_a_novice_downgrade_reports_session_deep_not_daily_usd(store, events):
+    """A novice turn at BOTH the $-soft level and the novice deep cap is downgraded by the deep
+    cap alone (the $-soft level never downgrades novice turns), so the decision names it."""
+    from learning import params
+
+    novice_cap = config.STUDENT_DAILY_BUDGET_USD * config.BUDGET_NOVICE_MULTIPLIER
+    store([_row(cost=novice_cap * config.STUDENT_SOFT_FRACTION)])
+    d = ai_budget.check(
+        UID, "tutor", "novice", session_deep_requests=params.LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE
+    )
+    assert (d.level, d.tier_ceiling, d.scope, d.reset_at) == (
+        "soft",
+        "standard",
+        "session_deep",
+        None,
+    )
+    assert {kw["payload"]["scope"] for _, kw in events} == {"daily_usd", "session_deep"}
+
+
+def test_soft_scopes_that_do_cause_the_downgrade_are_unchanged(store):
+    from learning import params
+
+    # novice at the $-soft level only: no downgrade, the $ scope is reported (as before)
+    novice_cap = config.STUDENT_DAILY_BUDGET_USD * config.BUDGET_NOVICE_MULTIPLIER
+    store([_row(cost=novice_cap * config.STUDENT_SOFT_FRACTION)])
+    d = ai_budget.check(UID, "tutor", "novice")
+    assert (d.tier_ceiling, d.scope) == ("deep", "daily_usd")
+    # develop: the $-soft level itself downgrades, so the first trigger stays the report
+    store([_row(cost=config.STUDENT_DAILY_BUDGET_USD * config.STUDENT_SOFT_FRACTION)])
+    d = ai_budget.check(
+        UID, "tutor", "develop", session_deep_requests=params.LOOP_SESSION_MAX_DEEP_REQUESTS
+    )
+    assert (d.tier_ceiling, d.scope, d.reset_at) == (
+        "standard",
+        "daily_usd",
+        datetime(2026, 9, 30, tzinfo=timezone.utc),
+    )
