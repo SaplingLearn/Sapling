@@ -456,8 +456,8 @@ Added with the upload → SSE → library journey (#387).
 ### `review`
 
 Added with the learning loop's daily review queue (PKG-12). Owner:
-`frontend/src/components/learn/DueQueue.tsx` (PKG-12; the launch Study surface,
-spec §11.3 — PKG-13 adds the budget banner and launch polish). Rendered above the
+`frontend/src/components/learn/DueQueue.tsx` (PKG-12; launch polish PKG-13 — the
+launch Study surface, spec §11.3). Rendered above the
 Flashcards filter bar in `screens/Study.tsx` only when `getLoopStatus` reports the
 loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the gate's 404 → absent).
 
@@ -465,7 +465,8 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | --- | --- |
 | `review-due-panel` | the "Due today" panel root |
 | `review-budget` | chip: minutes left of today's review budget |
-| `review-empty` | "All caught up for today" (no item and nothing due) |
+| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item) |
+| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` ("AI tutor paused until <time>. Flashcards and review keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until your daily AI budget resets. …"); `role="status"`, `data-reset-at`, `data-session-capped` |
 | `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
 | `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
 | `review-answer-input` | free-response answer textarea (a `free` check) |
@@ -476,7 +477,7 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
 | `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
 | `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
-| `review-next` | "Next" — polls `/review/next` after a graded answer |
+| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving) |
 
 ### `loop`
 

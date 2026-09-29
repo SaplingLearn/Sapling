@@ -1,8 +1,10 @@
 "use client";
 // "Due today" — the learning loop's daily review queue on Study (PKG-12; spec §3.2,
 // §11.3). Driven by /api/learn/loop/review/next → /review/answer → next. Rendered only
-// when the loop is on for the student (Study.tsx probes getLoopStatus first); PKG-13
-// adds the budget banner and launch polish.
+// when the loop is on for the student (Study.tsx probes getLoopStatus first). Launch
+// polish (PKG-13): the budget pause banner (a 429 "ai budget reached", or novice
+// concepts paused at the tutor hard level per /review/summary — spec §3.5), a real
+// "All caught up" state, and a testid on every control.
 //
 // A check item's reference answer never reaches the client until the server returns it
 // in the corrective `hint` after a wrong answer; an mc_reason item's options are shown
@@ -10,11 +12,16 @@
 import React from "react";
 import {
   answerReview,
+  budgetPauseOf,
   getReviewNext,
+  getReviewSummary,
+  type LoopBudgetPause,
   type ReviewAnswerResponse,
   type ReviewNextResponse,
+  type ReviewSummaryResponse,
 } from "@/lib/api";
 import { extractErrorDetail } from "@/lib/errorMessage";
+import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 
 // Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
 // won; it can come BEFORE the grade (nothing recorded) or AFTER it (the record lost its
@@ -24,6 +31,18 @@ import { extractErrorDetail } from "@/lib/errorMessage";
 // on, so the panel re-polls.
 const RETRY_DETAIL = /retry/i;
 const GRADED_DETAIL = /already graded/i;
+
+/** A 429 "ai budget reached" on a review call (spec §3.5 / A20). */
+function answerPauseMessage(pause: LoopBudgetPause): string {
+  return pause.resetAt
+    ? `AI tutor paused until ${formatResetAt(pause.resetAt)}. Flashcards and review keep working.`
+    : "AI tutor paused for now. Flashcards and review keep working.";
+}
+
+/** Novice concepts paused at the tutor hard level (`/review/summary` `paused`). */
+function pausedConceptsMessage(n: number): string {
+  return `${n} ${n === 1 ? "concept" : "concepts"} paused until your daily AI budget resets. Flashcards and other reviews keep working.`;
+}
 
 const RATINGS: { n: number; label: string }[] = [
   { n: 1, label: "forgot" },
@@ -41,6 +60,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const [alreadyGraded, setAlreadyGraded] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // The budget pause from a review call's 429; cleared by the next graded answer.
+  const [pause, setPause] = React.useState<LoopBudgetPause | null>(null);
+  const [summary, setSummary] = React.useState<ReviewSummaryResponse | null>(null);
   // Every load bumps the sequence; a response for an older sequence (a slow poll, or
   // an answer to an item the panel has since moved past) is dropped, never attached
   // to the newer item.
@@ -63,7 +85,10 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setAlreadyGraded(false);
     } catch (err) {
       if (mine !== seq.current) return;
-      console.error("review next failed", err);
+      const paused = budgetPauseOf(err);
+      if (paused) setPause(paused);
+      else console.error("review next failed", err);
+      setNext(null); // never leave a stale item on screen
       setError("Couldn't load your review queue.");
     } finally {
       if (mine === seq.current) setBusy(false);
@@ -73,6 +98,16 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   React.useEffect(() => {
     load();
   }, [load]);
+
+  // The summary only feeds the banner and the empty state: a failure is ignored.
+  React.useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    getReviewSummary(userId, courseId)
+      .then((r) => { if (!cancelled) setSummary(r); })
+      .catch(() => { /* optional */ });
+    return () => { cancelled = true; };
+  }, [userId, courseId]);
 
   const item = next?.item ?? null;
 
@@ -98,11 +133,16 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       });
       if (mine !== seq.current) return; // the panel moved on: never attach it
       setResult(r);
+      if (!r.unavailable) setPause(null); // a graded answer got through
       setNext({ ...next, remaining_budget_s: r.remaining_budget_s });
     } catch (err) {
       if (mine !== seq.current) return;
       const { status, detail } = extractErrorDetail(err);
-      if (status === 409 && detail && RETRY_DETAIL.test(detail)) {
+      const paused = budgetPauseOf(err);
+      if (paused) {
+        // the pause, not an error: the typed answer stays; flashcards keep working
+        setPause(paused);
+      } else if (status === 409 && detail && RETRY_DETAIL.test(detail)) {
         // keep what the student typed and let them resend
         setError("Something changed — try again.");
       } else if (status === 409 && detail && GRADED_DETAIL.test(detail)) {
@@ -122,6 +162,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   // After a refusal or an outage nothing was recorded: the item stays answerable.
   const retryable = result !== null && result.unavailable;
   const answered = alreadyGraded || (result !== null && !result.unavailable);
+  const pausedConcepts = summary?.paused ?? 0;
+  const dueLater = summary ? summary.due.flashcard + summary.due.check : 0;
   const canSubmit =
     !busy &&
     !answered &&
@@ -144,16 +186,28 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         )}
       </div>
 
+      {pause ? (
+        <BudgetPausedBanner
+          testId="review-budget-paused"
+          resetAt={pause.resetAt}
+          sessionCapped={pause.sessionCapped}
+          message={answerPauseMessage(pause)}
+        />
+      ) : pausedConcepts > 0 ? (
+        <BudgetPausedBanner testId="review-budget-paused" resetAt={null} message={pausedConceptsMessage(pausedConcepts)} />
+      ) : null}
+
       {error && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
 
       {next && !item && next.due_total > 0 && (
         <div data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
-          That's today's review time. {next.due_total} more due — they'll wait for tomorrow.
+          That&apos;s today&apos;s review time. {next.due_total} more due — they&apos;ll wait for tomorrow.
         </div>
       )}
       {next && !item && next.due_total === 0 && (
         <div data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
-          All caught up for today.
+          All caught up — nothing is due right now.
+          {dueLater > 0 && ` ${dueLater} more ${dueLater === 1 ? "is" : "are"} due later.`}
         </div>
       )}
 
@@ -271,7 +325,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
             </div>
           )}
 
-          {answered && (
+          {(answered || pause !== null) && (
             <button
               data-testid="review-next"
               className="btn btn--sm"
