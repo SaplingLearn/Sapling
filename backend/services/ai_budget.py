@@ -3,8 +3,8 @@
 Outside backend/learning/ (spec §2, §12): reads llm_usage, never calls a model. Every grader,
 grader_second, decision, loop_tutor* and session_close run site calls ``ai_budget.check(`` first
 (invariant 23) and turns ``level == "hard"`` into "no model call", never into a verdict (spec §3.5
-validity rule, invariant 28). ONE paged llm_usage read since the UTC month start, cached per request
-id — no lru_cache (CLAUDE.md #98); tests/conftest.py resets the module state around every test.
+validity rule, invariant 28). ONE paged llm_usage read since the UTC month start, cached per
+server-minted request key — no lru_cache (CLAUDE.md #98); tests/conftest.py resets the module state around every test.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from learning import params
 from learning.policy import Band, BudgetLevel, Tier
 from services.auth_guard import get_session_user_id
 from services.events_service import log_event
-from services.request_context import current_request_id
+from services.request_context import current_request_id, current_request_key
 
 logger = logging.getLogger("sapling.ai_budget")
 
@@ -50,9 +50,9 @@ BUDGET_REACHED_DETAIL = "ai budget reached"  # spec §3.5 / A20 429 body
 GRADE_TASKS = frozenset({"grader", "grader_second", "decision"})  # spec §3.5 STUDENT_DAILY_GRADES
 RATE_LIMIT_WINDOW_S = 60  # spec §3.5: LEARN_RATE_LIMIT_PER_MIN counts rows in the last 60 s
 _REQUEST_CACHE_MAX = 512  # entries; a memory bound, not a policy threshold
-# † How long one cached summary may serve its request id. RequestIDMiddleware trusts a
-# caller-supplied X-Request-ID, so a client re-sending one id on every request would otherwise
-# be judged forever on its first summary; a real request makes its checks within seconds.
+# † How long one cached summary may serve its request key. The key is server-minted per request
+# (request_context.current_request_key, owner decision 06b g), so a client can no longer share
+# one entry across requests; the expiry stays as a belt (a real request checks within seconds).
 _REQUEST_CACHE_TTL_S = 5.0
 _DECEMBER = 12
 _USAGE_COLUMNS = "id,cost_usd,total_tokens,task,created_at"
@@ -301,8 +301,9 @@ def _usage(user_id: str) -> _Usage | None:
     """One llm_usage read per (request, user); None on a read error (fail open). A failed read
     is cached like a summary: grade() checks up to three times, and each retry of a hanging
     PostgREST would block again for up to the client's timeout (one WARNING per read)."""
-    rid = current_request_id()
-    key = (rid, user_id) if rid else None
+    # the SERVER-minted key, never the client's X-Request-ID (owner decision 06b g)
+    rkey = current_request_key()
+    key = (rkey, user_id) if rkey else None
     if key is not None:
         with _lock:
             hit = _request_cache.get(key)

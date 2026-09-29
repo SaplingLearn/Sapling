@@ -448,12 +448,12 @@ def test_one_usage_read_per_request(usage):
     from services import request_context
 
     fake = usage([_row(task="grader")])
-    token = request_context._REQUEST_ID_CTX.set("req-budget-0001")
+    token = request_context._REQUEST_KEY_CTX.set("req-budget-0001")
     try:
         for kind, band in (("grader", None), ("tutor", "develop"), ("close", None)):
             ai_budget.check(UID, kind, band)
     finally:
-        request_context._REQUEST_ID_CTX.reset(token)
+        request_context._REQUEST_KEY_CTX.reset(token)
     assert fake.reads == 1
     ai_budget.check(UID, "grader")  # outside a request: no cache
     assert fake.reads == 2
@@ -485,7 +485,7 @@ def test_a_failed_usage_read_is_not_retried_within_its_request(usage, monkeypatc
         raise RuntimeError("pg down")
 
     monkeypatch.setattr(ai_budget, "_load_rows", _down)
-    token = request_context._REQUEST_ID_CTX.set("req-budget-down-0001")
+    token = request_context._REQUEST_KEY_CTX.set("req-budget-down-0001")
     try:
         with caplog.at_level("WARNING", logger="sapling.ai_budget"):
             for kind, band in (("grader", None), ("grader", None), ("tutor", "develop")):
@@ -497,7 +497,7 @@ def test_a_failed_usage_read_is_not_retried_within_its_request(usage, monkeypatc
                 session_tutor_requests=params.LOOP_SESSION_MAX_TUTOR_REQUESTS,
             )
     finally:
-        request_context._REQUEST_ID_CTX.reset(token)
+        request_context._REQUEST_KEY_CTX.reset(token)
     assert attempts == [UID], "a failed read is cached for its request like a summary"
     assert (d.level, d.scope) == ("hard", "session_requests")  # the session caps still apply
     warnings = [r for r in caplog.records if "llm_usage read failed" in r.getMessage()]
@@ -774,23 +774,22 @@ def test_decision_run_is_skipped_at_the_grader_cap(usage):
 
 
 def test_a_reused_request_id_serves_a_summary_at_most_ttl_stale(usage, monkeypatch):
-    """RequestIDMiddleware trusts a caller-supplied X-Request-ID, so a client could send one id on
-    every request. Within _REQUEST_CACHE_TTL_S a later request re-sending the id IS served the
-    earlier summary (the cache cannot tell it from the same request); after it, a fresh read.
-    So the bound is "at most TTL-stale", not "never stale" (HANDOFF-06b Known gaps)."""
+    """The cache key is server-minted per request (owner decision 06b g; a client re-sending
+    one X-Request-ID gets a fresh key each request — tests/test_learning_ai_budget_a38.py). The
+    TTL stays as a belt: one key is served its summary for at most _REQUEST_CACHE_TTL_S."""
     from services import request_context
 
     clock = [1000.0]
     monkeypatch.setattr(ai_budget, "_clock", lambda: clock[0])
     fake = usage([])
-    token = request_context._REQUEST_ID_CTX.set("client-fixed-id")
+    token = request_context._REQUEST_KEY_CTX.set("client-fixed-id")
     try:
         assert ai_budget.check(UID, "grader").level == "normal"
         fake.rows += [_row(task="grader") for _ in range(config.STUDENT_DAILY_GRADES)]
         assert ai_budget.check(UID, "grader").level == "normal"  # the same request: its one read
         assert fake.reads == 1
-        clock[0] += ai_budget._REQUEST_CACHE_TTL_S  # a later request re-sending the id
+        clock[0] += ai_budget._REQUEST_CACHE_TTL_S  # the same key, past the TTL
         assert ai_budget.check(UID, "grader").level == "hard"
         assert fake.reads == 2
     finally:
-        request_context._REQUEST_ID_CTX.reset(token)
+        request_context._REQUEST_KEY_CTX.reset(token)

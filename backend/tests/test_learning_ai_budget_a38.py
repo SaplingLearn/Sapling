@@ -391,3 +391,55 @@ def test_soft_scopes_that_do_cause_the_downgrade_are_unchanged(store):
         "daily_usd",
         datetime(2026, 9, 30, tzinfo=timezone.utc),
     )
+
+
+# ── C4 (06b g): the usage cache keys on a server-minted id ───────────────────
+
+
+def _middleware_app(seen: list):
+    from fastapi import FastAPI
+
+    from services import request_context
+
+    app = FastAPI()
+    app.add_middleware(request_context.RequestIDMiddleware)
+
+    @app.post("/grade")
+    def grade():
+        seen.append(
+            (request_context.current_request_id(), request_context.current_request_key())
+        )
+        ai_budget.check(UID, "grader")  # a request's checks share its one read
+        ai_budget.check(UID, "grader")
+        return {"ok": True}
+
+    return app
+
+
+def test_two_requests_with_the_same_client_request_id_read_usage_separately(store, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    reads: list[str] = []
+    monkeypatch.setattr(ai_budget, "_load_rows", lambda uid, since: reads.append(uid) or [])
+    store([])
+    seen: list = []
+    client = TestClient(_middleware_app(seen))
+    header = {"X-Request-ID": "client-fixed-id-0001"}
+    assert client.post("/grade", headers=header).status_code == 200
+    assert client.post("/grade", headers=header).status_code == 200
+    assert reads == [UID, UID], "one read per request, never shared across requests"
+    (rid1, key1), (rid2, key2) = seen
+    assert rid1 == rid2 == "client-fixed-id-0001", "the correlation id still echoes the client's"
+    assert key1 and key2 and key1 != key2 and key1 != rid1
+
+
+def test_the_request_key_is_server_minted_and_scoped_to_its_request():
+    from fastapi.testclient import TestClient
+
+    from services import request_context
+
+    seen: list = []
+    client = TestClient(_middleware_app(seen))
+    client.post("/grade", headers={"X-Request-ID": "k" * 20})
+    assert seen[0][1] != "k" * 20
+    assert request_context.current_request_key() is None, "reset when the request ends"

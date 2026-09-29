@@ -32,6 +32,14 @@ _REQUEST_ID_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "sapling_request_id", default=None,
 )
 
+# A per-request key the SERVER mints, never read from a header: the X-Request-ID above is
+# caller-controllable (a client may re-send one id on every request), so anything keyed per
+# request for correctness rather than correlation — services/ai_budget.py's usage cache (owner
+# decision A38, HANDOFF-06b (g)) — keys on this instead.
+_REQUEST_KEY_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "sapling_request_key", default=None,
+)
+
 # Defensive: only accept caller-supplied IDs that are 8–128 chars of
 # hex/uuid-ish characters. Anything else, ignore and generate fresh.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_\-]{8,128}$")
@@ -42,6 +50,17 @@ _log = logging.getLogger("sapling.request")
 def current_request_id() -> str | None:
     """Return the current request's ID, or None if outside a request scope."""
     return _REQUEST_ID_CTX.get()
+
+
+def current_request_key() -> str | None:
+    """The current request's server-minted key (never client-supplied), or None outside a
+    request scope. Use it to key per-request state; use current_request_id() for correlation."""
+    return _REQUEST_KEY_CTX.get()
+
+
+def new_request_key() -> str:
+    """Mint a fresh server-side request key. Module-level so tests can monkeypatch."""
+    return uuid.uuid4().hex
 
 
 def new_request_id() -> str:
@@ -60,6 +79,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         rid = incoming if _SAFE_ID.match(incoming) else new_request_id()
         request.state.request_id = rid
         token = _REQUEST_ID_CTX.set(rid)
+        key_token = _REQUEST_KEY_CTX.set(new_request_key())
         start = time.perf_counter()
         try:
             response = await call_next(request)
@@ -101,6 +121,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # the var still holds this request's id).
             if _REQUEST_ID_CTX.get() == rid:
                 _REQUEST_ID_CTX.reset(token)
+            _REQUEST_KEY_CTX.reset(key_token)
 
         # One log line per request, severity tracking the response code.
         dur_ms = (time.perf_counter() - start) * 1000
