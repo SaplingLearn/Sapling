@@ -2150,11 +2150,16 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         message="",
         independent_s=0.0,
     )
+    phase = _phase_for(dict(state, current=active if item is not None else None))
     return {
         "active": True,
         "session_id": session_id,
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
-        "phase": _phase_for(dict(state, current=active if item is not None else None)),
+        "phase": phase,
+        # PKG-13 reopen: the open item's pose, so a resuming client restores the
+        # check READ-ONLY (POST /check/next may activate — write — another item).
+        # Only while the item takes answers; never the reference (A17/A22).
+        "check": _pose_payload(item) if item is not None and phase == "check" else None,
         "band": band,
         "ceiling": int(ceiling),
         "active_question_hash": active if item is not None else None,
