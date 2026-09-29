@@ -46,6 +46,8 @@ def test_the_grader_item_carries_the_correct_option_text():
         ("Maybe nothing stops the calls?", True),  # the correct option's text
         ("Think about what ends a recursion.", False),
         ("Option B has a flaw.", False),
+        ("Is it the third one?", True),  # the key's position (C is third)
+        ("Is there a smaller subproblem?", False),
     ],
 )
 def test_the_grader_hint_check_is_strict(hint, leaks):
