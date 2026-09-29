@@ -322,12 +322,12 @@ describe('learning-loop review client (PKG-12)', () => {
   const ok = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-  it('getLoopStatus: 200 from /review/summary is active, same-origin with credentials', async () => {
+  it('getLoopStatus: 200 from the gate-only /review/active is active, same-origin with credentials', async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
-    fetchMock.mockResolvedValue(ok({ due: { flashcard: 0, check: 0 } }));
+    fetchMock.mockResolvedValue(ok({ active: true }));
     await expect(getLoopStatus('u 1')).resolves.toEqual({ active: true });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('/api/learn/loop/review/summary?user_id=u+1');
+    expect(url).toBe('/api/learn/loop/review/active?user_id=u+1');
     expect(init?.credentials).toBe('include');
   });
 

@@ -14,7 +14,12 @@ import {
   type ReviewAnswerResponse,
   type ReviewNextResponse,
 } from "@/lib/api";
-import { statusOf } from "@/lib/errorMessage";
+import { extractErrorDetail } from "@/lib/errorMessage";
+
+// The backend 409 that means "a concurrent write won; submit again" (routes/learn_loop.py
+// _STATE_CONFLICT). Every other review 409 — already graded, not served, a new day —
+// means the queue moved on, so the panel re-polls instead.
+const RETRY_DETAIL = /retry/i;
 
 const RATINGS: { n: number; label: string }[] = [
   { n: 1, label: "forgot" },
@@ -31,13 +36,19 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const [result, setResult] = React.useState<ReviewAnswerResponse | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Every load bumps the sequence; a response for an older sequence (a slow poll, or
+  // an answer to an item the panel has since moved past) is dropped, never attached
+  // to the newer item.
+  const seq = React.useRef(0);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
+    const mine = ++seq.current;
     setBusy(true);
     setError(null);
     try {
       const r = await getReviewNext(userId, courseId);
+      if (mine !== seq.current) return;
       setNext(r);
       setAnswer("");
       setChoice("");
@@ -45,10 +56,11 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setFlipped(false);
       setResult(null);
     } catch (err) {
+      if (mine !== seq.current) return;
       console.error("review next failed", err);
       setError("Couldn't load your review queue.");
     } finally {
-      setBusy(false);
+      if (mine === seq.current) setBusy(false);
     }
   }, [userId, courseId]);
 
@@ -60,6 +72,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
   const submit = async (extra: { rating?: number } = {}) => {
     if (!next || !item || busy) return;
+    const mine = seq.current;
     setBusy(true);
     setError(null);
     try {
@@ -77,19 +90,25 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         item_id: item.id,
         ...body,
       });
+      if (mine !== seq.current) return; // the panel moved on: never attach it
       setResult(r);
       setNext({ ...next, remaining_budget_s: r.remaining_budget_s });
     } catch (err) {
-      // 409: already graded, not served or a new day began — the queue moved on.
-      if (statusOf(err) === 409) {
+      if (mine !== seq.current) return;
+      const { status, detail } = extractErrorDetail(err);
+      if (status === 409 && detail && RETRY_DETAIL.test(detail)) {
+        // nothing was recorded: keep what the student typed and let them resend
+        setError("That didn't go through — please submit again.");
+      } else if (status === 409) {
+        // already graded, not served or a new day began — the queue moved on
         await load();
         return;
+      } else {
+        console.error("review answer failed", err);
+        setError("Couldn't send that answer.");
       }
-      console.error("review answer failed", err);
-      setError("Couldn't send that answer.");
-    } finally {
-      setBusy(false);
     }
+    if (mine === seq.current) setBusy(false);
   };
 
   // After a refusal or an outage nothing was recorded: the item stays answerable.
@@ -119,7 +138,12 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
       {error && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
 
-      {next && !item && (
+      {next && !item && next.due_total > 0 && (
+        <div data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
+          That's today's review time. {next.due_total} more due — they'll wait for tomorrow.
+        </div>
+      )}
+      {next && !item && next.due_total === 0 && (
         <div data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
           All caught up for today.
         </div>

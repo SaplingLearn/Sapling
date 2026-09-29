@@ -873,7 +873,10 @@ export interface ReviewNextResponse {
   remaining_budget_s: number;
   session_id: string;
   retention_target: number;
+  // everything due today; in_budget = what today's remaining budget covers. A null
+  // item with due_total > 0 means the budget is spent, not that nothing is due.
   due_total: number;
+  in_budget: number;
 }
 export interface ReviewAnswerBody {
   user_id: string;
@@ -900,6 +903,7 @@ export interface ReviewAnswerResponse {
 }
 export interface ReviewSummaryResponse {
   due: { flashcard: number; check: number };
+  in_budget: number;
   unservable: number;
   paused: number;
   budget_min: number;
@@ -925,13 +929,15 @@ export const answerReview = (body: ReviewAnswerBody) =>
 export const getReviewSummary = (userId: string, courseId?: string) =>
   fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewQuery(userId, courseId)}`);
 
-/** Is the learning loop on for this student? Probes GET /review/summary (PKG-07's
- *  /status is per loop session): 200 → active, the gate's 404 → inactive. Any other
- *  failure rejects; callers treat that as inactive too. */
+/** Is the learning loop on for this student? Probes GET /review/active — a
+ *  gate-only route that builds nothing (PKG-07's /status needs a loop session id):
+ *  200 → active, the gate's 404 → inactive. Any other failure rejects; callers
+ *  treat that as inactive too. */
 export const getLoopStatus = async (userId: string): Promise<{ active: boolean }> => {
   try {
-    await getReviewSummary(userId);
-    return { active: true };
+    return await fetchJSON<{ active: boolean }>(
+      `/api/learn/loop/review/active?${reviewQuery(userId)}`,
+    );
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return { active: false };
     throw err;

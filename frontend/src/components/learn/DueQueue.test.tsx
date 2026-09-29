@@ -28,13 +28,16 @@ vi.mock("@/lib/api", () => ({
 import { DueQueue } from "./DueQueue";
 
 const SR = { stage: "acquire", correct: 0, target: 3 } as const;
-const next = (item: unknown, remaining = 600) => ({
+const next = (item: unknown, remaining = 600, due = item ? 1 : 0) => ({
   item,
   remaining_budget_s: remaining,
   session_id: "sess-1",
   retention_target: 0.9,
-  due_total: item ? 1 : 0,
+  due_total: due,
+  in_budget: item ? 1 : 0,
 });
+const conflict = (detail: string) =>
+  Object.assign(new Error(JSON.stringify({ detail })), { status: 409, body: { detail } });
 const FREE = {
   kind: "check", id: "ci-1", node_id: "n1", concept_name: "Recursion", format: "free",
   difficulty: 3, cost_s: 45, sr: SR, prompt: "What stops factorial(0)?",
@@ -141,12 +144,64 @@ describe("DueQueue", () => {
 
   it("re-polls the queue on a 409 instead of showing an error", async () => {
     mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(null));
-    mockAnswer.mockRejectedValue(Object.assign(new Error("already graded"), { status: 409 }));
+    mockAnswer.mockRejectedValue(conflict("already graded"));
     render(<DueQueue userId="u1" />);
     await screen.findByTestId("review-item");
     await userEvent.type(screen.getByTestId("review-answer-input"), "x");
     await userEvent.click(screen.getByTestId("review-submit"));
     expect(await screen.findByTestId("review-empty")).toBeTruthy();
     expect(mockNext).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the typed answer and lets the student resend after a retry 409", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer.mockRejectedValueOnce(conflict("loop state changed, retry")).mockResolvedValueOnce(graded());
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect(await screen.findByText(/please submit again/i)).toBeTruthy();
+    expect((screen.getByTestId("review-answer-input") as HTMLTextAreaElement).value).toBe("the base case");
+    expect(mockNext).toHaveBeenCalledTimes(1); // no re-poll: the item is still this one
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect((await screen.findByTestId("review-hint")).textContent).toContain("Correct.");
+    expect(mockAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ answer: "the base case" }));
+  });
+
+  it("says the budget is spent, not caught up, when due items remain", async () => {
+    mockNext.mockResolvedValue(next(null, 0, 4));
+    render(<DueQueue userId="u1" />);
+    expect((await screen.findByTestId("review-budget-spent")).textContent).toContain("4 more due");
+    expect(screen.queryByTestId("review-empty")).toBeNull();
+  });
+
+  it("never attaches a late answer to a newer item", async () => {
+    let resolveAnswer: (v: unknown) => void = () => {};
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(CARD));
+    mockAnswer.mockReturnValueOnce(new Promise((res) => { resolveAnswer = res; }));
+    const { rerender } = render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "x");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    rerender(<DueQueue userId="u1" courseId="c2" />); // a course switch reloads the queue
+    await screen.findByText("Q?");
+    resolveAnswer(graded({ hint: "LATE" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(/LATE/)).toBeNull();
+    expect(screen.queryByTestId("review-hint")).toBeNull();
+  });
+
+  it("drops a stale queue response that lands after a newer one", async () => {
+    let resolveOld: (v: unknown) => void = () => {};
+    mockNext
+      .mockReturnValueOnce(new Promise((res) => { resolveOld = res; }))
+      .mockResolvedValueOnce(next(CARD));
+    const { rerender } = render(<DueQueue userId="u1" courseId="c1" />);
+    rerender(<DueQueue userId="u1" courseId="c2" />);
+    await screen.findByText("Q?");
+    resolveOld(next(FREE));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByText("Q?")).toBeTruthy();
+    expect(screen.queryByText("What stops factorial(0)?")).toBeNull();
   });
 });

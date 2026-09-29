@@ -458,13 +458,14 @@ Added with the learning loop's daily review queue (PKG-12). Owner:
 `frontend/src/components/learn/DueQueue.tsx` (PKG-12; the launch Study surface,
 spec §11.3 — PKG-13 adds the budget banner and launch polish). Rendered above the
 Flashcards filter bar in `screens/Study.tsx` only when `getLoopStatus` reports the
-loop active (`GET /api/learn/loop/review/summary` 200; the gate's 404 → absent).
+loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the gate's 404 → absent).
 
 | testid | element |
 | --- | --- |
 | `review-due-panel` | the "Due today" panel root |
 | `review-budget` | chip: minutes left of today's review budget |
-| `review-empty` | "All caught up for today" (the queue served no item) |
+| `review-empty` | "All caught up for today" (no item and nothing due) |
+| `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
 | `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
 | `review-answer-input` | free-response answer textarea (a `free` check) |
 | `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22) |
