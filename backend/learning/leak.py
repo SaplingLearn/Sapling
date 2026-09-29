@@ -71,7 +71,9 @@ at least LEAK_PROVENANCE_MIN_TOKENS answer tokens copied verbatim from `given`
 cannot see already ("3x^2" copied from the item holds a "2"). (2) Strict
 mode's number-word and standalone-letter rules count only in ANSWER POSITION:
 right after an answer/result/equals construction (or an option keyword), a
-copula or an "=" / ":" / arrow, or standing alone as a clause ("Two.").
+copula or an "=" / ":" / arrow, or standing alone as a clause ("Two."); a
+number word also when it quantifies a word of `given` ("two nonzero terms"
+for an item asking how many nonzero terms).
 `leak_spans` returns the served-mode hits. Default mode ignores both.
 
 The reference is never parsed for a final answer (A34): extracting one from
@@ -658,6 +660,17 @@ def _answer_position(text: str, start: int, end: int) -> bool:
     return bool(clause_start and _CLAUSE_CLOSE.match(text, end))
 
 
+_NEXT_WORD = re.compile(r"[\s\-]{1,4}([A-Za-z]{3,})")
+
+
+def _quantifies_given(text: str, end: int, given_words: set[str]) -> bool:
+    """A number word right before a word the given text holds — the item's own
+    object ("two nonzero terms" for "how many nonzero terms …") — states the
+    count the item asks for (final round)."""
+    m = _NEXT_WORD.match(text, end)
+    return bool(m and m.group(1).lower() in given_words)
+
+
 def _copied_runs(text: str, given: str) -> list[tuple[int, int]]:
     """The spans of `text` it copied verbatim from `given`: unions of runs of
     LEAK_PROVENANCE_MIN_TOKENS consecutive answer tokens that `given` also
@@ -702,10 +715,11 @@ def _served_hits(text: str, rules: _Rules, given: str) -> list[tuple[int, int, D
     if rules.strict:
         final += _numeric_hits(text, toks, rules.numeric, words=False)
         final += _lemma_run_hits(toks, rules.answer.run)
+        given_words = {w.lower() for w in re.findall(r"[A-Za-z]{3,}", given)}
         final += [
             (a, b)
             for a, b in _number_word_hits(text, rules.numeric)
-            if _answer_position(text, a, b)
+            if _answer_position(text, a, b) or _quantifies_given(text, b, given_words)
         ]
     hits += [(a, b, "final_answer") for a, b in final]
     option = _option_hits(text, rules.option, strict=rules.strict, gate=_answer_position)

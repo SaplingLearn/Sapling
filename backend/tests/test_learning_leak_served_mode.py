@@ -77,3 +77,10 @@ def test_leak_spans_are_the_filtered_hits():
     text = "The first term is 3x^2. The answer is 2."
     spans = leak_spans(emitted=text, strict=True, given=G_PROMPT, **G)
     assert [text[a:b] for a, b in spans] == ["2"] and spans[0][0] > text.index("answer")
+
+
+def test_a_number_word_quantifying_the_items_own_object_is_in_answer_position():
+    """Final round: "It has two nonzero terms." states the count the item asks
+    for — the number word is followed by the item's own noun ("terms")."""
+    assert _served("It has two nonzero terms.")
+    assert not _served("Add the two results together.")
