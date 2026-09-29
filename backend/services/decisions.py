@@ -363,7 +363,9 @@ def _emit(event_type: str, category: str, deps, payload: dict) -> None:
         logger.debug("decision event %s dropped", event_type, exc_info=True)
 
 
-def _made(decision: str, verdict: Verdict, deps) -> None:
+def _made(decision: str, verdict: Verdict, deps, *, prior: bool = False) -> None:
+    """`prior` (PKG-10): the decision was answered from a result the caller
+    already held (no model run), and `verdict.backend` names where it came from."""
     _emit(
         "decision.made",
         "usage",
@@ -375,6 +377,7 @@ def _made(decision: str, verdict: Verdict, deps) -> None:
             "latency_ms": verdict.latency_ms,
             "confidence": verdict.confidence,
             "fallback": verdict.fallback,
+            "prior": prior,
         },
     )
 
@@ -511,8 +514,12 @@ async def match_wrong_reason(
     if prior is not None and prior.unavailable:
         return None  # the grade already reported the outage (or the A33 refusal)
     sel, t0 = _select("match_wrong_reason", deps), time.monotonic()
+    served = sel.served
     if prior is not None:
         key, conf, ms = prior.matched_wrong_key, prior.confidence, 0
+        # PKG-10 fix round: the key is the grader's — name the grader's backend
+        # (both grader slots are Gemini), not the seam's selected one
+        served = "gemini" if prior.backend in ("gemini", "gemini_second") else sel.served
     else:
         out = await _run_decision("match_wrong_reason", state, deps)
         if out is None or out is BUDGET_CAPPED:
@@ -522,14 +529,14 @@ async def match_wrong_reason(
         key, conf, ms = shown.get(out.choice, NO_MATCH), out.confidence, _ms(t0)
     key = key if key in state.wrong else NO_MATCH
     verdict = Pick(
-        backend=sel.served,
+        backend=served,
         confidence=conf,
         latency_ms=ms,
         fallback=sel.fallback_reason is not None,
         value=key,
         probs={key: conf},
     )
-    _made("match_wrong_reason", verdict, deps)
+    _made("match_wrong_reason", verdict, deps, prior=prior is not None)
     return verdict
 
 
