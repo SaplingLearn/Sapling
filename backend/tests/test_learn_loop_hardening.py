@@ -626,7 +626,7 @@ def _real_run(seams, answers):
 
     from agents.tools.graph_read import GraphNeighborhood
 
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     queue = list(answers)
 
     def model(messages, info):
@@ -673,7 +673,7 @@ def test_the_stream_fallback_continues_from_the_failed_runs_messages_without_rep
     import routes.learn_loop as ll
     from tests.test_learn_loop_routes import FakeRunResult, SaplingEvent
 
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     failed = [
         ModelRequest(parts=[UserPromptPart("hi")]),
         ModelResponse(parts=[ToolCallPart("read_graph_neighborhood", {}, tool_call_id="t1")]),

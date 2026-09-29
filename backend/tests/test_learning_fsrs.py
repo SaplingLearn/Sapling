@@ -622,15 +622,21 @@ def test_fsrs_import_detector(source, expected):
     assert _imports_fsrs(source) is expected
 
 
+#: The gate a route may call: `learning_loop_active`, or its route-entry form
+#: `learning_loop_for_request` (owner decision 00, A38 — the loop routes read the
+#: gate once at entry through it; tests/test_learning_gate_route_entry.py).
+_GATE_FUNCS = frozenset({"learning_loop_active", "learning_loop_for_request"})
+
+
 def _calls_gate(source: str) -> bool:
-    """True when `source` CALLS learning_loop_active (bare or as an attribute).
+    """True when `source` CALLS a gate function (bare or as an attribute).
     A comment, a string, or an import of the name alone is not a call."""
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call):
             func = node.func
-            if isinstance(func, ast.Name) and func.id == "learning_loop_active":
+            if isinstance(func, ast.Name) and func.id in _GATE_FUNCS:
                 return True
-            if isinstance(func, ast.Attribute) and func.attr == "learning_loop_active":
+            if isinstance(func, ast.Attribute) and func.attr in _GATE_FUNCS:
                 return True
     return False
 
@@ -670,6 +676,12 @@ def h(row):
             False,
         ),
         ("from learning.gate import learning_loop_active\ndef h(uid):\n    return 1", False),
+        (
+            "from learning import fsrs\nfrom learning.gate import learning_loop_for_request\n"
+            "def h(uid):\n    if learning_loop_for_request(uid):\n        fsrs.order_due([], 0)",
+            False,
+        ),
+        ("from learning import fsrs\nGATE = 'learning_loop_for_request'", True),
     ],
 )
 def test_route_gate_rule_detector(source, violates):

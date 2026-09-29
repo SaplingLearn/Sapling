@@ -133,7 +133,18 @@ MODEL_ROUTES = [
     "/start-session/stream",
     "/action",
 ]
-NO_MODEL_ROUTES = ["/status", "/hint", "/check/next"]
+#: No rate-limit DEPENDENCY. /probe/answer runs the grader but checks the rate
+#: limit inline, after the gate (PKG-08 fix round; PKG-12's pattern), pinned in
+#: tests/test_learning_probe_planner.py.
+NO_MODEL_ROUTES = [
+    "/status",
+    "/hint",
+    "/check/next",
+    "/probe/next",
+    "/probe/answer",
+    "/plan",
+    "/plan/approve",
+]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
 
@@ -165,8 +176,9 @@ def _step(**fields) -> dict:
 
 
 def _state(**step_fields) -> dict:
-    """A session with qh-1 active (PKG-06's document: `current` + `steps`)."""
-    return {"current": "qh-1", "steps": {"qh-1": _step(**step_fields)}}
+    """A session with qh-1 active (PKG-06's document: `current` + `steps`), past
+    the probe and the plan (PKG-08's `phase`: teaching routes run only then)."""
+    return {"phase": "teach", "current": "qh-1", "steps": {"qh-1": _step(**step_fields)}}
 
 
 def _graded(verdict: str, **over) -> dict:
@@ -578,7 +590,7 @@ def test_a_conflict_re_applies_the_mutate_to_the_fresh_state(seams):
     FRESH document, so neither writer's change is lost."""
     from routes.learn_loop import _update_loop_state
 
-    seams.store["doc"] = {"tutor_requests": 1}
+    seams.store["doc"] = {"phase": "teach", "tutor_requests": 1}
     seams.store["conflicts"] = 1
     seams.store["racer"] = lambda d: d.__setitem__("deep_requests", 4)
 
@@ -792,7 +804,7 @@ def _fake_stream(reply="Key idea: the base case. What input stops it?"):
 
 
 def test_teach_stream_checks_budget_routes_the_tier_and_counts_the_request(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     with patch("routes.learn_loop.stream_structured_turn", _fake_stream()):
         r = client.post(
             "/api/learn/loop/chat/stream",
@@ -851,7 +863,7 @@ def test_check_phase_chat_serves_the_pose_without_a_model(gate_on, seams):
 
 
 def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     seams.ai_budget.check.return_value = HARD
     never = MagicMock(side_effect=AssertionError("no model at the hard level"))
     with patch("routes.learn_loop.stream_structured_turn", never):
@@ -867,7 +879,7 @@ def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
 
 
 def test_hard_budget_json_chat_is_429_with_reset_at(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     seams.ai_budget.check.return_value = HARD
     r = client.post(
         "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
@@ -907,7 +919,7 @@ def test_develop_check_pose_is_served_at_the_hard_level_with_the_notice(gate_on,
 
 
 def test_soft_level_reaches_tier_and_context_policy(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     seams.ai_budget.check.return_value = SOFT
     with patch("routes.learn_loop.stream_structured_turn", _fake_stream()):
         client.post(
@@ -1043,7 +1055,7 @@ def test_a_stream_that_fails_before_the_ladder_ends_in_a_terminal_error(gate_on,
     """ADR 0024 honest degrade on the loop's own SSE path: a failure while the
     turn is planned (a context read) ends the stream with ONE terminal
     `error` event — never a broken stream — and persists nothing."""
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     seams.blocks.side_effect = RuntimeError("rag read failed")
     never = MagicMock(side_effect=AssertionError("no model run after a failed plan"))
     with patch("routes.learn_loop.stream_structured_turn", never):
@@ -1074,7 +1086,7 @@ def test_rung1_fallback_is_the_json_turn_on_the_same_tier(gate_on, seams):
     """The Rung-1 fallback is the SAME planned turn (review round 3, m2): no
     second plan or budget read of its own; with no tool result to continue
     from, the continuation re-runs the turn tool-less on the same slot."""
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
 
     async def fake(**kwargs):
         result = await kwargs["nonstream_fallback"]([])
@@ -1101,7 +1113,7 @@ def test_rung1_fallback_is_the_json_turn_on_the_same_tier(gate_on, seams):
 
 
 def test_chat_json_runs_once_on_the_policy_slot_and_counts_deep(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     seams.model_tier.return_value = "deep"
     agent, seen = _json_agent()
     with (
@@ -1129,7 +1141,11 @@ def test_chat_json_runs_once_on_the_policy_slot_and_counts_deep(gate_on, seams):
 def test_deep_caps_reach_the_tier_router(gate_on, seams):
     from learning.params import LOOP_SESSION_MAX_DEEP_REQUESTS
 
-    seams.store["doc"] = {"tutor_requests": 9, "deep_requests": LOOP_SESSION_MAX_DEEP_REQUESTS}
+    seams.store["doc"] = {
+        "phase": "teach",
+        "tutor_requests": 9,
+        "deep_requests": LOOP_SESSION_MAX_DEEP_REQUESTS,
+    }
     agent, _ = _json_agent()
     with (
         patch("routes.learn_loop.loop_tutor_agent", agent),
@@ -1158,7 +1174,7 @@ def test_a_tool_run_that_ends_without_a_turn_is_rescued_tool_less(gate_on, seams
     continuation, which produces the turn."""
     from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     agent = MagicMock()
 
     async def _run(msg, **kw):
@@ -1199,7 +1215,7 @@ def _real_agent_tool_turn(seams, answer):
 
     from agents.tools.graph_read import GraphNeighborhood
 
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     calls = []
 
     def model(messages, info):
@@ -1807,7 +1823,7 @@ def test_a_delegated_legacy_request_reads_the_gate_once(seams):
 
 
 def test_a_model_turn_counts_one_tutor_call_before_its_run(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     order = []
     seams.ai_budget.count_tutor_call.side_effect = lambda uid: order.append(("count", uid))
     agent = MagicMock()
@@ -1828,7 +1844,7 @@ def test_a_model_turn_counts_one_tutor_call_before_its_run(gate_on, seams):
 
 
 def test_a_streamed_model_turn_counts_one_tutor_call(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     with patch("routes.learn_loop.stream_structured_turn", _fake_stream()):
         client.post(
             "/api/learn/loop/chat/stream",
@@ -1847,7 +1863,7 @@ def test_a_template_turn_counts_no_tutor_call(gate_on, seams):
 
 
 def test_the_budget_notice_carries_scope_and_session_capped(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     capped = SimpleNamespace(**{**vars(HARD), "scope": "daily_tutor_calls", "session_capped": True})
     seams.ai_budget.check.return_value = capped
     r = client.post(
@@ -2098,7 +2114,7 @@ def test_hint_unlocks_the_next_rung_and_emits_the_offer_when_offered(gate_on, se
 
 
 def test_hint_no_active_item(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     r = client.post("/api/learn/loop/hint", json=_hint())
     assert r.json() == {"denied": "no_active_item"}
 
@@ -2132,7 +2148,7 @@ def test_action_in_check_phase_is_a_hint_turn_with_no_evidence(gate_on, seams):
 
 
 def test_action_outside_the_check_phase_is_a_teach_turn(gate_on, seams):
-    seams.store["doc"] = {}
+    seams.store["doc"] = {"phase": "teach"}
     agent, seen = _json_agent()
     with (
         patch("routes.learn_loop.loop_tutor_agent", agent),
@@ -2778,3 +2794,80 @@ def test_delegation_lines_sit_after_auth_and_touch_nothing_below():
     src = inspect.getsource(learn.end_session)
     assert src.index("get_session_user_id(request)") < src.index("learning_loop_for_request(")
     assert '_loop_delegate("end_session")' in src
+
+
+# ── PKG-08 reopen: no teaching before the probe and the plan are done ────────
+
+_TEACH_ROUTES = [
+    ("/chat", {"session_id": "s1", "user_id": "u1", "message": "what is the answer?"}),
+    ("/chat/stream", {"session_id": "s1", "user_id": "u1", "message": "what is the answer?"}),
+    ("/hint", {"session_id": "s1", "user_id": "u1", "question_hash": "qh-1"}),
+    ("/action", {"session_id": "s1", "user_id": "u1", "action_type": "hint"}),
+    ("/check/next", {"session_id": "s1", "user_id": "u1"}),
+]
+
+
+@pytest.mark.parametrize("phase", ["probe", "plan"])
+@pytest.mark.parametrize("path,body", _TEACH_ROUTES)
+def test_teach_routes_refuse_during_the_probe_and_the_plan(gate_on, seams, phase, path, body):
+    """While the document's phase is probe or plan a posed probe item is not in
+    PKG-07's `current`, so a teach turn would run with no guarded item and could
+    hand the student its answer: every teaching route is a 409 before any
+    model, budget or state write."""
+    posed = {"check_item_id": "item-1", "question_hash": "qh-1", "node_id": "node-1"}
+    seams.store["doc"] = {"phase": phase, "probe": {"skills": ["node-1"], "current": posed}}
+    rev = seams.store["rev"]
+    agent = MagicMock()
+    with patch("routes.learn_loop.loop_tutor_agent", agent):
+        r = client.post(f"/api/learn/loop{path}", json=body)
+    assert r.status_code == 409 and r.json()["detail"] == f"finish the {phase} first", r.text
+    assert seams.store["rev"] == rev, "nothing saved"
+    seams.ai_budget.check.assert_not_called()
+    seams.ai_budget.count_tutor_call.assert_not_called()
+    assert not agent.run.called
+
+
+def test_a_session_with_no_phase_is_still_probing(gate_on, seams):
+    """A fresh loop session's document has no `phase`: it reads `probe`."""
+    seams.store["doc"] = {}
+    r = client.post(
+        "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+    )
+    assert r.status_code == 409 and r.json()["detail"] == "finish the probe first"
+
+
+def test_teach_routes_work_again_after_the_plan_is_approved(gate_on, seams):
+    """The document /plan/approve leaves (phase teach, plan, concept) teaches."""
+    seams.store["doc"] = {
+        "phase": "teach",
+        "plan": {"approved": ["node-1"], "cursor": 0},
+        "concept": "node-1",
+        "teach_turns": 0,
+        "concept_checks": 0,
+    }
+    agent, _ = _json_agent()
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        r = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["phase"] == "teach"
+
+
+@pytest.mark.parametrize(
+    "doc,phase",
+    [
+        ({}, "probe"),
+        ({"phase": "plan"}, "plan"),
+        ({"plan": {"approved": ["n"]}}, "teach"),
+        ({"phase": "teach"}, "teach"),
+    ],
+)
+def test_status_exposes_the_loop_phase(gate_on, seams, doc, phase):
+    """A resuming client reads where the session stands: probe, plan or teach."""
+    seams.store["doc"] = doc
+    r = client.get("/api/learn/loop/status?user_id=u1&session_id=s1")
+    assert r.status_code == 200 and r.json()["loop_phase"] == phase

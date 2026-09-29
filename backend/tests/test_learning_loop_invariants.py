@@ -20,7 +20,16 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 LEARNING = BACKEND / "learning"
 MIGRATIONS = BACKEND / "db" / "migrations"
 
-PURE_MODULES = ("bkt.py", "fsrs.py", "policy.py", "gates.py", "ladder.py", "leak.py")
+PURE_MODULES = (
+    "bkt.py",
+    "fsrs.py",
+    "policy.py",
+    "gates.py",
+    "ladder.py",
+    "leak.py",
+    "probe.py",
+    "planner.py",
+)
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
 SERIES_AGENT_TASKS = (
@@ -52,9 +61,11 @@ LOOP_TUTOR_SLOTS = ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep")
 LOOP_ROUTES = BACKEND / "routes" / "learn_loop.py"
 #: routes/learn_loop.py functions allowed to grade or persist evidence (spec §8 #26).
 #: PKG-08/12/14 add their explicit-submission helper; nothing else ever joins.
-EVIDENCE_WRITERS = {"_grade_submission"}
+#: PKG-08: `_probe_submission` is the probe's writer (grade_answer → ONE
+#: flush_pending, under a grading claim), reached only from POST /probe/answer.
+EVIDENCE_WRITERS = {"_grade_submission", "_probe_submission"}
 #: The only route handlers allowed to reach an EVIDENCE_WRITERS function.
-EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream"}
+EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream", "probe_answer"}
 _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
 #: Modules that WRITE check_items.source_chunk_ids at generation (PKG-04; HANDOFF-04
 #: §Symbols: services/check_item_service.py::_build_row copies the draft's chunk ids —
@@ -1426,3 +1437,19 @@ def test_inv_29_source_chunks_visibility_aware():
     assert not offenders, (
         f"source chunks must resolve through rag_service.chunks_for_ids(ids, user_id=...): {offenders}"
     )
+
+
+def test_inv_16_probe_planner_pure():
+    """PKG-08: the probe and planner are policy, not I/O. Named explicitly so a
+    later edit to PURE_MODULES cannot drop them without this test noticing."""
+    for name in ("probe.py", "planner.py"):
+        assert name in PURE_MODULES, f"{name} fell out of PURE_MODULES"
+        path = LEARNING / name
+        assert path.exists(), f"{name} missing"
+        bad = [r for r in _imports_of(path) if r in FORBIDDEN_IMPORT_ROOTS]
+        assert not bad, f"{name} imports {bad}"
+        text = path.read_text()
+        assert "table(" not in text and "rpc(" not in text, f"{name} touches the database"
+        assert "learning.checks" not in text, (
+            f"{name} must stay decoupled from checks.py (Protocol instead)"
+        )
