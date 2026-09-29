@@ -43,6 +43,7 @@ backend/learning/                 pure policy + math; NO imports from agents/, p
 backend/agents/_providers.py      slots: check_items (04), grader + grader_second (05), decision (05b),
                                   loop_tutor_lite + loop_tutor + loop_tutor_deep (07), session_close (09)
 backend/agents/check_items.py     task "check_items"  (ingest-time item generation)           PKG-04
+backend/agents/check_items_topup.py  mc_reason top-up (A37): one prompt, the "check_items" slot, llm_usage feature "check_items_topup"  PKG-04 (A37 reopen)
 backend/agents/grader.py          task "grader" (+ slot "grader_second", same prompt)          PKG-05
 backend/agents/tools/check.py     grade_answer() ROUTE helper (A16): pre-checks, grader via    PKG-05 (PKG-05b routes it through services/decisions.py)
                                   the decision seam, Evidence appended to deps.pending_evidence;

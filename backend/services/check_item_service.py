@@ -1142,8 +1142,11 @@ def generate_for_document(
 # ── upload-time drafting pool ──────────────────────────────────────────────
 #
 # One upload's drafting is up to ceil(CHECK_ITEM_MAX_CONCEPTS_PER_DOC /
-# CHECK_ITEM_CONCEPTS_PER_CALL) sequential Flex runs, each up to FLEX_TIMEOUT_S
-# x (CHECK_ITEM_FLEX_RETRIES + 1): a thread held for minutes, hours at worst.
+# CHECK_ITEM_CONCEPTS_PER_CALL) = 4 sequential generation runs plus at most
+# CHECK_ITEM_MAX_CONCEPTS_PER_DOC x CHECK_ITEM_MC_TOPUP_CALLS = 10 one-concept
+# mc_reason top-up runs (A37), all on Flex and on this one thread, each up to
+# FLEX_TIMEOUT_S x (CHECK_ITEM_FLEX_RETRIES + 1): a thread held for minutes,
+# hours at worst.
 # On the event loop's default executor or Starlette's request threadpool a few
 # concurrent uploads would starve every other threaded call in the process
 # (the next upload's extraction and persist among them), so real-mode drafting
