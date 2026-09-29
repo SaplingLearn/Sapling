@@ -147,3 +147,4 @@ ls docs/decisions/*decision-seam*.md                                            
 - PKG-a38 fix round 2026-09-29 (m4, m5): `BUDGET_CAPPED.__bool__` is False; `agents/decision.option_key` shows a key outside `[a-z0-9_]+` collapsed to one line (`_one_line`) and `match_wrong_reason` maps the shown key back — commit 20938fe8
 - PKG-a38 fix round 2026-09-29 (M1(d)): `GraderItem.correct_option_text` (from `ReasonState.options[correct_option]`), for the hint's strict leak check only — commit b2625e4b
 - PKG-a38 fix round 2 2026-09-29 (minor): `agents/decision.option_keys` shows a key outside `[a-z0-9_]+` as a positional alias `k<n>` (one-to-one, never colliding with a real key); `match_wrong_reason` accepts only a shown key — commit fd33ab88 (replaces round 1's `option_key` collapse)
+- PKG-a38 fix round 3 2026-09-29 (MINOR 2): `option_keys` treats "none" as reserved and aliases it — commit 28f154e3
