@@ -2495,3 +2495,38 @@ def _fresh_brief_failures():
     loop._BRIEF_FAILED.clear()
     yield
     loop._BRIEF_FAILED.clear()
+
+
+@pytest.mark.parametrize(
+    "path, body",
+    [
+        ("/chat", {"message": "hi"}),
+        ("/check/next", {}),
+        ("/hint", {"question_hash": "qh-1"}),
+        ("/action", {"action_type": "hint"}),
+    ],
+)
+def test_teaching_routes_wait_while_a_close_is_being_written(monkeypatch, path, body):
+    """Review MINOR 1: _require_teaching refuses under a live close claim too, so no
+    teach turn, activation or hint runs while the close reads the session."""
+    from services import ai_budget
+
+    _wire_close(
+        monkeypatch,
+        loop_state={
+            "phase": "teach",
+            "close_claim": "c",
+            "close_claim_at": 1e18,
+            "current": "qh-1",
+            "steps": {"qh-1": {"check_item_id": "ci-1", "first_shown_at": 1.0}},
+        },
+    )
+    app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
+    try:
+        with patch("routes.learn_loop.get_check_item", return_value=_item()):
+            r = client.post(
+                f"/api/learn/loop{path}", json={"session_id": "s1", "user_id": UID, **body}
+            )
+    finally:
+        app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
+    assert r.status_code == 409 and r.json()["detail"] == "session close in progress"

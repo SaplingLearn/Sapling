@@ -430,6 +430,7 @@ def _require_teaching(state: dict) -> None:
     detail = _TEACHING_CLOSED.get(_loop_phase(state))
     if detail:
         raise HTTPException(status_code=409, detail=detail)
+    _refuse_while_closing(state, _now_s())  # PKG-09: nor while a close is being written
 
 
 def _teaching_open(session_id: str, user_id: str) -> None:
