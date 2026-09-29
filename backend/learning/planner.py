@@ -40,20 +40,74 @@ class Plan:
     order: tuple[str, ...] = tuple(PLAN_ORDER)
 
 
+def _components(nodes: Sequence[str], prereqs: dict[str, set[str]]) -> dict[str, int]:
+    """node -> strongly-connected-component id over the prerequisite graph
+    (iterative Tarjan; deterministic over the sorted node list)."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    comp: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    counter = 0
+    for root in nodes:
+        if root in index:
+            continue
+        work = [(root, iter(sorted(prereqs[root])))]
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack.add(root)
+        while work:
+            node, edges = work[-1]
+            advanced = False
+            for nxt in edges:
+                if nxt not in index:
+                    index[nxt] = low[nxt] = counter
+                    counter += 1
+                    stack.append(nxt)
+                    on_stack.add(nxt)
+                    work.append((nxt, iter(sorted(prereqs[nxt]))))
+                    advanced = True
+                    break
+                if nxt in on_stack:
+                    low[node] = min(low[node], index[nxt])
+            if advanced:
+                continue
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[node])
+            if low[node] == index[node]:
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    comp[member] = index[node]
+                    if member == node:
+                        break
+    return comp
+
+
 def outer_fringe(states: dict[str, float], prereq_edges: Iterable[tuple[str, str]]) -> list[str]:
     """Every node below BKT_PROFICIENT whose prerequisites are all proficient (no
-    prerequisites qualifies), by p descending then node_id. Edges with an endpoint
-    outside `states`, and self-loops, are dropped."""
+    prerequisites qualifies), by p descending then node_id. A prerequisite CYCLE
+    is one unit (its strongly connected component): a member is ready when every
+    prerequisite OUTSIDE its component is proficient, so a cycle never hides its
+    nodes. Edges with an endpoint outside `states`, and self-loops, are dropped."""
     prereqs: dict[str, set[str]] = defaultdict(set)
     for prereq, dependent in prereq_edges:
         if prereq == dependent or prereq not in states or dependent not in states:
             continue
         prereqs[dependent].add(prereq)
-    fringe = [
-        n
-        for n, p in states.items()
-        if p < BKT_PROFICIENT and all(states[q] >= BKT_PROFICIENT for q in prereqs[n])
-    ]
+    comp = _components(sorted(states), prereqs)
+    members: dict[int, list[str]] = defaultdict(list)
+    for n, c in comp.items():
+        members[c].append(n)
+
+    def ready(n: str) -> bool:
+        outside = {q for m in members[comp[n]] for q in prereqs[m] if comp[q] != comp[n]}
+        return all(states[q] >= BKT_PROFICIENT for q in outside)
+
+    fringe = [n for n, p in states.items() if p < BKT_PROFICIENT and ready(n)]
     return sorted(fringe, key=lambda n: (-states[n], n))
 
 

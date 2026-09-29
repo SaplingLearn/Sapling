@@ -146,6 +146,22 @@ def test_per_skill_cap():
     assert chosen is not None and chosen.node_id == "B"
 
 
+def test_per_skill_cap_counts_the_callers_observations():
+    """Asked items that are no longer in `items` (withdrawn) still count toward
+    the per-skill cap when the caller passes its own per-node count."""
+    from learning.probe import next_probe_item
+
+    items = _items("A", 2) + _items("B", 1)
+    chosen = next_probe_item(
+        {"A": 0.5, "B": 0.5},
+        items,
+        asked_hashes=[f"gone-{k}" for k in range(P.PROBE_ITEMS_PER_SKILL_MAX)],
+        channel_for_format=CHANNEL_FOR_FORMAT,
+        asked_per_node={"A": P.PROBE_ITEMS_PER_SKILL_MAX},
+    )
+    assert chosen is not None and chosen.node_id == "B"
+
+
 def test_session_cap_returns_none():
     from learning.probe import next_probe_item
 
@@ -261,6 +277,26 @@ def test_fringe_ignores_foreign_endpoints_and_self_loops():
 
     states = {"A": _BELOW}
     assert outer_fringe(states, [("ghost", "A"), ("A", "A")]) == ["A"]
+
+
+def test_fringe_treats_a_prerequisite_cycle_as_one_unit():
+    """A strongly connected component is one unit: its members are ready when
+    every prerequisite OUTSIDE the component is proficient — a cycle never
+    hides its nodes from the fringe."""
+    from learning.planner import outer_fringe
+
+    assert outer_fringe({"a": 0.2, "b": 0.3}, [("a", "b"), ("b", "a")]) == ["b", "a"]
+    # an outside prerequisite below proficient blocks the whole component
+    states = {"p": _BELOW, "a": 0.2, "b": 0.3}
+    edges = [("p", "a"), ("a", "b"), ("b", "a")]
+    assert outer_fringe(states, edges) == ["p"]
+    # ... and a proficient one lets it through; proficient members stay out
+    states = {"p": _PROF, "a": 0.2, "b": 0.3, "c": _PROF}
+    edges = [("p", "a"), ("a", "b"), ("b", "c"), ("c", "a")]
+    assert outer_fringe(states, edges) == ["b", "a"]
+    # a node after the cycle waits for every member of it
+    states = {"a": _PROF, "b": 0.3, "d": 0.4}
+    assert outer_fringe(states, [("a", "b"), ("b", "a"), ("b", "d")]) == ["b"]
 
 
 def _sib_map(edges):
@@ -466,6 +502,7 @@ def probe():
         ns.full = _node_items("A", P.PROBE_ITEMS_PER_SKILL_MAX) + _node_items("B", 2, difficulty=1)
         ns.items = p("_probe_items", side_effect=lambda _u, _c, _ids: list(ns.full))
         ns.revealed = p("revealed_hashes", return_value=set())
+        ns.seen = p("seen_hashes", return_value=set())
         ns.read_states = p("read_states", side_effect=_read_states)
         ns.names = p("_plan_node_names", side_effect=lambda _u, ids: {i: f"name-{i}" for i in ids})
         ns.due = p("_plan_due_reviews", return_value=[])
@@ -615,6 +652,8 @@ def test_gate_false_is_404_and_reads_nothing(method, path, body):
         patch("routes.learn_loop.table", side_effect=lambda name: reads.append(name) or _Boom()),
         patch("routes.learn_loop._consume_pending") as consume,
         patch("routes.learn_loop.load_loop_state") as load,
+        patch("routes.learn_loop.ai_budget") as budget,
+        patch("routes.learn_loop.check_rate_limit") as reads_limit,
     ):
         r = (
             client.post(f"{LOOP}{path}", json=body)
@@ -624,6 +663,8 @@ def test_gate_false_is_404_and_reads_nothing(method, path, body):
     assert r.status_code == 404 and r.json()["detail"] == "learning loop not enabled"
     gate.assert_called_once_with(UID)  # route entry, once (A38 00)
     assert reads == [] and not consume.called and not load.called
+    # the rate limits run AFTER the gate: a gate-off student never gets a 429
+    assert not budget.enforce_rate_limit_for.called and not reads_limit.called
 
 
 @pytest.mark.parametrize("method,path,body", GATED_ROUTES)
@@ -1006,13 +1047,15 @@ def test_probe_answer_emits_probe_done_and_moves_to_plan(probe):
 def test_probe_answer_rate_limited_is_429_and_grades_nothing(probe):
     """Spec §9 / A20: /probe/answer can run the grader, so it carries PKG-06b's rate limit."""
 
-    def _limited():
-        raise HTTPException(status_code=429, detail="ai budget reached")
+    from services.ai_budget import AIBudgetExceeded
 
+    decision = SimpleNamespace(reset_at=None, scope="rate_limit", session_capped=False)
+    probe.ai_budget.enforce_rate_limit_for.side_effect = AIBudgetExceeded(decision)
     _answer_doc(probe)
-    app.dependency_overrides[ai_budget.enforce_rate_limit] = _limited
     r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="x"))
     assert r.status_code == 429 and "ai budget reached" in r.text
+    probe.ai_budget.enforce_rate_limit_for.assert_called_once_with(UID)
+    probe.gate.assert_called_once_with(UID)  # the gate first, then the limit
     probe.grade.assert_not_awaited()
     probe.agu.assert_not_called()
 
@@ -1061,7 +1104,14 @@ def test_probe_and_plan_handlers_never_touch_the_tutor_budget():
             for n in ast.walk(defs[name])
             if isinstance(n, (ast.Attribute, ast.Name))
         }
-        assert "ai_budget" not in loads and "count_tutor_call" not in loads, name
+        tutor_budget = {
+            n.attr
+            for n in ast.walk(defs[name])
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "ai_budget"
+        } - {"enforce_rate_limit_for"}
+        assert not tutor_budget and "count_tutor_call" not in loads, (name, tutor_budget)
 
 
 def test_probe_answer_double_submit_writes_once(probe):
@@ -1341,3 +1391,169 @@ def test_plan_approve_wrong_phase_is_409(probe):
         f"{LOOP}/plan/approve", json={"session_id": "s1", "user_id": UID, "concept_ids": ["A"]}
     )
     assert r.status_code == 409 and not _learn_events(probe)
+
+
+# ── fix round (three reviews) ───────────────────────────────────────────────
+
+
+def test_probe_next_excludes_items_already_answered_in_an_earlier_session(probe):
+    """A23: an item the student already has evidence on (seen) is not probed
+    again — a new session would otherwise re-write full-weight evidence."""
+    probe.full = [
+        _ci("A-f", "A", "free", 2, "h-A-0"),  # reserve
+        _ci("A-s", "A", "free", 2, "h-A-a"),  # sorts first: served first unless excluded
+        _ci("A-k", "A", "free", 2, "h-A-k"),
+    ]
+    probe.seen.return_value = {"h-A-a"}
+    # the unseen item first; the seen one only once nothing unseen is left
+    assert _served_until_done(probe, 3) == ["h-A-k", "h-A-a"]
+    probe.seen.assert_called_with(UID)
+    probe.store["doc"] = {}
+    probe.full.append(_ci("A-n", "A", "free", 2, "h-A-n"))
+    assert _served_until_done(probe, 4)[:2] == ["h-A-k", "h-A-n"]
+
+
+def test_probe_next_falls_back_to_seen_items_when_nothing_else_is_servable(probe):
+    """Review's A23 rule: seen-but-not-revealed items are served only when no
+    unseen item is left; revealed items never are."""
+    probe.full = [
+        _ci("A-f", "A", "free", 2, "h-A-0"),  # reserve
+        _ci("A-s", "A", "free", 2, "h-A-s"),
+        _ci("A-r", "A", "free", 2, "h-A-r"),
+    ]
+    probe.seen.return_value = {"h-A-s", "h-A-r"}
+    probe.revealed.return_value = {"h-A-r"}
+    assert _served_until_done(probe, 3) == ["h-A-s"]
+
+
+def test_probe_next_counts_withdrawn_asked_items_toward_the_per_skill_cap(probe):
+    """The per-skill cap counts the recorded observations, not today's item
+    list: items asked and since withdrawn still count."""
+    history = [
+        {
+            "node_id": "A",
+            "question_hash": f"gone-{k}",
+            "difficulty": 2,
+            "channel": "free_response",
+            "correct": True,
+            "idk": False,
+            "p_after": 0.5,
+        }
+        for k in range(P.PROBE_ITEMS_PER_SKILL_MAX)
+    ]
+    _probing(probe, history=history)
+    body = client.post(f"{LOOP}/probe/next", json=NEXT).json()
+    assert body["done"] is True
+
+
+def test_probe_next_serving_the_same_item_again_writes_nothing(probe):
+    client.post(f"{LOOP}/probe/next", json=NEXT)
+    rev = probe.store["rev"]
+    again = client.post(f"{LOOP}/probe/next", json=NEXT)
+    assert again.status_code == 200 and probe.store["rev"] == rev
+
+
+def test_plan_get_again_with_the_same_proposal_writes_nothing(probe):
+    _planning(probe)
+    client.get(f"{LOOP}/plan", params=PLAN_Q)
+    rev = probe.store["rev"]
+    again = client.get(f"{LOOP}/plan", params=PLAN_Q)
+    assert again.status_code == 200 and probe.store["rev"] == rev
+
+
+@pytest.mark.parametrize("method,path", [("post", "/probe/next"), ("get", "/plan")])
+def test_probe_next_and_plan_get_are_rate_limited_per_user(probe, method, path):
+    """m2: the two no-model routes that write state carry a cheap per-user
+    limit (services/request_limits sliding window, PROBE_PLAN_READS_PER_MIN)."""
+    if path == "/plan":
+        _planning(probe)
+
+    def call(uid):
+        if method == "post":
+            return client.post(f"{LOOP}{path}", json={**NEXT, "user_id": uid})
+        return client.get(f"{LOOP}{path}", params={**PLAN_Q, "user_id": uid})
+
+    with patch("routes.learn_loop.PROBE_PLAN_READS_PER_MIN", 2):
+        codes = [call(UID).status_code for _ in range(3)]
+        other = call("u2")
+    assert codes == [200, 200, 429]
+    assert other.status_code != 429  # per user
+
+
+def test_a_grade_that_outlives_its_claim_writes_nothing(probe):
+    """m1: a grade slower than LOOP_GRADING_CLAIM_STALE_S may lose its claim
+    (/probe/next moved past the item meanwhile): the claim is re-taken by
+    compare-and-set right before the flush, and a lost claim writes nothing."""
+    _answer_doc(probe)
+    inner = _grader(correct=True)
+
+    async def slow(*a, **k):
+        pr = probe.store["doc"]["probe"]  # another request moved past the item
+        pr["unavailable"].append(pr["current"]["question_hash"])
+        pr["current"] = None
+        return await inner(*a, **k)
+
+    probe.grade.side_effect = slow
+    r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
+    assert r.status_code == 200 and r.json() == {"graded": False, "recorded": False}
+    probe.agu.assert_not_called()
+    assert probe.store["doc"]["probe"]["history"] == []
+
+
+def test_the_pre_flush_recheck_renews_the_claim(probe):
+    """The re-take stamps the claim fresh, so /probe/next cannot call it stale
+    while the flush runs."""
+    _answer_doc(probe)
+    stamps = []
+
+    def write(*_a, **_k):
+        stamps.append(dict(probe.store["doc"]["probe"]["current"]))
+        return []
+
+    probe.agu.side_effect = write
+    later = NOW + 50
+    clock = iter([NOW])
+    with patch("routes.learn_loop._now_s", side_effect=lambda: next(clock, later)):
+        r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
+    assert r.status_code == 200, r.text
+    assert stamps and stamps[0]["grading_claim_at"] == later
+
+
+@pytest.mark.parametrize(
+    "states",
+    [
+        {},  # a new student: no graph nodes yet
+        {"A": _PROF, "B": _PROF},  # everything proficient, nothing due
+    ],
+)
+def test_an_empty_proposal_opens_teaching(probe, states):
+    """MAJOR 1: an empty plan (no fringe, no due review) must not trap the
+    session in `plan` — GET /plan says so and moves the session to teach with
+    an empty approved plan (teaching only; nothing to activate)."""
+    _planning(probe)
+    probe.states.return_value = states
+    probe.edges.return_value = []
+    probe.due.return_value = []
+    r = client.get(f"{LOOP}/plan", params=PLAN_Q)
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "concepts": [],
+        "order": list(P.PLAN_ORDER),
+        "empty": True,
+        "phase": "teach",
+    }
+    doc = probe.store["doc"]
+    assert doc["phase"] == "teach" and doc["plan"]["approved"] == []
+    assert doc["plan"]["proposed"] == [] and "concept" not in doc
+    assert not _learn_events(probe)  # the student approved nothing
+    after = client.post(
+        f"{LOOP}/plan/approve", json={"session_id": "s1", "user_id": UID, "concept_ids": ["A"]}
+    )
+    assert after.status_code == 409
+
+
+def test_a_non_empty_proposal_stays_in_plan(probe):
+    _planning(probe)
+    body = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
+    assert "empty" not in body and body["concepts"]
+    assert probe.store["doc"]["phase"] == "plan"

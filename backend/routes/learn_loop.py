@@ -41,6 +41,7 @@ session is checked to be the requesting student's before any read or write.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import hashlib
 import logging
@@ -49,6 +50,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from collections import Counter
 from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -116,6 +118,7 @@ from learning.params import (
     LOOP_TEACH_TURNS_BEFORE_CHECK,
     PLAN_ORDER,
     PROBE_MAX_SKILLS,
+    PROBE_PLAN_READS_PER_MIN,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_SECONDS_PER_CHECK,
 )
@@ -169,6 +172,7 @@ from services.graph_service import _normalize_concept, _prerequisite_edges, get_
 from services.prompt_safety import wrap_untrusted
 from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks
 from services.request_context import current_request_id
+from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -2548,6 +2552,31 @@ def _emit_probe_done(saved: dict, user_id: str, request_id: str) -> None:
     )
 
 
+def _probe_plan_read_limit(user_id: str) -> None:
+    """A cheap per-user limit on the two no-model routes that write loop state
+    (/probe/next, GET /plan): services/request_limits' in-process sliding
+    window, PROBE_PLAN_READS_PER_MIN a minute. Runs after the gate. No model
+    runs behind these routes, so this is not the A20 rate limit (llm_usage)."""
+    retry = check_rate_limit(
+        f"loop_probe_plan:{user_id}", limit=PROBE_PLAN_READS_PER_MIN, window_sec=60
+    )
+    if retry is not None:
+        raise HTTPException(
+            status_code=429, detail="too many requests", headers={"Retry-After": str(retry)}
+        )
+
+
+def _update_if_changed(session_id: str, doc: dict, mutate: Callable[[dict], None]) -> dict:
+    """`_update_loop_state`, skipped when `mutate` leaves the document as read
+    unchanged (a re-served item, a re-GET of the same plan): the mutate runs on a
+    copy first; only a real change costs a compare-and-set write."""
+    trial = copy.deepcopy(doc)
+    mutate(trial)
+    if trial == doc:
+        return trial
+    return _update_loop_state(session_id, mutate)
+
+
 def _claim_live(current: dict, now: float) -> bool:
     claimed_at = current.get("grading_claim_at")
     return bool(current.get("grading_claim")) and (
@@ -2557,15 +2586,20 @@ def _claim_live(current: dict, now: float) -> bool:
 
 @router.post("/probe/next")
 def probe_next(body: ProbeNextBody, request: Request) -> dict:
-    """The next probe item (Behaviour 10): no model call, so no rate limit. The
+    """The next probe item (Behaviour 10): no model call (so no A20 rate limit;
+    the cheap per-user read limit instead). The
     skill set is fixed on the first call — the outer fringe of the course graph,
     capped at PROBE_MAX_SKILLS — or, for a course with no check items, the probe
     ends at once (`no_check_items`, A23/A26). A posed item is served again until
     it is answered (never a skip); one left under a stale grading claim is
     moved past. Selection never serves a concept's post-test reserve (A23), an
     item whose answer this student has been shown (`revealed_hashes`), one the
-    grader could not grade (`unavailable`), or one with no final answer (A34)."""
+    grader could not grade (`unavailable`), or one with no final answer (A34);
+    an item the student already has evidence on (`seen_hashes`) only when no
+    unseen one is left (review's A23 fallback). Asked items always count toward
+    the per-skill cap, by the recorded observations."""
     _gate(body.user_id, request)
+    _probe_plan_read_limit(body.user_id)
     _consume_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
@@ -2595,6 +2629,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         skills = [s for s in fixed if isinstance(s, str)]
     items = _probe_items(body.user_id, course_id, skills)
     revealed = revealed_hashes(body.user_id) if items else set()
+    seen = seen_hashes(body.user_id) if items else set()
     reserves = {
         posttest_reserve_hash([it for it in items if it.node_id == n])
         for n in {it.node_id for it in items}
@@ -2621,16 +2656,25 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
                 pr["unavailable"].append(qh)
             pr["current"] = None
         asked = {h.get("question_hash") for h in pr["history"]}
-        never = (reserves | revealed | set(pr["unavailable"])) - asked
-        candidates = [
-            it
-            for it in items
-            if it.question_hash in asked or (it.question_hash not in never and is_servable(it))
-        ]
+        per_node = Counter(h.get("node_id") for h in pr["history"])
         skill_states = {n: states.get(n, BKT_L0) for n in pr["skills"]}
-        item = probe_policy.next_probe_item(
-            skill_states, candidates, asked, channel_for_format=CHANNEL_FOR_FORMAT
-        )
+
+        def pick(extra_never: set[str]):
+            never = (reserves | revealed | set(pr["unavailable"]) | extra_never) - asked
+            candidates = [
+                it
+                for it in items
+                if it.question_hash in asked or (it.question_hash not in never and is_servable(it))
+            ]
+            return probe_policy.next_probe_item(
+                skill_states,
+                candidates,
+                asked,
+                channel_for_format=CHANNEL_FOR_FORMAT,
+                asked_per_node=per_node,
+            )
+
+        item = pick(seen) or pick(set())  # seen items only when nothing unseen is left
         if item is None:
             doc["phase"] = "plan"
             out["done"] = True
@@ -2644,7 +2688,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         }
         out["item"] = item
 
-    saved = _update_loop_state(body.session_id, select)
+    saved = _update_if_changed(body.session_id, state, select)
     if out.get("done"):
         _emit_probe_done(saved, body.user_id, request_id)
         return {"done": True, "phase": "plan"}
@@ -2798,6 +2842,16 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         if outcome.unavailable:  # invariant 28: nothing for either outcome
             _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))
             return {"graded": False, "unavailable": True}
+
+        # m1: re-take the claim (fresh stamp) right before the write — a grade
+        # slower than LOOP_GRADING_CLAIM_STALE_S may have lost the item to
+        # /probe/next meanwhile; a lost claim writes nothing.
+        def renew(_pr: dict, cur: dict) -> None:
+            cur["grading_claim_at"] = _now_s()
+
+        renewed = _update_loop_state(body.session_id, _under_probe_claim(qh, claim, renew))
+        if (_probe_doc(renewed).get("current") or {}).get("grading_claim") != claim:
+            return {"graded": False, "recorded": False}
         written = True
         flush_pending(deps, course_id or None)  # ONE call: the probe's only evidence write
     except BaseException:
@@ -2849,11 +2903,14 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     return response
 
 
-@router.post("/probe/answer", dependencies=_RATE_LIMITED)
+@router.post("/probe/answer")
 async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     """Behaviour 11: grade_answer only (A16) — no tutor turn, no tutor budget
-    (A20); the rate limit is the one model-cost guard here (spec §9)."""
+    (A20); the rate limit is the one model-cost guard here (spec §9), checked
+    inline AFTER the gate (PKG-12's pattern) so a gate-off student gets the
+    404, never a 429."""
     loop_on = _gate(body.user_id, request)
+    ai_budget.enforce_rate_limit_for(body.user_id)
     _consume_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _probe_submission(body, request, loop_on=loop_on), what="probe grader"
@@ -2868,8 +2925,10 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
     against it. No goal filter yet (Non-goals: nothing maps a syllabus week to
     concepts)."""
     _gate(user_id, request)
+    _probe_plan_read_limit(user_id)
     _, course_id = _session_scope(session_id, user_id)
-    _require_phase(_load_loop_state(session_id), "plan")
+    state = _load_loop_state(session_id)
+    _require_phase(state, "plan")
     states = _plan_states(user_id, course_id)
     edges = _plan_prereq_edges(user_id, list(states))
     parents: dict[str, set[str]] = {}
@@ -2896,8 +2955,16 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
         plan_doc = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
         plan_doc["proposed"], plan_doc["proposed_kinds"] = list(ids), dict(kinds)
         doc["plan"] = plan_doc
+        if not ids:
+            # Nothing to plan (no fringe, no due review: a new student, all
+            # proficient): the session is not left in `plan` — it teaches with
+            # an empty approved plan (nothing to activate, A27).
+            plan_doc["approved"], plan_doc["cursor"] = [], 0
+            doc["phase"] = "teach"
 
-    _update_loop_state(session_id, store)
+    _update_if_changed(session_id, state, store)
+    if not ids:
+        return {"concepts": [], "order": list(PLAN_ORDER), "empty": True, "phase": "teach"}
     names = _plan_node_names(user_id, ids)
     return {
         "concepts": [

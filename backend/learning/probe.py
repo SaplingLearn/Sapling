@@ -67,17 +67,25 @@ def next_probe_item(
     asked_hashes: Iterable[str],
     *,
     channel_for_format: Mapping[str, str],
+    asked_per_node: Mapping[str, int] | None = None,
 ) -> ProbeItem | None:
     """The unasked item closest to the probe-band midpoint, in-band preferred;
     ties break on (difficulty, question_hash). Respects PROBE_ITEMS_PER_SKILL_MAX
     per node and PROBE_SESSION_CAP. Pass the full candidate list (asked items
     included) so per-node counts are right; the caller has already removed items
     that must never be served (post-test reserve, unavailable, unservable).
-    channel_for_format is PKG-05's CHANNEL_FOR_FORMAT."""
+    channel_for_format is PKG-05's CHANNEL_FOR_FORMAT. `asked_per_node` is the
+    caller's own count of asked items per node (its recorded observations); when
+    given it replaces the count over `items`, so an asked item that has since
+    left the list (withdrawn) still counts toward the per-skill cap."""
     asked = set(asked_hashes)
     if len(asked) >= PROBE_SESSION_CAP:
         return None
-    per_node: Counter[str] = Counter(it.node_id for it in items if it.question_hash in asked)
+    per_node: Counter[str] = (
+        Counter(dict(asked_per_node))
+        if asked_per_node is not None
+        else Counter(it.node_id for it in items if it.question_hash in asked)
+    )
     mid = (PROBE_TARGET_LO + PROBE_TARGET_HI) / 2.0
     in_band: list[tuple[tuple[float, int, str], ProbeItem]] = []
     near: list[tuple[tuple[float, int, str], ProbeItem]] = []

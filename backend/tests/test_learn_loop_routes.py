@@ -132,9 +132,19 @@ MODEL_ROUTES = [
     "/start-session",
     "/start-session/stream",
     "/action",
-    "/probe/answer",  # PKG-08: runs the grader (spec §9)
 ]
-NO_MODEL_ROUTES = ["/status", "/hint", "/check/next", "/probe/next", "/plan", "/plan/approve"]
+#: No rate-limit DEPENDENCY. /probe/answer runs the grader but checks the rate
+#: limit inline, after the gate (PKG-08 fix round; PKG-12's pattern), pinned in
+#: tests/test_learning_probe_planner.py.
+NO_MODEL_ROUTES = [
+    "/status",
+    "/hint",
+    "/check/next",
+    "/probe/next",
+    "/probe/answer",
+    "/plan",
+    "/plan/approve",
+]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
 
