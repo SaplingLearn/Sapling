@@ -143,7 +143,7 @@ import binascii
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
@@ -1454,23 +1454,49 @@ def _longest_run(said: list[str], text: list[str]) -> tuple[int, int]:
 
 
 def support_span(
-    quote: str, answer: str, *, min_chars: int, min_share: float, context: str = ""
+    quote: str,
+    answer: str,
+    *,
+    min_chars: int,
+    min_share: float,
+    context: str = "",
+    sources: Sequence[str] = (),
 ) -> str | None:
     """The answer's own words that `quote` may support credit with for one rubric
     item of `answer` (above), cut from `answer` as written; None when the quote
     supports nothing. `context` is that item's own text; `min_chars` is
     GRADER_SUPPORT_MIN_CHARS and `min_share` GRADER_SUPPORT_MIN_SHARE (the share of
     the quote's words the run must be; learning/params.py, passed in, so the guard
-    stays pure code)."""
+    stays pure code). `sources` are the item's own texts (the question, the
+    reference answer, every rubric item and common wrong reason): a quote, or a
+    passage it sets in quotation marks, that one of them holds in full and the
+    answer does not is the grader quoting the item, never the student, and
+    supports nothing; beside such a passage the quote's own framing supports
+    nothing either, and only the student's passages count (live: the rubric item's
+    own "says the base case stops the recursion" as the quote for "some say the
+    base case stops the recursion ..., but really ..." — the cut alone handed the
+    span check the rejected claim)."""
     folded, origin = _fold_mapped(answer)
     words = list(_WORD.finditer(folded))
     text = [m.group() for m in words]
     passages = [quote, *("".join(m) for m in _QUOTED_PASSAGE.findall(quote or ""))]
-    start, n = 0, 0
+    source_words = [_word_list(normalise(src)) for src in sources]
+    found = []  # (the passage's words, where its run starts, the run's length)
+    of_item = []  # the passage is the item's own text, not the student's
     for passage in passages:
         said = _word_list(normalise(passage))
         at, run = _longest_run(said, text)
-        if run and run >= min_share * len(said) and run > n:
+        found.append((said, at, run))
+        of_item.append(
+            bool(said)
+            and run < len(said)
+            and any(_longest_run(said, w)[1] == len(said) for w in source_words)
+        )
+    if any(of_item[1:]):
+        of_item[0] = True  # the item's text in quotation marks: the rest is framing
+    start, n = 0, 0
+    for (said, at, run), items_own in zip(found, of_item):
+        if not items_own and run and run >= min_share * len(said) and run > n:
             start, n = at, run
     if not n:
         return None

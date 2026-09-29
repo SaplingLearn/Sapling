@@ -2995,6 +2995,64 @@ def test_a_passage_in_single_quotation_marks_is_the_students_words(quote, span):
     assert _span(quote) == span
 
 
+# Live (the ruling's re-measure at 641ac67): on an mc_reason reason that names the
+# base case's job only to reject it ("some say the base case stops the recursion
+# ..., but really it is only there to make recursion faster"), the first slot
+# credited r1 and "quoted" the rubric item's own text, "says the base case stops
+# the recursion". The answer holds 6 of its 7 words, so the cut handed the span
+# check "the base case stops the recursion" alone, which it credited: a wrong
+# answer earned an item. A quote that the item's own texts (the question, the
+# reference answer, a rubric item, a common wrong reason) hold more of than the
+# answer does is the grader quoting the item, never the student.
+SPEED_REASON = (
+    "some say the base case stops the recursion so the stack never overflows, but really "
+    "it is only there to make recursion faster"
+)
+R1_TEXT = "says the base case stops the recursion"
+
+
+def test_a_quote_the_items_own_text_holds_more_of_is_not_the_students():
+    assert _span(R1_TEXT, SPEED_REASON) == "the base case stops the recursion"  # the cut alone
+    assert _span(R1_TEXT, SPEED_REASON, sources=(R1_TEXT,)) is None
+    reference = "The base case stops the recursion; without it the stack overflows."
+    assert (
+        _span(
+            reference,
+            "the base case stops it; without it the stack overflows",
+            sources=(reference,),
+        )
+        is None
+    )
+
+
+def test_the_students_own_words_that_the_item_also_uses_still_support():
+    """A student may write the rubric's or the reference's words: a quote the
+    answer holds in full is the student's, however much of it the item holds."""
+    answer = "The base case stops the recursion; without it the stack overflows."
+    assert _span("the base case stops the recursion", answer, sources=(R1_TEXT, answer)) == (
+        "The base case stops the recursion"
+    )
+    wrapped = "The student says the base case stops the recursion"
+    assert _span(wrapped, answer, sources=(R1_TEXT,)) == "The base case stops the recursion"
+
+
+def test_a_passage_the_item_holds_is_set_aside_and_the_students_passage_counts():
+    """Live (641ac67): 'The student answer explicitly mentions "at that exact point",
+    which directly addresses the "at a single point" aspect of the rubric item.' The
+    second passage is the rubric item's text, the first the student's words."""
+    answer = "Selected option: A\nReason: the slope of the tangent line at that exact point"
+    rubric = "at a single point (instantaneous, tangent)"
+    quote = (
+        'The student answer explicitly mentions "at that exact point", which directly '
+        'addresses the "at a single point" aspect of the rubric item.'
+    )
+    assert _span(quote, answer, sources=(rubric,)) == "at that exact point"
+    # the item's text in quotation marks never lends the grader's framing a run
+    framed = f'The rubric says "{R1_TEXT}"'
+    assert _span(framed, SPEED_REASON) == "the base case stops the recursion"
+    assert _span(framed, SPEED_REASON, sources=(R1_TEXT,)) is None
+
+
 @pytest.mark.parametrize(
     "quote",
     [
@@ -3277,6 +3335,32 @@ def test_a_replacing_second_opinion_stands_on_its_own_quotes(monkeypatch, events
     res, calls = _grade_with(monkeypatch, [unsure, second], answer="It stops the calls.")
     assert calls["n"] == 2 and res.backend == "gemini_second"
     assert res.item_results == {"r1": True, "r2": False}
+
+
+def test_a_quote_of_the_rubric_items_own_text_earns_nothing(monkeypatch, events):
+    """The live miss above, through grade(): the rubric item's text as the quote
+    for a rejected claim supports nothing, so the span check never sees it."""
+    item = _item(
+        prompt="What is the base case of a recursive function for?",
+        reference_answer="It stops the recursion; without it the stack overflows.",
+        rubric=[
+            RubricItem(id="r1", text=R1_TEXT),
+            RubricItem(id="r2", text="explains that without it the stack overflows"),
+        ],
+    )
+    import agents.grader as g
+
+    first = {
+        **_all_yes(0.6),
+        "item_results": ["r1:yes", "r2:no"],
+        "contradicts_reference": True,
+        "support": [f"r1: {R1_TEXT}"],
+    }
+    model, calls = _sequenced_grader([first])
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    with g.grader_agent.override(model=model):
+        res = asyncio.run(g.grade(item, format="free", student_answer=SPEED_REASON, deps=_deps()))
+    assert calls["spans"] == 0 and res.item_results == {"r1": False, "r2": False}
 
 
 def test_a_quote_is_checked_against_the_credited_items_own_text(monkeypatch, events):
