@@ -678,6 +678,13 @@ def _quantifies_given(text: str, end: int, given_words: set[str]) -> bool:
     return bool(m and m.group(1).lower() in given_words)
 
 
+def quantifies_given(text: str, end: int, given: str) -> bool:
+    """Public face of the served count rule (PKG-10 fix round 3): the token
+    ending at `end` quantifies a word `given` holds — the item's own object
+    ("2 nonzero terms" for "how many nonzero terms …")."""
+    return _quantifies_given(text, end, {w.lower() for w in re.findall(r"[A-Za-z]{3,}", given)})
+
+
 def _copied_runs(text: str, given: str) -> list[tuple[int, int]]:
     """The spans of `text` it copied verbatim from `given`: unions of runs of
     LEAK_PROVENANCE_MIN_TOKENS consecutive answer tokens that `given` also
