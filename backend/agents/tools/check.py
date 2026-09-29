@@ -46,6 +46,7 @@ from learning.misconceptions import (
     Verdict,
     attempts_for_node,
     attempts_of,
+    confront_of,
     is_key,
     record,
     set_confront,
@@ -262,14 +263,21 @@ async def apply_misconception_rule(
     ).model_dump()
     log.append(attempt)
     verdict = slip_or_misconception(attempts_for_node(log, node_id))
-    marker = None
+    marker = cleared = None
     if verdict == "misconception" and grade.wrong_key:
         await asyncio.to_thread(
             record, deps.user_id, node_id, item.id, grade.wrong_key, answer_text
         )
         marker = {"node_id": node_id, "wrong_key": grade.wrong_key, "check_item_id": item.id}
         set_confront(deps.loop_state, marker)
-    grade.diagnosis = {"attempt": dict(attempt), "confront": marker}
+    elif evidence.correct:
+        # a marker still waiting for a model turn (its feedback turn was a template)
+        # never confronts a student who has since answered this concept right
+        pending = confront_of(deps.loop_state)
+        if pending is not None and pending["node_id"] == node_id:
+            cleared = pending
+            set_confront(deps.loop_state, None)
+    grade.diagnosis = {"attempt": dict(attempt), "confront": marker, "cleared": cleared}
     return verdict
 
 

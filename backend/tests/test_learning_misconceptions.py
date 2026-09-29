@@ -638,7 +638,11 @@ def test_hook_records_on_misconception_and_sets_confront():
     marker = {"node_id": "n1", "wrong_key": "k1", "check_item_id": "ci2"}
     assert confront_of(deps.loop_state) == marker
     # the change the route re-applies to its fresh CAS document
-    assert grade.diagnosis == {"attempt": attempts_of(deps.loop_state)[-1], "confront": marker}
+    assert grade.diagnosis == {
+        "attempt": attempts_of(deps.loop_state)[-1],
+        "confront": marker,
+        "cleared": None,
+    }
 
 
 def test_hook_slip_records_nothing():
@@ -1132,3 +1136,61 @@ def test_the_store_write_runs_off_the_event_loop(graded):
             )
         )
     assert seen["thread"] != main
+
+
+def test_a_correct_answer_on_the_node_clears_a_pending_marker():
+    """A marker still pending (its feedback turn was a template at the hard
+    budget level) is never used to confront a student who has since answered
+    the concept right: the correct attempt clears it, in the snapshot and in
+    the change the route re-applies (only if the fresh marker is that one)."""
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+    from learning.misconceptions import attempts_of, carry, confront_of, set_confront
+
+    marker = {"node_id": "n1", "wrong_key": "k1", "check_item_id": "ci1"}
+    deps = _loop_deps()
+    attempts_of(deps.loop_state).extend([_prior_attempt("h0"), _prior_attempt("h1")])
+    set_confront(deps.loop_state, marker)
+    grade = GradeOutcome(correct=True, confidence=0.9)
+    with patch.object(check_mod, "record") as rec:
+        _run(
+            check_mod.apply_misconception_rule(
+                deps,
+                item=MagicMock(id="ci2", question_hash="h2", difficulty=2),
+                grade=grade,
+                evidence=_ev(True),
+                answer_text="right",
+            )
+        )
+    rec.assert_not_called()
+    assert confront_of(deps.loop_state) is None
+    assert grade.diagnosis["cleared"] == marker
+    fresh = {**_fresh_loop_state(), "confront": dict(marker)}
+    carry(fresh, grade.diagnosis)
+    assert confront_of(fresh) is None
+    other = {"node_id": "n1", "wrong_key": "k2", "check_item_id": "ci9"}
+    newer = {**_fresh_loop_state(), "confront": dict(other)}
+    carry(newer, grade.diagnosis)
+    assert confront_of(newer) == other, "a newer marker is never cleared by an older change"
+
+
+def test_a_correct_answer_on_another_node_keeps_the_marker():
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+    from learning.evidence import Evidence
+    from learning.misconceptions import confront_of, set_confront
+
+    marker = {"node_id": "n9", "wrong_key": "k1", "check_item_id": "ci1"}
+    deps = _loop_deps()
+    set_confront(deps.loop_state, marker)
+    grade = GradeOutcome(correct=True, confidence=0.9)
+    _run(
+        check_mod.apply_misconception_rule(
+            deps,
+            item=MagicMock(id="ci2", question_hash="h2", difficulty=2),
+            grade=grade,
+            evidence=Evidence(node_id="n1", channel="free_response", correct=True),
+            answer_text="right",
+        )
+    )
+    assert confront_of(deps.loop_state) == marker and grade.diagnosis.get("cleared") is None
