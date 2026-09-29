@@ -190,6 +190,7 @@ from routes.learn import (  # legacy helpers, reused verbatim — never copied
 )
 from services import ai_budget, events_service
 from services.academics import (
+    course_offering_ids,
     offering_course_id,
     resolve_offering,
     user_offering_ids_for_course,
@@ -2167,14 +2168,22 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
 # What LoopLearn resumes instead of starting a new probe: the student's loop
 # sessions for the course that have loop_state, no close record and no end.
 # Read-only — no write, no model, no event — and never rate-limited (A20: a
-# failure here must not push a student off the loop UI). mode='review' rows are
-# PKG-12's daily review sessions, not resumable loop sessions (NOT_REVIEW). A
-# lazy session (spec §9) has no row until its first loop write, so it is not
-# listed. `phase` is the phase GET /status reports for the same document:
-# `_loop_phase` (probe | plan | teach), refined in teach by `_phase_for`
-# (teach | check | feedback); a stored `close_phase` wins; a document whose
-# close is being stored (`phase: close`) is not open.
+# failure here must not push a student off the loop UI). The offerings are the
+# COURSE's (`course_offering_ids`): a loop session is stamped with
+# `resolve_offering(course, create=True)` — the current term — which is not the
+# enrollment's offering once a term rolls over (#553/#529); ownership is the
+# `user_id` filter. Offerings the store cannot vouch for are a 503 (the
+# client's retry state), never an empty list — that would start a new probe.
+# `loop_state=neq.{}` keeps legacy tutor sessions (the column default '{}') out
+# BEFORE the limit; mode='review' rows are PKG-12's daily review sessions
+# (NOT_REVIEW). A lazy session (spec §9) has no row until its first loop write,
+# so it is not listed. `phase` is the phase GET /status reports for the same
+# document: `_loop_phase` (probe | plan | teach), refined in teach by
+# `_phase_for` (teach | check | feedback); a document whose close is being
+# stored (`phase: close`) is not open. (`close_phase` is written together with
+# `close_json`, so an open row never has one.)
 LOOP_OPEN_SESSIONS_LIMIT = 10  # † picker length; mirrors the legacy getSessions(limit=10)
+_OFFERINGS_UNKNOWN = "course offerings unavailable, retry"
 
 
 @router.get("/sessions")
@@ -2182,17 +2191,20 @@ def list_open_sessions(
     request: Request, user_id: str = Query(...), course_id: str = Query(...)
 ) -> dict:
     _gate(user_id, request)  # require_self, then the spec §7 404
-    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    offering_ids = course_offering_ids(course_id)
+    if offering_ids is None:
+        raise HTTPException(status_code=503, detail=_OFFERINGS_UNKNOWN)
     if not offering_ids:
         return {"sessions": []}
     rows = (
         table("sessions").select(
-            "id,topic,started_at,loop_state,close_phase",
+            "id,topic,started_at,loop_state",
             filters={
                 "user_id": f"eq.{user_id}",
                 "offering_id": f"in.({','.join(offering_ids)})",
                 "close_json": "is.null",  # never an equality on the ciphertext (invariant 9)
                 "ended_at": "is.null",
+                "loop_state": "neq.{}",
                 **NOT_REVIEW,
             },
             order="started_at.desc",
@@ -2213,8 +2225,7 @@ def list_open_sessions(
                 "session_id": row["id"],
                 "topic": row.get("topic") or "",
                 "started_at": row.get("started_at"),
-                "phase": row.get("close_phase")
-                or (_phase_for(state) if loop_phase == "teach" else loop_phase),
+                "phase": _phase_for(state) if loop_phase == "teach" else loop_phase,
             }
         )
     return {"sessions": sessions}
