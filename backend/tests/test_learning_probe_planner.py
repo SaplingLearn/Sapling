@@ -218,3 +218,91 @@ def test_novice_floor_repeated_idk():
     ]
     assert novice_floor(hist) is True
     assert novice_floor(hist[:-1]) is False
+
+
+# ── planner ─────────────────────────────────────────────────────────────────
+
+_PROF = P.BKT_PROFICIENT
+_BELOW = P.BKT_PROFICIENT - 0.2
+
+
+def test_fringe_chain_a_b_c():
+    from learning.planner import outer_fringe
+
+    edges = [("A", "B"), ("B", "C")]
+    assert outer_fringe({"A": _BELOW, "B": _BELOW, "C": _BELOW}, edges) == ["A"]
+    assert outer_fringe({"A": _PROF, "B": _BELOW, "C": _BELOW}, edges) == ["B"]
+    assert outer_fringe({"A": _PROF, "B": _PROF, "C": _BELOW}, edges) == ["C"]
+    assert outer_fringe({"A": _PROF, "B": _PROF, "C": _PROF}, edges) == []
+
+
+def test_fringe_orders_by_p_desc_then_id():
+    from learning.planner import outer_fringe
+
+    states = {"R1": _BELOW, "R2": _BELOW + 0.1, "R3": _BELOW}
+    assert outer_fringe(states, []) == ["R2", "R1", "R3"]
+
+
+def test_fringe_ignores_foreign_endpoints_and_self_loops():
+    from learning.planner import outer_fringe
+
+    states = {"A": _BELOW}
+    assert outer_fringe(states, [("ghost", "A"), ("A", "A")]) == ["A"]
+
+
+def _sib_map(edges):
+    parents = {}
+    for a, b in edges:
+        parents.setdefault(b, set()).add(a)
+
+    def siblings(n):
+        return sorted(m for m, ps in parents.items() if m != n and ps & parents.get(n, set()))
+
+    return siblings
+
+
+def test_plan_sections_follow_plan_order():
+    from learning.planner import plan
+
+    edges = [("P", "N1"), ("P", "N2"), ("Q", "N3"), ("P", "K")]
+    out = plan(["N1", "N3"], ["R1"], _sib_map(edges), None, proficient=frozenset({"K", "R1"}))
+    assert [c.kind for c in out.concepts] == ["review", "new", "new", "sibling"]
+    assert [c.node_id for c in out.concepts] == ["R1", "N1", "N3", "K"]
+    assert out.order == P.PLAN_ORDER
+
+
+def test_plan_coupled_cap():
+    from learning.planner import plan
+
+    n = P.PLAN_MAX_COUPLED + 2
+    fringe = [f"N{i}" for i in range(n)]
+    edges = [("P", f) for f in fringe]
+    out = plan(fringe, [], _sib_map(edges), None)
+    new = [c.node_id for c in out.concepts if c.kind == "new"]
+    assert len(new) == P.PLAN_MAX_COUPLED
+
+
+def test_plan_max_concepts_when_independent():
+    from learning.planner import plan
+
+    fringe = [f"N{i}" for i in range(P.PLAN_MAX_CONCEPTS + 3)]
+    out = plan(fringe, [], lambda _n: [], None)
+    assert len([c for c in out.concepts if c.kind == "new"]) == P.PLAN_MAX_CONCEPTS
+
+
+def test_plan_goal_filter_and_dedupe():
+    from learning.planner import plan
+
+    out = plan(["N1", "N2", "R1"], ["R1", "R1"], lambda _n: [], lambda n: n != "N2")
+    assert [c.node_id for c in out.concepts] == ["R1", "N1"]
+
+
+def test_plan_siblings_only_when_proficient_and_unique():
+    from learning.planner import plan
+
+    edges = [("P", "N1"), ("P", "N2"), ("P", "K")]
+    out = plan(["N1", "N2"], [], _sib_map(edges), None, proficient=frozenset({"K"}))
+    sibs = [c.node_id for c in out.concepts if c.kind == "sibling"]
+    assert sibs == [
+        "K"
+    ]  # one K, not one per new concept; N2 is not proficient so never a sibling entry
