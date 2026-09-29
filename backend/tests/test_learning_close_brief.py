@@ -2559,3 +2559,13 @@ def test_the_shape_validator_holds_no_word_list():
         open_misconception_keys=[],
     )
     assert sc.close_shape_problems(out) == []
+
+
+def test_close_and_brief_columns_are_in_the_ciphertext_manifest_and_claude_md():
+    """Review M4: the `ciphertext` oracle samples both columns; CLAUDE.md lists them."""
+    from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
+
+    for column in ("close_json", "loop_brief"):
+        assert ("sessions", "id", column) in _CIPHERTEXT_MANIFEST, column
+    claude = (pathlib.Path(__file__).resolve().parents[2] / "CLAUDE.md").read_text()
+    assert "`sessions.close_json`" in claude and "`sessions.loop_brief`" in claude

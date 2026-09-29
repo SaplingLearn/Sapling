@@ -228,6 +228,10 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("check_items", "id", "options_json"),
     ("check_items", "id", "correct_option"),
     ("check_items", "id", "canonical_answer"),
+    # Learning loop PKG-09: the session close (encrypted JSON) and the learner
+    # brief (encrypted text; "" is still a ciphertext, so null = not built yet).
+    ("sessions", "id", "close_json"),
+    ("sessions", "id", "loop_brief"),
 )
 
 
