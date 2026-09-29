@@ -98,6 +98,14 @@ from learning.ladder import Rung
 from learning.leak import detect_leak, leak_spans
 from learning.learner_brief import course_concept_names, store_brief
 from learning.learner_state import LearnerState, read_states
+from learning.misconceptions import (
+    attempts_for_node,
+    attempts_of,
+    carry,
+    confront_of,
+    set_confront,
+    slip_or_misconception,
+)
 from learning.loop_state_store import (
     LoopStateConflict,
     load_loop_state,
@@ -192,7 +200,7 @@ from services.check_item_service import (
 )
 from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
-from services.prompt_safety import wrap_untrusted
+from services.prompt_safety import neutralise_control_tags, wrap_untrusted
 from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
@@ -1084,6 +1092,39 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
 # ── The turn ───────────────────────────────────────────────────────────────
 
 
+# ── PKG-10: the misconception confrontation line (spec §3.3, §13 A15) ─────
+
+_CONFRONT_LINE = (
+    'The student holds misconception "{text}": create a contradiction they must '
+    "resolve; do not simply state the correction."
+)
+
+
+def _confrontation_line(loop_state: dict) -> str | None:
+    """PKG-10: the line for the misconception grade_answer recorded (the
+    loop state's `confront` marker), or None. The text is the marked item's
+    decrypted `common_wrong` entry for the marker's key, collapsed to one line
+    with its control tags neutralised (item-drafted text may never forge a
+    [VERDICT: …] or [STUDENT MESSAGE] block). No marker, a missing item, a
+    failed read or an unknown key → None, no error. Reads only: the turn that
+    serves the line clears the marker in its compare-and-set save."""
+    confront = confront_of(loop_state)
+    if confront is None:
+        return None
+    try:
+        item = get_check_item(confront["check_item_id"])
+    except Exception as exc:
+        logger.warning("confrontation: check item read failed (%s)", type(exc).__name__)
+        return None
+    if item is None:
+        return None
+    for entry in item.common_wrong or []:
+        if entry.key == confront["wrong_key"] and entry.text:
+            text = " ".join(neutralise_control_tags(entry.text).split())
+            return _CONFRONT_LINE.format(text=text) if text else None
+    return None
+
+
 class _LoopTurn:
     """One loop turn, shared by the JSON and streamed paths.
 
@@ -1153,6 +1194,7 @@ class _LoopTurn:
         )
         self.planned = None
         self.given = ""
+        self.confront_line, self.confront_used = None, None
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
 
@@ -1187,6 +1229,8 @@ class _LoopTurn:
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
         self.text = self._deterministic_text(hard=decision.level == "hard")
+        # PKG-10 (A15): a recorded misconception makes this a confronting turn
+        self.confront_line = self._confront_line()
         if self.phase != "check":  # the pose never reaches the model (A17)
             deep = self.budget_counters()["session_deep_requests"]
             self.tier = routable_tier(
@@ -1195,7 +1239,7 @@ class _LoopTurn:
                     self.band,
                     self.rung,
                     _failed_on_concept(self.state, self.concept_node),
-                    False,  # misconception_active: PKG-10
+                    self.confront_line is not None,  # misconception_active (PKG-10)
                     deterministic_payload=self.text is not None,
                     budget_level=decision.level,
                     deep_cap_reached=deep >= LOOP_SESSION_MAX_DEEP_REQUESTS,
@@ -1235,6 +1279,12 @@ class _LoopTurn:
             answer_released=self.answer_released,
             verdict=self.verdict if self.phase == "feedback" else None,
         )
+        if self.confront_line:
+            # PKG-10: right after the phase instruction, before the context blocks
+            # and the student's words — trusted route text for THIS turn only
+            # (never the stored brief, the history or the system prompt, A19)
+            self.prefix += "\n" + self.confront_line
+            self.confront_used = confront_of(self.state)
         self.agent, self.assembled, self.run_kwargs, self.deps = _prepare_loop_run(
             user_id=self.user_id,
             session_id=self.session_id,
@@ -1261,6 +1311,25 @@ class _LoopTurn:
             item_prompt=self.item.prompt if self.item is not None else "",
         )
         self.deps.loop_leak = self._leak_guard()
+
+    def _confront_line(self) -> str | None:
+        """The confrontation line this turn may carry (PKG-10), or None. Not on
+        a check pose (no model) nor a correct-answer feedback turn. The text is
+        model-written (item drafting), so while the active item's answer is
+        unreleased it must pass the strict served leak check, provenance = the
+        item as posed; a leaking text is withheld and its marker waits."""
+        if self.phase == "check" or (self.phase == "feedback" and self.verdict == "correct"):
+            return None
+        line = _confrontation_line(self.state)
+        if line is None or self.item is None or self.answer_released:
+            return line
+        leaked = detect_leak(
+            emitted=line,
+            rung=self._leak_rung(),
+            given=self.item.prompt,
+            **_item_check_kwargs(**self._item_answer()),
+        ).leaked
+        return None if leaked else line
 
     def _tier_phase(self) -> str:
         """PKG-06's TurnPhase: the feedback verdict rides the phase value."""
@@ -1533,6 +1602,8 @@ class _LoopTurn:
             if state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
                 _advance_cursor(state)
         state["phase_served"] = self.phase
+        if self.confront_used is not None and confront_of(state) == self.confront_used:
+            set_confront(state, None)  # PKG-10: used once (a newer marker is kept)
         if self.tier != "none":
             state["tutor_requests"] = int(state.get("tutor_requests") or 0) + 1
             if self.tier == "deep":
@@ -1715,6 +1786,22 @@ def _advance_cursor(state: dict) -> bool:
     return True
 
 
+def _isomorph_after_unknown(state: dict, node_id: str, items: list, exclude: set):
+    """PKG-10 (spec §3.3 "unknown → re-ask an isomorph"; §13 A27): when the
+    session's last attempt on this concept was `unknown`, the isomorph of that
+    attempt's item (policy.next_isomorph) among the site's own candidates —
+    everything `exclude` leaves (seen, revealed, session hashes, the post-test
+    reserve; A23), servable only (A34) — else None (the normal pick)."""
+    tail = attempts_for_node(attempts_of(state), node_id)
+    if not tail or slip_or_misconception(tail) != "unknown":
+        return None
+    last = next((i for i in items if i.question_hash == tail[-1].question_hash), None)
+    if last is None:
+        return None
+    candidates = [i for i in items if i.question_hash not in exclude and is_servable(i)]
+    return policy.next_isomorph(last, candidates)
+
+
 def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float) -> str | None:
     """The ONLY code that SETS the document's `current` (the spec's `active`;
     feedback and withdrawal only clear it). For the current plan concept: its
@@ -1735,10 +1822,11 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
             items = list_items(course_id, key)
             reserve = posttest_reserve_hash(items)
             exclude = excluded | ({reserve} if reserve else set())
+            item = _isomorph_after_unknown(state, concept, items, exclude)
             band, _ = _band_for(user_id, concept)
             rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
             formats = CHECK_ITEM_FORMATS[rotation:] + CHECK_ITEM_FORMATS[:rotation]
-            for fmt in formats:
+            for fmt in formats if item is None else ():
                 item = select_item(
                     items,
                     format=fmt,
@@ -2183,6 +2271,9 @@ async def _grade_submission(
         session_id=body.session_id,
         feature="loop_check",
         learning_loop=loop_on,
+        # PKG-10: the hook's attempt log + marker; its change rides
+        # outcome.diagnosis into the grade's compare-and-set save below
+        loop_state=copy.deepcopy(state),
     )
     rung = int(entry.get("rung") or 0)
     claim = str(uuid.uuid4())
@@ -2274,10 +2365,20 @@ async def _grade_submission(
         e["wrong"] = int(e.get("wrong") or 0) + (0 if correct else 1)
         e.update(graded)
 
+    under = _under_claim(qh, claim, record_grade, release=True)
+    diagnosis = getattr(outcome, "diagnosis", None)
+
+    def record_grade_and_diagnosis(doc: dict) -> None:
+        entry = _steps(doc).get(qh)
+        held = isinstance(entry, dict) and entry.get("grading_claim") == claim
+        under(doc)
+        if held:  # PKG-10: the attempt log + marker change, on the FRESH document
+            carry(doc, diagnosis)
+
     # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
     # conflict here is a 409 with the claim still held: the item is never
     # flushed again (it closes via /check/next once the claim is stale).
-    state = _update_loop_state(body.session_id, _under_claim(qh, claim, record_grade, release=True))
+    state = _update_loop_state(body.session_id, record_grade_and_diagnosis)
     return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
 
 
@@ -2695,8 +2796,7 @@ def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
         "role,content", filters={"session_id": f"eq.{session_id}"}, order="created_at.asc"
     )
     transcript = [
-        {"role": m.get("role"), "content": decrypt_if_present(m.get("content"))}
-        for m in msgs or []
+        {"role": m.get("role"), "content": decrypt_if_present(m.get("content"))} for m in msgs or []
     ]
     evidence = table("node_mastery_events").select(
         "node_id,p_before,p_after,correct,channel",
@@ -2879,7 +2979,11 @@ async def close_session(
             "model_written": record.model_written,
         },
     )
-    return {"close": record.model_dump(), "model_written": record.model_written, "close_phase": phase}
+    return {
+        "close": record.model_dump(),
+        "model_written": record.model_written,
+        "close_phase": phase,
+    }
 
 
 @router.post("/close")
