@@ -77,12 +77,26 @@ def _one_line(text: str) -> str:
 _OPTION_KEY = re.compile(r"[a-z0-9_]+")
 
 
-def option_key(key: str) -> str:
-    """An OPTION key as the message shows it (A38 fix round, m5): a key of
-    [a-z0-9_]+ as is, any other collapsed to one line, so no key can start a
-    forged line. services/decisions.match_wrong_reason maps the shown key back."""
-    key = str(key)
-    return key if _OPTION_KEY.fullmatch(key) else _one_line(key)
+def option_keys(keys) -> dict[str, str]:
+    """The OPTION keys as the message shows them → the item's keys, one to one
+    and in order (A38 fix round 2). A key of [a-z0-9_]+ is shown as is; any
+    other is shown as a positional alias "k<n>" (n = its option position,
+    suffixed with "_" until it collides with no shown key), so no key can
+    start a forged line and no two keys can read alike ("foo"/" foo",
+    "x y"/"x\\ny", a ":"). services/decisions.match_wrong_reason maps back."""
+    keys = [str(k) for k in keys]
+    taken = {k for k in keys if _OPTION_KEY.fullmatch(k)}
+    shown: dict[str, str] = {}
+    for position, key in enumerate(keys, start=1):
+        if _OPTION_KEY.fullmatch(key):
+            shown[key] = key
+            continue
+        alias = f"k{position}"
+        while alias in taken:
+            alias += "_"
+        taken.add(alias)
+        shown[alias] = key
+    return shown
 
 
 def build_decision_message(question: str, state: list[tuple[str, str]], options=()) -> str:
@@ -91,7 +105,7 @@ def build_decision_message(question: str, state: list[tuple[str, str]], options=
     Spec §13 A38 (owner decision 05b(g)), as agents/grader.py quotes a student
     answer: every line of each state text (any line break, not only \\n) is
     quoted with "> " under its unquoted label, and each option text is collapsed
-    to one line — its key too, unless it is [a-z0-9_]+ (option_key) — so no
+    to one line — its key shown as a positional alias unless it is [a-z0-9_]+ (option_keys) — so no
     student or item text can start a line that forges an OPTION, QUESTION,
     STATE or label line. The question and the labels are the
     seam's own constants."""
@@ -99,6 +113,8 @@ def build_decision_message(question: str, state: list[tuple[str, str]], options=
     for label, text in state:
         lines.append(f"{label}:")
         lines += [_STATE_QUOTE + line for line in str(text).splitlines() or [""]]
+    options = list(options)
+    shown = option_keys(key for key, _ in options)
     return "\n".join(
-        lines + [f"OPTION {option_key(key)}: {_one_line(text)}" for key, text in options]
+        lines + [f"OPTION {alias}: {_one_line(text)}" for alias, (_, text) in zip(shown, options)]
     )

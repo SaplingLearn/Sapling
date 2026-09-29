@@ -57,7 +57,7 @@ from agents.decision import (
     DecisionYesNoOutput,
     build_decision_message,
     decision_agent,
-    option_key,
+    option_keys,
 )
 from agents.grader import GradeResult
 from agents.usage import record_agent_usage
@@ -517,9 +517,9 @@ async def match_wrong_reason(
         out = await _run_decision("match_wrong_reason", state, deps)
         if out is None or out is BUDGET_CAPPED:
             return _unavailable("match_wrong_reason", sel, deps, budget=out is BUDGET_CAPPED)
-        # the model answers with the key it was SHOWN (agents.decision.option_key)
-        shown = {option_key(k): k for k in state.wrong}
-        key, conf, ms = shown.get(out.choice, out.choice), out.confidence, _ms(t0)
+        # the model answers with the key it was SHOWN (agents.decision.option_keys)
+        shown = option_keys(state.wrong)
+        key, conf, ms = shown.get(out.choice, NO_MATCH), out.confidence, _ms(t0)
     key = key if key in state.wrong else NO_MATCH
     verdict = Pick(
         backend=sel.served,
