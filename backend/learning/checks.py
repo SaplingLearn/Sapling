@@ -1437,8 +1437,7 @@ def _wrong_text_answer_reasons(draft: CheckItemDraft) -> list[str]:
     carry it. No stated final answer: _final_answer_reasons refuses the draft."""
     if not answer_run(draft.final_answer):
         return []
-    # lazy: learning.leak imports this module
-    from learning.ladder import Rung
+    # lazy (learning.leak imports this module); drafting runs only with the loop on
     from learning.leak import detect_leak
 
     return [
@@ -1448,7 +1447,7 @@ def _wrong_text_answer_reasons(draft: CheckItemDraft) -> list[str]:
         and detect_leak(
             reference="",
             emitted=w.text,
-            rung=Rung.H0,
+            rung=0,  # H0: nothing of the answer may show (detect_leak takes Rung(rung))
             final_answer=draft.final_answer,
             canonical_answer=draft.canonical_answer,
             strict=True,

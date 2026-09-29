@@ -3542,6 +3542,10 @@ _PKG06_SANCTIONED_IMPORTS = {
     # leak.detect_leak before serving it. detect_leak alone: pure, no model, no DB; grade()
     # itself runs only behind the learning-loop gate (grade_answer returns first when off).
     "agents/grader.py": ("learning.leak", frozenset({"detect_leak"})),
+    # PKG-10 fix round F3 (spec §13 A75): validate_draft refuses a drafted wrong reason
+    # that states the final answer (strict detect_leak) — a lazy import inside
+    # checks._wrong_text_answer_reasons; drafting runs only with LEARNING_LOOP_ENABLED.
+    "learning/checks.py": ("learning.leak", frozenset({"detect_leak"})),
 }
 # PKG-07 (spec §7, §9): the loop route WIRES the layer — gates, ladder, policy, leak,
 # the loop_state store and the zpd_events emitters — so every PKG-06 import in it is
