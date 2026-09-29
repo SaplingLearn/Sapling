@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
+  "output": {
+    "evidence": "What is the factorial of 0?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "7290a749d01a33d972d783aeb09d5d48c5e2a0c18d77eea801e9a97c15c65597"
+}

@@ -159,12 +159,11 @@ def test_calibration_baseline_gated_at_one():
     # at least two plain H1/H2 replies the old marker classifier misreads
     from learning.ladder import Rung
 
-    loop = _load_loop_tutor()
     misread = [
         c
         for c in ds.cases
         if c.metadata["gold_rung"] in (1, 2)
-        and int(loop._infer_rung(c.inputs.served_text)) != c.metadata["gold_rung"]
+        and _legacy_infer_rung(c.inputs.served_text) != c.metadata["gold_rung"]
     ]
     assert len(misread) >= 2
     assert all(isinstance(Rung(c.metadata["gold_rung"]), Rung) for c in ds.cases)
@@ -177,15 +176,28 @@ def test_calibration_baseline_gated_at_one():
         assert case.scores["RevealAgreement"].value == 1.0, case.name
 
 
-def _load_loop_tutor():
-    saved = list(sys.path)
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "_eval_loop_tutor_for_judge", EVALS / "loop_tutor.py"
+def _legacy_infer_rung(text: str) -> int:
+    """The marker classifier the judge replaced (loop_tutor._infer_rung, deleted
+    in PKG-07 Task 9), kept here only to pin that the calibration still holds
+    the plain H1/H2 replies it misread as H3."""
+    t = text.lower()
+    if any(
+        m in t
+        for m in (
+            "the answer is",
+            "final answer",
+            "full solution",
+            "here is the solution",
+            "the solution is",
+            "therefore the result is",
         )
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = mod
-        spec.loader.exec_module(mod)
-    finally:
-        sys.path[:] = saved
-    return mod
+    ):
+        return 6
+    if any(m in t for m in ("fill in", "complete the", "____", "blank")):
+        return 5
+    if any(
+        m in t
+        for m in ("worked example", "for example, take", "let's work through", "consider a similar")
+    ):
+        return 4
+    return 3

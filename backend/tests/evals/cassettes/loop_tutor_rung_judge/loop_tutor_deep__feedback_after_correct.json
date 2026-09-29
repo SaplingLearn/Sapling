@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
+  "output": {
+    "evidence": "In your own words, what is the purpose of a base case in any recursive function?",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "c702d9867e51cae786091775e62ccbbb99ed7c4298923640e11753a66e3d901d"
+}

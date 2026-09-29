@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "03100ab3c0a9e54fdc28c8135bf2586d08fbda6740d7256160894e5f4d290bfd",
+  "output": {
+    "evidence": "This means when the function is called with 0, it returns 1 directly without making another recursive call, which prevents it from calling factorial(-1) and recursing indefinitely.",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "3233284e5e619e002bfd28107e809ddf1de8d973912839dd8d42ff6e0218dc04"
+}

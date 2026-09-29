@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "d40e4174052c82cc81a778bdeafb938ae13a3ad0db94f15718012f30183dd1ec",
+  "output": {
+    "evidence": "Key idea: The power rule is fundamental for differentiating polynomials.\n\nTo find the derivative of a term like x^n, you multiply the coefficient by the exponent and then subtract 1 from the exponent.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "ce08682de10c2bd4a609e1c0fc84dd0f0248c122ac6064bab3c158b500033a1e"
+}

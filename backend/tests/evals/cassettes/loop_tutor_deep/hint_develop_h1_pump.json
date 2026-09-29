@@ -1,4 +1,19 @@
 {
-  "text": "The question is: What stops `factorial(0)` from recursing forever?\n\nKey idea: Every recursive function must have two fundamental parts.\n\nWhat are those two parts?\n\nYour next action: Try to answer the question.",
+  "attempts": [
+    "```json\n{\n  \"key_idea\": \"Start by considering the fundamental structure of all recursive functions.\",\n  \"body\": \"A recursive function must have a way to terminate.\",\n  \"question\": \"What is the name for the part of a recursive function that tells it when to stop?\"\n}\n```"
+  ],
+  "input_sha256": "53baeb0b9c163e2ddf64e53304a11b196d63a66328a981d9b9f8cc9c0a41891f",
+  "model": "gemini-2.5-pro",
+  "output": {
+    "body": "A recursive function must have a way to terminate.",
+    "key_idea": "Start by considering the fundamental structure of all recursive functions.",
+    "question": "What is the name for the part of a recursive function that tells it when to stop?"
+  },
+  "prompt_hash": "27d13b848957",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
   "tool_calls": []
 }

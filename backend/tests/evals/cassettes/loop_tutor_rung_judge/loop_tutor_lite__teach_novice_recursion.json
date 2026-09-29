@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "A recursive function breaks a problem into smaller, self-similar sub-problems. It continues to call itself until it reaches a base case, which is a simple condition that can be solved directly.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "fe536e45f5a220cd659b2324c6c5cc935f69b8a78003e9d3fafd598cd276c71c"
+}

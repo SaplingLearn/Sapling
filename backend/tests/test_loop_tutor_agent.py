@@ -337,7 +337,7 @@ def _loop_eval_module():
     path = Path(__file__).parent / "evals" / "loop_tutor.py"
     spec = importlib.util.spec_from_file_location("_eval_loop_tutor", path)
     mod = importlib.util.module_from_spec(spec)
-    # registered first: pydantic resolves LoopReply's postponed annotations through it
+    # registered first: pydantic resolves the eval models' postponed annotations through it
     sys.modules[spec.name] = mod
     saved = list(sys.path)
     try:
@@ -347,10 +347,24 @@ def _loop_eval_module():
     return mod
 
 
-def _score(mod, evaluator, inputs, text, **metadata):
+_REF = "The base case returns 1 when n equals 0 so the function stops calling itself."
+
+
+def _reply(mod, served, *, raw=None, rung=0, reveals=False, retries=0, rescued=False):
+    return mod.LoopReply(
+        raw=served if raw is None else raw,
+        served=served,
+        judgement=mod.RungJudgement(rung=rung, reveals_final_answer=reveals, evidence="e"),
+        retries=retries,
+        rescued=rescued,
+        requests=1 + retries,
+    )
+
+
+def _score(mod, evaluator, inputs, reply, **metadata):
     from types import SimpleNamespace
 
-    ctx = SimpleNamespace(inputs=inputs, output=mod.LoopReply(text=text), metadata=metadata)
+    ctx = SimpleNamespace(inputs=inputs, output=reply, metadata=metadata)
     return evaluator.evaluate(ctx)
 
 
@@ -360,97 +374,170 @@ def test_loop_eval_is_eight_cases_per_tier_slot():
     mod = _loop_eval_module()
     assert len(mod.CASES) == 8
     assert set(mod.VARIANTS) == set(LOOP_TIER_SLOTS.values())
+    assert mod.SERVED_GATES == (
+        "ServedAnswerLeak",
+        "ServedNoReveal",
+        "CeilingCompliance",
+        "MaxSentences",
+        "OneQuestion",
+        "FeedbackNeverEndsInAnswer",
+        "SycophancyResists",
+        "NoControlTags",
+        "PlainMathBelowH6",
+    )
+    assert mod.DIAGNOSTICS == ("RawAnswerLeak", "RetriesUsed")
     for slot, (make, _run) in mod.VARIANTS.items():
         ds = make()
-        assert ds.name == slot and len(ds.evaluators) == 6
+        assert ds.name == slot
+        assert tuple(type(e).__name__ for e in ds.evaluators) == mod.SERVED_GATES + mod.DIAGNOSTICS
     for case in mod.CASES:  # A34: every case names its item's structured final answer
         assert case.metadata["final_answer"] and case.metadata["reference"]
+    assert not hasattr(mod, "_infer_rung"), "the marker classifier is replaced by the rung judge"
 
 
-def test_loop_eval_evaluators_score_what_they_name():
+def test_loop_eval_evaluators_score_the_served_path():
     mod = _loop_eval_module()
     teach = ("teach", "develop", 3, "m")
+    low = ("hint", "develop", 1, "m")
     feedback = ("feedback", "develop", 3, "m")
-    ref = "The base case returns 1 when n equals 0 so the function stops calling itself."
-    # AnswerLeak: the reference's n-gram or the structured final answer below H6 leaks
+    meta = {"reference": _REF, "final_answer": "returns 1"}
+    ok = "Key idea: A base case stops it.\n\nIt answers directly.\n\nWhich input is it?"
+    # ServedAnswerLeak reads the SERVED text; RawAnswerLeak the model's own render
+    leaky = "Key idea: It returns 1 there.\n\nWhy does that stop it?"
+    stripped = _reply(mod, ok, raw=leaky)
+    assert _score(mod, mod.ServedAnswerLeak(), teach, stripped, **meta) == 1.0
+    assert _score(mod, mod.RawAnswerLeak(), teach, stripped, **meta) == 0.0
+    assert _score(mod, mod.ServedAnswerLeak(), teach, _reply(mod, leaky), **meta) == 0.0
+    released = {**meta, "answer_released": True}
+    assert _score(mod, mod.ServedAnswerLeak(), feedback, _reply(mod, leaky), **released) == 1.0
+    # ServedNoReveal / CeilingCompliance: the rung judge's reading of the served text
+    assert _score(mod, mod.ServedNoReveal(), teach, _reply(mod, ok, reveals=True), **meta) == 0.0
     assert (
-        _score(
-            mod,
-            mod.AnswerLeak(),
-            teach,
-            "Think about n == 0. What happens?",
-            reference=ref,
-            final_answer="returns 1",
-        )
+        _score(mod, mod.ServedNoReveal(), feedback, _reply(mod, ok, reveals=True), **released)
         == 1.0
     )
+    assert _score(mod, mod.CeilingCompliance(), low, _reply(mod, ok, rung=1), **meta) == 1.0
+    assert _score(mod, mod.CeilingCompliance(), low, _reply(mod, ok, rung=2), **meta) == 0.0
     assert (
-        _score(
-            mod,
-            mod.AnswerLeak(),
-            teach,
-            "It returns 1 there. Why?",
-            reference=ref,
-            final_answer="returns 1",
-        )
-        == 0.0
+        _score(mod, mod.CeilingCompliance(), feedback, _reply(mod, ok, rung=6), **released) == 1.0
     )
+    # FeedbackNeverEndsInAnswer
+    assert _score(mod, mod.FeedbackNeverEndsInAnswer(), feedback, _reply(mod, ok), **meta) == 1.0
+    ends = "Key idea: Close.\n\nThe base case returns 1."
+    assert _score(mod, mod.FeedbackNeverEndsInAnswer(), feedback, _reply(mod, ends), **meta) == 0.0
+    # MaxSentences / OneQuestion count with learning.turn_shape.sentences
     assert (
-        _score(
-            mod,
-            mod.AnswerLeak(),
-            teach,
-            "It returns 1 there.",
-            reference=ref,
-            final_answer="returns 1",
-            answer_released=True,
-        )
-        == 1.0
+        _score(mod, mod.MaxSentences(), teach, _reply(mod, "One. Two. Three. Four. Five?")) == 1.0
     )
-    # CeilingCompliance: a detected rung above the ceiling fails
-    assert _score(mod, mod.CeilingCompliance(), teach, "Here is the solution: n! = 1.") == 0.0
-    assert _score(mod, mod.CeilingCompliance(), teach, "Which input stops it?") == 1.0
-    # FeedbackNeverEndsInAnswer: the last sentence is a next step or a question, never the answer
-    assert (
-        _score(
-            mod,
-            mod.FeedbackNeverEndsInAnswer(),
-            feedback,
-            "Close. Try factorial(1) next.",
-            final_answer="returns 1",
-        )
-        == 1.0
+    six = "One. Two. Three. Four. Five. Six?"
+    assert _score(mod, mod.MaxSentences(), teach, _reply(mod, six)) == 0.0
+    assert _score(mod, mod.MaxSentences(), teach, _reply(mod, "Use 3.14 here. e.g. pi?")) == 1.0
+    assert _score(mod, mod.OneQuestion(), teach, _reply(mod, "Why? Because.")) == 1.0
+    assert _score(mod, mod.OneQuestion(), teach, _reply(mod, "Why? How?")) == 0.0
+    # SycophancyResists
+    yes = _reply(mod, "Yes, x^2/2 is right.")
+    assert _score(mod, mod.SycophancyResists(), teach, yes, wrong_token="x^2/2") == 0.0
+    no = _reply(mod, "x^2/2 is the integral. What is d/dx?")
+    assert _score(mod, mod.SycophancyResists(), teach, no, wrong_token="x^2/2") == 1.0
+    # NoControlTags / PlainMathBelowH6
+    tag = _reply(mod, "[LOOP PHASE: teach] Key idea: x.\n\nWhy?")
+    assert _score(mod, mod.NoControlTags(), teach, tag) == 0.0
+    assert _score(mod, mod.NoControlTags(), teach, _reply(mod, ok)) == 1.0
+    tex = _reply(mod, "Key idea: \\frac{1}{2} matters.\n\nWhy?")
+    assert _score(mod, mod.PlainMathBelowH6(), teach, tex, **meta) == 0.0
+    assert _score(mod, mod.PlainMathBelowH6(), feedback, tex, **released) == 1.0
+    assert _score(mod, mod.PlainMathBelowH6(), teach, _reply(mod, ok), **meta) == 1.0
+    # RetriesUsed (diagnostic): 1.0 = the first attempt was served
+    assert _score(mod, mod.RetriesUsed(), teach, _reply(mod, ok)) == 1.0
+    assert _score(mod, mod.RetriesUsed(), teach, _reply(mod, ok, retries=1)) == 0.0
+    assert _score(mod, mod.RetriesUsed(), teach, _reply(mod, ok, rescued=True)) == 0.0
+
+
+def test_loop_eval_serves_through_the_production_path():
+    """Replay recomputes the served text: production render_turn, then the
+    route's served_model_text at the route's loop_leak_rung."""
+    from learning.leak import WITHHELD
+    from learning.turn_shape import render_turn
+
+    mod = _loop_eval_module()
+    out = {
+        "key_idea": "At n == 0 the function returns 1.",
+        "body": "No further call happens.",
+        "question": "Why does that end the chain?",
+    }
+    case = next(c for c in mod.CASES if c.name == "hint_develop_h1_pump")
+    raw, served = mod.served_texts(out, case.inputs, case.metadata)
+    assert raw == render_turn(out)
+    assert WITHHELD in served and "returns 1" not in served
+    released = next(c for c in mod.CASES if c.metadata.get("answer_released"))
+    raw, served = mod.served_texts(out, released.inputs, released.metadata)
+    assert served == raw == render_turn(out), "a released answer is served at H6, unstripped"
+
+
+def test_loop_tutor_cassettes_match_the_current_prompt_schema_and_model():
+    """A stale recording can never justify routing: every committed tutor
+    cassette was recorded under the agent's CURRENT system prompt, output
+    schema, slot model and the exact assembled case message."""
+    import json
+    from pathlib import Path
+
+    from agents._providers import model_name_for
+    from agents.loop_tutor import _PROMPT_HASH, LOOP_TIER_SLOTS
+
+    mod = _loop_eval_module()
+    root = Path(__file__).parent / "evals" / "cassettes"
+    for slot in LOOP_TIER_SLOTS.values():
+        for case in mod.CASES:
+            path = root / slot / f"{case.name}.json"
+            assert path.exists(), f"missing cassette {slot}/{case.name}"
+            body = json.loads(path.read_text())
+            assert body["prompt_hash"] == _PROMPT_HASH, f"{slot}/{case.name}: stale prompt"
+            assert body["schema_hash"] == mod.OUTPUT_SCHEMA_HASH, (
+                f"{slot}/{case.name}: stale schema"
+            )
+            assert body["model"] == model_name_for(slot), f"{slot}/{case.name}: other model"
+            assert body["input_sha256"] == mod.input_sha256(slot, case.inputs), (
+                f"{slot}/{case.name}: the case message or run settings changed"
+            )
+
+
+def test_loop_eval_replay_refuses_a_stale_recording():
+    mod = _loop_eval_module()
+    case = mod.CASES[0]
+    good = mod.LoopRecording(
+        slot="loop_tutor",
+        model="gemini-x",
+        prompt_hash="old",
+        schema_hash=mod.OUTPUT_SCHEMA_HASH,
+        input_sha256="x",
+        output={"key_idea": "a", "body": "b", "question": "c?"},
     )
-    assert (
-        _score(
-            mod,
-            mod.FeedbackNeverEndsInAnswer(),
-            feedback,
-            "Close. The base case returns 1.",
-            final_answer="returns 1",
-        )
-        == 0.0
-    )
-    # MaxSentences / OneQuestion: the turn shape
-    assert _score(mod, mod.MaxSentences(), teach, "One. Two. Three. Four. Five.") == 1.0
-    assert _score(mod, mod.MaxSentences(), teach, "One. Two. Three. Four. Five. Six.") == 0.0
-    assert _score(mod, mod.OneQuestion(), teach, "Why? Because.") == 1.0
-    assert _score(mod, mod.OneQuestion(), teach, "Why? How?") == 0.0
-    # SycophancyResists: never affirm the student's wrong claim
-    assert (
-        _score(mod, mod.SycophancyResists(), teach, "Yes, x^2/2 is right.", wrong_token="x^2/2")
-        == 0.0
-    )
-    assert (
-        _score(
-            mod,
-            mod.SycophancyResists(),
-            teach,
-            "x^2/2 is the integral. What is d/dx?",
-            wrong_token="x^2/2",
-        )
-        == 1.0
-    )
+    with pytest.raises(mod.StaleRecordingError, match="prompt"):
+        mod.check_fresh(good, "loop_tutor", case.inputs)
+
+
+LOOP_TIER_PASS_SCORE = 1.0  # spec §10, A15: a tier routes only when it passes every served gate
+
+
+def test_loop_routable_tiers_match_baselines():
+    """LOOP_ROUTABLE_TIERS is exactly the tiers whose committed baselines score
+    1.0 on EVERY served gate (diagnostics — RawAnswerLeak, RetriesUsed — never
+    route), and at least one tier routes."""
+    import json
+    from pathlib import Path
+
+    from agents.loop_tutor import LOOP_ROUTABLE_TIERS, LOOP_TIER_SLOTS
+
+    mod = _loop_eval_module()
+    baselines = json.loads((Path(__file__).parent / "evals" / "baselines.json").read_text())
+    passing = set()
+    for tier, slot in LOOP_TIER_SLOTS.items():
+        block = baselines[slot]
+        assert set(block) == set(mod.SERVED_GATES) | set(mod.DIAGNOSTICS), slot
+        if all(block[g] >= LOOP_TIER_PASS_SCORE for g in mod.SERVED_GATES):
+            passing.add(tier)
+    assert passing, "no tier passes every served gate (spec §10: STOP)"
+    assert set(LOOP_ROUTABLE_TIERS) == passing
 
 
 # ── PKG-07 unblock S1: the structured turn ──────────────────────────────────
@@ -602,3 +689,67 @@ def test_output_validator_is_registered_and_retries_a_bad_final_turn():
     assert len(seen) == 2
     retry = [p for m in seen[1] for p in getattr(m, "parts", []) if isinstance(p, RetryPromptPart)]
     assert retry and "question_shape" in str(retry[-1].content)
+
+
+# ── Task 9 prompt/structure fixes (served-gate iterations) ──────────────────
+
+
+def test_output_template_asks_for_the_object_not_the_schema():
+    """flash-lite answered PromptedOutput's default template with the SCHEMA's
+    shape ({"properties": {...}}) or the rendered text ("Key idea: ..."). The
+    loop's template names the three keys and shows the object's shape; the
+    prompt hash covers it, so a template change stales every recording."""
+    import hashlib
+
+    import agents.loop_tutor as lt
+
+    tpl = lt.LOOP_OUTPUT_TEMPLATE
+    assert lt.loop_tutor_agent.output_type.template == tpl
+    assert "{schema}" in tpl
+    assert '"key_idea"' in tpl and '"body"' in tpl and '"question"' in tpl
+    assert "properties" in tpl  # names the wrapper it must not write
+    want = hashlib.sha256((lt._LOOP_SYSTEM_PROMPT + "\x00" + tpl).encode("utf-8")).hexdigest()[:12]
+    assert lt._PROMPT_HASH == want
+
+
+@pytest.mark.parametrize("ceiling", [0, 1, 2, 3, 4, 5])
+def test_phase_prefix_names_what_the_ceiling_means_for_each_field(ceiling):
+    from agents.loop_tutor import CEILING_GUIDE, phase_prefix
+    from learning.ladder import Rung
+
+    text = phase_prefix(phase="teach", band="develop", ceiling=Rung(ceiling))
+    assert CEILING_GUIDE[ceiling] in text
+    assert "key_idea" in CEILING_GUIDE[ceiling] and "question" in CEILING_GUIDE[ceiling]
+
+
+def test_low_ceilings_forbid_content_and_own_practice_problems():
+    from agents.loop_tutor import CEILING_GUIDE
+
+    for rung in (0, 1):
+        assert "practice problem" in CEILING_GUIDE[rung]
+        assert "no concept" in CEILING_GUIDE[rung].lower()
+    assert "never what to do next" in CEILING_GUIDE[2]
+    # below H4 the model invents no problem of its own (the loop poses vetted,
+    # leak-checked check items) and computes no result in an example
+    for rung in (2, 3):
+        assert "problem of your own" in CEILING_GUIDE[rung]
+        assert "computes a result" in CEILING_GUIDE[rung]
+    assert "no fact about the subject" in CEILING_GUIDE[1]
+
+
+def test_system_prompt_forbids_stating_the_corrected_answer():
+    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT
+
+    assert "corrected" in _LOOP_SYSTEM_PROMPT
+    assert "judged by its content" in _LOOP_SYSTEM_PROMPT
+
+
+def test_developing_band_is_problem_first_without_inventing_problems():
+    """'problem-first' read as 'make up a problem': every slot invented a worked
+    practice problem under an H3 ceiling. The student works on THEIR problem or
+    the loop's check item."""
+    from agents.loop_tutor import _BAND_FORMATS, CEILING_GUIDE
+
+    assert "problem of your own" in _BAND_FORMATS["develop"]
+    assert "check item" in _BAND_FORMATS["develop"]
+    assert "not about this item" in CEILING_GUIDE[2]

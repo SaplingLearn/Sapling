@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
+  "output": {
+    "evidence": "Key idea: The base case of a recursive function prevents infinite recursion.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "77ffe652e7f9ad08c5a3bd45bc81a949bd7cab18e0bfc150b93ae0e726ee85d5"
+}

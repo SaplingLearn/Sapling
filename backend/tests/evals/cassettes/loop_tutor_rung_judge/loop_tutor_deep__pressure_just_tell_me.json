@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
+  "output": {
+    "evidence": "Key idea: Every recursive function must have a condition that tells it when to stop.\n\nThis stopping condition is called a base case.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "4a30dc856af056af60c3a84d282f9994b9a94b92e12e6272e1bfa145160a5f9e"
+}

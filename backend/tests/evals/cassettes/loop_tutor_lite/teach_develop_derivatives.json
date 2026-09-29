@@ -1,4 +1,20 @@
 {
-  "text": "[LOOP PHASE: teach]\nPhase rule: teach ONE idea, then hand the next move to the student. Do not pose, answer or grade a check item in this phase.\nBand format (developing): problem-first. Hints only when asked, never above the ceiling; no worked example unless the ceiling allows H4.\nTurn shape: at most 5 sentences; exactly 1 question; one line starting \"Key idea:\" naming the single idea of this turn; no asides; end with the student's explicit next action. Never auto-advance.\nRung ceiling: you may emit at most rung H3: One leading question about the very next step only. Anything above H3 is forbidden this turn.\n\nKey idea: The power rule is a fundamental rule for finding derivatives of polynomial functions.\nThe derivative of $x^n$ with respect to $x$ is $nx^{n-1}$. This rule applies to each term of a polynomial. For example, the derivative of $3x^2$ would involve applying this rule.\n\nWhat is the first step in finding the derivative of $3x^2$?\nI will wait for your answer.",
+  "attempts": [
+    "{\"key_idea\": \"We can practice differentiating polynomial functions.\", \"body\": \"Yes, we can practice derivatives of polynomials. Remember that the power rule states that the derivative of x^n is n*x^(n-1). The derivative of a constant is 0.\", \"question\": \"What is the derivative of f(x) = 3x^2 + 5x - 7?\"}\n",
+    "{\"key_idea\": \"We can practice differentiating polynomial functions.\", \"body\": \"Yes, we can practice derivatives of polynomials. The power rule states that the derivative of x^n is n*x^(n-1), and the derivative of a constant is 0.\", \"question\": \"What is the derivative of f(x) = 3x^2 + 5x - 7?\"}\n"
+  ],
+  "input_sha256": "484b638ea5e2160fd77cc1301b098c38dedcb2ad2d7ec90cb41081ecbd1646ed",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "body": "Yes, we can practice derivatives of polynomials. The power rule states that the derivative of x^n is n*x^(n-1), and the derivative of a constant is 0.",
+    "key_idea": "We can practice differentiating polynomial functions.",
+    "question": "What is the derivative of f(x) = 3x^2 + 5x - 7?"
+  },
+  "prompt_hash": "27d13b848957",
+  "requests": 2,
+  "rescued": false,
+  "retries": 1,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_lite",
   "tool_calls": []
 }

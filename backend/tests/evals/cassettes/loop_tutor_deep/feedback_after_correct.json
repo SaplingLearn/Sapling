@@ -1,4 +1,19 @@
 {
-  "text": "Correct.\n\nKey idea: A recursive function must have a base case to terminate.\n\nYou've identified the condition that stops the recursion. What would `factorial(-1)` return in this implementation?\n\nDescribe the function's behavior for that input.",
+  "attempts": [
+    "{\"key_idea\": \"You've correctly identified the base case that stops this recursion.\", \"body\": \"That's correct.\", \"question\": \"In your own words, what is the purpose of a base case in any recursive function?\"}"
+  ],
+  "input_sha256": "2da60f1dbf9c0924fcdbba92b41505575317c46eaa6a4952f52573003eaa11eb",
+  "model": "gemini-2.5-pro",
+  "output": {
+    "body": "That's correct.",
+    "key_idea": "You've correctly identified the base case that stops this recursion.",
+    "question": "In your own words, what is the purpose of a base case in any recursive function?"
+  },
+  "prompt_hash": "27d13b848957",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
   "tool_calls": []
 }

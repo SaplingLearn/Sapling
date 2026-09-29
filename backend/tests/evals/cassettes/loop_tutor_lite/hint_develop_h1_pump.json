@@ -1,4 +1,19 @@
 {
-  "text": "Key idea: Base cases in recursion.\n\nTo understand why factorial(0) doesn't recurse forever, consider the definition of factorial. What is the stopping condition for the factorial function? What value does it return when it hits that condition?",
+  "attempts": [
+    "{\n\"key_idea\": \"Focus on the definition of factorial and how it applies to the base case.\",\n\"body\": \"Consider how the factorial function is defined and what happens when the input is 0.\",\n\"question\": \"What is the factorial of 0?\"\n}"
+  ],
+  "input_sha256": "3c0639dca9fc441cf52eca2497bbdb6b6288fcbb6c3f5d49b47ed477a6f33527",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "body": "Consider how the factorial function is defined and what happens when the input is 0.",
+    "key_idea": "Focus on the definition of factorial and how it applies to the base case.",
+    "question": "What is the factorial of 0?"
+  },
+  "prompt_hash": "27d13b848957",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_lite",
   "tool_calls": []
 }

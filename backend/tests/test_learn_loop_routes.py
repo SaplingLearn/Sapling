@@ -267,6 +267,11 @@ def seams():
         ns.load = p("load_loop_state", side_effect=_load)
         # the REAL update_loop_state runs over the store's own load/save
         stack.enter_context(patch("learning.loop_state_store.load_loop_state", side_effect=_load))
+        # These tests read the POLICY tier off the turn, so every slot is routable
+        # here; the committed LOOP_ROUTABLE_TIERS (Task 9) has its own route test.
+        stack.enter_context(
+            patch("agents.loop_tutor.LOOP_ROUTABLE_TIERS", frozenset({"lite", "standard", "deep"}))
+        )
         ns.save = stack.enter_context(
             patch("learning.loop_state_store.save_loop_state", side_effect=_save)
         )
@@ -995,6 +1000,23 @@ def test_feedback_after_correct_runs_lite(gate_on, seams):
     assert seams.model_tier.call_args.args[0] == "feedback_correct"
 
 
+def test_a_policy_tier_whose_slot_failed_its_evals_routes_to_a_routable_one(gate_on, seams):
+    """A15/§10 through the route: with the committed LOOP_ROUTABLE_TIERS
+    ({"standard"}, Task 9), a lite feedback turn is served on the standard slot."""
+    seams.store["doc"] = _graded("correct")
+    with (
+        patch("agents.loop_tutor.LOOP_ROUTABLE_TIERS", frozenset({"standard"})),
+        patch("routes.learn_loop.stream_structured_turn", _fake_stream("Right. Next?")),
+    ):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "ok"},
+        )
+    assert _sse_events(r.text)[-1]["data"]["tier"] == "standard"
+    assert seams.tier_run_kwargs.call_args.args[0] == "standard"
+    assert seams.model_tier.call_args.args[0] == "feedback_correct"  # the policy said lite
+
+
 def test_a_stream_that_fails_before_the_ladder_ends_in_a_terminal_error(gate_on, seams):
     """ADR 0024 honest degrade on the loop's own SSE path: a failure while the
     turn is planned (a context read) ends the stream with ONE terminal
@@ -1143,22 +1165,16 @@ def test_a_tool_run_that_ends_without_a_turn_is_rescued_tool_less(gate_on, seams
     assert r.status_code == 502
 
 
-def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_turn(gate_on, seams):
-    """(g) end to end through the REAL loop_tutor_agent and pydantic-ai: the
-    model calls a tool, then (tools still declared) returns empty responses —
-    the flash-lite behaviour. The tool-less continuation (tools removed) writes
-    the LoopTurnOut, and the route serves its render."""
-    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+def _real_agent_tool_turn(seams, answer):
+    """Drive the REAL loop_tutor_agent through /chat with a FunctionModel whose
+    replies `answer(messages, has_tools, returned)` decides; returns
+    (response, calls) with calls = [(has_tools, tool_result_seen), ...]."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
     from pydantic_ai.models.function import FunctionModel
 
     from agents.tools.graph_read import GraphNeighborhood
 
     seams.store["doc"] = {}
-    turn = {
-        "key_idea": "A base case stops recursion.",
-        "body": "It needs no call.",
-        "question": "Which n?",
-    }
     calls = []
 
     def model(messages, info):
@@ -1171,9 +1187,7 @@ def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_tu
             return ModelResponse(
                 parts=[ToolCallPart("read_graph_neighborhood", {"concepts": ["recursion"]})]
             )
-        if has_tools:
-            return ModelResponse(parts=[])  # the #646 empty response
-        return ModelResponse(parts=[TextPart(json.dumps(turn))])
+        return answer(messages, has_tools, returned)
 
     retrieval = MagicMock()
     retrieval.graph_neighborhood = AsyncMock(return_value=GraphNeighborhood(concepts=[], edges=[]))
@@ -1188,11 +1202,53 @@ def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_tu
         r = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
         )
+    return r, calls
+
+
+_TOOL_TURN = {
+    "key_idea": "A base case stops recursion.",
+    "body": "It needs no call.",
+    "question": "Which n?",
+}
+
+
+def test_the_real_agent_after_a_tool_round_answers_tool_less_in_one_run(gate_on, seams):
+    """(g) end to end through the REAL loop_tutor_agent and pydantic-ai: the
+    model calls a tool, and the next request declares NO tools (the agent's
+    tool-round cost fix) — the shape flash-lite answers — so the turn is one run
+    of two requests, one counted call, no rescue."""
+    from pydantic_ai.messages import ModelResponse, TextPart
+
+    def answer(messages, has_tools, returned):
+        if has_tools:
+            return ModelResponse(parts=[])  # the #646 empty response, tools declared
+        return ModelResponse(parts=[TextPart(json.dumps(_TOOL_TURN))])
+
+    r, calls = _real_agent_tool_turn(seams, answer)
     assert r.status_code == 200, r.text
-    assert r.json()["reply"] == render_turn(turn)
-    assert calls[0] == (True, False) and calls[-1][0] is False, "the rescue ran with no tools"
-    assert (True, True) in calls, "the tool result was in the conversation the rescue saw"
-    assert (False, True) == calls[-1], "the rescue continued from the tool result"
+    assert r.json()["reply"] == render_turn(_TOOL_TURN)
+    assert calls == [(True, False), (False, True)], "tool round, then a tool-less answer"
+    assert seams.ai_budget.count_tutor_call.call_count == 1, "one model run, one count"
+
+
+def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_turn(gate_on, seams):
+    """(g) the rescue still stands behind the fix: a model that answers empty
+    after its tool round even tool-less gets the tool-less continuation (the
+    nudge over the tool results), and the route serves its render."""
+    from pydantic_ai.messages import ModelResponse, TextPart
+
+    from routes.learn_loop import _CONTINUATION_NUDGE
+
+    def answer(messages, has_tools, returned):
+        prompts = [p.content for m in messages for p in m.parts if p.part_kind == "user-prompt"]
+        if prompts and prompts[-1] == _CONTINUATION_NUDGE:
+            return ModelResponse(parts=[TextPart(json.dumps(_TOOL_TURN))])
+        return ModelResponse(parts=[])
+
+    r, calls = _real_agent_tool_turn(seams, answer)
+    assert r.status_code == 200, r.text
+    assert r.json()["reply"] == render_turn(_TOOL_TURN)
+    assert calls[0] == (True, False) and calls[-1] == (False, True), "rescued from the tool result"
     assert seams.ai_budget.count_tutor_call.call_count == 2, "two model runs, two counts"
 
 

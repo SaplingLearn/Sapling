@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "Recursion is a programming technique where a function solves a problem by calling itself with smaller inputs until it reaches a simple base case.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "741761e679a4a5efe9689fa6908d457f5b0416d109928a001bcb1dd50bf966b5"
+}

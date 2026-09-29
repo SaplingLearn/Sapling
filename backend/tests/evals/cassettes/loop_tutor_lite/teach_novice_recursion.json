@@ -1,4 +1,20 @@
 {
-  "text": "Key idea: Recursion is a method where a function calls itself to solve a problem.\n\nRecursion breaks down a problem into smaller, self-similar subproblems. The function solves these subproblems and combines their results to solve the original problem.\n\nA crucial part of recursion is the \"base case,\" which is a condition that stops the recursion. Without a base case, the function would call itself indefinitely, leading to a stack overflow.\n\nTo get a better handle on this, let's look at a quick example of calculating factorials. The factorial of a non-negative integer $n$, denoted by $n!$, is the product of all positive integers less than or equal to $n$. For example, $4! = 4 \\times 3 \\times 2 \\times 1 = 24$.\n\nWe can define the factorial recursively:\n$n! = n \\times (n-1)!$ for $n > 0$\nAnd the base case is $0! = 1$.\n\nHow would you describe the base case in this factorial example?",
+  "attempts": [
+    "{\n\"key_idea\": \"Recursion is a method where a function calls itself to solve smaller instances of the same problem.\",\n\"body\": \"Think of it like Russian nesting dolls. Each doll contains a smaller version of itself. In programming, a recursive function breaks a problem down into smaller, identical sub-problems until it reaches a simple case that can be solved directly. This simple case is called the base case.\",\n\"question\": \"What do you think would happen if a recursive function didn't have a base case?\"\n}\n",
+    "{\n\"key_idea\": \"Recursion solves problems by having a function call itself with smaller inputs.\",\n\"body\": \"A recursive function breaks a problem into smaller, self-similar sub-problems. It continues to call itself until it reaches a base case, which is a simple condition that can be solved directly without further recursion. The solutions to the sub-problems are then combined to solve the original problem.\",\n\"question\": \"Can you identify the base case in the Russian nesting doll analogy?\"\n}\n"
+  ],
+  "input_sha256": "f8315b87c10787a2fd3903e37214115d00f8c0b77e93fae44190eb5648299c63",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "body": "A recursive function breaks a problem into smaller, self-similar sub-problems. It continues to call itself until it reaches a base case, which is a simple condition that can be solved directly without further recursion. The solutions to the sub-problems are then combined to solve the original problem.",
+    "key_idea": "Recursion solves problems by having a function call itself with smaller inputs.",
+    "question": "Can you identify the base case in the Russian nesting doll analogy?"
+  },
+  "prompt_hash": "27d13b848957",
+  "requests": 2,
+  "rescued": false,
+  "retries": 1,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_lite",
   "tool_calls": []
 }

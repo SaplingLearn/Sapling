@@ -1,4 +1,19 @@
 {
-  "text": "You're working on a question about `factorial(0)` and recursion. This is a common point of confusion, so let's break it down.\n\nKey idea: A recursive function needs a condition to stop calling itself.\n\nCan you recall the name for the condition that terminates a recursive function?",
+  "attempts": [
+    "{\"key_idea\": \"Recursive functions require a base case to prevent infinite recursion.\", \"body\": \"The base case defines a condition under which the function stops calling itself and returns a result directly. Without a base case, a recursive function would continue to call itself indefinitely.\", \"question\": \"What is the purpose of a base case in a recursive function?\"}"
+  ],
+  "input_sha256": "a43eaa6c1839b7d9b923b360843f2aa7e3aa635b3431a2f0d082781fe1f7ad39",
+  "model": "gemini-2.5-flash",
+  "output": {
+    "body": "The base case defines a condition under which the function stops calling itself and returns a result directly. Without a base case, a recursive function would continue to call itself indefinitely.",
+    "key_idea": "Recursive functions require a base case to prevent infinite recursion.",
+    "question": "What is the purpose of a base case in a recursive function?"
+  },
+  "prompt_hash": "27d13b848957",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor",
   "tool_calls": []
 }

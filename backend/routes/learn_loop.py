@@ -549,49 +549,102 @@ def _continuation_history(messages: list) -> list | None:
     return None
 
 
-async def _loop_continuation_text(turn, messages: list) -> str | None:
-    """The #646 twin of routes.learn._continuation_text for the STRUCTURED loop
-    turn. Lane B's live finding: after a tool call gemini flash-lite answered
-    with empty responses and never wrote the LoopTurnOut — Gemini only takes
-    the structured (JSON) turn with no tools declared. So: a budget check
-    FIRST (invariant 23; None at the hard level), one counted tutor call (A39),
-    then a run on the SAME slot with every tool removed — the safety property,
-    `override(tools=[], toolsets=[])` (pinned) — that continues from the tool
-    results with the nudge, or, when no tool ran (`messages` has none; the
-    stream's Rung-1 fallback), re-runs the turn itself. Returns the rendered
-    turn (the output validator still judges it against deps.loop_turn)."""
-    decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
-    if decision.level == "hard":
-        return None
-    carried = {k: turn.run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in turn.run_kwargs}
-    # no tools, so no tool_choice (a tool_config with nothing to choose)
+@dataclass(frozen=True)
+class ContinuationPlan:
+    """What the tool-less continuation run is: its prompt, its `agent.run`
+    kwargs (tools are removed by the caller's override) and its usage feature."""
+
+    prompt: str
+    run_kwargs: dict
+    feature: str
+
+
+def continuation_plan(*, assembled: str, run_kwargs: dict, messages: list) -> ContinuationPlan:
+    """The #646 continuation of a loop run that ended without a structured turn,
+    as data (the route runs it; tests/evals/loop_tutor.py replays through it).
+    It continues from the failed run's last tool results with the nudge under
+    CONTINUATION_LIMITS, or — no tool ran — re-runs the turn itself under the
+    turn's own limits. Same slot, same settings, minus `tool_choice` (no tools,
+    so a tool_config would have nothing to choose)."""
+    carried = {k: run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in run_kwargs}
     carried["model_settings"] = {
         k: v for k, v in (carried.get("model_settings") or {}).items() if k != "tool_choice"
     }
     history = _continuation_history(messages)
     if history is None:
-        prompt, limits, feature = turn.assembled, turn.run_kwargs.get("usage_limits"), "loop_tutor"
-        history = list(turn.run_kwargs.get("message_history") or [])
-    else:
-        prompt, limits, feature = (
-            _CONTINUATION_NUDGE,
-            CONTINUATION_LIMITS,
-            "loop_tutor_continuation",
-        )
+        carried["message_history"] = list(run_kwargs.get("message_history") or [])
+        carried["usage_limits"] = run_kwargs.get("usage_limits")
+        return ContinuationPlan(prompt=assembled, run_kwargs=carried, feature="loop_tutor")
+    carried["message_history"] = history
+    carried["usage_limits"] = CONTINUATION_LIMITS
+    return ContinuationPlan(
+        prompt=_CONTINUATION_NUDGE, run_kwargs=carried, feature="loop_tutor_continuation"
+    )
+
+
+async def _loop_continuation_text(turn, messages: list) -> str | None:
+    """The #646 twin of routes.learn._continuation_text for the STRUCTURED loop
+    turn. Lane B's live finding: after a tool call gemini flash-lite answered
+    with empty responses and never wrote the LoopTurnOut — Gemini only takes
+    the structured (JSON) turn with no tools declared (the agent now declares
+    no tools after a tool round, so this is the rescue for what is left). So: a
+    budget check FIRST (invariant 23; None at the hard level), one counted
+    tutor call (A39), then `continuation_plan` run on the SAME slot with every
+    tool removed — the safety property, `override(tools=[], toolsets=[])`
+    (pinned). Returns the rendered turn (the output validator still judges it
+    against deps.loop_turn)."""
+    decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
+    if decision.level == "hard":
+        return None
+    plan = continuation_plan(
+        assembled=turn.assembled, run_kwargs=turn.run_kwargs, messages=messages
+    )
     ai_budget.count_tutor_call(turn.user_id)
     with turn.agent.override(tools=[], toolsets=[]):
         result = record_agent_usage(
-            await turn.agent.run(
-                prompt,
-                message_history=history,
-                usage_limits=limits,
-                **carried,
-            ),
-            feature=feature,
+            await turn.agent.run(plan.prompt, **plan.run_kwargs),
+            feature=plan.feature,
             task=turn.slot,
             user_id=turn.user_id,
         )
     return render_turn(result.output)
+
+
+# ── The served text (route + tests/evals/loop_tutor.py) ────────────────────
+
+
+def loop_leak_rung(*, phase: str, rung: Rung, ceiling: Rung, answer_released: bool) -> Rung:
+    """The rung model text is served at: H6 once the answer is released, the
+    hint rung on a hint turn, else the ceiling — clamped below H6 while the
+    answer is unreleased (clamp_model_ceiling: model text never writes H6)."""
+    at = rung if phase == "hint" else ceiling
+    if answer_released:
+        at = Rung.H6
+    return Rung(clamp_model_ceiling(at, answer_released))
+
+
+def served_model_text(
+    reply: str,
+    *,
+    leak_rung: Rung,
+    reference: str,
+    final_answer: str,
+    canonical_answer: str | None = None,
+    correct_option: str | None = None,
+):
+    """What the student is served for model-written `reply` against the active
+    item: the reply, or — when `detect_leak` finds the item's answer at
+    `leak_rung` — `strip_leak`'s redaction. Returns (text, LeakVerdict)."""
+    item = {
+        "reference": reference,
+        "final_answer": final_answer,
+        "canonical_answer": canonical_answer,
+        "correct_option": correct_option,
+    }
+    verdict = detect_leak(emitted=reply, rung=leak_rung, **item)
+    if not verdict.leaked:
+        return reply, verdict
+    return strip_leak(emitted=reply, **item), verdict
 
 
 # ── The turn ───────────────────────────────────────────────────────────────
@@ -814,13 +867,13 @@ class _LoopTurn:
         record_agent_usage(run_result, feature="loop_tutor", task=self.slot, user_id=self.user_id)
 
     def _leak_rung(self) -> Rung:
-        """The rung model text is served at: H6 once the answer is released, the
-        hint rung on a hint turn, else the ceiling — clamped below H6 while the
-        answer is unreleased (clamp_model_ceiling: model text never writes H6)."""
-        rung = self.rung if self.phase == "hint" else self.ceiling
-        if self.answer_released:
-            rung = Rung.H6
-        return Rung(clamp_model_ceiling(rung, self.answer_released))
+        """`loop_leak_rung` for this turn."""
+        return loop_leak_rung(
+            phase=self.phase,
+            rung=self.rung,
+            ceiling=self.ceiling,
+            answer_released=self.answer_released,
+        )
 
     def _item_leak_kwargs(self) -> dict:
         """The active item's answer forms (A34) and, for an mc_reason item, its
@@ -845,10 +898,13 @@ class _LoopTurn:
 
     def _leak_checked(self, reply: str) -> tuple[str, bool]:
         """Model-written text is leak-checked against the ACTIVE item at the rung
-        it is served at (`_leak_rung`; A34: the item's structured final answer)."""
+        it is served at (`_leak_rung`; A34: the item's structured final answer),
+        through `served_model_text`."""
         if self.tier == "none" or self.item is None:
             return reply, False
-        verdict = self._leak_verdict(reply)
+        served, verdict = served_model_text(
+            reply, leak_rung=self._leak_rung(), **self._item_leak_kwargs()
+        )
         if not verdict.leaked:
             return reply, False
         zpd_events.emit_zpd_leak(
@@ -858,7 +914,7 @@ class _LoopTurn:
             ceiling=self.ceiling,
             detector=verdict.detector,
         )
-        return strip_leak(emitted=reply, **self._item_leak_kwargs()), True
+        return served, True
 
     def _emit_step(self, entry: dict) -> None:
         """zpd.step for the ONE feedback turn (spec §6), from what

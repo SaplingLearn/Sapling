@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "You open the largest doll to find a slightly smaller doll inside. You then repeat the exact same action\u2014opening a doll\u2014on the new doll, and so on, until you reach the smallest doll...",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "4030c032a5cdf0597a9858f27177264dcb1eb5ce7f0b09986ed33d9f901076a0"
+}

@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "d40e4174052c82cc81a778bdeafb938ae13a3ad0db94f15718012f30183dd1ec",
+  "output": {
+    "evidence": "what is the derivative of the first term in the polynomial f(x) = [withheld]^3 + 5x^2 - 3?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "f63c178a8da7ccb647b7d46977a615b700ef28e9921b44280d3e3608da83995c"
+}

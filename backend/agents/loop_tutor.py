@@ -26,6 +26,9 @@ import hashlib
 from typing import Literal
 
 from pydantic_ai import Agent, ModelRetry, PromptedOutput, RunContext
+from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.tools import ToolDefinition
 
 from agents._providers import model_for
 from agents.chat_tutor import _ACADEMIC_INTEGRITY, _build_tools
@@ -67,9 +70,14 @@ LOOP_TIER_SLOTS: dict[str, str] = {
     "deep": "loop_tutor_deep",
 }
 _TIER_ORDER: tuple[str, ...] = ("lite", "standard", "deep")
-#: Tiers whose slot passed EVERY loop_tutor evaluator (spec §10). Task 9 sets
-#: this from the recorded baselines; tests/test_loop_tutor_agent.py pins the match.
-LOOP_ROUTABLE_TIERS: frozenset[str] = frozenset(_TIER_ORDER)
+#: Tiers whose slot scores 1.0 on EVERY served gate of tests/evals/loop_tutor.py
+#: in the committed cassettes (spec §10, A15; PKG-07 Task 9, recorded
+#: 2026-09-29): only `loop_tutor` (gemini-2.5-flash, thinking 0). flash-lite and
+#: 2.5-pro each fail CeilingCompliance on H1/H2-ceiling cases, so lite turns
+#: route up to standard and deep turns down to it (`routable_tier`).
+#: tests/test_loop_tutor_agent.py::test_loop_routable_tiers_match_baselines pins
+#: this to baselines.json.
+LOOP_ROUTABLE_TIERS: frozenset[str] = frozenset({"standard"})
 
 
 def routable_tier(tier: str) -> str:
@@ -133,7 +141,11 @@ _LOOP_SYSTEM_PROMPT = (
     "- Never state, complete, or confirm a final answer to a check item "
     "unless the phase block explicitly releases it. A student who insists "
     "on a wrong claim gets a question that exposes the contradiction, not "
-    "agreement.\n"
+    "agreement — and not the corrected result either: ask the question that "
+    "lets them find it.\n"
+    "- A turn's rung is judged by its content, in every field: the key_idea, "
+    "the body and the question all count, and a question that names the "
+    "next step IS a hint. Stay at or below the ceiling in all three.\n"
     "- Never grade the student yourself; the verdict arrives in the phase "
     "prefix. When a [VERDICT: ...] line is present, relay it — never "
     "re-grade, soften, or contradict it.\n"
@@ -159,7 +171,22 @@ _LOOP_SYSTEM_PROMPT = (
     "Call each at most once per turn.\n"
 )
 
-_PROMPT_HASH = hashlib.sha256(_LOOP_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+#: PromptedOutput's instruction (the default asks for "a JSON object compatible
+#: with this schema"; flash-lite answered it with the schema's own shape,
+#: {"properties": {...}}, or with the rendered "Key idea: ..." text).
+LOOP_OUTPUT_TEMPLATE = (
+    "Reply with ONLY one JSON object with exactly these three string keys, in "
+    'this order: {{"key_idea": "...", "body": "...", "question": "...?"}}. '
+    'Write the object itself — never a schema, never a "properties" or '
+    '"type" wrapper, no "Key idea:" labels, no Markdown fences, no text before '
+    "or after it. The keys mean:\n\n{schema}"
+)
+
+#: Covers everything fixed the model is told: the system prompt and the output
+#: instruction (tests/evals/loop_tutor.py pins recordings to it).
+_PROMPT_HASH = hashlib.sha256(
+    (_LOOP_SYSTEM_PROMPT + "\x00" + LOOP_OUTPUT_TEMPLATE).encode("utf-8")
+).hexdigest()[:12]
 
 
 # ── Per-turn prefix (user-message side) ────────────────────────────────────
@@ -202,13 +229,63 @@ _BAND_FORMATS: dict[Band, str] = {
         "hints."
     ),
     "develop": (
-        "Band format (developing): problem-first. Hints only when asked, "
-        "never above the ceiling; no worked example unless the ceiling "
-        "allows H4."
+        "Band format (developing): problem-first — the student does the "
+        "work on their own problem or the loop's check item; you never make "
+        "up a problem of your own below H4. Hints only when asked, never "
+        "above the ceiling; no worked example unless the ceiling allows H4."
     ),
     "profic": (
         "Band format (proficient): pose the problem; verification-only "
         "feedback (correct / not yet); elaborate only if asked."
+    ),
+}
+
+#: What the rung ceiling means for each field of the structured turn (PKG-07
+#: Task 9: the rung judge reads the key_idea and the question too, and every
+#: slot wrote a concept key idea or a next-step question under an H1 ceiling).
+CEILING_GUIDE: dict[int, str] = {
+    0: (
+        "At H0 the whole turn only acknowledges or verifies what the student "
+        "already said: key_idea states the verdict or confirms their step (e.g. "
+        "'Your step is right.'); body adds no new fact, rule, example or practice "
+        "problem; question asks them to carry on in their own words (e.g. 'What "
+        "will you do next?'). No concept is named that the student did not name."
+    ),
+    1: (
+        "At H1 the turn adds NO content: key_idea names the student's move and "
+        "states no fact about the subject (e.g. 'Start by pinning down what the "
+        "question asks.'); body at most restates the student's own words or the "
+        "verdict; question is a generic focus question about their own thinking "
+        "(e.g. 'What is the first thing you need to figure out?') that does not "
+        "name or describe the idea that answers the item. No concept, definition, "
+        "rule, step, example or practice problem of your own — not even one that "
+        "looks unrelated."
+    ),
+    2: (
+        "At H2 you may point to ONE concept or definition in general terms (quote "
+        "the course passage if a tool returned one) without applying it to this "
+        "item: key_idea and body name the idea; question asks the student to "
+        "recall or reread it in general (e.g. 'What does your definition of X "
+        "say?'), not about this item and never what to do next on it. No worked example, no step of the item, no "
+        "practice or example problem of your own, and nothing that computes a "
+        "result."
+    ),
+    3: (
+        "At H3 key_idea and body may name the idea that applies; question leads "
+        "to the very next step of the item only. Do not do that step or give any "
+        "part of the answer; no worked example, no practice or example problem "
+        "of your own (the loop poses the vetted check items), and nothing that "
+        "computes a result — use the student's own words or example instead."
+    ),
+    4: (
+        "At H4 you may walk through a DIFFERENT problem with the same structure "
+        "(an isomorph) in key_idea and body; question hands the student the "
+        "matching step on their own item. Never solve the item itself."
+    ),
+    5: (
+        "At H5 key_idea names the idea; body may show a partial solution with "
+        "the last step(s) left blank for the student; question asks them to fill "
+        "the blank. Never write the blanked step or the final answer."
     ),
 }
 
@@ -276,6 +353,8 @@ def phase_prefix(
             f"{intent(rung)} Anything above H{int(rung)} is forbidden this turn."
         ),
     ]
+    if int(rung) in CEILING_GUIDE:  # H6 (released) needs no guide
+        lines.append(CEILING_GUIDE[int(rung)])
     if verdict is not None:
         lines.append(f"[VERDICT: {verdict}] {_VERDICT_SENTENCES[verdict]}")
     if answer_released:
@@ -322,15 +401,49 @@ def _validate_loop_turn(ctx: RunContext[SaplingDeps], output: LoopTurnOut) -> Lo
     return output
 
 
+# ── Tool rounds (PKG-07 Task 9 cost fix) ──────────────────────────────────
+
+
+def _tool_round_done(messages: list) -> bool:
+    """True once THIS run has a tool result: a ToolReturnPart after the run's
+    prompt (the last request carrying a UserPromptPart). Earlier turns' tool
+    rounds in message_history do not count."""
+    start = 0
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if isinstance(m, ModelRequest) and any(isinstance(p, UserPromptPart) for p in m.parts):
+            start = i
+            break
+    return any(
+        isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts)
+        for m in messages[start:]
+    )
+
+
+async def _tools_until_first_round(
+    ctx: RunContext[SaplingDeps], tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
+    """Offer the read tools only until the run's first tool round. Live
+    finding (#646, HANDOFF-07): with tools still declared after a tool call,
+    gemini-2.5-flash-lite answers EMPTY, and pydantic-ai re-sends that request
+    once per output retry — 3 paid, empty requests per tool turn before the
+    route's tool-less rescue. Gemini writes the structured turn when no tools
+    are declared, so the request after a tool round declares none: a tool turn
+    is 2 requests. The prompt already allows each tool at most once per turn,
+    and both may be called in the same (first) round."""
+    return [] if _tool_round_done(ctx.messages) else tool_defs
+
+
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 loop_tutor_agent = Agent[SaplingDeps, LoopTurnOut](
     model=model_for("loop_tutor"),
     deps_type=SaplingDeps,
-    output_type=PromptedOutput(LoopTurnOut),
+    output_type=PromptedOutput(LoopTurnOut, template=LOOP_OUTPUT_TEMPLATE),
     output_retries=LOOP_OUTPUT_RETRIES,
     system_prompt=_LOOP_SYSTEM_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "loop_tutor"},
     tools=_build_tools(learning_loop=True),
+    capabilities=[PrepareTools(_tools_until_first_round)],
 )
 loop_tutor_agent.output_validator(_validate_loop_turn)

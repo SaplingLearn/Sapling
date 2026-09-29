@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "03100ab3c0a9e54fdc28c8135bf2586d08fbda6740d7256160894e5f4d290bfd",
+  "output": {
+    "evidence": "The factorial function's base case is factorial(0) = 1. This explicit condition stops the recursion...",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "18e1889cc13324d616570e83c16895a2202f6b9c5c5e8c1e65b29212289a1a3e"
+}
