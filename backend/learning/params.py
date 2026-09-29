@@ -211,6 +211,16 @@ CHECK_REFUSALS_AS_IDK = 2
 LEAK_NGRAM = 6
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
+# PKG-08 † — engineering choices with no validated cut-point (spec §13 A6 values).
+# Difficulty shifts p_known before the §3.1 observation likelihood; LLM-generated
+# items carry no calibrated parameters (research §Probe, last sentence).
+PROBE_DIFFICULTY_SHIFT: dict[int, float] = {1: 0.15, 2: 0.0, 3: -0.15}
+# "repeated idk" (§3.3) given a number.
+NOVICE_FLOOR_IDK = 2
+# Derived, so no literal repeats the spec's "difficulty 1" or the skill count.
+PROBE_EASIEST_DIFFICULTY = min(CHECK_ITEM_DIFFICULTIES)
+PROBE_MAX_SKILLS = PROBE_SESSION_CAP // PROBE_ITEMS_PER_SKILL_MIN
+assert set(PROBE_DIFFICULTY_SHIFT) == set(CHECK_ITEM_DIFFICULTIES)
 CHECK_ITEM_MIN_RUBRIC = 2
 CHECK_ITEM_MIN_WRONG = 1
 MISCONCEPTION_ROLLUP_MIN_USERS = 5
