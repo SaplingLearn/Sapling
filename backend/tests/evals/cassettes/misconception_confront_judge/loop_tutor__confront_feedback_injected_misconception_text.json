@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "cb3c2db8cf41195478289d2ec3919b0301887d74f02f82532b696d84c910394f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What would happen if you tried to compute factorial(3) in your head without a base case?",
+    "only_states_correction": false
+  },
+  "served_sha256": "5f2a176485ad0ffa1251ae0bb90daf189f3dc92b6341e3946e34e76530c6b6a8"
+}

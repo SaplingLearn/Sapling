@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "e747e9906d9ea9f91bfd2330cf4ed74ce2b05a64908c150b370f30141a813635",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What is the slope of the line f(x) = x, and what does your rule predict the derivative is?",
+    "only_states_correction": false
+  },
+  "served_sha256": "44efd9a2dc4260d4e6aa38cd126d610a743fea07b0fd0a3ef569efe00a38a69b"
+}

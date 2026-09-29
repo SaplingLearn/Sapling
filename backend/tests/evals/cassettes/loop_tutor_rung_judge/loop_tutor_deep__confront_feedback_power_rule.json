@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "fad98bbcde6dda5e511aed240abf2c95025df9fe04964fe16de22044be28f066",
+  "output": {
+    "evidence": "The answer: By the power rule the derivative of x^3 is 3x^2.",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "3ecb77e0c4dc663235229d6cc659093c485a73fc3138ef6130be8c4188ff91cd"
+}

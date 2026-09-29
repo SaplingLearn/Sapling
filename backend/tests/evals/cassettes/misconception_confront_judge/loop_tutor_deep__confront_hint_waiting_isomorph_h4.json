@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "058d561bcb0cda3956d731c2c28419de88d3f9a85f548c93641542b407c2c89e",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Based on a sketch of the graph of y = x^2, what would you estimate the slope to be at x = 2, and what slope does your rule for x^4 suggest for x^2 at that same point?",
+    "only_states_correction": false
+  },
+  "served_sha256": "37be2507c75832b15e6154d6f2c62df5a4ba586ea87cae93e4f36e227911e6ea"
+}

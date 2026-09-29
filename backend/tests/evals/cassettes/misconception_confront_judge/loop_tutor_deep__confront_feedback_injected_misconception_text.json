@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "cb3c2db8cf41195478289d2ec3919b0301887d74f02f82532b696d84c910394f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What value would the function try to calculate next after `factorial(0)`?",
+    "only_states_correction": false
+  },
+  "served_sha256": "293302c66758851bfb960bb37badc00ba8d9776e10cee2cccf2d875f5ecd1432"
+}

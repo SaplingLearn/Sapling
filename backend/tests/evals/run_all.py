@@ -50,6 +50,9 @@ DATASETS = [
     # PKG-09: the session-close agent, gated on the SERVED close
     # (routes.learn_loop.served_close).
     "session_close",
+    # PKG-10: the confronting turn (loop tutor + the confrontation line), on the
+    # SERVED path, one dataset per slot it is served on (deep, and standard).
+    "misconception_confront",
 ]
 
 

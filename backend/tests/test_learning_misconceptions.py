@@ -1182,3 +1182,76 @@ def test_grade_answer_never_persists_the_misconception_store():
         for a in node.names
     }
     assert names and not names & {"record", "resolve", "open_for", "rollup"}
+
+
+# ── the confrontation eval gates what the route serves (spec §13 A75) ───────
+
+
+def _confront_eval():
+    import importlib
+    import sys
+
+    evals = BACKEND / "tests" / "evals"
+    for p in (str(evals), str(BACKEND)):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    return importlib.import_module("misconception_confront")
+
+
+def test_confront_tiers_match_the_eval_baselines():
+    """routes.learn_loop.CONFRONT_TIERS is exactly the tiers whose fresh
+    recordings (baselines.json `misconception_confront_routing`, one score
+    block per run, >= 3 runs) ALL score 1.0 on every served gate with no case
+    raised — A49's min-of-N direction; diagnostics never route."""
+    import json
+
+    from agents.loop_tutor import LOOP_ROUTABLE_TIERS, LOOP_TIER_SLOTS
+    from routes.learn_loop import CONFRONT_TIERS
+
+    mod = _confront_eval()
+    baselines = json.loads((BACKEND / "tests" / "evals" / "baselines.json").read_text())
+    routing = baselines["misconception_confront_routing"]
+    assert routing["runs"] >= 3
+    passing = set()
+    for tier, slot in LOOP_TIER_SLOTS.items():
+        if slot not in mod.CONFRONT_SLOTS:
+            continue
+        assert set(baselines[mod.dataset_name(slot)]) == set(mod.SERVED_GATES) | set(
+            mod.DIAGNOSTICS
+        )
+        runs = routing.get(slot) or []
+        assert len(runs) == routing["runs"], slot
+        if all(not run["_raised"] and all(run[g] >= 1.0 for g in mod.SERVED_GATES) for run in runs):
+            passing.add(tier)
+    assert passing, "no tier confronts on every served gate"
+    assert set(CONFRONT_TIERS) == passing
+    assert set(CONFRONT_TIERS) <= set(LOOP_ROUTABLE_TIERS)
+
+
+def test_the_eval_assembles_the_route_s_confronting_message():
+    """The eval's message is the route's: the prefix, then the line built by
+    routes.learn_loop.confront_line_for, placed by with_confrontation."""
+    from routes.learn_loop import confront_line_for
+
+    mod = _confront_eval()
+    for case in mod.CASES:
+        msg = mod.assembled(case.inputs)
+        line = confront_line_for(case.metadata["misconception"])
+        assert msg.count(line) == 1
+        assert msg.index("[LOOP PHASE:") < msg.index(line)
+        if "[STUDENT MESSAGE]" in msg:
+            assert msg.index(line) < msg.index("[STUDENT MESSAGE]")
+    assert len(mod.CASES) <= 8
+
+
+def test_every_confrontation_cassette_is_fresh():
+    """Replay would raise on a stale recording; pin it hermetically too."""
+    from _replay import load_cassette
+    from loop_tutor import LoopRecording
+
+    mod = _confront_eval()
+    for slot in mod.CONFRONT_SLOTS:
+        for case in mod.CASES:
+            body = load_cassette(mod._cassette_dataset(slot), case.name)
+            assert body is not None, f"{slot}/{case.name} not recorded"
+            mod.check_fresh(LoopRecording.model_validate(body), slot, case.inputs)
