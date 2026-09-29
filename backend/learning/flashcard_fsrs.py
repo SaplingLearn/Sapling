@@ -3,8 +3,11 @@ target by PKG-12's reopen).
 
 `flashcard_fsrs_update` is the one place a self-rated flashcard's FSRS state
 moves: `routes/flashcards.py::rate_card` (loop path) and `learning/review.py`
-(the daily review queue) both call it, so a card rated in either surface is
-scheduled identically. Pure: no db, no clock — the caller passes `now` and
+(the daily review queue) both call it, so both surfaces run the same FSRS
+update. They differ in the retention target only: `rate_card` schedules at
+`FSRS_RETENTION_DEFAULT`, the review queue at its own target
+(`review.retention_target`: higher in an exam window, lower for a large set),
+so the same rating can yield a different `due_at` in the two surfaces. Pure: no db, no clock — the caller passes `now` and
 writes the returned columns itself.
 
 ADAPTER around learning.fsrs.next_state/interval (HANDOFF-02:
