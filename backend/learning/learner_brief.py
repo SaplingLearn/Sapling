@@ -37,6 +37,7 @@ from learning.session_close import ensure_session_row
 from services.academics import course_offering_ids
 from services.encryption import decrypt_json_column, encrypt_if_present
 from services.exam_proximity import days_until_next_exam
+from services.session_modes import NOT_REVIEW
 from services.prompt_safety import (
     neutralise_control_tags,
     untrusted_envelope_overhead,
@@ -101,6 +102,7 @@ def _read_closes(user_id: str, course_id: str | None) -> list[dict]:
             "user_id": f"eq.{user_id}",
             "offering_id": f"in.({','.join(offerings)})",
             "close_json": "not.is.null",
+            **NOT_REVIEW,  # PKG-12: review sessions carry no close
         },
         order="started_at.desc",
         limit=LEARNER_BRIEF_LAST_CLOSES,

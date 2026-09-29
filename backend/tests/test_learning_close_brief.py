@@ -834,6 +834,7 @@ def test_brief_has_header_envelope_and_sections(monkeypatch):
         "user_id": "eq.u",
         "offering_id": "in.(off-1)",
         "close_json": "not.is.null",
+        "mode": "neq.review",  # PKG-12: review sessions carry no close
     }
     assert sessions[3]["order"] == "started_at.desc"
     names = [c for c in calls if c[0] == "graph_nodes"][0]
@@ -1075,7 +1076,11 @@ class _Tables:
         class _T:
             def select(self, cols, filters=None, **kw):
                 tables.calls.append(("select", name, cols, dict(filters or {}), kw))
-                return [dict(r) for r in tables.rows.get(name, [])]
+                rows = [dict(r) for r in tables.rows.get(name, [])]
+                mode = (filters or {}).get("mode", "")
+                if mode.startswith("neq."):  # PostgREST's NOT_REVIEW, honoured
+                    rows = [r for r in rows if r.get("mode") != mode[len("neq.") :]]
+                return rows
 
             def insert(self, row):
                 tables.calls.append(("insert", name, row))
@@ -1992,3 +1997,85 @@ def test_answers_wait_while_a_close_is_being_written(monkeypatch, path):
     finally:
         app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
     assert r.status_code == 409 and r.json()["detail"] == "session close in progress"
+
+
+# ── PKG-12 interactions: a review session is never closed ───────────────────
+
+
+def test_close_route_404s_a_review_session_and_writes_nothing(monkeypatch):
+    """A review session (mode='review', PKG-12) is not a tutor session: /close 404s
+    it before any claim, read or write, so it never gets close_json or loop_brief."""
+    import routes.learn_loop as loop
+
+    tables, events, store = _wire_close(
+        monkeypatch, evidence=[EVIDENCE_N1], loop_state={"sr": {}, "review": {"spent_s": 0}}
+    )
+    tables.rows["sessions"][0]["mode"] = "review"
+    monkeypatch.setattr(loop, "run_session_close", _fake_run(AssertionError()))
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 404
+    assert events == [] and not tables.writes("update", "sessions")
+    assert not tables.writes("insert", "sessions")
+    assert "close_claim" not in store["doc"] and "phase" not in store["doc"]
+    sel = [c for c in tables.calls if c[1] == "sessions"][0]
+    assert sel[3]["mode"] == "neq.review"
+
+
+def test_end_session_never_closes_a_review_session(monkeypatch):
+    import routes.learn as learn
+    import routes.learn_loop as loop
+
+    _gate(monkeypatch, True)
+    tables = _Tables(
+        {
+            "sessions": [
+                {
+                    "id": "s1",
+                    "user_id": UID,
+                    "mode": "review",
+                    "started_at": "2026-09-29T00:00:00+00:00",
+                    "loop_state": {"sr": {}, "review": {}},
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(learn, "table", tables)
+    monkeypatch.setattr(loop, "table", tables)
+    called = []
+
+    async def fake_close(*a, **k):
+        called.append(a)
+
+    monkeypatch.setattr("routes.learn_loop.close_session", fake_close)
+    r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 404  # PKG-12: the legacy end 404s a review session
+    assert called == [] and not tables.writes("update", "sessions")
+
+
+def test_loop_history_reads_no_brief_off_a_review_session(monkeypatch):
+    import routes.learn_loop as loop
+
+    tables = _Tables({"sessions": [{"id": "s1", "mode": "review", "loop_brief": None}]})
+    monkeypatch.setattr(loop, "table", tables)
+    monkeypatch.setattr(loop, "_load_message_history", lambda sid: [])
+    monkeypatch.setattr(loop, "store_brief", lambda *a, **k: pytest.fail("no brief on review"))
+    assert loop._load_loop_history("s1", user_id=UID, course_id="c1", loop_state={}) == []
+
+
+def test_review_routes_ignore_the_tutor_close_phase(monkeypatch):
+    """The review queue runs on its own session: a `phase: close` document (a closed
+    tutor session's marker) never blocks /review/next — no teaching guard there."""
+    from learning import review
+
+    _gate(monkeypatch, True)
+    monkeypatch.setattr("routes.learn_loop.user_offering_ids_for_course", lambda u, c: ["off-1"])
+    monkeypatch.setattr(
+        review,
+        "load_or_create_review_session",
+        lambda u, c, now: ("rs-1", {"phase": "close", "sr": {}, "review": {"spent_s": 0}}),
+    )
+    monkeypatch.setattr(review, "review_retention", lambda u, c: 0.9)
+    monkeypatch.setattr(review, "due_queue_with_stats", lambda u, c, now, **kw: ([], {"due": {}}))
+    r = client.get(f"/api/learn/loop/review/next?user_id={UID}&course_id=c1")
+    assert r.status_code == 200, r.text
+    assert r.json()["item"] is None and r.json()["session_id"] == "rs-1"

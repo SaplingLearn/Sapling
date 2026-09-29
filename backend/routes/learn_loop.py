@@ -506,7 +506,7 @@ def _load_loop_history(
     row yet (a lazy session), or `user_id=None`, reads only. Leading assistant
     messages are kept: dropping them would move the window every turn."""
     rows = table("sessions").select(
-        "id,loop_brief", filters={"id": f"eq.{session_id}"}, limit=1
+        "id,loop_brief", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
     )
     brief = ""
     if rows:
@@ -2731,7 +2731,8 @@ async def close_session(
     else:
         rows = table("sessions").select(
             "id,user_id,loop_state,close_json,close_phase",
-            filters={"id": f"eq.{session_id}"},
+            # PKG-12: a review session is not a tutor session — never closed (404)
+            filters={"id": f"eq.{session_id}", **NOT_REVIEW},
             limit=1,
         )
         if not rows:
@@ -2815,7 +2816,7 @@ def end_session(body: EndSessionBody, request: Request) -> None:
         return None
     try:
         rows = table("sessions").select(
-            "loop_state", filters={"id": f"eq.{body.session_id}"}, limit=1
+            "loop_state", filters={"id": f"eq.{body.session_id}", **NOT_REVIEW}, limit=1
         )
         if rows and rows[0].get("loop_state"):
             run_agent_sync(
