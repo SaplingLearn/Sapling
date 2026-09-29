@@ -20,7 +20,16 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 LEARNING = BACKEND / "learning"
 MIGRATIONS = BACKEND / "db" / "migrations"
 
-PURE_MODULES = ("bkt.py", "fsrs.py", "policy.py", "gates.py", "ladder.py", "leak.py")
+PURE_MODULES = (
+    "bkt.py",
+    "fsrs.py",
+    "policy.py",
+    "gates.py",
+    "ladder.py",
+    "leak.py",
+    "probe.py",
+    "planner.py",
+)
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
 SERIES_AGENT_TASKS = (
@@ -1156,3 +1165,19 @@ def test_inv_23_ai_budget_checked_before_every_run():
         found, bad = found + n, bad + b
     assert found >= 2, f"expected at least the grader and decision run sites, found {found}"
     assert bad == [], f"agent run with no earlier ai_budget.check( in the same function: {bad}"
+
+
+def test_inv_16_probe_planner_pure():
+    """PKG-08: the probe and planner are policy, not I/O. Named explicitly so a
+    later edit to PURE_MODULES cannot drop them without this test noticing."""
+    for name in ("probe.py", "planner.py"):
+        assert name in PURE_MODULES, f"{name} fell out of PURE_MODULES"
+        path = LEARNING / name
+        assert path.exists(), f"{name} missing"
+        bad = [r for r in _imports_of(path) if r in FORBIDDEN_IMPORT_ROOTS]
+        assert not bad, f"{name} imports {bad}"
+        text = path.read_text()
+        assert "table(" not in text and "rpc(" not in text, f"{name} touches the database"
+        assert "learning.checks" not in text, (
+            f"{name} must stay decoupled from checks.py (Protocol instead)"
+        )
