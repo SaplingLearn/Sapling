@@ -2906,8 +2906,18 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             reason=body.reason,
             idk=body.idk,
         )
+        # A76: every grading caller decides the re-check through the one helper
+        # (no session log here: the node's journal decides)
+        recheck = recheck_after_release(
+            body.user_id, body.node_id, None, now=_posttest_now(), item=item
+        )
         outcome = await grade_answer(
-            _item_like(item), answer, deps=deps, node_id=body.node_id, max_rung=int(Rung.H0)
+            _item_like(item),
+            answer,
+            deps=deps,
+            node_id=body.node_id,
+            max_rung=int(Rung.H0),
+            same_session_recheck=recheck,
         )
         if outcome.refused:  # A33: checked first — a refused outcome is also unavailable
             return {"graded": False, "refused": True}
