@@ -621,22 +621,28 @@ E2E_LOOP_PHASE_PATTERNS: dict[str, str] = {
     "hint": "the student asked for help with the check item below",
     "feedback": "the student has just submitted an answer to the check",
 }
+# The body and question reach the student verbatim at H0/H1 (the key idea is
+# then code's); the journey asserts these two.
+E2E_LOOP_HINT_BODY = "Reread the item and name the one thing it wants you to state."
+E2E_LOOP_HINT_QUESTION = "What is the first thing you need before you can answer this?"
 E2E_LOOP_HINT_TURN = {
     "key_idea": (
         "[e2e-function-model] Deterministic loop hint: start from what the check "
         "item asks for."
     ),
-    "body": "Reread the item and name the one thing it wants you to state.",
-    "question": "What is the first thing you need before you can answer this?",
+    "body": E2E_LOOP_HINT_BODY,
+    "question": E2E_LOOP_HINT_QUESTION,
 }
 E2E_LOOP_HINT_REPLY = render_turn(E2E_LOOP_HINT_TURN)
+E2E_LOOP_FEEDBACK_BODY = "Look at which part of the item your answer addressed."
+E2E_LOOP_FEEDBACK_QUESTION = "How would you check that part yourself next time?"
 E2E_LOOP_FEEDBACK_TURN = {
     "key_idea": (
         "[e2e-function-model] Deterministic loop feedback: compare your answer "
         "with what the check item asks for."
     ),
-    "body": "Look at which part of the item your answer addressed.",
-    "question": "How would you check that part yourself next time?",
+    "body": E2E_LOOP_FEEDBACK_BODY,
+    "question": E2E_LOOP_FEEDBACK_QUESTION,
 }
 E2E_LOOP_FEEDBACK_REPLY = render_turn(E2E_LOOP_FEEDBACK_TURN)
 

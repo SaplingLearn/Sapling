@@ -1039,3 +1039,28 @@ def test_loop_constants_do_not_state_a_seeded_answer():
     # reference and the prompt: a token there would grade EVERY answer correct.
     assert m.E2E_GRADER_CORRECT_TOKEN not in m.E2E_LOOP_REFERENCE
     assert m.E2E_LOOP_PROBE_PROMPT.startswith("[e2e-loop]")
+
+
+def test_loop_turn_body_and_question_survive_the_served_path_at_the_journeys_rung():
+    """frontend/e2e/learn-loop.spec.ts asserts the model-written body and question
+    of the hint (H1) and correct-verdict feedback turns: at H0/H1 the route serves
+    the KEY IDEA from code (routes.learn_loop.served_render), so the journey pins
+    the two fields that reach the student verbatim."""
+    import agents.function_handlers_e2e as m
+    from learning.ladder import Rung
+    from routes.learn_loop import served_render
+
+    for phase, turn, body, question, verdict in (
+        ("hint", m.E2E_LOOP_HINT_TURN, m.E2E_LOOP_HINT_BODY, m.E2E_LOOP_HINT_QUESTION, None),
+        (
+            "feedback",
+            m.E2E_LOOP_FEEDBACK_TURN,
+            m.E2E_LOOP_FEEDBACK_BODY,
+            m.E2E_LOOP_FEEDBACK_QUESTION,
+            "correct",
+        ),
+    ):
+        assert (turn["body"], turn["question"]) == (body, question)
+        for rung in (Rung.H0, Rung.H1):
+            served = served_render(turn, phase=phase, rung=rung, verdict=verdict)
+            assert body in served and question in served
