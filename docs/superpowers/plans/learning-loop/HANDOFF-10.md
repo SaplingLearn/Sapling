@@ -28,6 +28,7 @@ Every graded explicit submission on the loop check route now runs the spec §3.3
 ## Constants chosen
 
 - `MISCONCEPTION_MIN_ISOMORPHS = 2` (spec §3.3 "≥ 2 isomorphs").
+- `MISCONCEPTION_RECENT_DAYS = 30 †` (fix round F6; spec §13 A75(i); A/B candidate).
 - `GAP_CONFIDENCE_MAX = 0.4 †` (spec §13 A6; A/B candidate; unused on the served path until a student-confidence field exists).
 - `NOVICE_FLOOR_IDK = 2 †` (spec §13 A6; PKG-08 added it — verified present).
 - `MISCONCEPTION_KEY_MAX_CHARS = 64` (the PKG-09 brief's key pattern, now the store's).
@@ -49,14 +50,14 @@ Every graded explicit submission on the loop check route now runs the spec §3.3
 - Prompt "no eval dataset, no new E2E constant" → a `misconception_confront` dataset (7 cases, two slots, min-of-3) and `E2E_GRADER_WRONG_REASON_TOKEN` → session rules: gate the SERVED path; every newly wired request-path decision gets a function-mode path + test.
 - `FeedbackNeverEndsInAnswer` in this dataset matches the final answer as a token (loop_tutor's substring test counts a one-character answer inside any other number of a confronting case).
 - `test_learning_decisions.py` (PKG-05b) pins changed: `grade_answer` emits one more `decision.made` (`match_wrong_reason`, latency 0).
-- `CLAUDE.md`'s encrypted-column list is NOT updated with `misconceptions.evidence_text` (session rule: this session does not edit CLAUDE.md) → coordinator item.
+- `CLAUDE.md`'s encrypted-column list gains `misconceptions.evidence_text` (fix round; the coordinator authorised this one line).
 
 ## Known gaps
 
 - Student-stated confidence is `None` (A16's body has no confidence field; post-series reason/confidence tier), so only the two-isomorph path yields `misconception` today, and `gap` never fires on the served path.
 - A misconception recorded mid-session reaches the learner brief only from the next session (the brief is built once, A19); in-session the confrontation line carries it.
 - A marker waits while no turn has room (develop-band teach turns sit below H4; soft budget/deep cap downgrade to standard): the confrontation may never happen in that session; the store row and the next brief still carry the key.
-- `resolve()` has no caller (PKG-12's review grading or PKG-14's post-test is the natural one); `rollup()` has no caller (instructor surface / quiz-agent switch are open questions).
+- `resolve()` has no caller (PKG-12's review grading or PKG-14's post-test is the natural one): rows stay open; since the fix round the brief and the close list only rows seen within `MISCONCEPTION_RECENT_DAYS` (30 †), so an old misconception stops re-listing, but it still counts in the rollup. `rollup()` has no caller (instructor surface / quiz-agent switch are open questions). `not_known` is unreachable on the served path (`_wrong_key` gives a correct answer no key).
 - A wrong key longer than 64 characters (no length bound on drafted keys, `checks.wrong_key_form`) is never stored (WARNING).
 - The probe (PKG-08) and the review (PKG-12) pass no loop state: their answers never feed the rule.
 - The verdict is computed over the request's loop-state snapshot; a concurrent grade of another item in the same session (not reachable through `current`, but possible around `/check/next`) could miss one attempt in that one verdict — the log itself is re-applied to the fresh document and loses nothing.
@@ -77,6 +78,20 @@ grep -c "HAVING count(DISTINCT m.user_id) >= 5" backend/db/migrations/*_learning
 grep -cE "^def (record|slip_or_misconception|rollup)\(" backend/learning/misconceptions.py        → 3
 ```
 
+## Fix round (2026-09-29, after three reviews)
+
+- **MAJOR F1 (evidence integrity).** After an unkeyed wrong answer the isomorph re-ask served the twin right after the feedback turn released the reference, graded as a full-weight unassisted first attempt (recheck detection keys on the same question_hash). Now each Attempt records `released` / `after_release`, `released_on_node(state, node)` says a concept's reference was released earlier this session, and `_grade_submission` grades such an item `same_session_recheck=True`: weight × WEIGHT_SAME_SESSION_RECHECK, the unassisted streak and the strong-channel count unchanged (graph_service's re-check rule). A twin after a CORRECT answer is unaffected. Tests through the route, grade_answer and apply_graph_update. — 3e280376, 31d5b1b2, 2ba00440
+- **F2** the marker is concept-scoped (`_confront_line` needs `marker.node_id == concept_node`, so misconception_active never routes another concept deep) and `_advance_cursor` drops it. — 5d696699
+- **F3** the item-drafted text (not the route's wording) is leak-checked strict with NO provenance ("stays four, not three" for 4x^3 is withheld); PKG-04 drafting refuses a wrong reason stating the final answer. — 70c40aec, 178a0f17 (70c40aec alone left the PKG-06 inertness scan red; 178a0f17 fixes it), 5d696699
+- **F4** a confronting deep turn adds every model request of its run to `deep_requests`. — d2383c49, fc2e0dd2
+- **F5** NEW migration `20260929143810_learning_misconceptions_atomic.sql`: open duplicates merged, partial UNIQUE index on the open key, `misconception_record(...)` INSERT … ON CONFLICT increment (`record()` is one rpc), validated on a throwaway Postgres 15; `_close_misconception_keys` de-duplicates; an integration-marked test (`tests/integration/test_misconceptions_record_db.py`, 8 concurrent records → one row, count 8; not run here). — 6408132b, 96926dba
+- **F6** the rollup re-created with `g.user_id = m.user_id` (same migration); recency window `MISCONCEPTION_RECENT_DAYS = 30 †` on `open_for`. — 6408132b
+- **Conformance 3** `decision.made` carries `prior`; the prior-path wrong-key match names the grader's backend. — fdac54d4
+- **Conformance 8** the misconception row is written only after the save that recorded the grade under our claim. — cbfe4cbe
+- **Formatting** the whole-file ruff reflows of `agents/function_handlers_e2e.py`, `tests/test_e2e_function_handlers.py` and two `routes/learn_loop.py` hunks are reverted. — e15dfc12, 2ba00440
+- **Conformance 2 (eval record, stated in full)** standard's three runs: run 1 Confronts 0.43 (RetriesUsed 0.57); run 2 Confronts 0.50 with `_raised: true` (a case errored); run 3 Confronts 0.43, FeedbackNeverEndsInAnswer 0.857 (RetriesUsed 0.57). Deep: every served gate 1.0 in all three (RetriesUsed 0.57 / 0.86 / 0.71). Deep-cap interaction: a develop/profic session that has spent `LOOP_SESSION_MAX_DEEP_REQUESTS` routes the confronting turn to standard, which carries no line — the marker waits the rest of the session.
+- Suite after the fix round: 7862 passed, 140 skipped (the 2 new skips are the integration-marked tests); `run_all` replay 16/16 PASS; no re-recording (≤ $1 cap: $0 spent).
+
 ## Open questions for the series owner
 
 1. Should `quiz`'s `read_misconceptions_for_course` switch to `rollup()` (it would need the course → graph_nodes join, not offerings; the consent check at `graph_read.py:516` stays)? Took: untouched.
@@ -85,7 +100,7 @@ grep -cE "^def (record|slip_or_misconception|rollup)\(" backend/learning/misconc
 4. `match_wrong_reason` is a Jev candidate (A24, PKG-15): with `prior` it makes no model call today, so a Jev backend would first need a reason to call it without `prior`.
 5. Tighten the line's body length to cut deep retries (then re-record the three runs)? Took: diagnostic only.
 6. Should a `slip` after a recorded misconception `resolve()` the row? Took: no (spec names no resolve rule).
-7. CLAUDE.md's encryption list gains `misconceptions.evidence_text` (coordinator).
+7. (Resolved in the fix round: CLAUDE.md lists `misconceptions.evidence_text`.)
 
 ## Post-hoc changes
 
