@@ -1235,6 +1235,7 @@ class _LoopTurn:
         self.planned = None
         self.given = ""
         self.confront_line, self.confront_used = None, None
+        self.run_requests = 0
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
 
@@ -1446,6 +1447,9 @@ class _LoopTurn:
         return evs
 
     def record_usage(self, run_result) -> None:
+        # PKG-10 (fix round F4): the model requests this turn cost (a run, its
+        # output/leak retries, a continuation) — a confronting turn counts them all
+        self.run_requests += _requests_of(run_result)
         record_agent_usage(run_result, feature="loop_tutor", task=self.slot, user_id=self.user_id)
 
     def _leak_rung(self) -> Rung:
@@ -1659,7 +1663,9 @@ class _LoopTurn:
         if self.tier != "none":
             state["tutor_requests"] = int(state.get("tutor_requests") or 0) + 1
             if self.tier == "deep":
-                state["deep_requests"] = int(state.get("deep_requests") or 0) + 1
+                # A39: one per run; PKG-10 (F4): a confronting run counts every request
+                spent = max(1, self.run_requests) if self.confront_used is not None else 1
+                state["deep_requests"] = int(state.get("deep_requests") or 0) + spent
         if self.revealed_hash:  # an H4 sibling shown: never a future check (A23)
             revealed = list(state.get("revealed") or [])
             if self.revealed_hash not in revealed:
@@ -2443,6 +2449,17 @@ async def _grade_submission(
     # flushed again (it closes via /check/next once the claim is stale).
     state = _update_loop_state(body.session_id, record_grade_and_diagnosis)
     return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
+
+
+def _requests_of(run_result) -> int:
+    """Model requests a run reports (RunResult.usage / UnfinishedRun.usage()); 0 unknown."""
+    usage = getattr(run_result, "usage", None)
+    if callable(usage):
+        usage = usage()
+    try:
+        return int(getattr(usage, "requests", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _write_misconception(user_id: str, outcome, item, answer: CheckAnswer) -> None:

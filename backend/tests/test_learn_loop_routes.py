@@ -3446,3 +3446,43 @@ def test_a_spelled_out_answer_in_the_misconception_text_is_withheld(gate_on, sea
         )
     assert "holds misconception" not in seen.get("msg", "")
     assert seams.store["doc"]["confront"] == CONFRONT
+
+
+def _counting_agent(requests: int):
+    """A loop agent whose run reports `requests` model requests (output/leak
+    retries included), as RunResult.usage does."""
+    agent, seen = MagicMock(), {}
+
+    async def _run(msg, **kw):
+        seen["msg"] = msg
+        result = _turn_result("What would your rule give for f(x) = x?")
+        result.usage = SimpleNamespace(requests=requests)
+        return result
+
+    agent.run = _run
+    return agent, seen
+
+
+@pytest.mark.parametrize("confronting,requests,counted", [(True, 3, 3), (False, 3, 1)])
+def test_a_confronting_turn_counts_its_retries_toward_the_deep_cap(
+    gate_on, seams, confronting, requests, counted
+):
+    """F4 (fix round): a confronting deep turn cannot burn three deep requests
+    for one counted — every request of its run counts toward
+    LOOP_SESSION_MAX_DEEP_REQUESTS. Other deep turns keep A39's one per run."""
+    seams.store["doc"] = {
+        **_graded("not_yet"),
+        **({"confront": dict(CONFRONT)} if confronting else {}),
+    }
+    if not confronting:
+        seams.model_tier.return_value = "deep"
+    agent, _ = _counting_agent(requests)
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        body = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "ok"}
+        ).json()
+    assert body["tier"] == "deep"
+    assert seams.store["doc"]["deep_requests"] == counted
