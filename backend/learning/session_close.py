@@ -60,6 +60,9 @@ class CloseDraft(BaseModel):
     turns: list[Turn]
     concepts: list[ConceptDelta]
     misconception_keys: list[str]
+    # the session's graded checks and how many were correct (evidence rows)
+    graded_checks: int = 0
+    correct_checks: int = 0
     # node_id -> concept name (one graph_nodes read in the route); rendering
     # only — the stored record keeps node ids (the brief resolves names itself).
     concept_names: dict[str, str] = {}
@@ -108,7 +111,10 @@ def build_close(
         if m.get("role") in _ROLES and m.get("content")
     ]
     deltas = learner_deltas or _deltas_from_evidence(evidence_rows)
+    graded = [r for r in evidence_rows or [] if r.get("correct") is not None]
     return CloseDraft(
+        graded_checks=len(graded),
+        correct_checks=sum(1 for r in graded if r.get("correct")),
         turns=kept[-LOOP_HISTORY_MAX_MESSAGES:],
         concepts=[ConceptDelta(node_id=n, p_before=b, p_after=a) for n, (b, a) in deltas.items()],
         misconception_keys=list(dict.fromkeys(k for k in misconception_keys or [] if k)),

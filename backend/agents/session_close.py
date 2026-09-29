@@ -117,8 +117,8 @@ session_close_agent = Agent[SaplingDeps, SessionClose](
 def _validate_close(output: SessionClose) -> SessionClose:
     """Retry (within `retries=2` / CLOSE_LIMITS) a close whose shape the served
     path would otherwise have to cut: an incomplete summary, a plan that is not
-    "If …, then …", a self-evaluation that is not one question, or a plan or
-    question about "the student" instead of to them. `served_close` still
+    "If …, then …", or a self-evaluation that is not one question (structure
+    only — no word lists). `served_close` still
     enforces the same shape on whatever comes back."""
     problems = close_shape_problems(output)
     if problems:
@@ -140,10 +140,19 @@ def direction(delta) -> str:
     return "down" if delta.p_after < delta.p_before else "unchanged"
 
 
+def _facts(draft: CloseDraft) -> str:
+    """Review MINOR 5: what happened, as code-rendered sentences from the
+    evidence rows, addressed to the student."""
+    n, ok = draft.graded_checks, draft.correct_checks
+    if not n:
+        return "No check was graded this session."
+    return f"You answered {n} graded check{'' if n == 1 else 's'}: {ok} correct, {n - ok} not yet."
+
+
 def render_draft(draft: CloseDraft, *, nonce: str) -> str:
     """The user message: trusted framing, then the whole record inside ONE
     nonce envelope (tags neutralised, the nonce removed from the record)."""
-    lines = ["TRANSCRIPT:"]
+    lines = ["SESSION FACTS: " + _facts(draft), "TRANSCRIPT:"]
     lines += [f"{t.role}: {t.content}" for t in draft.turns] or ["(no turns)"]
     lines.append("CONCEPT CHANGES:")
     lines += [
@@ -210,7 +219,6 @@ async def run_session_close(
 #: A sentence end: a terminator and any closing quotes/brackets, then
 #: whitespace or the end of the text ("0.35" and "e.g" mid-text are not one).
 _SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*(?=\s|$)")
-_THIRD_PERSON = "the student"
 
 
 def complete_sentences(text: str) -> str:
@@ -230,8 +238,6 @@ def close_shape_problems(output: SessionClose) -> list[str]:
         problems.append("the plan must read exactly 'If <situation>, then <action>'")
     if not is_one_question(output.self_eval_prompt):
         problems.append("the self-evaluation must be exactly one question ending in '?'")
-    if any(_THIRD_PERSON in t.lower() for t in (output.if_then_plan, output.self_eval_prompt)):
-        problems.append("address the student as 'you' in the question and the plan")
     return problems
 
 

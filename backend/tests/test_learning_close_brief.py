@@ -713,7 +713,6 @@ def test_the_output_validator_retries_a_malformed_close_once():
     retry = [p for p in calls[1][-1].parts if isinstance(p, RetryPromptPart)][0]
     text = str(retry.content)
     assert "complete sentences" in text and "If <situation>" in text and "one question" in text
-    assert "'you'" in text  # the plan named "the student"
 
 
 def test_render_draft_labels_each_move():
@@ -2529,3 +2528,34 @@ def test_teaching_routes_wait_while_a_close_is_being_written(monkeypatch, path, 
     finally:
         app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
     assert r.status_code == 409 and r.json()["detail"] == "session close in progress"
+
+
+def test_the_rendered_record_states_what_happened_in_the_second_person():
+    """Review MINOR 5: the session record's facts are code-rendered sentences from
+    the evidence rows (graded count and outcomes), addressed to "you" — the model
+    no longer infers "their answer was evaluated" from a transcript."""
+    from agents.session_close import render_draft
+    from learning.session_close import build_close
+
+    rows = [_evidence("n1", 0.3, 0.5), _evidence("n1", 0.5, 0.4, correct=False)]
+    draft = build_close([], rows, [], {})
+    assert (draft.graded_checks, draft.correct_checks) == (2, 1)
+    text = render_draft(draft, nonce=NONCE)
+    assert "You answered 2 graded checks: 1 correct, 1 not yet." in text
+    none = render_draft(build_close([{"role": "user", "content": "hi"}], [], [], {}), nonce=NONCE)
+    assert "No check was graded this session." in none
+
+
+def test_the_shape_validator_holds_no_word_list():
+    """Review MINOR 5: the validator checks structure only (complete sentences, the
+    if-then form, one question) — no pronoun list."""
+    import agents.session_close as sc
+
+    assert not hasattr(sc, "_THIRD_PERSON")
+    out = sc.SessionClose(
+        summary="The student checked it.",
+        self_eval_prompt="Which step?",
+        if_then_plan="If the student is stuck, then review.",
+        open_misconception_keys=[],
+    )
+    assert sc.close_shape_problems(out) == []
