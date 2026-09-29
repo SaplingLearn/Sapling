@@ -1126,9 +1126,26 @@ def test_grader_spans_carry_no_labels_and_no_student_text(monkeypatch, events):
     logfire.force_flush()
     spans = exporter.exported_spans_as_dict()
     assert any("grader" in json.dumps(s["attributes"]) for s in spans), "no grader span"
-    blob = json.dumps(spans)
-    for secret in (*drawn[0].values(), "WHAT_THE_STUDENT_WROTE", "names the base case"):
+    # What a span CARRIES: its name, attributes, events and resource — never the
+    # random span/trace ids or the nanosecond timestamps, whose digits can hold a
+    # random 5-digit label by chance (A38 fix round, m10). A label counts only as
+    # a standalone token (no letter or digit on either side), which is how the
+    # message and item_results would carry it ("<label>: text", "<label>:yes").
+    carried = [
+        {k: v for k, v in s.items() if k not in ("context", "parent", "start_time", "end_time")}
+        for s in spans
+    ]
+    blob = json.dumps(carried)
+    for label in drawn[0].values():
+        assert not re.search(rf"(?<![0-9A-Za-z]){label}(?![0-9A-Za-z])", blob), label
+    for secret in ("WHAT_THE_STUDENT_WROTE", "names the base case"):
         assert secret not in blob, secret
+    # the check itself still sees a label placed where a leak would put it, and
+    # never one inside a longer id or number (what made the old blob search flaky)
+    pattern = rf"(?<![0-9A-Za-z]){label}(?![0-9A-Za-z])"
+    assert re.search(pattern, json.dumps({"item_results": [f"{label}:yes"]}))
+    assert not re.search(pattern, json.dumps({"trace_id": f"a{label}f", "t": int(f"1{label}2")}))
+    assert {k for s in spans for k in s} >= {"name", "attributes"}, "the content fields are kept"
 
 
 # ── grade(): the production grading path ─────────────────────────────────────
