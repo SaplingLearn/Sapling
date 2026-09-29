@@ -415,3 +415,22 @@ class TestRedraftExpiry:
         monkeypatch.setenv("SAPLING_MODEL_CHECK_ITEMS", "some-other-model")
         _, calls, _ = _run(env, failures, _invalid())
         assert calls == 1, "a new model is a new source"
+
+
+def test_the_draft_failures_table_is_backend_only():
+    """A38 fix round (m1): RLS with no policy + guarded REVOKE/GRANT, the idiom of
+    20260929050404_learning_ai_tutor_daily_calls.sql, in a NEW migration."""
+    hits = sorted(MIG_DIR.glob("*_learning_check_item_draft_failures_rls.sql"))
+    assert len(hits) == 1, hits
+    assert re.fullmatch(r"\d{14}_learning_check_item_draft_failures_rls\.sql", hits[0].name)
+    first = sorted(MIG_DIR.glob("*_learning_check_item_draft_failures.sql"))[0].name
+    assert hits[0].name > first, "appended after the table's own migration"
+    ddl = hits[0].read_text()
+    t = "check_item_draft_failures"
+    assert f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY" in ddl
+    assert f"REVOKE ALL ON TABLE {t} FROM PUBLIC" in ddl
+    assert "FROM pg_roles WHERE rolname = r" in ddl
+    assert f"'REVOKE ALL ON TABLE {t} FROM %I'" in ddl
+    assert "rolname = 'service_role'" in ddl
+    assert f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {t} TO service_role" in ddl
+    assert "CREATE POLICY" not in ddl.upper()
