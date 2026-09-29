@@ -68,6 +68,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--base-url", default="http://localhost:5000", help="local backend base URL"
     )
     parser.add_argument("--log", default=str(_DEFAULT_LOG), help="backend log path for logscan")
+    parser.add_argument(
+        "--expect-loop-activity",
+        action="store_true",
+        help=(
+            "learn_loop: no loop user or no graded check step is a finding (the loop "
+            "journey passes it right after its walk; the per-test truncate leaves an "
+            "idle stack after a full suite, so the default run does not)"
+        ),
+    )
     return parser.parse_args(argv)
 
 

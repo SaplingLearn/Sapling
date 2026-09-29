@@ -455,10 +455,10 @@ def run_learn_loop(args: argparse.Namespace) -> tuple[list[Finding], int]:
     leaks = conn.execute(
         "SELECT count(*) AS n FROM events WHERE event_type = 'zpd.leak'"
     ).fetchone()
-    steps = [
-        r["payload"]
-        for r in conn.execute("SELECT payload FROM events WHERE event_type = 'zpd.step'").fetchall()
-    ]
+    step_rows = conn.execute(
+        "SELECT user_id, payload FROM events WHERE event_type = 'zpd.step'"
+    ).fetchall()
+    steps = [r["payload"] for r in step_rows]
     node_ids = sorted({s["node_id"] for s in states})
     scores = (
         conn.execute(
@@ -467,9 +467,66 @@ def run_learn_loop(args: argparse.Namespace) -> tuple[list[Finding], int]:
         if node_ids
         else []
     )
-    return (
-        learn_loop.learn_loop_findings(
-            pairs, states, int((leaks or {}).get("n") or 0), steps, scores
-        ),
-        0,
+    findings = learn_loop.learn_loop_findings(
+        pairs, states, int((leaks or {}).get("n") or 0), steps, scores
+    )
+    findings.extend(_learn_loop_activity(conn, step_rows, args, learn_loop))
+    return findings, 0
+
+
+def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
+    """The rows behind `learn_loop_activity_findings` (e)–(h): every loop session
+    (non-empty loop_state, not a review session) with its document, the
+    (user, question_hash) pairs that have evidence / a zpd.step event, the
+    DECRYPTED assistant messages of those sessions, and the loop-user count.
+    The sentinel is E2E_LOOP_FINAL_ANSWER, read from the handler module's
+    source (db.e2e_handler_constants) — never a second literal."""
+    from db.e2e_handler_constants import read_constants
+    from services.encryption import decrypt_if_present
+
+    sessions = conn.execute(
+        "SELECT /* learn_loop:sessions */ id, user_id, loop_state FROM sessions "
+        "WHERE loop_state <> '{}'::jsonb AND mode IS DISTINCT FROM 'review'"
+    ).fetchall()
+    evidence = {
+        (r["user_id"], r["question_hash"])
+        for r in conn.execute(
+            "SELECT /* learn_loop:evidence_hashes */ DISTINCT g.user_id AS user_id, "
+            "e.question_hash AS question_hash FROM node_mastery_events e "
+            "JOIN graph_nodes g ON g.id = e.node_id "
+            "WHERE e.event_type = 'evidence' AND e.question_hash IS NOT NULL"
+        ).fetchall()
+    }
+    stepped = {
+        (r.get("user_id"), (r.get("payload") or {}).get("question_hash"))
+        for r in step_rows
+        if isinstance(r.get("payload"), dict)
+    }
+    messages = [
+        {
+            "session_id": r["session_id"],
+            "at": None if r.get("at") is None else float(r["at"]),
+            "content": decrypt_if_present(r.get("content")),
+        }
+        for r in conn.execute(
+            "SELECT /* learn_loop:messages */ m.session_id AS session_id, "
+            "extract(epoch FROM m.created_at) AS at, m.content AS content "
+            "FROM messages m JOIN sessions s ON s.id = m.session_id "
+            "WHERE m.role = 'assistant' AND s.loop_state <> '{}'::jsonb "
+            "AND s.mode IS DISTINCT FROM 'review'"
+        ).fetchall()
+    ]
+    loop_users = conn.execute(
+        "SELECT /* learn_loop:loop_users */ count(*) AS n FROM user_settings "
+        "WHERE learning_loop_beta IS TRUE"
+    ).fetchone()
+    (sentinel,) = read_constants("E2E_LOOP_FINAL_ANSWER")
+    return learn_loop.learn_loop_activity_findings(
+        [dict(s) for s in sessions],
+        evidence,
+        stepped,
+        messages,
+        sentinel,
+        int((loop_users or {}).get("n") or 0),
+        bool(getattr(args, "expect_loop_activity", False)),
     )
