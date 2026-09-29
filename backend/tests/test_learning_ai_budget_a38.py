@@ -290,3 +290,62 @@ def test_ai_budget_reaches_the_store_only_through_db_connection():
     assert "from db.connection import page_all, rpc, table" in src
     assert "import httpx" not in src
 
+
+
+# ── C2 (06b j): the session-capped flag ──────────────────────────────────────
+
+
+def _raising_app(decision_for):
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
+
+    @app.post("/turn")
+    def turn():
+        raise ai_budget.AIBudgetExceeded(decision_for())
+
+    return app
+
+
+def test_session_capped_is_set_whenever_the_session_counter_is_at_its_cap(store):
+    from learning import params
+
+    at_cap = {"session_tutor_requests": params.LOOP_SESSION_MAX_TUTOR_REQUESTS}
+    # alone: the reported scope is the session's
+    store([])
+    d = ai_budget.check(UID, "tutor", "develop", **at_cap)
+    assert (d.scope, d.session_capped) == ("session_requests", True)
+    # beside a timed scope that is reported instead (06b j keeps the rule): still flagged, so
+    # the banner says "for this session" whatever reset_at says
+    store([_row(ago_s=5) for _ in range(config.LEARN_RATE_LIMIT_PER_MIN)])
+    d = ai_budget.check(UID, "tutor", "develop", **at_cap)
+    assert (d.scope, d.session_capped) == ("rate_limit", True)
+    store([_row(cost=config.STUDENT_DAILY_BUDGET_USD)])
+    d = ai_budget.check(UID, "tutor", "develop", **at_cap)
+    assert (d.scope, d.session_capped) == ("daily_usd", True)
+    # not at the cap: never flagged
+    d = ai_budget.check(UID, "tutor", "develop")
+    assert (d.scope, d.session_capped) == ("daily_usd", False)
+    assert ai_budget._NORMAL.session_capped is False
+
+
+def test_the_429_body_carries_session_capped(store):
+    from fastapi.testclient import TestClient
+    from learning import params
+
+    store([_row(ago_s=5) for _ in range(config.LEARN_RATE_LIMIT_PER_MIN)])
+    capped = TestClient(
+        _raising_app(
+            lambda: ai_budget.check(
+                UID,
+                "tutor",
+                "develop",
+                session_tutor_requests=params.LOOP_SESSION_MAX_TUTOR_REQUESTS,
+            )
+        )
+    ).post("/turn")
+    assert capped.status_code == 429
+    assert (capped.json()["scope"], capped.json()["session_capped"]) == ("rate_limit", True)
+    plain = TestClient(_raising_app(lambda: ai_budget.check(UID, "tutor", "develop"))).post("/turn")
+    assert (plain.json()["scope"], plain.json()["session_capped"]) == ("rate_limit", False)

@@ -78,13 +78,17 @@ _TUTOR_CALLS_RPC = "ai_budget_bump_tutor_calls"
 @dataclass(frozen=True)
 class BudgetDecision:
     """spec §3.5. ``tier_ceiling`` caps what policy.model_tier may choose; ``pause_novice``
-    (tutor kind, hard level) = serve no check for a novice-band concept on any surface except the probe."""
+    (tutor kind, hard level) = serve no check for a novice-band concept on any surface except the probe.
+    ``session_capped`` = the session's tutor-request counter is at LOOP_SESSION_MAX_TUTOR_REQUESTS,
+    whatever ``scope`` reports: that session stays paused past ``reset_at``, so the banner says
+    "for this session" (owner decision 06b j; the copy is PKG-13's)."""
 
     level: BudgetLevel
     tier_ceiling: Tier
     scope: Scope | None = None
     reset_at: datetime | None = None
     pause_novice: bool = False
+    session_capped: bool = False
 
 
 _NORMAL = BudgetDecision(level="normal", tier_ceiling="deep")
@@ -445,6 +449,7 @@ def _spend_decision(
             scope=scope,
             reset_at=hard[scope],
             pause_novice=kind == "tutor" and set(hard) != {"rate_limit"},
+            session_capped="session_requests" in hard,
         )
     if kind == "close":
         return _NORMAL  # one call, nothing to downgrade: the close has no soft level
@@ -567,7 +572,7 @@ def enforce_rate_limit(request: Request) -> None:
 
 async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JSONResponse:
     """HTTP 429 {"detail": "ai budget reached", "reset_at": <iso or null>} (spec §3.5, A20), plus
-    the house request_id and the scope; Retry-After (≥ 1 s) when the reset is known, rounded UP
+    the house request_id, the scope and session_capped (06b j); Retry-After (≥ 1 s) when the reset is known, rounded UP
     so a client that obeys it never retries before reset_at."""
     rid = getattr(request.state, "request_id", None) or current_request_id()
     reset_at = exc.decision.reset_at
@@ -580,6 +585,7 @@ async def budget_exceeded_handler(request: Request, exc: AIBudgetExceeded) -> JS
         "detail": BUDGET_REACHED_DETAIL,
         "reset_at": reset_at.isoformat() if reset_at else None,
         "scope": exc.decision.scope,
+        "session_capped": exc.decision.session_capped,
         "request_id": rid,
     }
     return JSONResponse(
