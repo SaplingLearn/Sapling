@@ -1570,7 +1570,7 @@ LEARN_LOOP_SPEC_STUB_MARKER = "Contains no tests yet."
 # `/** Must match backend/agents/function_handlers_e2e.py::E2E_X */` followed by
 # `const NAME = "..." + "...";` — the house shape (tutor.spec.ts).
 _SYNC_RX = re.compile(
-    r"Must match backend/agents/function_handlers_e2e\.py::(E2E_[A-Z0-9_]+)\s*\*/\s*"
+    r"Must match backend/agents/function_handlers_e2e\.py::(E2E_[A-Z0-9_]+)\.?\s*\*/\s*"
     r"const\s+\w+\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*\+?\s*)+);",
 )
 
@@ -1590,6 +1590,9 @@ def test_inv_13a_sync_scan_self_test():
     ((name, expr),) = _SYNC_RX.findall(src)
     assert name == "E2E_X_REPLY"
     assert _ts_string(expr) == 'Key idea: a "b" c?'
+    # tutor.spec.ts's shape ends the comment with a period
+    dotted = src.replace("E2E_X_REPLY */", "E2E_X_REPLY. */")
+    assert [n for n, _ in _SYNC_RX.findall(dotted)] == ["E2E_X_REPLY"]
 
 
 def test_inv_13a_spec_constants_match_function_handlers():
