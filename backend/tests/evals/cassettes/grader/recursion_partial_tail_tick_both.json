@@ -4,14 +4,15 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "Could you elaborate on what happens if the function continues to call itself without ever stopping?",
+      "feedback_hint": "",
       "item_results": [
         "27033:yes",
-        "93675:no"
+        "93675:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "27033: It's the case where the function stops recursing."
+        "27033: It's the case where the function stops recursing.",
+        "93675: without it calls never end / stack overflows"
       ]
     }
   ],

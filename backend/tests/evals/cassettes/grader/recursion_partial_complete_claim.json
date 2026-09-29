@@ -4,7 +4,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "The student explained that the base case stops recursion, but did not explain what happens if there is no base case.",
+      "feedback_hint": "The student correctly identified that the base case stops recursion. However, the explanation of *why* this is necessary (to prevent infinite calls and stack overflow) is missing.",
       "item_results": [
         "82235:yes",
         "28137:no"

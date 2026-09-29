@@ -2,18 +2,15 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.6,
-      "contradicts_reference": true,
-      "feedback_hint": "The student mentions that recursion is like a for loop, but doesn't explain the role of the base case in stopping the recursion or preventing stack overflow.",
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "The student mentions recursion but does not explain why a base case is needed. They also state that recursion is like a for loop that ends on its own, which is incorrect.",
       "item_results": [
         "42605:no",
         "60874:no"
       ],
       "matched_wrong_key": "w_loop",
-      "support": [
-        "42605: ",
-        "60874: "
-      ]
+      "support": []
     }
   ],
   "span_checks": []

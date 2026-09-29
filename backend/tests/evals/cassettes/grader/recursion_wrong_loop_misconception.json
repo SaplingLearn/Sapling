@@ -2,18 +2,15 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student claims that recursion is like a for loop and doesn't need a base case. This overlooks the fundamental nature of recursion, where each call must have a condition to cease, preventing infinite calls. Consider what happens in a loop versus a recursive process when a stopping condition is absent.",
+      "feedback_hint": "The student claims recursion functions like a loop and doesn't require a base case. Review the definition of recursion and the role of the base case in preventing infinite calls.",
       "item_results": [
         "73324:no",
         "96768:no"
       ],
       "matched_wrong_key": "w_loop",
-      "support": [
-        "73324: ",
-        "96768: "
-      ]
+      "support": []
     }
   ],
   "span_checks": []

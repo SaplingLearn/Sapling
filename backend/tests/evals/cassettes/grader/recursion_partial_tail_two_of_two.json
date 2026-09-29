@@ -4,7 +4,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "The student correctly identified that the base case stops recursion. However, the student did not explain the consequence of not having a base case, which is that the calls would never end and the stack would overflow.",
       "item_results": [
         "41891:yes",
         "87525:no"

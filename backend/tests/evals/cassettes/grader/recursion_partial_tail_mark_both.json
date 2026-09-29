@@ -4,21 +4,23 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "It looks like you correctly identified that the base case stops recursion. Could you also explain what would happen if there wasn't a base case?",
+      "feedback_hint": "",
       "item_results": [
         "57694:yes",
-        "77039:no"
+        "77039:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "57694: It's the case where the function stops recursing."
+        "57694: It's the case where the function stops recursing.",
+        "77039: It's the case where the function stops recursing."
       ]
     }
   ],
   "span_checks": [
     {
       "item_results": [
-        "57694:yes"
+        "57694:yes",
+        "77039:no"
       ]
     }
   ]

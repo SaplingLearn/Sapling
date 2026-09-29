@@ -2,15 +2,18 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.8,
       "contradicts_reference": true,
-      "feedback_hint": "The student incorrectly believes the base case is only for optimization. Review the purpose of the base case in preventing infinite recursion.",
+      "feedback_hint": "The student's answer incorrectly states the base case's purpose. Review the reference answer to understand why a base case is essential for recursion to terminate.",
       "item_results": [
         "27895:no",
         "93888:no"
       ],
       "matched_wrong_key": "w_speed",
-      "support": []
+      "support": [
+        "27895: ",
+        "93888: "
+      ]
     }
   ],
   "span_checks": []

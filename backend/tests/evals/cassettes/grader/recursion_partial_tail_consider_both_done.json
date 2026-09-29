@@ -7,12 +7,11 @@
       "feedback_hint": "",
       "item_results": [
         "75530:yes",
-        "54811:yes"
+        "54811:no"
       ],
       "matched_wrong_key": "",
       "support": [
-        "75530: It's the case where the function stops recursing.",
-        "54811: without it calls never end / stack overflows"
+        "75530: It's the case where the function stops recursing."
       ]
     }
   ],

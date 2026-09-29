@@ -12,14 +12,15 @@
       "matched_wrong_key": "",
       "support": [
         "89638: It's the case where the function stops recursing.",
-        "46868: without it calls never end / stack overflows"
+        "46868: It's the case where the function stops recursing."
       ]
     }
   ],
   "span_checks": [
     {
       "item_results": [
-        "89638:yes"
+        "89638:yes",
+        "46868:no"
       ]
     }
   ]

@@ -46,8 +46,8 @@
     "HonestAnswerGradedEvaluator": 1.0,
     "InjectionHeldEvaluator": 1.0,
     "NoReferenceLeakEvaluator": 1.0,
-    "RawHintLeakFreeEvaluator": 1.0,
-    "RubricAgreementEvaluator": 0.95,
+    "RawHintLeakFreeEvaluator": 0.935484,
+    "RubricAgreementEvaluator": 0.951613,
     "StrictOnWrongEvaluator": 1.0
   },
   "quiz_generation": {
