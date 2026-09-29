@@ -46,6 +46,7 @@ from db.connection import table
 from learning import fsrs, loop_state_store
 from learning.bkt import band, decayed_p
 from learning.checks import posttest_reserve_hash, select_item
+from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PKG-11
 from learning.loop_state_store import update_loop_state
 from learning.params import (
     FSRS_S0_GOOD,
@@ -674,6 +675,41 @@ def _record(
     return _sr_view(entry)
 
 
+def _grade_flashcard(
+    user_id: str,
+    item: ReviewItem,
+    *,
+    rating: int | None,
+    session_id: str,
+    loop_state: dict,
+    now: datetime,
+    request_id: str | None,
+    retention: float,
+    card_row: dict | None,
+) -> ReviewOutcome:
+    """A self-rated card (legacy 1 forgot / 2 hard / 3 easy) through PKG-11's
+    flashcard_fsrs_update at the review's retention target. Never a model
+    call and never graph evidence. A rating outside the map raises
+    ValueError before any write (the route answers 422)."""
+    fsrs_rating = fsrs_rating_for(rating)
+    if card_row is None:
+        raise ValueError("a flashcard review needs the card's flashcards row")
+    cols = flashcard_fsrs_update(card_row, rating, now=now, retention=retention)
+    table("flashcards").update(cols, filters={"id": f"eq.{item.id}", "user_id": f"eq.{user_id}"})
+    correct = fsrs_rating != fsrs.Rating.AGAIN  # legacy 1 = forgot
+    sr = _record(
+        user_id,
+        item,
+        correct=correct,
+        rating=fsrs_rating,
+        session_id=session_id,
+        loop_state=loop_state,
+        request_id=request_id,
+        retention=retention,
+    )
+    return ReviewOutcome(correct=correct, next_due_at=cols["due_at"], rating=fsrs_rating, sr=sr)
+
+
 async def grade_review(
     user_id: str,
     item: ReviewItem,
@@ -696,7 +732,17 @@ async def grade_review(
     apply_graph_update call; unavailable/refused writes nothing. A flashcard
     goes through flashcard_fsrs_update."""
     if item.kind == "flashcard":
-        raise NotImplementedError("PKG-12 Task 4")
+        return _grade_flashcard(
+            user_id,
+            item,
+            rating=rating,
+            session_id=session_id,
+            loop_state=loop_state,
+            now=now,
+            request_id=request_id,
+            retention=retention,
+            card_row=card_row,
+        )
     if check_item is None or deps is None:
         raise ValueError("a check review needs the decrypted check_item and the route's deps")
     outcome = await grade_answer(

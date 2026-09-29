@@ -1245,3 +1245,140 @@ def test_review_module_imports_no_route_and_no_budget():
     text = (pathlib.Path(__file__).resolve().parents[1] / "learning" / "review.py").read_text()
     assert "from routes" not in text and "import routes" not in text
     assert "ai_budget" not in text
+
+
+# ── Task 4: flashcard reviews ─────────────────────────────────────────────────
+
+
+def _card_row(**kw):
+    row = {
+        "id": "f1",
+        "user_id": USER,
+        "topic": "T",
+        "offering_id": None,
+        "fsrs_d": None,
+        "fsrs_s": None,
+        "due_at": None,
+        "reps": 0,
+        "lapses": 0,
+        "times_reviewed": 0,
+        "last_rating": None,
+        "last_reviewed_at": None,
+        "front": "enc-front",
+        "back": "enc-back",
+    }
+    row.update(kw)
+    return row
+
+
+def _grade_card(rating, *, loop_state=None, retention=params.FSRS_RETENTION_DEFAULT, row=None):
+    from learning import review
+
+    return asyncio.run(
+        review.grade_review(
+            USER,
+            _item("flashcard", 1.0, id="f1"),
+            answer=None,
+            rating=rating,
+            session_id="s",
+            loop_state=loop_state
+            if loop_state is not None
+            else {"sr": {}, "review": {"spent_s": 0}},
+            now=NOW,
+            request_id="r",
+            retention=retention,
+            card_row=row or _card_row(),
+        )
+    )
+
+
+@pytest.mark.parametrize("rating,correct", [(1, False), (2, True), (3, True)])
+def test_flashcard_review_updates_fsrs_and_legacy_columns(monkeypatch, store, rating, correct):
+    from learning import review
+
+    factory, handles = _tables({"flashcards": [_card_row()]})
+    monkeypatch.setattr(review, "table", factory)
+    events = []
+    monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append((et, kw["payload"])))
+    for name in ("grade_answer", "apply_graph_update"):  # a card is never graph evidence
+        monkeypatch.setattr(review, name, MagicMock(side_effect=AssertionError(name)))
+    loop_state = {"sr": {}, "review": {"spent_s": 0}}
+    out = _grade_card(rating, loop_state=loop_state)
+    handles["flashcards"].update.assert_called_once()
+    cols = handles["flashcards"].update.call_args.args[0]
+    kwargs = handles["flashcards"].update.call_args.kwargs
+    assert kwargs["filters"] == {"id": "eq.f1", "user_id": f"eq.{USER}"}
+    assert {
+        "fsrs_d",
+        "fsrs_s",
+        "due_at",
+        "reps",
+        "lapses",
+        "times_reviewed",
+        "last_rating",
+        "last_reviewed_at",
+    } <= set(cols)
+    assert cols["reps"] == 1 and cols["times_reviewed"] == 1 and cols["last_rating"] == rating
+    assert cols["fsrs_s"] > 0 and cols["due_at"] > NOW.isoformat()
+    assert out.correct is correct and out.next_due_at == cols["due_at"]
+    assert loop_state["review"]["spent_s"] == params.REVIEW_SECONDS_PER_FLASHCARD
+    assert loop_state["sr"]["fc:f1"]["correct"] == (1 if correct else 0)
+    assert store.calls == ["s"] and store.state.extra["sr"]["fc:f1"]["correct"] == int(correct)
+    assert events == [
+        ("review.graded", {"kind": "flashcard", "correct": correct, "rating": out.rating})
+    ]
+    assert out.rating == params.FLASHCARD_RATING_TO_FSRS[rating]  # PKG-11's map
+    assert out.rating in (1, 2, 3)  # Easy(4) is never emitted in v1 (spec §3.2)
+    assert out.hint is None and out.unavailable is False
+
+
+def test_flashcard_review_uses_the_requested_retention(monkeypatch):
+    from learning import review
+
+    seen = []
+    real = review.flashcard_fsrs_update
+
+    def spy(card_row, rating, *, now, retention):
+        seen.append(retention)
+        return real(card_row, rating, now=now, retention=retention)
+
+    monkeypatch.setattr(review, "flashcard_fsrs_update", spy)
+    factory, _ = _tables({"flashcards": [_card_row()]})
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    _grade_card(3, retention=params.FSRS_RETENTION_EXAM)
+    assert seen == [params.FSRS_RETENTION_EXAM]
+
+
+@pytest.mark.parametrize("bad", [4, 0, None, True])
+def test_flashcard_review_rejects_bad_rating(monkeypatch, store, bad):
+    from learning import review
+
+    factory, handles = _tables({"flashcards": [_card_row()]})
+    monkeypatch.setattr(review, "table", factory)
+    events = []
+    monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append(et))
+    loop_state = {"sr": {}, "review": {"spent_s": 0}}
+    with pytest.raises(ValueError):
+        _grade_card(bad, loop_state=loop_state)
+    assert handles == {} and store.calls == [] and events == []
+    assert loop_state == {"sr": {}, "review": {"spent_s": 0}}
+
+
+def test_flashcard_review_requires_the_card_row():
+    from learning import review
+
+    with pytest.raises(ValueError):
+        asyncio.run(
+            review.grade_review(
+                USER,
+                _item("flashcard", 1.0, id="f1"),
+                answer=None,
+                rating=3,
+                session_id="s",
+                loop_state={"sr": {}},
+                now=NOW,
+                request_id="r",
+                retention=params.FSRS_RETENTION_DEFAULT,
+            )
+        )
