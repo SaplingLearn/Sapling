@@ -118,14 +118,16 @@ async def _lifespan(_app: FastAPI):
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
     yield
+    # A38 low-severity 4: drop queued check-item drafting (non-daemon workers,
+    # each run up to FLEX_TIMEOUT_S) so a deploy's SIGTERM does not wait on it.
+    # First (A38 fix round, m8): before the event drain stops, so no drafting
+    # starts after it, and before any other step whose failure could skip it.
+    shutdown_draft_pool()
     await stop_sweeper()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
     shutdown_dbos()
-    # A38 low-severity 4: drop queued check-item drafting (non-daemon workers,
-    # each run up to FLEX_TIMEOUT_S) so a deploy's SIGTERM does not wait on it.
-    shutdown_draft_pool()
 
 
 def _drop_request_arguments(_request, _attributes):

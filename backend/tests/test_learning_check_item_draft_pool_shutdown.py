@@ -68,3 +68,47 @@ def test_the_app_lifespan_shuts_the_pool_down():
         with TestClient(app):
             down.assert_not_called()
         down.assert_called_once_with()
+
+
+def test_the_pool_is_shut_down_before_the_event_drain_and_dbos():
+    """A38 fix round (m8): drafting still running would log usage and events after
+    events_service stopped, and a failing shutdown_dbos (or stop_sweeper) must not skip
+    dropping the queue — so the pool goes first."""
+    from fastapi.testclient import TestClient
+
+    order: list[str] = []
+    with (
+        patch("main.shutdown_draft_pool", side_effect=lambda: order.append("pool")),
+        patch("main.shutdown_dbos", side_effect=lambda: order.append("dbos")),
+        patch("main.start_sweeper"),
+        patch("main.stop_sweeper", new=AsyncMock(side_effect=lambda: order.append("sweeper"))),
+        patch("main.ensure_bucket_exists", new=AsyncMock()),
+        patch(
+            "services.events_service.shutdown",
+            side_effect=lambda *a, **k: order.append("events"),
+        ),
+    ):
+        from main import app
+
+        with TestClient(app):
+            pass
+    assert order[0] == "pool", order
+    assert order.index("pool") < order.index("events") < order.index("dbos"), order
+
+
+def test_a_failing_dbos_shutdown_never_skips_the_pool():
+    from fastapi.testclient import TestClient
+
+    with (
+        patch("main.shutdown_draft_pool") as down,
+        patch("main.shutdown_dbos", side_effect=RuntimeError("dbos")),
+        patch("main.start_sweeper"),
+        patch("main.stop_sweeper", new=AsyncMock(side_effect=RuntimeError("sweeper"))),
+        patch("main.ensure_bucket_exists", new=AsyncMock()),
+    ):
+        from main import app
+
+        with pytest.raises(RuntimeError):
+            with TestClient(app):
+                pass
+        down.assert_called_once_with()
