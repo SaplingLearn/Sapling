@@ -2961,6 +2961,25 @@ def test_a_wrapped_or_paraphrased_quote_is_cut_to_the_students_own_words(quote, 
     assert _span(quote) == span
 
 
+# Live (the prompt variants measured for the ruling's re-measure): flash-lite also
+# set the student's words in single quotation marks, beside an apostrophe of its
+# own ("The student's answer mentions '…' and '…'"). An apostrophe inside a word
+# never opens or closes a passage; of two passages, the longer run counts.
+@pytest.mark.parametrize(
+    "quote,span",
+    [
+        ("The student's answer mentions 'the stack blows up'.", "the stack blows up"),
+        (
+            "The student's answer mentions 'what stops it' and 'it keeps calling itself'.",
+            "it keeps calling itself",
+        ),
+        ("The student\u2019s answer says \u2018the stack blows up\u2019", "the stack blows up"),
+    ],
+)
+def test_a_passage_in_single_quotation_marks_is_the_students_words(quote, span):
+    assert _span(quote) == span
+
+
 @pytest.mark.parametrize(
     "quote",
     [

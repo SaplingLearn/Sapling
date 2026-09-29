@@ -1420,11 +1420,15 @@ _ANSWER_TALK = frozenset(
 _FILLER_WORDS = frozenset("i me am im s ve ll d t re m so".split())
 
 
-# A passage the grader sets in quotation marks inside its quote (a curly single
-# quote only as a pair, so an apostrophe never opens one).
-_QUOTATION_MARKS = '"\u201c\u201d\u201e\u201f\u00ab\u00bb'  # straight, curly, low-9, guillemets
+# A passage the grader sets in quotation marks inside its quote: double marks
+# (straight, curly, low-9, guillemets), curly single marks as a pair, or straight
+# single marks that no letter or digit touches from outside — an apostrophe
+# inside a word ("student's") never opens or closes one.
+_QUOTATION_MARKS = '"\u201c\u201d\u201e\u201f\u00ab\u00bb'
 _QUOTED_PASSAGE = re.compile(
-    f"[{_QUOTATION_MARKS}]([^{_QUOTATION_MARKS}]+)[{_QUOTATION_MARKS}]|\u2018([^\u2018\u2019]+)\u2019"
+    f"[{_QUOTATION_MARKS}]([^{_QUOTATION_MARKS}]+)[{_QUOTATION_MARKS}]"
+    "|\u2018([^\u2018\u2019]+)\u2019"
+    "|(?<![^\\W_])'([^']+)'(?![^\\W_])"
 )
 
 
@@ -1461,7 +1465,7 @@ def support_span(
     folded, origin = _fold_mapped(answer)
     words = list(_WORD.finditer(folded))
     text = [m.group() for m in words]
-    passages = [quote, *(a or b for a, b in _QUOTED_PASSAGE.findall(quote or ""))]
+    passages = [quote, *("".join(m) for m in _QUOTED_PASSAGE.findall(quote or ""))]
     start, n = 0, 0
     for passage in passages:
         said = _word_list(normalise(passage))
