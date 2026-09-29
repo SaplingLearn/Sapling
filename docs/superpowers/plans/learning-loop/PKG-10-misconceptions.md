@@ -1613,3 +1613,7 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 3. Three failed iterations on one task → append a `BLOCKED` row to `LEDGER.md` (hypothesis, commands run, outputs), commit what is green, open the PR as draft, stop.
 4. Never widen scope to unblock (no instructor route, no frontend, no quiz-agent switch). Never disable a test to unblock.
 5. Ambiguity → choose the option closest to the spec, mark it `†` in the hand-off, continue.
+
+## A38 amendments (2026-09-29)
+
+Spec §13 A38 (owner decision 05b(g)) binds this package. **Precondition:** decision-seam messages line-quote the state text, as the grader already quotes student answers. This is built by the A38 step's lane E and must be on `feat/learning-loop` before Task 1 wires `decisions.match_wrong_reason` into `grade_answer`. Verify it first (a seam test whose state text carries a line that starts with a role or directive marker shows it quoted in the message); if it is missing, stop and append a `BLOCKED` row to `LEDGER.md` instead of wiring the call. Read `loop_state["active"]` above as `loop_state["current"]` and per-item entries as `loop_state["steps"][qh]` (A38 06(p)); write loop state only through `loop_state_store.update_loop_state` (A38 06(q)).

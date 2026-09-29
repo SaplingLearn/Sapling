@@ -1680,3 +1680,13 @@ Half B:
 2. Three failed iterations on one task → append a `BLOCKED` row to `LEDGER.md` (hypothesis, commands run, outputs), commit what is green, open the PR as draft, stop.
 3. Never widen scope to unblock. Never disable a test to unblock. In half B, if an `inv_21` hit is in code you cannot safely change (e.g. `db/archive/`), change it anyway — the invariant is the contract — and say so in the hand-off.
 4. Ambiguity → choose the option closest to the spec, mark it `†` in the hand-off, continue.
+
+## A38 amendments (2026-09-29)
+
+Spec §13 A39, A40 and A45 bind this package.
+
+1. **Eval floors = the minimum of 3 recordings (A40 06(s)).** Where half A sets or re-sets an eval floor or baseline from a recording, record the dataset 3 times (`SAPLING_EVAL_MODE=record`) and take the minimum score per metric as the floor; record all three numbers and the minimum in HANDOFF-14. A floor from a single recording is not accepted.
+2. **Tighten `CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS` (A40 06(t)).** Measure the `final_answer` token counts (`checks.answer_tokens`) of the drafts the `check_items` eval accepts (DraftValid), and lower the constant (20 †) to the smallest value that keeps DraftValid at its floor; record the distribution and the chosen value in HANDOFF-14 and spec §3.5, and keep the † unless the measurement validates the cut.
+3. **Platform budget in the runbook (A39 (e)).** The §11.7 runbook written in Task B9 sets production `PLATFORM_DAILY_BUDGET_USD=5` (the owner's decision; it replaces the "suggested ≈ 3×" wording above). Before that step the owner sets a deliberately low value on staging (e.g. `0.01`), drives one tutor turn, confirms the `ai.budget_capped{scope: platform}` alert reaches them, then restores the staging value. The session never sets either value itself.
+4. **Cutover ADR number (A45).** ADRs 0027, 0028 and 0029 are claimed by #672, #677 and #705. The cutover ADR takes the next free number in `docs/decisions/` at the time it is written (0030 or later), not "0028 expected"; record the number in HANDOFF-14.
+5. **Grader cap blind spot (A45).** `STUDENT_DAILY_GRADES` counts `llm_usage` rows, so it does not hold when `EVENTS_LOGGING_ENABLED=false`. This is open (recorded, not decided); if the launch config sets that flag false, raise it with the owner at the half B STOP gate.
