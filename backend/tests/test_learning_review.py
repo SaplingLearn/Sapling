@@ -2540,12 +2540,34 @@ def test_a_course_the_student_is_not_enrolled_in_is_404(client, method, path, bo
 
 
 def test_review_active_is_the_cheap_gate_only_probe(client):
-    with _loop(), patch("learning.review.table", side_effect=_no_table):
-        on = client.get(f"{REVIEW}/active?user_id={USER}")
-    with _loop(False):
-        off = client.get(f"{REVIEW}/active?user_id={USER}")
+    """The probe ANSWERS the gate: 200 either way (PKG-13 reopen). A 404 for "off"
+    made every legacy student's /learn and /study visit log an `error.4xx` event
+    (request_context), so the error rollups counted the gate as a failure."""
+    from services import events_service
+
+    logged = []
+    with patch.object(events_service, "log_event", lambda et, **kw: logged.append(et)):
+        with _loop(), patch("learning.review.table", side_effect=_no_table):
+            on = client.get(f"{REVIEW}/active?user_id={USER}")
+        with _loop(False), patch("learning.review.table", side_effect=_no_table):
+            off = client.get(f"{REVIEW}/active?user_id={USER}")
     assert on.status_code == 200 and on.json() == {"active": True}
-    assert off.status_code == 404 and off.json()["detail"] == "learning loop not enabled"
+    assert off.status_code == 200 and off.json() == {"active": False}
+    assert not [e for e in logged if e.startswith("error.")]
+
+
+def test_review_active_still_refuses_another_student(client):
+    from fastapi import HTTPException
+
+    def _refuse(user_id, request):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    with (
+        patch("routes.learn_loop.require_self", _refuse),
+        patch("routes.learn_loop.learning_loop_for_request") as gate,
+    ):
+        r = client.get(f"{REVIEW}/active?user_id={USER}")
+    assert r.status_code == 403 and gate.call_count == 0
 
 
 def test_review_graded_is_emitted_only_when_the_record_was_saved(monkeypatch, store):

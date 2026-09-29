@@ -271,12 +271,17 @@ def _gate(user_id: str, request: Request) -> bool:
     `request.state.learning_loop` (routes/learn.py), so a delegated request
     costs one `user_settings` read, not two. Returns the gate for
     `SaplingDeps.learning_loop`; False is the spec §7 404."""
-    require_self(user_id, request)
-    carried = getattr(request.state, "learning_loop", None)
-    loop_on = carried if isinstance(carried, bool) else learning_loop_for_request(user_id)
+    loop_on = _gate_value(user_id, request)
     if not loop_on:
         raise HTTPException(status_code=404, detail=_NOT_ENABLED)
     return loop_on
+
+
+def _gate_value(user_id: str, request: Request) -> bool:
+    """require_self, then the gate's value (read once per request, A38 00)."""
+    require_self(user_id, request)
+    carried = getattr(request.state, "learning_loop", None)
+    return carried if isinstance(carried, bool) else learning_loop_for_request(user_id)
 
 
 def _now_s() -> float:
@@ -4110,8 +4115,10 @@ def review_summary(
 
 @router.get("/review/active")
 def review_active(request: Request, user_id: str = Query(...)) -> dict:
-    """The frontend's cheap loop probe (`getLoopStatus`): 200 when the loop is on
-    for the student, the gate's 404 when it is off. Builds nothing (PKG-07's
-    GET /status needs a loop session id)."""
-    _gate(user_id, request)
-    return {"active": True}
+    """The frontend's cheap loop probe (`getLoopStatus`): `{active}` — the gate's
+    answer, 200 either way (PKG-13 reopen). It is the one loop route that does not
+    404 when the gate is off: its job IS to answer the gate, and a 404 made every
+    legacy student's /learn and /study visit log an `error.4xx` event. Still
+    require_self first (403). Builds nothing (PKG-07's GET /status needs a loop
+    session id)."""
+    return {"active": _gate_value(user_id, request)}
