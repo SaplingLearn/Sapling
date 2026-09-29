@@ -3545,7 +3545,11 @@ _PKG06_SANCTIONED_IMPORTS = {
     # PKG-10 fix round F3 (spec §13 A75): validate_draft refuses a drafted wrong reason
     # that states the final answer (strict detect_leak) — a lazy import inside
     # checks._wrong_text_answer_reasons; drafting runs only with LEARNING_LOOP_ENABLED.
-    "learning/checks.py": ("learning.leak", frozenset({"detect_leak"})),
+    # Fix round 2 (R2-4): a single-token answer counts only in answer position.
+    "learning/checks.py": (
+        "learning.leak",
+        frozenset({"detect_leak", "in_answer_position", "leak_spans"}),
+    ),
 }
 # PKG-07 (spec §7, §9): the loop route WIRES the layer — gates, ladder, policy, leak,
 # the loop_state store and the zpd_events emitters — so every PKG-06 import in it is

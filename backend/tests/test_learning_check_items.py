@@ -5932,3 +5932,70 @@ def test_a_wrong_reason_stating_the_final_answer_fails_validation():
     clean = CheckItemDraft(**base, wrong_texts=["Keeps the exponent unchanged"])
     assert any("states the final answer" in r for r in validate_draft(leaky))
     assert not any("states the final answer" in r for r in validate_draft(clean))
+
+
+def _wrong_reason_draft(final_answer: str, wrong_text: str, reference: str | None = None):
+    from learning.checks import CheckItemDraft
+
+    return CheckItemDraft(
+        concept="counting",
+        format="free",
+        difficulty=2,
+        prompt="Work the problem out and state the result.",
+        reference_answer=reference or f"Working it through, the result is {final_answer}.",
+        final_answer=final_answer,
+        rubric=["sets the problem up", "states the result"],
+        wrong_keys=["some_mistake"],
+        wrong_texts=[wrong_text],
+        answer_kind="free",
+    )
+
+
+def _states_answer(draft) -> bool:
+    from learning.checks import validate_draft
+
+    return any("states the final answer" in r for r in validate_draft(draft))
+
+
+@pytest.mark.parametrize(
+    "final_answer,wrong_text",
+    [
+        ("2", "Forgets to multiply by 2"),
+        ("1", "Stops one step too late"),
+        ("true", "Thinks it is true only for positive n"),
+        ("3", "Counts three sides"),
+        ("2", "Divides by 2 at the end instead of the start"),
+        ("1", "Uses 1 as the base case of every sum"),
+    ],
+)
+def test_an_honest_wrong_reason_mentioning_a_small_answer_is_clean(final_answer, wrong_text):
+    """PKG-10 fix round 2 (R2-4): for a single-token numeric/boolean final answer
+    only a STATED RESULT counts — an operand, a count or a condition that happens
+    to share the token is an honest misconception."""
+    assert not _states_answer(_wrong_reason_draft(final_answer, wrong_text))
+
+
+@pytest.mark.parametrize(
+    "final_answer,wrong_text",
+    [
+        ("2", "Thinks the answer is 2"),
+        ("2", "Thinks x = 2"),
+        ("2", "Thinks it gives 2"),
+        ("2", "Gets 2"),
+        ("true", "Believes the statement is true"),
+        ("5", "Concludes the mean is five"),
+    ],
+)
+def test_a_wrong_reason_stating_a_small_answer_as_its_result_is_caught(final_answer, wrong_text):
+    assert _states_answer(_wrong_reason_draft(final_answer, wrong_text))
+
+
+@pytest.mark.parametrize(
+    "wrong_text",
+    ["Writes 4x^3 instead of lowering the exponent", "Thinks the exponent stays four, not three"],
+)
+def test_a_multi_token_answer_keeps_the_strict_check(wrong_text):
+    draft = _wrong_reason_draft(
+        "4x^3", wrong_text, reference="By the power rule the derivative of x^4 is 4x^3."
+    )
+    assert _states_answer(draft)

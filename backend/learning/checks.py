@@ -57,6 +57,7 @@ from learning.params import (
     CHECK_ITEM_MIN_RUBRIC,
     CHECK_ITEM_MIN_WRONG,
     CHECK_ITEM_STEPWISE_MIN_STEPS,
+    LEAK_POSITION_WINDOW_CHARS,
 )
 
 _SEP = "\x1f"  # unit separator: never appears in normalized text
@@ -1429,29 +1430,76 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
     return reasons
 
 
+#: PKG-10 fix round 2 (R2-4): a verb that states a result right before the hit
+#: ("gives 2", "gets 2", "returns 2") — the served answer-position rule reads
+#: copulas, "=", "answer", "result", but not these.
+_RESULT_VERB = re.compile(
+    r"(?i)\b(?:gives?|gets?|got|yields?|returns?|outputs?|evaluates\s+to|comes?\s+(?:out\s+)?to"
+    r"|ends?\s+up\s+(?:with|at))\s+$"
+)
+#: ...and a condition right after it ("is true only for positive n") makes the
+#: token part of a claim about when, not a stated result.
+_CONDITION_AFTER = re.compile(r"(?i)\s+(?:only|when|if|unless|except|for|whenever)\b")
+_BOOLEAN_ANSWERS = frozenset({"true", "false", "yes", "no"})
+
+
+def _single_token_answer(run: tuple[str, ...]) -> bool:
+    """A final answer of one numeric or boolean token ("2", "1.5", "true")."""
+    if len(run) != 1:
+        return False
+    return run[0].casefold() in _BOOLEAN_ANSWERS or _finite_float(run[0]) is not None
+
+
 def _wrong_text_answer_reasons(draft: CheckItemDraft) -> list[str]:
     """PKG-10 fix round (F3): a common wrong reason never states the final
-    answer — in strict form (number words, fractions, percentages), with no
-    provenance. The confrontation line puts a stored wrong reason in front of
-    the tutor while the answer may still be unreleased, so the text must never
-    carry it. No stated final answer: _final_answer_reasons refuses the draft."""
-    if not answer_run(draft.final_answer):
+    answer. The confrontation line puts a stored wrong reason in front of the
+    tutor while the answer may still be unreleased. A multi-token answer is
+    checked strict with no provenance (number words, fractions, percentages).
+    A single numeric/boolean token (fix round 2, R2-4) counts only as a STATED
+    RESULT — in answer position (learning.leak.in_answer_position: a copula,
+    "=", "answer"/"result", a clause of its own) or after a result verb
+    ("gives 2"), and not before a condition ("true only for …") — so an
+    operand, a count or a condition that shares the token stays an honest
+    misconception ("Forgets to multiply by 2", "Counts three sides"). No stated
+    final answer: _final_answer_reasons refuses the draft."""
+    run = answer_run(draft.final_answer)
+    if not run:
         return []
     # lazy (learning.leak imports this module); drafting runs only with the loop on
-    from learning.leak import detect_leak
+    from learning.leak import detect_leak, in_answer_position, leak_spans
+
+    def states(text: str) -> bool:
+        if not _single_token_answer(run):
+            return detect_leak(
+                reference="",
+                emitted=text,
+                rung=0,  # H0: nothing of the answer may show (detect_leak takes Rung(rung))
+                final_answer=draft.final_answer,
+                canonical_answer=draft.canonical_answer,
+                strict=True,
+            ).leaked
+        spans = leak_spans(
+            emitted=text,
+            reference="",
+            final_answer=draft.final_answer,
+            canonical_answer=draft.canonical_answer,
+            strict=True,
+            given="",
+        )
+        window = LEAK_POSITION_WINDOW_CHARS
+        return any(
+            not _CONDITION_AFTER.match(text, b)
+            and (
+                in_answer_position(text, a, b)
+                or _RESULT_VERB.search(text[max(0, a - window) : a]) is not None
+            )
+            for a, b in spans
+        )
 
     return [
         f"wrong reason {w.key!r} states the final answer"
         for w in common_wrong(draft)
-        if w.text
-        and detect_leak(
-            reference="",
-            emitted=w.text,
-            rung=0,  # H0: nothing of the answer may show (detect_leak takes Rung(rung))
-            final_answer=draft.final_answer,
-            canonical_answer=draft.canonical_answer,
-            strict=True,
-        ).leaked
+        if w.text and states(w.text)
     ]
 
 
