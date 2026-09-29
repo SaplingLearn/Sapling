@@ -270,6 +270,8 @@ async def apply_misconception_rule(
         difficulty=int(item.difficulty),
         idk=bool(evidence.idk),
         isomorph_of=earlier[-1].get("question_hash") if earlier else None,
+        released=not evidence.correct,  # a wrong or idk grade releases the reference (A16)
+        after_release=bool(evidence.same_session_recheck),
     ).model_dump()
     log.append(attempt)
     verdict = slip_or_misconception(attempts_for_node(log, node_id))

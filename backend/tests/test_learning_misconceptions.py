@@ -1277,6 +1277,33 @@ def test_released_on_node_reads_the_attempt_log():
     assert released_on_node({"attempts": ["junk", {"node_id": "n1"}]}, "n1") is False
 
 
+def test_hook_marks_released_and_after_release_on_the_attempt():
+    from agents.tools import check as check_mod
+    from agents.tools.check import GradeOutcome
+    from learning.misconceptions import attempts_of
+
+    deps = _loop_deps()
+    _run(
+        check_mod.apply_misconception_rule(
+            deps,
+            item=MagicMock(id="ci1", question_hash="h1", difficulty=2),
+            grade=GradeOutcome(correct=False, confidence=0.9),
+            evidence=_ev(False),
+        )
+    )
+    _run(
+        check_mod.apply_misconception_rule(
+            deps,
+            item=MagicMock(id="ci2", question_hash="h2", difficulty=2),
+            grade=GradeOutcome(correct=True, confidence=0.9),
+            evidence=_ev(True, same_session_recheck=True),
+        )
+    )
+    first, second = attempts_of(deps.loop_state)
+    assert (first["released"], first["after_release"]) == (True, False)
+    assert (second["released"], second["after_release"]) == (False, True)
+
+
 def _twin_evidence(recheck: bool) -> dict:
     """The Evidence dict grade_answer builds for a correct free answer on a twin."""
     from agents.tools.check import CheckAnswer, grade_answer
