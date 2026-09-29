@@ -210,6 +210,12 @@ GRAPH_PRIVATE_WRITERS = GRAPH_WRITER_FUNCS[1:]
 # call to GRAPH_WRITER_FUNCS. Nothing else in that module may write.
 LEARNER_STATE_MODULE = "learning/learner_state.py"
 LEARNER_STATE_WRITE = ("learner_state", "upsert", "write_state")  # table, method, enclosing def
+# PKG-14 (spec §13 A79): the one non-evidence learner_state write — an UPDATE of
+# the four derived columns inside write_metrics, called only by the nightly
+# metrics script (the last block of inv_01 pins its callers).
+LEARNER_STATE_METRICS_WRITE = ("learner_state", "update", "write_metrics")
+LEARNER_STATE_SANCTIONED = (LEARNER_STATE_WRITE, LEARNER_STATE_METRICS_WRITE)
+METRICS_SCRIPT = "scripts/derive_zpd_metrics.py"
 GRAPH_TABLE_READ_METHODS = ("select", "select_with_count")
 INV01_EXEMPT_PREFIXES = ("tests/", "venv/", "db/archive/", "db/e2e_checks/")
 _WRITE_CHAIN = re.compile(
@@ -286,7 +292,7 @@ def _graph_table_offenders(rel: str, source: str) -> list[str]:
     for line, tbl, method, enclosing in _graph_table_uses(source):
         if method in GRAPH_TABLE_READ_METHODS:
             continue
-        if rel == LEARNER_STATE_MODULE and (tbl, method, enclosing) == LEARNER_STATE_WRITE:
+        if rel == LEARNER_STATE_MODULE and (tbl, method, enclosing) in LEARNER_STATE_SANCTIONED:
             continue
         use = f".{method}(" if method else "a handle that is not a direct read"
         offenders.append(f"{rel}:{line} uses table({tbl!r}) for {use}; only reads allowed")
@@ -335,11 +341,10 @@ def test_inv_01_single_graph_writer():
             offenders += _private_writer_offenders(rel, text)
         if rel != GRAPH_WRITER:
             for m in _WRITE_CHAIN.finditer(text):
-                if (
-                    rel == LEARNER_STATE_MODULE
-                    and (m.group(1), m.group(2)) == LEARNER_STATE_WRITE[:2]
-                ):
-                    continue  # write_state's own upsert; the ast half pins it to write_state
+                if rel == LEARNER_STATE_MODULE and (m.group(1), m.group(2)) in {
+                    w[:2] for w in LEARNER_STATE_SANCTIONED
+                }:
+                    continue  # write_state's upsert / write_metrics' update; the ast half pins each to its def
                 line = text.count("\n", 0, m.start()) + 1
                 offenders.append(f"{rel}:{line} writes {m.group(1)} via .{m.group(2)}(")
             offenders += _graph_table_offenders(rel, text)
@@ -377,6 +382,39 @@ def test_inv_01_single_graph_writer():
     assert "apply_graph_update(" in (BACKEND / "routes/quiz.py").read_text(), (
         "routes/quiz.py must reach the graph through apply_graph_update"
     )
+
+    # PKG-14: learner_state.write_metrics (the derived-column UPDATE) is the
+    # metrics script's seam only — referenced (called, imported, aliased) from
+    # nowhere but its module, the script and their tests.
+    callers = sorted(
+        p.relative_to(BACKEND).as_posix()
+        for p in BACKEND.rglob("*.py")
+        if "venv" not in p.parts and "write_metrics" in p.read_text()
+    )
+    assert callers == [
+        LEARNER_STATE_MODULE,
+        METRICS_SCRIPT,
+        "tests/test_learning_loop_invariants.py",
+    ] + sorted(c for c in callers if c.startswith("tests/test_learning_zpd_metrics")), (
+        f"write_metrics is the metrics script's seam only: {callers}"
+    )
+
+
+def test_inv_20_metrics_script_idempotent():
+    """PKG-14 (spec §8 invariant 20): the nightly ZPD metrics script offers a dry
+    run, never inserts, names on_conflict on every upsert, and writes
+    learner_state only through learning.learner_state.write_metrics."""
+    path = BACKEND / METRICS_SCRIPT
+    assert path.exists(), "PKG-14 ships scripts/derive_zpd_metrics.py"
+    text = path.read_text()
+    assert "--dry-run" in text, "the script must offer --dry-run"
+    assert ".insert(" not in text, "metrics are an UPDATE of derived columns; never insert"
+    for m in re.finditer(r"\.upsert\(", text):
+        assert "on_conflict=" in text[m.end() : m.end() + 400], "every upsert names on_conflict"
+    assert not re.search(r"""table\(\s*["']learner_state["']""", text), (
+        "write learner_state only via learning.learner_state.write_metrics"
+    )
+    assert "write_metrics(" in text
 
 
 def test_inv_02_pure_modules_import_nothing_impure():
