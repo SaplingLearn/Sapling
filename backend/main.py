@@ -39,6 +39,7 @@ from services.storage_service import (
     ensure_bucket_exists,
 )
 from services.durable import init_dbos, shutdown_dbos
+from services.check_item_service import shutdown_draft_pool
 from services.index_sweeper import start_sweeper, stop_sweeper
 
 try:
@@ -122,6 +123,9 @@ async def _lifespan(_app: FastAPI):
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
     shutdown_dbos()
+    # A38 low-severity 4: drop queued check-item drafting (non-daemon workers,
+    # each run up to FLEX_TIMEOUT_S) so a deploy's SIGTERM does not wait on it.
+    shutdown_draft_pool()
 
 
 def _drop_request_arguments(_request, _attributes):
