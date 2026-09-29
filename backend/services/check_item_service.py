@@ -1274,10 +1274,12 @@ def generate_for_document(
 # (the next upload's extraction and persist among them), so real-mode drafting
 # runs HERE, CHECK_ITEM_DRAFT_WORKERS at a time; the rest wait in the queue.
 # The workers are not daemons: concurrent.futures joins them at interpreter
-# exit after they drain the queue, so a graceful shutdown (a deploy's SIGTERM,
-# a `reload=True` restart) waits for every queued drafting to finish, and only
-# the platform's kill after its grace period drops what is still queued or in
-# flight. The nightly `--all-courses` backfill (spec §11.7) drafts that then.
+# exit. So the app's shutdown hook (main.py's lifespan) calls
+# `shutdown_draft_pool`, which drops every QUEUED drafting (owner decision A38,
+# low-severity 4) instead of letting a deploy's SIGTERM wait for the whole
+# queue; a run already in flight still finishes or dies with the platform's
+# kill after its grace period. The nightly `--all-courses` backfill (spec
+# §11.7) drafts what was dropped.
 
 _draft_pool_instance: ThreadPoolExecutor | None = None
 _draft_pool_lock = threading.Lock()
@@ -1291,6 +1293,17 @@ def _draft_pool() -> ThreadPoolExecutor:
                 max_workers=CHECK_ITEM_DRAFT_WORKERS, thread_name_prefix="check-items"
             )
         return _draft_pool_instance
+
+
+def shutdown_draft_pool() -> None:
+    """Drop the queued drafting and let the pool go without waiting (the app's
+    shutdown hook). Idempotent; a later upload builds a new pool."""
+    global _draft_pool_instance
+    with _draft_pool_lock:
+        pool, _draft_pool_instance = _draft_pool_instance, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+        logger.info("check items: drafting pool shut down; queued drafting dropped")
 
 
 def _generate_for_document_logged(document_id: str, **kwargs) -> None:
