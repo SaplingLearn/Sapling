@@ -423,9 +423,12 @@ def test_match_wrong_reason_without_prior_runs_decision_and_never_invents(seam, 
 
 
 @pytest.mark.parametrize(
-    "answer,value,p_yes", [("yes", True, 0.8), ("no", False, 0.2), ("unclear", False, None)]
+    "answer,leak_value,answerable_value,p_yes",
+    [("yes", True, True, 0.8), ("no", False, False, 0.2), ("unclear", True, False, None)],
 )
-def test_yes_no_decisions_map_answers(seam, answer, value, p_yes):
+def test_yes_no_decisions_map_answers(seam, answer, leak_value, answerable_value, p_yes):
+    """A38 (owner decision 05b(d)): judge_leak's `unclear` BLOCKS (value True: fail
+    closed); item_answerable's `unclear` stays False. p_yes of `unclear` is 0.5 on both."""
     from agents.decision import decision_agent
 
     model, calls = _scripted([{"answer": answer, "confidence": 0.8}])
@@ -438,7 +441,7 @@ def test_yes_no_decisions_map_answers(seam, answer, value, p_yes):
             asyncio.run(seam.judge_leak(leak, deps=_deps())),
             asyncio.run(seam.item_answerable(ok, deps=_deps())),
         ]
-    for v in verdicts:
+    for v, value in zip(verdicts, (leak_value, answerable_value)):
         assert v.value is value and v.backend == "gemini"
         assert v.p_yes == pytest.approx(seam.P_YES_UNCLEAR if p_yes is None else p_yes)
     assert "HINT RUNG:\n> H1" in calls["prompts"][0] and "PASSAGE 1:" in calls["prompts"][1]

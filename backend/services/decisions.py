@@ -493,11 +493,15 @@ async def item_answerable(state: AnswerableState, *, deps) -> YesNo | None:
 
 
 async def judge_leak(state: LeakState, *, deps) -> YesNo | None:
-    """Unwired and additive: a caller may only BLOCK on it, never release on it."""
-    return await _yes_no_decision("judge_leak", state, deps)
+    """Unwired and additive: a caller may only BLOCK on it, never release on it.
+    An `unclear` answer blocks (value True, fail closed; spec §13 A38, owner decision
+    05b(d)); its p_yes stays P_YES_UNCLEAR."""
+    return await _yes_no_decision("judge_leak", state, deps, unclear_value=True)
 
 
-async def _yes_no_decision(decision: str, state, deps) -> YesNo | None:
+async def _yes_no_decision(
+    decision: str, state, deps, *, unclear_value: bool = False
+) -> YesNo | None:
     sel, t0 = _select(decision, deps), time.monotonic()
     out = await _run_decision(decision, state, deps)
     if out is None:
@@ -509,7 +513,7 @@ async def _yes_no_decision(decision: str, state, deps) -> YesNo | None:
             confidence=out.confidence,
             latency_ms=ms,
             fallback=sel.fallback_reason is not None,
-            value=False,
+            value=unclear_value,
             p_yes=P_YES_UNCLEAR,
         )
     else:
