@@ -652,12 +652,11 @@ def _supported_spans(
     """Rubric id → the answer's own words behind the first quote, from `runs` in
     order, that answer_guard.support_span accepts for that credited item (round
     a33): cut from the answer as the student wrote it, never the grader's words.
-    Each item is read against its own text and the reference answer, where a word
-    that talks about an answer ("both", "correct") can be the substance; a quote
-    that one of the item's own texts holds in full, and the answer does not, is
-    the grader quoting the item, never the student."""
+    The check is structural (CONTINUE §4.1 (b)): whether those words answer the
+    item or only claim credit is the span check's to judge. A quote that one of
+    the item's own texts holds in full, and the answer does not, is the grader
+    quoting the item, never the student."""
     supports = [parse_support(run.support, labels) for run in runs]
-    texts = {r.id: r.text for r in item.rubric}
     sources = (
         item.prompt or "",
         item.reference_answer or "",
@@ -666,14 +665,12 @@ def _supported_spans(
     )
     spans: dict[str, str] = {}
     for rid in credited:
-        context = f"{texts[rid]}\n{item.reference_answer}"
         for quote in (q for support in supports for q in support.get(rid, [])):
             span = answer_guard.support_span(
                 quote,
                 answer,
                 min_chars=GRADER_SUPPORT_MIN_CHARS,
                 min_share=GRADER_SUPPORT_MIN_SHARE,
-                context=context,
                 sources=sources,
             )
             if span is not None:

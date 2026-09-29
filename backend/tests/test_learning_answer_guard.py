@@ -3066,6 +3066,10 @@ def _span(quote: str, answer: str = REC_FULL, **kw):
     return guard.support_span(quote, answer, **{"min_chars": _MIN, "min_share": _SHARE, **kw})
 
 
+def _words(text: str) -> list[str]:
+    return guard._word_list(guard.normalise(text))
+
+
 def test_the_span_bounds_here_are_the_ones_grade_passes(monkeypatch, events):
     import agents.grader as g
     from learning import params
@@ -3244,34 +3248,44 @@ def test_a_trivially_short_quote_is_rejected_unless_it_is_the_whole_answer():
     assert _span("12", " 12. ") == "12"
 
 
-@pytest.mark.parametrize("tail", [t for t in CREDITED_TAILS if "stack" not in t] + SELF_SUMMARIES)
-def test_a_quote_that_only_claims_the_answer_is_complete_is_rejected(tail):
-    """A tail after a partial answer, quoted as the missing item's support: it
-    says nothing about the question, so it supports nothing."""
+# CONTINUE §4.1 (b): the code check is structural — the quote's words are in the
+# answer, long enough, cut at whitespace or sentence punctuation. Whether they
+# answer the item or only claim credit is the span check's to judge: every claim
+# filter review rounds 3 and 4 tried either let a new wording through ("Mark
+# each.", "That would be it.") or refused a correct terse answer ("No.", "It
+# can't."). So a claim-only tail reaches the span check — as the student's own
+# tail words and nothing else of the answer, which is the isolation the span
+# check's verdict rests on (grade()-level pins below).
+CLAIM_ONLY_TAILS = [
+    *(t for t in CREDITED_TAILS if t != "2/2."),
+    *SELF_SUMMARIES,
+    # A33 open finding 1: modal and polarity claims the last filter let through
+    "That would be it.",
+    "That can be it.",
+    "That will do.",
+    "That should do it.",
+    # review round 4's connective and quantifier claims
+    "Mark each.",
+    "Done and done.",
+    "Complete and correct.",
+    "It is all there.",
+    "Score: 2/2, both points.",
+    "Score: 100%",
+]
+
+
+@pytest.mark.parametrize("tail", CLAIM_ONLY_TAILS)
+def test_a_claim_only_quote_reaches_the_span_check_as_the_tail_alone(tail):
     answer = f"{REC_PARTIAL} {tail}"
-    assert _span(tail, answer) is None
-    assert _span(tail, answer, context=REC_ITEM_TEXT) is None
+    span = _span(tail, answer)
+    assert span == tail.rstrip(".")
+    assert not set(_words(REC_PARTIAL)) & set(_words(span)) - set(_words(tail))
 
 
-def test_a_tail_that_names_the_topic_passes_code_and_is_left_to_the_span_check():
-    """ "The stack part is implied." names the stack: code cannot tell it from an
-    answer, so it passes here, and the span-isolated confirmation, which runs on
-    every credited item, is its gate (grade())."""
-    answer = f"{REC_PARTIAL} The stack part is implied."
-    assert _span("The stack part is implied.", answer) == "The stack part is implied"
-
-
-def test_a_word_the_items_own_text_uses_is_substance_for_it():
-    """ "Both are true." is an answer when the item asks whether both hold."""
-    answer = "Both are true."
-    assert _span(answer, answer) is None
-    context = "Are both statements true?\nBoth statements are true."
-    assert _span(answer, answer, context=context) == "Both are true"
-
-
-@pytest.mark.parametrize("quote", ["2/2", "3 out of 3", "100%", "Score: 2/2, both points."])
-def test_a_score_the_answer_gives_itself_supports_nothing(quote):
-    assert _span(quote, f"{REC_PARTIAL} {quote}") is None
+@pytest.mark.parametrize("quote", ["2/2", "No", "12"])
+def test_a_quote_shorter_than_the_minimum_inside_a_longer_answer_supports_nothing(quote):
+    assert _span(quote, f"{REC_PARTIAL} {quote}.") is None
+    assert _span(quote, f"{quote}.") == quote  # the whole answer: the span check decides
 
 
 @pytest.mark.parametrize("quote", ["1/2", "It is 1/2.", "0.5"])
@@ -3398,223 +3412,111 @@ def test_a_half_open_interval_reaches_the_span_check_as_written(monkeypatch, eve
     assert res.item_results == {"r1": answer == "[0, 1)"}
 
 
-@pytest.mark.parametrize("quote", ["100%", "Score: 100%", "Full marks: 100%.", "2/2", "3 out of 3"])
-def test_a_score_the_answer_gives_itself_is_no_substance_however_short(quote):
-    """The `100%` arm of the score rule read a span cut before its "%", so it never
-    matched: "Score: 100%" reached the span check as "Score: 100" (review round 3).
-    With GRADER_SUPPORT_MIN_CHARS at 1 the score rule itself must reject it."""
-    assert _span(quote, f"{REC_PARTIAL} {quote}", min_chars=1) is None
-    assert _span(quote, quote, min_chars=1) is None
+# Review rounds 3 and 4 found a correct terse answer recorded as a confident
+# incorrect, with no span check, whenever a claim filter read its function words
+# as a claim ("No.", "It can't.", "It does.", "4/4", "100%"). With the filter
+# gone (CONTINUE §4.1 (b)) a whole answer is always long enough, and the span
+# check — which sees the rubric item beside it — decides it, right or wrong.
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "No.",
+        "No, it can't.",
+        "It can't.",
+        "It cannot.",
+        "Not at all.",
+        "It does.",
+        "It can.",
+        "Yes.",
+        "4/4",
+        "It's 4/4.",
+        "100%",
+        "Done.",
+        "Both.",
+    ],
+)
+def test_a_whole_answer_always_reaches_the_span_check(answer):
+    assert _span(answer, answer, min_chars=1) == answer.rstrip(".")
+    assert _span(answer, answer) == answer.rstrip(".")
 
 
-# Review round 3: the claim filter read a function word or a score shape as a
-# claim even when the item's own text keys it as the answer. A correct "No." on
-# an item whose reference answer is "No. …" (and "No, it can't.") and a correct
-# "4/4" on an item keyed "4/4" were recorded as confident incorrects with no span
-# check, while the mirror "Yes." was credited ("yes" is answer talk, which the
-# item's text makes substance; "no" was a function word, which nothing did). A
-# word that can answer on its own — a polarity, a quantifier, a connective, a
-# modal — is substance when the item's text uses it, as answer talk is; an
-# article, a copula, a preposition or a pronoun never is.
-NO_ITEM = "answers no\nNo. Without a base case it never terminates."
-YES_ITEM = "answers yes\nYes. A guard on the calls can end it."
-TIME_ITEM = "identifies common time as 4/4\nCommon time is 4/4."
+def test_a_terse_sentence_inside_a_longer_answer_is_cut_as_written():
+    answer = "No, it can't. Without a base case the stack just keeps growing."
+    assert _span("No, it can't.", answer) == "No, it can't"
 
 
-@pytest.mark.parametrize("answer", ["No.", "No, it can't.", "No, not at all."])
-def test_a_word_that_answers_on_its_own_is_substance_when_the_item_keys_it(answer):
-    assert _span(answer, answer, context=NO_ITEM) == answer[:-1]
-    # inside a longer answer, only the item's keying makes it substance (a whole
-    # terse answer meets the span check whatever the item keys; review round 4)
-    assert _span(answer, f"{answer} The stack overflows.", context=REC_ITEM_TEXT) is None
-    assert _span("Yes.", "Yes.", context=YES_ITEM) == "Yes"
-
-
-@pytest.mark.parametrize("answer", ["4/4", "It's 4/4."])
-def test_a_score_shape_the_item_keys_is_the_answer_not_a_score(answer):
-    assert _span(answer, answer, context=TIME_ITEM) == answer.rstrip(".")
-    assert _span(answer, answer, context=REC_ITEM_TEXT) is None
-    assert _span("2/2", "2/2", context=TIME_ITEM) is None  # a score the item never keys
-
-
-@pytest.mark.parametrize("claim", [*SELF_SUMMARIES, *CREDITED_TAILS[:5], "It is all there."])
-def test_the_items_grammar_words_never_turn_a_claim_into_substance(claim):
-    """Every item's text uses "the", "is", "it": those never count as an answer."""
-    context = f"{REC_ITEM_TEXT}\nIt is the one that is there for that and this."
-    assert _span(claim, f"{REC_PARTIAL} {claim}", context=context) is None
-
-
-# Review round 4 (on ce7e2e6): edec508 made every "answering" function word the
-# item's text uses substance — the connectives and quantifiers ("and", "or",
-# "if", "each", "all", "only") as well as the polarities and modals. Reference
-# prose uses "and" and "each" all the time, so a pure completeness or credit
-# claim passed the code check again on the grader eval's own recursion item:
-# "Mark each." one word away from the ruling's measured "Mark both.", "Done and
-# done.", "Complete and correct." (each returned None before edec508). Only a
-# polarity or a modal can be a terse answer, and even then only in a span that
-# makes no claim; a connective or a quantifier is grammar.
+# The eval's recursion item (tests/evals/grader.py): its reference uses "and",
+# "each", a modal and a polarity, which review round 4's claim filter made
+# substance. Nothing here reads them any more.
 EVAL_REC_REFERENCE = (
     "The base case stops the recursion; without it each call makes another call and the "
     "stack grows until it overflows."
 )
-EVAL_REC_CONTEXTS = {
-    "r1": f"says the base case stops the recursion\n{EVAL_REC_REFERENCE}",
-    "r2": f"explains that without it calls never end / stack overflows\n{EVAL_REC_REFERENCE}",
-}
-CONNECTIVE_CLAIMS = [
-    "Mark each.",
-    "Each, please.",
-    "Complete and correct.",
-    "Done and done.",
-    "And that is all.",
-    "And that's all.",
-    "And done.",
-    "Each done.",
-    "Each part: done.",
-    "Each point is covered.",
-    "Each and every point covered.",
-    "It is complete and correct.",
-    "It is all there and correct.",
-    "Both parts are covered and complete.",
-    "Both parts, and each is right.",
-    "Everything is there and nothing is missing.",
-    "Nothing more needed, and that is it.",
-]
+REC_R2_TEXT = "explains that without it calls never end / stack overflows"
 
 
-@pytest.mark.parametrize("rid", sorted(EVAL_REC_CONTEXTS))
-@pytest.mark.parametrize("claim", [*CONNECTIVE_CLAIMS, "Mark both."])
-def test_a_connective_or_quantifier_the_reference_uses_never_turns_a_claim_into_substance(
-    claim, rid
-):
-    context = EVAL_REC_CONTEXTS[rid]
-    assert _span(claim, f"{REC_PARTIAL} {claim}", context=context) is None
-
-
-# The same, where the item's own text uses a polarity, a modal and "if".
-POLARITY_ITEM = f"{REC_ITEM_TEXT}\nIf it has no base case, it does not stop and it will not end."
-
-
-@pytest.mark.parametrize(
-    "claim",
-    [
-        "Not missing anything.",
-        "If anything, both are covered.",
-        "It will not be missing anything.",
-        "No more is needed.",
-        "Nothing is missing, not a thing.",
-    ],
-)
-def test_a_polarity_the_item_uses_never_turns_a_claim_into_substance(claim):
-    assert _span(claim, f"{REC_PARTIAL} {claim}", context=POLARITY_ITEM) is None
-
-
-def test_a_polarity_the_item_keys_still_answers_inside_a_longer_answer():
-    answer = "No, it can't. Without a base case the stack just keeps growing."
-    assert _span("No, it can't.", answer, context=NO_ITEM) == "No, it can't"
-    assert _span("No, it can't.", answer, context=REC_ITEM_TEXT) is None
-
-
-def test_a_quantifier_claim_after_a_partial_answer_earns_nothing_through_grade(monkeypatch, events):
-    """Through grade() on the grader eval's recursion item: the first run credits
-    both items, quoting the partial answer for r1 and the tail for r2. Before
-    this round the span check saw "Mark each" as r2's span and a lenient one
-    credited it; now r2 has no verifiable quote."""
-    item = _item(
+def _eval_rec_item():
+    return _item(
         reference_answer=EVAL_REC_REFERENCE,
         rubric=[
             RubricItem(id="r1", text="says the base case stops the recursion"),
-            RubricItem(id="r2", text="explains that without it calls never end / stack overflows"),
+            RubricItem(id="r2", text=REC_R2_TEXT),
         ],
     )
-    first = {**_all_yes(0.95), "support": [f"r1: {REC_PARTIAL}", "r2: Mark each."]}
-    res, calls = _grade_item(monkeypatch, item, [first], f"{REC_PARTIAL} Mark each.")
+
+
+def _only_substance(item: str, span: str) -> bool:
+    """A stand-in span check: r1 on the partial answer's words, r2 only on words
+    about the calls or the stack — what the isolated live span check judges."""
+    if item == REC_R2_TEXT:
+        return any(w in span.lower() for w in ("stack", "overflow", "never end"))
+    return "recurs" in span.lower() or "stops" in span.lower()
+
+
+@pytest.mark.parametrize("tail", ["Mark each.", "That would be it.", "That can be it."])
+def test_a_claim_tail_after_a_partial_answer_is_withheld_by_the_span_check(
+    monkeypatch, events, tail
+):
+    """Through grade() on the eval's recursion item (A33 open finding 1): the
+    first run credits both items, quoting the partial answer for r1 and the tail
+    for r2. The tail reaches the span check alone beside r2's text, and its no
+    withholds r2."""
+    first = {**_all_yes(0.95), "support": [f"r1: {REC_PARTIAL}", f"r2: {tail}"]}
+    answer = f"{REC_PARTIAL} {tail}"
+    res, calls = _grade_item(monkeypatch, _eval_rec_item(), [first], answer, judge=_only_substance)
     [message] = calls["span_messages"]
-    assert [span for _, _, span in grader_fakes.spans_of(message)] == [REC_PARTIAL[:-1]]
+    assert [span for _, _, span in grader_fakes.spans_of(message)] == [
+        REC_PARTIAL[:-1],
+        tail.rstrip("."),
+    ]
     assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
 
 
-# Review round 4: a correct terse answer still became a confident incorrect with
-# no span check whenever the item's text did not use its exact polarity word —
-# "It can't.", "Not at all.", "It is not." on an item keyed "No. …", and "It
-# does." on an item whose reference is "Yes, it does." (a verbatim substring of
-# it) — and "It cannot." passed where "It can't." failed. A whole answer made
-# only of function words, with no claim and no score, is a terse answer, not a
-# claim about one: the span check decides it. A negation reads the same however
-# it is spelled, and a percentage the item keys counts in any spelling.
-YES_DOES_ITEM = "answers yes\nYes, it does."
-PERCENT_ITEM = "gives the share of runs that halt\n100 percent of them halt."
-NOT_ITEM = "answers no\nIt does not terminate: it cannot stop, is not bounded and won't end."
+# A33 open finding 3: a dash, or glue that holds sentence punctuation, ends the
+# span — never a joiner; a hyphen or slash joins the whole token as written. No
+# word the widening brings in is judged by code: the span check sees it.
+GLUED_TAILS = [  # (what follows "…stops recursing", the quote, the span)
+    ("—both parts done.", "both parts done", "both parts done"),
+    ("–both parts done.", "both parts done", "both parts done"),
+    (".)Tick both.", "Tick both", "Tick both"),
+    ('."Tick both.', "Tick both", "Tick both"),
+    (".'Tick both.", "Tick both", "Tick both"),
+    ("-Mark both.", "Mark both", "recursing-Mark both"),
+    ("/Mark both.", "Mark both", "recursing/Mark both"),
+]
 
 
-@pytest.mark.parametrize(
-    "answer,context",
-    [
-        ("It can't.", NO_ITEM),
-        ("It cannot.", NO_ITEM),
-        ("Not at all.", NO_ITEM),
-        ("It is not.", NO_ITEM),
-        ("It does not.", NO_ITEM),
-        ("It doesn't.", NO_ITEM),
-        ("It won't.", NO_ITEM),
-        ("It does.", YES_DOES_ITEM),
-        ("It is.", YES_DOES_ITEM),
-        ("It can.", YES_DOES_ITEM),
-        ("No.", REC_ITEM_TEXT),
-        ("That is it.", REC_ITEM_TEXT),
-    ],
-)
-def test_a_terse_whole_answer_meets_the_span_check(answer, context):
-    assert _span(answer, answer, context=context) == answer.rstrip(".")
+@pytest.mark.parametrize("glue,quote,span", GLUED_TAILS)
+def test_a_dash_or_punctuated_glue_ends_the_span(glue, quote, span):
+    assert _span(quote, REC_PARTIAL[:-1] + glue) == span
 
 
-@pytest.mark.parametrize(
-    "answer",
-    [
-        "It is all there.",
-        "It's 2/2.",
-        "Yes.",
-        "That's all.",
-        "Both.",
-        "Done.",
-        "100%",
-        "Score: 100 percent.",
-    ],
-)
-def test_a_whole_answer_that_is_a_claim_still_supports_nothing(answer):
-    """A claim word, a verdict word or a score the answer gives itself keeps a
-    whole answer a claim."""
-    assert _span(answer, answer, context=REC_ITEM_TEXT, min_chars=1) is None
-
-
-def test_a_terse_sentence_inside_a_longer_answer_still_needs_the_item_to_key_it():
-    assert _span("It is.", "It is. The base case stops it.", context=REC_ITEM_TEXT) is None
-    assert _span("That is it.", f"{REC_PARTIAL} That is it.", context=REC_ITEM_TEXT) is None
-
-
-@pytest.mark.parametrize(
-    "short,spelled",
-    [
-        ("It can't.", "It cannot."),
-        ("It can't.", "It can not."),
-        ("It doesn't.", "It does not."),
-        ("It won't.", "It will not."),
-        ("It isn't.", "It is not."),
-    ],
-)
-@pytest.mark.parametrize("context", [NO_ITEM, NOT_ITEM, REC_ITEM_TEXT], ids=["no", "not", "rec"])
-def test_a_contracted_negation_reads_as_the_spelled_out_one(short, spelled, context):
-    tail = " Without a base case the stack overflows."
-    got = [_span(q, f"{q}{tail}", context=context) for q in (short, spelled)]
-    expect = [q.rstrip(".") for q in (short, spelled)] if context is NOT_ITEM else [None, None]
-    assert got == expect
-
-
-@pytest.mark.parametrize("answer", ["100%", "100 percent", "It is 100%."])
-def test_a_percentage_the_item_keys_in_any_spelling_is_the_answer(answer):
-    assert _span(answer, answer, context=PERCENT_ITEM, min_chars=1) == answer.rstrip(".")
-    tail = f"{REC_PARTIAL} {answer}"
-    assert _span(answer, tail, context=REC_ITEM_TEXT, min_chars=1) is None
+@pytest.mark.parametrize("glue,quote,span", GLUED_TAILS)
+def test_a_glued_claim_tail_is_withheld_by_the_span_check(monkeypatch, events, glue, quote, span):
+    first = {**_all_yes(0.95), "support": ["r1: stops recursing", f"r2: {quote}"]}
+    answer = REC_PARTIAL[:-1] + glue
+    res, calls = _grade_item(monkeypatch, _eval_rec_item(), [first], answer, judge=_only_substance)
+    assert res.item_results == {"r1": True, "r2": False}
 
 
 @pytest.mark.parametrize(
@@ -3686,10 +3588,10 @@ def test_a_quote_the_answer_does_not_hold_credits_nothing_and_checks_nothing(mon
 def test_a_credited_tail_after_a_partial_answer_earns_no_credit(monkeypatch, events, tail):
     """Review round 2's critical finding, through grade(): the first slot credits
     the partial answer in full and quotes the tail for the missing item, as the
-    fooled live run did. Code rejects every tail that only claims the answer is
-    complete, so the span check never even sees it; the one that names the topic
-    reaches the span check, which sees that item and that tail alone (here, an
-    isolated judge that finds nothing in a tail)."""
+    fooled live run did. Every tail long enough to quote reaches the span check
+    (CONTINUE §4.1 (b)), which sees that item and that tail alone (here, an
+    isolated judge that finds nothing in a tail); "2/2" is under
+    GRADER_SUPPORT_MIN_CHARS inside a longer answer and supports nothing."""
     answer = f"{REC_PARTIAL} {tail}"
     first = {**_all_yes(0.95), "support": [f"r1: {REC_PARTIAL}", f"r2: {tail}"]}
     res, calls = _grade_with(
@@ -3702,7 +3604,7 @@ def test_a_credited_tail_after_a_partial_answer_earns_no_credit(monkeypatch, eve
     [message] = calls["span_messages"]
     spans = [span for _, _, span in grader_fakes.spans_of(message)]
     partial = REC_PARTIAL.rstrip(".")
-    assert spans == ([partial, tail.rstrip(".")] if "stack" in tail else [partial])
+    assert spans == ([partial] if tail == "2/2." else [partial, tail.rstrip(".")])
 
 
 def test_the_span_check_sees_each_credited_item_and_its_quote_only(monkeypatch, events):

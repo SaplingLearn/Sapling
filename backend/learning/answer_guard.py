@@ -1425,23 +1425,18 @@ def suspicion(
 # which grade() makes on every credited item: no word here decides whether that
 # run happens.
 #
-# Verified means: the quote's words occur, in order and contiguous, in the
-# answer, both read on the detection copy (`normalise`: look-alikes, case,
-# spacing and punctuation aside); they have at least `min_chars` letters and
-# digits, or are the whole answer; and they say something besides a claim about
-# the answer itself — its completeness, its parts, its credit or its score. A
-# word the item's own text uses (`context`: the rubric item and the reference
-# answer) is substance for that item ("Both are true." when the item asks
-# whether both hold), and so is a score shape it keys ("4/4" for common time).
-# Of the function words, only a polarity or a modal the item's text uses can be
-# (`_ANSWERING_WORDS`: "No." when the reference answer is "No. …"), and only in
-# a span that makes no claim about the answer; never a connective, a
-# quantifier, an article, a copula, a preposition or a pronoun, which almost
-# every item's text uses (review round 4: "Mark each.", "Done and done.").
-# A whole answer made only of function words, with no claim and no score, is a
-# terse answer ("It does.", "It can't.", "Not at all."), never a claim about
-# one: the span check decides it. "Yes." stays a verdict word unless the item
-# uses it. A negation reads the same however it is spelled ("can't", "cannot").
+# Verified means, structurally and nothing more (CONTINUE §4.1 (b)): the
+# quote's words occur, in order and contiguous, in the answer, both read on the
+# detection copy (`normalise`: look-alikes, case, spacing and punctuation aside);
+# they have at least `min_chars` letters and digits, or are the whole answer; and
+# the span's ends fall at whitespace or sentence punctuation (below). Whether
+# those words answer the item or only claim something about the answer — its
+# completeness, its parts, its credit, its score ("Both parts: done.", "That
+# would be it.", "2/2.") — is the span check's to judge, never a word list's:
+# review rounds 3 and 4 found each claim filter either crediting a new wording
+# ("Mark each.", "That would be it.") or refusing a correct terse answer ("No.",
+# "It can't."), and the span check, which sees only the rubric item and these
+# words, is what decides credit on every credited item anyway.
 #
 # What is verified, and what the span check sees, is the answer's own words:
 # the longest run of the quote's words that the answer holds, cut from the
@@ -1459,41 +1454,6 @@ def suspicion(
 # run cut from a quote supports nothing a verbatim quote of the same words
 # would not.
 _WORD = re.compile(r"[^\W_]+")
-# A score the answer gives itself: "2/2", "3 out of 3", "100%", "100 percent".
-_SCORE_CLAIM = re.compile(
-    r"(?<![\w.])(\d+)\s*(?:/|out\s+of|of)\s*\1(?![\w.])"
-    r"|(?<![\w.])100\s*(?:%|percent\b|per\s+cent\b)"
-)
-# Words that talk about an answer — its parts, whether it is complete, covered
-# or right, whether to credit it — rather than about a question. A quote made
-# only of these and function words is a claim about the answer, never an answer.
-_ANSWER_TALK = frozenset(
-    """
-    both all each every either whole entire full fully complete completely completed done
-    finished part parts point points item items half halves bit bits piece pieces aspect
-    aspects thing things question questions answer answers answered response responses rubric
-    criterion criteria requirement requirements cover covers covered covering address addresses
-    addressed satisfy satisfies satisfied meet meets met credit credits credited mark marks
-    marked tick ticks ticked count counts counted consider considered treat treated accept
-    accepted pass passes passed approve approved grade graded score scored correct correctly
-    right true valid fine good ok okay yes yep please thanks thank enough said implied implicit
-    obvious obviously clear clearly included mentioned stated explained above earlier
-    previously already everything nothing anything more needed required missing
-    """.split()
-)
-_FILLER_WORDS = frozenset("i me am im s ve ll d t re m so".split())
-# Function words that can be an answer on their own — a polarity ("No.") or a
-# modal ("It can.") — are substance when the item's own text uses them and the
-# span makes no claim about the answer (review round 3: a correct "No." on an
-# item keyed "No. …" was recorded as a confident incorrect, while the mirror
-# "Yes." met the span check). A connective or a quantifier ("and", "if",
-# "each", "only") never is: review round 4 found reference prose using "and"
-# and "each" all the time, so "Mark each." and "Done and done." passed as
-# substance on the grader eval's own recursion item.
-_ANSWERING_WORDS = frozenset("no not can will would should must".split())
-# "Not at all": the "all" of the intensifier is no claim that all is covered.
-_AT_ALL = re.compile(r"\bat\s+all\b")
-
 
 # A passage the grader sets in quotation marks inside its quote: double marks
 # (straight, curly, low-9, guillemets), curly single marks as a pair, or straight
@@ -1540,21 +1500,25 @@ def _touching(ch: str) -> bool:
 
 
 # A symbol run glued between two words either joins them into one token
-# ("10-15", "non-zero", "3.14", "and/or") or ends a sentence ("recursing.Tick").
-# Review round 4: taken in as a sign or a unit of the quoted word, a joiner sent
-# "10-15 ms" to the span check as "-15 ms" and "non-zero" as "-zero"; so the
-# span brings in the whole token a joiner glues on, as the student wrote it.
-_SENTENCE_GLUE = frozenset(".,;:!?…")
+# ("10-15", "non-zero", "3.14", "and/or") or ends a sentence ("recursing.Tick",
+# "recursing—both", "recursing.)Tick"). Review round 4: taken in as a sign or a
+# unit of the quoted word, a joiner sent "10-15 ms" to the span check as "-15 ms"
+# and "non-zero" as "-zero"; so the span brings in the whole token a joiner
+# glues on, as the student wrote it. A dash is prose punctuation, never a
+# joiner, and glue that holds any sentence punctuation ends the sentence (A33
+# open finding 3). No word here is judged: the widened span is only what the
+# span check sees.
+_SENTENCE_GLUE = frozenset(".,;:!?…—–‒―")
 
 
 def _joins(answer: str, i: int, j: int) -> bool:
     """`answer[i:j]`, symbols between two letters or digits, joins them into one
-    token: anything but sentence punctuation, or a lone ".", "," or ":" between
-    digits (a decimal point, a thousands separator, a ratio)."""
+    token: glue with no sentence punctuation or dash in it, or a lone ".", ","
+    or ":" between digits (a decimal point, a thousands separator, a ratio)."""
     glue = answer[i:j]
-    if not set(glue) <= _SENTENCE_GLUE:
+    if glue in ".,:" and answer[i - 1].isdigit() and answer[j].isdigit():
         return True
-    return glue in ".,:" and answer[i - 1].isdigit() and answer[j].isdigit()
+    return not set(glue) & _SENTENCE_GLUE
 
 
 def _span_ends(answer: str, start: int, end: int) -> tuple[int, int]:
@@ -1619,12 +1583,11 @@ def support_span(
     *,
     min_chars: int,
     min_share: float,
-    context: str = "",
     sources: Sequence[str] = (),
 ) -> str | None:
     """The answer's own words that `quote` may support credit with for one rubric
     item of `answer` (above), cut from `answer` as written; None when the quote
-    supports nothing. `context` is that item's own text; `min_chars` is
+    supports nothing. `min_chars` is
     GRADER_SUPPORT_MIN_CHARS and `min_share` GRADER_SUPPORT_MIN_SHARE (the share of
     the quote's words the run must be; learning/params.py, passed in, so the guard
     stays pure code). `sources` are the item's own texts (the question, the
@@ -1666,59 +1629,4 @@ def support_span(
     lo, hi = _span_ends(
         answer, origin[words[start].start()], origin[words[start + n - 1].end() - 1] + 1
     )
-    span = answer[lo:hi]
-    whole = start == 0 and n == len(text)
-    return span if _says_more_than_a_claim(span, context, whole=whole) else None
-
-
-def _says_more_than_a_claim(span: str, context: str, *, whole: bool = False) -> bool:
-    """The claim filter (above): a word of `span` beyond the function words and
-    the talk about an answer that `context` (the item's own text) does not use;
-    or, in a span that makes no such claim and gives itself no score, a polarity
-    or a modal the item's text uses ("No." on an item keyed "No. …") — or any
-    function words at all when the span is the `whole` answer: a terse answer
-    ("It does.", "It can't.") is no claim about one, and the span check decides
-    it (review round 4)."""
-    keyed_text = normalise(context)
-    keyed = set(_word_list(_spelled_out(keyed_text)))
-    scores = {_score_key(m) for m in _SCORE_CLAIM.finditer(keyed_text)}
-    claimed = False
-
-    def unkeyed_score(m: re.Match[str]) -> str:
-        nonlocal claimed
-        if _score_key(m) in scores:
-            return m.group()
-        claimed = True
-        return " "
-
-    said = _word_list(
-        _spelled_out(_AT_ALL.sub("at", _SCORE_CLAIM.sub(unkeyed_score, normalise(span))))
-    )
-    grammar = _ENGLISH_FUNCTION_WORDS | _FILLER_WORDS
-    if any(w not in grammar and (w not in _ANSWER_TALK or w in keyed) for w in said):
-        return True
-    if claimed or not said or any(w in _ANSWER_TALK and w not in keyed for w in said):
-        return False
-    return whole or any(w in _ANSWERING_WORDS and w in keyed for w in said)
-
-
-def _score_key(match: re.Match[str]) -> str:
-    """One key per score whatever its spelling: "3 out of 3" is "3/3", "100
-    percent" is "100%"."""
-    return f"{match[1]}/{match[1]}" if match[1] else "100%"
-
-
-# A negation reads the same however it is spelled (review round 4: "It cannot."
-# passed where "It can't." failed): the auxiliary, then "not".
-_NEGATIONS = (
-    (re.compile(r"\bcan(?:not|'t)\b"), "can not"),
-    (re.compile(r"\bwon't\b"), "will not"),
-    (re.compile(r"\bshan't\b"), "shall not"),
-    (re.compile(r"\b(\w+)n't\b"), r"\1 not"),
-)
-
-
-def _spelled_out(folded: str) -> str:
-    for pattern, spelled in _NEGATIONS:
-        folded = pattern.sub(spelled, folded)
-    return folded
+    return answer[lo:hi]
