@@ -1504,3 +1504,51 @@ def test_inv_19_review_grades_through_grader_only():
         r"\.(insert|update|upsert)\(",
         text,
     ), "review.py writes a graph table directly (inv 1)"
+
+
+#: PKG-10: the only modules that may import learning.misconceptions (all
+#: loop-only surfaces; spec §8 invariant 17, PKG-10 Behaviour 9).
+MISCONCEPTIONS_IMPORTERS_ALLOWED = {
+    "agents/tools/check.py",
+    "routes/learn_loop.py",
+    "learning/learner_brief.py",
+}
+
+
+def test_inv_17_rollup_not_a_tutor_tool():
+    """ADR 0023 §5: a class-aggregate read never ships on a tutor behind a soft
+    guard. The rollup is reachable only from backend code; nothing under
+    agents/ may name it, and the misconception store is imported only by the
+    loop-only surfaces."""
+    for path in (BACKEND / "agents").rglob("*.py"):
+        text = path.read_text()
+        rel = path.relative_to(BACKEND)
+        assert "misconception_rollup" not in text, f"{rel} names the rollup"
+        assert not re.search(
+            r"from\s+learning\.misconceptions\s+import\s+[^\n]*\brollup\b", text
+        ), f"{rel} imports rollup"
+        assert not re.search(r"\bmisconceptions\.rollup\b", text), f"{rel} calls rollup"
+    importers = set()
+    for sub in ("agents", "routes", "services", "learning"):
+        for path in (BACKEND / sub).rglob("*.py"):
+            if re.search(
+                r"^\s*(from|import)\s+learning\.misconceptions\b|^\s*from\s+learning\s+import\s+[^\n]*\bmisconceptions\b",
+                path.read_text(),
+                re.M,
+            ):
+                importers.add(str(path.relative_to(BACKEND)))
+    assert importers <= MISCONCEPTIONS_IMPORTERS_ALLOWED, (
+        f"unexpected importers: {importers - MISCONCEPTIONS_IMPORTERS_ALLOWED}"
+    )
+
+
+def test_inv_17_scan_self_test():
+    """The importer pattern of inv 17 catches both import spellings."""
+    pat = re.compile(
+        r"^\s*(from|import)\s+learning\.misconceptions\b|^\s*from\s+learning\s+import\s+[^\n]*\bmisconceptions\b",
+        re.M,
+    )
+    assert pat.search("from learning.misconceptions import record\n")
+    assert pat.search("import learning.misconceptions as m\n")
+    assert pat.search("from learning import gates, misconceptions\n")
+    assert not pat.search("from learning import gates\n")
