@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\n\"key_idea\": \"You will start by identifying the core components of the problem.\",\n\"body\": \"This problem requires you to break down the information provided and determine what needs to be calculated.\",\n\"question\": \"What is the first piece of information you need to identify from the problem description?\"\n}"
+  ],
+  "input_sha256": "1244f71908e0171878bba451e4f14a700964328618f380cc3cacfce579d0e197",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "body": "This problem requires you to break down the information provided and determine what needs to be calculated.",
+    "key_idea": "You will start by identifying the core components of the problem.",
+    "question": "What is the first piece of information you need to identify from the problem description?"
+  },
+  "prompt_hash": "23e9d0b6402d",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_lite",
+  "tool_calls": []
+}

@@ -522,6 +522,14 @@ def _assemble_message(user_message: str) -> str:
     return block + "\n\n[STUDENT QUESTION]\n" + user_message
 
 
+def graph_block(user_message: str) -> str:
+    """The fixture course's GRAPH CONTEXT block alone (tests/evals/loop_tutor.py
+    assembles its own message around it)."""
+    assembled = _assemble_message(user_message)
+    tail = "\n\n[STUDENT QUESTION]\n" + user_message
+    return assembled[: -len(tail)] if assembled.endswith(tail) else ""
+
+
 async def _run(case_input: ChatInput) -> ChatReply:
     """Local adapter that mirrors `_replay.run_with_cassette` but wraps
     the agent's plain-text reply in `ChatReply` so cassettes round-trip

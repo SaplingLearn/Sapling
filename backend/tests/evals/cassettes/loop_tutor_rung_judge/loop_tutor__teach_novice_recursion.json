@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "A recursive function typically has two main parts: a base case that defines when the recursion stops, and a recursive step that calls the function with a modified input.",
+    "reveals_final_answer": false,
+    "rung": 2
+  },
+  "served_sha256": "6817a2140f6a75c81ce2b74745d3d8adf3f82d2dd02c6b86808547bb4ad496c7"
+}
