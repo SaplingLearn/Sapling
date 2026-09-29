@@ -162,7 +162,6 @@ from learning.turn_shape import (
     clamp_model_ceiling,
     render_partial,
     render_turn,
-    sentences,
     turn_limits,
 )
 from models import (
@@ -935,39 +934,15 @@ LOW_RUNG_KEY_IDEAS: dict[str, str] = {
 }
 
 
-#: PKG-14 reopen (owner decision 2026-09-29, spec §13 A81): the question of a
-#: TEACH turn at a ceiling of H0/H1, from code. Those rungs add no content
-#: (RUNG_INTENT: acknowledge / one pump); recorded model questions there were a
-#: pointed next step (judged H3) when the tutor contradicted a wrong claim.
-TEACH_LOW_RUNG_QUESTIONS: dict[int, str] = {
-    0: "What will you try next?",
-    1: "What is the first thing you need to figure out here?",
-}
-
-
-def _without_questions(text: str) -> str:
-    """`text` minus every sentence that asks anything (fail closed: a question
-    in model text at a low teach ceiling is never served)."""
-    return " ".join(s for s in sentences(text or "") if "?" not in s)
-
-
 def _served_fields(out, *, phase: str, rung: Rung, verdict: str | None = None):
     """The structured turn as served (fix round 2). The ladder fixes what the
     lowest rungs may say, so code serves those fields: at an H2 hint the
     question is the ladder's (H2 is a concept pointer: reread the definition —
     recorded model questions named the item's own objects, judged H3); at
     H0/H1 the key idea of a hint or a correct-verdict feedback turn is
-    LOW_RUNG_KEY_IDEAS'; at a TEACH ceiling of H0/H1 the question is
-    TEACH_LOW_RUNG_QUESTIONS' and a sentence of the model's key idea or body
-    that asks anything is dropped (A81). The model writes everything else."""
+    LOW_RUNG_KEY_IDEAS'. The model writes everything else."""
     at = int(rung)
     served = dict(out)
-    if phase == "teach" and at in TEACH_LOW_RUNG_QUESTIONS:
-        for k in ("key_idea", "body"):
-            if k in out and "?" in (out[k] or ""):
-                served[k] = _without_questions(out[k])
-        if "question" in out:
-            served["question"] = TEACH_LOW_RUNG_QUESTIONS[at]
     if phase == "hint" and at == int(Rung.H2) and "question" in out:
         served["question"] = LADDER_FALLBACK_LINES[at]
     if at <= int(Rung.H1) and "key_idea" in out:
