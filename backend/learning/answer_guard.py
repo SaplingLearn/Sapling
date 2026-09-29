@@ -1384,10 +1384,12 @@ def suspicion(
 # the answer itself — its completeness, its parts, its credit or its score. A
 # word the item's own text uses (`context`: the rubric item and the reference
 # answer) is substance for that item ("Both are true." when the item asks
-# whether both hold), and so is a score shape it keys ("4/4" for common time);
-# of the function words, only those that can answer on their own can be
-# (`_ANSWERING_WORDS`: "No." when the reference answer is "No. …"), never an
-# article, a copula, a preposition or a pronoun, which every item's text uses.
+# whether both hold), and so is a score shape it keys ("4/4" for common time).
+# Of the function words, only a polarity or a modal the item's text uses can be
+# (`_ANSWERING_WORDS`: "No." when the reference answer is "No. …"), and only in
+# a span that makes no claim about the answer; never a connective, a
+# quantifier, an article, a copula, a preposition or a pronoun, which almost
+# every item's text uses (review round 4: "Mark each.", "Done and done.").
 #
 # What is verified, and what the span check sees, is the answer's own words:
 # the longest run of the quote's words that the answer holds, cut from the
@@ -1425,14 +1427,17 @@ _ANSWER_TALK = frozenset(
     """.split()
 )
 _FILLER_WORDS = frozenset("i me am im s ve ll d t re m so".split())
-# Function words that can be an answer on their own — a polarity ("No."), a
-# quantifier, a connective in logic, a modal ("It can.") — count as answer talk:
-# a claim, unless the item's own text uses them (review round 3: a correct "No."
-# on an item keyed "No. …" was recorded as a confident incorrect, while the
-# mirror "Yes." met the span check).
-_ANSWERING_WORDS = frozenset(
-    "no not and or if then all any each every only can will would should must".split()
-)
+# Function words that can be an answer on their own — a polarity ("No.") or a
+# modal ("It can.") — are substance when the item's own text uses them and the
+# span makes no claim about the answer (review round 3: a correct "No." on an
+# item keyed "No. …" was recorded as a confident incorrect, while the mirror
+# "Yes." met the span check). A connective or a quantifier ("and", "if",
+# "each", "only") never is: review round 4 found reference prose using "and"
+# and "each" all the time, so "Mark each." and "Done and done." passed as
+# substance on the grader eval's own recursion item.
+_ANSWERING_WORDS = frozenset("no not can will would should must".split())
+# "Not at all": the "all" of the intensifier is no claim that all is covered.
+_AT_ALL = re.compile(r"\bat\s+all\b")
 
 
 # A passage the grader sets in quotation marks inside its quote: double marks
@@ -1572,14 +1577,33 @@ def support_span(
         answer, origin[words[start].start()], origin[words[start + n - 1].end() - 1] + 1
     )
     span = answer[lo:hi]
-    keyed = normalise(context)
-    filler = (_ENGLISH_FUNCTION_WORDS - _ANSWERING_WORDS) | _FILLER_WORDS
-    talk = ((_ANSWER_TALK | _ANSWERING_WORDS) - set(_word_list(keyed))) | filler
-    scores = {_score_key(m) for m in _SCORE_CLAIM.finditer(keyed)}
-    claimless = _word_list(
-        _SCORE_CLAIM.sub(lambda m: m.group() if _score_key(m) in scores else " ", normalise(span))
-    )
-    return span if any(w not in talk for w in claimless) else None
+    return span if _says_more_than_a_claim(span, context) else None
+
+
+def _says_more_than_a_claim(span: str, context: str) -> bool:
+    """The claim filter (above): a word of `span` beyond the function words and
+    the talk about an answer that `context` (the item's own text) does not use;
+    or, in a span that makes no such claim and gives itself no score, a polarity
+    or a modal the item's text uses ("No." on an item keyed "No. …")."""
+    keyed_text = normalise(context)
+    keyed = set(_word_list(keyed_text))
+    scores = {_score_key(m) for m in _SCORE_CLAIM.finditer(keyed_text)}
+    claimed = False
+
+    def unkeyed_score(m: re.Match[str]) -> str:
+        nonlocal claimed
+        if _score_key(m) in scores:
+            return m.group()
+        claimed = True
+        return " "
+
+    said = _word_list(_AT_ALL.sub("at", _SCORE_CLAIM.sub(unkeyed_score, normalise(span))))
+    grammar = _ENGLISH_FUNCTION_WORDS | _FILLER_WORDS
+    if any(w not in grammar and (w not in _ANSWER_TALK or w in keyed) for w in said):
+        return True
+    if claimed or any(w in _ANSWER_TALK and w not in keyed for w in said):
+        return False
+    return any(w in _ANSWERING_WORDS and w in keyed for w in said)
 
 
 def _score_key(match: re.Match[str]) -> str:
