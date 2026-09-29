@@ -1232,12 +1232,17 @@ def test_an_innocuous_hint_is_kept_past_the_final_answer_check():
         ("Look again at option A.", False),  # the key letter in an option context
         ("Why is (A) better than the others?", False),
         ("Why did you rule out option C?", True),  # another letter is no leak
-        ("A base case is what ends the calls.", True),  # a bare capital never counts
+        # A38 fix round (M1): the grader hint runs the STRICT mode, where any
+        # standalone key letter counts — the article "A" too when the key is A.
+        # A false positive only drops a hint, so this is by design.
+        ("A base case is what ends the calls.", False),
+        ("The base case is what ends the calls.", True),
     ],
 )
 def test_an_mc_reason_hint_naming_the_correct_option_is_dropped(hint, kept):
     """mc_reason: the check passes the item's correct_option, so a hint that names
-    the key letter in an option context is dropped (A38, detector "option")."""
+    the key letter — any standalone one, the grader's strict mode — is dropped
+    (A38, detector "option")."""
     import agents.grader as g
     import agents.tools.check as c
 

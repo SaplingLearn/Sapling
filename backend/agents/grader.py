@@ -617,14 +617,29 @@ def _echoes_reference(hint: str, reference: str) -> bool:
 _HINT_RUNG = 0
 
 
+def _correct_option_text(item) -> str | None:
+    """The key option's text: the seam's GraderItem carries it; a CheckItem's
+    lettered options hold it."""
+    text = getattr(item, "correct_option_text", None)
+    if text:
+        return text
+    letter = (getattr(item, "correct_option", None) or "").strip().upper()
+    for option in getattr(item, "options", None) or ():
+        if getattr(option, "letter", "").strip().upper() == letter and letter:
+            return getattr(option, "text", None) or None
+    return None
+
+
 def _hint_leaks(item, hint: str, *, format: str) -> bool:
     """Spec §13 A38 (the grader-hint owner decision; HANDOFF-05 (b), invariant 27):
-    True when leak.detect_leak flags `hint` at H0 — the reference's LEAK_NGRAM
-    windows, the item's structured final_answer (and canonical_answer), and on an
-    mc_reason item the correct option letter in an option context. The 6-gram
-    check alone misses a short final answer such as "O(n)" or "7". Fail closed:
-    an item with no final_answer (or an mc_reason item with no correct_option)
-    cannot be vouched for, so its hint counts as leaking."""
+    True when leak.detect_leak flags `hint` at H0 in STRICT mode (A38 fix round
+    M1/m7: a false positive here only drops a hint) — the reference's LEAK_NGRAM
+    windows, the item's structured final_answer (and canonical_answer, in any
+    notation: "seven", "\\frac{1}{2}", "50%", "5/10"), and on an mc_reason item
+    ANY standalone correct option letter and the correct option's text. The
+    6-gram check alone misses a short final answer such as "O(n)" or "7". Fail
+    closed: an item with no final_answer (or an mc_reason item with no
+    correct_option) cannot be vouched for, so its hint counts as leaking."""
     correct_option = getattr(item, "correct_option", None) or None
     if format == "mc_reason" and correct_option is None:
         return True
@@ -636,6 +651,8 @@ def _hint_leaks(item, hint: str, *, format: str) -> bool:
             final_answer=getattr(item, "final_answer", None),
             canonical_answer=getattr(item, "canonical_answer", None),
             correct_option=correct_option if format == "mc_reason" else None,
+            strict=True,
+            option_text=_correct_option_text(item) if format == "mc_reason" else None,
         )
     except ValueError:  # no final_answer (A34), or a correct_option that is not one letter
         return True

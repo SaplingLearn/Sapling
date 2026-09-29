@@ -282,8 +282,9 @@ class GraderItem:
     models (the grader reads r.id / r.text / w.key / w.text, HANDOFF-05).
     `options` holds an mc_reason item's option texts for grade()'s answer screen
     (answer_guard.item_terms; never in the message). `final_answer`,
-    `canonical_answer` and `correct_option` feed only grade()'s hint leak check
-    (spec §13 A38; never in the message)."""
+    `canonical_answer`, `correct_option` and `correct_option_text` (the key
+    option's text, from ReasonState.options) feed only grade()'s hint leak
+    check (spec §13 A38; never in the message)."""
 
     id: str
     prompt: str
@@ -294,6 +295,13 @@ class GraderItem:
     final_answer: str | None = None
     canonical_answer: str | None = None
     correct_option: str | None = None
+    correct_option_text: str | None = None  # the hint's strict leak check only (A38 M1)
+
+
+def _correct_option_text(state: GradeState | ReasonState) -> str | None:
+    letter = (getattr(state, "correct_option", None) or "").strip().upper()
+    options = {k.strip().upper(): v for k, v in (getattr(state, "options", {}) or {}).items()}
+    return options.get(letter) or None
 
 
 def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> GraderItem:
@@ -307,6 +315,7 @@ def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> 
         final_answer=state.final_answer,
         canonical_answer=state.canonical_answer,
         correct_option=getattr(state, "correct_option", None) or None,
+        correct_option_text=_correct_option_text(state),
     )
 
 
