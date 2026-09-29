@@ -2882,3 +2882,29 @@ def test_status_exposes_the_loop_phase(gate_on, seams, doc, phase):
     seams.store["doc"] = doc
     r = client.get("/api/learn/loop/status?user_id=u1&session_id=s1")
     assert r.status_code == 200 and r.json()["loop_phase"] == phase
+
+
+# ── PKG-09 reopen: a grading claim is refused while the session closes ─────
+
+
+@pytest.mark.parametrize(
+    "extra, detail",
+    [
+        ({"close_claim": "c", "close_claim_at": 10.0}, "session close in progress"),
+        ({"phase": "close"}, "this session is closed"),
+    ],
+)
+def test_claim_grading_refuses_while_the_session_closes(seams, extra, detail):
+    """Grading and closing exclude each other on the one session document: the
+    close refuses a live grading claim (PKG-09), and the grading claim refuses a
+    live close claim or a closed session — so no evidence lands outside a close."""
+    from routes.learn_loop import _claim_grading
+
+    doc = _state()
+    doc.update(extra)
+    doc.setdefault("steps", {})["qh-x"] = {"check_item_id": "ci", "first_shown_at": 1.0}
+    seams.store["doc"] = doc
+    with pytest.raises(HTTPException) as exc:
+        _claim_grading("s1", "qh-x", "claim", 11.0)
+    assert exc.value.status_code == 409 and exc.value.detail == detail
+    assert "grading_claim" not in seams.store["doc"]["steps"]["qh-x"]

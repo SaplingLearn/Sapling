@@ -2090,6 +2090,7 @@ def _claim_grading(session_id: str, qh: str, claim: str, now: float) -> None:
     refusal can never grade (or flush) the item twice."""
 
     def take(state: dict) -> None:
+        _refuse_while_closing(state, now)  # PKG-09: grading and closing exclude each other
         entry = _steps(state).get(qh)
         if not isinstance(entry, dict):
             raise HTTPException(status_code=404, detail="No such check item in this session")
