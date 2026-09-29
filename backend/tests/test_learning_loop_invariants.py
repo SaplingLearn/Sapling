@@ -409,7 +409,10 @@ def test_inv_20_metrics_script_idempotent():
     assert path.exists(), "PKG-14 ships scripts/derive_zpd_metrics.py"
     text = path.read_text()
     assert "--dry-run" in text, "the script must offer --dry-run"
-    assert ".insert(" not in text, "metrics are an UPDATE of derived columns; never insert"
+    # sys.path.insert (the script preamble) is no table write
+    assert not re.search(r"(?<!sys\.path)\.insert\(", text), (
+        "metrics are an UPDATE of derived columns; never insert"
+    )
     for m in re.finditer(r"\.upsert\(", text):
         assert "on_conflict=" in text[m.end() : m.end() + 400], "every upsert names on_conflict"
     assert not re.search(r"""table\(\s*["']learner_state["']""", text), (

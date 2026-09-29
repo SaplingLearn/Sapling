@@ -4,6 +4,9 @@ read_* return p_known DECAYED toward BKT_L0 along the concept's FSRS
 stability (spec §3.1, "Decay at read"). write_state is called ONLY from
 services.graph_service.apply_graph_update — spec §8 invariant 1,
 tests/test_learning_loop_invariants.py::test_inv_01_single_graph_writer.
+write_metrics (PKG-14, spec §13 A79) is the one non-evidence write: an UPDATE of
+the four derived columns only, called ONLY by scripts/derive_zpd_metrics.py
+(inv_01 pins its callers, inv_20 the script).
 Nothing here swallows: a PostgREST error or a corrupt stored row raises
 (there is no honest default for "the store is down").
 """
@@ -13,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from db.connection import table
+from db.connection import page_all, table
 from learning import bkt
 from learning.params import BKT_L0
 
@@ -137,3 +140,51 @@ def write_state(state: LearnerState, now: datetime | None = None) -> None:
         },
         on_conflict="user_id,node_id",
     )
+
+
+def write_metrics(
+    user_id: str,
+    node_id: str,
+    *,
+    htc_k: float | None,
+    unassisted_next: float | None,
+    assist_gap: float | None,
+    in_zone: bool | None,
+) -> None:
+    """UPDATE the derived ZPD columns of one row (spec §4, §10 rung 2) and its
+    updated_at — nothing else. ONLY caller: scripts/derive_zpd_metrics.py. An
+    UPDATE on the primary key, never an upsert: a row that does not exist is
+    not created here (only evidence creates learner_state rows)."""
+    table("learner_state").update(
+        {
+            "htc_k": htc_k,
+            "unassisted_next": unassisted_next,
+            "assist_gap": assist_gap,
+            "in_zone": in_zone,
+            "updated_at": _iso(datetime.now(timezone.utc)),
+        },
+        filters={"user_id": f"eq.{user_id}", "node_id": f"eq.{node_id}"},
+    )
+
+
+def opportunity_states(user_id: str | None = None) -> list[dict]:
+    """Every (user_id, node_id, opps) row with at least one opportunity — one
+    user's with `user_id` — paged in primary-key order (the metrics script's
+    read; it never names the table itself, invariant 20)."""
+    filters = {"opps": "gt.0"}
+    if user_id:
+        filters["user_id"] = f"eq.{user_id}"
+    return list(
+        page_all(
+            _LearnerStateRead(), "user_id,node_id,opps", filters=filters, order="user_id,node_id"
+        )
+    )
+
+
+class _LearnerStateRead:
+    """A read-only `page_all` handle over learner_state (invariant 1's ast half
+    allows `table("learner_state")` only as a direct read, so the handle is never
+    passed around; the services/check_item_service.py::_GraphNodesRead pattern)."""
+
+    def select_with_count(self, *args, **kwargs):
+        return table("learner_state").select_with_count(*args, **kwargs)
