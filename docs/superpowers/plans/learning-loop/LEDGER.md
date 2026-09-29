@@ -174,6 +174,9 @@ Execution order and dependencies: spec §14. PKG-04 appends no `00 | reopened` r
 | 06b | ai-budget-and-usage | reopened | feat/learning-loop-a38-owner-decisions | 53558531 | — | 2026-09-29 (Andres, handoff #5): A38 owner decision(s) call-count cap, (j) session_capped, (k) session_deep, (g) server-minted request key (reopen; HANDOFF-06b Post-hoc) | HANDOFF-06b.md |
 | a38 | owner-decisions | verified | feat/learning-loop | 3459b006 | — | 2026-09-29 (Andres, handoff #5): merged; suite 6911 passed, 136 skipped; invariants 18 passed, 1 skipped; fresh-DB E2E at f1b3d402: Playwright 89 passed, 13 skipped, 0 failed, oracles 0 findings, clean teardown; spec §13 A38–A45; 3 reviews (conformance, regression clean; adversarial 5 rounds, final: no critical/major) | spec §13 A38–A45 |
 | 07 | loop-tutor | blocked | feat/learning-loop-07-loop-tutor | 2b2a895 | — | Tasks 1–8 built + green; Task 9 tier evals and the A33 wiring open; handed to Andres (CONTINUE.md §4.3) | HANDOFF-07.md (on the 07 branch) |
+| 07 | loop-tutor | reopened | feat/learning-loop-13-frontend-e2e | 682e161e | +3 (tests/test_learn_loop_routes.py: /status pose) | 2026-09-29 (PKG-13 fix round): GET /status carries the open item's pose, read-only (HANDOFF-07 Post-hoc) | HANDOFF-07.md |
+| 12 | review-surfaces | reopened | feat/learning-loop-13-frontend-e2e | 532a84c4 | +1, 1 rewritten (tests/test_learning_review.py) | 2026-09-29 (PKG-13 fix round): GET /review/active 200 {active} either way — no error.4xx per legacy visit; spec §13 A77 (HANDOFF-12 Post-hoc) | HANDOFF-12.md |
+| 13 | frontend-e2e | done | feat/learning-loop-13-frontend-e2e | 977c3e66 | backend: test_learn_loop_sessions 24, test_learning_seed_loop_user 13, test_e2e_oracles_learn_loop 30, test_e2e_handler_constants 9, test_e2e_function_handlers +13, invariants +3; frontend: api.loop 31, loopState 15, LoopLearn 62, useLoopStatus 6, LearnBranch 3, DueQueue +9; e2e/learn-loop.spec.ts 4 journeys | 2026-09-29 (review fix round, every finding fixed): hermetic `pytest tests/ -q -p no:cacheprovider --ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py` → 7986 passed, 140 skipped; ruff clean; evals replay 16/16 PASS; tsc clean; vitest 1254 passed, 2 skipped; eslint clean. Fresh-DB E2E cycle NOT yet run (the integrator runs it before merge) | HANDOFF-13.md |
 
 ## Deviations
 
@@ -516,6 +519,12 @@ Format: `PKG-NN: <spec said> → <did instead> → <why> → <† if an A/B flag
 - PKG-07: `test_no_production_caller_passes_evidence_yet` "PKG-07 retires it" (HANDOFF-03) → kept: still green, still the single-persister guard.
 - PKG-07: Task 9 "set LOOP_ROUTABLE_TIERS from the scores" → not narrowed, no routable-tier pin: no tier passes, and the prompt says STOP (Blocked notes).
 - PKG-07: session override "handle the A33 refusal in /check/answer" → not built: the A33 guard (fix/coderabbit-r2) is not on the base (Blocked notes).
+
+- PKG-13: `GET /sessions` reads `course_offering_ids(course_id)` (sessions are stamped with `resolve_offering`, the current term), not `user_offering_ids_for_course` (the enrollment's keyspace, #553/#529); `loop_state=neq.{}` (the column is NOT NULL DEFAULT '{}') before the limit; `close_phase` not read (written with `close_json`); `?resume=` adds one read → HANDOFF-13 Deviations.
+- PKG-13: `/status` pose (PKG-07 reopen) and `/review/active` 200 `{active}` (PKG-12 reopen, spec §13 A77) → HANDOFF-07/12 Post-hoc.
+- PKG-13: the `learn_loop` oracle adds activity checks (e)–(h) and `--expect-loop-activity`; the loop journey runs it over its own rows (`frontend/e2e/support/oracle.ts`, outside the Files list) — the per-test truncate leaves the post-suite oracle an idle stack.
+- PKG-13: the loop seed imports no model SDK (`db/e2e_handler_constants.py` AST read; `services/chunk_ids.py` moved verbatim from `rag_service`, re-exported) — both outside the Files lists; `rich-usage-capped-1` upserted with `created_at = now`.
+- PKG-13: `loop-hint-offer` removed (unreachable: PKG-07 sends `hint_offer` on the feedback turn, after the item closed) → HANDOFF-13 Open questions; "New session" closes the session it leaves; the budget pause lifts at its `reset_at` (owner question); the flag-off upload/course-context leg has no E2E coverage until PKG-14b (HANDOFF-13 Known gaps).
 
 ## Blocked notes
 
