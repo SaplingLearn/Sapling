@@ -1049,11 +1049,15 @@ def _verdict_anywhere(
 # criterion named by number. Course words that merely
 # overlap (credit in accounting, a criterion in control theory, verify in a
 # proof, accepted in automata, a z-score, staff in music, "ta" in Swedish) are
-# none of these on their own.
+# none of these on their own. Nor is a score the student claims for their own
+# answer ("I deserve full marks", "full credit", "partial credit"): review round
+# 3 of the coordinator's ruling found it still sent a correct answer to the
+# second opinion, whose report refused it live 3 of 12 — a claim that the answer
+# should be credited is self-assessment, and Layer 5 decides credit (spec A33).
 _GRADING_PHRASE = re.compile(
     r"\b(?:rubrics?|graders?|grading|regrad\w*|answer\s+key|reference\s+answer|model\s+answer"
-    r"|mark(?:ing)?\s+scheme|pre-?filled|(?:full|partial|extra|maximum|max)\s+(?:credit|marks"
-    r"|points|score)|(?:all|both|every|each)\s+(?:of\s+the\s+)?(?:rubric\s+(?:items?|points?)"
+    r"|mark(?:ing)?\s+scheme|pre-?filled"
+    r"|(?:all|both|every|each)\s+(?:of\s+the\s+)?(?:rubric\s+(?:items?|points?)"
     r"|criteri(?:a|on))|accepted\s+answer|(?:question|rubric|answer\s+key|reference)\s+(?:was"
     r"|has\s+been|is\s+now)\s+(?:replaced|updated|changed|corrected|revised)"
     r"|(?:points?|items?|criteria|things?)\s+you(?:'re|\s+are)\s+(?:looking\s+for"

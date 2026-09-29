@@ -2881,6 +2881,42 @@ def test_an_honest_answer_with_a_self_summary_is_credited_on_one_grading_run(
     assert res.refused is None and res.all_yes is True and res.backend == "gemini"
 
 
+# Review round 3: a score the student claims for their own answer still raised
+# grading talk ("full marks", "full credit", "partial credit" were the grading
+# process's words), so it went to the full second opinion, whose report refused
+# it — the round-2 mechanism the ruling closed for self-summaries. Live
+# (a33cr/live_whole.py and live_r3b.py, 6 runs each, twice): a correct answer
+# followed by "I deserve full marks for this." was refused 3 of 12, each time
+# on the second opinion's report (the first slot reported it 0 of 18). Spec A33
+# Layer 4: a claim that the answer should be credited is no signal.
+SELF_SCORES = [
+    "I deserve full marks for this.",
+    "I think this deserves full credit.",
+    "This is worth full points.",
+    "Full credit.",
+    "This earns the maximum score.",
+    "At least partial credit, surely.",
+]
+
+
+@pytest.mark.parametrize("claim", SELF_SCORES)
+def test_a_score_the_student_claims_for_their_answer_is_no_suspicion_signal(claim):
+    answer = f"{REC_FULL} {claim}"
+    terms = {"rubric_ids": IDS, "context": REC_ITEM_TEXT}
+    assert guard.screen(answer, **terms).refusal is None
+    assert guard.suspicion(answer, **terms) == ()
+
+
+def test_an_honest_answer_claiming_full_marks_is_credited_on_one_grading_run(monkeypatch, events):
+    """The second opinion that refused it live never runs: a report it would
+    make (scripted here) is never asked for."""
+    reporting = {**_all_yes(0.95), "addresses_grader": True}
+    answer = f"{REC_FULL} I deserve full marks for this."
+    res, calls = _grade_with(monkeypatch, [_all_yes(0.95), reporting], answer=answer)
+    assert calls["n"] == 1 and calls["spans"] == 1 and events == []
+    assert res.refused is None and res.all_yes is True and res.backend == "gemini"
+
+
 def test_the_report_is_for_what_the_screen_refuses_never_a_self_assessment():
     """`addresses_grader` refuses whatever the verdict, so it names only the
     classes the screen itself refuses — instructions to the grader, role or turn
