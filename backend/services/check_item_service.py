@@ -1038,7 +1038,7 @@ class _DraftFailures:
             return
         try:
             rows = table(_FAILURES_TABLE).select(
-                "concept_key,failures,source_fp,updated_at",
+                "concept_key,failures,source_fp,updated_at,solo",
                 filters={
                     "course_id": f"eq.{course_id}",
                     "concept_key": f"in.({','.join(pg_quote_value(k) for k in keys)})",
@@ -1053,6 +1053,17 @@ class _DraftFailures:
             return
         self.rows = {r["concept_key"]: r for r in rows or [] if r.get("concept_key")}
 
+    def _fresh(self, row: dict) -> bool:
+        stamp = _parse_stamp(row.get("updated_at"))
+        ttl = timedelta(days=CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS)
+        return stamp is not None and _utcnow() - stamp < ttl
+
+    def solo(self, key: str, fp: str) -> bool:
+        """Drafted alone: a split rescued it and every batch-mate on an
+        unchanged source, within the TTL (A38 fix round 3)."""
+        row = self.rows.get(key)
+        return bool(row and row.get("solo") and row.get("source_fp") == fp and self._fresh(row))
+
     def stalled(self, key: str, fp: str) -> bool:
         """At the bound on an unchanged source, within the TTL of the last
         failure. A row with no readable updated_at is not stalled (fail open)."""
@@ -1063,16 +1074,18 @@ class _DraftFailures:
             and (row.get("failures") or 0) >= CHECK_ITEM_REDRAFT_MAX_FAILURES
         ):
             return False
-        stamp = _parse_stamp(row.get("updated_at"))
-        ttl = timedelta(days=CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS)
-        return stamp is not None and _utcnow() - stamp < ttl
+        return self._fresh(row)
 
-    def _write(self, key: str, failures: int, fp: str) -> None:
+    def _write(self, key: str, failures: int, fp: str, *, solo: bool | None = None) -> None:
+        old = self.rows.get(key) or {}
+        if solo is None:  # kept while the source is unchanged
+            solo = bool(old.get("solo")) and old.get("source_fp") == fp
         row = {
             "course_id": self.course_id,
             "concept_key": key,
             "failures": failures,
             "source_fp": fp,
+            "solo": solo,
             "updated_at": _utcnow().isoformat(),
         }
         try:
@@ -1096,6 +1109,27 @@ class _DraftFailures:
         row = self.rows.get(key)
         if row and (row.get("failures") or 0) > 0:  # no record, nothing to reset
             self._write(key, 0, fp)
+
+    def mark_solo(self, key: str, fp: str) -> None:
+        self._write(key, 0, fp, solo=True)
+
+
+class _SplitGroup:
+    """The concepts of one split batch, as their solo re-runs settle. When the
+    last one settles and every one stored items alone, the failure was the
+    combination's: each is marked solo (A38 fix round 3)."""
+
+    def __init__(self, batch: list):
+        self.fps = {key: _source_fingerprint(ranked) for key, _, ranked in batch}
+        self.ok: dict[str, bool] = {}
+
+    def settle(self, key: str, *, ok: bool, ledger: _DraftFailures) -> None:
+        if key not in self.fps or key in self.ok:
+            return
+        self.ok[key] = ok
+        if len(self.ok) == len(self.fps) and all(self.ok.values()):
+            for k, fp in self.fps.items():
+                ledger.mark_solo(k, fp)
 
 
 def generate_for_concepts(
@@ -1187,12 +1221,21 @@ def generate_for_concepts(
     # re-run one concept at a time, once, so the failure lands on the concept
     # that caused it and its batch-mates still get items this pass (A38 fix
     # round 2). At most 1 + CHECK_ITEM_CONCEPTS_PER_CALL calls per batch.
-    queue: deque[tuple[list, bool]] = deque(
-        (todo[start : start + CHECK_ITEM_CONCEPTS_PER_CALL], False)
-        for start in range(0, len(todo), CHECK_ITEM_CONCEPTS_PER_CALL)
+    # A concept whose last split rescued its whole batch (it and its mates
+    # each drafted fine alone) is drafted alone while that holds (A38 fix
+    # round 3), so a combination-only failure does not cost 1 + N calls a pass.
+    solo = [t for t in todo if ledger.solo(t[0], _source_fingerprint(t[2]))]
+    rest = [t for t in todo if t not in solo]
+    queue: deque[tuple[list, _SplitGroup | None]] = deque(
+        [([t], None) for t in solo]
+        + [
+            (rest[start : start + CHECK_ITEM_CONCEPTS_PER_CALL], None)
+            for start in range(0, len(rest), CHECK_ITEM_CONCEPTS_PER_CALL)
+        ]
     )
     while queue:
-        batch, split = queue.popleft()
+        batch, group = queue.popleft()
+        split = group is not None
         if gone:
             remaining = [c for c in chunks if c.get("doc_id") not in gone]
             kept = []
@@ -1216,8 +1259,11 @@ def generate_for_concepts(
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
             if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
-                queue.extendleft(([concept], True) for concept in reversed(batch))
+                new_group = _SplitGroup(list(batch))
+                queue.extendleft(([concept], new_group) for concept in reversed(batch))
                 continue
+            if group is not None:
+                group.settle(batch[0][0], ok=False, ledger=ledger)
             unavailable += len(batch)
             # Only a one-concept call's validation failure is that concept's
             # own outcome; anything else is no concept's fault (M2 allowlist).
@@ -1275,6 +1321,10 @@ def generate_for_concepts(
                     ledger.succeeded(key, fp)
                 else:
                     ledger.failed(key, fp)
+                if group is not None:
+                    group.settle(key, ok=bool(write.stored[key].ids or topped), ledger=ledger)
+            elif group is not None:
+                group.settle(key, ok=False, ledger=ledger)
 
     outcome = GenerationOutcome(created, attempted, unavailable, skipped, unmatched)
     logger.info(

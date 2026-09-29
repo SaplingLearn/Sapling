@@ -518,3 +518,81 @@ class TestSplitOnValidationFailure:
             env, failures, CheckItemsUnavailable(reason="ReadTimeout"), self.NAMES
         )
         assert calls == 1 and failures.rows == {}
+
+
+# ── A38 fix round 3 (MINOR 1): a combination-only failure is remembered ─────
+
+
+def _combo_run(svc, failures, names):
+    """Any call with more than one concept fails validation; alone each succeeds."""
+    from agents.check_items import CheckItemsOutput, CheckItemsUnavailable
+
+    items = _Items()
+    calls: list = []
+
+    def factory(name):
+        return {"check_items": items, "check_item_draft_failures": failures}[name]
+
+    async def fake_draft(concepts, passages, *, deps, flex):
+        calls.append(list(concepts))
+        if len(concepts) > 1:
+            return CheckItemsUnavailable(reason="UnexpectedModelBehavior")
+        return CheckItemsOutput(items=[_draft(concept=concepts[0], chunk_ids=[passages[0]["id"]])])
+
+    chunks = [
+        {"id": f"c{i}", "chunk_index": i, "chunk_text": f"{n} text", "doc_id": "doc-1"}
+        for i, n in enumerate(names)
+    ]
+    with (
+        patch.object(svc, "table", side_effect=factory),
+        patch.object(svc, "draft_items", side_effect=fake_draft),
+    ):
+        out = svc.generate_for_concepts(
+            user_id="u1", course_id="course-1", concept_names=names, chunks=chunks, flex=True
+        )
+    return out, calls, items
+
+
+class TestSoloAfterARescuedSplit:
+    NAMES = ["Learning Rate", "Momentum", "Batch Size"]
+
+    def test_the_second_pass_drafts_them_solo(self, env):
+        failures = _Failures()
+        out, calls, _ = _combo_run(env, failures, self.NAMES)
+        assert len(calls) == 4 and out.items_created == 3
+        assert all(r.get("solo") is True for r in failures.rows.values())
+        assert {r["failures"] for r in failures.rows.values()} == {0}
+        out, calls, _ = _combo_run(env, failures, self.NAMES)
+        assert len(calls) == 3 and all(len(c) == 1 for c in calls)
+        assert out.items_created == 3
+
+    def test_a_partial_rescue_marks_nobody_solo(self, env):
+        failures = _Failures()
+        _split_run(env, failures, "Momentum", self.NAMES)
+        assert not any(r.get("solo") for r in failures.rows.values())
+
+    def test_solo_expires_with_a_changed_source_or_the_ttl(self, env, monkeypatch):
+        from datetime import UTC, datetime, timedelta
+
+        from agents import check_items
+        from learning.params import CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS as ttl
+
+        failures = _Failures()
+        _combo_run(env, failures, self.NAMES)
+        monkeypatch.setattr(check_items, "_PROMPT_HASH", "a-new-prompt")
+        _, calls, _ = _combo_run(env, failures, self.NAMES)
+        assert calls[0] == self.NAMES, "a new source batches again"
+        later = datetime.now(UTC) + timedelta(days=ttl, hours=1)
+        monkeypatch.setattr(env, "_utcnow", lambda: later)
+        _, calls, _ = _combo_run(env, failures, self.NAMES)
+        assert calls[0] == self.NAMES, "past the TTL they batch again"
+
+    def test_the_solo_migration(self):
+        hits = sorted(MIG_DIR.glob("*_learning_check_item_draft_failures_solo.sql"))
+        assert len(hits) == 1, hits
+        sql = hits[0].read_text()
+        assert re.search(
+            r"ALTER TABLE check_item_draft_failures\s+ADD COLUMN IF NOT EXISTS solo boolean "
+            r"NOT NULL DEFAULT false",
+            sql,
+        )
