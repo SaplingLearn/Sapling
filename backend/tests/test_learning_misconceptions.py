@@ -1496,7 +1496,7 @@ def test_recheck_after_release_reads_the_session_log_then_the_journal():
     RECHECK_RELEASE_WINDOW_HOURS of `now`. A failed read (None) is no re-check."""
     from datetime import datetime, timedelta, timezone
 
-    from learning import loop_state_store as store
+    from learning import misconceptions as store
     from learning.misconceptions import recheck_after_release
     from learning.params import RECHECK_RELEASE_WINDOW_HOURS
 
@@ -1516,7 +1516,7 @@ def test_recheck_after_release_reads_the_session_log_then_the_journal():
 def test_recheck_after_release_never_mutates_the_loop_state():
     """The review and the probe pass their own session documents: reading the
     rule must not add an `attempts` key to them."""
-    from learning import loop_state_store as store
+    from learning import misconceptions as store
     from learning.misconceptions import last_release_on_node, recheck_after_release
 
     doc: dict = {"review": {}}

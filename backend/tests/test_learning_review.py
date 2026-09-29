@@ -2700,7 +2700,7 @@ def test_a_review_after_a_release_is_graded_as_a_recheck(monkeypatch, journal, r
     morning) is the next graded item after a release — graded as a re-check,
     never a full-weight unassisted first attempt. The review session keeps no
     attempt log, so the evidence journal decides."""
-    from learning import loop_state_store, review
+    from learning import misconceptions, review
 
     grade, calls = _grade(correct=True)
     monkeypatch.setattr(review, "grade_answer", grade)
@@ -2710,7 +2710,7 @@ def test_a_review_after_a_release_is_graded_as_a_recheck(monkeypatch, journal, r
     monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
     reads = []
     monkeypatch.setattr(
-        loop_state_store,
+        misconceptions,
         "latest_evidence_released",
         lambda user, node, *, since: reads.append((user, node, since)) or journal,
     )

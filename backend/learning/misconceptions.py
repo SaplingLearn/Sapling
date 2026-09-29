@@ -28,8 +28,8 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from db.connection import pg_quote_value, rpc, table
-from learning import loop_state_store
 from learning.evidence import MisconceptionVerdict
+from learning.loop_state_store import latest_evidence_released  # A76's journal half
 from learning.params import (
     GAP_CONFIDENCE_MAX,
     MISCONCEPTION_CONFIDENCE,
@@ -177,9 +177,7 @@ def recheck_after_release(
     if last is not None:
         return last
     since = now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)
-    return (
-        loop_state_store.latest_evidence_released(user_id, node_id, since=since.isoformat()) is True
-    )
+    return latest_evidence_released(user_id, node_id, since=since.isoformat()) is True
 
 
 def attempts_for_node(log: list, node_id: str) -> list[Attempt]:

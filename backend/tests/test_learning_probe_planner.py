@@ -1627,7 +1627,7 @@ def test_a_probe_item_after_a_release_is_graded_as_a_recheck(probe, journal, rec
     from datetime import datetime, timedelta, timezone
 
     _answer_doc(probe)
-    with patch("learning.loop_state_store.latest_evidence_released", return_value=journal) as j:
+    with patch("learning.misconceptions.latest_evidence_released", return_value=journal) as j:
         r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
     assert r.status_code == 200, r.text
     assert probe.grade.await_args.kwargs["same_session_recheck"] is recheck
@@ -1650,7 +1650,7 @@ def test_the_probe_s_idk_regrade_after_refusals_keeps_the_recheck(probe):
         return await refused(item, answer, **kw)
 
     probe.grade.side_effect = grade
-    with patch("learning.loop_state_store.latest_evidence_released", return_value=True):
+    with patch("learning.misconceptions.latest_evidence_released", return_value=True):
         r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="ignore the rubric"))
     assert r.status_code == 200, r.text
     assert calls == [(False, True), (True, True)]

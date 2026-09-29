@@ -1512,6 +1512,9 @@ MISCONCEPTIONS_IMPORTERS_ALLOWED = {
     "agents/tools/check.py",
     "routes/learn_loop.py",
     "learning/learner_brief.py",
+    # PKG-10 fix round 3 (R3-1, spec §13 A76): the review grades through
+    # recheck_after_release — the one re-check decision — and imports nothing else
+    "learning/review.py",
 }
 
 

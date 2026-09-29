@@ -3550,6 +3550,14 @@ _PKG06_SANCTIONED_IMPORTS = {
         "learning.leak",
         frozenset({"detect_leak", "in_answer_position", "leak_spans"}),
     ),
+    # PKG-10 fix round 3 (R3-1, spec §13 A76): recheck_after_release — the one
+    # re-check decision every grader caller passes — reads the evidence journal
+    # when the session has no attempt on the concept. The store's read alone; the
+    # module is reached only by the loop surfaces (inv 17's importer list).
+    "learning/misconceptions.py": (
+        "learning.loop_state_store",
+        frozenset({"latest_evidence_released"}),
+    ),
 }
 # PKG-07 (spec §7, §9): the loop route WIRES the layer — gates, ladder, policy, leak,
 # the loop_state store and the zpd_events emitters — so every PKG-06 import in it is

@@ -332,7 +332,7 @@ def seams():
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
         # PKG-10 (A76): the evidence-journal half of the re-check rule
         ns.journal_release = stack.enter_context(
-            patch("learning.loop_state_store.latest_evidence_released", return_value=None)
+            patch("learning.misconceptions.latest_evidence_released", return_value=None)
         )
         ns.select_item = p("select_item", wraps=checks.select_item)
         ns.reserve = p("posttest_reserve_hash", return_value="qh-reserve")
