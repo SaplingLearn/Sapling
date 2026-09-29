@@ -28,7 +28,11 @@ loop_state write goes through `loop_state_store.update_loop_state` (A38
 freshly loaded state, and a `LoopStateConflict` propagates (the route answers
 409), never a silent loss.
 
-Imported only by routes/learn_loop.py (PKG-12 Task 5), behind the loop gate.
+A served item is opened for answering in loop_state["open"][key]; an answer
+first takes a claim on it (`claim_item`, PKG-07's grading-claim discipline,
+§13 A52), so a double submit is graded and written at most once.
+
+Imported only by routes/learn_loop.py (the /review/* routes), behind the loop gate.
 """
 
 from __future__ import annotations
@@ -50,6 +54,7 @@ from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PK
 from learning.loop_state_store import update_loop_state
 from learning.params import (
     FSRS_S0_GOOD,
+    LOOP_GRADING_CLAIM_STALE_S,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_DIFFICULTY_BY_BAND,
     REVIEW_FORMAT_BY_BAND,
@@ -79,6 +84,9 @@ _REVIEW_MODE = "review"
 _FLASHCARD_KEY_PREFIX = "fc:"
 _KINDS: tuple[Kind, ...] = ("flashcard", "check")
 _CARD_COLUMNS = "id,topic,offering_id,fsrs_d,fsrs_s,due_at,reps,lapses,last_rating,last_reviewed_at"
+#: What a served / graded card needs besides the queue's columns: the text
+#: (serve) and the counter flashcard_fsrs_update advances (grade).
+_CARD_ROW_COLUMNS = _CARD_COLUMNS + ",times_reviewed,front,back"
 _CONCEPT_COLUMNS = "node_id,p_known,streak_unassisted,fsrs_d,fsrs_s,fsrs_last_review_at,fsrs_due_at"
 _PHASE_TO_STAGE: dict[str, Stage] = {
     fsrs.SR_ACQUISITION: "acquire",
@@ -92,15 +100,14 @@ _PHASE_TO_STAGE: dict[str, Stage] = {
 
 def seen_hashes(user_id: str) -> set[str]:
     """The student's seen check items (A23). ONE definition: PKG-07's
-    `loop_state_store.seen_hashes`, resolved at call time because PKG-07
-    lands it on the integration branch (until then a queue build with a due
-    concept raises AttributeError; no route calls this module yet)."""
+    `loop_state_store.seen_hashes` (read once per queue build, only when a
+    concept is due)."""
     return set(loop_state_store.seen_hashes(user_id))
 
 
 def revealed_hashes(user_id: str) -> set[str]:
     """The student's revealed check items (A23): PKG-07's
-    `loop_state_store.revealed_hashes`, resolved at call time (see seen_hashes)."""
+    `loop_state_store.revealed_hashes` (see seen_hashes)."""
     return set(loop_state_store.revealed_hashes(user_id))
 
 
@@ -223,6 +230,17 @@ def load_or_create_review_session(
     return sid, _session_view(row.get("loop_state"))
 
 
+def peek_review_session(user_id: str, course_id: str | None, now: datetime) -> dict:
+    """Today's review-session view WITHOUT creating the row (a read-only
+    surface such as `/review/summary` never inserts a session)."""
+    rows = _read_session(review_session_id(user_id, course_id, now))
+    if not rows:
+        return _session_view()
+    if rows[0].get("user_id") not in (None, user_id):
+        raise PermissionError("review session belongs to another user")
+    return _session_view(rows[0].get("loop_state"))
+
+
 def _scheduled_concept_count(user_id: str, course_id: str | None) -> int:
     rows = table("learner_state").select(
         "node_id", filters={"user_id": f"eq.{user_id}", "fsrs_due_at": "not.is.null"}
@@ -246,7 +264,9 @@ def review_retention(user_id: str, course_id: str | None) -> float:
 # ── queue ─────────────────────────────────────────────────────────────────────
 
 
-def _sr_key(item: ReviewItem) -> str:
+def sr_key(item: ReviewItem) -> str:
+    """The item's key in loop_state["sr"] and loop_state["open"]: the student's
+    node for a concept check, "fc:<card id>" for a flashcard."""
     return item.node_id if item.kind == "check" else _FLASHCARD_KEY_PREFIX + item.id
 
 
@@ -271,30 +291,70 @@ def _due_flashcards(user_id: str, course_id: str | None, now: datetime) -> list[
         due = [
             (r, d) for r, d in due if r.get("offering_id") is None or r["offering_id"] in offerings
         ]
-    items = []
-    for row, due_at in due:
-        last = parse_ts(row.get("last_reviewed_at"))
-        stability = row.get("fsrs_s") or FSRS_S0_GOOD
-        reps = row.get("reps") or 0
-        last_rating = row.get("last_rating")
-        stage, target = sr_stage_for_flashcard(reps, last_rating)
-        items.append(
-            ReviewItem(
-                kind="flashcard",
-                id=row["id"],
-                course_id=course_id,
-                due_at=due_at,
-                last_review_at=last,
-                r=_retrievability(stability, last, now),
-                stability=stability,
-                cost_s=REVIEW_SECONDS_PER_FLASHCARD,
-                sr_stage=stage,
-                sr_target=target,
-                sr_count=0 if last_rating == fsrs.Rating.AGAIN else reps,
-                topic=row.get("topic"),
-            )
-        )
-    return items
+    return [item_for_card(row, course_id, now) for row, _ in due]
+
+
+def item_for_card(row: dict, course_id: str | None, now: datetime) -> ReviewItem:
+    """The ReviewItem of one `flashcards` row — the queue's, and `/review/answer`'s
+    (which re-loads the row by id: the client never supplies its state)."""
+    last = parse_ts(row.get("last_reviewed_at"))
+    stability = row.get("fsrs_s") or FSRS_S0_GOOD
+    reps = row.get("reps") or 0
+    last_rating = row.get("last_rating")
+    stage, target = sr_stage_for_flashcard(reps, last_rating)
+    return ReviewItem(
+        kind="flashcard",
+        id=row["id"],
+        course_id=course_id,
+        due_at=parse_ts(row.get("due_at")),
+        last_review_at=last,
+        r=_retrievability(stability, last, now),
+        stability=stability,
+        cost_s=REVIEW_SECONDS_PER_FLASHCARD,
+        sr_stage=stage,
+        sr_target=target,
+        sr_count=0 if last_rating == fsrs.Rating.AGAIN else reps,
+        topic=row.get("topic"),
+    )
+
+
+def load_card(user_id: str, card_id: str) -> dict | None:
+    """The student's own `flashcards` row by id (both filters), or None."""
+    rows = table("flashcards").select(
+        _CARD_ROW_COLUMNS, filters={"id": f"eq.{card_id}", "user_id": f"eq.{user_id}"}
+    )
+    return rows[0] if rows else None
+
+
+def item_for_check(user_id: str, check_item, node_id: str, now: datetime) -> ReviewItem:
+    """The ReviewItem of a check item answered on `/review/answer`: its SR stage
+    and R come from the student's `learner_state` row for `node_id` (resolved
+    server-side, A2), never from the client. One read."""
+    rows = table("learner_state").select(
+        _CONCEPT_COLUMNS, filters={"user_id": f"eq.{user_id}", "node_id": f"eq.{node_id}"}
+    )
+    row = rows[0] if rows else {}
+    last = parse_ts(row.get("fsrs_last_review_at"))
+    stability = row.get("fsrs_s") or FSRS_S0_GOOD
+    streak = row.get("streak_unassisted") or 0
+    stage, target = sr_stage_for_concept(streak)
+    return ReviewItem(
+        kind="check",
+        id=check_item.id,
+        node_id=node_id,
+        course_id=check_item.course_id,
+        question_hash=check_item.question_hash,
+        due_at=parse_ts(row.get("fsrs_due_at")),
+        last_review_at=last,
+        r=_retrievability(stability, last, now),
+        stability=stability,
+        format=check_item.format,
+        difficulty=check_item.difficulty,
+        cost_s=REVIEW_SECONDS_PER_CHECK,
+        sr_stage=stage,
+        sr_target=target,
+        sr_count=streak,
+    )
 
 
 def _formats_for(band_name: str) -> list[str]:
@@ -448,7 +508,7 @@ def due_queue_with_stats(
         pause_novice=pause_novice,
         stats=stats,
     )
-    items = [i for i in items if not _target_met(sr.get(_sr_key(i)))]
+    items = [i for i in items if not _target_met(sr.get(sr_key(i)))]
     stats["due"] = {kind: sum(i.kind == kind for i in items) for kind in _KINDS}
     return _budget_prefix(_order(items, now), remaining_budget_s(state)), stats
 
@@ -535,7 +595,7 @@ def _seed_relearning(item: ReviewItem) -> fsrs.SuccessiveRelearning:
 
 def _entry(doc: dict, item: ReviewItem) -> dict:
     """loop_state["sr"][key], created on first touch; tolerates a partial entry."""
-    entry = doc.setdefault("sr", {}).setdefault(_sr_key(item), {})
+    entry = doc.setdefault("sr", {}).setdefault(sr_key(item), {})
     entry.setdefault("correct", 0)
     entry.setdefault("target", item.sr_target)
     entry.setdefault("served", 0)
@@ -548,19 +608,104 @@ def _sr_view(entry: dict) -> dict:
     return {"stage": entry["stage"], "correct": entry["correct"], "target": entry["target"]}
 
 
-def _apply_serve(doc: dict, item: ReviewItem) -> dict:
+def _apply_serve(doc: dict, item: ReviewItem, now_s: float | None = None) -> dict:
     entry = _entry(doc, item)
     entry["served"] += 1
     if item.kind == "check" and item.question_hash:
         hashes = doc.setdefault("review", {}).setdefault("served_hashes", [])
         if item.question_hash not in hashes:
             hashes.append(item.question_hash)
+    if now_s is not None:
+        _open_item(doc, item, now_s)
     return entry
 
 
+# ── answer claims (PKG-07's grading-claim discipline, spec §13 A52) ───────────
+# loop_state["open"][key] = {"item_id", "served_at"[, "claim", "claim_at"][, "graded_at"]}
+# (Unix seconds). serve opens the key for the item it served; /review/answer claims
+# it by compare-and-set BEFORE grading. A claim is never re-taken: the grade, the ONE
+# evidence (or flashcard) write and its record run under it; a path that writes
+# nothing releases it; after the write only the record closes it (graded_at), so a
+# double submit — sequential or concurrent — never writes twice (409), and a lost
+# record keeps the item claimed. Only a later serve reopens the key, and it leaves
+# a live claim (younger than LOOP_GRADING_CLAIM_STALE_S) alone.
+
+_NOT_SERVED = "not_served"
+_ALREADY_GRADED = "already_graded"
+
+
+class ReviewClaimRefused(Exception):
+    """The answer may not be graded: `reason` is "not_served" (the item is not the
+    one this session served for its key) or "already_graded" (graded, or another
+    request holds its claim). The route answers 409."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _live_claim(entry: dict, now_s: float) -> bool:
+    return bool(entry.get("claim")) and (
+        now_s - float(entry.get("claim_at") or 0) <= LOOP_GRADING_CLAIM_STALE_S
+    )
+
+
+def _open_item(doc: dict, item: ReviewItem, now_s: float) -> None:
+    opened = doc.setdefault("open", {})
+    current = opened.get(sr_key(item))
+    if isinstance(current, dict) and _live_claim(current, now_s):
+        return  # grading in flight: the served item stays the answerable one
+    opened[sr_key(item)] = {"item_id": item.id, "served_at": now_s}
+
+
+def claim_item(session_id: str, key: str, item_id: str, claim: str, now: datetime) -> None:
+    """Take the answer claim on `key` for `item_id` (one compare-and-set write), or
+    raise ReviewClaimRefused and write nothing."""
+    now_s = now.timestamp()
+
+    def take(doc: dict) -> None:
+        entry = (doc.get("open") or {}).get(key)
+        if not isinstance(entry, dict) or entry.get("item_id") != item_id:
+            raise ReviewClaimRefused(_NOT_SERVED)
+        if entry.get("graded_at") is not None or entry.get("claim"):
+            raise ReviewClaimRefused(_ALREADY_GRADED)
+        entry["claim"], entry["claim_at"] = claim, now_s
+
+    _persist_loop_state(session_id, take)
+
+
+def _release_claim(session_id: str, key: str, claim: str) -> None:
+    def release(doc: dict) -> None:
+        entry = (doc.get("open") or {}).get(key)
+        if isinstance(entry, dict) and entry.get("claim") == claim:
+            entry.pop("claim", None)
+            entry.pop("claim_at", None)
+
+    try:
+        _persist_loop_state(session_id, release)
+    except Exception:  # the claim goes stale; a later serve reopens the key
+        logger.warning("review: answer claim on %s not released", key, exc_info=True)
+
+
 def _apply_grade(
-    doc: dict, item: ReviewItem, *, correct: bool, session_id: str, retention: float
-) -> dict:
+    doc: dict,
+    item: ReviewItem,
+    *,
+    correct: bool,
+    session_id: str,
+    retention: float,
+    claim: str | None = None,
+    now_s: float | None = None,
+) -> dict | None:
+    """The record of one graded answer. With a `claim`, only while that claim
+    holds the item's open entry (else nothing), and it closes the entry."""
+    if claim is not None:
+        opened = (doc.get("open") or {}).get(sr_key(item))
+        if not isinstance(opened, dict) or opened.get("claim") != claim:
+            return None
+        opened.pop("claim", None)
+        opened.pop("claim_at", None)
+        opened["graded_at"] = now_s
     entry = _entry(doc, item)
     machine = fsrs.SuccessiveRelearning.from_dict(entry["relearning"])
     if correct:
@@ -600,15 +745,18 @@ def serve(
     card_row: dict | None = None,
     loop_state: dict,
     session_id: str | None = None,
+    now: datetime | None = None,
 ) -> dict:
     """Rule 5: the client payload. A check never carries the reference, final
     answer, rubric, common wrong answers, correct option, canonical answer or
     any option's wrong_key; an mc_reason check carries its STORED options
     (letter + text, stored order; A22). With `session_id` the served counter
-    and served hash are persisted too."""
-    entry = _apply_serve(loop_state, item)
+    and served hash are persisted too; with `now` the item is opened for
+    answering (`claim_item`)."""
+    now_s = now.timestamp() if now is not None else None
+    entry = _apply_serve(loop_state, item, now_s)
     if session_id is not None:
-        _persist_loop_state(session_id, lambda doc: _apply_serve(doc, item))
+        _persist_loop_state(session_id, lambda doc: _apply_serve(doc, item, now_s))
     sr = _sr_view(entry)
     if item.kind == "flashcard":
         row = card_row or {}
@@ -654,15 +802,25 @@ def _record(
     loop_state: dict,
     request_id: str | None,
     retention: float,
+    claim: str | None = None,
+    now: datetime | None = None,
 ) -> dict:
-    """Both kinds, after the grade is written: SR + budget, persisted, event."""
+    """Both kinds, after the grade is written: SR + budget, persisted (under the
+    answer claim, which this write closes), event."""
     entry = _apply_grade(
         loop_state, item, correct=correct, session_id=session_id, retention=retention
     )
+    now_s = now.timestamp() if now is not None else None
     _persist_loop_state(
         session_id,
         lambda doc: _apply_grade(
-            doc, item, correct=correct, session_id=session_id, retention=retention
+            doc,
+            item,
+            correct=correct,
+            session_id=session_id,
+            retention=retention,
+            claim=claim,
+            now_s=now_s,
         ),
     )
     log_event(
@@ -675,39 +833,25 @@ def _record(
     return _sr_view(entry)
 
 
-def _grade_flashcard(
+def _write_flashcard(
     user_id: str,
     item: ReviewItem,
     *,
     rating: int | None,
-    session_id: str,
-    loop_state: dict,
     now: datetime,
-    request_id: str | None,
     retention: float,
     card_row: dict | None,
-) -> ReviewOutcome:
+) -> tuple[int, dict]:
     """A self-rated card (legacy 1 forgot / 2 hard / 3 easy) through PKG-11's
-    flashcard_fsrs_update at the review's retention target. Never a model
-    call and never graph evidence. A rating outside the map raises
-    ValueError before any write (the route answers 422)."""
+    flashcard_fsrs_update at the review's retention target: (FSRS rating, the
+    written columns). Never a model call and never graph evidence. A rating
+    outside the map raises ValueError before any write (the route answers 422)."""
     fsrs_rating = fsrs_rating_for(rating)
     if card_row is None:
         raise ValueError("a flashcard review needs the card's flashcards row")
     cols = flashcard_fsrs_update(card_row, rating, now=now, retention=retention)
     table("flashcards").update(cols, filters={"id": f"eq.{item.id}", "user_id": f"eq.{user_id}"})
-    correct = fsrs_rating != fsrs.Rating.AGAIN  # legacy 1 = forgot
-    sr = _record(
-        user_id,
-        item,
-        correct=correct,
-        rating=fsrs_rating,
-        session_id=session_id,
-        loop_state=loop_state,
-        request_id=request_id,
-        retention=retention,
-    )
-    return ReviewOutcome(correct=correct, next_due_at=cols["due_at"], rating=fsrs_rating, sr=sr)
+    return fsrs_rating, cols
 
 
 async def grade_review(
@@ -726,51 +870,66 @@ async def grade_review(
     selected_option: str | None = None,
     reason: str | None = None,
     deps=None,
+    claim: str | None = None,
 ) -> ReviewOutcome:
     """Rule 6. A check item is graded by grade_answer ONCE (unassisted:
     max_rung 0, no same-session recheck) and its Evidence persisted by ONE
     apply_graph_update call; unavailable/refused writes nothing. A flashcard
-    goes through flashcard_fsrs_update."""
-    if item.kind == "flashcard":
-        return _grade_flashcard(
-            user_id,
-            item,
-            rating=rating,
-            session_id=session_id,
-            loop_state=loop_state,
-            now=now,
-            request_id=request_id,
-            retention=retention,
-            card_row=card_row,
-        )
-    if check_item is None or deps is None:
-        raise ValueError("a check review needs the decrypted check_item and the route's deps")
-    outcome = await grade_answer(
-        check_item,
-        CheckAnswer(
-            question_hash=check_item.question_hash,
-            answer_text=answer or "",
-            selected_option=selected_option,
-            reason=reason,
-        ),
-        deps=deps,
-        node_id=item.node_id,
-    )
-    if outcome.refused is not None:  # A33: never graded, never a skip; nothing written
-        return ReviewOutcome(unavailable=True, refused=True)
-    if outcome.unavailable:  # invariant 28: nothing for EITHER outcome
-        return ReviewOutcome(unavailable=True)
-    # The one write. deps.pending_evidence is discarded, never flushed: the
-    # retention target rides on this call only.
-    apply_graph_update(
-        user_id, {"evidence": [outcome.evidence]}, course_id=item.course_id, retention=retention
-    )
-    correct = bool(outcome.correct)
-    hint = outcome.feedback_hint
-    if not correct:  # spec §3.3: corrective feedback WITH the answer
-        hint = f"{outcome.feedback_hint}\n\nAnswer: {check_item.reference_answer}"
-    rating_out = fsrs.rating_for(outcome.evidence["channel"], correct, 0)
-    next_due = _next_due_for_concept(user_id, item.node_id)
+    goes through flashcard_fsrs_update.
+
+    `claim` (the route's, from `claim_item`): every path that writes nothing —
+    unavailable, refused, an error before the write — releases it; after the
+    write only the record closes it."""
+    written = False
+    try:
+        if item.kind == "flashcard":
+            fsrs_rating, cols = _write_flashcard(
+                user_id, item, rating=rating, now=now, retention=retention, card_row=card_row
+            )
+            written = True
+            correct = fsrs_rating != fsrs.Rating.AGAIN  # legacy 1 = forgot
+            rating_out, hint, next_due = fsrs_rating, None, cols["due_at"]
+        else:
+            if check_item is None or deps is None:
+                raise ValueError(
+                    "a check review needs the decrypted check_item and the route's deps"
+                )
+            outcome = await grade_answer(
+                check_item,
+                CheckAnswer(
+                    question_hash=check_item.question_hash,
+                    answer_text=answer or "",
+                    selected_option=selected_option,
+                    reason=reason,
+                ),
+                deps=deps,
+                node_id=item.node_id,
+            )
+            if outcome.refused is not None or outcome.unavailable:
+                # A33 (refused: never graded, never a skip) and invariant 28
+                # (unavailable: nothing for EITHER outcome) — nothing is written.
+                if claim is not None:
+                    _release_claim(session_id, sr_key(item), claim)
+                return ReviewOutcome(unavailable=True, refused=outcome.refused is not None)
+            # The one write. deps.pending_evidence is discarded, never flushed:
+            # the retention target rides on this call only.
+            apply_graph_update(
+                user_id,
+                {"evidence": [outcome.evidence]},
+                course_id=item.course_id,
+                retention=retention,
+            )
+            written = True
+            correct = bool(outcome.correct)
+            hint = outcome.feedback_hint
+            if not correct:  # spec §3.3: corrective feedback WITH the answer
+                hint = f"{outcome.feedback_hint}\n\nAnswer: {check_item.reference_answer}"
+            rating_out = fsrs.rating_for(outcome.evidence["channel"], correct, 0)
+            next_due = _next_due_for_concept(user_id, item.node_id)
+    except BaseException:
+        if claim is not None and not written:  # nothing written: the student may answer again
+            _release_claim(session_id, sr_key(item), claim)
+        raise
     sr = _record(
         user_id,
         item,
@@ -780,5 +939,7 @@ async def grade_review(
         loop_state=loop_state,
         request_id=request_id,
         retention=retention,
+        claim=claim,
+        now=now,
     )
     return ReviewOutcome(correct=correct, hint=hint, next_due_at=next_due, rating=rating_out, sr=sr)

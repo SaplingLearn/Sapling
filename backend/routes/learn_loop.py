@@ -2315,3 +2315,186 @@ def end_session(body: EndSessionBody, request: Request) -> dict | None:
     """PKG-07 pass-through: the legacy end_session body runs unchanged.
     PKG-09 returns the close payload (summary + brief) from here."""
     return None
+
+
+# ── PKG-12: the daily review queue (spec §3.2, §3.5, §5; A16, A20, A22, A23, A33, A52) ──
+# Every review route is require_self + the gate (`_gate`, 404 when the loop is off,
+# before any read). The review session (a `sessions` row with mode 'review', one per
+# user, course and UTC day) is keyed on the requesting user, and a row of another
+# student's is a 403. No review route gates on the tutor budget level: the only budget
+# reads are `pause_novice` (A20 — novice concepts pause, flashcards and the rest keep
+# working) and the rate limit on a CHECK answer, the one body that runs a model.
+
+from learning import review  # noqa: E402
+from models import ReviewAnswerBody  # noqa: E402
+
+_REVIEW_NOT_FOUND = "review item not found"
+_REVIEW_EXPIRED = "review session expired"
+_REVIEW_CLAIM_DETAIL = {"not_served": "review item not served", "already_graded": _ALREADY_GRADED}
+
+
+def _review_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _pause_novice(user_id: str) -> bool:
+    """A20: at the tutor hard level novice-band concepts are held back."""
+    return bool(ai_budget.check(user_id, "tutor", "novice").pause_novice)
+
+
+def _review_deps(
+    user_id: str, course_id: str | None, session_id: str, request_id: str, loop_on: bool
+) -> SaplingDeps:
+    """The grader's deps, built as `_grade_submission` builds them, on the review
+    session."""
+    return SaplingDeps(
+        user_id=user_id,
+        course_id=course_id or None,
+        supabase=None,
+        request_id=request_id,
+        session_id=session_id,
+        feature="loop_review",
+        learning_loop=loop_on,
+    )
+
+
+def _review_session(user_id: str, course_id: str | None, now: datetime) -> tuple[str, dict]:
+    try:
+        return review.load_or_create_review_session(user_id, course_id, now)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Session user mismatch") from None
+
+
+def _serve_review_item(user_id: str, item, loop_state: dict, session_id: str, now: datetime):
+    """The client payload of `item`, re-loaded here (a check item withdrawn or a card
+    deleted since the queue was built → None, and the next item is served)."""
+    if item.kind == "check":
+        check = get_check_item(item.id)
+        if check is None:
+            return None
+        return review.serve(
+            item, check_item=check, loop_state=loop_state, session_id=session_id, now=now
+        )
+    row = review.load_card(user_id, item.id)
+    if row is None:
+        return None
+    return review.serve(item, card_row=row, loop_state=loop_state, session_id=session_id, now=now)
+
+
+@router.get("/review/next")
+def review_next(
+    request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
+) -> dict:
+    """The first item of today's review queue (or null), opened for answering."""
+    _gate(user_id, request)
+    now = _review_now()
+    sid, loop_state = _review_session(user_id, course_id, now)
+    retention = review.review_retention(user_id, course_id)
+    queue, _ = review.due_queue_with_stats(
+        user_id, course_id, now, loop_state=loop_state, pause_novice=_pause_novice(user_id)
+    )
+    review.log_served(user_id, queue, retention=retention, request_id=_request_id(request))
+    payload = None
+    try:
+        for item in queue:
+            payload = _serve_review_item(user_id, item, loop_state, sid, now)
+            if payload is not None:
+                break
+    except LoopStateConflict:
+        raise _StateConflict() from None
+    return {
+        "item": payload,
+        "remaining_budget_s": review.remaining_budget_s(loop_state),
+        "session_id": sid,
+        "retention_target": retention,
+        "due_total": len(queue),
+    }
+
+
+@router.post("/review/answer")
+async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
+    """Grade one answer to the item today's session served for its key: a check
+    through PKG-05's grade_answer (inside review.grade_review — its ONE evidence
+    write), a flashcard through PKG-11's FSRS path. The item, its node (A2) and
+    its reference are re-loaded here. Grading is a claim (A52): a second submit of
+    the same served item is a 409 and is never graded or written twice."""
+    loop_on = _gate(body.user_id, request)
+    if body.kind == "check":  # the one review body that runs a model (the grader)
+        ai_budget.enforce_rate_limit_for(body.user_id)
+    now = _review_now()
+    if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
+        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
+    sid, loop_state = _review_session(body.user_id, body.course_id, now)
+    check = card_row = deps = None
+    if body.kind == "check":
+        check = get_check_item(body.item_id)
+        node_id = _node_for_item(body.user_id, check) if check is not None else None
+        if node_id is None:
+            raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
+        if check.format == "mc_reason" and not body.selected_option:
+            raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
+        if check.format != "mc_reason" and not body.answer:
+            raise HTTPException(status_code=422, detail="a free answer needs answer")
+        item = review.item_for_check(body.user_id, check, node_id, now)
+        deps = _review_deps(body.user_id, body.course_id, sid, _request_id(request), loop_on)
+    else:
+        card_row = review.load_card(body.user_id, body.item_id)
+        if card_row is None:
+            raise HTTPException(status_code=404, detail=_REVIEW_NOT_FOUND)
+        item = review.item_for_card(card_row, body.course_id, now)
+    retention = loop_state["review"].get("retention") or review.review_retention(
+        body.user_id, body.course_id
+    )
+    claim = str(uuid.uuid4())
+    try:
+        review.claim_item(sid, review.sr_key(item), item.id, claim, now)
+        outcome = await review.grade_review(
+            body.user_id,
+            item,
+            answer=body.answer,
+            rating=body.rating,
+            session_id=sid,
+            loop_state=loop_state,
+            now=now,
+            request_id=_request_id(request),
+            retention=retention,
+            check_item=_item_like(check) if check is not None else None,
+            card_row=card_row,
+            selected_option=body.selected_option,
+            reason=body.reason,
+            deps=deps,
+            claim=claim,
+        )
+    except review.ReviewClaimRefused as exc:
+        raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None
+    except LoopStateConflict:
+        raise _StateConflict() from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return {
+        "correct": outcome.correct,
+        "hint": outcome.hint,
+        "next_due_at": outcome.next_due_at,
+        "rating": outcome.rating,
+        "remaining_budget_s": review.remaining_budget_s(loop_state),
+        "sr": outcome.sr,
+        "unavailable": outcome.unavailable,
+        "refused": outcome.refused,
+    }
+
+
+@router.get("/review/summary")
+def review_summary(
+    request: Request, user_id: str = Query(...), course_id: str | None = Query(None)
+) -> dict:
+    """Today's due counts, budget and retention target. Read-only: it never creates
+    the review session. Also the frontend's loop probe (`getLoopStatus`: 404 → off)."""
+    _gate(user_id, request)
+    now = _review_now()
+    try:
+        loop_state = review.peek_review_session(user_id, course_id, now)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Session user mismatch") from None
+    return review.summary(
+        user_id, course_id, now, loop_state=loop_state, pause_novice=_pause_novice(user_id)
+    )

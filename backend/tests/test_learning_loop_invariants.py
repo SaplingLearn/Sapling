@@ -52,9 +52,12 @@ LOOP_TUTOR_SLOTS = ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep")
 LOOP_ROUTES = BACKEND / "routes" / "learn_loop.py"
 #: routes/learn_loop.py functions allowed to grade or persist evidence (spec §8 #26).
 #: PKG-08/12/14 add their explicit-submission helper; nothing else ever joins.
-EVIDENCE_WRITERS = {"_grade_submission"}
+#: PKG-12: learning/review.py::grade_review (a review's one evidence write, reached as
+#: `review.grade_review`).
+EVIDENCE_WRITERS = {"_grade_submission", "grade_review"}
 #: The only route handlers allowed to reach an EVIDENCE_WRITERS function.
-EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream"}
+#: PKG-12: the /review/answer handler (an explicit review answer).
+EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream", "review_answer"}
 _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
 #: Modules that WRITE check_items.source_chunk_ids at generation (PKG-04; HANDOFF-04
 #: §Symbols: services/check_item_service.py::_build_row copies the draft's chunk ids —
