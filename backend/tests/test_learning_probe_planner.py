@@ -1606,3 +1606,14 @@ def test_plan_approve_rejected_stores_no_brief(probe):
         )
     assert r.status_code == 422
     store.assert_not_called()
+
+
+def test_probe_answer_waits_while_a_close_is_being_written(probe):
+    """PKG-09 post-hoc: the probe's grading claim is refused while a live close
+    claim holds the session (the close refuses a live grading claim in turn)."""
+    _answer_doc(probe)
+    probe.store["doc"]["close_claim"], probe.store["doc"]["close_claim_at"] = "c", NOW
+    r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="x"))
+    assert r.status_code == 409 and r.json()["detail"] == "session close in progress"
+    probe.grade.assert_not_called()
+    assert "grading_claim" not in probe.store["doc"]["probe"]["current"]

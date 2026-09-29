@@ -3235,6 +3235,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
 
     def take_posed(doc: dict) -> None:
         _require_phase(doc, "probe")
+        _refuse_while_closing(doc, now)  # PKG-09: grading and closing exclude each other
         cur = _probe_doc(doc).get("current")
         if not isinstance(cur, dict) or cur.get("question_hash") != qh:
             raise HTTPException(status_code=409, detail=_PROBE_NOT_POSED)
