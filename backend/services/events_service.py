@@ -195,6 +195,13 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # withdrawal that failed after the response (reason WithdrawalError,
     # document_id and course_id null). Never any item text.
     "learn.check_items_failed",
+    # Learning loop spec §13 A37 (series coordinator's ruling, 2026-09-28): one
+    # mc_reason top-up call — a concept a generation pass left below
+    # CHECK_ITEM_MC_MIN_PER_CONCEPT stored mc_reason items. category="usage":
+    # it counts a designed call, not a failure (a failed call also emits
+    # learn.check_items_failed). Payload ids and counts only: document_id,
+    # course_id, requested, returned, stored, mc_reason_items. Never item text.
+    "learn.check_items_topup",
     # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
     # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
     # the loop tutor. Payloads are ids/counts/enums — the question_hash is a
