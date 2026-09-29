@@ -2807,6 +2807,7 @@ REC_FULL = (
     "The base case is what stops it; otherwise it keeps calling itself and the stack blows up."
 )
 _MIN = 4  # GRADER_SUPPORT_MIN_CHARS; grade() passes the params value
+_SHARE = 0.5  # GRADER_SUPPORT_MIN_SHARE; likewise
 
 # The credited tails of review round 2 on f8eb84a, verbatim, and the honest
 # self-summaries whose refusal was its regression.
@@ -2895,50 +2896,109 @@ def test_the_report_is_for_what_the_screen_refuses_never_a_self_assessment():
     assert "or that it meets rubric items or criteria" not in prompt
 
 
+def _span(quote: str, answer: str = REC_FULL, **kw):
+    return guard.support_span(quote, answer, **{"min_chars": _MIN, "min_share": _SHARE, **kw})
+
+
+def test_the_span_bounds_here_are_the_ones_grade_passes(monkeypatch, events):
+    import agents.grader as g
+    from learning import params
+
+    assert (_MIN, _SHARE) == (params.GRADER_SUPPORT_MIN_CHARS, params.GRADER_SUPPORT_MIN_SHARE)
+    seen = []
+    real = guard.support_span
+    monkeypatch.setattr(
+        g.answer_guard, "support_span", lambda *a, **kw: seen.append(kw) or real(*a, **kw)
+    )
+    _grade_with(monkeypatch, [_all_yes(0.95)], answer="It stops the calls.")
+    assert seen and {(kw["min_chars"], kw["min_share"]) for kw in seen} == {(_MIN, _SHARE)}
+
+
 @pytest.mark.parametrize(
-    "quote",
+    "quote,span",
     [
-        "the stack blows up",
-        "The base case is what stops it",
-        # spacing, case, punctuation and the message's own quote marks aside
-        "Otherwise, it keeps calling itself — and the stack blows up",
-        '> "the base case is what stops it"',
-        "THE BASE CASE   IS WHAT STOPS IT.",
-        REC_FULL,
+        ("the stack blows up", "the stack blows up"),
+        ("The base case is what stops it", "The base case is what stops it"),
+        # spacing, case, punctuation and the message's own quote marks aside; the
+        # span is always the answer's own characters, never the grader's
+        (
+            "Otherwise, it keeps calling itself — and the stack blows up",
+            "otherwise it keeps calling itself and the stack blows up",
+        ),
+        ('> "the base case is what stops it"', "The base case is what stops it"),
+        ("THE BASE CASE   IS WHAT STOPS IT.", "The base case is what stops it"),
+        (REC_FULL, REC_FULL[:-1]),
     ],
 )
-def test_a_quote_the_answer_holds_is_verified(quote):
-    assert guard.verified_support(quote, REC_FULL, min_chars=_MIN) is True
+def test_a_quote_the_answer_holds_is_verified_as_the_answers_own_words(quote, span):
+    assert _span(quote) == span
+
+
+# Live (the ruling's re-measure, before this rule): in 4 of 42 honest grade calls
+# flash-lite credited a correct answer on a "quote" the answer does not hold
+# word for word — twice the student's words inside its own prose ('The student
+# answer clearly states "…"', "The student's answer says …"), twice a sentence of
+# its own — and the verbatim check recorded the correct answer as a confident
+# incorrect. The student's own words inside such a quote are what the span check
+# needs: the longest run of the quote's words the answer holds, when it is at
+# least half of the quote or of a passage it sets in quotation marks.
+@pytest.mark.parametrize(
+    "quote,span",
+    [
+        # the grader's framing around the student's words
+        ('The student answer clearly states "the stack blows up"', "the stack blows up"),
+        (
+            "The student's answer says it keeps calling itself and the stack blows up",
+            "it keeps calling itself and the stack blows up",
+        ),
+        # a paraphrase or a stitch: only the words the answer holds, in order
+        ("the stack overflows", "the stack"),
+        ("the base case ... the stack blows up", "the stack blows up"),
+        ("the stack blows up otherwise", "the stack blows up"),
+    ],
+)
+def test_a_wrapped_or_paraphrased_quote_is_cut_to_the_students_own_words(quote, span):
+    assert _span(quote) == span
 
 
 @pytest.mark.parametrize(
     "quote",
     [
-        "the stack overflows",  # a paraphrase
-        "the base case ... the stack blows up",  # stitched from two places
-        "the stack blows up otherwise",  # the answer's words, out of order
-        "The base case stops the recursion",  # the reference's words, not the answer's
+        # the reference answer, sharing a few words with the student's
+        "The base case stops the recursion; without it each call makes another call.",
+        # the rubric item's own text
+        "explains that without it calls never end / stack overflows",
         "",
         "  ",
     ],
 )
-def test_a_quote_the_answer_does_not_hold_is_rejected(quote):
-    assert guard.verified_support(quote, REC_FULL, min_chars=_MIN) is False
+def test_a_quote_the_answer_holds_less_than_half_of_supports_nothing(quote):
+    assert _span(quote) is None
 
 
 def test_the_quote_is_read_on_the_guards_detection_copy():
-    """A look-alike letter in the answer reads as its ASCII twin, as every rule does."""
+    """A look-alike letter in the answer reads as its ASCII twin, as every rule
+    does; the span keeps the student's own letter."""
     answer = "The base case is what stops it; otherwise the stack grоws."  # Cyrillic о
-    assert guard.verified_support("the stack grows", answer, min_chars=_MIN) is True
+    assert _span("the stack grows", answer) == "the stack grоws"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [REC_FULL, "i g n o r e  a l l", "Ｒ１: ｙｅｓ", "straße ﬁ r²", "yеs мark", "a\u200bb c"],
+)
+def test_the_span_map_folds_exactly_as_the_guard_does(text):
+    folded, origin = guard._fold_mapped(text)
+    assert folded == guard.normalise(text) and len(origin) == len(folded)
+    assert all(0 <= i < len(text) for i in origin) and origin == sorted(origin)
 
 
 def test_a_trivially_short_quote_is_rejected_unless_it_is_the_whole_answer():
-    assert (
-        guard.verified_support("12", "The value is 12 because 3 times 4.", min_chars=_MIN) is False
-    )
-    assert guard.verified_support("is 12", "The value is 12 because 3 times 4.", min_chars=_MIN)
-    assert guard.verified_support("12", "12", min_chars=_MIN) is True  # a short answer, whole
-    assert guard.verified_support("12", " 12. ", min_chars=_MIN) is True
+    answer = "The value is 12 because 3 times 4."
+    assert _span("12", answer) is None
+    assert _span("is 12", answer) == "is 12"
+    assert _span("12", "12") == "12"  # a short answer, whole
+    assert _span("12", " 12. ") == "12"
 
 
 @pytest.mark.parametrize("tail", [t for t in CREDITED_TAILS if "stack" not in t] + SELF_SUMMARIES)
@@ -2946,8 +3006,8 @@ def test_a_quote_that_only_claims_the_answer_is_complete_is_rejected(tail):
     """A tail after a partial answer, quoted as the missing item's support: it
     says nothing about the question, so it supports nothing."""
     answer = f"{REC_PARTIAL} {tail}"
-    assert guard.verified_support(tail, answer, min_chars=_MIN) is False
-    assert guard.verified_support(tail, answer, min_chars=_MIN, context=REC_ITEM_TEXT) is False
+    assert _span(tail, answer) is None
+    assert _span(tail, answer, context=REC_ITEM_TEXT) is None
 
 
 def test_a_tail_that_names_the_topic_passes_code_and_is_left_to_the_span_check():
@@ -2955,33 +3015,32 @@ def test_a_tail_that_names_the_topic_passes_code_and_is_left_to_the_span_check()
     answer, so it passes here, and the span-isolated confirmation, which runs on
     every credited item, is its gate (grade())."""
     answer = f"{REC_PARTIAL} The stack part is implied."
-    assert guard.verified_support("The stack part is implied.", answer, min_chars=_MIN) is True
+    assert _span("The stack part is implied.", answer) == "The stack part is implied"
 
 
 def test_a_word_the_items_own_text_uses_is_substance_for_it():
     """ "Both are true." is an answer when the item asks whether both hold."""
     answer = "Both are true."
-    assert guard.verified_support(answer, answer, min_chars=_MIN) is False
+    assert _span(answer, answer) is None
     context = "Are both statements true?\nBoth statements are true."
-    assert guard.verified_support(answer, answer, min_chars=_MIN, context=context) is True
+    assert _span(answer, answer, context=context) == "Both are true"
 
 
 @pytest.mark.parametrize("quote", ["2/2", "3 out of 3", "100%", "Score: 2/2, both points."])
 def test_a_score_the_answer_gives_itself_supports_nothing(quote):
-    answer = f"{REC_PARTIAL} {quote}"
-    assert guard.verified_support(quote, answer, min_chars=_MIN) is False
+    assert _span(quote, f"{REC_PARTIAL} {quote}") is None
 
 
 @pytest.mark.parametrize("quote", ["1/2", "It is 1/2.", "0.5"])
 def test_a_fraction_that_is_the_answer_is_substance(quote):
     answer = f"The probability is {quote}" if quote != "It is 1/2." else quote
-    assert guard.verified_support(quote, answer, min_chars=1) is True
+    assert _span(quote, answer, min_chars=1) is not None
 
 
 # ── grade(): each credited item stands on its own quote, confirmed alone ─────
 #
 # The grading run's `support` gives, for every item it credits, a quote from the
-# answer. grade() verifies each quote (verified_support, above) and then makes ONE
+# answer. grade() verifies each quote (support_span, above) and then makes ONE
 # span check for all the verified ones: a run on the grader_second slot that sees
 # each credited rubric item's text with its quote and nothing else — not the
 # question, not the reference, not the rest of the answer. An item is credited
@@ -3032,12 +3091,16 @@ def test_a_credited_tail_after_a_partial_answer_earns_no_credit(monkeypatch, eve
     answer = f"{REC_PARTIAL} {tail}"
     first = {**_all_yes(0.95), "support": [f"r1: {REC_PARTIAL}", f"r2: {tail}"]}
     res, calls = _grade_with(
-        monkeypatch, [first], answer=answer, judge=lambda item, span: span != tail
+        monkeypatch,
+        [first],
+        answer=answer,
+        judge=lambda item, span: span != tail.rstrip("."),
     )
     assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
     [message] = calls["span_messages"]
     spans = [span for _, _, span in grader_fakes.spans_of(message)]
-    assert spans == ([REC_PARTIAL, tail] if "stack" in tail else [REC_PARTIAL])
+    partial = REC_PARTIAL.rstrip(".")
+    assert spans == ([partial, tail.rstrip(".")] if "stack" in tail else [partial])
 
 
 def test_the_span_check_sees_each_credited_item_and_its_quote_only(monkeypatch, events):
@@ -3063,6 +3126,20 @@ def test_the_span_check_sees_each_credited_item_and_its_quote_only(monkeypatch, 
     item = _item()
     for absent in (item.prompt, item.reference_answer, "professor", "keeps calling", "w_loop"):
         assert absent not in message, absent
+
+
+def test_the_span_check_sees_the_students_words_never_the_graders_wrapper(monkeypatch, events):
+    first = {
+        **_all_yes(0.95),
+        "support": [
+            'r1: The student answer clearly states "It stops the calls"',
+            "r2: The student says that it stops the calls",
+        ],
+    }
+    res, calls = _grade_with(monkeypatch, [first], answer="It stops the calls.")
+    [message] = calls["span_messages"]
+    assert [span for _, _, span in grader_fakes.spans_of(message)] == ["It stops the calls"] * 2
+    assert "student" not in message.partition("\n")[2].split("END OF SPANS")[0].lower()
 
 
 def test_the_span_check_runs_on_the_grader_second_slot(monkeypatch, events):

@@ -122,8 +122,9 @@ The grader's own report does (`contradicts_reference`, read by grade(); spec
 second verification round's keyword lists for it closed the wordings they named,
 never the class, and refused honest self-summaries through the second opinion's
 report. Each credited rubric item now stands on its own quote from the answer,
-verified here (`verified_support`) and confirmed by a span check that sees only
-that item and that quote (agents/grader.py; the coordinator's ruling).
+verified here (`support_span`: the student's own words behind it) and confirmed
+by a span check that sees only that item and those words (agents/grader.py; the
+coordinator's ruling).
 
 Known limits: directives are refused in English only (another language is a
 suspicion signal when it switches from the answer's own, never a refusal);
@@ -236,12 +237,19 @@ def _base_char(ch: str, spaced: bool = False) -> str:
     return "".join(out)
 
 
-def _unspace(text: str) -> str:
-    """`text` with letter-spaced runs glued back together (_SPACED_RUN)."""
+def _glue_positions(text: str) -> set[int]:
+    """The positions of `text` that _unspace drops: the gaps inside each
+    letter-spaced run (_SPACED_RUN) of at least _SPACED_MIN_LETTERS letters."""
     glue: set[int] = set()
     for run in _SPACED_RUN.finditer(text):
         if sum(c.isalpha() for c in run.group()) >= _SPACED_MIN_LETTERS:
             glue.update(m.start() for m in _GLUE.finditer(text, run.start(), run.end()))
+    return glue
+
+
+def _unspace(text: str) -> str:
+    """`text` with letter-spaced runs glued back together (_SPACED_RUN)."""
+    glue = _glue_positions(text)
     return "".join(c for i, c in enumerate(text) if i not in glue) if glue else text
 
 
@@ -264,6 +272,26 @@ def _fold(original: str, spaced: bool = False) -> _Folded:
 def normalise(text: str) -> str:
     """The case-folded detection form of `text` (what every rule but one reads)."""
     return _fold(text).text
+
+
+def _fold_mapped(text: str) -> tuple[str, list[int]]:
+    """`normalise(text)` with, for each of its characters, the index in `text` of
+    the character it came from (non-decreasing), so a match on the detection copy
+    can be cut from the original (`support_span`). The fold is per character —
+    NFKD, the look-alike map and case folding each map one code point to a string
+    — so folding each character alone and then dropping _unspace's glue gives the
+    same string as `normalise` (pinned by a test)."""
+    folded: list[str] = []
+    origin: list[int] = []
+    for i, ch in enumerate(text or ""):
+        piece = _base_char(ch).translate(_CONFUSABLES)
+        piece = piece.casefold().translate(_CONFUSABLES).casefold()
+        folded.append(piece)
+        origin.extend([i] * len(piece))
+    joined = "".join(folded)
+    glue = _glue_positions(joined)
+    keep = [j for j in range(len(joined)) if j not in glue]
+    return "".join(joined[j] for j in keep), [origin[j] for j in keep]
 
 
 # ── verdict tokens (a signal, never a refusal) ───────────────────────────────
@@ -1339,20 +1367,36 @@ def suspicion(
 # partial answer, "Both parts: done.", "Mark both." or "2/2." was credited in
 # full on the first flash-lite run alone. grade() credits a rubric item only on
 # a quote the grader gives for it (`GraderOutput.support`) that this check
-# verifies, and only when a run that sees nothing but the item and that quote
-# says yes too (agents/grader.py). The check can only withhold credit, and what
-# it lets through still meets that span-isolated run, which grade() makes on
-# every credited item: no word here decides whether that run happens.
+# verifies, and only when a run that sees nothing but the item and the answer's
+# words behind that quote says yes too (agents/grader.py). The check can only
+# withhold credit, and what it lets through still meets that span-isolated run,
+# which grade() makes on every credited item: no word here decides whether that
+# run happens.
 #
 # Verified means: the quote's words occur, in order and contiguous, in the
 # answer, both read on the detection copy (`normalise`: look-alikes, case,
-# spacing and punctuation aside, so a quote cannot be stitched together or
-# paraphrased); it has at least `min_chars` letters and digits, or is the whole
-# answer; and it says something besides a claim about the answer itself — its
-# completeness, its parts, its credit or its score. A word the item's own text
-# uses (`context`: the rubric item and the reference answer) is substance for
-# that item ("Both are true." when the item asks whether both hold); a function
-# word never is.
+# spacing and punctuation aside); they have at least `min_chars` letters and
+# digits, or are the whole answer; and they say something besides a claim about
+# the answer itself — its completeness, its parts, its credit or its score. A
+# word the item's own text uses (`context`: the rubric item and the reference
+# answer) is substance for that item ("Both are true." when the item asks
+# whether both hold); a function word never is.
+#
+# What is verified, and what the span check sees, is the answer's own words:
+# the longest run of the quote's words that the answer holds, cut from the
+# answer as the student wrote it, when that run is at least half of the quote
+# (`min_share`) — or of a passage the quote sets in quotation marks. Live (the
+# ruling's re-measure), in 4 of 42 honest grade calls flash-lite credited a
+# correct answer on a "quote" the answer does not hold word for word — twice
+# the student's words inside its own prose ('The student answer clearly states
+# "…"', "The student's answer says …"), twice a sentence of its own — and a
+# verbatim check recorded that correct answer as a confident incorrect. A run
+# shorter than half of the quote is no quote of the answer (the reference
+# answer, the rubric item's text, the grader's own sentence sharing a phrase
+# with the student's): nothing. No run is ever stitched from two places, and
+# the span check never sees the grader's own words — only the student's, so a
+# run cut from a quote supports nothing a verbatim quote of the same words
+# would not.
 _WORD = re.compile(r"[^\W_]+")
 # A score the answer gives itself: "2/2", "3 out of 3", "100%".
 _SCORE_CLAIM = re.compile(r"(?<![\w.])(\d+)\s*(?:/|out\s+of|of)\s*\1(?![\w.])|(?<![\w.])100\s*%")
@@ -1376,22 +1420,61 @@ _ANSWER_TALK = frozenset(
 _FILLER_WORDS = frozenset("i me am im s ve ll d t re m so".split())
 
 
+# A passage the grader sets in quotation marks inside its quote (a curly single
+# quote only as a pair, so an apostrophe never opens one).
+_QUOTATION_MARKS = '"\u201c\u201d\u201e\u201f\u00ab\u00bb'  # straight, curly, low-9, guillemets
+_QUOTED_PASSAGE = re.compile(
+    f"[{_QUOTATION_MARKS}]([^{_QUOTATION_MARKS}]+)[{_QUOTATION_MARKS}]|\u2018([^\u2018\u2019]+)\u2019"
+)
+
+
 def _word_list(folded: str) -> list[str]:
     return _WORD.findall(folded)
 
 
-def verified_support(quote: str, answer: str, *, min_chars: int, context: str = "") -> bool:
-    """True when `quote` may support credit for one rubric item of `answer`
-    (above). `context` is that item's own text; `min_chars` is
-    GRADER_SUPPORT_MIN_CHARS (learning/params.py; passed in, so the guard stays
-    pure code)."""
-    folded = normalise(quote)
-    said, text = _word_list(folded), _word_list(normalise(answer))
-    n = len(said)
-    if not n or not any(text[i : i + n] == said for i in range(len(text) - n + 1)):
-        return False
-    if sum(map(len, said)) < min(min_chars, sum(map(len, text))):
-        return False
+def _longest_run(said: list[str], text: list[str]) -> tuple[int, int]:
+    """(start in `text`, length) of the longest run of consecutive words of
+    `said` that `text` holds consecutively; the first such run in `text`."""
+    best = (0, 0)
+    prev = [0] * (len(text) + 1)
+    for w in said:
+        cur = [0] * (len(text) + 1)
+        for j, t in enumerate(text, 1):
+            if w == t:
+                cur[j] = prev[j - 1] + 1
+                start = j - cur[j]
+                if cur[j] > best[1] or (cur[j] == best[1] and start < best[0]):
+                    best = (start, cur[j])
+        prev = cur
+    return best
+
+
+def support_span(
+    quote: str, answer: str, *, min_chars: int, min_share: float, context: str = ""
+) -> str | None:
+    """The answer's own words that `quote` may support credit with for one rubric
+    item of `answer` (above), cut from `answer` as written; None when the quote
+    supports nothing. `context` is that item's own text; `min_chars` is
+    GRADER_SUPPORT_MIN_CHARS and `min_share` GRADER_SUPPORT_MIN_SHARE (the share of
+    the quote's words the run must be; learning/params.py, passed in, so the guard
+    stays pure code)."""
+    folded, origin = _fold_mapped(answer)
+    words = list(_WORD.finditer(folded))
+    text = [m.group() for m in words]
+    passages = [quote, *(a or b for a, b in _QUOTED_PASSAGE.findall(quote or ""))]
+    start, n = 0, 0
+    for passage in passages:
+        said = _word_list(normalise(passage))
+        at, run = _longest_run(said, text)
+        if run and run >= min_share * len(said) and run > n:
+            start, n = at, run
+    if not n:
+        return None
+    run_words = text[start : start + n]
+    if sum(map(len, run_words)) < min(min_chars, sum(map(len, text))):
+        return None
+    span = answer[origin[words[start].start()] : origin[words[start + n - 1].end() - 1] + 1]
     filler = _ENGLISH_FUNCTION_WORDS | _FILLER_WORDS
     talk = (_ANSWER_TALK - set(_word_list(normalise(context)))) | filler
-    return any(w not in talk for w in _word_list(_SCORE_CLAIM.sub(" ", folded)))
+    claimless = _word_list(_SCORE_CLAIM.sub(" ", normalise(span)))
+    return span if any(w not in talk for w in claimless) else None

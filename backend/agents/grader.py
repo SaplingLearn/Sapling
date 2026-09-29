@@ -50,14 +50,16 @@ the letter is never evidence — so this holds whichever option was chosen.
 Credit is evidence-grounded (grader-guard round a33, the series coordinator's
 ruling on HANDOFF-a33 open question (g)). For every rubric item a grading run
 credits, its `support` gives a quote from the student's answer; code verifies it
-(`answer_guard.verified_support`: the answer holds its words, it is not trivially
-short, and it says more than that the answer is complete), and ONE span check —
-a run on the grader_second slot that sees each credited item's text with its
-quote and nothing else, never the rest of the answer — must say yes too. An item
-is credited only when all three hold. The span check runs whenever anything is
-credited: no keyword decides it. So a partial answer followed by a short claim
-("Both parts: done.", "Mark both.") earns no credit for the missing item, and a
-self-summary neither earns nor blocks credit.
+(`answer_guard.support_span`: the answer holds its words, at least half of the
+quote, cut from the answer as the student wrote them; they are not trivially
+short; and they say more than that the answer is complete), and ONE span check —
+a run on the grader_second slot that sees each credited item's text with those
+words of the student's and nothing else, never the rest of the answer and never
+the grader's own words — must say yes too. An item is credited only when all
+three hold. The span check runs whenever anything is credited: no keyword
+decides it. So a partial answer followed by a short claim ("Both parts: done.",
+"Mark both.") earns no credit for the missing item, and a self-summary neither
+earns nor blocks credit.
 
 Exactly one system prompt and one agent construction (spec §8.12; inv_12): the
 span check is the same agent with its own output type (`SpanVerdicts`), chosen
@@ -98,6 +100,7 @@ from learning.params import (
     GRADER_SECOND_OPINION_CONFIDENCE,
     GRADER_SECOND_OPINION_SLOT,
     GRADER_SUPPORT_MIN_CHARS,
+    GRADER_SUPPORT_MIN_SHARE,
     LEAK_NGRAM,
 )
 from services import ai_budget, events_service
@@ -432,19 +435,20 @@ _SPAN_HEADER = (
     "text). Judge each item only on its own span."
 )
 _SPAN_END = "END OF SPANS."
-_QUOTE_MARKS = re.compile(r"^[ \t]*>[ \t]?", re.M)
 
 
 def build_span_message(item, *, labels: dict[str, str], quotes: dict[str, str]) -> str:
     """The span check's one user message (round a33, the coordinator's ruling):
-    each credited rubric item's text under its label, followed by its verified
-    quote, every quote line quoted with "> " — and nothing else: no question, no
-    reference answer, no common wrong reason, no other part of the answer.
-    `quotes` maps rubric id → quote, in any order; the message keeps rubric order."""
+    each credited rubric item's text under its label, followed by its span — the
+    student's own words behind the grader's verified quote (`_supported_spans`),
+    never the grader's words — every span line quoted with "> ", and nothing
+    else: no question, no reference answer, no common wrong reason, no other part
+    of the answer. `quotes` maps rubric id → span, in any order; the message keeps
+    rubric order."""
     lines = [_SPAN_HEADER]
     shown = [r for r in item.rubric if r.id in quotes]
     for r in shown:
-        span = _QUOTE_MARKS.sub("", quotes[r.id]).strip()
+        span = quotes[r.id].strip()
         lines += ["", f"RUBRIC ITEM {labels[r.id]}: {r.text}"]
         lines += [_ANSWER_QUOTE + line for line in span.splitlines() or [""]]
     listed = ", ".join(f"{labels[r.id]} ({r.text})" for r in shown)
@@ -634,25 +638,31 @@ def _needs_confirmation(
     )
 
 
-def _verified_quotes(
+def _supported_spans(
     item, runs: list[GraderOutput], credited: list[str], labels: dict[str, str], answer: str
 ) -> dict[str, str]:
-    """Rubric id → the first quote, from `runs` in order, that
-    answer_guard.verified_support accepts for that credited item (round a33).
+    """Rubric id → the answer's own words behind the first quote, from `runs` in
+    order, that answer_guard.support_span accepts for that credited item (round
+    a33): cut from the answer as the student wrote it, never the grader's words.
     Each item is read against its own text and the reference answer, where a word
     that talks about an answer ("both", "correct") can be the substance."""
     supports = [parse_support(run.support, labels) for run in runs]
     texts = {r.id: r.text for r in item.rubric}
-    quotes: dict[str, str] = {}
+    spans: dict[str, str] = {}
     for rid in credited:
         context = f"{texts[rid]}\n{item.reference_answer}"
         for quote in (q for support in supports for q in support.get(rid, [])):
-            if answer_guard.verified_support(
-                quote, answer, min_chars=GRADER_SUPPORT_MIN_CHARS, context=context
-            ):
-                quotes[rid] = quote
+            span = answer_guard.support_span(
+                quote,
+                answer,
+                min_chars=GRADER_SUPPORT_MIN_CHARS,
+                min_share=GRADER_SUPPORT_MIN_SHARE,
+                context=context,
+            )
+            if span is not None:
+                spans[rid] = span
                 break
-    return quotes
+    return spans
 
 
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
@@ -673,8 +683,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     second opinion, signal or not (§3.4 / A6). A conflicted all-yes from the
     second opinion — replacing or confirming — is no verdict: `unavailable`. Every item
     the verdict credits then needs its own quote (`support`) that code verifies, and
-    one span check on the grader_second slot, which sees only those items and their
-    quotes, must say yes too; a span check that fails is `unavailable` (round a33,
+    one span check on the grader_second slot, which sees only those items and the
+    student's words behind their quotes, must say yes too; a span check that fails
+    is `unavailable` (round a33,
     the coordinator's ruling). A hint past GRADER_HINT_MAX_CHARS is dropped, never
     an outage.
 
@@ -777,12 +788,13 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         results = {rid: ok and first[rid] for rid, ok in results.items()}
         confidence = min(confidence, runs[0].confidence)
     # Round a33 (the coordinator's ruling): every credited item stands on a quote
-    # code verifies, confirmed by ONE span check that sees each such item with its
-    # quote and nothing else of the answer. It runs whenever anything is credited.
+    # code verifies, confirmed by ONE span check that sees each such item with the
+    # student's own words behind that quote and nothing else of the answer. It
+    # runs whenever anything is credited.
     # A replacing second opinion stands on its own quotes (the unsure first run is
     # no verdict); a confirmed item may stand on either run's.
     credited = [rid for rid, ok in results.items() if ok]
-    quotes = _verified_quotes(
+    quotes = _supported_spans(
         item, [out, runs[0]] if confirming else [out], credited, labels, student_answer
     )
     if len(quotes) < len(credited):
