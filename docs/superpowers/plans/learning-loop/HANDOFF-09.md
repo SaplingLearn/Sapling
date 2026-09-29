@@ -143,3 +143,4 @@ Known gaps added: (1) pre-existing, predates the series — student-written conc
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+- PKG-10 2026-09-29: `learner_brief._open_misconception_keys` reads the student's open `misconceptions` rows for the nodes in play (`open_for`, count descending) before the closes' union; `_KEY` is `learning.misconceptions.KEY_PATTERN`; `routes.learn_loop._close_misconception_keys(user_id, evidence)` (was `(user_id, session_id)` returning `[]`) feeds `build_close` the open keys on the session's evidence nodes, so the close record and `learn.session_closed` carry them; test helpers `_wire_brief` / `_wire_close` gain `open_rows` — commit c5efdec0
