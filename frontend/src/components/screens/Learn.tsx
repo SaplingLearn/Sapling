@@ -332,7 +332,13 @@ export function Learn() {
   // null → the same fallback the legacy Suspense shows; false / 404 / error → legacy.
   const loop = useLoopStatus(userId, userReady);
   if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
-  if (loop) return <LoopLearn />;
+  if (loop) {
+    return (
+      <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+        <LoopLearn />
+      </Suspense>
+    );
+  }
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
       <LearnInner />
