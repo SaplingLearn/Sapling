@@ -96,7 +96,7 @@ from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
 from learning.leak import detect_leak, leak_spans
-from learning.learner_brief import store_brief
+from learning.learner_brief import course_concept_names, store_brief
 from learning.learner_state import LearnerState, read_states
 from learning.loop_state_store import (
     LoopStateConflict,
@@ -117,6 +117,7 @@ from learning.params import (
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     LOOP_CHECKS_PER_CONCEPT,
     LOOP_GRADING_CLAIM_STALE_S,
+    LEARNER_BRIEF_CANDIDATE_NODES,
     LEARNER_BRIEF_RETRY_AFTER_S,
     LEARNER_BRIEF_TOP_STATES,
     LOOP_HISTORY_TRIM_BLOCK,
@@ -484,13 +485,17 @@ def _brief_node_ids(loop_state: dict, user_id: str, course_id: str | None) -> li
         return approved
     if not course_id:
         return []
+    # Review round 2: only nodes that map to a course concept (a student-created
+    # node at mastery 0 would otherwise rank first and carry its own name in)
     rows = table("graph_nodes").select(
-        "id",
+        "id,concept_name",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         order="mastery_score.asc",
-        limit=LEARNER_BRIEF_TOP_STATES,
+        limit=LEARNER_BRIEF_CANDIDATE_NODES,
     )
-    return [r["id"] for r in rows or [] if r.get("id")]
+    names = {r["id"]: r.get("concept_name") or "" for r in rows or [] if r.get("id")}
+    course = course_concept_names(course_id, names)
+    return [n for n in names if n in course][:LEARNER_BRIEF_TOP_STATES]
 
 
 #: Review M1: session id → when its brief build last failed (per process; a
@@ -533,7 +538,12 @@ def _load_loop_history(
                 )
                 _BRIEF_FAILED.pop(session_id, None)
             except Exception as exc:
-                _BRIEF_FAILED[session_id] = _now_s()
+                now = _now_s()
+                for stale in [
+                    k for k, at in _BRIEF_FAILED.items() if now - at > LEARNER_BRIEF_RETRY_AFTER_S
+                ]:
+                    _BRIEF_FAILED.pop(stale, None)  # bounded: only live windows are kept
+                _BRIEF_FAILED[session_id] = now
                 logger.warning(
                     "learner brief not built for this turn (%s); retried after %ss",
                     type(exc).__name__,
@@ -2715,11 +2725,30 @@ def _served_fallback(draft, items: list) -> CloseRecord:
     names and numbers, so it passes the same leak check as a model close —
     named, then with the names withheld, then with no names or numbers."""
     record = fallback_close(draft)
+    named_ok = not any(
+        _name_in_answer(draft.concept_names.get(c.node_id, ""), i)
+        for c in draft.concepts
+        for i in items
+    )
     for detail in CLOSE_FALLBACK_DETAILS:
         record = fallback_close(draft, detail=detail)
+        if detail == "named" and not named_ok:
+            continue
         if not any(close_states_answer(_close_text(record), i) for i in items):
             return record
     return record
+
+
+_WORD = re.compile(r"[^\W_]+")
+
+
+def _name_in_answer(name: str, item) -> bool:
+    """Review round 2: a concept name whose words all appear in an unreleased
+    item's final (or canonical) answer states it ("Base Case" for "a base
+    case") — the bare name is no sentence the text check reads as an answer."""
+    words = set(_WORD.findall((name or "").casefold()))
+    answer = " ".join(filter(None, (item.final_answer, item.canonical_answer))).casefold()
+    return bool(words) and words <= set(_WORD.findall(answer))
 
 
 async def _model_close(draft, *, user_id: str, request_id: str) -> object | None:

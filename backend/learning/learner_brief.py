@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import re
 
-from db.connection import table
+from db.connection import pg_quote_value, table
 from learning.bkt import band
 from learning.learner_state import read_states
 from learning.params import (
@@ -38,6 +38,7 @@ from learning.session_close import ensure_session_row
 from services.academics import course_offering_ids
 from services.encryption import decrypt_json_column, encrypt_if_present
 from services.exam_proximity import days_until_next_exam
+from services.graph_service import _normalize_concept
 from services.session_modes import NOT_REVIEW
 from services.prompt_safety import (
     neutralise_control_tags,
@@ -56,6 +57,9 @@ BRIEF_HEADER = (
 #: else in a stored close is not rendered.
 _KEY = re.compile(r"[a-z0-9][a-z0-9_]{0,63}")
 _SOURCE = "learner brief"
+#: How a node that maps to no course concept is named (review round 2): its
+#: name is the student's own text, so none of it is rendered.
+UNNAMED_CONCEPT = "a concept you added"
 _ELLIPSIS = "…"
 
 
@@ -68,7 +72,41 @@ def _goal_section(user_id: str, course_id: str | None) -> str:
     return f"goal: next exam in {days} day{'' if days == 1 else 's'}"
 
 
-def _states_section(user_id: str, node_ids: list[str]) -> str:
+def course_concept_names(course_id: str | None, names: dict[str, str]) -> dict[str, str]:
+    """Review round 2 (MAJOR): the subset of `{node_id: concept_name}` whose name
+    is a COURSE concept — a check_items `concept_key` of the course (the A2 keying
+    PKG-07's `_node_for_item` resolves nodes by; one read). Any other name was
+    written by the student (POST /api/graph/{uid}/nodes accepts any text) and
+    never reaches a prompt through the brief."""
+    keys = {n: _normalize_concept(name) for n, name in names.items() if name}
+    if not course_id or not keys:
+        return {}
+    rows = table("check_items").select(
+        "concept_key",
+        filters={
+            "course_id": f"eq.{course_id}",
+            "concept_key": f"in.({','.join(pg_quote_value(k) for k in sorted(set(keys.values())))})",
+        },
+    )
+    course = {r.get("concept_key") for r in rows or []}
+    return {n: names[n] for n, k in keys.items() if k in course}
+
+
+def _node_names(user_id: str, course_id: str | None, node_ids: list[str]) -> dict[str, str]:
+    """`{node_id: rendered name}` for the student's own nodes among `node_ids`:
+    the course concept's name, else UNNAMED_CONCEPT (no student text at all)."""
+    if not node_ids:
+        return {}
+    rows = table("graph_nodes").select(
+        "id,concept_name",
+        filters={"user_id": f"eq.{user_id}", "id": f"in.({','.join(node_ids)})"},
+    )
+    raw = {r["id"]: r.get("concept_name") or "" for r in rows or [] if r.get("id")}
+    course = course_concept_names(course_id, raw)
+    return {n: course.get(n, UNNAMED_CONCEPT) for n in raw}
+
+
+def _states_section(user_id: str, course_id: str | None, node_ids: list[str]) -> str:
     ids = list(dict.fromkeys(n for n in node_ids or [] if n))
     if not ids:
         return ""
@@ -76,15 +114,11 @@ def _states_section(user_id: str, node_ids: list[str]) -> str:
     # A node with no learner_state row is at the BKT prior (learner_state.read_state).
     ranked = sorted(ids, key=lambda n: states[n].p_known if n in states else BKT_L0)
     top = ranked[:LEARNER_BRIEF_TOP_STATES]
-    rows = table("graph_nodes").select(
-        "id,concept_name",
-        filters={"user_id": f"eq.{user_id}", "id": f"in.({','.join(top)})"},
-    )
-    names = {r["id"]: r.get("concept_name") for r in rows or [] if r.get("id")}
+    names = _node_names(user_id, course_id, top)
     lines = []
     for node in top:
-        if not names.get(node):
-            continue  # never an id alone: the model needs the name
+        if node not in names:
+            continue  # not the student's node: never an id alone
         state = states.get(node)
         p = state.p_known if state is not None else BKT_L0
         due_at = state.fsrs_due_at if state is not None else None
@@ -139,22 +173,14 @@ def _deltas(close: dict) -> list[tuple[str, float, float]]:
     return out
 
 
-def _closes_section(user_id: str, closes: list[tuple[str, dict]]) -> str:
+def _closes_section(user_id: str, course_id: str | None, closes: list[tuple[str, dict]]) -> str:
     """Review MAJOR 1: rendered from STRUCTURED close data only — the session
     date, each checked concept's name (the student's own graph) and recorded
     p_before → p_after with its direction. The model-written summary, plan and
     self-evaluation stay in `close_json` for the student's close screen and
     never enter a later prompt (a poisoned plan steered the tutor live)."""
     ids = list(dict.fromkeys(n for _, c in closes for n, _, _ in _deltas(c)))
-    names: dict[str, str] = {}
-    if ids:
-        rows = table("graph_nodes").select(
-            "id,concept_name",
-            filters={"user_id": f"eq.{user_id}", "id": f"in.({','.join(ids)})"},
-        )
-        names = {
-            r["id"]: r["concept_name"] for r in rows or [] if r.get("id") and r.get("concept_name")
-        }
+    names = _node_names(user_id, course_id, ids)
     lines = []
     for day, close in closes:
         moves = [
@@ -212,7 +238,7 @@ def build_brief(user_id: str, course_id: str | None, node_ids_in_play: list[str]
 
     def closes_block() -> str:
         closes.extend(_read_closes(user_id, course_id))
-        return _closes_section(user_id, closes)
+        return _closes_section(user_id, course_id, closes)
 
     def keys_block() -> str:
         keys = _open_misconception_keys(user_id, node_ids_in_play, [c for _, c in closes])
@@ -221,7 +247,7 @@ def build_brief(user_id: str, course_id: str | None, node_ids_in_play: list[str]
 
     sections = [
         _section("goal", lambda: _goal_section(user_id, course_id)),
-        _section("states", lambda: _states_section(user_id, node_ids_in_play)),
+        _section("states", lambda: _states_section(user_id, course_id, node_ids_in_play)),
         _section("closes", closes_block),
         _section("misconceptions", keys_block),
     ]

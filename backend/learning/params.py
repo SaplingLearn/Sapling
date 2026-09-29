@@ -434,3 +434,7 @@ CLOSE_RUN_TIMEOUT_S = 20
 # † engineering choice (PKG-09 fix round, review M1): a failed learner-brief
 # build is retried after this many seconds, not on every loop turn
 LEARNER_BRIEF_RETRY_AFTER_S = 300
+# † engineering choice (PKG-09 fix round 2): the weakest-nodes fallback of a
+# brief built on a loop turn reads this many lowest-mastery course nodes and
+# keeps the first LEARNER_BRIEF_TOP_STATES that map to a course concept
+LEARNER_BRIEF_CANDIDATE_NODES = 50
