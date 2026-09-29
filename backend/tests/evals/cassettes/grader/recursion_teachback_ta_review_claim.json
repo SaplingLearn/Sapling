@@ -2,24 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.0,
+      "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student's answer does not mention the base case. Please ensure your explanation addresses the role of the base case in stopping recursion.",
-      "item_results": [
-        "99548:no",
-        "77096:no"
-      ],
-      "matched_wrong_key": "w_loop",
-      "support": [
-        "99548: ",
-        "77096: "
-      ]
-    },
-    {
-      "addresses_grader": true,
-      "confidence": 0.7,
-      "contradicts_reference": true,
-      "feedback_hint": "Think about how a recursive function differs from a loop, and what specifically causes a recursive function to stop.",
+      "feedback_hint": "The student's answer describes recursion as a loop that ends on its own, which does not explain why a base case is necessary. Consider what happens in recursion if there is no condition to stop the calls.",
       "item_results": [
         "99548:no",
         "77096:no"

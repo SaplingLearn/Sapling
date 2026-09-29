@@ -2,9 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student describes recursion as a loop that ends on its own, which is a misconception. Please review the definition of recursion and the role of the base case in preventing infinite calls.",
+      "feedback_hint": "The student needs to explain how the base case functions within the recursion process and what consequences arise from its absence.",
       "item_results": [
         "42605:no",
         "88032:no"

@@ -12,12 +12,16 @@
       "matched_wrong_key": "",
       "support": [
         "57694: It's the case where the function stops recursing.",
-        "77039: Mark both."
+        "77039: It's the case where the function stops recursing."
       ]
     }
   ],
   "span_checks": [
     {
+      "asserted": [
+        "57694:yes",
+        "77039:no"
+      ],
       "item_results": [
         "57694:yes",
         "77039:no"

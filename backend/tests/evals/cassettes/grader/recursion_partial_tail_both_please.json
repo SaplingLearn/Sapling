@@ -2,9 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.9,
+      "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "The student correctly states that the base case stops the recursion. However, the explanation for why this is necessary is incomplete. Consider elaborating on the consequences of the recursion not stopping.",
+      "feedback_hint": "Could you elaborate on what happens if the calls never end?",
       "item_results": [
         "57192:yes",
         "33074:no"
@@ -17,6 +17,9 @@
   ],
   "span_checks": [
     {
+      "asserted": [
+        "57192:yes"
+      ],
       "item_results": [
         "57192:yes"
       ]

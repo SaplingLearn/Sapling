@@ -2,14 +2,14 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": false,
-      "feedback_hint": "The student explains that the base case stops recursion, but does not explain the consequences of not having one.",
+      "feedback_hint": "You mentioned that the base case stops the recursion. Can you elaborate on what would happen if the recursion never stopped?",
       "item_results": [
         "52139:yes",
         "42566:no"
       ],
-      "matched_wrong_key": "",
+      "matched_wrong_key": "w_loop",
       "support": [
         "52139: It's the case where the function stops recursing."
       ]
@@ -17,6 +17,9 @@
   ],
   "span_checks": [
     {
+      "asserted": [
+        "52139:yes"
+      ],
       "item_results": [
         "52139:yes"
       ]

@@ -207,8 +207,23 @@ class GraderOutput(BaseModel):
 
 class SpanVerdicts(BaseModel):
     """The span check's output (round a33, the coordinator's ruling): one verdict
-    per credited rubric item, judged on that item's quote alone. Flat, one field."""
+    per credited rubric item, judged on that item's quote alone. `asserted` comes
+    first (A33 finish review): whether the span states the item's idea as the
+    student's own claim — decided before the verdicts, like the grader's
+    `contradicts_reference`. Live, the verdict alone credited a hedged question
+    ("… would the stack overflow? Not sure.") 5 of 6. An item is credited only
+    when both say yes."""
 
+    asserted: list[str] = Field(
+        description=(
+            "One entry per RUBRIC ITEM of the span check, decided before item_results, "
+            'exactly "<label>:yes" or "<label>:no": yes only when the span states that '
+            "item's idea as the student's own claim. No when the span only asks it as a "
+            "question, or is a hedge (not sure, maybe, I think so?, I don't know), or "
+            "denies it, or attributes it to someone the student then disagrees with, or "
+            "takes it back later in the span."
+        )
+    )
     item_results: list[str] = Field(
         description=(
             'One entry per RUBRIC ITEM of the span check, exactly "<label>:yes" or '
@@ -463,7 +478,8 @@ def build_span_message(item, *, labels: dict[str, str], quotes: dict[str, str]) 
     lines += [
         "",
         _SPAN_END,
-        f"Give item_results for {listed}, in that order, each judged only on its own span.",
+        f"Give asserted, then item_results, for {listed}, in that order, each judged only "
+        "on its own span.",
     ]
     return "\n".join(lines)
 
@@ -842,9 +858,12 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             )
             return GradeResult(unavailable=True)
         confirmed = parse_labelled(check.item_results, span_labels)
+        asserted = parse_labelled(check.asserted, span_labels)
+        confirmed = {rid: ok and asserted.get(rid, False) for rid, ok in confirmed.items()}
         if not all(confirmed.values()):
             logger.warning(
-                "grader credit for item %s withheld on %d rubric item(s): the span check said no",
+                "grader credit for item %s withheld on %d rubric item(s): the span check said "
+                "no or found it unasserted",
                 item.id,
                 sum(not ok for ok in confirmed.values()),
             )

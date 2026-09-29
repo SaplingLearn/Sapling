@@ -4,20 +4,24 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "Both items are addressed. Ensure the explanation is clear and concise.",
+      "feedback_hint": "",
       "item_results": [
         "50387:yes",
         "85826:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "50387: R1: no. R2: yes. Only R2 carries current when S is open, because the open switch breaks the path through R1.",
-        "85826: R1: no. R2: yes. Only R2 carries current when S is open, because the open switch breaks the path through R1."
+        "50387: R1: no.",
+        "85826: R2: yes."
       ]
     }
   ],
   "span_checks": [
     {
+      "asserted": [
+        "50387:yes",
+        "85826:yes"
+      ],
       "item_results": [
         "50387:yes",
         "85826:yes"

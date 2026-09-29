@@ -4,13 +4,16 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student believes the base case is for optimization, but it's essential for preventing infinite recursion. Consider what happens if a recursive function *never* stops calling itself.",
+      "feedback_hint": "The student believes the base case is for optimization, but it is essential for stopping the recursion to prevent infinite calls and stack overflow. Consider what happens if a recursive function never stops calling itself.",
       "item_results": [
         "27895:no",
         "93888:no"
       ],
       "matched_wrong_key": "w_speed",
-      "support": []
+      "support": [
+        "27895: ",
+        "93888: "
+      ]
     }
   ],
   "span_checks": []

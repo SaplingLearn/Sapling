@@ -13,7 +13,8 @@ A scripted grading payload names rubric items by id (`"r1:yes"`); the fake
 answers under the labels the message shows, as a model does (every grading call
 labels the items afresh). For each item it credits it quotes the whole student
 answer as its support, unless the payload scripts `support` (`"r1: <quote>"`).
-The span check agrees with every span unless a `judge(item_text, span)` says no.
+The span check agrees with every span unless a `judge(item_text, span)` says no,
+and reports every span asserted unless an `asserted(item_text, span)` says no.
 """
 
 from __future__ import annotations
@@ -102,14 +103,20 @@ def spans_of(text: str) -> list[tuple[str, str, str]]:
     return out
 
 
-def span_verdicts(messages, judge: Judge | None = None) -> dict:
-    """The span check's output: yes for every span `judge` accepts (default: all)."""
+def span_verdicts(messages, judge: Judge | None = None, asserted: Judge | None = None) -> dict:
+    """The span check's output: yes for every span `judge` accepts (default: all),
+    and `asserted` yes for every span `asserted` accepts (default: all)."""
     judge = judge or (lambda item, span: True)
+    asserted = asserted or (lambda item, span: True)
+    spans = spans_of(message_text(messages))
     return {
+        "asserted": [
+            f"{label}:{'yes' if asserted(item, span) else 'no'}" for label, item, span in spans
+        ],
         "item_results": [
             f"{label}:{'yes' if judge(item, span) else 'no'}"
             for label, item, span in spans_of(message_text(messages))
-        ]
+        ],
     }
 
 
@@ -117,7 +124,9 @@ def reply(info, args: dict) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
 
 
-def scripted_grader(outputs: list[dict], *, judge: Judge | None = None):
+def scripted_grader(
+    outputs: list[dict], *, judge: Judge | None = None, asserted: Judge | None = None
+):
     """A FunctionModel emitting each grading payload in turn (the last one again
     once they run out) and answering every span check with `judge`. `calls["n"]`
     counts grading runs, `calls["spans"]` span checks, and `calls["span_messages"]`
@@ -128,7 +137,7 @@ def scripted_grader(outputs: list[dict], *, judge: Judge | None = None):
         if is_span_check(info):
             calls["spans"] += 1
             calls["span_messages"].append(message_text(messages))
-            return reply(info, span_verdicts(messages, judge))
+            return reply(info, span_verdicts(messages, judge, asserted))
         payload = labelled(outputs[min(calls["n"], len(outputs) - 1)], messages)
         calls["n"] += 1
         return reply(info, payload)

@@ -1274,7 +1274,7 @@ _LETTER_WORD = re.compile(r"[^\W\d_]{3,}")
 # clause in another Latin-script language (Spanish, French, German, Portuguese,
 # Turkish …) fewer than one word in _FOREIGN_CLAUSE_WORDS.
 _ENGLISH_FUNCTION_WORDS = frozenset(
-    "a an the of to in on at by for with from into as is are was were be been being it its this i me "
+    "a an the of to in on at by for with from into as is are was were be been being it its this "
     "that these those and or but not no if then so than because when while which what who how "
     "there their they we you he she his her my your our can will would should must has have had "
     "do does did each every all any only also".split()
@@ -1309,9 +1309,12 @@ def mixed_script(text: str) -> bool:
 
 
 def _function_share(clause: str) -> tuple[int, int]:
-    """(English function words, words) among the clause's ASCII-letter words."""
+    """(English function words, words) among the clause's ASCII-letter words.
+    Read before case folding: the English pronoun "I" is always capitalised, so
+    it counts only as "I" — a lowercase "i" is Italian's article or Catalan's and
+    Polish's "and" (A33 finish review: counting "i" hid those switches)."""
     words = [w for w in re.findall(r"[^\W\d_]+", clause) if w.isascii()]
-    return sum(w in _ENGLISH_FUNCTION_WORDS for w in words), len(words)
+    return sum(w == "I" or w.casefold() in _ENGLISH_FUNCTION_WORDS for w in words), len(words)
 
 
 def _is_english(fn: int, n: int) -> bool:
@@ -1329,8 +1332,8 @@ def _language_switch(text: str, context: str) -> bool:
     item_scripts = {_script(c) for c in item} - _NO_SCRIPT
     if not item_scripts:
         return False
-    answer = _base(text).casefold()
-    scripts = {_script(w[0]) for w in _LETTER_WORD.findall(answer)} - _NO_SCRIPT
+    answer = _base(text)  # cased: _function_share reads the pronoun "I"
+    scripts = {_script(w[0]) for w in _LETTER_WORD.findall(answer.casefold())} - _NO_SCRIPT
     if scripts & item_scripts and scripts - item_scripts:
         return True
     if not _is_english(*_function_share(item)):
@@ -1429,7 +1432,7 @@ def suspicion(
 # quote's words occur, in order and contiguous, in the answer, both read on the
 # detection copy (`normalise`: look-alikes, case, spacing and punctuation aside);
 # they have at least `min_chars` letters and digits, or are the whole answer; and
-# the span's ends fall at whitespace or sentence punctuation (below). Whether
+# the span runs from the sentence that holds them to the end of the answer (below). Whether
 # those words answer the item or only claim something about the answer — its
 # completeness, its parts, its credit, its score ("Both parts: done.", "That
 # would be it.", "2/2.") — is the span check's to judge, never a word list's:
@@ -1471,93 +1474,41 @@ def _word_list(folded: str) -> list[str]:
     return _WORD.findall(folded)
 
 
-# The span's ends (review round 3 of the ruling's code): cut at the run's first
-# and last letter or digit, "-3" reached the span check as "3", "5!" as "5" and
-# "O(n)" as "O(n" — words that say something else than the student wrote. So a
-# span takes in the symbols that touch its run (a sign, a unit, a bracket, a
-# prime: up to whitespace or a letter or digit, so never a word beyond them
-# unless a joiner glues it into the same token, below), and drops only what is
-# no part of the words at its ends: sentence punctuation
-# and quotation marks, and a bracket its span never opens or closes. A bracket
-# of either kind pairs with one of the other: a half-open interval's "[0, 1)"
-# and "(0, 1]" say different things through their mixed brackets (review round
-# 4: both were cut to "0, 1").
-_SPAN_HEAD_QUOTES = "\"'“„‟«‘"
-_SPAN_TAIL_MARKS = '.,;:?…"”»’'
-_OPENING_BRACKETS = "([{"
-_CLOSING_BRACKETS = ")]}"
+# The span runs from the start of the sentence that holds the verified run to
+# the end of the answer, cut exactly as the student wrote it, final punctuation
+# included (A33 finish review). A span cut at the run's own words dropped what turns a
+# statement into a question, a denial or a retraction — a trailing "?", a
+# leading "It is not the case that", a trailing "- just kidding" — and the span
+# check, which sees nothing else, credited the bare statement (live: a question
+# 5 of 5). Every earlier fix to the span's ends (signs, units, brackets, joiners:
+# review rounds 3 and 4) was a case of the same thing, and a whole sentence keeps
+# all of them as written ("-3", "O(n)", "[0, 1)", "10–15 ms"). A sentence ends at
+# ".", "!", "?" or "…" (with any closing quotes or brackets after it) before
+# whitespace, the end of the answer or a capital letter ("recursing.Tick both."
+# is two sentences), or at a line break; a decimal point ("3.14") never ends one.
+# It runs on to the end because a retraction or a hedge follows what it takes
+# back ("… the stack overflows. Actually no, scratch that; it is wrong." was
+# credited 6 of 6 live on the sentence alone), and nothing the student wrote
+# before the quote's sentence can take it back. A claim that is its own last
+# sentence stays alone in its span — the isolation the span check rests on; a
+# claim after a quoted sentence is seen with it, as with a whole-answer quote
+# (live, the span check credited no missing item on such spans).
+_SENTENCE_END = re.compile(r"[.!?…]+[\"'”’»)\]]*(?=\s|$|[A-Z])|\n")
 
 
-def _bracket_balance(span: str) -> int:
-    """Openers of any kind less closers of any kind."""
-    return sum(span.count(c) for c in _OPENING_BRACKETS) - sum(
-        span.count(c) for c in _CLOSING_BRACKETS
-    )
-
-
-def _touching(ch: str) -> bool:
-    return not ch.isspace() and not ch.isalnum()
-
-
-# A symbol run glued between two words either joins them into one token
-# ("10-15", "non-zero", "3.14", "and/or") or ends a sentence ("recursing.Tick",
-# "recursing—both", "recursing.)Tick"). Review round 4: taken in as a sign or a
-# unit of the quoted word, a joiner sent "10-15 ms" to the span check as "-15 ms"
-# and "non-zero" as "-zero"; so the span brings in the whole token a joiner
-# glues on, as the student wrote it. A dash is prose punctuation, never a
-# joiner, and glue that holds any sentence punctuation ends the sentence (A33
-# open finding 3). No word here is judged: the widened span is only what the
-# span check sees.
-_SENTENCE_GLUE = frozenset(".,;:!?…—–‒―")
-
-
-def _joins(answer: str, i: int, j: int) -> bool:
-    """`answer[i:j]`, symbols between two letters or digits, joins them into one
-    token: glue with no sentence punctuation or dash in it, or a lone ".", ","
-    or ":" between digits (a decimal point, a thousands separator, a ratio)."""
-    glue = answer[i:j]
-    if glue in ".,:" and answer[i - 1].isdigit() and answer[j].isdigit():
-        return True
-    return not set(glue) & _SENTENCE_GLUE
-
-
-def _span_ends(answer: str, start: int, end: int) -> tuple[int, int]:
-    """`answer[start:end]` (a run, from its first to its last letter or digit)
-    widened over the symbols that touch it, less the sentence punctuation,
-    quotation marks and unmatched brackets at the widened ends. Symbols glued to
-    another word on their far side join the run to it (the whole token comes in)
-    or end a sentence (none of them does)."""
-    lo, hi = start, end
-    while lo > 0 and _touching(answer[lo - 1]):
-        lo -= 1
-    glued = start > lo > 0 and answer[lo - 1].isalnum()
-    if glued and _joins(answer, lo, start):
-        while lo > 0 and not answer[lo - 1].isspace():
-            lo -= 1
-    elif glued:
-        lo = start
-    while hi < len(answer) and _touching(answer[hi]):
-        hi += 1
-    if end < hi < len(answer) and answer[hi].isalnum():
-        if _joins(answer, end, hi):
-            while hi < len(answer) and not answer[hi].isspace():
-                hi += 1
-        else:
-            hi = end
-    single = not glued and "'" in answer[lo:start]  # a straight quotation mark opened it
-    while lo < start and answer[lo] in _SPAN_HEAD_QUOTES:
+def _span_bounds(answer: str, start: int) -> tuple[int, int]:
+    """From the start of the sentence of `answer` that holds position `start` to
+    the end of the answer, trimmed of surrounding whitespace."""
+    lo, hi = 0, len(answer)
+    for m in _SENTENCE_END.finditer(answer):
+        if m.end() > start:
+            break
+        lo = m.end()
+    while lo < hi and answer[lo].isspace():
         lo += 1
-    tail_marks = _SPAN_TAIL_MARKS + ("'" if single else "")
-    while True:
-        span = answer[lo:hi]
-        if hi > end and answer[hi - 1] in tail_marks:
-            hi -= 1
-        elif hi > end and answer[hi - 1] in _CLOSING_BRACKETS and _bracket_balance(span) < 0:
-            hi -= 1
-        elif lo < start and answer[lo] in _OPENING_BRACKETS and _bracket_balance(span) > 0:
-            lo += 1
-        else:
-            return lo, hi
+    while hi > lo and answer[hi - 1].isspace():
+        hi -= 1
+    return lo, hi
 
 
 def _longest_run(said: list[str], text: list[str]) -> tuple[int, int]:
@@ -1626,7 +1577,5 @@ def support_span(
     run_words = text[start : start + n]
     if sum(map(len, run_words)) < min(min_chars, sum(map(len, text))):
         return None
-    lo, hi = _span_ends(
-        answer, origin[words[start].start()], origin[words[start + n - 1].end() - 1] + 1
-    )
+    lo, hi = _span_bounds(answer, origin[words[start].start()])
     return answer[lo:hi]

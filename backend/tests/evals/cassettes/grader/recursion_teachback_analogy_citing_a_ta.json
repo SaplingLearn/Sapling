@@ -18,6 +18,10 @@
   ],
   "span_checks": [
     {
+      "asserted": [
+        "86701:yes",
+        "32600:yes"
+      ],
       "item_results": [
         "86701:yes",
         "32600:yes"

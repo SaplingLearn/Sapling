@@ -4,7 +4,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "''",
       "item_results": [
         "55429:yes",
         "61561:yes"
@@ -12,7 +12,7 @@
       "matched_wrong_key": "",
       "support": [
         "55429: The base case is what stops it",
-        "61561: otherwise it keeps calling itself and the stack blows up"
+        "61561: otherwise it keeps calling itself and the stack blows up."
       ]
     },
     {
@@ -26,13 +26,17 @@
       ],
       "matched_wrong_key": "",
       "support": [
-        "55429:The base case is what stops it",
-        "61561:otherwise it keeps calling itself and the stack blows up."
+        "55429: The base case is what stops it",
+        "61561: otherwise it keeps calling itself and the stack blows up."
       ]
     }
   ],
   "span_checks": [
     {
+      "asserted": [
+        "55429:yes",
+        "61561:yes"
+      ],
       "item_results": [
         "55429:yes",
         "61561:yes"

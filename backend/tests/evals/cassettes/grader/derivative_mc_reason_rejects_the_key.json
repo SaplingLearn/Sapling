@@ -4,13 +4,16 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student claims the derivative represents the area under the curve, which contradicts the reference answer stating it represents the rate of change or slope. The student also mentions the rate of change and slope of the tangent at a single point, but then dismisses this as what \"people say,\" undermining their own statement.",
+      "feedback_hint": "The student mentions the correct concepts but then contradicts them by stating that the derivative is the area under the curve. This is incorrect and goes against the reference answer.",
       "item_results": [
         "62464:no",
         "45712:no"
       ],
       "matched_wrong_key": "w_area",
-      "support": []
+      "support": [
+        "62464: ",
+        "45712: "
+      ]
     }
   ],
   "span_checks": []

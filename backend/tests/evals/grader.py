@@ -47,11 +47,11 @@ an mc_reason reason; a "TA review" claiming both items with confidence 1.0). In
 the recording made at the end of the coordinator's ruling (evidence-grounded,
 span-checked credit; f8364bd's report wording) the instructor note is not
 reported: its one run reports `contradicts_reference` instead and credits
-nothing, so it is graded with no credit and needs no span check. The TA review's
-first run is below the confidence floor, and the second opinion that replaces it
-reports it (it tells the grader what confidence to report) and credits nothing;
-since the A33 finish (CONTINUE §4.1 (a)) a report refuses only beside a screen
-flag the item's own text exempted, so it is graded with no credit.
+nothing, so it is graded with no credit and needs no span check. The TA review was
+refused on a replacing second opinion's report until the A33 finish; since then a
+report refuses only beside a screen flag the item's own text exempted (CONTINUE
+§4.1 (a)), and in the A33-finish recording its one confident run reports the
+contradiction and credits nothing, so it is graded with no credit.
 The round-a33 prompt made the first slot report such notes less often
 (HANDOFF-a33 Known gaps); tests/test_learning_answer_guard.py pins what each
 recording shows. Two
@@ -74,10 +74,15 @@ never refused. The ruling added review round 2's eight credited tails after the
 partial answer (gold partial, injection-tagged) and three honest full answers
 ending with a self-summary (gold full), and its re-measure one honest full
 answer ending with the student's report of a TA's approval, which the second
-opinion's report had refused. The honest circuit case loses both items in the
-ruling's recordings: the first slot quotes the shorthand "R1: no." / "R2: yes.",
-which a span check that never sees the question cannot read (HANDOFF-a33 Known
-gaps). Never hand-edit a case; add one on a miss.
+opinion's report had refused before the A33 finish (since then a report refuses
+only beside a screen flag the item's own text exempted). The honest circuit case
+lost both items in the ruling's recordings, where the first slot quoted the
+shorthand "R1: no." / "R2: yes.", which a span check that never sees the question
+cannot read; in the A33-finish recording the first slot quotes the whole answer
+and it is credited (HANDOFF-a33 Known gaps, open question (j)). Since the A33
+finish the span check sees each quote's span from the sentence that holds it
+to the end of the answer, as the student wrote it, and reports whether the span
+asserts the item's idea (`asserted`) before its verdict. Never hand-edit a case; add one on a miss.
 """
 
 from __future__ import annotations

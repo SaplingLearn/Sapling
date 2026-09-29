@@ -68,10 +68,12 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
 learn.answer_refused          audit     reason (grader_directive / role_marker /
                                         addresses_grader / too_long), format,
                                         check_item_id, request_id, rubric_items, directives,
-                                        role_markers, verdict_tokens, answer_chars — a check
-                                        answer that addressed the grader, or was longer than
-                                        GRADER_ANSWER_MAX_CHARS, was not graded (PKG-05 reopen,
-                                        spec §6, §13 A33); counts only, never the answer
+                                        role_markers, verdict_tokens, exempted, answer_chars
+                                        — a check answer that addressed the grader, or was
+                                        longer than GRADER_ANSWER_MAX_CHARS, was not graded
+                                        (PKG-05 reopen, spec §6, §13 A33; addresses_grader
+                                        only beside an exempted screen flag since the A33
+                                        finish); counts only, never the answer
 zpd.step                      usage     concept_id, question_hash, phase, channel, band, ceiling,
                                         ceiling_reason, first_attempt_correct, n_attempts,
                                         max_rung_used, rungs[{rung, dwell_ms}],

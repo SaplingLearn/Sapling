@@ -212,48 +212,54 @@ def _structured_output(args: dict) -> FunctionModelHandler:
     the REAL output schema validates the payload before the agent returns."""
 
     def handler(messages, info) -> ModelResponse:
-        return ModelResponse(
-            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)]
-        )
+        return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
 
     return handler
 
 
 register_function_handler(
     "classifier",
-    _structured_output({
-        "category": E2E_DOC_CATEGORY,
-        "is_syllabus": False,
-        "confidence": 0.95,
-        "shareability": E2E_DOC_SHAREABILITY,
-        "rationale": "Scripted E2E classification: narrative notes, no schedule.",
-    }),
+    _structured_output(
+        {
+            "category": E2E_DOC_CATEGORY,
+            "is_syllabus": False,
+            "confidence": 0.95,
+            "shareability": E2E_DOC_SHAREABILITY,
+            "rationale": "Scripted E2E classification: narrative notes, no schedule.",
+        }
+    ),
 )
 register_function_handler(
     "summary",
-    _structured_output({
-        "headline": E2E_DOC_HEADLINE,
-        "abstract": E2E_DOC_ABSTRACT,
-        "key_points": E2E_DOC_KEY_POINTS,
-    }),
+    _structured_output(
+        {
+            "headline": E2E_DOC_HEADLINE,
+            "abstract": E2E_DOC_ABSTRACT,
+            "key_points": E2E_DOC_KEY_POINTS,
+        }
+    ),
 )
 register_function_handler(
     "concepts",
-    _structured_output({
-        "concepts": [
-            {"name": name, "description": desc, "importance": imp}
-            for name, desc, imp in E2E_DOC_CONCEPTS
-        ],
-    }),
+    _structured_output(
+        {
+            "concepts": [
+                {"name": name, "description": desc, "importance": imp}
+                for name, desc, imp in E2E_DOC_CONCEPTS
+            ],
+        }
+    ),
 )
 register_function_handler(
     "course_summary",
-    _structured_output({
-        "summary": (
-            "Scripted E2E course summary: the class is progressing "
-            "steadily; review the struggling concepts listed above."
-        ),
-    }),
+    _structured_output(
+        {
+            "summary": (
+                "Scripted E2E course summary: the class is progressing "
+                "steadily; review the struggling concepts listed above."
+            ),
+        }
+    ),
 )
 
 
@@ -344,12 +350,8 @@ def _note_chat_handler(messages, info) -> ModelResponse:
     return ModelResponse(parts=[TextPart(content=E2E_NOTE_CHAT_REPLY)])
 
 
-register_function_handler(
-    "note_summary", _structured_output({"summary": E2E_NOTE_SUMMARY})
-)
-register_function_handler(
-    "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
-)
+register_function_handler("note_summary", _structured_output({"summary": E2E_NOTE_SUMMARY}))
+register_function_handler("note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS}))
 register_function_handler("note_chat", _note_chat_handler)
 
 
@@ -407,23 +409,34 @@ E2E_CHECK_ITEM_MC_WRONG_TEXTS = [
     "Thinks the learning rate sets the direction of the step.",
 ]
 E2E_CHECK_ITEM_OPTIONS = [
-    {"text": E2E_CHECK_ITEM_FINAL_ANSWER, "is_correct": True,
-     "misconception_key": None, "misconception_text": None},
-    {"text": "The number of iterations to run", "is_correct": False,
-     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[0],
-     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[0]},
-    {"text": "The value of the loss", "is_correct": False,
-     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[1],
-     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[1]},
-    {"text": "The sign of the gradient", "is_correct": False,
-     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[2],
-     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[2]},
+    {
+        "text": E2E_CHECK_ITEM_FINAL_ANSWER,
+        "is_correct": True,
+        "misconception_key": None,
+        "misconception_text": None,
+    },
+    {
+        "text": "The number of iterations to run",
+        "is_correct": False,
+        "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[0],
+        "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[0],
+    },
+    {
+        "text": "The value of the loss",
+        "is_correct": False,
+        "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[1],
+        "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[1],
+    },
+    {
+        "text": "The sign of the gradient",
+        "is_correct": False,
+        "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[2],
+        "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[2],
+    },
 ]
 
 
-def _e2e_check_item(
-    concept: str, fmt: str, difficulty: int = CHECK_ITEM_DIFFICULTIES[0]
-) -> dict:
+def _e2e_check_item(concept: str, fmt: str, difficulty: int = CHECK_ITEM_DIFFICULTIES[0]) -> dict:
     label = fmt if difficulty == CHECK_ITEM_DIFFICULTIES[0] else f"{fmt} {difficulty}"
     item = {
         "concept": concept,
@@ -447,19 +460,25 @@ def _e2e_check_item(
 
 register_function_handler(
     "check_items",
-    _structured_output({
-        "items": [
-            item
-            for name, _, _ in E2E_DOC_CONCEPTS
-            for item in [
-                *(_e2e_check_item(name, fmt) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
-                *(
-                    _e2e_check_item(name, "mc_reason", level)
-                    for level in CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
-                ),
-            ]
-        ],
-    }),
+    _structured_output(
+        {
+            "items": [
+                item
+                for name, _, _ in E2E_DOC_CONCEPTS
+                for item in [
+                    *(
+                        _e2e_check_item(name, fmt)
+                        for fmt in CHECK_ITEM_FORMATS
+                        if fmt != "mc_reason"
+                    ),
+                    *(
+                        _e2e_check_item(name, "mc_reason", level)
+                        for level in CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
+                    ),
+                ]
+            ],
+        }
+    ),
 )
 
 
@@ -501,7 +520,11 @@ def _grader_handler(messages, info) -> ModelResponse:
     labels = _RUBRIC_ID_RE.findall(text)
     if "addresses_grader" not in (tool.parameters_json_schema or {}).get("properties", {}):
         # the span check (round a33): its spans are the grading run's quotes below
-        args = {"item_results": [f"{rid}:{verdict}" for rid in labels]}
+        # A33 finish: the span check reports the span asserted before its verdicts
+        args = {
+            "asserted": [f"{rid}:{verdict}" for rid in labels],
+            "item_results": [f"{rid}:{verdict}" for rid in labels],
+        }
         return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
     answer = " ".join(line[2:] for line in text.splitlines() if line.startswith("> "))
     args = {
