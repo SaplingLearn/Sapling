@@ -475,6 +475,75 @@ def test_decision_agent_failure_degrades_to_none(seam, monkeypatch, caplog, even
     assert rows == []  # no response → nothing was billed
 
 
+def _hard_cap(monkeypatch):
+    from services import ai_budget
+
+    kinds: list[str] = []
+
+    def check(user_id, kind, *a, **k):
+        kinds.append(kind)
+        return ai_budget.BudgetDecision(level="hard", tier_ceiling="fast", scope="daily_grades")
+
+    monkeypatch.setattr(ai_budget, "check", check)
+    return kinds
+
+
+def test_a_capped_decision_emits_budget_not_both_failed(seam, monkeypatch, events):
+    """A39 (owner decision 06b(f)): a decision the AI budget cap refused emits
+    decision.fallback with reason `budget`, never `both_failed`; no model runs."""
+    from agents.decision import decision_agent
+
+    kinds = _hard_cap(monkeypatch)
+    monkeypatch.setattr(decision_agent, "run", _must_not_run)
+    leak = seam.LeakState(reference=REFERENCE, emitted="x", rung=1)
+    ok = seam.AnswerableState(passages=["p"], question=QUESTION, reference=REFERENCE)
+    pick = seam.WrongReasonState(question=QUESTION, answer="a loop", wrong=WRONG)
+    assert asyncio.run(seam.judge_leak(leak, deps=_deps())) is None
+    assert asyncio.run(seam.item_answerable(ok, deps=_deps())) is None
+    assert asyncio.run(seam.match_wrong_reason(pick, deps=_deps())) is None
+    assert kinds == ["decision"] * 3
+    payloads = [kw["payload"] for et, kw in events if et == "decision.fallback"]
+    assert [(p["decision"], p["to_backend"], p["reason"]) for p in payloads] == [
+        ("judge_leak", "none", "budget"),
+        ("item_answerable", "none", "budget"),
+        ("match_wrong_reason", "none", "budget"),
+    ]
+
+
+def test_a_grade_capped_by_the_grader_budget_emits_budget(seam, monkeypatch, events):
+    """The grading decisions too: grade() at the grader cap reports `budget_capped`,
+    and the seam's fallback says `budget` (an outage still says both_failed)."""
+    from agents import grader
+
+    kinds = _hard_cap(monkeypatch)
+    monkeypatch.setattr(grader.grader_agent, "run", _must_not_run)
+    assert asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps())) is None
+    reason = seam.ReasonState(
+        question=QUESTION,
+        reference=REFERENCE,
+        rubric=RUBRIC,
+        wrong=WRONG,
+        selected_option="B",
+        correct_option="B",
+        reason="it stops the calls",
+    )
+    assert asyncio.run(seam.reason_is_correct(reason, deps=_deps())) is None
+    assert kinds == ["grader", "grader"]
+    assert [kw["payload"]["reason"] for et, kw in events if et == "decision.fallback"] == [
+        "budget",
+        "budget",
+    ]
+    capped = asyncio.run(
+        grader.grade(
+            seam.grader_item_from(_gstate(seam)),
+            format="free",
+            student_answer="x",
+            deps=_deps(),
+        )
+    )
+    assert capped.unavailable is True and capped.budget_capped is True
+
+
 def _llm_usage_rows(monkeypatch) -> list[dict]:
     """Spy one level BELOW record_agent_usage: what reaches the llm_usage writer."""
     from services import events_service

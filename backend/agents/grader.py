@@ -261,10 +261,13 @@ class GradeResult:
     """Code-side result of grade(); `unavailable=True` is the ADR 0024 degrade.
     `backend` names the run whose verdict is used (A22 provenance). `refused`
     (A33) names why the answer was not graded; a refused result is also
-    `unavailable`, so a caller that reads only that flag still records nothing."""
+    `unavailable`, so a caller that reads only that flag still records nothing.
+    `budget_capped` (A39): unavailable because the grader cap was hard, before any
+    run (the decision seam reports it as decision.fallback{reason: budget})."""
 
     unavailable: bool = False
     refused: Refusal | None = None
+    budget_capped: bool = False
     item_results: dict[str, bool] = field(default_factory=dict)
     all_yes: bool = False
     confidence: float = 0.0
@@ -834,7 +837,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     run, so a capped attempt is unavailable whatever its outcome (spec §3.5, A22, inv 28)."""
     # spec §3.5 grader cap (PKG-06b), invariant 28
     if ai_budget.check(deps.user_id, "grader").level == "hard":
-        return GradeResult(unavailable=True)
+        return GradeResult(unavailable=True, budget_capped=True)
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
         # come back a full-weight "incorrect" (check_item_service falls back to

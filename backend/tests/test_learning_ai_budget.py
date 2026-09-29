@@ -769,7 +769,9 @@ def test_decision_run_is_skipped_at_the_grader_cap(usage):
     usage([_row(task="decision") for _ in range(config.STUDENT_DAILY_GRADES)])
     runs: list = []
     with decision_agent.override(model=FunctionModel(_must_not_run(runs))):
-        assert asyncio.run(decisions._run_decision("judge_leak", None, _deps())) is None
+        assert asyncio.run(decisions._run_decision("judge_leak", None, _deps())) is (
+            decisions.BUDGET_CAPPED
+        )
     assert runs == []
 
 
