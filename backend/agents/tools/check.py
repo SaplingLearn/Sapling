@@ -29,7 +29,6 @@ route's own rule records the CHECK_REFUSALS_AS_IDK-th refusal of an item as
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 from dataclasses import dataclass
@@ -48,7 +47,6 @@ from learning.misconceptions import (
     attempts_of,
     confront_of,
     is_key,
-    record,
     set_confront,
     slip_or_misconception,
 )
@@ -196,6 +194,16 @@ async def _reason_grade(item, *, selected_option: str, reason: str, deps: Saplin
     return _via_seam(await decisions.reason_is_correct(state, deps=deps, item_id=item.id))
 
 
+def grader_answer_text(item, answer: CheckAnswer) -> str:
+    """The text the grader sees for `answer` (mc_reason: PKG-05's byte-identical
+    "Selected option: …\nReason: …", decisions.mc_reason_answer). PKG-10: the
+    wrong-reason match reads it, and the check route stores it (encrypted) as a
+    misconception's evidence_text."""
+    if item.format == _MC_REASON:
+        return decisions.mc_reason_answer(answer.selected_option or "", answer.reason or "")
+    return answer.answer_text
+
+
 async def match_wrong_key(item, *, prior, answer_text: str | None, deps: SaplingDeps) -> str | None:
     """PKG-10 (spec §13 A22/A24): the ONLY source of a wrong_key. The student's
     reason is matched against the item's listed wrong reasons through the
@@ -226,13 +234,15 @@ async def apply_misconception_rule(
     item,
     grade: GradeOutcome,
     evidence: Evidence,
-    answer_text: str | None,
 ) -> Verdict | None:
     """PKG-10 (spec §3.3; A16: the hook lives in grade_answer). Append this
     attempt to the session attempt log on `deps.loop_state`, run the rule over
-    this concept's attempts, and on a keyed `misconception` record it in the
-    misconceptions store (a diagnosis write, never evidence) and set the
-    confrontation marker. The key is grade.wrong_key — the seam-matched key
+    this concept's attempts, and on a keyed `misconception` set the
+    confrontation marker and mark the store row to write
+    (`grade.diagnosis["record"]`). grade_answer never persists (spec §13 A75):
+    the check route writes the row with learning.misconceptions.record AFTER
+    its one flush_pending, under the grading claim, so a failed flush never
+    leaves a row behind for a resubmission to count twice. The key is grade.wrong_key — the seam-matched key
     after PKG-05's A22 option filter; the option → key map alone never reaches
     here. Student-stated confidence only: CheckAnswer has none yet, and
     grade.confidence is the grader's, deliberately not read. The change is
@@ -263,12 +273,10 @@ async def apply_misconception_rule(
     ).model_dump()
     log.append(attempt)
     verdict = slip_or_misconception(attempts_for_node(log, node_id))
-    marker = cleared = None
+    marker = cleared = to_record = None
     if verdict == "misconception" and grade.wrong_key:
-        await asyncio.to_thread(
-            record, deps.user_id, node_id, item.id, grade.wrong_key, answer_text
-        )
         marker = {"node_id": node_id, "wrong_key": grade.wrong_key, "check_item_id": item.id}
+        to_record = dict(marker)  # the store row the route writes after the flush
         set_confront(deps.loop_state, marker)
     elif evidence.correct:
         # a marker still waiting for a model turn (its feedback turn was a template)
@@ -277,7 +285,12 @@ async def apply_misconception_rule(
         if pending is not None and pending["node_id"] == node_id:
             cleared = pending
             set_confront(deps.loop_state, None)
-    grade.diagnosis = {"attempt": dict(attempt), "confront": marker, "cleared": cleared}
+    grade.diagnosis = {
+        "attempt": dict(attempt),
+        "confront": marker,
+        "cleared": cleared,
+        "record": to_record,
+    }
     return verdict
 
 
@@ -287,7 +300,6 @@ async def _record(
     ev: Evidence,
     *,
     item,
-    answer_text: str | None,
 ) -> GradeOutcome:
     """Append the Evidence dict. Its weight is PKG-03's evidence_weight(ev),
     derived by the model at validation from the flags: assisted (a correct
@@ -296,9 +308,7 @@ async def _record(
     slip/misconception rule runs first; its verdict and the matched key ride
     the Evidence dict (spec §5) — nothing journals them (no column), the
     misconceptions row is the durable record."""
-    outcome.verdict = await apply_misconception_rule(
-        deps, item=item, grade=outcome, evidence=ev, answer_text=answer_text
-    )
+    outcome.verdict = await apply_misconception_rule(deps, item=item, grade=outcome, evidence=ev)
     row = ev.model_copy(update={"verdict": outcome.verdict, "wrong_key": outcome.wrong_key})
     row = Evidence.model_validate(row.model_dump()).model_dump()
     deps.pending_evidence.append(row)
@@ -339,13 +349,7 @@ async def grade_answer(
         same_session_recheck=same_session_recheck,
     )
 
-    # The text the grader sees (mc_reason: the byte-identical PKG-05 string), for
-    # the wrong-reason match and the misconception store (PKG-10).
-    answer_text = (
-        decisions.mc_reason_answer(answer.selected_option or "", answer.reason or "")
-        if item.format == _MC_REASON
-        else answer.answer_text
-    )
+    answer_text = grader_answer_text(item, answer)  # PKG-10: the wrong-reason match
 
     if answer.idk:  # A1: an incorrect observation on the item's channel; no grader call
         return await _record(
@@ -353,7 +357,6 @@ async def grade_answer(
             GradeOutcome(correct=False),
             Evidence(idk=True, correct=False, **base),
             item=item,
-            answer_text=None,
         )
 
     if item.format == _MC_REASON:  # the reason check runs for BOTH option outcomes (A22)
@@ -396,4 +399,4 @@ async def grade_answer(
         grader_backend=backend,
     )
     ev = Evidence(correct=correct, confidence=confidence, grader_backend=backend, **base)
-    return await _record(deps, outcome, ev, item=item, answer_text=answer_text)
+    return await _record(deps, outcome, ev, item=item)

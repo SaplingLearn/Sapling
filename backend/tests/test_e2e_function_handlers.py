@@ -771,7 +771,6 @@ def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch)
     from unittest.mock import patch
 
     from agents.grader import grader_agent
-    from agents.tools import check as check_mod
     from agents.tools.check import CheckAnswer, grade_answer
     from learning.misconceptions import confront_of
     from learning.policy import LoopState
@@ -802,7 +801,7 @@ def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch)
     )
     with (
         grader_agent.override(model=model_for("grader")),
-        patch.object(check_mod, "record", return_value={}) as rec,
+        patch("learning.misconceptions.record", side_effect=AssertionError("route-only")),
         patch.object(decisions, "_run_decision") as run,
     ):
         outs = [
@@ -832,6 +831,11 @@ def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch)
         (False, "w_loop", "unknown"),
         (False, "w_loop", "misconception"),
     ]
-    rec.assert_called_once()
+    assert outs[0].diagnosis["record"] is None
+    assert outs[1].diagnosis["record"] == {
+        "node_id": "n1",
+        "check_item_id": "ci-h2",
+        "wrong_key": "w_loop",
+    }
     assert confront_of(deps.loop_state)["wrong_key"] == "w_loop"
     assert right.correct is True and right.wrong_key is None and right.matched_wrong_key is None

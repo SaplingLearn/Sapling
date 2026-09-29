@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -573,6 +574,18 @@ def test_rollup_degrades_to_empty(caplog):
         assert misconceptions.rollup("c1") == []
 
 
+@contextmanager
+def _no_store_write():
+    """grade_answer never touches the misconception store (PKG-10: the route
+    writes it, after the one flush); the yielded mock proves nothing called it."""
+    boom = AssertionError("grade_answer wrote the misconceptions store")
+    with (
+        patch("learning.misconceptions.record", side_effect=boom) as rec,
+        patch("learning.misconceptions.table", side_effect=boom),
+    ):
+        yield rec
+
+
 # ── the grade_answer hook (post-hoc PKG-05) ─────────────────────────────────
 
 
@@ -617,7 +630,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_hook_records_on_misconception_and_sets_confront():
+def test_hook_marks_a_record_on_misconception_and_sets_confront():
     from agents.tools import check as check_mod
     from agents.tools.check import GradeOutcome
     from learning.misconceptions import attempts_of, confront_of
@@ -626,14 +639,16 @@ def test_hook_records_on_misconception_and_sets_confront():
     attempts_of(deps.loop_state).append(_prior_attempt())
     item = MagicMock(id="ci2", question_hash="h2", difficulty=2)
     grade = GradeOutcome(correct=False, confidence=0.9, matched_wrong_key="k1", wrong_key="k1")
-    with patch.object(check_mod, "record", return_value={"id": "m1"}) as rec:
+    with _no_store_write():
         verdict = _run(
-            check_mod.apply_misconception_rule(
-                deps, item=item, grade=grade, evidence=_ev(False), answer_text="x is 2"
-            )
+            check_mod.apply_misconception_rule(deps, item=item, grade=grade, evidence=_ev(False))
         )
     assert verdict == "misconception"
-    rec.assert_called_once_with("u1", "n1", "ci2", "k1", "x is 2")
+    assert grade.diagnosis["record"] == {
+        "node_id": "n1",
+        "check_item_id": "ci2",
+        "wrong_key": "k1",
+    }
     assert attempts_of(deps.loop_state)[-1]["isomorph_of"] == "h1"
     marker = {"node_id": "n1", "wrong_key": "k1", "check_item_id": "ci2"}
     assert confront_of(deps.loop_state) == marker
@@ -642,6 +657,7 @@ def test_hook_records_on_misconception_and_sets_confront():
         "attempt": attempts_of(deps.loop_state)[-1],
         "confront": marker,
         "cleared": None,
+        "record": {"node_id": "n1", "check_item_id": "ci2", "wrong_key": "k1"},
     }
 
 
@@ -654,14 +670,11 @@ def test_hook_slip_records_nothing():
     attempts_of(deps.loop_state).append(_prior_attempt())
     item = MagicMock(id="ci2", question_hash="h2", difficulty=2)
     grade = GradeOutcome(correct=True, confidence=0.9)
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         verdict = _run(
-            check_mod.apply_misconception_rule(
-                deps, item=item, grade=grade, evidence=_ev(True), answer_text="4"
-            )
+            check_mod.apply_misconception_rule(deps, item=item, grade=grade, evidence=_ev(True))
         )
     assert verdict == "slip"
-    rec.assert_not_called()
     assert confront_of(deps.loop_state) is None
     assert grade.diagnosis["confront"] is None and grade.diagnosis["attempt"]["correct"] is True
 
@@ -677,17 +690,16 @@ def test_hook_is_inert_without_loop_or_loop_state():
     )
     off_with_state = _loop_deps(learning_loop=False)
     item = MagicMock(id="ci1", question_hash="h1", difficulty=1)
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         for deps in (off, no_state, off_with_state):
             grade = GradeOutcome(correct=False, confidence=0.9, wrong_key="k1")
             verdict = _run(
                 check_mod.apply_misconception_rule(
-                    deps, item=item, grade=grade, evidence=_ev(False), answer_text="?"
+                    deps, item=item, grade=grade, evidence=_ev(False)
                 )
             )
             assert verdict is None and grade.diagnosis is None
     assert no_state.loop_state is None and "attempts" not in off_with_state.loop_state
-    rec.assert_not_called()
 
 
 def test_hook_uses_student_confidence_not_grader_confidence():
@@ -699,19 +711,17 @@ def test_hook_uses_student_confidence_not_grader_confidence():
 
     deps = _loop_deps()
     grade = GradeOutcome(correct=False, confidence=0.99, matched_wrong_key="k1", wrong_key="k1")
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         verdict = _run(
             check_mod.apply_misconception_rule(
                 deps,
                 item=MagicMock(id="ci1", question_hash="h1", difficulty=2),
                 grade=grade,
                 evidence=_ev(False, confidence=0.99),
-                answer_text="x",
             )
         )
     assert verdict == "unknown"
     assert attempts_of(deps.loop_state)[-1]["confidence"] is None
-    rec.assert_not_called()
 
 
 def test_hook_keeps_the_attempt_log_free_of_student_text():
@@ -726,14 +736,13 @@ def test_hook_keeps_the_attempt_log_free_of_student_text():
     attempts = [_prior_attempt()]
     deps.loop_state["attempts"] = attempts
     grade = GradeOutcome(correct=False, confidence=0.9, wrong_key="k1")
-    with patch.object(check_mod, "record", return_value={}):
+    with _no_store_write():
         _run(
             check_mod.apply_misconception_rule(
                 deps,
                 item=MagicMock(id="ci2", question_hash="h2", difficulty=2),
                 grade=grade,
                 evidence=_ev(False),
-                answer_text="MY SECRET ANSWER TEXT",
             )
         )
     assert "MY SECRET ANSWER TEXT" not in json.dumps(deps.loop_state)
@@ -748,7 +757,7 @@ def test_hook_a_misconception_without_a_key_records_nothing():
 
     deps = _loop_deps()
     with (
-        patch.object(check_mod, "record") as rec,
+        _no_store_write(),
         patch.object(check_mod, "slip_or_misconception", return_value="misconception"),
     ):
         grade = GradeOutcome(correct=False, confidence=0.9, wrong_key=None)
@@ -758,11 +767,9 @@ def test_hook_a_misconception_without_a_key_records_nothing():
                 item=MagicMock(id="ci1", question_hash="h1", difficulty=2),
                 grade=grade,
                 evidence=_ev(False),
-                answer_text="x",
             )
         )
     assert verdict == "misconception" and grade.diagnosis["confront"] is None
-    rec.assert_not_called()
 
 
 # ── the key comes only from the decision seam (A22/A24) ────────────────────
@@ -900,17 +907,16 @@ def _mc(qh):
     return _mc_item(id=f"ci-{qh}", question_hash=qh, difficulty=2)
 
 
-def test_grade_answer_two_isomorphs_same_matched_key_records_once(graded):
+def test_grade_answer_two_isomorphs_same_matched_key_marks_one_record(graded):
     """Two wrong free answers on two isomorphs whose reasons the grader matched
     to w_loop: the second is a misconception, recorded once; the Evidence
     dicts carry verdict and wrong_key; the store gets the student's answer."""
-    from agents.tools import check as check_mod
     from agents.tools.check import CheckAnswer, grade_answer
     from learning.misconceptions import confront_of
 
     deps = _loop_deps()
     graded["set"](item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
-    with patch.object(check_mod, "record", return_value={"id": "m1"}) as rec:
+    with _no_store_write():
         first = _run(
             grade_answer(
                 _free("h1"),
@@ -932,7 +938,12 @@ def test_grade_answer_two_isomorphs_same_matched_key_records_once(graded):
     ev = deps.pending_evidence
     assert [e["verdict"] for e in ev] == ["unknown", "misconception"]
     assert [e["wrong_key"] for e in ev] == ["w_loop", "w_loop"]
-    rec.assert_called_once_with("u1", "n1", "ci-h2", "w_loop", "x again")
+    assert first.diagnosis["record"] is None
+    assert second.diagnosis["record"] == {
+        "node_id": "n1",
+        "check_item_id": "ci-h2",
+        "wrong_key": "w_loop",
+    }
     assert confront_of(deps.loop_state)["wrong_key"] == "w_loop"
 
 
@@ -955,7 +966,7 @@ def test_grade_answer_takes_the_key_from_the_seam_with_the_graders_result(graded
 
     with (
         patch.object(check_mod.decisions, "match_wrong_reason", spy),
-        patch.object(check_mod, "record", return_value={}),
+        _no_store_write(),
         patch.object(decisions, "_run_decision") as run,
     ):
         out = _run(
@@ -975,12 +986,11 @@ def test_grade_answer_takes_the_key_from_the_seam_with_the_graders_result(graded
 def test_option_prior_alone_never_records(graded):
     """A22: an mc_reason wrong option keyed w_loop whose reason matched nothing
     carries no key — twice, on two isomorphs, is still not a misconception."""
-    from agents.tools import check as check_mod
     from agents.tools.check import CheckAnswer, grade_answer
 
     deps = _loop_deps()
     graded["set"](item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="")
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         for qh in ("h1", "h2"):
             out = _run(
                 grade_answer(
@@ -991,19 +1001,17 @@ def test_option_prior_alone_never_records(graded):
                 )
             )
             assert out.wrong_key is None and out.verdict == "unknown"
-    rec.assert_not_called()
 
 
 def test_a_reason_matched_to_another_options_key_never_records(graded):
     """The chosen option C is keyed w_loop; the reason matched w_speed: no key (A22)."""
-    from agents.tools import check as check_mod
     from agents.tools.check import CheckAnswer, grade_answer
 
     deps = _loop_deps()
     graded["set"](
         item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_speed"
     )
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         for qh in ("h1", "h2"):
             out = _run(
                 grade_answer(
@@ -1014,18 +1022,16 @@ def test_a_reason_matched_to_another_options_key_never_records(graded):
                 )
             )
             assert out.wrong_key is None
-    rec.assert_not_called()
 
 
-def test_a_matched_mc_reason_on_two_isomorphs_records_the_graders_answer_text(graded):
-    from agents.tools import check as check_mod
+def test_a_matched_mc_reason_on_two_isomorphs_marks_a_record(graded):
     from agents.tools.check import CheckAnswer, grade_answer
 
     deps = _loop_deps()
     graded["set"](
         item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
     )
-    with patch.object(check_mod, "record", return_value={}) as rec:
+    with _no_store_write():
         outs = [
             _run(
                 grade_answer(
@@ -1038,20 +1044,22 @@ def test_a_matched_mc_reason_on_two_isomorphs_records_the_graders_answer_text(gr
             for qh in ("h1", "h2")
         ]
     assert [o.verdict for o in outs] == ["unknown", "misconception"]
-    rec.assert_called_once_with(
-        "u1", "n1", "ci-h2", "w_loop", "Selected option: C\nReason: it ends itself"
-    )
+    assert outs[1].diagnosis["record"]["wrong_key"] == "w_loop"
+    # the store's evidence text is the text the grader saw (the route writes it)
+    from agents.tools.check import grader_answer_text
+
+    answer = CheckAnswer(question_hash="h2", selected_option="C", reason="it ends itself")
+    assert grader_answer_text(_mc("h2"), answer) == "Selected option: C\nReason: it ends itself"
 
 
 def test_unavailable_or_refused_grade_logs_no_attempt_for_either_outcome(graded):
     """Invariant 28: no grade → no attempt, no verdict, no record — for a
     would-be-correct and a would-be-wrong answer alike (A33 refusals too)."""
-    from agents.tools import check as check_mod
     from agents.tools.check import CheckAnswer, grade_answer
     from learning.misconceptions import attempts_of
 
     deps = _loop_deps()
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         for over in ({"unavailable": True}, {"unavailable": True, "refused": "grader_directive"}):
             for all_yes in (True, False):
                 graded["set"](all_yes=all_yes, matched_wrong_key="w_loop", **over)
@@ -1065,7 +1073,6 @@ def test_unavailable_or_refused_grade_logs_no_attempt_for_either_outcome(graded)
                 )
                 assert out.unavailable and out.verdict is None and out.diagnosis is None
     assert attempts_of(deps.loop_state) == [] and deps.pending_evidence == []
-    rec.assert_not_called()
 
 
 def test_idk_is_an_attempt_with_no_key_and_no_grader_call(graded):
@@ -1087,13 +1094,12 @@ def test_idk_is_an_attempt_with_no_key_and_no_grader_call(graded):
 def test_grade_answer_without_loop_state_is_unchanged(graded):
     """The probe and the review pass no loop state: no rule, no attempt, no
     record; the Evidence carries the matched key and no verdict."""
-    from agents.tools import check as check_mod
     from agents.tools.check import CheckAnswer, grade_answer
 
     graded["set"](item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
     deps = _loop_deps()
     deps.loop_state = None
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         out = _run(
             grade_answer(
                 _free("h1"),
@@ -1105,37 +1111,6 @@ def test_grade_answer_without_loop_state_is_unchanged(graded):
     assert out.verdict is None and out.diagnosis is None and out.wrong_key == "w_loop"
     assert deps.pending_evidence[-1]["verdict"] is None
     assert deps.pending_evidence[-1]["wrong_key"] == "w_loop"
-    rec.assert_not_called()
-
-
-def test_the_store_write_runs_off_the_event_loop(graded):
-    """record() is sync I/O: the hook hands it to a worker thread."""
-    import threading
-
-    from agents.tools import check as check_mod
-    from agents.tools.check import CheckAnswer, grade_answer
-
-    graded["set"](
-        item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop"
-    )
-    deps = _loop_deps(state={"attempts": [_prior_attempt(qh="h0", key="w_loop")]})
-    main = threading.get_ident()
-    seen = {}
-
-    def _record(*a):
-        seen["thread"] = threading.get_ident()
-        return {}
-
-    with patch.object(check_mod, "record", side_effect=_record):
-        _run(
-            grade_answer(
-                _free("h1"),
-                CheckAnswer(question_hash="h1", answer_text="x"),
-                deps=deps,
-                node_id="n1",
-            )
-        )
-    assert seen["thread"] != main
 
 
 def test_a_correct_answer_on_the_node_clears_a_pending_marker():
@@ -1152,17 +1127,15 @@ def test_a_correct_answer_on_the_node_clears_a_pending_marker():
     attempts_of(deps.loop_state).extend([_prior_attempt("h0"), _prior_attempt("h1")])
     set_confront(deps.loop_state, marker)
     grade = GradeOutcome(correct=True, confidence=0.9)
-    with patch.object(check_mod, "record") as rec:
+    with _no_store_write():
         _run(
             check_mod.apply_misconception_rule(
                 deps,
                 item=MagicMock(id="ci2", question_hash="h2", difficulty=2),
                 grade=grade,
                 evidence=_ev(True),
-                answer_text="right",
             )
         )
-    rec.assert_not_called()
     assert confront_of(deps.loop_state) is None
     assert grade.diagnosis["cleared"] == marker
     fresh = {**_fresh_loop_state(), "confront": dict(marker)}
@@ -1190,7 +1163,22 @@ def test_a_correct_answer_on_another_node_keeps_the_marker():
             item=MagicMock(id="ci2", question_hash="h2", difficulty=2),
             grade=grade,
             evidence=Evidence(node_id="n1", channel="free_response", correct=True),
-            answer_text="right",
         )
     )
     assert confront_of(deps.loop_state) == marker and grade.diagnosis.get("cleared") is None
+
+
+def test_grade_answer_never_persists_the_misconception_store():
+    """Spec §13 A75: grade_answer marks the row (diagnosis["record"]); only the
+    check route writes it, after its one flush_pending. check.py imports no
+    store writer (inv 14's posture: grade_answer persists nothing)."""
+    import ast
+
+    src = (BACKEND / "agents" / "tools" / "check.py").read_text()
+    names = {
+        a.name
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.ImportFrom) and node.module == "learning.misconceptions"
+        for a in node.names
+    }
+    assert names and not names & {"record", "resolve", "open_for", "rollup"}
