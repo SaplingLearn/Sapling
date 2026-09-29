@@ -41,6 +41,9 @@ DATASETS = [
     # PKG-07: one dataset per loop tutor tier slot, exposed as the module's VARIANTS
     # (loop_tutor_lite / loop_tutor / loop_tutor_deep; baselines key on the slot).
     "loop_tutor",
+    # PKG-07 Task 9: calibration of the eval-side rung judge (_rung_judge.py) that
+    # scores the loop tutor's ceiling; gated at 1.0.
+    "loop_rung_judge",
     "check_items",
     "grader",
     "decisions",

@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "85d8947d6d9e5c1ab9f4b2c1d3b73f3781cb33bee4fc32c39fcff43445b10876",
+  "output": {
+    "evidence": "Yes, that's the right first move \u2014 bringing the 3 down in front is correct.",
+    "reveals_final_answer": false,
+    "rung": 0
+  },
+  "served_sha256": "2d20e2aa776de606fb89d1dd08ed0b9d3872cace515868c82bf5b81217a7e22d"
+}

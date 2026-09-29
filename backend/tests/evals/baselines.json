@@ -47,6 +47,10 @@
     "RubricAgreementEvaluator": 0.9375,
     "StrictOnWrongEvaluator": 1.0
   },
+  "loop_rung_judge": {
+    "RevealAgreement": 1.0,
+    "RungJudgeAgreement": 1.0
+  },
   "loop_tutor": {
     "AnswerLeak": 0.875,
     "CeilingCompliance": 0.5,
