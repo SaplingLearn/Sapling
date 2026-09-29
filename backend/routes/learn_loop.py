@@ -103,6 +103,8 @@ from learning.misconceptions import (
     attempts_of,
     carry,
     confront_of,
+    is_key,
+    open_for,
     set_confront,
     slip_or_misconception,
 )
@@ -2731,9 +2733,12 @@ def _unreleased_items(doc: dict | None) -> list:
     return out
 
 
-def _close_misconception_keys(user_id: str, session_id: str) -> list[str]:
-    """PKG-10 repoints this at the session's matched wrong keys. Empty until then."""
-    return []
+def _close_misconception_keys(user_id: str, evidence: list[dict]) -> list[str]:
+    """PKG-10: the student's OPEN misconception keys on the concepts this
+    session's evidence rows touched (`open_for`; identifier-shaped keys only,
+    count descending). No evidence → no read, []. Never raises."""
+    node_ids = sorted({e.get("node_id") for e in evidence or [] if e.get("node_id")})
+    return [r["wrong_key"] for r in open_for(user_id, node_ids) if is_key(r.get("wrong_key"))]
 
 
 def _stored_close(row: dict) -> dict:
@@ -2931,7 +2936,7 @@ async def close_session(
             draft = build_close(
                 transcript,
                 evidence,
-                _close_misconception_keys(user_id, session_id),
+                _close_misconception_keys(user_id, evidence),
                 {},
                 concept_names=_concept_names(user_id, [e.get("node_id") for e in evidence]),
             )

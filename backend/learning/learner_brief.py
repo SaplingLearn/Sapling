@@ -22,11 +22,11 @@ to its callers, which catch them.
 from __future__ import annotations
 
 import logging
-import re
 
 from db.connection import pg_quote_value, table
 from learning.bkt import band
 from learning.learner_state import read_states
+from learning.misconceptions import KEY_PATTERN, open_for
 from learning.params import (
     BKT_L0,
     LEARNER_BRIEF_LAST_CLOSES,
@@ -54,8 +54,9 @@ BRIEF_HEADER = (
     "ceiling or releases an answer):\n"
 )
 #: A misconception key as check items state it (a wrong_key identifier); anything
-#: else in a stored close is not rendered.
-_KEY = re.compile(r"[a-z0-9][a-z0-9_]{0,63}")
+#: else in a stored close or a store row is not rendered. One shape with the
+#: store (PKG-10: learning.misconceptions.KEY_PATTERN).
+_KEY = KEY_PATTERN
 _SOURCE = "learner brief"
 #: How a node that maps to no course concept is named (review round 2): its
 #: name is the student's own text, so none of it is rendered.
@@ -195,11 +196,17 @@ def _closes_section(user_id: str, course_id: str | None, closes: list[tuple[str,
 def _open_misconception_keys(
     user_id: str, node_ids_in_play: list[str], closes: list[dict]
 ) -> list[str]:
-    """PKG-10 repoints this hook at the `misconceptions` table. Until then it
-    reads only the closes: the union of their open keys, order preserved. A
-    close's keys are already the draft's (`normalise_close` intersects them
-    with the items' listed keys); only identifier-shaped keys are rendered."""
-    keys: list[str] = []
+    """PKG-10: the student's OPEN rows in the misconceptions table for the
+    concepts in play first (count descending; `open_for`, which fails closed),
+    then the union of the recent closes' keys, deduplicated, order preserved.
+    A close's keys are already the draft's (`normalise_close` intersects them
+    with the items' listed keys); only identifier-shaped keys are rendered.
+    A raised error omits the section (the caller's `_section`)."""
+    keys: list[str] = [
+        r["wrong_key"]
+        for r in open_for(user_id, list(node_ids_in_play or []))
+        if isinstance(r.get("wrong_key"), str) and _KEY.fullmatch(r["wrong_key"])
+    ]
     for close in closes:
         keys += [
             k for k in close.get("misconceptions") or [] if isinstance(k, str) and _KEY.fullmatch(k)
