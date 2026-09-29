@@ -1122,9 +1122,23 @@ def _confrontation_line(loop_state: dict) -> str | None:
         return None
     for entry in item.common_wrong or []:
         if entry.key == confront["wrong_key"] and entry.text:
-            text = " ".join(neutralise_control_tags(entry.text).split())
-            return _CONFRONT_LINE.format(text=text) if text else None
+            return confront_line_for(entry.text)
     return None
+
+
+def confront_line_for(text: str) -> str | None:
+    """The confrontation line for one wrong-reason text: collapsed to one line,
+    its control tags neutralised; None for a text with nothing left. Shared
+    with the eval (tests/evals/misconception_confront.py) so it scores the
+    line production sends."""
+    text = " ".join(neutralise_control_tags(text or "").split())
+    return _CONFRONT_LINE.format(text=text) if text else None
+
+
+def with_confrontation(prefix: str, line: str | None) -> str:
+    """The turn prefix with the confrontation line right after the phase
+    instruction (before the context blocks and the student's words)."""
+    return f"{prefix}\n{line}" if line else prefix
 
 
 class _LoopTurn:
@@ -1285,7 +1299,7 @@ class _LoopTurn:
             # PKG-10: right after the phase instruction, before the context blocks
             # and the student's words — trusted route text for THIS turn only
             # (never the stored brief, the history or the system prompt, A19)
-            self.prefix += "\n" + self.confront_line
+            self.prefix = with_confrontation(self.prefix, self.confront_line)
             self.confront_used = confront_of(self.state)
         self.agent, self.assembled, self.run_kwargs, self.deps = _prepare_loop_run(
             user_id=self.user_id,

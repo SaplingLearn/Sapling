@@ -3222,3 +3222,15 @@ def test_item_selection_is_unchanged_without_an_unknown(seams):
     st = _plan_state(attempts=[correct])
     assert _activate_next_item("u1", "c1", st, now=NOW) == "qh-1"
     seams.select_item.assert_called()
+
+
+def test_confront_line_for_and_with_confrontation_are_the_one_assembly():
+    """The eval scores exactly what the route sends (tests/evals/misconception_confront.py)."""
+    from routes.learn_loop import confront_line_for, with_confrontation
+
+    assert confront_line_for("no base case") == CONFRONT_LINE
+    assert confront_line_for(" \n ") is None and confront_line_for("") is None
+    assert with_confrontation("[LOOP PHASE: feedback]", CONFRONT_LINE) == (
+        "[LOOP PHASE: feedback]\n" + CONFRONT_LINE
+    )
+    assert with_confrontation("P", None) == "P"
