@@ -174,10 +174,11 @@ def set_confront(loop_state: dict, marker: dict | None) -> None:
 
 
 def carry(loop_state: dict, diagnosis: dict | None) -> None:
-    """Apply the hook's change to a loop-state document: append its attempt
-    and — only when it set one — its marker. The route's compare-and-set
-    mutate calls this on the FRESH document (A38 06(q)), so the change is
-    re-applied, never a copy of an older state. None changes nothing."""
+    """Apply the hook's change to a loop-state document: append its attempt;
+    set its marker when it set one, or clear the one it cleared. The route's
+    compare-and-set mutate calls this on the FRESH document (A38 06(q)), so
+    the change is re-applied, never a copy of an older state. None changes
+    nothing."""
     if not diagnosis:
         return
     attempt = diagnosis.get("attempt")
@@ -185,6 +186,8 @@ def carry(loop_state: dict, diagnosis: dict | None) -> None:
         attempts_of(loop_state).append(dict(attempt))
     if diagnosis.get("confront"):
         set_confront(loop_state, diagnosis["confront"])
+    elif diagnosis.get("cleared") and confront_of(loop_state) == diagnosis["cleared"]:
+        set_confront(loop_state, None)  # only that marker: a newer one is never lost
 
 
 # ── the store (fails closed) ────────────────────────────────────────────────
