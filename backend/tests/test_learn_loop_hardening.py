@@ -1209,3 +1209,92 @@ def test_the_tool_less_continuation_keeps_the_loop_rules():
         except Exception:
             pass  # the output validator may reject the stub turn; the request was made
     assert got and _LOOP_SYSTEM_PROMPT in got[0]
+
+
+# ── PKG-14 reopen (owner decision 2026-09-29, spec §13 A81): at a teach ceiling of
+# H0/H1 the question is the ladder's; model text there carries no question ──
+
+
+def test_a_teach_turn_at_h0_h1_serves_the_ladders_question_not_the_models():
+    """Recorded (PKG-14, sycophancy_insists_wrong_limit, 3/3 runs on standard and
+    deep): at the profic teach ceiling H1 the model contradicted a wrong claim
+    with a pointed next-step question ("What happens to the denominator as x
+    approaches 0?"), judged H3. H0/H1 add no content (RUNG_INTENT): code writes
+    the question, the model writes only the key idea and the body."""
+    from routes.learn_loop import TEACH_LOW_RUNG_QUESTIONS, served_render
+
+    out = {
+        "key_idea": "A limit is about the approach.",
+        "body": "You looked at the value at 0.",
+        "question": "What happens to the denominator as x approaches 0?",
+    }
+    for rung in (Rung.H0, Rung.H1):
+        served = served_render(out, phase="teach", rung=rung)
+        assert served.endswith(TEACH_LOW_RUNG_QUESTIONS[int(rung)])
+        assert "denominator" not in served
+        assert "A limit is about the approach." in served and "You looked at the value" in served
+        assert served.count("?") == 1
+    for rung in (Rung.H2, Rung.H3, Rung.H5):  # above H1 the model's question stands
+        assert served_render(out, phase="teach", rung=rung).endswith(out["question"])
+
+
+def test_teach_low_rung_questions_are_one_plain_pump_each():
+    from learning.turn_shape import sentences
+
+    from routes.learn_loop import TEACH_LOW_RUNG_QUESTIONS
+
+    assert set(TEACH_LOW_RUNG_QUESTIONS) == {int(Rung.H0), int(Rung.H1)}
+    for line in TEACH_LOW_RUNG_QUESTIONS.values():
+        assert line.endswith("?") and line.count("?") == 1 and len(sentences(line)) == 1
+
+
+def test_a_question_in_model_text_at_a_low_teach_ceiling_is_stripped_fail_closed():
+    """validate_turn already refuses a "?" outside the question field; the served
+    render is the belt: a sentence of the model's key idea or body that asks
+    anything is dropped at a teach ceiling of H0/H1 — never served."""
+    from routes.learn_loop import TEACH_LOW_RUNG_QUESTIONS, served_render
+
+    out = {
+        "key_idea": "Limits describe an approach. Why not plug in?",
+        "body": "You used the value at 0. What does the denominator do? Think about it.",
+        "question": "Q?",
+    }
+    served = served_render(out, phase="teach", rung=Rung.H1)
+    assert "plug in" not in served and "denominator" not in served
+    assert "Limits describe an approach." in served and "Think about it." in served
+    assert served.count("?") == 1 and served.endswith(TEACH_LOW_RUNG_QUESTIONS[1])
+
+
+def test_a_streamed_teach_partial_at_h1_never_shows_the_models_question():
+    from routes.learn_loop import TEACH_LOW_RUNG_QUESTIONS, _served_fields
+
+    partial = {"key_idea": "K.", "body": "B.", "question": "What happens to the denom"}
+    served = _served_fields(partial, phase="teach", rung=Rung.H1)
+    assert served["question"] == TEACH_LOW_RUNG_QUESTIONS[1]
+    assert _served_fields({"key_idea": "K."}, phase="teach", rung=Rung.H1) == {"key_idea": "K."}
+
+
+def test_a_profic_teach_turn_serves_the_ladders_question(gate_on, seams):
+    """End to end on the JSON route: a profic-band teach turn (ceiling H1)."""
+    from routes.learn_loop import TEACH_LOW_RUNG_QUESTIONS
+
+    seams.store["doc"] = _routes._plan_state()
+    seams.p_known["node-1"] = 0.99  # profic
+    agent, _ = _routes._json_agent(
+        {
+            "key_idea": "A limit is about the approach.",
+            "body": "Not zero.",
+            "question": "What about x?",
+        }
+    )
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        body = client.post(
+            "/api/learn/loop/chat",
+            json={"session_id": "s1", "user_id": "u1", "message": "It is 0, confirm it."},
+        ).json()
+    assert body["ceiling"] <= int(Rung.H1)
+    assert body["reply"].endswith(TEACH_LOW_RUNG_QUESTIONS[body["ceiling"]])
+    assert "What about x?" not in body["reply"]
