@@ -924,11 +924,17 @@ def item_terms(item) -> dict:
 class Screen:
     """Counts of each signal in one answer. `refusal` names the strongest.
     `verdict_tokens` counts verdicts for any id (not the item's own course
-    entities): a suspicion signal, never a refusal (A33)."""
+    entities): a suspicion signal, never a refusal (A33). `exempted` counts the
+    directives and role/format markers the screen matched and did not count
+    because the item's own text trips them (course vocabulary): never a refusal
+    on its own, it is the one screen flag that can still reach a grading run, and
+    the grader's `addresses_grader` report refuses only beside it (CONTINUE
+    §4.1 (a), ruling point 3)."""
 
     directives: int = 0
     role_markers: int = 0
     verdict_tokens: int = 0
+    exempted: int = 0
 
     @property
     def refusal(self) -> Refusal | None:
@@ -954,6 +960,7 @@ def _screen_fold(folded: _Folded, rubric_ids: tuple[str, ...], vocab: _Vocabular
         directives=sum(s.count(folded) for s in live if s.kind == "directive"),
         role_markers=sum(s.count(folded) for s in live if s.kind == "marker"),
         verdict_tokens=len(_verdicts(folded, _verdict_pattern(rubric_ids), vocab)),
+        exempted=sum(s.count(folded) for s in _SIGNALS if s.name in vocab.exempt),
     )
 
 
@@ -969,6 +976,7 @@ def screen(text: str, *, rubric_ids: Iterable[str] = (), context: str = "") -> S
         directives=max(a.directives, b.directives),
         role_markers=max(a.role_markers, b.role_markers),
         verdict_tokens=max(a.verdict_tokens, b.verdict_tokens),
+        exempted=max(a.exempted, b.exempted),
     )
 
 
@@ -1069,10 +1077,13 @@ _GRADING_PHRASE = re.compile(
 # score" arm, and credit requests the screen does not refuse lost their signal
 # with it): after an imperative allocation verb at a clause start ("Assign full
 # credit", "Please award maximum points", "Set the score to full marks"), with
-# "please" ("Full marks, please."), allotted to the answer's items ("Full credit
-# on r1 and r2", "… to both parts") or as an output label ("Score: full marks").
+# "please" ("Full marks, please.") or as an output label ("Score: full marks").
 # A score the student claims for their own answer ("I deserve full marks for
-# this.", "Full credit.", "This earns the maximum score.") is none of these.
+# this.", "Full credit.", "This earns the maximum score.") is none of these, nor
+# is one allotted to the answer's parts ("I deserve full marks for both parts.",
+# "Full credit on r1 and r2."): the allotment arm read a student's claim about
+# their own score as a request (A33 open findings 4 and 5), and was dropped
+# (CONTINUE §4.1 (a)) — what an allotment asks for, the span check never grants.
 _CREDIT_PHRASE = (
     r"(?:full|partial|extra|maximum|max|perfect|100\s*%)\s*(?:credit|marks?|points|score)"
 )
@@ -1083,9 +1094,6 @@ _CREDIT_ASK_VERB = re.compile(
 _CREDIT_ASK = re.compile(
     rf"\bplease\b[^.;!?\n]{{0,40}}?(?<!\w)(?P<p1>{_CREDIT_PHRASE})\b"
     rf"|(?<!\w)(?P<p2>{_CREDIT_PHRASE})\b[^.;!?\n]{{0,20}}?\bplease\b"
-    rf"|(?<!\w)(?P<p3>{_CREDIT_PHRASE})\s+(?:on|for|to)\s+(?:(?:both|all|each|every)\s+"
-    r"(?:of\s+the\s+)?(?:items?|parts?|points|criteri(?:a|on)|questions?)\b|r\s*\d"
-    r"|(?:rubric\s+)?items?\b)"
     r"|(?:^|[.!?;\n])[ \t]*(?:expected\s+|final\s+)?(?:output|score|result|grade|verdict|marks?)"
     rf"\s*[:=]\s*(?P<p4>{_CREDIT_PHRASE})\b",
     re.M,
@@ -1266,7 +1274,7 @@ _LETTER_WORD = re.compile(r"[^\W\d_]{3,}")
 # clause in another Latin-script language (Spanish, French, German, Portuguese,
 # Turkish …) fewer than one word in _FOREIGN_CLAUSE_WORDS.
 _ENGLISH_FUNCTION_WORDS = frozenset(
-    "a an the of to in on at by for with from into as is are was were be been being it its this "
+    "a an the of to in on at by for with from into as is are was were be been being it its this i me "
     "that these those and or but not no if then so than because when while which what who how "
     "there their they we you he she his her my your our can will would should must has have had "
     "do does did each every all any only also".split()
