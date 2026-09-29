@@ -1918,6 +1918,7 @@ _LETTER_LEAKS = [
     "I would go with C here.",
     "ANSWER IS C",
     "It's option (C).",
+    "option c",  # A38 fix round (M1): any case after a keyword
 ]
 _LETTER_CLEAN = [
     "option B fails because it has a base case.",
@@ -1925,7 +1926,6 @@ _LETTER_CLEAN = [
     "(B) and (D) share a flaw.",
     "Can you see why it might be C-like?",  # no option context
     "Compare the calls: C stands for calls here.",  # a bare capital
-    "option c",  # the letter must be a capital in context
     "ABC) is not a label.",
     "optionC is one token.",
 ]
