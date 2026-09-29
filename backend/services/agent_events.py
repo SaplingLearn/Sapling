@@ -20,6 +20,9 @@ from pydantic import BaseModel, Field
 SaplingEventType = Literal[
     "status", "progress", "result", "error", "token", "graph_update", "done",
     "phase", "check", "hint_offer", "learner_state", "budget",
+    # PKG-07 unblock S1: discard every token streamed so far this turn (an
+    # output retry superseded it, or the caller's transform rewrote it).
+    "retract",
 ]
 
 

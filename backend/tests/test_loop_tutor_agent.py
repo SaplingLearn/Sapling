@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import get_args
 
 import pytest
@@ -87,13 +86,25 @@ def test_build_tools_learning_loop_is_the_two_read_tools():
 
 
 def test_e2e_loop_reply_is_a_valid_loop_turn():
-    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_REPLY
+    """The persisted E2E reply is the RENDERED structured turn (PKG-07 unblock S1)."""
+    from agents.function_handlers_e2e import E2E_LOOP_TUTOR_REPLY, E2E_LOOP_TUTOR_TURN
+    from learning.turn_shape import render_turn, sentences
 
-    assert E2E_LOOP_TUTOR_REPLY.startswith("[e2e-function-model]")
-    sentences = [s for s in re.split(r"(?<=[.!?])\s+", E2E_LOOP_TUTOR_REPLY.strip()) if s]
-    assert len(sentences) <= STEP_MAX_SENTENCES
+    assert E2E_LOOP_TUTOR_REPLY == render_turn(E2E_LOOP_TUTOR_TURN)
+    assert "[e2e-function-model]" in E2E_LOOP_TUTOR_REPLY
+    assert len(sentences(E2E_LOOP_TUTOR_REPLY)) <= STEP_MAX_SENTENCES
     assert E2E_LOOP_TUTOR_REPLY.count("?") == STEP_QUESTIONS_PER_TURN
-    assert "Key idea:" in E2E_LOOP_TUTOR_REPLY  # the loop's turn shape (phase_prefix)
+    assert E2E_LOOP_TUTOR_REPLY.startswith("Key idea: ")
+    assert E2E_LOOP_TUTOR_REPLY.endswith("?")  # the question is always last
+
+
+def test_stream_event_types_gain_retract():
+    """PKG-07 unblock S1: a structured stream whose shown text was superseded
+    (an output retry, or a transform that rewrote earlier text) says so."""
+    from services.agent_events import SaplingEvent, SaplingEventType
+
+    assert "retract" in set(get_args(SaplingEventType))
+    SaplingEvent(type="retract", step="reply", message="", data={"reason": "retry"})
 
 
 @pytest.mark.parametrize("slot", LOOP_TUTOR_SLOTS)
@@ -121,7 +132,7 @@ def test_loop_agent_is_one_prompt_stack_with_two_read_tools():
     from agents.loop_tutor import _LOOP_SYSTEM_PROMPT, loop_tutor_agent
     from services.prompt_safety import INJECTION_GUARD_PROMPT
 
-    assert loop_tutor_agent.output_type is str
+    assert loop_tutor_agent.output_type is not str  # the structured turn (S1)
     assert INJECTION_GUARD_PROMPT in _LOOP_SYSTEM_PROMPT
     assert _ACADEMIC_INTEGRITY in _LOOP_SYSTEM_PROMPT
     for absent in (
@@ -176,9 +187,13 @@ def test_phase_prefix_shape(phase, band):
     assert text.startswith(f"[LOOP PHASE: {phase}]")
     assert "at most rung H3" in text and intent(Rung.H3) in text
     assert "Anything above H3 is forbidden this turn" in text
-    assert f"{STEP_MAX_SENTENCES} sentences" in text
-    assert f"exactly {STEP_QUESTIONS_PER_TURN} question" in text
-    assert "Key idea:" in text
+    from learning.turn_shape import turn_limits
+
+    limit = turn_limits(phase, Rung.H3, False).body_max_sentences
+    assert f"body: at most {limit} sentence" in text
+    assert f"question: exactly {STEP_QUESTIONS_PER_TURN} question" in text
+    assert "key_idea" in text and "Key idea:" not in text  # the renderer adds the label
+    assert "no latex" in text.lower()
     assert "graded_check_tool" not in text
     if phase in ("hint", "feedback"):
         assert f"[CHECK ITEM] (format: free)\n{_ITEM_PROMPT}" in text
@@ -436,3 +451,154 @@ def test_loop_eval_evaluators_score_what_they_name():
         )
         == 1.0
     )
+
+
+# ── PKG-07 unblock S1: the structured turn ──────────────────────────────────
+
+
+def test_loop_agent_output_is_prompted_turn():
+    """The tutor returns a LoopTurnOut through PromptedOutput (the mode that streams
+    partial output on Gemini with tools, see the S1 commit), with 2 output retries,
+    and LOOP_LIMITS still admits one tool round plus both retries."""
+    from pydantic_ai import PromptedOutput
+
+    from agents import LOOP_LIMITS
+    from agents.loop_tutor import LOOP_OUTPUT_RETRIES, loop_tutor_agent
+    from learning.turn_shape import LoopTurnOut
+
+    assert isinstance(loop_tutor_agent.output_type, PromptedOutput)
+    assert loop_tutor_agent.output_type.outputs is LoopTurnOut
+    assert LOOP_OUTPUT_RETRIES == 2
+    assert loop_tutor_agent._max_output_retries == LOOP_OUTPUT_RETRIES
+    one_tool_round = 2  # the tool-calling request + the request that answers
+    assert LOOP_LIMITS.request_limit >= one_tool_round + LOOP_OUTPUT_RETRIES
+
+
+def test_system_prompt_asks_for_the_structured_turn_in_plain_text_math():
+    from agents.loop_tutor import _LOOP_SYSTEM_PROMPT
+
+    for field in ("key_idea", "body", "question"):
+        assert field in _LOOP_SYSTEM_PROMPT
+    assert "$x^2$" not in _LOOP_SYSTEM_PROMPT  # the old "use LaTeX" instruction is gone
+    assert "plain text" in _LOOP_SYSTEM_PROMPT.lower()
+    assert "unless the phase block says the answer is released" in _LOOP_SYSTEM_PROMPT
+    assert "never repeat" in _LOOP_SYSTEM_PROMPT.lower()  # no echoed [LOOP PHASE] blocks
+
+
+def test_phase_prefix_body_limit_follows_the_ceiling_and_release():
+    from agents.loop_tutor import phase_prefix
+    from learning.ladder import Rung
+    from learning.turn_shape import turn_limits
+
+    h1 = phase_prefix(phase="teach", band="develop", ceiling=Rung.H1)
+    assert f"body: at most {turn_limits('teach', Rung.H1, False).body_max_sentences} sentence" in h1
+    released = phase_prefix(
+        phase="feedback",
+        band="develop",
+        ceiling=Rung.H6,
+        item_prompt=_ITEM_PROMPT,
+        verdict="not_yet",
+        answer_released=True,
+    )
+    assert "no latex" not in released.lower()
+
+
+def _ctx(deps, *, partial: bool):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(deps=deps, partial_output=partial)
+
+
+def _loop_deps(loop_turn=None):
+    from agents.deps import SaplingDeps
+
+    return SaplingDeps(
+        user_id="u1",
+        course_id="c1",
+        supabase=None,
+        request_id="r1",
+        learning_loop=True,
+        loop_turn=loop_turn,
+    )
+
+
+_BAD_TURN = {
+    "key_idea": "A base case stops the recursion.",
+    "body": "Is it zero? Maybe one. Think about it. Then more.",
+    "question": "Which input stops it? Or not?",
+}
+_GOOD_TURN = {
+    "key_idea": "A base case stops the recursion.",
+    "body": "Without one, the calls never end.",
+    "question": "Which input should stop factorial?",
+}
+
+
+def test_output_validator_retries_final_only():
+    from pydantic_ai import ModelRetry
+
+    from agents.loop_tutor import _validate_loop_turn
+    from learning.ladder import Rung
+    from learning.turn_shape import turn_limits
+
+    limits = turn_limits("teach", Rung.H1, False)
+    deps = _loop_deps(limits)
+    # a partial is never judged: it is still being written
+    assert _validate_loop_turn(_ctx(deps, partial=True), dict(_BAD_TURN)) == _BAD_TURN
+    assert _validate_loop_turn(_ctx(deps, partial=True), {"key_idea": "A"}) == {"key_idea": "A"}
+    with pytest.raises(ModelRetry) as info:
+        _validate_loop_turn(_ctx(deps, partial=False), dict(_BAD_TURN))
+    msg = str(info.value)
+    assert "question_outside_question:body" in msg and "question_shape" in msg
+    assert f"at most {limits.body_max_sentences} sentence" in msg
+    assert _validate_loop_turn(_ctx(deps, partial=False), dict(_GOOD_TURN)) == _GOOD_TURN
+    # the limits ride the deps: an H1 body of 2 sentences fails, an H3 body passes
+    two = dict(_GOOD_TURN, body="Without one, the calls never end. Each call must shrink.")
+    with pytest.raises(ModelRetry):
+        _validate_loop_turn(_ctx(deps, partial=False), two)
+    h3 = _loop_deps(turn_limits("teach", Rung.H3, False))
+    assert _validate_loop_turn(_ctx(h3, partial=False), two) == two
+    # LaTeX is refused unless the answer is released
+    latex = dict(_GOOD_TURN, body="Here \\frac{1}{2} is the step.")
+    with pytest.raises(ModelRetry):
+        _validate_loop_turn(_ctx(h3, partial=False), latex)
+    released = _loop_deps(turn_limits("feedback", Rung.H6, True))
+    assert _validate_loop_turn(_ctx(released, partial=False), latex) == latex
+
+
+def test_output_validator_without_limits_uses_the_loosest_unreleased_shape():
+    from pydantic_ai import ModelRetry
+
+    from agents.loop_tutor import _validate_loop_turn
+
+    deps = _loop_deps(None)
+    assert _validate_loop_turn(_ctx(deps, partial=False), dict(_GOOD_TURN)) == _GOOD_TURN
+    with pytest.raises(ModelRetry):
+        _validate_loop_turn(_ctx(deps, partial=False), dict(_BAD_TURN))
+
+
+def test_output_validator_is_registered_and_retries_a_bad_final_turn():
+    """End to end through pydantic-ai: a bad final turn earns ONE retry prompt
+    naming its problems, and the corrected turn is the output."""
+    import json
+
+    from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from agents.loop_tutor import loop_tutor_agent
+    from learning.ladder import Rung
+    from learning.turn_shape import turn_limits
+
+    seen: list = []
+
+    def fn(messages, info):
+        seen.append(messages)
+        body = _BAD_TURN if len(seen) == 1 else _GOOD_TURN
+        return ModelResponse(parts=[TextPart(content=json.dumps(body))])
+
+    deps = _loop_deps(turn_limits("teach", Rung.H3, False))
+    result = loop_tutor_agent.run_sync("hi", deps=deps, model=FunctionModel(fn))
+    assert result.output == _GOOD_TURN
+    assert len(seen) == 2
+    retry = [p for m in seen[1] for p in getattr(m, "parts", []) if isinstance(p, RetryPromptPart)]
+    assert retry and "question_shape" in str(retry[-1].content)

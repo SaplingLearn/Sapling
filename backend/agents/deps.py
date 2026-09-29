@@ -64,6 +64,11 @@ class SaplingDeps:
         pending_evidence: `learning.evidence.Evidence` dicts accumulated by
             `graded_check_tool` (PKG-05) for the ROUTE to persist through
             `apply_graph_update` — tools never write graph tables.
+        loop_turn: The `learning.turn_shape.TurnLimits` for this loop tutor
+            turn (phase, model ceiling, answer released). The loop tutor's
+            output validator judges the FINAL structured turn against it;
+            None → the loosest unreleased limits. Typed Any so agents/deps.py
+            stays free of learning/ imports.
     """
 
     user_id: str
@@ -79,3 +84,4 @@ class SaplingDeps:
     learning_loop: bool = False
     loop_state: Any = None
     pending_evidence: list = field(default_factory=list)
+    loop_turn: Any = None
