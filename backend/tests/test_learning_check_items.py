@@ -1800,6 +1800,102 @@ class TestDeliberation:
 
         assert validate_draft(_mc_draft(reference_answer=reason + self._CLOSE)) == []
 
+    # A language item whose options are first-person sentences (review of the
+    # coordinator's top-up ruling): A37's closing "Final answer: <correct
+    # option>." puts ": I will …" into every such reference.
+    _FUTURE = (
+        ("I will visit Paris", True, None),
+        ("I visited Paris", False, "past_for_future", "Confuses the past with the future."),
+        ("I must visit Paris", False, "modal_of_duty", "Reads a modal of duty as the future."),
+        ("I am visit Paris", False, "be_as_auxiliary", "Uses be where will is needed."),
+    )
+    _FUTURE_STEM = (
+        "Which sentence states a plan in the simple future? Pick one and give your reason."
+    )
+
+    def _future(self, reference, *, options=_FUTURE):
+        from learning.checks import repair_draft
+
+        (correct,) = [o[0] for o in options if o[1]]
+        draft = _mc_draft(
+            concept="Future Tense",
+            prompt=self._FUTURE_STEM,
+            reference_answer=reference,
+            final_answer=correct,
+            options=_opts(*options),
+        )
+        return repair_draft(draft)[0]
+
+    @pytest.mark.parametrize(
+        "reference,options",
+        [
+            (  # the closing sentence quotes the first-person answer
+                "Will with the bare infinitive marks a plan, as the lecture's table shows. "
+                "Final answer: I will visit Paris.",
+                _FUTURE,
+            ),
+            (  # the body quotes it at a clause start, then a distractor after a colon
+                "I will visit Paris puts will before the bare infinitive, which marks a plan; "
+                "a duty is another modal: I must visit Paris. Final answer: I will visit Paris.",
+                _FUTURE,
+            ),
+            (  # a quotation as the answer
+                "Descartes grounds certainty in the act of doubting itself. "
+                "Final answer: I think, therefore I am.",
+                (
+                    ("I think, therefore I am", True, None),
+                    ("God exists", False, "god_first", "Puts God before the self."),
+                    ("The senses never lie", False, "trusts_senses", "Trusts the senses."),
+                    ("Matter is mind", False, "idealism", "Confuses him with Berkeley."),
+                ),
+            ),
+            (  # a contraction as the answer
+                "The apostrophe stands for the dropped letter of us. Final answer: Let's.",
+                (
+                    ("Let's", True, None),
+                    ("Lets", False, "drops_apostrophe", "Drops the apostrophe."),
+                    ("Let'us", False, "keeps_u", "Keeps a letter the contraction drops."),
+                    ("Le'ts", False, "misplaces_apostrophe", "Misplaces the apostrophe."),
+                ),
+            ),
+        ],
+    )
+    def test_a_quoted_answer_or_option_in_the_first_person_is_not_working(self, reference, options):
+        from learning.checks import validate_draft
+
+        assert validate_draft(self._future(reference, options=options)) == []
+
+    @pytest.mark.parametrize(
+        "working",
+        [
+            "Let me check the table: will marks a plan.",
+            "So I think will marks a plan here.",
+            # the working shares its first words with the answer, not the whole quote
+            "I will pick the sentence whose verb follows will.",
+        ],
+    )
+    def test_working_beside_a_first_person_answer_is_still_dropped(self, working):
+        from learning.checks import validate_draft
+
+        reasons = validate_draft(self._future(working + " Final answer: I will visit Paris."))
+        assert [r.split(":")[0] for r in reasons] == ["deliberation"], reasons
+
+    def test_an_option_that_is_only_a_pronoun_hides_no_working(self):
+        """A quote hides a match only when it holds the whole match, so an
+        option "I" (a numbered statement) never hides "So I think"."""
+        from learning.checks import validate_draft
+
+        numbered = (
+            ("I", True, None),
+            ("II", False, "second_statement", "Reads the second statement as the claim."),
+            ("III", False, "third_statement", "Reads the third statement as the claim."),
+            ("IV", False, "fourth_statement", "Reads the fourth statement as the claim."),
+        )
+        reasons = validate_draft(
+            self._future("So I think statement I holds. Final answer: I.", options=numbered)
+        )
+        assert [r.split(":")[0] for r in reasons] == ["deliberation"], reasons
+
     def test_the_rule_reads_only_an_mc_reason_reference(self):
         """A teachback reference may teach in the first person ("Let's
         picture a stack of plates"); a free or teachback final answer is
