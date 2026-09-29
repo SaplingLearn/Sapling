@@ -3191,6 +3191,41 @@ def test_a_score_the_answer_gives_itself_is_no_substance_however_short(quote):
     assert _span(quote, quote, min_chars=1) is None
 
 
+# Review round 3: the claim filter read a function word or a score shape as a
+# claim even when the item's own text keys it as the answer. A correct "No." on
+# an item whose reference answer is "No. …" (and "No, it can't.") and a correct
+# "4/4" on an item keyed "4/4" were recorded as confident incorrects with no span
+# check, while the mirror "Yes." was credited ("yes" is answer talk, which the
+# item's text makes substance; "no" was a function word, which nothing did). A
+# word that can answer on its own — a polarity, a quantifier, a connective, a
+# modal — is substance when the item's text uses it, as answer talk is; an
+# article, a copula, a preposition or a pronoun never is.
+NO_ITEM = "answers no\nNo. Without a base case it never terminates."
+YES_ITEM = "answers yes\nYes. A guard on the calls can end it."
+TIME_ITEM = "identifies common time as 4/4\nCommon time is 4/4."
+
+
+@pytest.mark.parametrize("answer", ["No.", "No, it can't.", "No, not at all."])
+def test_a_word_that_answers_on_its_own_is_substance_when_the_item_keys_it(answer):
+    assert _span(answer, answer, context=NO_ITEM) == answer[:-1]
+    assert _span(answer, answer, context=REC_ITEM_TEXT) is None
+    assert _span("Yes.", "Yes.", context=YES_ITEM) == "Yes"
+
+
+@pytest.mark.parametrize("answer", ["4/4", "It's 4/4."])
+def test_a_score_shape_the_item_keys_is_the_answer_not_a_score(answer):
+    assert _span(answer, answer, context=TIME_ITEM) == answer.rstrip(".")
+    assert _span(answer, answer, context=REC_ITEM_TEXT) is None
+    assert _span("2/2", "2/2", context=TIME_ITEM) is None  # a score the item never keys
+
+
+@pytest.mark.parametrize("claim", [*SELF_SUMMARIES, *CREDITED_TAILS[:5], "It is all there."])
+def test_the_items_grammar_words_never_turn_a_claim_into_substance(claim):
+    """Every item's text uses "the", "is", "it": those never count as an answer."""
+    context = f"{REC_ITEM_TEXT}\nIt is the one that is there for that and this."
+    assert _span(claim, f"{REC_PARTIAL} {claim}", context=context) is None
+
+
 # ── grade(): each credited item stands on its own quote, confirmed alone ─────
 #
 # The grading run's `support` gives, for every item it credits, a quote from the
@@ -3323,6 +3358,47 @@ def test_the_span_check_sees_the_sign_the_student_wrote(monkeypatch, events):
     [message] = calls["span_messages"]
     assert [span for _, _, span in grader_fakes.spans_of(message)] == ["-3"]
     assert res.item_results == {"r1": True} and res.all_yes is True
+
+
+@pytest.mark.parametrize(
+    "rubric,reference,prompt,answer",
+    [
+        (
+            "answers no",
+            "No. Without a base case it never terminates.",
+            "Can a recursive function with no base case ever terminate on its own?",
+            "No.",
+        ),
+        (
+            "answers yes",
+            "Yes. A guard on the calls can end it.",
+            "Can a recursive function end without an explicit base case?",
+            "Yes.",
+        ),
+        (
+            "identifies common time as 4/4",
+            "Common time is 4/4.",
+            "What time signature is common time?",
+            "4/4",
+        ),
+        (
+            "identifies common time as 4/4",
+            "Common time is 4/4.",
+            "What time signature is common time?",
+            "It's 4/4.",
+        ),
+    ],
+)
+def test_a_terse_answer_the_item_keys_meets_the_span_check(
+    monkeypatch, events, rubric, reference, prompt, answer
+):
+    """Review round 3, through grade(): the first run credits a correct terse answer
+    and quotes it whole. "No." and "4/4" were recorded as confident incorrects with
+    no span check; each now meets the span check, as "Yes." did."""
+    item = _one_item(rubric, reference, prompt)
+    first = {**_all_yes(0.95), "item_results": ["r1:yes"]}
+    res, calls = _grade_item(monkeypatch, item, [first], answer)
+    assert calls["spans"] == 1 and res.item_results == {"r1": True} and res.all_yes is True
 
 
 def test_the_span_check_runs_on_the_grader_second_slot(monkeypatch, events):
