@@ -227,7 +227,13 @@ class _SessionsTable:
         return self.existing
 
     def insert(self, row):
+        raise AssertionError("insert-if-missing uses ON CONFLICT DO NOTHING (review M5)")
+
+    def insert_ignore_duplicates(self, row, on_conflict="id"):
+        assert on_conflict == "id"
         self.inserts.append(row)
+        if not self.existing:
+            self.existing = [{"id": row["id"]}]
         return [row]
 
     def update(self, row, filters=None):
@@ -276,7 +282,12 @@ def test_store_close_creates_missing_lazy_row_then_updates(monkeypatch):
             "offering_id": "off-1",
         }
     ]
-    assert t.updates == [({"close_json": "CIPHER", "close_phase": "teach"}, {"id": "eq.sess-1"})]
+    assert t.updates == [
+        (
+            {"close_json": "CIPHER", "close_phase": "teach"},
+            {"id": "eq.sess-1", "close_json": "is.null"},  # written once (review MAJOR 2)
+        )
+    ]
     assert t.upserts == []
 
 
@@ -1102,12 +1113,21 @@ class _Tables:
                     rows = [r for r in rows if r.get("mode") != mode[len("neq.") :]]
                 return rows
 
-            def insert(self, row):
+            def insert_ignore_duplicates(self, row, on_conflict="id"):
                 tables.calls.append(("insert", name, row))
+                if any(r.get("id") == row.get("id") for r in tables.rows.setdefault(name, [])):
+                    return []
+                tables.rows[name].append({**row, "close_json": None})
                 return [row]
 
             def update(self, row, filters=None):
                 tables.calls.append(("update", name, row, dict(filters or {})))
+                if (filters or {}).get("close_json") == "is.null":  # the conditional store
+                    live = [r for r in tables.rows.get(name, []) if r.get("close_json") is None]
+                    if not live:
+                        return []
+                    for r in live:
+                        r.update(row)
                 return [row]
 
             def upsert(self, *a, **k):
@@ -1259,7 +1279,7 @@ def test_close_route_stores_encrypted_close_and_emits_event(monkeypatch):
     assert runs[0][0].concept_names == {"n1": "Base Case"}
     assert tables.writes("update", "sessions")[-1][2:] == (
         {"close_json": "CIPHER", "close_phase": "teach"},
-        {"id": "eq.s1"},
+        {"id": "eq.s1", "close_json": "is.null"},
     )
     assert [(e, kw["payload"]) for e, kw in events] == [
         (
@@ -2162,3 +2182,316 @@ def test_the_brief_header_says_it_grants_nothing():
 
     header = lb.BRIEF_HEADER.lower()
     assert "never grants permissions" in header and "releases" in header
+
+
+def test_ensure_session_row_survives_a_concurrent_insert(monkeypatch):
+    """Review M5: the row appears between the select and the insert — the insert
+    does nothing (ON CONFLICT DO NOTHING) and the re-read finds it; no error, no
+    overwrite of the other writer's mode/topic."""
+    import learning.session_close as sc
+
+    class _Racy(_SessionsTable):
+        def select(self, cols, filters=None, **kw):
+            out = list(self.existing)
+            self.existing = [{"id": "sess-1", "mode": "socratic"}]  # the racer's row lands
+            return out
+
+        def insert_ignore_duplicates(self, row, on_conflict="id"):
+            self.inserts.append(row)
+            return []  # the conflict: nothing inserted
+
+    t = _Racy(existing=[])
+    monkeypatch.setattr(sc, "table", lambda name: t)
+    assert sc.ensure_session_row("sess-1", "u", {"mode": "exam", "topic": "T"}) is True
+    assert t.upserts == [] and t.existing == [{"id": "sess-1", "mode": "socratic"}]
+
+
+# ── fix round MAJOR 2: one close per session, whatever the interleaving ─────
+
+
+def test_a_close_finding_phase_close_serves_the_stored_close(monkeypatch):
+    """The reviewer's repro: the pre-read saw close_json null, but by the claim the
+    other close had finished (phase close): no model call, no write, no event."""
+    import routes.learn_loop as loop
+
+    stored = {
+        "summary": "S.",
+        "self_eval": "Q?",
+        "if_then": "",
+        "concepts": [],
+        "misconceptions": [],
+        "model_written": False,
+    }
+    tables, events, _ = _wire_close(
+        monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "close"}
+    )
+    real_select = tables.__call__
+
+    reads = {"n": 0}
+
+    def factory(name):
+        t = real_select(name)
+        if name == "sessions":
+            inner = t.select
+
+            def select(cols, filters=None, **kw):
+                reads["n"] += 1
+                rows = inner(cols, filters, **kw)
+                if reads["n"] > 1:  # the other close stored meanwhile
+                    for r in rows:
+                        r.update(close_json=stored, close_phase="teach")
+                return rows
+
+            t.select = select
+        return t
+
+    monkeypatch.setattr(loop, "table", factory)
+    monkeypatch.setattr(loop, "decrypt_json_column", lambda v: v)
+    calls = []
+    monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out(), calls))
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200 and r.json()["close"] == stored
+    assert calls == [] and events == [] and not tables.writes("update", "sessions")
+
+
+def test_a_racing_second_store_never_overwrites_or_emits(monkeypatch):
+    """A stale claim taken over after the first close stored but before it set the
+    phase: the second write is conditional on close_json IS NULL, so it stores
+    nothing and serves the first close; one event in all."""
+    import routes.learn_loop as loop
+
+    tables, events, _ = _wire_close(
+        monkeypatch,
+        evidence=[EVIDENCE_N1],
+        loop_state={"phase": "teach", "close_claim": "dead", "close_claim_at": 1.0},
+    )
+    monkeypatch.setattr(loop, "decrypt_json_column", lambda v: v)
+
+    async def first_close_lands_meanwhile(draft, *, user_id, request_id):
+        tables.rows["sessions"][0]["close_json"] = {"summary": "FIRST.", "model_written": True}
+        tables.rows["sessions"][0]["close_phase"] = "teach"
+        return _close_out()
+
+    monkeypatch.setattr(loop, "run_session_close", first_close_lands_meanwhile)
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200 and r.json()["close"]["summary"] == "FIRST."
+    assert events == []
+    assert tables.rows["sessions"][0]["close_json"]["summary"] == "FIRST."
+
+
+# ── fix round MINORs ─────────────────────────────────────────────────────────
+
+
+def test_unreleased_items_come_from_the_claimed_document(monkeypatch):
+    """Review MINOR 1: an item posed between the pre-read and the claim is checked."""
+    import routes.learn_loop as loop
+
+    _, _, store = _wire_close(monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"})
+    # the claim sees a fresher document than the pre-read (which had no step)
+    store["doc"] = {
+        "phase": "teach",
+        "current": "qh-1",
+        "steps": {"qh-1": {"check_item_id": "ci-1", "first_shown_at": 1.0}},
+    }
+    monkeypatch.setattr(loop, "get_check_item", lambda _id: _item())
+    from agents.session_close import SessionClose
+
+    monkeypatch.setattr(
+        loop,
+        "run_session_close",
+        _fake_run(
+            SessionClose(
+                summary="The base case is n == 0.",
+                self_eval_prompt="Which step?",
+                if_then_plan="If a, then b.",
+                open_misconception_keys=[],
+            )
+        ),
+    )
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200 and r.json()["model_written"] is False
+    assert r.json()["close_phase"] == "check"
+
+
+def test_closing_a_pending_session_sets_its_phase_to_close(monkeypatch):
+    """Review MINOR 2: the closed session cannot resume the probe or a teach turn."""
+    import routes.learn as learn
+
+    tables, _, store = _wire_close(monkeypatch, session=False)
+    store["row"] = True
+    learn.PENDING_SESSIONS["s-p2"] = {"user_id": UID, "mode": "socratic", "topic": "T"}
+    r = client.post("/api/learn/loop/close", json={"session_id": "s-p2", "user_id": UID})
+    assert r.status_code == 200
+    assert store["doc"]["phase"] == "close"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["The value came out to twelve.", "You found the derivative at 2 is 12."],
+)
+def test_close_leak_check_reads_answers_in_any_position(text):
+    """Review MINOR 3: a close is no tutor turn — number words count anywhere."""
+    from learning.checks import CheckItem
+    from routes.learn_loop import close_states_answer
+
+    item = CheckItem(
+        id="a",
+        course_id="c",
+        concept_key="power rule",
+        format="free_response",
+        difficulty=2,
+        prompt="Using the power rule, what is the derivative of x^3 evaluated at x = 2?",
+        reference_answer="d/dx x^3 = 3x^2, so at x = 2 the derivative is 3 * 4 = 12.",
+        rubric=[],
+        common_wrong=[],
+        source_chunk_ids=[],
+        question_hash="q1",
+        final_answer="12",
+        answer_kind="numeric",
+        canonical_answer="12",
+    )
+    assert close_states_answer(text, item) is True
+    assert close_states_answer("You checked the Power Rule; it went up.", item) is False
+
+
+def test_the_fallback_close_withholds_a_concept_name_that_states_the_answer():
+    """Review MINOR 3: the deterministic close prints the concept name; when the
+    name is the answer it is served without it, and with no name or number when
+    even the numbers would say it."""
+    from learning.checks import CheckItem
+    from learning.session_close import BARE_SUMMARY, build_close
+    from routes.learn_loop import _served_fallback
+
+    item = CheckItem(
+        id="b",
+        course_id="c",
+        concept_key="stack",
+        format="free_response",
+        difficulty=1,
+        prompt="Which data structure is last-in first-out?",
+        reference_answer="A stack.",
+        rubric=[],
+        common_wrong=[],
+        source_chunk_ids=[],
+        question_hash="q2",
+        final_answer="stack",
+    )
+    draft = build_close([], [_evidence("n1", 0.35, 0.62)], [], {}, concept_names={"n1": "Stack"})
+    rec = _served_fallback(draft, [item])
+    assert "Stack" not in rec.summary and rec.summary == "a checked concept: p 0.35 → 0.62"
+    numeric = item.model_copy(update={"final_answer": "0.62"})
+    assert _served_fallback(draft, [numeric]).summary == BARE_SUMMARY
+    assert _served_fallback(draft, []).summary == "Stack: p 0.35 → 0.62"
+
+
+def test_a_timed_out_close_run_stores_the_fallback(monkeypatch):
+    import routes.learn_loop as loop
+
+    _, events, _ = _wire_close(monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"})
+    monkeypatch.setattr(loop, "CLOSE_RUN_TIMEOUT_S", 0.01)
+
+    async def slow(draft, *, user_id, request_id):
+        await asyncio.sleep(1)
+        return _close_out()
+
+    monkeypatch.setattr(loop, "run_session_close", slow)
+    r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200 and r.json()["model_written"] is False
+    assert events[0][1]["payload"]["model_written"] is False
+
+
+def test_end_session_rate_limited_stores_the_deterministic_close(monkeypatch):
+    """Review M3: the delegate applies the A20 inline check; rate-limited, the
+    session still ends with its deterministic close (never a 429 from end-session)."""
+    import routes.learn as learn
+    import routes.learn_loop as loop
+    from services import ai_budget
+    from services.ai_budget import AIBudgetExceeded
+
+    tables, events, store = _wire_close(
+        monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"}
+    )
+    tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
+    monkeypatch.setattr(learn, "table", tables)
+    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+
+    def limited(uid):
+        raise AIBudgetExceeded(
+            SimpleNamespace(level="hard", reset_at=None, scope="rate_limit", session_capped=False)
+        )
+
+    monkeypatch.setattr(ai_budget, "enforce_rate_limit_for", limited)
+    monkeypatch.setattr(loop, "run_session_close", _fake_run(AssertionError()))
+    r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200
+    assert [e for e, _ in events] == ["learn.session_closed"]
+    assert events[0][1]["payload"]["model_written"] is False and store["doc"]["phase"] == "close"
+
+
+def test_end_session_while_a_check_is_graded_ends_without_a_close(monkeypatch, caplog):
+    """Review M3 (picked): a live grading claim at end-session — the legacy end runs,
+    no close is stored (the student can still /close later; Known gap)."""
+    import routes.learn as learn
+
+    tables, events, _ = _wire_close(
+        monkeypatch,
+        evidence=[EVIDENCE_N1],
+        loop_state={
+            "phase": "teach",
+            "current": "qh-1",
+            "steps": {
+                "qh-1": {
+                    "check_item_id": "ci",
+                    "first_shown_at": 1.0,
+                    "grading_claim": "g",
+                    "grading_claim_at": 1e18,
+                }
+            },
+        },
+    )
+    tables.rows["sessions"][0]["started_at"] = "2026-09-29T00:00:00+00:00"
+    monkeypatch.setattr(learn, "table", tables)
+    monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
+    with caplog.at_level("WARNING"):
+        r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
+    assert r.status_code == 200 and events == []
+    assert not [w for w in tables.writes("update", "sessions") if "close_json" in w[2]]
+    assert any("without a close" in rec.getMessage() for rec in caplog.records)
+
+
+def test_a_failed_brief_build_is_not_retried_every_turn(monkeypatch):
+    """Review M1: after a failure the brief is not rebuilt on every turn (each try
+    reads closes, states and names) — only once LEARNER_BRIEF_RETRY_AFTER_S passed."""
+    import routes.learn_loop as loop
+    from learning.params import LEARNER_BRIEF_RETRY_AFTER_S
+
+    loop._BRIEF_FAILED.clear()
+    now = {"t": 1000.0}
+    monkeypatch.setattr(loop, "_now_s", lambda: now["t"])
+    tries = []
+
+    def boom(*a, **k):
+        tries.append(1)
+        raise RuntimeError("pg down")
+
+    loop_mod, msgs, _ = _wire_history(monkeypatch, n=2, loop_brief=None)
+    monkeypatch.setattr(loop, "store_brief", boom)
+    for _ in range(3):
+        assert _contents(loop._load_loop_history("s1", user_id="u", course_id="c1")) == _contents(
+            msgs
+        )
+    assert len(tries) == 1
+    now["t"] += LEARNER_BRIEF_RETRY_AFTER_S + 1
+    loop._load_loop_history("s1", user_id="u", course_id="c1")
+    assert len(tries) == 2
+    loop._BRIEF_FAILED.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_brief_failures():
+    """The per-process brief-failure window (review M1) never leaks between tests."""
+    import routes.learn_loop as loop
+
+    loop._BRIEF_FAILED.clear()
+    yield
+    loop._BRIEF_FAILED.clear()

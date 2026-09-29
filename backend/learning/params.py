@@ -427,3 +427,10 @@ LOOP_HISTORY_TRIM_BLOCK = 10
 REVIEW_SECONDS_PER_FLASHCARD = 15  # † budget cost of one self-rated card
 REVIEW_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}  # †
 REVIEW_FORMAT_BY_BAND = {"novice": "mc_reason", "develop": "mc_reason", "profic": "free"}  # †
+# † engineering choice, no validated cut-point (PKG-09 fix round): the close
+# model run's wall-clock bound (flash-lite, one structured request + one retry);
+# a timed-out run is the unavailable agent — the deterministic close is stored
+CLOSE_RUN_TIMEOUT_S = 20
+# † engineering choice (PKG-09 fix round, review M1): a failed learner-brief
+# build is retried after this many seconds, not on every loop turn
+LEARNER_BRIEF_RETRY_AFTER_S = 300

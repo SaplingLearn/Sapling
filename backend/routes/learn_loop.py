@@ -41,6 +41,7 @@ session is checked to be the requesting student's before any read or write.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import dataclasses
 import hashlib
@@ -113,10 +114,12 @@ from learning.params import (
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_PHASES,
+    CLOSE_RUN_TIMEOUT_S,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     LOOP_CHECKS_PER_CONCEPT,
     LOOP_GRADING_CLAIM_STALE_S,
+    LEARNER_BRIEF_RETRY_AFTER_S,
     LEARNER_BRIEF_TOP_STATES,
     LOOP_HISTORY_TRIM_BLOCK,
     LOOP_SESSION_MAX_DEEP_REQUESTS,
@@ -131,6 +134,7 @@ from learning.params import (
 )
 from learning.policy import LearnerView, LoopState, StepState
 from learning.session_close import (
+    CLOSE_FALLBACK_DETAILS,
     CloseRecord,
     build_close,
     fallback_close,
@@ -490,6 +494,11 @@ def _brief_node_ids(loop_state: dict, user_id: str, course_id: str | None) -> li
     return [r["id"] for r in rows or [] if r.get("id")]
 
 
+#: Review M1: session id → when its brief build last failed (per process; a
+#: failure is retried after LEARNER_BRIEF_RETRY_AFTER_S, not on every turn).
+_BRIEF_FAILED: dict[str, float] = {}
+
+
 def _load_loop_history(
     session_id: str,
     *,
@@ -513,7 +522,9 @@ def _load_loop_history(
         stored = rows[0].get("loop_brief")
         if stored is not None:
             brief = decrypt_if_present(stored) or ""
-        elif user_id:
+        elif user_id and _now_s() - _BRIEF_FAILED.get(session_id, float("-inf")) > (
+            LEARNER_BRIEF_RETRY_AFTER_S
+        ):
             try:
                 brief = store_brief(
                     session_id,
@@ -521,10 +532,13 @@ def _load_loop_history(
                     course_id or None,
                     _brief_node_ids(loop_state or {}, user_id, course_id),
                 )
+                _BRIEF_FAILED.pop(session_id, None)
             except Exception as exc:
+                _BRIEF_FAILED[session_id] = _now_s()
                 logger.warning(
-                    "learner brief not built for this turn (%s); the next turn retries",
+                    "learner brief not built for this turn (%s); retried after %ss",
                     type(exc).__name__,
+                    LEARNER_BRIEF_RETRY_AFTER_S,
                 )
                 brief = ""
     msgs = _load_message_history(session_id)
@@ -931,22 +945,24 @@ def served_model_text(
 
 
 def close_states_answer(text: str, item) -> bool:
-    """Strict, served-mode leak check of close text against one item the
-    session posed but never released (the item as posed is the given text).
-    Fails closed: an item the check cannot read (no final answer) is a leak."""
+    """Strict leak check of close text against one item the session posed but
+    never released: in served mode (the item as posed is the provenance, as
+    PKG-07's served_model_text reads it) AND with no provenance at all — a close
+    is no tutor turn, so an answer in any position (a number word such as
+    "came out to twelve", an option's text) is a leak. Fails closed: an item
+    the check cannot read (no final answer) is a leak."""
+    kwargs = _item_check_kwargs(
+        reference=item.reference_answer,
+        final_answer=item.final_answer,
+        canonical_answer=item.canonical_answer,
+        correct_option=item.correct_option,
+        option_text=option_text(item),
+    )
     try:
-        return detect_leak(
-            emitted=text,
-            rung=Rung.H0,
-            given=item.prompt,
-            **_item_check_kwargs(
-                reference=item.reference_answer,
-                final_answer=item.final_answer,
-                canonical_answer=item.canonical_answer,
-                correct_option=item.correct_option,
-                option_text=option_text(item),
-            ),
-        ).leaked
+        return any(
+            detect_leak(emitted=text, rung=Rung.H0, given=given, **kwargs).leaked
+            for given in (item.prompt, None)
+        )
     except (ValueError, TypeError):
         return True
 
@@ -956,12 +972,14 @@ def served_close(output, draft, unreleased_items) -> CloseRecord:
     close agent's `output` — the path the session_close eval gates:
     `agents.session_close.shape_close`, then the deterministic close when any
     served text states the answer of an unreleased item (never masked in
-    place, A51 N1)."""
+    place, A51 N1), itself leak-checked (`_served_fallback`)."""
+    items = list(unreleased_items)
     record = shape_close(output, draft)
-    served = "\n".join((record.summary, record.self_eval, record.if_then))
-    if record.model_written and any(close_states_answer(served, i) for i in unreleased_items):
+    if not record.model_written:
+        return _served_fallback(draft, items)
+    if any(close_states_answer(_close_text(record), i) for i in items):
         logger.warning("session close stated an unreleased item's answer; storing fallback close")
-        return fallback_close(draft)
+        return _served_fallback(draft, items)
     return record
 
 
@@ -2636,24 +2654,32 @@ def _stored_close(row: dict) -> dict:
     }
 
 
-def _claim_close(session_id: str, claim: str, now: float) -> str:
+class _AlreadyClosed(Exception):
+    """The document says `phase: close`: another close finished first."""
+
+
+def _claim_close(session_id: str, claim: str, now: float) -> dict:
     """Take the session's close claim by compare-and-set (A38 06(q)); 409 while
     another close holds a live one, or while a check is being graded (its
-    evidence is not written yet). Returns the phase the session stopped in,
-    read from the same document."""
+    evidence is not written yet); `_AlreadyClosed` when a close already
+    finished. Returns the document as claimed (claim keys stripped), so the
+    phase and the unreleased items are read from the same state the claim saw."""
     out: dict = {}
 
     def take(doc: dict) -> None:
+        if _loop_phase(doc) == "close":
+            raise _AlreadyClosed()
         if doc.get("close_claim") != claim and _live(doc, "close_claim", now):
             raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
         if _grading_in_flight(doc, now):
             raise HTTPException(status_code=409, detail=_GRADING_IN_FLIGHT)
-        stripped = {k: v for k, v in doc.items() if k not in ("close_claim", "close_claim_at")}
-        out["phase"] = _close_phase(stripped)
+        out["doc"] = copy.deepcopy(
+            {k: v for k, v in doc.items() if k not in ("close_claim", "close_claim_at")}
+        )
         doc["close_claim"], doc["close_claim_at"] = claim, now
 
     _update_loop_state(session_id, take)
-    return out.get("phase", "close")
+    return out.get("doc", {})
 
 
 def _finish_close(session_id: str, claim: str, *, closed: bool) -> None:
@@ -2700,28 +2726,70 @@ def _concept_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
     return {r["id"]: r["concept_name"] for r in rows or [] if r.get("id") and r.get("concept_name")}
 
 
+def _close_text(record: CloseRecord) -> str:
+    return "\n".join((record.summary, record.self_eval, record.if_then))
+
+
+def _served_fallback(draft, items: list) -> CloseRecord:
+    """The deterministic close as served (review MINOR 3): it prints concept
+    names and numbers, so it passes the same leak check as a model close —
+    named, then with the names withheld, then with no names or numbers."""
+    record = fallback_close(draft)
+    for detail in CLOSE_FALLBACK_DETAILS:
+        record = fallback_close(draft, detail=detail)
+        if not any(close_states_answer(_close_text(record), i) for i in items):
+            return record
+    return record
+
+
+async def _model_close(draft, *, user_id: str, request_id: str) -> object | None:
+    """One close run under CLOSE_RUN_TIMEOUT_S (a timed-out run is the
+    unavailable agent: the deterministic close is stored)."""
+    try:
+        return await asyncio.wait_for(
+            run_session_close(draft, user_id=user_id, request_id=request_id),
+            CLOSE_RUN_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.warning("session_close timed out; storing fallback close")
+        return None
+
+
+def _reread_close(session_id: str) -> dict:
+    rows = table("sessions").select(
+        "id,close_json,close_phase", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
+    )
+    if rows and rows[0].get("close_json") is not None:
+        return _stored_close(rows[0])
+    raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
+
+
 async def close_session(
     session_id: str,
     user_id: str,
     *,
     request_id: str | None = None,
-    rate_limit: bool = False,
+    rate_limit: str | None = None,
 ) -> dict:
     """Close a loop session (Behaviour 10). A pending (never-materialised)
     session has no transcript or evidence: its deterministic close is stored
-    on the row the A11 helper creates. A materialised one is claimed, read,
-    closed — the model only when it has evidence (A25; `run_session_close`
-    itself returns None at the hard budget level) and, with `rate_limit`, only
-    past the inline A20 check — then stored, the phase moved to `close`, and
-    `learn.session_closed` emitted. A stored close is returned as it is."""
+    on the row the A11 helper creates, and its phase set to `close`. A
+    materialised one is claimed, read, closed — the model only when it has
+    evidence (A25; `run_session_close` itself returns None at the hard budget
+    level), under CLOSE_RUN_TIMEOUT_S and past the inline A20 check
+    (`rate_limit="raise"`: the 429; `"fallback"`: the deterministic close) —
+    then stored ONCE (the write is conditional on `close_json IS NULL`), the
+    phase moved to `close`, and `learn.session_closed` emitted. A close that
+    finds the session already closed returns the stored close: no model call,
+    no write, no event."""
     request_id = request_id or current_request_id() or str(uuid.uuid4())
     pending = PENDING_SESSIONS.get(session_id)
-    claim = None
+    claim = ""
     if pending is not None:
         if pending.get("user_id") != user_id:
             raise HTTPException(status_code=403, detail="Session user mismatch")
         PENDING_SESSIONS.pop(session_id, None)
-        phase, doc = "close", None
+        phase = "close"
         record = fallback_close(build_close([], [], [], {}))
         row_defaults = {
             "mode": pending.get("mode"),
@@ -2741,10 +2809,13 @@ async def close_session(
             raise HTTPException(status_code=403, detail="Session user mismatch")
         if rows[0].get("close_json") is not None:
             return _stored_close(rows[0])
-        doc = rows[0].get("loop_state") or None
+        had_state = bool(rows[0].get("loop_state"))
         claim = uuid.uuid4().hex
-        claimed_phase = _claim_close(session_id, claim, _now_s())
-        phase = claimed_phase if doc else "close"
+        try:
+            doc = _claim_close(session_id, claim, _now_s())
+        except _AlreadyClosed:
+            return _reread_close(session_id)
+        phase = _close_phase(doc) if had_state else "close"
         row_defaults = None
         try:
             transcript, evidence = _session_record(session_id)
@@ -2755,25 +2826,37 @@ async def close_session(
                 {},
                 concept_names=_concept_names(user_id, [e.get("node_id") for e in evidence]),
             )
-            record = fallback_close(draft)
+            items = _unreleased_items(doc)
+            out = None
             if evidence:  # A25: no model without graded evidence
+                limited = False
                 if rate_limit:
-                    ai_budget.enforce_rate_limit_for(user_id)  # A20 inline: a model may run
-                out = await run_session_close(draft, user_id=user_id, request_id=request_id)
-                if out is not None:
-                    record = served_close(out, draft, _unreleased_items(doc))
+                    try:
+                        ai_budget.enforce_rate_limit_for(user_id)  # A20 inline: a model may run
+                    except AIBudgetExceeded:
+                        if rate_limit == "raise":
+                            raise
+                        limited = True
+                if not limited:
+                    out = await _model_close(draft, user_id=user_id, request_id=request_id)
+            record = (
+                served_close(out, draft, items)
+                if out is not None
+                else _served_fallback(draft, items)
+            )
         except BaseException:
             _finish_close(session_id, claim, closed=False)
             raise
     try:
-        store_close(session_id, user_id, record, phase, row_defaults=row_defaults)
+        stored = store_close(session_id, user_id, record, phase, row_defaults=row_defaults)
     except Exception as exc:
         if claim:
             _finish_close(session_id, claim, closed=False)
         logger.warning("session close not stored (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail=_CLOSE_STORE_FAILED) from None
-    if claim:
-        _finish_close(session_id, claim, closed=True)
+    _finish_close(session_id, claim, closed=True)  # a pending session's phase too
+    if not stored:  # another close's write landed first: serve it, emit nothing
+        return _reread_close(session_id)
     events_service.log_event(
         "learn.session_closed",
         category="usage",
@@ -2800,13 +2883,15 @@ async def close(body: CloseBody, request: Request) -> dict:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
     return await close_session(
-        body.session_id, body.user_id, request_id=_request_id(request), rate_limit=True
+        body.session_id, body.user_id, request_id=_request_id(request), rate_limit="raise"
     )
 
 
 def end_session(body: EndSessionBody, request: Request) -> None:
     """The legacy end_session's loop delegate (PKG-07's pass-through, filled by
-    PKG-09): a materialised session with loop state gets its real close first;
+    PKG-09): a materialised session with loop state gets its real close first
+    (A20 inline check: rate-limited, the deterministic close; the run bounded by
+    CLOSE_RUN_TIMEOUT_S; a check still being graded → no close, WARNING);
     the legacy body then runs unchanged (ended_at, XP, the `summary_json`
     `flashcards._get_session_summary` reads, achievements). A pending session
     keeps the legacy early return. A close failure never fails the legacy end.
@@ -2820,11 +2905,19 @@ def end_session(body: EndSessionBody, request: Request) -> None:
         )
         if rows and rows[0].get("loop_state"):
             run_agent_sync(
-                close_session(body.session_id, body.user_id, request_id=_request_id(request))
+                close_session(
+                    body.session_id,
+                    body.user_id,
+                    request_id=_request_id(request),
+                    rate_limit="fallback",  # A20 inline: rate-limited → the deterministic close
+                )
             )
     except Exception as exc:
+        # e.g. a check still being graded (409): the session ends without a close;
+        # the student can still POST /close later (close_json stays null)
         logger.warning(
-            "loop close failed at session end (%s); the legacy end continues", type(exc).__name__
+            "loop session ended without a close (%s); the legacy end continues",
+            type(exc).__name__,
         )
     return None
 

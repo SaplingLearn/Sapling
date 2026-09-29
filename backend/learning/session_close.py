@@ -121,13 +121,27 @@ def concept_label(draft: CloseDraft, node_id: str) -> str:
     return draft.concept_names.get(node_id) or node_id
 
 
-def fallback_close(draft: CloseDraft) -> CloseRecord:
-    """The deterministic close (no LLM): the concept deltas as the summary, the
-    fixed self-evaluation question, no if-then plan, `model_written=False`."""
+#: What the deterministic close may print, most to least (review MINOR 3): the
+#: route serves the first whose text states no unreleased item's answer.
+CLOSE_FALLBACK_DETAILS = ("named", "unnamed", "bare")
+#: The `bare` fallback summary: no concept name, no number.
+BARE_SUMMARY = "Your checks this session were recorded."
+
+
+def fallback_close(draft: CloseDraft, *, detail: str = "named") -> CloseRecord:
+    """The deterministic close (no LLM): the concept deltas as the summary
+    (`named`: "<name>: p a → b"; `unnamed`: the name withheld; `bare`: no name
+    and no number), the fixed self-evaluation question, no if-then plan,
+    `model_written=False`."""
+    if detail not in CLOSE_FALLBACK_DETAILS:
+        raise ValueError(f"fallback_close: unknown detail {detail!r}")
     summary = "; ".join(
-        f"{concept_label(draft, c.node_id)}: p {c.p_before:.2f} → {c.p_after:.2f}"
+        (f"{concept_label(draft, c.node_id)}: " if detail == "named" else "a checked concept: ")
+        + f"p {c.p_before:.2f} → {c.p_after:.2f}"
         for c in draft.concepts
     )
+    if detail == "bare" and draft.concepts:
+        summary = BARE_SUMMARY
     return CloseRecord(
         summary=summary or NO_EVIDENCE_SUMMARY,
         self_eval=FALLBACK_SELF_EVAL,
@@ -157,8 +171,9 @@ def normalise_close(output, draft: CloseDraft) -> CloseRecord:
 def ensure_session_row(session_id: str, user_id: str, row_defaults: dict | None) -> bool:
     """A11 insert-if-missing: True when the `sessions` row exists or was just
     inserted from `row_defaults` (`mode`/`topic` are NOT NULL; `offering_id`
-    only when present, as `_consume_pending` inserts it); False when it is
-    missing and no defaults were given (nothing inserted). Never `upsert`."""
+    only when present, as `_consume_pending` inserts it; ON CONFLICT DO
+    NOTHING, then re-read, so a concurrent insert is no error); False when it
+    is missing and no defaults were given (nothing inserted). Never `upsert`."""
     if table("sessions").select("id", filters={"id": f"eq.{session_id}"}):
         return True
     if not row_defaults:
@@ -171,8 +186,11 @@ def ensure_session_row(session_id: str, user_id: str, row_defaults: dict | None)
     }
     if row_defaults.get("offering_id"):
         row["offering_id"] = row_defaults["offering_id"]
-    table("sessions").insert(row)
-    return True
+    # Review M5: a concurrent writer may insert the row between the select and
+    # here — ON CONFLICT DO NOTHING (never an upsert: it would overwrite
+    # mode/topic, A11), then re-read.
+    table("sessions").insert_ignore_duplicates(row, on_conflict="id")
+    return bool(table("sessions").select("id", filters={"id": f"eq.{session_id}"}))
 
 
 def store_close(
@@ -182,8 +200,9 @@ def store_close(
     phase: str,
     *,
     row_defaults: dict | None,
-) -> None:
-    """Encrypt and store the close with the phase the session stopped in.
+) -> bool:
+    """Encrypt and store the close with the phase the session stopped in, once:
+    True when this write stored it, False when a close was already stored.
     ValueError on a phase outside CLOSE_PHASES (the CHECK enum); LookupError
     when the row is missing and cannot be created (no defaults) — a close is
     never silently dropped. DB errors propagate."""
@@ -191,7 +210,10 @@ def store_close(
         raise ValueError(f"store_close: phase {phase!r} not in CLOSE_PHASES")
     if not ensure_session_row(session_id, user_id, row_defaults):
         raise LookupError(f"store_close: sessions row {session_id} missing")
-    table("sessions").update(
+    # Review MAJOR 2: written once — the update matches only while close_json is
+    # still null (`is.null`, never an equality filter on the ciphertext, inv 9).
+    rows = table("sessions").update(
         {"close_json": encrypt_json(record.model_dump()), "close_phase": phase},
-        filters={"id": f"eq.{session_id}"},
+        filters={"id": f"eq.{session_id}", "close_json": "is.null"},
     )
+    return bool(rows)
