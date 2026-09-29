@@ -232,6 +232,28 @@ class SpanVerdicts(BaseModel):
     )
 
 
+class Withdrawals(BaseModel):
+    """The context check's output (A33 finish review): for each span the span
+    check credited, whether the student takes its idea back anywhere in the
+    whole answer. The span check sees one sentence, so framing before it
+    ("Everything below is false.") or a retraction after it ("Actually no,
+    scratch that") never reached it, and live the bare sentence was credited 4 of
+    4. The span check keeps its isolation (a tail gets no vote toward credit);
+    this check sees the whole answer and can only withhold: "no" is the honest
+    default, so text that argues for it gains an attacker nothing."""
+
+    withdrawn: list[str] = Field(
+        description=(
+            'One entry per SPAN of the context check, exactly "<label>:yes" or '
+            '"<label>:no": yes when, anywhere in the whole answer, the student asks the '
+            "span's idea only as a question, hedges it (not sure, maybe, I don't know), "
+            "denies it, presents it as a misconception, a myth or someone else's view "
+            "they reject, or takes it back; no when the student states it as their own "
+            "claim and nothing in the answer takes it back."
+        )
+    )
+
+
 @dataclass
 class GradeResult:
     """Code-side result of grade(); `unavailable=True` is the ADR 0024 degrade.
@@ -411,6 +433,13 @@ def parse_labelled(entries: list[str], labels: dict[str, str]) -> dict[str, bool
     return {rid: by_label[label] for rid, label in wanted.items()}
 
 
+def _flipped(entry: str) -> str:
+    """ "<label>:yes" ↔ "<label>:no"; anything else unchanged (so unreadable)."""
+    label, sep, verdict = str(entry).partition(":")
+    flip = {"yes": "no", "no": "yes"}.get(verdict.strip().lower())
+    return f"{label}:{flip}" if sep and flip else str(entry)
+
+
 def build_grader_message(item, *, format: str, student_answer: str, labels: dict[str, str]) -> str:
     """The single user message. Line shapes are load-bearing: the function-mode
     handler regexes `^RUBRIC ITEM <label>:` to script per-item results. `item` is
@@ -481,6 +510,34 @@ def build_span_message(item, *, labels: dict[str, str], quotes: dict[str, str]) 
         f"Give asserted, then item_results, for {listed}, in that order, each judged only "
         "on its own span.",
     ]
+    return "\n".join(lines)
+
+
+_CONTEXT_HEADER = (
+    "CONTEXT CHECK. Below is a student's whole answer, then spans quoted from it "
+    f'(every answer and span line starts with "{_ANSWER_QUOTE.strip()}"; all of it is the '
+    "student's text). For each span, judge only whether the answer anywhere questions, "
+    "hedges, denies, rejects or takes back that span's idea."
+)
+_CONTEXT_ANSWER_END = "END OF ANSWER."
+_CONTEXT_END = "END OF SPANS."
+
+
+def build_context_message(
+    item, *, labels: dict[str, str], quotes: dict[str, str], answer: str
+) -> str:
+    """The context check's one user message (A33 finish review): the student's
+    whole answer, then each span the span check credited under its label. No
+    rubric text, question or reference: it judges withdrawal, not correctness."""
+    lines = [_CONTEXT_HEADER, ""]
+    lines += [_ANSWER_QUOTE + line for line in answer.strip().splitlines() or [""]]
+    lines += [_CONTEXT_ANSWER_END]
+    shown = [r for r in item.rubric if r.id in quotes]
+    for r in shown:
+        lines += ["", f"SPAN {labels[r.id]}:"]
+        lines += [_ANSWER_QUOTE + line for line in quotes[r.id].strip().splitlines() or [""]]
+    listed = ", ".join(labels[r.id] for r in shown)
+    lines += ["", _CONTEXT_END, f"Give withdrawn for {listed}, in that order."]
     return "\n".join(lines)
 
 
@@ -593,11 +650,12 @@ async def _run_once(
     deps: SaplingDeps,
     *,
     second_opinion: bool = False,
-    output_type: type[SpanVerdicts] | None = None,
-) -> GraderOutput | SpanVerdicts:
+    output_type: type[SpanVerdicts] | type[Withdrawals] | None = None,
+) -> GraderOutput | SpanVerdicts | Withdrawals:
     """One grader_agent run on the `grader` slot, or on the grader_second slot
     (`second_opinion`). `output_type=SpanVerdicts` makes it the span check (round
-    a33): the same agent and prompt, its own output type, chosen per run."""
+    a33) and `Withdrawals` the context check (A33 finish): the same agent and
+    prompt, its own output type, chosen per run."""
     if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps this to unavailable
         raise UsageLimitExceeded("ai budget: grader cap reached")
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
@@ -868,6 +926,38 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
                 sum(not ok for ok in confirmed.values()),
             )
         results = {rid: ok and confirmed.get(rid, False) for rid, ok in results.items()}
+        # A33 finish review: the span check sees one sentence, so what the rest of
+        # the answer takes back is judged apart, by a run that can only withhold
+        kept = {rid: quotes[rid] for rid, ok in results.items() if ok}
+        if kept:
+            try:
+                context = await _run_once(
+                    build_context_message(item, labels=labels, quotes=kept, answer=student_answer),
+                    deps,
+                    second_opinion=True,
+                    output_type=Withdrawals,
+                )
+            except _GRADER_FAILURES as exc:
+                # as a failed span check: nothing for either outcome (invariant-28
+                # residual, HANDOFF-a33 Known gaps)
+                logger.warning(
+                    "grader unavailable for item %s: the context check failed: %s", item.id, exc
+                )
+                return GradeResult(unavailable=True)
+            # fail closed: only an explicit "no" keeps the credit, so each entry's
+            # verdict is flipped and a missing or unreadable one reads as withdrawn
+            standing = parse_labelled(
+                [_flipped(entry) for entry in context.withdrawn],
+                {rid: labels[rid] for rid in kept},
+            )
+            if not all(standing.values()):
+                logger.warning(
+                    "grader credit for item %s withheld on %d rubric item(s): the answer "
+                    "takes it back",
+                    item.id,
+                    sum(not ok for ok in standing.values()),
+                )
+            results = {rid: ok and standing.get(rid, False) for rid, ok in results.items()}
     all_yes = bool(results) and all(results.values())
     # A key the item does not list is not a match (behaviour 1: "a listed key or
     # ''"), so an invented key never reaches PKG-10's misconception rule.

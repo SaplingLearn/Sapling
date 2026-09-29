@@ -10,7 +10,8 @@ the hint-echo drop are the real code, and so are the quote check and the span
 check behind every credited item (grader-guard round a33, the coordinator's
 ruling). Only the model runs come from the cassette: `_run_once`, grade()'s one
 call per model run, is served per case from `{"runs": [GraderOutput, ...],
-"span_checks": [SpanVerdicts, ...]}` (one entry per run of each kind grade()
+"span_checks": [SpanVerdicts, ...], "context_checks": [Withdrawals, ...]}` (one
+entry per run of each kind grade()
 asked for, in order; `[]` when it asked for none, as when it refused the answer
 before any run). Replay fails a case whose grade() asks for more or fewer runs
 of either kind than were recorded, so a weakened screen, or a credited item
@@ -112,7 +113,7 @@ from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     make_deps,
     save_cassette,
 )
-from agents.grader import GraderOutput, SpanVerdicts  # noqa: E402
+from agents.grader import GraderOutput, SpanVerdicts, Withdrawals  # noqa: E402
 from learning.checks import RubricItem, WrongReason  # noqa: E402
 from learning.params import LEAK_NGRAM  # noqa: E402
 
@@ -144,7 +145,8 @@ class GradeCase(BaseModel):
 class GradeEvalOutput(BaseModel):
     """What agents.grader.grade() served for one case, plus every model run it
     made: the grading runs (`runs`, in order; empty when the answer was refused
-    before any run) and the span checks (`span_checks`)."""
+    before any run), the span checks (`span_checks`) and the context checks
+    (`context_checks`, the A33 finish)."""
 
     refused: str | None = None
     unavailable: bool = False
@@ -154,6 +156,7 @@ class GradeEvalOutput(BaseModel):
     feedback_hint: str = ""
     runs: list[GraderOutput] = []
     span_checks: list[SpanVerdicts] = []
+    context_checks: list[Withdrawals] = []
 
 
 def _tokens(text: str) -> list[str]:
@@ -650,6 +653,8 @@ class _CaseRuns:
     span_cassette: list[SpanVerdicts] | None = None  # None = record/live
     made: list[GraderOutput] = field(default_factory=list)
     span_made: list[SpanVerdicts] = field(default_factory=list)
+    context_cassette: list[Withdrawals] | None = None  # None = record/live
+    context_made: list[Withdrawals] = field(default_factory=list)
     errors: list[BaseException] = field(default_factory=list)
 
 
@@ -689,9 +694,10 @@ async def _cassette_run_once(message: str, deps, *, second_opinion: bool = False
         return await _REAL_RUN_ONCE(
             message, deps, second_opinion=second_opinion, output_type=output_type
         )
-    span = output_type is SpanVerdicts
-    served, made = (case.span_cassette, case.span_made) if span else (case.cassette, case.made)
-    kind = "span check" if span else "model run"
+    served, made, kind = {
+        SpanVerdicts: (case.span_cassette, case.span_made, "span check"),
+        Withdrawals: (case.context_cassette, case.context_made, "context check"),
+    }.get(output_type, (case.cassette, case.made, "model run"))
     if served is not None:
         if len(made) >= len(served):
             raise RuntimeError(
@@ -718,9 +724,9 @@ def _install() -> None:
         grader.rubric_labels = _seeded_labels
 
 
-def _load_runs(name: str) -> tuple[list[GraderOutput], list[SpanVerdicts]]:
+def _load_runs(name: str) -> tuple[list[GraderOutput], list[SpanVerdicts], list[Withdrawals]]:
     body = load_cassette(DATASET, name)
-    if body is None or "runs" not in body or "span_checks" not in body:
+    if body is None or not {"runs", "span_checks", "context_checks"} <= set(body):
         raise RuntimeError(
             f"No grade() cassette for {DATASET}/{name}. "
             "Run with SAPLING_EVAL_MODE=record to capture it."
@@ -728,6 +734,7 @@ def _load_runs(name: str) -> tuple[list[GraderOutput], list[SpanVerdicts]]:
     return (
         [GraderOutput.model_validate(run) for run in body["runs"]],
         [SpanVerdicts.model_validate(check) for check in body["span_checks"]],
+        [Withdrawals.model_validate(check) for check in body["context_checks"]],
     )
 
 
@@ -736,7 +743,7 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
     name = next(c.name for c in CASES if c.inputs == case_input)
     runs = _CaseRuns(name=name, cassette=None)
     if MODE == "replay":
-        runs.cassette, runs.span_cassette = _load_runs(name)
+        runs.cassette, runs.span_cassette, runs.context_cassette = _load_runs(name)
     token = _CASE.set(runs)
     try:
         result = await grader.grade(
@@ -752,6 +759,7 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
     for kind, made, served in (
         ("model run", runs.made, runs.cassette),
         ("span check", runs.span_made, runs.span_cassette),
+        ("context check", runs.context_made, runs.context_cassette),
     ):
         if served is not None and len(made) != len(served):
             raise RuntimeError(
@@ -765,6 +773,7 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
             {
                 "runs": [r.model_dump(mode="json") for r in runs.made],
                 "span_checks": [c.model_dump(mode="json") for c in runs.span_made],
+                "context_checks": [c.model_dump(mode="json") for c in runs.context_made],
             },
         )
     return GradeEvalOutput(
@@ -776,6 +785,7 @@ async def _run(case_input: GradeCase) -> GradeEvalOutput:
         feedback_hint=result.feedback_hint,
         runs=runs.made,
         span_checks=runs.span_made,
+        context_checks=runs.context_made,
     )
 
 

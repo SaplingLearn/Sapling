@@ -1,4 +1,12 @@
 {
+  "context_checks": [
+    {
+      "withdrawn": [
+        "86701:no",
+        "32600:no"
+      ]
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,

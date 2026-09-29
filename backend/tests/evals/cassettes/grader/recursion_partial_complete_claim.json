@@ -1,10 +1,17 @@
 {
+  "context_checks": [
+    {
+      "withdrawn": [
+        "82235:no"
+      ]
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "The student correctly states that the base case stops recursion. However, the explanation of what happens without a base case is missing.",
+      "feedback_hint": "You explained that the base case stops recursion, but didn't explain what happens if there is no base case.",
       "item_results": [
         "82235:yes",
         "28137:no"

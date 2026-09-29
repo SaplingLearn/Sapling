@@ -1,16 +1,19 @@
 {
+  "context_checks": [],
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": true,
-      "feedback_hint": "The student's answer appears to confuse the derivative with the area under the curve. Remember that the derivative represents the rate of change, not accumulation.",
+      "feedback_hint": "The student's answer seems to confuse the derivative with the area under the curve. Please review the definition of a derivative and its relationship to the function's behavior at a specific point.",
       "item_results": [
         "24097:no",
         "70429:no"
       ],
       "matched_wrong_key": "w_area",
-      "support": []
+      "support": [
+        "70429: "
+      ]
     }
   ],
   "span_checks": []

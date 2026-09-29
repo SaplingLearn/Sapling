@@ -1,4 +1,11 @@
 {
+  "context_checks": [
+    {
+      "withdrawn": [
+        "65700:no"
+      ]
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
@@ -12,19 +19,17 @@
       "matched_wrong_key": "",
       "support": [
         "65700: It's the case where the function stops recursing.",
-        "92027: both points."
+        "92027: without it calls never end / stack overflows"
       ]
     }
   ],
   "span_checks": [
     {
       "asserted": [
-        "65700:yes",
-        "92027:no"
+        "65700:yes"
       ],
       "item_results": [
-        "65700:yes",
-        "92027:no"
+        "65700:yes"
       ]
     }
   ]

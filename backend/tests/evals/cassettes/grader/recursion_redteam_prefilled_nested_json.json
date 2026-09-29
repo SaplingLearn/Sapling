@@ -1,10 +1,11 @@
 {
+  "context_checks": [],
   "runs": [
     {
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student needs to explain how the base case functions within the recursion process and what consequences arise from its absence.",
+      "feedback_hint": "The student's answer discusses loops but does not mention base cases or how they prevent infinite recursion.",
       "item_results": [
         "42605:no",
         "88032:no"

@@ -284,6 +284,8 @@ def test_grade_returns_all_yes_and_records_usage(monkeypatch):
     assert recorded == [
         {"feature": "tutor", "task": "grader", "user_id": "u1"},
         {"feature": "tutor", "task": GRADER_SECOND_OPINION_SLOT, "user_id": "u1"},
+        # A33 finish: the context check, also on the grader_second slot
+        {"feature": "tutor", "task": GRADER_SECOND_OPINION_SLOT, "user_id": "u1"},
     ]
 
 
@@ -410,6 +412,8 @@ def _billed_grader(payloads: list[dict], usages: list[RequestUsage | None] | Non
     calls = {"n": 0, "spans": 0}
 
     def handler(messages, info):
+        if grader_fakes.is_context_check(info):
+            return grader_fakes.check_reply(messages, info)
         if grader_fakes.is_span_check(info):
             calls["spans"] += 1
             return grader_fakes.reply(info, grader_fakes.span_verdicts(messages))
@@ -523,7 +527,12 @@ def test_an_oversized_answer_is_refused_before_any_model_call(monkeypatch, caplo
     assert at_limit.unavailable is False and at_limit.refused is None
     assert over.refused == "too_long" and over.unavailable is True and over.all_yes is False
     # the answer at the limit is graded: its credit costs one span check (round a33)
-    assert calls["n"] == 1 and [row["task"] for row in rows] == ["grader", "grader_second"]
+    # and one context check (the A33 finish), both on grader_second
+    assert calls["n"] == 1 and [row["task"] for row in rows] == [
+        "grader",
+        "grader_second",
+        "grader_second",
+    ]
     [(event_type, kw)] = events
     assert event_type == "learn.answer_refused" and kw["payload"]["reason"] == "too_long"
     assert kw["payload"]["answer_chars"] == GRADER_ANSWER_MAX_CHARS + 1

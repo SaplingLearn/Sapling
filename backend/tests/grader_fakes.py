@@ -15,6 +15,8 @@ labels the items afresh). For each item it credits it quotes the whole student
 answer as its support, unless the payload scripts `support` (`"r1: <quote>"`).
 The span check agrees with every span unless a `judge(item_text, span)` says no,
 and reports every span asserted unless an `asserted(item_text, span)` says no.
+The context check (A33 finish) finds no span withdrawn unless a
+`withdrawn(span, whole_answer)` says so.
 """
 
 from __future__ import annotations
@@ -50,10 +52,38 @@ def quoted_answer(text: str) -> str:
     return "\n".join(line[2:] for line in text.splitlines() if line.startswith("> "))
 
 
+def _properties(info) -> dict:
+    return (info.output_tools[0].parameters_json_schema or {}).get("properties", {})
+
+
+def is_context_check(info) -> bool:
+    """A context check's output (`Withdrawals`, A33 finish) is `withdrawn` alone."""
+    return "withdrawn" in _properties(info)
+
+
 def is_span_check(info) -> bool:
-    """A span check's output (`SpanVerdicts`) has no grading report fields."""
-    schema = info.output_tools[0].parameters_json_schema or {}
-    return "addresses_grader" not in schema.get("properties", {})
+    """A span check's output (`SpanVerdicts`) has `asserted` and no report fields."""
+    return "asserted" in _properties(info)
+
+
+_CONTEXT_SPAN = re.compile(r"^SPAN (\S+):$", re.M)
+
+
+def context_spans(text: str) -> list[tuple[str, str]]:
+    """A context check's (label, span) pairs, in order."""
+    out: list[tuple[str, str]] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = _CONTEXT_SPAN.match(line)
+        if not m:
+            continue
+        span = []
+        for nxt in lines[i + 1 :]:
+            if not nxt.startswith("> "):
+                break
+            span.append(nxt[2:])
+        out.append((m.group(1), "\n".join(span)))
+    return out
 
 
 def _by_label(rid: str, labels: list[str]) -> str:
@@ -124,16 +154,48 @@ def reply(info, args: dict) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
 
 
+def context_verdicts(messages, withdrawn: Judge | None = None) -> dict:
+    """The context check's output: no span withdrawn unless `withdrawn(span,
+    whole_answer)` says so."""
+    withdrawn = withdrawn or (lambda span, answer: False)
+    text = message_text(messages)
+    answer = quoted_answer(text.split("END OF ANSWER.")[0])
+    return {
+        "withdrawn": [
+            f"{label}:{'yes' if withdrawn(span, answer) else 'no'}"
+            for label, span in context_spans(text)
+        ]
+    }
+
+
+def check_reply(messages, info, *, judge=None, asserted=None, withdrawn=None):
+    """The reply to a span check or a context check, or None for a grading run."""
+    if is_context_check(info):
+        return reply(info, context_verdicts(messages, withdrawn))
+    if is_span_check(info):
+        return reply(info, span_verdicts(messages, judge, asserted))
+    return None
+
+
 def scripted_grader(
-    outputs: list[dict], *, judge: Judge | None = None, asserted: Judge | None = None
+    outputs: list[dict],
+    *,
+    judge: Judge | None = None,
+    asserted: Judge | None = None,
+    withdrawn: Judge | None = None,
 ):
     """A FunctionModel emitting each grading payload in turn (the last one again
     once they run out) and answering every span check with `judge`. `calls["n"]`
     counts grading runs, `calls["spans"]` span checks, and `calls["span_messages"]`
     holds each span check's message."""
-    calls: dict = {"n": 0, "spans": 0, "span_messages": []}
+    calls: dict = {"n": 0, "spans": 0, "span_messages": [], "contexts": 0, "context_messages": []}
+    withdrawn = withdrawn or (lambda span, answer: False)
 
     def handler(messages, info):
+        if is_context_check(info):
+            calls["contexts"] += 1
+            calls["context_messages"].append(message_text(messages))
+            return reply(info, context_verdicts(messages, withdrawn))
         if is_span_check(info):
             calls["spans"] += 1
             calls["span_messages"].append(message_text(messages))

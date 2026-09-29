@@ -1,10 +1,11 @@
 {
+  "context_checks": [],
   "runs": [
     {
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student's answer describes recursion as a loop that ends on its own, which does not explain why a base case is necessary. Consider what happens in recursion if there is no condition to stop the calls.",
+      "feedback_hint": "The student describes recursion as a loop that ends on its own, which is incorrect. Recursion relies on a base case to terminate, preventing infinite calls and stack overflow.",
       "item_results": [
         "99548:no",
         "77096:no"

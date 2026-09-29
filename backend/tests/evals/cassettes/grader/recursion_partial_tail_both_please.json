@@ -1,27 +1,37 @@
 {
+  "context_checks": [
+    {
+      "withdrawn": [
+        "57192:no"
+      ]
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "Could you elaborate on what happens if the calls never end?",
+      "feedback_hint": "",
       "item_results": [
         "57192:yes",
-        "33074:no"
+        "33074:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "57192: It's the case where the function stops recursing."
+        "57192: It's the case where the function stops recursing.",
+        "33074: Both, please."
       ]
     }
   ],
   "span_checks": [
     {
       "asserted": [
-        "57192:yes"
+        "57192:yes",
+        "33074:no"
       ],
       "item_results": [
-        "57192:yes"
+        "57192:yes",
+        "33074:no"
       ]
     }
   ]

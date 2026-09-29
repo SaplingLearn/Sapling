@@ -1,10 +1,11 @@
 {
+  "context_checks": [],
   "runs": [
     {
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student believes the base case is for optimization, but it is essential for stopping the recursion to prevent infinite calls and stack overflow. Consider what happens if a recursive function never stops calling itself.",
+      "feedback_hint": "The student claims the base case is an optimization and that the answer is still correct without it. This contradicts the reference answer's assertion that the base case is essential for stopping recursion and preventing a stack overflow.",
       "item_results": [
         "27895:no",
         "93888:no"

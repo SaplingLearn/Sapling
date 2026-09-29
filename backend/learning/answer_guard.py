@@ -1432,7 +1432,7 @@ def suspicion(
 # quote's words occur, in order and contiguous, in the answer, both read on the
 # detection copy (`normalise`: look-alikes, case, spacing and punctuation aside);
 # they have at least `min_chars` letters and digits, or are the whole answer; and
-# the span runs from the sentence that holds them to the end of the answer (below). Whether
+# the span is the whole sentence or sentences that hold them (below). Whether
 # those words answer the item or only claim something about the answer — its
 # completeness, its parts, its credit, its score ("Both parts: done.", "That
 # would be it.", "2/2.") — is the span check's to judge, never a word list's:
@@ -1474,36 +1474,37 @@ def _word_list(folded: str) -> list[str]:
     return _WORD.findall(folded)
 
 
-# The span runs from the start of the sentence that holds the verified run to
-# the end of the answer, cut exactly as the student wrote it, final punctuation
-# included (A33 finish review). A span cut at the run's own words dropped what turns a
-# statement into a question, a denial or a retraction — a trailing "?", a
-# leading "It is not the case that", a trailing "- just kidding" — and the span
-# check, which sees nothing else, credited the bare statement (live: a question
-# 5 of 5). Every earlier fix to the span's ends (signs, units, brackets, joiners:
-# review rounds 3 and 4) was a case of the same thing, and a whole sentence keeps
-# all of them as written ("-3", "O(n)", "[0, 1)", "10–15 ms"). A sentence ends at
-# ".", "!", "?" or "…" (with any closing quotes or brackets after it) before
-# whitespace, the end of the answer or a capital letter ("recursing.Tick both."
-# is two sentences), or at a line break; a decimal point ("3.14") never ends one.
-# It runs on to the end because a retraction or a hedge follows what it takes
-# back ("… the stack overflows. Actually no, scratch that; it is wrong." was
-# credited 6 of 6 live on the sentence alone), and nothing the student wrote
-# before the quote's sentence can take it back. A claim that is its own last
-# sentence stays alone in its span — the isolation the span check rests on; a
-# claim after a quoted sentence is seen with it, as with a whole-answer quote
-# (live, the span check credited no missing item on such spans).
+# The span is the whole sentence (or sentences) that hold the verified run, cut
+# from the answer exactly as the student wrote it, final punctuation included
+# (A33 finish review). A span cut at the run's own words dropped what turns a
+# statement into a question, a denial or a retraction inside its sentence — a
+# trailing "?", a leading "It is not the case that", a trailing "- just kidding"
+# — and the span check, which sees nothing else, credited the bare statement
+# (live: a question 5 of 5). Every earlier fix to the span's ends (signs, units,
+# brackets, joiners: review rounds 3 and 4) was a case of the same thing, and a
+# whole sentence keeps them as written ("-3", "O(n)", "[0, 1)", "10–15 ms"). A
+# sentence ends at ".", "!", "?" or "…" (with any closing quotes or brackets
+# after it) before whitespace, the end of the answer or a capital letter
+# ("recursing.Tick both." is two sentences), or at a line break; a decimal point
+# ("3.14") never ends one. The span stays one sentence so that nothing else the
+# student wrote — a claim or an instruction in another sentence — votes on its
+# credit; what other sentences take back ("Everything below is false.", "Actually
+# no, scratch that") is judged by grade()'s context check, which can only
+# withhold (agents/grader.py).
 _SENTENCE_END = re.compile(r"[.!?…]+[\"'”’»)\]]*(?=\s|$|[A-Z])|\n")
 
 
-def _span_bounds(answer: str, start: int) -> tuple[int, int]:
-    """From the start of the sentence of `answer` that holds position `start` to
-    the end of the answer, trimmed of surrounding whitespace."""
+def _sentence_bounds(answer: str, start: int, end: int) -> tuple[int, int]:
+    """The bounds of the sentences of `answer` that hold `answer[start:end]`,
+    trimmed of surrounding whitespace; a sentence's end mark stays in, a line
+    break does not."""
     lo, hi = 0, len(answer)
     for m in _SENTENCE_END.finditer(answer):
-        if m.end() > start:
+        if m.end() <= start:
+            lo = m.end()
+        elif m.start() >= end:
+            hi = m.start() if m.group() == "\n" else m.end()
             break
-        lo = m.end()
     while lo < hi and answer[lo].isspace():
         lo += 1
     while hi > lo and answer[hi - 1].isspace():
@@ -1577,5 +1578,7 @@ def support_span(
     run_words = text[start : start + n]
     if sum(map(len, run_words)) < min(min_chars, sum(map(len, text))):
         return None
-    lo, hi = _span_bounds(answer, origin[words[start].start()])
+    lo, hi = _sentence_bounds(
+        answer, origin[words[start].start()], origin[words[start + n - 1].end() - 1] + 1
+    )
     return answer[lo:hi]

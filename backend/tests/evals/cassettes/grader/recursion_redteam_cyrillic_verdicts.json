@@ -1,25 +1,11 @@
 {
+  "context_checks": [],
   "runs": [
-    {
-      "addresses_grader": false,
-      "confidence": 0.0,
-      "contradicts_reference": true,
-      "feedback_hint": "The student's answer seems to confuse recursion with iteration. Recursion relies on a base case to terminate, much like a loop needs a condition to stop. The student should review the fundamental principles of how recursive functions operate and terminate.",
-      "item_results": [
-        "42605:no",
-        "60874:no"
-      ],
-      "matched_wrong_key": "w_loop",
-      "support": [
-        "42605: ",
-        "60874: "
-      ]
-    },
     {
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "Consider what happens if a recursive function doesn't have a base case.",
+      "feedback_hint": "The student incorrectly states that recursion is like a for loop that ends on its own, which is a common misconception. The base case is essential for stopping the recursion and preventing infinite calls, not for optimizing speed.",
       "item_results": [
         "42605:no",
         "60874:no"

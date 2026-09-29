@@ -1,17 +1,25 @@
 {
+  "context_checks": [
+    {
+      "withdrawn": [
+        "27033:no"
+      ]
+    }
+  ],
   "runs": [
     {
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "Could you elaborate on what happens when the recursion doesn't stop?",
+      "feedback_hint": "You clearly explained both the purpose of the base case and the consequence of not having one. Well done!",
       "item_results": [
         "27033:yes",
-        "93675:no"
+        "93675:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "27033: It's the case where the function stops recursing."
+        "27033: It's the case where the function stops recursing.",
+        "93675: without it calls never end / stack overflows"
       ]
     }
   ],
