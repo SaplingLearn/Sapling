@@ -87,6 +87,39 @@ class LoopCheckNextBody(BaseModel):
     user_id: str
 
 
+# PKG-08 (probe + plan; spec §9). No course_id: the course is the session's
+# (routes/learn_loop.py::_session_scope), never the client's.
+
+
+class ProbeNextBody(BaseModel):
+    """PKG-08 /api/learn/loop/probe/next — the next probe item (no model call)."""
+    session_id: str
+    user_id: str
+
+
+class ProbeAnswerBody(BaseModel):
+    """PKG-08 /api/learn/loop/probe/answer — an explicit answer to the posed probe
+    item, graded through grade_answer (A16). The answer fields are PKG-07's
+    LoopCheckAnswerBody's, so the client sends one shape to every loop check;
+    above GRADER_ANSWER_MAX_CHARS the body is a 422 and the item stays posed
+    (A33: padding is never a skip)."""
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
+    idk: bool = False
+
+
+class PlanApproveBody(BaseModel):
+    """PKG-08 /api/learn/loop/plan/approve — the student's subset of the proposed
+    plan, in the order they want it (a reorder is theirs to make)."""
+    session_id: str
+    user_id: str
+    concept_ids: List[str] = Field(..., min_length=1)
+
+
 class ReviewAnswerBody(BaseModel):
     """PKG-12 /api/learn/loop/review/answer — one answer to a served review item
     (spec §3.2, A16, A22, A33). The item, its node and its reference are re-loaded

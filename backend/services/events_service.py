@@ -99,6 +99,11 @@ decision.fallback             error     decision, from_backend, to_backend, reas
                                         / both_failed / budget = the AI budget cap refused the
                                         call; PKG-15 adds the Jev error enums), request_id
 ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
+learn.probe_done              usage     items, misses (not-correct incl. idk), novice_floor,
+                                        skills (node ids) — the probe phase finished (learning
+                                        loop PKG-08, spec §6)
+learn.plan_approved           usage     concept_ids, n_reviews_first — the student approved a
+                                        plan (PKG-08, spec §6)
 review.session_started        usage     session_id, offering_id (a daily review session row; never
                                         session.started — it is not a tutor session)
 review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
@@ -249,6 +254,11 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # most once per user/scope/level/day, but for many students at once near a price change;
     # the /errors feed must not drown in it.
     "ai.budget_capped",
+    # PKG-08: probe finished (items/misses/novice_floor/skills) and the
+    # student approved a plan (concept_ids/n_reviews_first). Emit coverage
+    # lives in test_learning_probe_planner.py.
+    "learn.probe_done",
+    "learn.plan_approved",
     # Learning loop PKG-12: the daily review queue. `served` once per kind in
     # a built queue (n = how many), `graded` per answer. Reviews are evidence,
     # so `graded` is the countable twin of the node_mastery_events row.

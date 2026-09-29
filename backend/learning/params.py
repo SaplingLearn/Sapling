@@ -228,6 +228,18 @@ LEAK_PROVENANCE_MIN_TOKENS = 3
 LEAK_POSITION_WINDOW_CHARS = 60
 CHECK_ITEM_FORMATS = ("free", "teachback", "mc_reason")
 CHECK_ITEM_DIFFICULTIES = (1, 2, 3)
+# PKG-08 † — engineering choices with no validated cut-point (spec §13 A6 values).
+# Difficulty shifts p_known before the §3.1 observation likelihood; LLM-generated
+# items carry no calibrated parameters (research §Probe, last sentence).
+PROBE_DIFFICULTY_SHIFT: dict[int, float] = {1: 0.15, 2: 0.0, 3: -0.15}
+# "repeated idk" (§3.3) given a number.
+NOVICE_FLOOR_IDK = 2
+# Derived, so no literal repeats the spec's "difficulty 1" or the skill count.
+PROBE_EASIEST_DIFFICULTY = min(CHECK_ITEM_DIFFICULTIES)
+PROBE_MAX_SKILLS = PROBE_SESSION_CAP // PROBE_ITEMS_PER_SKILL_MIN
+# PKG-08 † — per-user calls a minute to /probe/next and GET /plan, the two
+# no-model loop routes that write state (services/request_limits sliding window).
+PROBE_PLAN_READS_PER_MIN = 30
 CHECK_ITEM_MIN_RUBRIC = 2
 CHECK_ITEM_MIN_WRONG = 1
 MISCONCEPTION_ROLLUP_MIN_USERS = 5
