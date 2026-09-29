@@ -525,6 +525,7 @@ async def stream_structured_turn(
     on_usage: Callable[[Any], None] | None = None,
     request_id: str = "",
     transform: Callable[[str], str] | None = None,
+    transform_final: Callable[[str], str] | None = None,
     render_final: Callable[[Any], str] | None = None,
     render_partial: Callable[[Any], str] | None = None,
 ) -> AsyncIterator[SaplingEvent]:
@@ -561,6 +562,9 @@ async def stream_structured_turn(
     `on_usage(run.result)` runs once after the run completes, before
     on_complete (guarded, as in stream_agent_turn).
 
+    `transform_final` (default: `transform`) makes the FINAL text instead —
+    a caller whose partial filter hides text (the loop's leak cut) may serve a
+    replacement for the final one (the loop's ladder line, fix round 2).
     `render_final` / `render_partial` default to learning.turn_shape's
     `render_turn` / `render_partial`, imported here lazily so the legacy
     stream never loads learning/ (PKG-07 review round 3, m6).
@@ -675,7 +679,7 @@ async def stream_structured_turn(
     if exc is None:
         try:
             raw_reply = render_final(final)
-            reply = xf(raw_reply)
+            reply = (transform_final or xf)(raw_reply)
         except Exception as render_exc:
             exc = render_exc
 

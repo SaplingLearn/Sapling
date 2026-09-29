@@ -88,7 +88,7 @@ from learning.checks import CheckItem, posttest_reserve_hash, select_item
 from learning.evidence import flush_pending
 from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
-from learning.leak import detect_leak, strip_leak
+from learning.leak import detect_leak, leak_spans
 from learning.learner_state import LearnerState, read_states
 from learning.loop_state_store import (
     LoopStateConflict,
@@ -629,25 +629,14 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
         assembled=turn.assembled, run_kwargs=turn.run_kwargs, messages=messages
     )
     ai_budget.count_tutor_call(turn.user_id)
-    usage = RunUsage()
     with turn.agent.override(tools=[], toolsets=[]):
-        try:
-            result = await turn.agent.run(plan.prompt, usage=usage, **plan.run_kwargs)
-        finally:
-            _count_extra_requests(turn.user_id, usage)
         result = record_agent_usage(
-            result, feature=plan.feature, task=turn.slot, user_id=turn.user_id
+            await turn.agent.run(plan.prompt, **plan.run_kwargs),
+            feature=plan.feature,
+            task=turn.slot,
+            user_id=turn.user_id,
         )
     return render_turn(result.output)
-
-
-def _count_extra_requests(user_id: str, usage) -> None:
-    """m2 (review round 3): count_tutor_call counts every model REQUEST, not
-    every run. The run site counts one before the run (so the cap binds before
-    any spend); this counts the rest after it — tool rounds and output
-    retries — from the run's usage (a failed run's too)."""
-    for _ in range(max(0, int(getattr(usage, "requests", 0) or 0) - 1)):
-        ai_budget.count_tutor_call(user_id)
 
 
 # ── The served text (route + tests/evals/loop_tutor.py) ────────────────────
@@ -670,6 +659,38 @@ def released_lead(reference: str) -> str:
     return _FEEDBACK_ANSWER_LEAD + (reference or "").strip() + FIELD_JOIN
 
 
+#: Fix round 2 (N1): what a turn whose model text still leaks after its one
+#: retry is served — a fixed, student-facing line per rung (never the
+#: model's text with the answer masked in place: the mask's position is itself
+#: the signal). Rung by rung it adds no content above the rung's intent.
+LADDER_FALLBACK_LINES: dict[int, str] = {
+    0: "What will you do next on this item?",
+    1: "What is the first thing you need to figure out here?",
+    2: "What does your course material say about the idea behind this item?",
+    3: "What is the very next step you would take on this item?",
+    4: "Which step of the item would you try next?",
+    5: "Which part of the item would you fill in next?",
+}
+
+
+def _item_check_kwargs(
+    *,
+    reference: str,
+    final_answer: str,
+    canonical_answer: str | None,
+    correct_option: str | None,
+    option_text: str | None,
+) -> dict:
+    return {
+        "reference": reference,
+        "final_answer": final_answer,
+        "canonical_answer": canonical_answer,
+        "correct_option": correct_option,
+        "option_text": option_text,
+        "strict": True,
+    }
+
+
 def served_model_text(
     reply: str,
     *,
@@ -680,25 +701,62 @@ def served_model_text(
     correct_option: str | None = None,
     option_text: str | None = None,
     answer_released: bool = False,
+    given: str = "",
 ):
     """What the student is served for model-written `reply` against the active
-    item: the reply, or — when `detect_leak` finds the item's answer at
-    `leak_rung` — `strip_leak`'s redaction; with the released answer's lead
-    (`released_lead`) in front when the answer is released. The check is STRICT
-    (review round 3, C1(c)): number words, the correct option's text and letter
-    in any context, and inflections of a word answer count. Returns
-    (text, LeakVerdict)."""
-    item = {
-        "reference": reference,
-        "final_answer": final_answer,
-        "canonical_answer": canonical_answer,
-        "correct_option": correct_option,
-        "option_text": option_text,
-        "strict": True,
-    }
-    verdict = detect_leak(emitted=reply, rung=leak_rung, **item)
-    text = strip_leak(emitted=reply, **item) if verdict.leaked else reply
+    item. The check is STRICT and in SERVED MODE (`detect_leak(given=…)`,
+    fix round 2): a copy of text the model was `given` this turn is no leak,
+    and number words / standalone letters count only in answer position. A
+    reply that still leaks is NEVER masked in place (N1): it is replaced by the
+    rung's LADDER_FALLBACK_LINES line (the model already had its one leak
+    retry, `deps.loop_leak`). The released answer's lead (`released_lead`)
+    goes in front when the answer is released. Returns (text, LeakVerdict)."""
+    item = _item_check_kwargs(
+        reference=reference,
+        final_answer=final_answer,
+        canonical_answer=canonical_answer,
+        correct_option=correct_option,
+        option_text=option_text,
+    )
+    verdict = detect_leak(emitted=reply, rung=leak_rung, given=given, **item)
+    text = LADDER_FALLBACK_LINES[int(Rung(leak_rung))] if verdict.leaked else reply
     return (released_lead(reference) + text if answer_released else text), verdict
+
+
+class _LeakGuard:
+    """`deps.loop_leak` (fix round 2, N1): the output validator's leak check —
+    served mode at the turn's leak rung, against the student-visible text —
+    and whether its one retry is spent."""
+
+    def __init__(self, check: Callable[[str], bool]):
+        self._check = check
+        self.retried = False
+
+    def leaks(self, text: str) -> bool:
+        return self._check(text)
+
+
+def _visible_text(history: list, *, item_prompt: str, message: str) -> str:
+    """The provenance of the served leak check (fix round 2, N1): only what the
+    STUDENT can already see — the item as posed, their own message, and the
+    conversation as it was served (user rows and served tutor turns). Never
+    the context the model alone reads: a source passage or a graph block can
+    state the answer (the deterministic H2 payload is leak-checked against it
+    for exactly that reason), so copying one is a leak, not a copy."""
+    parts = [item_prompt or "", message or ""]
+    for m in history:
+        for p in getattr(m, "parts", []):
+            if isinstance(p, (UserPromptPart, TextPart)) and isinstance(p.content, str):
+                parts.append(p.content)
+    return "\n".join(parts)
+
+
+def _cut_before_leak(text: str, spans: list) -> str:
+    """The streamed text up to the start of the sentence holding the first
+    leak — never a masked span (N1). Sentence ends: ". ", "? ", "! ", a newline."""
+    start = spans[0][0]
+    cut = max(text.rfind(sep, 0, start) + len(sep) for sep in (". ", "? ", "! ", "\n"))
+    return text[: max(cut, 0)].rstrip()
 
 
 def option_text(item) -> str | None:
@@ -808,6 +866,7 @@ class _LoopTurn:
             independent_s=_seconds_since(self.step.first_shown_at, _now_s()),
         )
         self.planned = None
+        self.given = ""
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
 
@@ -875,6 +934,7 @@ class _LoopTurn:
         if withhold:
             context = context._replace(rag_k=0, source_chunks=0, tool_choice="none")
         nonce = new_nonce()
+        history = self.history()
         self.prefix = phase_prefix(
             phase=self.phase,
             band=self.band,
@@ -890,7 +950,7 @@ class _LoopTurn:
             course_id=self.course_id,
             user_message=self.message,
             message_history=_guard_history(
-                self.history(), nonce=nonce, withheld=self.item.prompt if withhold else None
+                history, nonce=nonce, withheld=self.item.prompt if withhold else None
             ),
             request_id=self.request_id,
             prefix=self.prefix,
@@ -904,6 +964,13 @@ class _LoopTurn:
             instruction=self.instruction,
             nonce=nonce,
         )
+        # N1: the provenance the served leak check reads, and the validator's guard
+        self.given = _visible_text(
+            history,
+            item_prompt=self.item.prompt if self.item is not None else "",
+            message="" if self.trusted else self.message,
+        )
+        self.deps.loop_leak = self._leak_guard()
 
     def _tier_phase(self) -> str:
         """PKG-06's TurnPhase: the feedback verdict rides the phase value."""
@@ -979,24 +1046,53 @@ class _LoopTurn:
             answer_released=self.answer_released,
         )
 
-    def _item_leak_kwargs(self) -> dict:
+    def _item_answer(self) -> dict:
         """The active item's answer forms (A34), for an mc_reason item its
-        correct option letter (A38 06 gap) and text (strict mode, C1(c)), and
-        whether the answer is released (its lead, m1)."""
+        correct option letter (A38 06 gap) and text (strict mode, C1(c))."""
         return {
             "reference": self.item.reference_answer,
             "final_answer": self.item.final_answer,
             "canonical_answer": self.item.canonical_answer,
             "correct_option": self.item.correct_option,
             "option_text": option_text(self.item),
-            "answer_released": self.answer_released,
         }
 
+    def _item_leak_kwargs(self) -> dict:
+        """served_model_text's item keywords: the answer forms, whether the
+        answer is released (its lead, m1) and the text the model was given."""
+        return {**self._item_answer(), "answer_released": self.answer_released, "given": self.given}
+
+    def _leak_guard(self) -> _LeakGuard | None:
+        """deps.loop_leak for an unreleased active item (fix round 2, N1)."""
+        if self.item is None or self.answer_released:
+            return None
+        rung, answer = self._leak_rung(), _item_check_kwargs(**self._item_answer())
+
+        given = self.given
+
+        def check(text: str) -> bool:
+            return detect_leak(emitted=text, rung=rung, given=given, **answer).leaked
+
+        return _LeakGuard(check)
+
     def redact(self, text: str) -> str:
-        """stream_structured_turn's `transform`: the streamed (cumulative) text,
-        leak-stripped (strict) BEFORE any token is sent, behind the released
-        answer's lead when there is one. No event — `complete` records the one
-        zpd.leak for the turn."""
+        """stream_structured_turn's `transform` on the streamed (cumulative)
+        text, BEFORE any token is sent: text that states the answer is never
+        shown, and never masked in place (N1) — the stream stops before the
+        sentence that holds it (the output validator's retry, or the final
+        ladder line, replaces it). The released answer's lead goes in front."""
+        if self.tier == "none" or self.item is None:
+            return text
+        if self.answer_released:
+            return released_lead(self.item.reference_answer) + text
+        spans = leak_spans(
+            emitted=text, given=self.given, **_item_check_kwargs(**self._item_answer())
+        )
+        return _cut_before_leak(text, spans) if spans else text
+
+    def serve(self, text: str) -> str:
+        """stream_structured_turn's `transform_final`: the served text of the
+        final render (`served_model_text`)."""
         if self.tier == "none" or self.item is None:
             return text
         served, _ = served_model_text(text, leak_rung=self._leak_rung(), **self._item_leak_kwargs())
@@ -1397,9 +1493,10 @@ def _ms(seconds: float) -> int:
 
 async def _run_turn_json(turn: _LoopTurn) -> dict:
     """The JSON run site (chat, action, check-answer turns, opener): budget →
-    plan → deterministic text or ONE model run → complete. The run's first
-    request is counted (A39) right before it and the rest after it (m2). A
-    tool run that ends without a structured turn (#646; UnexpectedModelBehavior
+    plan → deterministic text or ONE model run → complete. The run is
+    counted (A39: once per model RUN; its tool round and output retries are
+    uncharged but bounded by LOOP_LIMITS / LOOP_OUTPUT_RETRIES) right before
+    it. A tool run that ends without a structured turn (#646; UnexpectedModelBehavior
     — the run is still billed) is finished by the tool-less continuation.
     Persist ordering mirrors routes.learn._chat_turn_json."""
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
@@ -1420,8 +1517,6 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
         else:
             turn.record_usage(result)
             reply = render_turn(result.output)
-        finally:
-            _count_extra_requests(turn.user_id, usage)
     if reply is None:
         reply = await _continue_turn(turn, list(messages))
     return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
@@ -1502,22 +1597,11 @@ async def _stream_turn(turn: _LoopTurn):
         )
         return
     usage = RunUsage()
-    counted: list = []
-
-    def count_rest() -> None:
-        if not counted:  # once per streamed run, whichever way it ends
-            counted.append(True)
-            _count_extra_requests(turn.user_id, usage)
-
-    def on_usage(result) -> None:
-        count_rest()
-        turn.record_usage(result)
 
     async def fallback(messages: list) -> dict:
         """Rung 1 (m2): the SAME planned turn — no second plan(), no second
         retrieval — billed for the failed streamed run and continued from its
         messages (tool results) by the tool-less continuation."""
-        count_rest()
         turn.record_usage(UnfinishedRun(usage))
         reply = await _continue_turn(turn, messages)
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
@@ -1530,9 +1614,10 @@ async def _stream_turn(turn: _LoopTurn):
         deps=turn.deps,
         on_complete=turn.complete,
         nonstream_fallback=fallback,
-        on_usage=on_usage,
+        on_usage=turn.record_usage,
         request_id=turn.request_id,
         transform=turn.redact,
+        transform_final=turn.serve,
     ):
         if ev.type == "done":
             for extra_ev in _pre_done_events(ev.data or {}):

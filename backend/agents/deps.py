@@ -73,6 +73,10 @@ class SaplingDeps:
             output validator judges the FINAL structured turn against it;
             None → the loosest unreleased limits. Typed Any so agents/deps.py
             stays free of learning/ imports.
+        loop_leak: The loop route's leak guard for this turn (PKG-07 fix
+            round 2, N1): `.leaks(text) -> bool` and `.retried`. The
+            output validator re-runs a leaking turn ONCE with the problem
+            named; None → no leak check (no active item, or released).
     """
 
     user_id: str
@@ -89,3 +93,4 @@ class SaplingDeps:
     loop_state: Any = None
     pending_evidence: list = field(default_factory=list)
     loop_turn: Any = None
+    loop_leak: Any = None

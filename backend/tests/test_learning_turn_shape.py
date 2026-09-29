@@ -318,3 +318,36 @@ def test_validate_turn_retries_invented_math_below_h4_only():
     released = turn_limits("feedback", 3, True)
     assert not any(p.startswith("invented_math") for p in validate_turn(turn, released, source=""))
     assert validate_turn(turn, turn_limits("teach", 3, False)) == [], "no source: not judged"
+
+
+def test_a_coefficient_counts_only_next_to_a_math_operator():
+    """Fix round 2: "3d printing" and "5s" are prose, "2x + 3" is math."""
+    from learning.turn_shape import invented_math
+
+    prose = {
+        "key_idea": "Think of 3d printing.",
+        "body": "It takes 5s to load.",
+        "question": "Why?",
+    }
+    assert invented_math(prose, "") == []
+    math_turn = {"key_idea": "Take 2x + 3.", "body": "", "question": "Why?"}
+    assert invented_math(math_turn, "") == ["2x"]
+
+
+def test_the_tutors_own_earlier_turns_are_given_text():
+    """Fix round 2: restating an expression the tutor itself served in an
+    earlier turn is no invention (the validator's provenance includes the
+    history's responses, never this run's own attempts)."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    from agents.loop_tutor import _given_text
+
+    history = [
+        ModelRequest(parts=[UserPromptPart("teach me")]),
+        ModelResponse(parts=[TextPart("Key idea: x^3 becomes 3x^2.")]),
+        ModelRequest(parts=[UserPromptPart("why?")]),
+        ModelResponse(parts=[TextPart("this run's own first attempt: 7x^6")]),
+    ]
+    given = _given_text(history)
+    assert "3x^2" in given and "teach me" in given and "why?" in given
+    assert "7x^6" not in given

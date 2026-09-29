@@ -202,14 +202,29 @@ _LATEX = re.compile(r"\\[A-Za-z]+|\\[(\[]|\$[^$\n]+\$")
 # ("H2O") are not expressions of this kind.
 _MATH_RUN = re.compile(r"[A-Za-z0-9^.]+")
 _COEFFICIENT = re.compile(r"[0-9]+(?:\.[0-9]+)?[a-z]")
+# A coefficient is math only beside an operator ("2x + 3", "(2x)"), never in
+# prose ("3d printing", "5s to load") — fix round 2.
+_OPERATORS = frozenset("+-*/=()<>^")
 
 
-def _math_atoms(text: str) -> list[str]:
+def _beside_operator(text: str, start: int, end: int) -> bool:
+    before = text[:start].rstrip()
+    after = text[end:].lstrip()
+    return bool((before and before[-1] in _OPERATORS) or (after and after[0] in _OPERATORS))
+
+
+def _math_atoms(text: str, *, in_context: bool = True) -> list[str]:
+    """Powers with a digit, and — beside an operator (`in_context`; every one
+    when reading the given text, whose copies are all allowed) — coefficients."""
     atoms: list[str] = []
-    for m in _MATH_RUN.finditer(text or ""):
+    text = text or ""
+    for m in _MATH_RUN.finditer(text):
         run = m.group().strip(".")
         power = "^" in run and any(c.isdigit() for c in run)
-        if (power or _COEFFICIENT.fullmatch(run)) and run not in atoms:
+        coefficient = bool(_COEFFICIENT.fullmatch(run)) and (
+            not in_context or _beside_operator(text, m.start(), m.end())
+        )
+        if (power or coefficient) and run not in atoms:
             atoms.append(run)
     return atoms
 
@@ -218,7 +233,7 @@ def invented_math(out: Mapping[str, str], source: str) -> list[str]:
     """The math expressions in the turn that `source` (everything the model was
     given: the prompt, the history, tool results) never wrote — an example or
     exercise of the model's own. Structural provenance, no word list."""
-    given = set(_math_atoms(source))
+    given = set(_math_atoms(source, in_context=False))
     text = " ".join((out.get(k) or "") for k in TURN_FIELDS)
     return [a for a in _math_atoms(text) if a not in given]
 

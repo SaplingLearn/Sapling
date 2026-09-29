@@ -476,7 +476,11 @@ def test_loop_eval_serves_through_the_production_path():
     case = next(c for c in mod.CASES if c.name == "hint_develop_h1_pump")
     raw, served, turn = mod.served_texts(out, case.inputs, case.metadata)
     assert raw == render_turn(out)
-    assert WITHHELD in served and "returns 1" not in served and turn == served
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
+    assert served == LADDER_FALLBACK_LINES[1] and WITHHELD not in served and turn == served, (
+        "fix round 2 (N1): a leak is the rung's ladder line, never masked"
+    )
     released = next(c for c in mod.CASES if c.metadata.get("answer_released"))
     raw, served, turn = mod.served_texts(out, released.inputs, released.metadata)
     assert turn == raw == render_turn(out), "a released answer is served at H6, unstripped"

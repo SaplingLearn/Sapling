@@ -292,7 +292,8 @@ def seams():
         ns.context_policy = p("policy.context_policy", wraps=policy.context_policy)
         ns.ai_budget = p("ai_budget")
         ns.detect = p("detect_leak", wraps=leak.detect_leak)
-        ns.strip = p("strip_leak", side_effect=lambda **kw: "STRIPPED")
+        # fix round 2 (N1): the served path never masks in place (no strip_leak)
+        ns.strip = MagicMock(name="strip_leak_unused")
         ns.zpd = p("zpd_events")
         ns.save_msg = p("save_message")
         ns.events = p("events_service")
@@ -775,7 +776,8 @@ def _fake_stream(reply="Key idea: the base case. What input stops it?"):
     transform(render); on_complete gets the untransformed render."""
 
     async def fake(**kwargs):
-        shown = (kwargs.get("transform") or (lambda t: t))(reply)
+        xf = kwargs.get("transform") or (lambda t: t)
+        shown = (kwargs.get("transform_final") or xf)(reply)
         yield SaplingEvent(type="status", step="start", message="Starting.")
         yield SaplingEvent(type="token", step="reply", message="", data={"delta": shown})
         extra = kwargs["on_complete"](reply, {}, []) or {}
@@ -917,7 +919,11 @@ def test_soft_level_reaches_tier_and_context_policy(gate_on, seams):
     seams.tier_run_kwargs.assert_called_once_with("standard", tool_choice="none")
 
 
-def test_leak_path_on_a_model_turn_redacts_persists_stripped_and_emits(gate_on, seams):
+def test_leak_path_on_a_model_turn_serves_the_ladder_line_persists_it_and_emits(gate_on, seams):
+    """Fix round 2 (N1): a reply that still leaks is never masked in place —
+    the rung's ladder line is served, persisted and streamed instead."""
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
     seams.store["doc"] = _graded("correct")
     leaky = "The base case returns 1 when n equals 0 without a recursive call. Done?"
     with patch("routes.learn_loop.stream_structured_turn", _fake_stream(leaky)):
@@ -927,7 +933,7 @@ def test_leak_path_on_a_model_turn_redacts_persists_stripped_and_emits(gate_on, 
         )
     done = _sse_events(r.text)[-1]["data"]
     assert (
-        done["reply"] == "STRIPPED"
+        done["reply"] == LADDER_FALLBACK_LINES[3]
         and done["leak_redacted"] is True
         and done["phase"] == "feedback"
     )
@@ -935,9 +941,8 @@ def test_leak_path_on_a_model_turn_redacts_persists_stripped_and_emits(gate_on, 
     assert kw["reference"] == ITEM.reference_answer and kw["emitted"] == leaky
     item_kw = {"final_answer": ITEM.final_answer, "canonical_answer": None, "correct_option": None}
     assert {k: kw[k] for k in item_kw} == item_kw
-    strip_kw = seams.strip.call_args.kwargs
-    assert strip_kw["reference"] == ITEM.reference_answer
-    assert {k: strip_kw[k] for k in item_kw} == item_kw
+    assert kw["strict"] is True and isinstance(kw["given"], str), "served mode"
+    seams.strip.assert_not_called()
     assert kw["rung"] == Rung.H3, "a correct verdict does not release the answer"
     tokens = [e for e in _sse_events(r.text) if e["type"] == "token"]
     assert tokens and all(ITEM.reference_answer not in e["data"]["delta"] for e in tokens), (
@@ -951,7 +956,7 @@ def test_leak_path_on_a_model_turn_redacts_persists_stripped_and_emits(gate_on, 
         and leak_kw["user_id"] == "u1"
     )
     assistant_row = [c for c in seams.save_msg.call_args_list if c.args[1] == "assistant"][0]
-    assert assistant_row.args[2] == "STRIPPED", "the stripped text is what persists"
+    assert assistant_row.args[2] == LADDER_FALLBACK_LINES[3], "the served line is what persists"
     assert ITEM.reference_answer not in json.dumps(seams.zpd.emit_zpd_leak.call_args.kwargs)
 
 
@@ -1248,9 +1253,7 @@ def test_the_real_agent_after_a_tool_round_answers_tool_less_in_one_run(gate_on,
     assert r.status_code == 200, r.text
     assert r.json()["reply"] == render_turn(_TOOL_TURN)
     assert calls == [(True, False), (False, True)], "tool round, then a tool-less answer"
-    assert seams.ai_budget.count_tutor_call.call_count == 2, (
-        "one run, two requests, two counts (m2)"
-    )
+    assert seams.ai_budget.count_tutor_call.call_count == 1, "one model run, one count (A39)"
 
 
 def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_turn(gate_on, seams):
@@ -1271,7 +1274,7 @@ def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_tu
     assert r.status_code == 200, r.text
     assert r.json()["reply"] == render_turn(_TOOL_TURN)
     assert calls[0] == (True, False) and calls[-1] == (False, True), "rescued from the tool result"
-    assert seams.ai_budget.count_tutor_call.call_count == len(calls), "every request counts (m2)"
+    assert seams.ai_budget.count_tutor_call.call_count == 2, "two model runs, two counts (A39)"
 
 
 def test_loop_continuation_is_tool_less_budget_checked_and_capped():
@@ -1887,9 +1890,11 @@ def test_an_mc_reason_reply_is_leak_checked_with_its_correct_option(gate_on, sea
             json={"session_id": "s1", "user_id": "u1", "message": "ok"},
         )
     assert r.status_code == 200
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
     assert seams.detect.call_args.kwargs["correct_option"] == "B"
-    assert seams.strip.call_args.kwargs["correct_option"] == "B"
     assert seams.zpd.emit_zpd_leak.call_args.kwargs["detector"] == "option"
+    assert _sse_events(r.text)[-1]["data"]["reply"] in LADDER_FALLBACK_LINES.values()
 
 
 # ── The structured turn (PKG-07 unblock S1, lane A wiring) ────────────────
@@ -1955,9 +1960,12 @@ def test_the_stream_is_the_structured_stream_with_a_leak_strip_transform(gate_on
             "/api/learn/loop/chat/stream",
             json={"session_id": "s1", "user_id": "u1", "message": "ok"},
         )
-    xf = got["transform"]
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
+    xf, final = got["transform"], got["transform_final"]
     assert xf("Fine. What next?") == "Fine. What next?", "clean text passes untouched"
-    assert xf(ITEM.reference_answer) == "STRIPPED", "a leak is stripped before any token"
+    assert xf("Fine. " + ITEM.reference_answer) == "Fine.", "the stream stops before a leak"
+    assert final(ITEM.reference_answer) == LADDER_FALLBACK_LINES[3], "never masked in place"
     assert got["run_kwargs"]["deps"] is got["deps"] and got["deps"].loop_turn is not None
 
 

@@ -13,7 +13,7 @@ Case input = (phase, band, ceiling, message). The case's check item (reference,
 final answer) lives in METADATA only — it is scored against, never sent to the
 tutor (phase_prefix has no parameter for it). Hint and feedback cases are
 served as production serves them with an active item: through the route's
-STRICT leak strip, behind the code-served answer when it is released (m1).
+STRICT served-mode leak check (a copy of what the student sees — the item, their message — is no leak; a leak is retried once, then served as the rung's ladder line — never masked, fix round 2), behind the code-served answer when released (m1).
 Teach cases are served as production serves a teach turn — with no active item,
 so nothing is stripped (PKG-07 review round 3, m4): their item is the one the
 reply is scored against (ServedAnswerLeak, the rung judge), never a strip input.
@@ -38,8 +38,8 @@ JSON schema — a field description is sent to Gemini), `model` (the slot's mode
 name) and `input_sha256` (the assembled case message + the slot's run
 settings). Replay REFUSES a recording whose hashes differ (StaleRecordingError)
 and recomputes the served text: `turn_shape.render_turn`, then
-`routes.learn_loop.served_model_text` at `loop_leak_rung` (strip_leak with the
-item's correct_option). The served text is then read by the eval-side rung
+`routes.learn_loop.served_model_text` at `loop_leak_rung` (served mode, the
+item's correct_option and its text; a leak becomes the rung's ladder line). The served text is then read by the eval-side rung
 judge (`_rung_judge.ajudge_rung`, its own cassettes, stale-checked on the
 served text's sha).
 
@@ -194,8 +194,10 @@ def _leak_rung(case_input: LoopInput, meta: dict) -> Rung:
 def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, str, str]:
     """(raw, served, turn): production render_turn; then, as the route serves
     it, a teach turn unchanged (no active item, m4) and a hint/feedback turn
-    through served_model_text (strict strip at the route's leak rung, the
-    released answer's lead in front); `turn` is served minus that lead."""
+    through served_model_text (strict, served mode with the student-visible
+    text as `given`, at the route's leak rung — a leak is the rung's
+    ladder line, never masked; the released answer's lead in front); `turn`
+    is served minus that lead."""
     from routes.learn_loop import released_lead, served_model_text
 
     raw = render_turn(output)
@@ -210,6 +212,7 @@ def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, 
         correct_option=meta.get("correct_option"),
         option_text=meta.get("option_text"),
         answer_released=_released(meta),
+        given=_visible(case_input, meta),
     )
     lead = released_lead(meta["reference"]) if _released(meta) else ""
     return raw, served, served[len(lead) :]
@@ -539,7 +542,35 @@ def check_fresh(rec: LoopRecording, slot: str, case_input: LoopInput) -> None:
         )
 
 
-def _deps(loop_turn) -> SaplingDeps:
+def _leak_guard(case_input: LoopInput, meta: dict):
+    """The route's deps.loop_leak for a hint/feedback case with the answer
+    unreleased (fix round 2, N1: one named retry before the ladder line)."""
+    if case_input[0] == "teach" or _released(meta):
+        return None
+    from routes.learn_loop import _item_check_kwargs, _LeakGuard
+
+    answer = _item_check_kwargs(
+        reference=meta["reference"],
+        final_answer=meta["final_answer"],
+        canonical_answer=meta.get("canonical_answer"),
+        correct_option=meta.get("correct_option"),
+        option_text=meta.get("option_text"),
+    )
+    rung = _leak_rung(case_input, meta)
+    given = _visible(case_input, meta)
+    return _LeakGuard(
+        lambda text: detect_leak(emitted=text, rung=rung, given=given, **answer).leaked
+    )
+
+
+def _visible(case_input: LoopInput, meta: dict) -> str:
+    """What the student can see (the route's `_visible_text`): the item as
+    posed and their own message — the served leak check's provenance."""
+    trusted = bool(meta.get("trusted"))
+    return (meta.get("item_prompt") or "") + "\n" + ("" if trusted else case_input[3])
+
+
+def _deps(loop_turn, leak_guard=None) -> SaplingDeps:
     return SaplingDeps(
         user_id="eval-user",
         course_id="eval-course",
@@ -550,6 +581,7 @@ def _deps(loop_turn) -> SaplingDeps:
         learning_loop=True,
         feature="loop_tutor",
         loop_turn=loop_turn,
+        loop_leak=leak_guard,
     )
 
 
@@ -589,7 +621,7 @@ async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
     assembled = _assembled(case_input)
     limits = turn_limits(phase, _model_ceiling(case_input, meta), _released(meta))
     run_kwargs = {
-        "deps": _deps(limits),
+        "deps": _deps(limits, _leak_guard(case_input, meta)),
         "message_history": [],
         "usage_limits": LOOP_LIMITS,
         **tier_run_kwargs(_tier_of(slot), tool_choice=_tool_choice(phase)),

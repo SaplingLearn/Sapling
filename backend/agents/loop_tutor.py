@@ -25,12 +25,19 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+import unicodedata
 from collections.abc import Sequence
 from typing import Literal
 
 from pydantic_ai import Agent, ModelRetry, PromptedOutput, RunContext
 from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.tools import ToolDefinition
 
 from agents._providers import model_for
@@ -47,6 +54,7 @@ from learning.params import (
 from learning.turn_shape import (
     LoopTurnOut,
     TurnLimits,
+    render_turn,
     turn_limits,
     validate_turn,
 )
@@ -476,8 +484,21 @@ def neutralise_control_tags(text: str) -> str:
     """Replace the opening bracket of every tag-shaped run in `text` with "(",
     so no student byte can open a control block ([LOOP PHASE], [VERDICT],
     [CHECK ITEM], [ACTION], [STUDENT QUESTION], [GRAPH CONTEXT], or any other
-    bracket tag)."""
-    return _TAG_OPENER.sub("(", text or "")
+    bracket tag). Fix round 2 (n1): format characters (Unicode category Cf —
+    zero-width spaces and joiners, BOM, word joiner, bidi marks) are dropped,
+    and tags are matched on each character's NFKC form, so neither an
+    invisible character nor a compatibility form ("[\u200bLOOP", fullwidth
+    letters) can hide one; every other character is kept as written."""
+    kept = [c for c in (text or "") if unicodedata.category(c) != "Cf"]
+    folded: list[str] = []
+    origin: list[int] = []
+    for i, c in enumerate(kept):
+        form = unicodedata.normalize("NFKC", c)
+        folded.append(form)
+        origin.extend([i] * len(form))
+    for m in _TAG_OPENER.finditer("".join(folded)):
+        kept[origin[m.start()]] = "("
+    return "".join(kept)
 
 
 def student_envelope(text: str, *, nonce: str) -> str:
@@ -545,17 +566,32 @@ def _retry_message(problems: list[str], limits: TurnLimits) -> str:
     )
 
 
+def _run_start(messages: list) -> int:
+    """The index of this run's prompt: the last request carrying a UserPromptPart."""
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if isinstance(m, ModelRequest) and any(isinstance(p, UserPromptPart) for p in m.parts):
+            return i
+    return 0
+
+
 def _given_text(messages: list) -> str:
-    """Everything the model was GIVEN this run (the user prompts, history user
-    rows and tool results) — never its own responses nor the system prompt —
-    the provenance `validate_turn` checks invented math against."""
+    """Everything the model was GIVEN: the user prompts, the history's user rows
+    AND the tutor's earlier served turns (fix round 2: restating its own prior
+    expression is no invention), and tool results — never this run's own
+    attempts nor the system prompt. The provenance `validate_turn` checks
+    invented math against (the served leak check reads only what the STUDENT
+    can see: routes/learn_loop.py `_visible_text`)."""
+    start = _run_start(messages)
     parts = []
-    for m in messages:
+    for i, m in enumerate(messages):
         if isinstance(m, ModelRequest):
             for p in m.parts:
                 if isinstance(p, (UserPromptPart, ToolReturnPart)):
                     content = p.content if isinstance(p.content, str) else str(p.content)
                     parts.append(content)
+        elif isinstance(m, ModelResponse) and i < start:
+            parts += [p.content for p in m.parts if isinstance(p, TextPart)]
     return "\n".join(parts)
 
 
@@ -566,12 +602,27 @@ def _validate_loop_turn(ctx: RunContext[SaplingDeps], output: LoopTurnOut) -> Lo
     if ctx.partial_output:
         return output
     limits = getattr(ctx.deps, "loop_turn", None) or _DEFAULT_TURN_LIMITS
-    problems = validate_turn(
-        output, limits, source=_given_text(getattr(ctx, "messages", None) or [])
-    )
+    given = _given_text(getattr(ctx, "messages", None) or [])
+    problems = validate_turn(output, limits, source=given)
     if problems:
         raise ModelRetry(_retry_message(problems, limits))
+    guard = getattr(ctx.deps, "loop_leak", None)
+    if guard is not None and not guard.retried and guard.leaks(render_turn(output)):
+        # fix round 2 (N1): a leak is never masked in place — the turn is
+        # re-run ONCE with the problem named; the route serves the rung's ladder
+        # line if it still leaks
+        guard.retried = True
+        raise ModelRetry(LEAK_RETRY_MESSAGE)
     return output
+
+
+#: The named problem of a leak retry (fix round 2, N1). It never quotes the answer.
+LEAK_RETRY_MESSAGE = (
+    "Your turn states, implies or confirms the check item's answer, which this "
+    "rung forbids. Rewrite all three fields so none of them gives the answer "
+    "away (not in words, symbols, a letter or a paraphrase); copying the "
+    "item's or the student's own wording is fine. Ask your one question instead."
+)
 
 
 # ── Tool rounds (PKG-07 Task 9 cost fix) ──────────────────────────────────

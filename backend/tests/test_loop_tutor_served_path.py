@@ -62,8 +62,10 @@ def test_loop_leak_rung_is_the_routes_clamp():
     )
 
 
-def test_served_model_text_strips_a_leak_and_passes_clean_text():
-    from routes.learn_loop import served_model_text
+def test_served_model_text_serves_the_ladder_line_for_a_leak_and_passes_clean_text():
+    """Fix round 2 (N1): a leak is never masked in place — the rung's ladder
+    line is served instead; a copy of the text the model was given is none."""
+    from routes.learn_loop import LADDER_FALLBACK_LINES, served_model_text
 
     clean = "Key idea: A base case stops recursion.\n\nWhich input ends it?"
     text, verdict = served_model_text(clean, leak_rung=Rung.H3, **_ITEM)
@@ -71,20 +73,24 @@ def test_served_model_text_strips_a_leak_and_passes_clean_text():
 
     leaky = "Key idea: At n == 0 it returns 1.\n\nWhy does that stop it?"
     text, verdict = served_model_text(leaky, leak_rung=Rung.H3, **_ITEM)
-    assert verdict.leaked and WITHHELD in text and "returns 1" not in text
+    assert verdict.leaked and text == LADDER_FALLBACK_LINES[3] and WITHHELD not in text
 
-    # released (served at H6): nothing is stripped
+    given = "Student: my code has a base case that at n == 0 it returns 1, why?"
+    text, verdict = served_model_text(leaky, leak_rung=Rung.H3, given=given, **_ITEM)
+    assert text == leaky and not verdict.leaked, "the student's own words are no leak"
+
+    # released (served at H6): nothing is checked
     text, verdict = served_model_text(leaky, leak_rung=Rung.H6, **_ITEM)
     assert text == leaky and not verdict.leaked
 
 
 def test_served_model_text_takes_the_correct_option():
-    from routes.learn_loop import served_model_text
+    from routes.learn_loop import LADDER_FALLBACK_LINES, served_model_text
 
     reply = "Key idea: Look again at option B.\n\nWhat does option B claim?"
     item = {**_ITEM, "correct_option": "B"}
     text, verdict = served_model_text(reply, leak_rung=Rung.H3, **item)
-    assert verdict.leaked and WITHHELD in text
+    assert verdict.leaked and text == LADDER_FALLBACK_LINES[3]
 
 
 # ── the tool-less continuation's plan (route + eval share it) ────────────────

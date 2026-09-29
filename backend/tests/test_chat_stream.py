@@ -1108,7 +1108,15 @@ def _loop_deps(limits=None):
 
 
 async def collect_structured(
-    agent, deps, model, on_complete, *, nonstream_fallback=None, on_usage=None, transform=None
+    agent,
+    deps,
+    model,
+    on_complete,
+    *,
+    nonstream_fallback=None,
+    on_usage=None,
+    transform=None,
+    transform_final=None,
 ):
     events = []
     async for ev in stream_structured_turn(
@@ -1121,6 +1129,7 @@ async def collect_structured(
         on_usage=on_usage,
         request_id="r1",
         transform=transform,
+        transform_final=transform_final,
     ):
         events.append(ev)
     return events
@@ -1272,6 +1281,35 @@ def test_structured_stream_applies_transform_before_emit():
     assert _tokens(events) == transform(render_turn(_TURN))
     assert events[-1].type == "done"
     assert events[-1].data["reply"] == transform(render_turn(_TURN))
+    assert persisted == [render_turn(_TURN)]
+
+
+def test_structured_stream_final_text_can_replace_what_the_partial_filter_hid():
+    """PKG-07 fix round 2 (N1): the loop's partial filter HIDES a leaking
+    sentence (never masks it) and `transform_final` serves a replacement for
+    the final text; the client discards what it was shown (retract) and
+    done.reply is the replacement. on_complete still gets the raw render."""
+    model, _ = _streamed_model([_TURN])
+    persisted = []
+
+    def hide(text):
+        return text.split("Without one")[0].rstrip()
+
+    events = asyncio.run(
+        collect_structured(
+            _loop_agent(),
+            _loop_deps(),
+            model,
+            lambda r, g, m: persisted.append(r) or {},
+            transform=hide,
+            transform_final=lambda text: "What input stops it?",
+        )
+    )
+    assert all("stack overflows" not in e.data["delta"] for e in events if e.type == "token")
+    types = [e.type for e in events]
+    assert "retract" in types
+    after = events[len(types) - 1 - types[::-1].index("retract") :]
+    assert events[-1].data["reply"] == "What input stops it?" == _tokens(after)
     assert persisted == [render_turn(_TURN)]
 
 
