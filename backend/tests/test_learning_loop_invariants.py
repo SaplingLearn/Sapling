@@ -63,9 +63,11 @@ LOOP_ROUTES = BACKEND / "routes" / "learn_loop.py"
 #: PKG-08/12/14 add their explicit-submission helper; nothing else ever joins.
 #: PKG-08: `_probe_submission` is the probe's writer (grade_answer → ONE
 #: flush_pending, under a grading claim), reached only from POST /probe/answer.
-EVIDENCE_WRITERS = {"_grade_submission", "_probe_submission"}
+#: PKG-12: learning/review.py::grade_review (a review's one evidence write, reached as
+#: `review.grade_review`), reached only from POST /review/answer.
+EVIDENCE_WRITERS = {"_grade_submission", "_probe_submission", "grade_review"}
 #: The only route handlers allowed to reach an EVIDENCE_WRITERS function.
-EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream", "probe_answer"}
+EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream", "probe_answer", "review_answer"}
 _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
 #: Modules that WRITE check_items.source_chunk_ids at generation (PKG-04; HANDOFF-04
 #: §Symbols: services/check_item_service.py::_build_row copies the draft's chunk ids —
@@ -1470,3 +1472,29 @@ def test_inv_16_probe_planner_pure():
         assert "learning.checks" not in text, (
             f"{name} must stay decoupled from checks.py (Protocol instead)"
         )
+
+
+def test_inv_19_review_grades_through_grader_only():
+    """PKG-12: a review is graded by grade_answer, the single grading route
+    helper (spec §13 A16) shared with the check route, the probe and the
+    post-test. review.py must import it from agents/tools/check.py and never
+    build an Agent, reach agents/grader.py, or call the decision seam itself
+    (one grader, one prompt stack, the A22 pre-checks never bypassed)."""
+    path = LEARNING / "review.py"
+    text = path.read_text()
+    assert "from agents.tools.check import" in text, (
+        "review.py must import the PKG-05 grading helper"
+    )
+    assert "grade_answer" in text, "review.py must grade through grade_answer"
+    assert "Agent(" not in text, "review.py constructs an Agent"
+    assert "agents.grader" not in text, (
+        "review.py bypasses grade_answer and reaches the grader agent"
+    )
+    assert "services.decisions" not in text, (
+        "review.py bypasses grade_answer and reaches the decision seam"
+    )
+    assert not re.search(
+        r"table\(\"(graph_nodes|graph_edges|node_mastery_events|learner_state)\"\)"
+        r"\.(insert|update|upsert)\(",
+        text,
+    ), "review.py writes a graph table directly (inv 1)"

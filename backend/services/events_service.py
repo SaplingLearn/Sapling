@@ -107,6 +107,10 @@ learn.plan_approved           usage     concept_ids, n_reviews_first — the stu
 learn.session_closed          usage     session_id, concepts, misconceptions, has_if_then,
                                         model_written — a loop session's close was stored
                                         (PKG-09, spec §6, §13 A8); counts and bools only
+review.session_started        usage     session_id, offering_id (a daily review session row; never
+                                        session.started — it is not a tutor session)
+review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
+review.graded                 usage     kind, correct, rating
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -261,6 +265,12 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # PKG-09: a loop session's close was stored. Counts and bools only (never the
     # summary text); model_written is the ADR 0024 degrade signal (spec §13 A8).
     "learn.session_closed",
+    # Learning loop PKG-12: the daily review queue. `served` once per kind in
+    # a built queue (n = how many), `graded` per answer. Reviews are evidence,
+    # so `graded` is the countable twin of the node_mastery_events row.
+    "review.session_started",
+    "review.served",
+    "review.graded",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
 from db.connection import table
+from services.session_modes import NOT_REVIEW
 from services.encryption import encrypt_if_present, decrypt_if_present
 from models import (
     UpdateProfileBody,
@@ -179,7 +180,7 @@ def _get_user_stats(user_id: str) -> dict:
     user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
     streak = user[0].get("streak_count", 0) if user else 0
 
-    sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}"})
+    sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}", **NOT_REVIEW})
     session_count = len(sessions) if sessions else 0
 
     docs = table("documents").select("id", filters={"user_id": f"eq.{user_id}"})

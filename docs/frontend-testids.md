@@ -84,6 +84,7 @@ renders the element.
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
+| Review queue | `review` | `frontend/src/components/learn/DueQueue.tsx` (the learning loop's "Due today" panel, rendered at the top of Study → Flashcards only while the loop is on — PKG-12; the launch Study surface, spec §11.3) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
@@ -450,6 +451,31 @@ Added with the upload → SSE → library journey (#387).
 | `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
 | `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+
+### `review`
+
+Added with the learning loop's daily review queue (PKG-12). Owner:
+`frontend/src/components/learn/DueQueue.tsx` (PKG-12; the launch Study surface,
+spec §11.3 — PKG-13 adds the budget banner and launch polish). Rendered above the
+Flashcards filter bar in `screens/Study.tsx` only when `getLoopStatus` reports the
+loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the gate's 404 → absent).
+
+| testid | element |
+| --- | --- |
+| `review-due-panel` | the "Due today" panel root |
+| `review-budget` | chip: minutes left of today's review budget |
+| `review-empty` | "All caught up for today" (no item and nothing due) |
+| `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
+| `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
+| `review-answer-input` | free-response answer textarea (a `free` check) |
+| `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22) |
+| `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
+| `review-submit` | "Check" / "Try again" — sends a check answer |
+| `review-flip` | "Show answer" on a flashcard |
+| `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
+| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
+| `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
+| `review-next` | "Next" — polls `/review/next` after a graded answer |
 
 ### `landing-graph`
 

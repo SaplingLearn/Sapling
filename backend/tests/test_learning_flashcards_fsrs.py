@@ -162,8 +162,8 @@ def _rate(rating: int, *, gate: bool | None, row: dict, next_state=None, interva
         _frozen_clock(),
         patch("routes.flashcards.table", side_effect=side_effect),
         _gate_patch(gate),
-        patch("routes.flashcards.next_state", new=ns),
-        patch("routes.flashcards.interval", new=iv),
+        patch("learning.flashcard_fsrs.next_state", new=ns),
+        patch("learning.flashcard_fsrs.interval", new=iv),
         patch("routes.flashcards.check_achievements", new=check or MagicMock()),
     ):
         r = client.post(
@@ -283,7 +283,7 @@ class TestRateCard:
         with (
             patch("routes.flashcards.table", side_effect=side_effect),
             patch("routes.flashcards.learning_loop_active", return_value=True),
-            patch("routes.flashcards.next_state", new=boom),
+            patch("learning.flashcard_fsrs.next_state", new=boom),
         ):
             with pytest.raises(ValueError, match="corrupt stored stability"):
                 client.post(
@@ -445,6 +445,115 @@ def _list(*, gate, query: str = "", order_due=None, rows=None):
     ):
         r = client.get(f"/api/flashcards/user/{USER_ID}{query}")
     return r, calls, od
+
+
+class TestFlashcardFsrsUpdate:
+    """PKG-12 reopen: rate_card's FSRS step moved out of the route into the
+    pure learning.flashcard_fsrs.flashcard_fsrs_update (so learning/review.py
+    never imports routes.*) and gained a retention target. At the default
+    retention it is the pre-reopen _fsrs_advance + legacy payload, value for
+    value; the real PKG-02 maths runs here (nothing patched)."""
+
+    @staticmethod
+    def _pre_reopen(row: dict, ui_rating: int, now: datetime) -> dict:
+        """routes.flashcards._fsrs_advance + rate_card's legacy keys, verbatim."""
+        from learning.fsrs import Rating, interval, next_state
+        from learning.params import FLASHCARD_RATING_TO_FSRS, FSRS_RETENTION_DEFAULT
+        from services.timestamps import parse_ts
+
+        fsrs_rating = FLASHCARD_RATING_TO_FSRS[ui_rating]
+        last = parse_ts(row.get("last_reviewed_at"))
+        days_since, same_day = 0.0, False
+        if last is not None:
+            days_since = max(0.0, (now - last) / timedelta(days=1))
+            same_day = now - last < timedelta(days=1)
+        d_new, s_new = next_state(
+            row.get("fsrs_d"), row.get("fsrs_s"), fsrs_rating, days_since, same_day=same_day
+        )
+        return {
+            "times_reviewed": (row["times_reviewed"] or 0) + 1,
+            "last_rating": ui_rating,
+            "last_reviewed_at": now.isoformat(),
+            "fsrs_d": d_new,
+            "fsrs_s": s_new,
+            "due_at": (now + timedelta(days=interval(FSRS_RETENTION_DEFAULT, s_new))).isoformat(),
+            "reps": (row.get("reps") or 0) + 1,
+            "lapses": (row.get("lapses") or 0) + (1 if fsrs_rating == Rating.AGAIN else 0),
+        }
+
+    @pytest.mark.parametrize("ui_rating", [1, 2, 3])
+    @pytest.mark.parametrize(
+        "row",
+        [
+            FRESH_ROW,
+            SEEN_ROW,
+            {**SEEN_ROW, "last_reviewed_at": (NOW - timedelta(hours=2)).isoformat()},
+        ],
+        ids=["fresh", "seen", "same_day"],
+    )
+    def test_default_retention_matches_the_pre_reopen_path(self, row, ui_rating):
+        from learning.flashcard_fsrs import FLASHCARD_FSRS_COLUMNS, flashcard_fsrs_update
+
+        cols = flashcard_fsrs_update(dict(row), ui_rating, now=NOW)
+        assert cols == self._pre_reopen(row, ui_rating, NOW)
+        assert set(cols) == set(FLASHCARD_FSRS_COLUMNS) == LEGACY_RATE_KEYS | FSRS_KEYS
+
+    def test_retention_moves_only_the_due_date(self):
+        from learning import fsrs
+        from learning.flashcard_fsrs import flashcard_fsrs_update
+        from learning.params import FSRS_RETENTION_DEFAULT, FSRS_RETENTION_EXAM
+
+        default = flashcard_fsrs_update(dict(SEEN_ROW), 3, now=NOW)
+        exam = flashcard_fsrs_update(dict(SEEN_ROW), 3, now=NOW, retention=FSRS_RETENTION_EXAM)
+        assert {k: v for k, v in exam.items() if k != "due_at"} == {
+            k: v for k, v in default.items() if k != "due_at"
+        }
+        assert exam["due_at"] < default["due_at"]
+        s = default["fsrs_s"]
+        assert datetime.fromisoformat(exam["due_at"]) - NOW == timedelta(
+            days=fsrs.interval(FSRS_RETENTION_EXAM, s)
+        )
+        assert datetime.fromisoformat(default["due_at"]) - NOW == timedelta(
+            days=fsrs.interval(FSRS_RETENTION_DEFAULT, s)
+        )
+
+    @pytest.mark.parametrize("bad", [0, 4, 5, -1, True, "3", 2.0, None])
+    def test_a_rating_outside_the_map_raises_before_any_maths(self, bad):
+        from learning.flashcard_fsrs import flashcard_fsrs_update
+
+        ns = MagicMock()
+        with patch("learning.flashcard_fsrs.next_state", new=ns):
+            with pytest.raises(ValueError):
+                flashcard_fsrs_update(dict(SEEN_ROW), bad, now=NOW)
+        ns.assert_not_called()
+
+    def test_rate_card_calls_the_helper_at_the_default_retention(self):
+        import learning.flashcard_fsrs as helper
+
+        spy = MagicMock(wraps=helper.flashcard_fsrs_update)
+        side_effect, calls = _rate_tables(SEEN_ROW)
+        with (
+            _frozen_clock(),
+            patch("routes.flashcards.table", side_effect=side_effect),
+            _gate_patch(True),
+            patch("routes.flashcards.flashcard_fsrs_update", new=spy),
+            patch("routes.flashcards.check_achievements", new=MagicMock()),
+        ):
+            r = client.post(
+                "/api/flashcards/rate",
+                json={"user_id": USER_ID, "card_id": "card-1", "rating": 2},
+            )
+        assert r.status_code == 200, r.text
+        spy.assert_called_once()
+        (row, ui_rating), kwargs = spy.call_args
+        assert ui_rating == 2 and kwargs == {"now": NOW}  # no retention: the default
+        assert calls["update"] == self._pre_reopen(SEEN_ROW, 2, NOW)
+
+    def test_the_route_no_longer_holds_fsrs_maths(self):
+        import routes.flashcards as route
+
+        assert not hasattr(route, "_fsrs_advance")
+        assert not hasattr(route, "next_state") and not hasattr(route, "interval")
 
 
 class TestListFlashcards:

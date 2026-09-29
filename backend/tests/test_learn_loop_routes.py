@@ -150,6 +150,9 @@ NO_MODEL_ROUTES = [
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
+#: PKG-12: no review route carries the dependency — /review/answer checks the rate
+#: limit inline for a check answer only (tests/test_learning_review.py).
+REVIEW_ROUTES = ["/review/next", "/review/answer", "/review/summary", "/review/active"]
 
 
 def _sse_events(text: str) -> list[dict]:
@@ -419,11 +422,12 @@ def test_router_mounted_under_learn_loop_prefix():
 def test_rate_limit_dependency_on_model_routes_only():
     declared = _declared()
     assert set(declared) == {
-        "/api/learn/loop" + s for s in (*MODEL_ROUTES, *NO_MODEL_ROUTES, *RATE_LIMITED_NO_MODEL)
+        "/api/learn/loop" + s
+        for s in (*MODEL_ROUTES, *NO_MODEL_ROUTES, *RATE_LIMITED_NO_MODEL, *REVIEW_ROUTES)
     }
     for suffix in (*MODEL_ROUTES, *RATE_LIMITED_NO_MODEL):
         assert ai_budget.enforce_rate_limit in declared["/api/learn/loop" + suffix], suffix
-    for suffix in NO_MODEL_ROUTES:
+    for suffix in (*NO_MODEL_ROUTES, *REVIEW_ROUTES):
         assert ai_budget.enforce_rate_limit not in declared["/api/learn/loop" + suffix], suffix
 
 

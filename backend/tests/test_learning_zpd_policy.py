@@ -3548,8 +3548,13 @@ _PKG06_SANCTIONED_IMPORTS = {
 # sanctioned. It is reached only through the /api/learn/loop router, which 404s unless
 # learning_loop_active, and through routes/learn.py's lazy `_loop_delegate`, which runs
 # only after that gate returned True.
-_PKG06_SANCTIONED_IMPORTERS = frozenset({"routes/learn_loop.py"})
-
+#
+# PKG-12 (spec §3.2, §13 A38 06(q)): the review queue keeps its successive-relearning
+# counters in its review session's loop_state, so it reaches the loop_state store
+# (update_loop_state, and PKG-07's seen/revealed readers) — and only that module of the
+# layer (test_review_reaches_only_the_loop_state_store). Nothing imports learning/review.py
+# except the gated /api/learn/loop router. Same shape as PKG-07's routes/learn_loop.py entry.
+_PKG06_SANCTIONED_IMPORTERS = frozenset({"routes/learn_loop.py", "learning/review.py"})
 
 # What the real app may load from the PKG-06 layer at boot (PKG-06b): the one sanctioned import
 # above brings learning.policy, and policy imports learning.ladder's Rung. Nothing else.
@@ -3765,6 +3770,14 @@ def test_inertness_scan_sanctions_the_loop_wiring(tmp_path):
     (tmp_path / "agents" / "loop_tutor.py").write_text("from learning.ladder import Rung\n")
     (tmp_path / "routes" / "learn.py").write_text("from learning import gates\n")
     assert _inertness_offenders(tmp_path) == ["routes/learn.py"]
+
+
+def test_review_reaches_only_the_loop_state_store():
+    """PKG-12: learning/review.py's sanction covers the loop_state store alone —
+    no policy, gates, ladder, leak or zpd_events import (any form)."""
+    text = (BACKEND / "learning" / "review.py").read_text()
+    modules = {".".join(n.split(".")[:2]) for n in _pkg06_imports(text, package="learning")}
+    assert modules == {"learning.loop_state_store"}, modules
 
 
 def test_zpd_layer_is_inert_nothing_imports_it():
