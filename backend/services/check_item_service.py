@@ -159,6 +159,10 @@ def _build_row(
     }
 
 
+# A top-up draft whose prompt a stored item of the concept already has (A37).
+_REPEAT = "repeat: the prompt is a stored item's"
+
+
 class _ConceptWrite(NamedTuple):
     """What one concept's write stored and dropped."""
 
@@ -176,18 +180,23 @@ def _store_drafts(
     allowed_chunk_ids: Iterable[str] = (),
     source_document_ids: Iterable[str] = (),
     limit: int | None = None,
+    exclude_ids: Iterable[str] = (),
 ) -> _ConceptWrite:
     """create_items, saying what it stored and why each mc_reason draft was
     dropped (the A37 top-up feeds those reasons back). `limit` caps the valid
-    rows stored (the top-up's missing count); the rest are logged, not stored."""
+    rows stored (the top-up's missing count); the rest are logged, not stored.
+    A draft whose row id is in `exclude_ids` (the top-up's stored items: the
+    id is the prompt's question_hash) is a repeat: dropped before `limit`
+    counts it, so it never rewrites the stored item or takes a new one's slot."""
     allowed = set(allowed_chunk_ids)
+    exclude = set(exclude_ids)
     source_docs = sorted({d for d in source_document_ids if d})
     if not source_docs and document_id:
         source_docs = [document_id]
     rows: list[dict] = []
     seen: set[str] = set()
     mc_drops: list[str] = []
-    surplus = 0
+    surplus = repeats = 0
     for draft in drafts:
         draft, repairs = repair_draft(draft)
         if repairs:
@@ -217,11 +226,24 @@ def _store_drafts(
             # Same normalized prompt twice in one batch: one upsert may not
             # name a row twice (PostgREST rejects it), and it is one item.
             continue
+        if row["id"] in exclude:
+            repeats += 1
+            if draft.format == _MC_REASON:
+                mc_drops.append(_REPEAT)
+            continue
         if limit is not None and len(rows) >= limit:
             surplus += 1
             continue
         seen.add(row["id"])
         rows.append(row)
+    if repeats:
+        logger.info(
+            "check items: %d draft(s) repeat a stored item's prompt; not stored "
+            "(course=%s concept=%s)",
+            repeats,
+            course_id,
+            concept_key,
+        )
     if surplus:
         logger.info(
             "check items: %d valid draft(s) beyond the %d asked for; not stored "
@@ -717,6 +739,7 @@ def _write_checked(
     document_id: str | None,
     course_id: str,
     limit: int | None = None,
+    exclude_ids: Iterable[str] = (),
 ) -> _CallWrite:
     """One call's write, with A23's source re-check on both sides of it. A
     concept whose write fails is reported (StorageError) and left out of
@@ -748,6 +771,7 @@ def _write_checked(
                 allowed_chunk_ids=sources.allowed,
                 source_document_ids=sources.source_docs,
                 limit=limit,
+                exclude_ids=exclude_ids,
             )
         except Exception:
             logger.warning(
@@ -777,18 +801,14 @@ def _write_checked(
     return _CallWrite(stored, withdrawn=retired)
 
 
-def _stored_mc_reason(course_id: str, key: str) -> dict[str, int]:
-    """The concept's stored mc_reason items, id -> difficulty (plaintext
+def _stored_items(course_id: str, key: str) -> dict[str, tuple[str | None, int | None]]:
+    """The concept's stored items, id -> (format, difficulty) (plaintext
     columns only, invariant 9)."""
     rows = table(_TABLE).select(
-        "id,difficulty",
-        filters={
-            "course_id": f"eq.{course_id}",
-            "concept_key": f"eq.{key}",
-            "format": f"eq.{_MC_REASON}",
-        },
+        "id,format,difficulty",
+        filters={"course_id": f"eq.{course_id}", "concept_key": f"eq.{key}"},
     )
-    return {r["id"]: r.get("difficulty") for r in rows or [] if r.get("id")}
+    return {r["id"]: (r.get("format"), r.get("difficulty")) for r in rows or [] if r.get("id")}
 
 
 def _report_topup(
@@ -836,8 +856,11 @@ def _top_up_mc_reason(
     for exactly the missing count at difficulties the concept lacks, shown
     the concept's own passages and told why its mc_reason drafts were
     dropped. The drafts pass the same repair and validation (no rule is
-    relaxed), the write the same A23 re-checks. Each call is billed by the
-    agent (llm_usage feature check_items_topup) and counted here
+    relaxed), the write the same A23 re-checks. The count is the one read
+    after the pass's write, which alone says what the concept holds (a pass
+    item retired meanwhile is not counted); a top-up draft whose prompt a
+    stored item already has is a repeat, not stored. Each call is billed by
+    the agent (llm_usage feature check_items_topup) and counted here
     (`learn.check_items_topup`). A concept still below is logged with its drop
     reasons and left to a later generation run or backfill, which drafts it
     again only while it has fewer than CHECK_ITEM_INITIAL_PER_CONCEPT items.
@@ -845,7 +868,7 @@ def _top_up_mc_reason(
     if len(first.mc_reason) >= CHECK_ITEM_MC_MIN_PER_CONCEPT:
         return 0  # this pass alone stored enough: no read, no call
     try:
-        have = _stored_mc_reason(course_id, key)
+        stored_items = _stored_items(course_id, key)
     except Exception:
         logger.warning(
             "check items: mc_reason count read failed (course=%s concept=%s); no top-up",
@@ -855,7 +878,8 @@ def _top_up_mc_reason(
         )
         _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
         return 0
-    have.update(first.mc_reason)
+    have = {i: d for i, (fmt, d) in stored_items.items() if fmt == _MC_REASON}
+    exclude = set(stored_items)
     drops = list(first.mc_drops)
     created = calls = 0
     recheck = {"user_id": user_id, "document_id": document_id, "course_id": course_id}
@@ -897,12 +921,15 @@ def _top_up_mc_reason(
                 len(out.items) - len(mine),
                 name,
             )
-        write = _write_checked({key: mine}, sources, gone=gone, limit=missing, **recheck)
+        write = _write_checked(
+            {key: mine}, sources, gone=gone, limit=missing, exclude_ids=exclude, **recheck
+        )
         result = write.stored.get(key)
         stored = len(result.ids) if result is not None else 0
         created += stored  # as the pass counts its own: written, even if retired right after
         if result is not None and not write.withdrawn:
             have.update(result.mc_reason)
+            exclude.update(result.ids)
             drops += result.mc_drops
         _report_topup(
             user_id,

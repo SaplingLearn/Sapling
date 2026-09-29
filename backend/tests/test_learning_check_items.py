@@ -4312,6 +4312,7 @@ class _ItemsTable:
         self.rows = {r["id"]: dict(r) for r in rows}
         self.upserts: list[list[dict]] = []
         self.selects: list[dict] = []
+        self.columns: list[str] = []  # each select's columns, in order
 
     def upsert(self, rows, on_conflict=None):
         self.upserts.append([dict(r) for r in rows])
@@ -4321,6 +4322,7 @@ class _ItemsTable:
 
     def select(self, columns, filters=None, order=None, limit=None):
         self.selects.append(dict(filters or {}))
+        self.columns.append(columns)
         eq = {k: v[3:] for k, v in (filters or {}).items() if v.startswith("eq.")}
         return [r for r in self.rows.values() if all(str(r.get(k)) == v for k, v in eq.items())]
 
@@ -4460,7 +4462,7 @@ class TestMcTopUp:
         out, items, topups, ev = self._run(monkeypatch, main, None)
         assert topups == [] and self._topup_events(ev) == []
         assert len(items.mc_reason("learning rate")) == 2 and out.items_created == 2
-        assert all("format" not in f for f in items.selects), "no top-up read at >= 2 this pass"
+        assert items.columns == ["id"], "only the A23 count: no top-up read at >= 2 this pass"
 
     def test_items_stored_before_the_pass_count_toward_the_floor(self, monkeypatch):
         """The floor is what the concept ENDS the pass with: an mc_reason item
@@ -4481,14 +4483,9 @@ class TestMcTopUp:
         main = CheckItemsOutput(items=[_draft(), _mc("Learning Rate", 1)])
         out, items, topups, ev = self._run(monkeypatch, main, None, items=earlier)
         assert topups == [] and self._topup_events(ev) == []
-        read = [f for f in items.selects if "format" in f]
-        assert read == [
-            {
-                "course_id": "eq.course-1",
-                "concept_key": "eq.learning rate",
-                "format": "eq.mc_reason",
-            }
-        ]
+        read = [f for f, c in zip(items.selects, items.columns) if "format" in c]
+        assert read == [{"course_id": "eq.course-1", "concept_key": "eq.learning rate"}]
+        assert [c for c in items.columns if "format" in c] == ["id,format,difficulty"]
 
     def test_topup_asks_for_the_difficulties_the_concept_lacks(self, monkeypatch):
         from agents.check_items import CheckItemsOutput
@@ -4673,7 +4670,7 @@ class TestMcTopUp:
         real_select = items.select
 
         def select(columns, filters=None, **kw):
-            if "format" in (filters or {}):
+            if "format" in columns:
                 raise RuntimeError("pg down")
             return real_select(columns, filters=filters, **kw)
 
@@ -4689,6 +4686,77 @@ class TestMcTopUp:
         from services.events_service import EVENT_TAXONOMY
 
         assert "learn.check_items_topup" in EVENT_TAXONOMY
+
+    def test_a_pass_item_retired_before_the_count_read_is_not_counted(self, monkeypatch, caplog):
+        """The count read follows the pass's own write, so it alone is what
+        the concept ends the pass with: an item retired in between (a
+        document deleted or opted out meanwhile) is not counted, the top-up
+        asks for the whole missing count, and a concept left below is logged."""
+        from agents.check_items import CheckItemsOutput
+
+        class Retiring(_ItemsTable):
+            def select(self, columns, filters=None, order=None, limit=None):
+                if self.upserts and not getattr(self, "retired", False):
+                    self.retired = True  # the first read after the pass's write
+                    for rid in [r["id"] for r in self.upserts[0] if r["format"] == "mc_reason"]:
+                        self.rows.pop(rid)
+                return super().select(columns, filters=filters, order=order, limit=limit)
+
+        items = Retiring()
+        main = CheckItemsOutput(items=[_draft(), _mc("Learning Rate", 1)])
+        dropped = _mc("Learning Rate", 2, prompt="Again?", options=_opts(*_SAME_MISTAKE))
+        with caplog.at_level("WARNING", logger="sapling.services.check_items"):
+            out, _, topups, ev = self._run(
+                monkeypatch, main, CheckItemsOutput(items=[dropped]), items=items
+            )
+        (call,) = topups
+        assert call["difficulties"] == [1, 2]
+        (event,) = self._topup_events(ev)
+        assert event.kwargs["payload"]["requested"] == 2
+        assert event.kwargs["payload"]["mc_reason_items"] == 0
+        (line,) = [r.getMessage() for r in caplog.records if "below" in r.getMessage()]
+        assert "0 mc_reason item(s)" in line
+
+    def test_a_topup_draft_repeating_a_stored_mc_stem_is_not_stored_or_counted(self, monkeypatch):
+        """A top-up draft whose prompt a stored item already has is that
+        item: it neither takes the missing count's slot from a new draft nor
+        rewrites the stored row."""
+        from agents.check_items import CheckItemsOutput
+
+        stem = "Which quantity does the rate scale? Pick one and give your reason."
+        main = CheckItemsOutput(items=[_draft(), _mc("Learning Rate", 1, prompt=stem)])
+        topup = CheckItemsOutput(
+            items=[
+                _mc("Learning Rate", 2, prompt=stem.upper()),  # the stored stem again
+                _mc("Learning Rate", 2, prompt="A new stem about the rate?"),
+            ]
+        )
+        out, items, topups, ev = self._run(monkeypatch, main, topup)
+        mc = items.mc_reason("learning rate")
+        assert sorted(r["difficulty"] for r in mc) == [1, 2], "the stored row keeps difficulty 1"
+        assert out.items_created == 3
+        (event,) = self._topup_events(ev)
+        assert event.kwargs["payload"]["returned"] == 2
+        assert event.kwargs["payload"]["stored"] == 1
+        assert event.kwargs["payload"]["mc_reason_items"] == 2
+
+    def test_a_topup_draft_repeating_a_stored_free_prompt_never_rewrites_that_item(
+        self, monkeypatch, caplog
+    ):
+        from agents.check_items import CheckItemsOutput
+
+        free = _draft()
+        main = CheckItemsOutput(items=[free, _mc("Learning Rate", 1)])
+        topup = CheckItemsOutput(items=[_mc("Learning Rate", 2, prompt=free.prompt)])
+        with caplog.at_level("WARNING", logger="sapling.services.check_items"):
+            out, items, topups, ev = self._run(monkeypatch, main, topup)
+        assert sorted(r["format"] for r in items.rows.values()) == ["free", "mc_reason"]
+        assert out.items_created == 2
+        (event,) = self._topup_events(ev)
+        assert event.kwargs["payload"]["stored"] == 0
+        assert event.kwargs["payload"]["mc_reason_items"] == 1
+        (line,) = [r.getMessage() for r in caplog.records if "below" in r.getMessage()]
+        assert "repeat: the prompt is a stored item's" in line
 
 
 def _documents_route_helpers():
