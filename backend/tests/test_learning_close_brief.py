@@ -2831,3 +2831,20 @@ def test_close_session_with_no_evidence_reads_no_misconceptions(monkeypatch):
     monkeypatch.setattr(loop, "run_session_close", _fake_run(None))
     r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
     assert r.status_code == 200 and r.json()["close"]["misconceptions"] == []
+
+
+def test_close_keys_are_deduplicated_across_nodes(monkeypatch):
+    """F5 (fix round): one key open on two of the session's nodes is listed once."""
+    import routes.learn_loop as loop
+
+    monkeypatch.setattr(
+        loop,
+        "open_for",
+        lambda uid, ids: [
+            {"node_id": "n1", "wrong_key": "k1", "count": 3},
+            {"node_id": "n2", "wrong_key": "k1", "count": 1},
+            {"node_id": "n2", "wrong_key": "k2", "count": 1},
+        ],
+    )
+    keys = loop._close_misconception_keys("u", [{"node_id": "n1"}, {"node_id": "n2"}])
+    assert keys == ["k1", "k2"]

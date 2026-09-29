@@ -2837,7 +2837,8 @@ def _close_misconception_keys(user_id: str, evidence: list[dict]) -> list[str]:
     session's evidence rows touched (`open_for`; identifier-shaped keys only,
     count descending). No evidence → no read, []. Never raises."""
     node_ids = sorted({e.get("node_id") for e in evidence or [] if e.get("node_id")})
-    return [r["wrong_key"] for r in open_for(user_id, node_ids) if is_key(r.get("wrong_key"))]
+    keys = [r["wrong_key"] for r in open_for(user_id, node_ids) if is_key(r.get("wrong_key"))]
+    return list(dict.fromkeys(keys))  # one key open on two nodes is listed once
 
 
 def _stored_close(row: dict) -> dict:
