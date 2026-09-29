@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What kind of limit problem do you think would be the best test of your skills right now?",
+    "evidence": "What kind of limits problems have you been working on recently?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "9a14efef649111ad3eb97ae6519e033abe109af1a47a7fa518d7a41fa4ff0eb5"
+  "served_sha256": "7a9dd42e977f427cb3b98dfa1debd60416390334ede28e8d424d842f122ea0e5"
 }

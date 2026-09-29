@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
   "output": {
-    "evidence": "Key idea: The power rule is used to differentiate functions of the form x^n.",
+    "evidence": "Given the power rule, how would you apply it to find the derivative of x^2?",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 3
   },
-  "served_sha256": "5aef17a28d1f10561e39a0cba16ac5e848a1c9bb872b3705974fa675c89452e3"
+  "served_sha256": "9e1f35778f3a98f18140ed741bd8ba13345a7a65ad70a3b329b617cc0bfac5e9"
 }

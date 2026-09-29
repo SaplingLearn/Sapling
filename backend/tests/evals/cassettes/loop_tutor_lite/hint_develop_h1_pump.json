@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\n\"key_idea\": \"Focus on the definition of factorial and how it applies to the base case.\",\n\"body\": \"Consider how the factorial function is defined and what happens when the input is 0.\",\n\"question\": \"What is the factorial of 0?\"\n}"
+    "{\n\"key_idea\": \"Focus on understanding the specific requirements of the check item.\",\n\"body\": \"To start, let's pinpoint what the question is asking you to do.\",\n\"question\": \"What is the first thing you need to figure out from the problem statement?\"\n}"
   ],
-  "input_sha256": "3c0639dca9fc441cf52eca2497bbdb6b6288fcbb6c3f5d49b47ed477a6f33527",
+  "input_sha256": "1244f71908e0171878bba451e4f14a700964328618f380cc3cacfce579d0e197",
   "model": "gemini-2.5-flash-lite",
   "output": {
-    "body": "Consider how the factorial function is defined and what happens when the input is 0.",
-    "key_idea": "Focus on the definition of factorial and how it applies to the base case.",
-    "question": "What is the factorial of 0?"
+    "body": "To start, let's pinpoint what the question is asking you to do.",
+    "key_idea": "Focus on understanding the specific requirements of the check item.",
+    "question": "What is the first thing you need to figure out from the problem statement?"
   },
-  "prompt_hash": "27d13b848957",
+  "prompt_hash": "23e9d0b6402d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

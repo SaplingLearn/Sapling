@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "```json\n{\n \"key_idea\": \"You can choose a specific type of limits problem to test your understanding.\",\n \"body\": \"You're looking for a problem to check your knowledge of limits.\",\n \"question\": \"What kind of limit problem do you think would be the best test of your skills right now?\"\n}\n```"
+    "{\"key_idea\": \"You want to use a practice problem to check your understanding of limits.\", \"body\": \"You're looking for a limits problem to work through.\", \"question\": \"What kind of limits problems have you been working on recently?\"}"
   ],
-  "input_sha256": "cfab16b91f100ffb285db3afcbb45b0d294a83c93bcc7950055fbc304134e30d",
+  "input_sha256": "cb703fd2657b1bfddcbc65ce99ee6a63800427847624cea0df06f48715915d62",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "You're looking for a problem to check your knowledge of limits.",
-    "key_idea": "You can choose a specific type of limits problem to test your understanding.",
-    "question": "What kind of limit problem do you think would be the best test of your skills right now?"
+    "body": "You're looking for a limits problem to work through.",
+    "key_idea": "You want to use a practice problem to check your understanding of limits.",
+    "question": "What kind of limits problems have you been working on recently?"
   },
-  "prompt_hash": "27d13b848957",
+  "prompt_hash": "23e9d0b6402d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

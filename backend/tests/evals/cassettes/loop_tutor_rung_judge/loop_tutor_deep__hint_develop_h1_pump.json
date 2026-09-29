@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the name for the part of a recursive function that tells it when to stop?",
+    "evidence": "What is the main goal or the specific value you need to find?",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 1
   },
-  "served_sha256": "c1385a15d5246705fe6c257ab96d6c3ae083406b1b9258ddb808fce423e16321"
+  "served_sha256": "9ddf70161883766548a68203ec589b5544f17a654fb4d618a065cc8545804ed9"
 }

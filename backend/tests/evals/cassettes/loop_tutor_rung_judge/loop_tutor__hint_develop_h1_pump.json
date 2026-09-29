@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the typical structure of a recursive function, and what components does it need to avoid infinite recursion?",
+    "evidence": "What's the first thing you need to figure out about the prompt?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "926c4964fe03540a4a09da38eae9612565f4e0a722f0dc6ee695383260cc5ab7"
+  "served_sha256": "85b088237fd90a5b47d46fdebf607c280c36935feb7b5e87dd23beeab7d10e12"
 }

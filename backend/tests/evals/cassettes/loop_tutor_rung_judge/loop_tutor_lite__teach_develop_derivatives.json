@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "d40e4174052c82cc81a778bdeafb938ae13a3ad0db94f15718012f30183dd1ec",
   "output": {
-    "evidence": "The power rule states that the derivative of x^n is n*x^(n-1), and the derivative of a constant is 0.",
+    "evidence": "The derivative of x to the power of n is n times x to the power of (n-1).",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "3ac4cac46806b981b3cd0613b498f0eb83c62bcf501c71cf7dbba959134a462f"
+  "served_sha256": "d3a131d10d8ade6510932312da7336654eea24bb445faeb31b26c618e395b33b"
 }

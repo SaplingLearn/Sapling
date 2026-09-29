@@ -244,8 +244,13 @@ def test_phase_prefix_verdict_and_release_only_in_feedback():
         item_prompt=_ITEM_PROMPT,
         verdict="correct",
     )
-    assert "[VERDICT: not_yet]" in released and "state the correct answer" in released.lower()
-    assert "state the correct answer" not in held.lower()
+    from agents.loop_tutor import _ANSWER_RELEASED
+
+    # m1 (review round 3): released, the system serves the stored answer; the
+    # model is told so and never asked to state it
+    assert "[VERDICT: not_yet]" in released and _ANSWER_RELEASED in released
+    assert "the system shows the student the stored correct solution" in released
+    assert _ANSWER_RELEASED not in held
     with pytest.raises(ValueError):
         phase_prefix(phase="teach", band="develop", ceiling=Rung.H3, answer_released=True)
     with pytest.raises(ValueError):
@@ -354,6 +359,7 @@ def _reply(mod, served, *, raw=None, rung=0, reveals=False, retries=0, rescued=F
     return mod.LoopReply(
         raw=served if raw is None else raw,
         served=served,
+        turn=served,
         judgement=mod.RungJudgement(rung=rung, reveals_final_answer=reveals, evidence="e"),
         retries=retries,
         rescued=rescued,
@@ -465,13 +471,22 @@ def test_loop_eval_serves_through_the_production_path():
         "body": "No further call happens.",
         "question": "Why does that end the chain?",
     }
+    from routes.learn_loop import released_lead
+
     case = next(c for c in mod.CASES if c.name == "hint_develop_h1_pump")
-    raw, served = mod.served_texts(out, case.inputs, case.metadata)
+    raw, served, turn = mod.served_texts(out, case.inputs, case.metadata)
     assert raw == render_turn(out)
-    assert WITHHELD in served and "returns 1" not in served
+    assert WITHHELD in served and "returns 1" not in served and turn == served
     released = next(c for c in mod.CASES if c.metadata.get("answer_released"))
-    raw, served = mod.served_texts(out, released.inputs, released.metadata)
-    assert served == raw == render_turn(out), "a released answer is served at H6, unstripped"
+    raw, served, turn = mod.served_texts(out, released.inputs, released.metadata)
+    assert turn == raw == render_turn(out), "a released answer is served at H6, unstripped"
+    assert served == released_lead(released.metadata["reference"]) + raw, (
+        "the released answer is served from code above the turn (m1)"
+    )
+    # m4: a teach turn has no active item in production, so nothing is stripped
+    teach = next(c for c in mod.CASES if c.inputs[0] == "teach")
+    raw, served, turn = mod.served_texts(out, teach.inputs, teach.metadata)
+    assert served == turn == raw == render_turn(out)
 
 
 def test_loop_tutor_cassettes_match_the_current_prompt_schema_and_model():
@@ -714,12 +729,20 @@ def test_output_template_asks_for_the_object_not_the_schema():
 
 @pytest.mark.parametrize("ceiling", [0, 1, 2, 3, 4, 5])
 def test_phase_prefix_names_what_the_ceiling_means_for_each_field(ceiling):
-    from agents.loop_tutor import CEILING_GUIDE, phase_prefix
+    from agents.loop_tutor import CEILING_GUIDE, TEACH_CEILING_GUIDE, phase_prefix
     from learning.ladder import Rung
 
-    text = phase_prefix(phase="teach", band="develop", ceiling=Rung(ceiling))
+    text = phase_prefix(phase="hint", band="develop", ceiling=Rung(ceiling), item_prompt="Q?")
     assert CEILING_GUIDE[ceiling] in text
     assert "key_idea" in CEILING_GUIDE[ceiling] and "question" in CEILING_GUIDE[ceiling]
+    # teach has no item: below H4 it gets the item-free guide (review round 3)
+    teach = phase_prefix(phase="teach", band="develop", ceiling=Rung(ceiling))
+    guide = TEACH_CEILING_GUIDE.get(ceiling, CEILING_GUIDE[ceiling])
+    assert guide in teach and "question" in guide
+    if ceiling in TEACH_CEILING_GUIDE:
+        assert CEILING_GUIDE[ceiling] not in teach and "item" not in guide.replace(
+            "check items", ""
+        )
 
 
 def test_low_ceilings_forbid_content_and_own_practice_problems():

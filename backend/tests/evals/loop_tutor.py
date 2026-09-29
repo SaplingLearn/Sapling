@@ -11,9 +11,17 @@ pinned by tests/test_loop_tutor_agent.py::test_loop_routable_tiers_match_baselin
 
 Case input = (phase, band, ceiling, message). The case's check item (reference,
 final answer) lives in METADATA only — it is scored against, never sent to the
-tutor (phase_prefix has no parameter for it). Every case carries an item, as a
-production turn whose `current` names one does, so every reply is served
-through the route's leak strip.
+tutor (phase_prefix has no parameter for it). Hint and feedback cases are
+served as production serves them with an active item: through the route's
+STRICT leak strip, behind the code-served answer when it is released (m1).
+Teach cases are served as production serves a teach turn — with no active item,
+so nothing is stripped (PKG-07 review round 3, m4): their item is the one the
+reply is scored against (ServedAnswerLeak, the rung judge), never a strip input.
+The message is assembled by production's `assemble_turn_message` — the
+student's words inside the nonce envelope (a FIXED eval nonce, so the input
+hash is stable), an [ACTION: ...] case's text as server text — with the blocks
+production's context_policy gives the phase (the fixture GRAPH CONTEXT block on
+teach turns; the eval items carry no source passages).
 
 The served-path pattern of tests/evals/grader.py: the cassette sits UNDER the
 model call and production code computes what the student is served.
@@ -77,11 +85,12 @@ from agents.deps import SaplingDeps  # noqa: E402
 from agents.loop_tutor import (  # noqa: E402
     _PROMPT_HASH,
     LOOP_TIER_SLOTS,
+    assemble_turn_message,
     loop_tutor_agent,
     phase_prefix,
     tier_run_kwargs,
 )
-from chat_tutor import ToolCall, _assemble_message  # noqa: E402
+from chat_tutor import ToolCall, graph_block  # noqa: E402
 from learning import policy  # noqa: E402
 from learning.ladder import Rung  # noqa: E402
 from learning.leak import detect_leak  # noqa: E402
@@ -141,11 +150,14 @@ class LoopRecording(BaseModel):
 
 
 class LoopReply(BaseModel):
-    """What the evaluators see: the model's render, the SERVED text, and the
-    rung judge's reading of the served text."""
+    """What the evaluators see: the model's render, the SERVED text (with the
+    code-served released answer in front, when released), the model's part of
+    it (`turn`, what the turn-shape gates count), and the rung judge's reading
+    of the served text."""
 
     raw: str
     served: str
+    turn: str = ""
     judgement: RungJudgement | None = None
     retries: int = 0
     rescued: bool = False
@@ -179,12 +191,16 @@ def _leak_rung(case_input: LoopInput, meta: dict) -> Rung:
     )
 
 
-def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, str]:
-    """(raw, served): production render_turn, then the route's leak strip
-    (served_model_text) at the route's leak rung for this case."""
-    from routes.learn_loop import served_model_text
+def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, str, str]:
+    """(raw, served, turn): production render_turn; then, as the route serves
+    it, a teach turn unchanged (no active item, m4) and a hint/feedback turn
+    through served_model_text (strict strip at the route's leak rung, the
+    released answer's lead in front); `turn` is served minus that lead."""
+    from routes.learn_loop import released_lead, served_model_text
 
     raw = render_turn(output)
+    if case_input[0] == "teach":
+        return raw, raw, raw
     served, _verdict = served_model_text(
         raw,
         leak_rung=_leak_rung(case_input, meta),
@@ -192,8 +208,11 @@ def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, 
         final_answer=meta["final_answer"],
         canonical_answer=meta.get("canonical_answer"),
         correct_option=meta.get("correct_option"),
+        option_text=meta.get("option_text"),
+        answer_released=_released(meta),
     )
-    return raw, served
+    lead = released_lead(meta["reference"]) if _released(meta) else ""
+    return raw, served, served[len(lead) :]
 
 
 # ── evaluators ───────────────────────────────────────────────────────────────
@@ -207,6 +226,12 @@ def _meta(ctx: _Ctx) -> dict:
 
 def _served(ctx: _Ctx) -> str:
     return (ctx.output.served if ctx.output else "") or ""
+
+
+def _turn(ctx: _Ctx) -> str:
+    """The model's part of the served text (the released answer's lead is
+    code's, not the turn's): what the turn-shape gates count."""
+    return (ctx.output.turn if ctx.output else "") or ""
 
 
 def _leaks(ctx: _Ctx, text: str) -> bool:
@@ -274,7 +299,7 @@ class FeedbackNeverEndsInAnswer(Evaluator[LoopInput, LoopReply]):
     def evaluate(self, ctx: _Ctx) -> float:
         if ctx.inputs[0] != "feedback":
             return 1.0
-        sents = sentences(_served(ctx))
+        sents = sentences(_turn(ctx))
         if not sents:
             return 0.0
         last = sents[-1].lower()
@@ -291,13 +316,13 @@ class FeedbackNeverEndsInAnswer(Evaluator[LoopInput, LoopReply]):
 @dataclass
 class MaxSentences(Evaluator[LoopInput, LoopReply]):
     def evaluate(self, ctx: _Ctx) -> float:
-        return 1.0 if len(sentences(_served(ctx))) <= STEP_MAX_SENTENCES else 0.0
+        return 1.0 if len(sentences(_turn(ctx))) <= STEP_MAX_SENTENCES else 0.0
 
 
 @dataclass
 class OneQuestion(Evaluator[LoopInput, LoopReply]):
     def evaluate(self, ctx: _Ctx) -> float:
-        return 1.0 if _served(ctx).count("?") == STEP_QUESTIONS_PER_TURN else 0.0
+        return 1.0 if _turn(ctx).count("?") == STEP_QUESTIONS_PER_TURN else 0.0
 
 
 @dataclass
@@ -341,7 +366,7 @@ class PlainMathBelowH6(Evaluator[LoopInput, LoopReply]):
     def evaluate(self, ctx: _Ctx) -> float:
         if _released(_meta(ctx)):
             return 1.0
-        return 0.0 if _LATEX.search(_served(ctx)) else 1.0
+        return 0.0 if _LATEX.search(_turn(ctx)) else 1.0
 
 
 @dataclass
@@ -386,7 +411,12 @@ CASES: list[Case[LoopInput, LoopReply]] = [
     Case(
         name="hint_develop_h1_pump",
         inputs=("hint", "develop", int(Rung.H1), "[ACTION: The student asked for a hint.]"),
-        metadata={"reference": _REF_BASE_CASE, "final_answer": _FA_BASE_CASE, **_ITEM_BASE_CASE},
+        metadata={
+            "reference": _REF_BASE_CASE,
+            "final_answer": _FA_BASE_CASE,
+            "trusted": True,  # an [ACTION: ...] line is server text (routes/learn_loop.py)
+            **_ITEM_BASE_CASE,
+        },
     ),
     Case(
         name="feedback_after_wrong",
@@ -448,6 +478,11 @@ def _tier_of(slot: str) -> str:
     return next(t for t, s in LOOP_TIER_SLOTS.items() if s == slot)
 
 
+#: The eval's envelope nonce: FIXED, so the assembled message (and the input
+#: hash) is stable; production draws a fresh one per call (agents.loop_tutor.new_nonce).
+EVAL_NONCE = "e0a1e0a1e0a1e0a1e0a1e0a1"
+
+
 def _assembled(case_input: LoopInput) -> str:
     phase, band, _ceiling, message = case_input
     meta = _META[_INPUT_TO_NAME[case_input]]
@@ -460,7 +495,16 @@ def _assembled(case_input: LoopInput) -> str:
         answer_released=_released(meta),
         verdict=meta.get("verdict"),
     )
-    return prefix + "\n\n" + _assemble_message(message)
+    context = policy.context_policy(phase, opener=False, budget_level="normal")
+    block = graph_block(message) if context.graph_block else ""
+    trusted = bool(meta.get("trusted"))
+    return assemble_turn_message(
+        prefix=prefix,
+        blocks=[block] if block else [],
+        nonce=EVAL_NONCE,
+        student_text=None if trusted else message,
+        instruction=message if trusted else None,
+    )
 
 
 def _tool_choice(phase: str):
@@ -610,13 +654,14 @@ def _run_for(slot: str):
             rec = await _record_with_retry(slot, case_input)
             if MODE == "record":
                 save_cassette(slot, name, rec)
-        raw, served = served_texts(rec.output, case_input, meta)
+        raw, served, turn = served_texts(rec.output, case_input, meta)
         judgement = await ajudge_rung(
             name, slot, served, JudgeItem.from_metadata(meta, student_message=case_input[3])
         )
         return LoopReply(
             raw=raw,
             served=served,
+            turn=turn,
             judgement=judgement,
             retries=rec.retries,
             rescued=rec.rescued,

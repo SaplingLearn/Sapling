@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "You open the largest doll to find a slightly smaller doll inside. You then repeat the exact same action\u2014opening a doll\u2014on the new doll, and so on, until you reach the smallest doll...",
+    "evidence": "Key idea: A recursive function solves a problem by calling itself on smaller versions of the same problem.",
     "reveals_final_answer": false,
-    "rung": 4
+    "rung": 2
   },
-  "served_sha256": "4030c032a5cdf0597a9858f27177264dcb1eb5ce7f0b09986ed33d9f901076a0"
+  "served_sha256": "1ad44a1aef187bfd32025727c433ff1da1e9e71b495e7d985f43961d5815081a"
 }

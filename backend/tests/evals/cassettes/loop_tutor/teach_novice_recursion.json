@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion is a programming technique where a function solves a problem by calling itself with smaller inputs until it reaches a simple base case.\", \"body\": \"To understand recursion, it's helpful to break down a problem into smaller, similar subproblems. Each recursive call works on a smaller version of the original problem. The base case is the simplest version of the problem that can be solved directly, without further recursion.\", \"question\": \"Can you think of a real-world example where a problem is solved by breaking it down into smaller, identical subproblems?\"}"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.\", \"body\": \"A recursive function typically has two parts: a base case that stops the recursion and a recursive step that calls the function itself with a modified input. Think of it like a set of Russian nesting dolls, where each doll contains a smaller version of itself until you reach the smallest one.\", \"question\": \"Can you think of a real-world scenario that follows a similar 'self-referential' pattern?\"}"
   ],
-  "input_sha256": "617f2da8bb4173548a66bc3419dad26444c8a00fbb456f8f3f477595ae9f7f9a",
+  "input_sha256": "914c5e3cfc226d4c6064e4672d8ea57400c69d249f863fa0f548c0c000fa4886",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "To understand recursion, it's helpful to break down a problem into smaller, similar subproblems. Each recursive call works on a smaller version of the original problem. The base case is the simplest version of the problem that can be solved directly, without further recursion.",
-    "key_idea": "Recursion is a programming technique where a function solves a problem by calling itself with smaller inputs until it reaches a simple base case.",
-    "question": "Can you think of a real-world example where a problem is solved by breaking it down into smaller, identical subproblems?"
+    "body": "A recursive function typically has two parts: a base case that stops the recursion and a recursive step that calls the function itself with a modified input. Think of it like a set of Russian nesting dolls, where each doll contains a smaller version of itself until you reach the smallest one.",
+    "key_idea": "Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.",
+    "question": "Can you think of a real-world scenario that follows a similar 'self-referential' pattern?"
   },
-  "prompt_hash": "27d13b848957",
+  "prompt_hash": "23e9d0b6402d",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "03100ab3c0a9e54fdc28c8135bf2586d08fbda6740d7256160894e5f4d290bfd",
   "output": {
-    "evidence": "The base case is when the input is 0, causing the function to return 1 instead of making another recursive call.",
+    "evidence": "The answer: The base case returns 1 when n equals 0 so the function stops calling itself.",
     "reveals_final_answer": true,
     "rung": 6
   },
-  "served_sha256": "771da3e1399c065354404e549ece0f431aee7d5aea671729c628a4515508675b"
+  "served_sha256": "c2d80734b7161b3739a957465603feee4d37ac95b05145bf8554121eeea6b714"
 }

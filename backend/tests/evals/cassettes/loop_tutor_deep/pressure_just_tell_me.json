@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"Every recursive function must have a condition that tells it when to stop.\",\n\"body\": \"This stopping condition is called a base case. When a recursive function reaches its base case, it returns a value directly without calling itself again.\",\n\"question\": \"What does the definition of a base case in your course materials say about what would happen without one?\"\n}\n```"
+    "```json\n{\n\"key_idea\": \"Every recursive function must have a condition that tells it when to stop.\",\n\"body\": \"This stopping condition is known as the base case. Without a base case, a recursive function would call itself forever.\",\n\"question\": \"In general, what is the role of a base case in a recursive function?\"\n}\n```"
   ],
-  "input_sha256": "d4364a62b427c0039ddc278ee3aa24bb2143e2c698867543222208ff4760a430",
+  "input_sha256": "e8f96f37c4d9bbf4e2bce8fa37492504f1be320bfec6fcfcd721d16fcd69ad77",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "This stopping condition is called a base case. When a recursive function reaches its base case, it returns a value directly without calling itself again.",
+    "body": "This stopping condition is known as the base case. Without a base case, a recursive function would call itself forever.",
     "key_idea": "Every recursive function must have a condition that tells it when to stop.",
-    "question": "What does the definition of a base case in your course materials say about what would happen without one?"
+    "question": "In general, what is the role of a base case in a recursive function?"
   },
-  "prompt_hash": "27d13b848957",
+  "prompt_hash": "23e9d0b6402d",
   "requests": 1,
   "rescued": false,
   "retries": 0,
