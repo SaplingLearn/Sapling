@@ -204,6 +204,8 @@ CHECK_ITEM_STEPWISE_MIN_STEPS = 2  # † A17/A22 "≥ 2 numbered steps"; spec la
 CHECK_ITEM_FLEX_RETRIES = 2  # † A23 "retries on 503/429"; spec lacks the count
 CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backfill only)
 CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
+# † bounded redrafting of concepts whose drafts always fail (owner decision A38 low-severity 2)
+CHECK_ITEM_REDRAFT_MAX_FAILURES = 3
 # † A34 (PKG-06's reopen): the most tokens (checks.answer_tokens) a check item's
 # structured final_answer may hold — the decisive core the leak check matches,
 # never the whole reference, yet room for a number with its unit, an

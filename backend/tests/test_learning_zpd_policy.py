@@ -391,6 +391,16 @@ def test_band_control_needs_min_attempts_before_harder():
     assert band_control([True], 0.5, True, wheelspin=True) is BandAction.WHEELSPIN
 
 
+def test_owner_decision_a38_params_are_pinned():
+    """Constants PKG-a38 lanes consume (added here to keep params.py edits in
+    one lane): the CAS retries (06(q)), the HARDER floor (06(m)) and lane D's
+    bounded redrafting (A38 low-severity 2)."""
+    assert params.LOOP_STATE_CAS_RETRIES == 3
+    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS == 4
+    assert params.BAND_CONTROL_HARDER_MIN_ATTEMPTS <= params.BAND_WINDOW
+    assert params.CHECK_ITEM_REDRAFT_MAX_FAILURES == 3
+
+
 def test_unassisted_rate_uses_last_window_only():
     from learning.policy import unassisted_rate
 
