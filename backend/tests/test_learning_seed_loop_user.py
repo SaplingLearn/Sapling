@@ -211,7 +211,41 @@ def test_capped_user_spend_is_past_the_novice_allowance(recorder):
     assert sum(float(r["cost_usd"]) for r in rows) > allowance  # hard level in every band
     assert len(rows) < config.LEARN_RATE_LIMIT_PER_MIN  # the $ cap, not the rate limit
     assert all(r["task"] not in ("grader", "grader_second", "decision") for r in rows)
-    assert all("created_at" not in r for r in rows)  # stamped now() by the column default
+    # stamped NOW on every run (an upsert): a stack seeded once stays capped past
+    # UTC midnight only through a re-seed, never on a stale timestamp
+    for r in rows:
+        at = datetime.fromisoformat(r["created_at"])
+        assert abs((datetime.now(timezone.utc) - at).total_seconds()) < 60
+
+
+def test_capped_spend_is_refreshed_by_a_reseed_not_skipped(recorder):
+    import inspect
+
+    src = inspect.getsource(seed.seed_learning_loop)
+    usage = src[src.index('"llm_usage"') - 40 : src.index('"llm_usage"')]
+    assert "h.upsert(" in usage and "insert_if_absent" not in usage
+
+
+def test_the_loop_seed_imports_no_model_sdk():
+    """The seed runs in a fresh process before every Playwright test; importing
+    the handler module or rag_service (pydantic-ai + google-genai) cost ~2.4 s a
+    test (PKG-13 fix round). Run the loop step's imports in a clean interpreter."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys, inspect, ast\n"
+        "import db.seed_local_rich as s\n"
+        "tree = ast.parse(inspect.getsource(s.seed_learning_loop))\n"
+        "tree2 = ast.parse(inspect.getsource(s._seed_embedding))\n"
+        "for t in (tree, tree2):\n"
+        "    for n in ast.walk(t):\n"
+        "        if isinstance(n, ast.ImportFrom): __import__(n.module)\n"
+        "        elif isinstance(n, ast.Import): [__import__(a.name) for a in n.names]\n"
+        "print('pydantic_ai' in sys.modules, 'google.genai' in sys.modules)\n"
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    assert out.stdout.split() == ["False", "False"], out.stderr
 
 
 def test_capped_user_has_one_due_flashcard(recorder):

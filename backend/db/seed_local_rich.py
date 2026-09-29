@@ -906,7 +906,7 @@ def _seed_embedding(text: str) -> list[float]:
     import hashlib
     import math
 
-    from services.rag_service import _OUTPUT_DIM
+    from services.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM
 
     raw: list[float] = []
     counter = 0
@@ -924,22 +924,25 @@ def seed_learning_loop() -> None:
     an indexed shared course document, shared encrypted check items drafted from
     it, and the capped user's spend and due card. Imports are function-local:
     `learning.*`, the `config` budget names, the RAG helpers and the
-    function-handler constants are only needed here, and importing
-    agents.function_handlers_e2e registers handlers as a harmless side effect
-    in this CLI process."""
+    function-handler constants are only needed here. Nothing here imports the
+    SDK (PKG-13 fix round): this runs in a fresh process before EVERY
+    Playwright test, and agents.function_handlers_e2e / services.rag_service
+    pull pydantic-ai and google-genai (~2.4 s a test) — the handler constants
+    are read from the module's source (db.e2e_handler_constants) and the chunk
+    id from services.chunk_ids (rag_service re-exports it)."""
     from datetime import datetime, timedelta, timezone
 
     import config
-    from agents.function_handlers_e2e import (
-        E2E_LOOP_FINAL_ANSWER,
-        E2E_LOOP_PROBE_PROMPT,
-        E2E_LOOP_REFERENCE,
-    )
+    from db.e2e_handler_constants import read_constants
     from learning.checks import question_hash
     from learning.params import CHECK_ITEM_DIFFICULTIES, EDGE_PREREQ_SOURCE_IS_PREREQ
+    from services.chunk_ids import chunk_id
     from services.chunk_visibility import SHARED
     from services.graph_service import _normalize_concept
-    from services.rag_service import chunk_id
+
+    E2E_LOOP_FINAL_ANSWER, E2E_LOOP_PROBE_PROMPT, E2E_LOOP_REFERENCE = read_constants(
+        "E2E_LOOP_FINAL_ANSWER", "E2E_LOOP_PROBE_PROMPT", "E2E_LOOP_REFERENCE"
+    )
 
     for uid in LOOP_USERS:
         # share_class_context: the uploader's consent the shared chunks rest on (#629).
@@ -1073,12 +1076,15 @@ def seed_learning_loop() -> None:
     # so the §3.5 hard level applies in every band. ONE row — far below
     # LEARN_RATE_LIMIT_PER_MIN, so the journey hits the $ cap and not the rate
     # limit — on a tutor slot, so the grader cap is untouched. created_at is
-    # the column default now(); the Playwright fixture re-seeds before every
-    # test, so the row is always inside today's UTC window.
-    h.insert_if_absent(
+    # stamped NOW on every run and the row is upserted (PKG-13 fix round): with
+    # insert-if-absent a stack seeded once (make e2e-up, make explore, any run
+    # without the per-test truncate) kept yesterday's timestamp after UTC
+    # midnight, and the "capped" user was silently no longer capped.
+    h.upsert(
         "llm_usage",
-        "rich-usage-capped-1",
         {
+            "id": "rich-usage-capped-1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "user_id": USER_CAPPED,
             "feature": "learn_loop",
             "task": "loop_tutor",
@@ -1091,6 +1097,7 @@ def seed_learning_loop() -> None:
                 6,
             ),
         },
+        on_conflict="id",
     )
     card_id, front, back = CAPPED_FLASHCARD
     h.insert_if_absent(
