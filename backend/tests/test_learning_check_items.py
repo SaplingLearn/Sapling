@@ -4687,6 +4687,37 @@ class TestMcTopUp:
 
         assert "learn.check_items_topup" in EVENT_TAXONOMY
 
+    def test_a_concept_at_the_item_count_gets_no_call_whatever_its_mc_reason_count(
+        self, monkeypatch
+    ):
+        """A23 (spec §13): a concept with CHECK_ITEM_INITIAL_PER_CONCEPT items
+        is skipped before any agent call, and a re-run costs nothing. The skip
+        counts items, not formats, and the top-up is for a concept a call of
+        this pass drafted (A37). So a concept holding 9 items of which 1 is
+        mc_reason gets neither a generation call nor a top-up, in this pass
+        or any later one: the residual HANDOFF-a37 records under Known gaps
+        and Open questions, pinned here."""
+        from learning.params import CHECK_ITEM_INITIAL_PER_CONCEPT, CHECK_ITEM_MC_MIN_PER_CONCEPT
+
+        rows = [
+            {
+                "id": f"old-{n}",
+                "course_id": "course-1",
+                "concept_key": "learning rate",
+                "format": "mc_reason" if n == 0 else "free",
+                "difficulty": 1,
+            }
+            for n in range(CHECK_ITEM_INITIAL_PER_CONCEPT)
+        ]
+        items = _ItemsTable(rows)
+        assert len(items.mc_reason("learning rate")) < CHECK_ITEM_MC_MIN_PER_CONCEPT
+        calls: list = []
+        out, _, topups, ev = self._run(monkeypatch, calls.append, None, items=items)
+        assert calls == [] and topups == [] and items.upserts == []
+        assert items.columns == ["id"], "the A23 count only: no mc_reason read"
+        assert out.concepts_skipped == 1 and out.concepts_attempted == 0
+        assert out.items_created == 0 and self._topup_events(ev) == []
+
     def test_a_pass_item_retired_before_the_count_read_is_not_counted(self, monkeypatch, caplog):
         """The count read follows the pass's own write, so it alone is what
         the concept ends the pass with: an item retired in between (a
