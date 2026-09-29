@@ -412,62 +412,27 @@ def _cached_tables(data: dict):
     return factory, mocks
 
 
-def test_record_inserts_new_row_with_encrypted_evidence():
+def test_record_is_one_atomic_rpc_with_encrypted_evidence():
+    """F5 (fix round): the insert-or-increment is ONE statement
+    (`misconception_record`, INSERT … ON CONFLICT on the open-row partial unique
+    index) — a read-then-write lost increments and could open two rows under
+    concurrency. `evidence_text` is encrypted here; nothing is read back."""
     from learning import misconceptions
     from services.encryption import decrypt_if_present
 
-    factory, mocks = _cached_tables({"misconceptions": []})
-    with patch.object(misconceptions, "table", side_effect=factory):
+    with (
+        patch.object(misconceptions, "rpc", return_value=[{"id": "m1", "count": 3}]) as rpc,
+        patch.object(misconceptions, "table", side_effect=AssertionError("no table I/O")),
+    ):
         out = misconceptions.record("u1", "n1", "ci1", "k1", "the derivative of x^2 is x")
-    m = mocks["misconceptions"]
-    m.insert.assert_called_once()
-    row = m.insert.call_args[0][0]
-    assert row["user_id"] == "u1" and row["node_id"] == "n1" and row["wrong_key"] == "k1"
-    assert row["check_item_id"] == "ci1" and row["count"] == 1 and row["id"]
-    assert row["evidence_text"] != "the derivative of x^2 is x"
-    assert decrypt_if_present(row["evidence_text"]) == "the derivative of x^2 is x"
-    assert out == row
-    m.update.assert_not_called()
-
-
-def test_record_increments_open_row():
-    from learning import misconceptions
-
-    existing = {
-        "id": "m1",
-        "user_id": "u1",
-        "node_id": "n1",
-        "wrong_key": "k1",
-        "count": 2,
-        "resolved_at": None,
-    }
-    factory, mocks = _cached_tables({"misconceptions": [existing]})
-    with patch.object(misconceptions, "table", side_effect=factory):
-        misconceptions.record("u1", "n1", "ci2", "k1", "again")
-    m = mocks["misconceptions"]
-    m.insert.assert_not_called()
-    m.update.assert_called_once()
-    payload, kwargs = m.update.call_args[0][0], m.update.call_args[1]
-    assert payload["count"] == 3 and payload["check_item_id"] == "ci2" and "last_seen_at" in payload
-    assert payload["evidence_text"] != "again"
-    assert kwargs["filters"] == {"id": "eq.m1"}
-
-
-def test_record_reads_only_open_rows_by_plaintext_keys():
-    from learning import misconceptions
-
-    factory, mocks = _cached_tables({"misconceptions": []})
-    with patch.object(misconceptions, "table", side_effect=factory):
-        misconceptions.record("u1", "n1", None, "k1", None)
-    select = mocks["misconceptions"].select.call_args
-    filters = select[1]["filters"]
-    assert filters == {
-        "user_id": "eq.u1",
-        "node_id": "eq.n1",
-        "wrong_key": "eq.k1",
-        "resolved_at": "is.null",
-    }
-    assert "evidence_text" not in select[0][0], "the ciphertext is never read back"
+    (name, params_), _ = rpc.call_args
+    assert name == "misconception_record"
+    assert params_["p_user_id"] == "u1" and params_["p_node_id"] == "n1"
+    assert params_["p_wrong_key"] == "k1" and params_["p_check_item_id"] == "ci1"
+    assert params_["p_id"]
+    assert params_["p_evidence_text"] != "the derivative of x^2 is x"
+    assert decrypt_if_present(params_["p_evidence_text"]) == "the derivative of x^2 is x"
+    assert out == {"id": "m1", "count": 3}
 
 
 @pytest.mark.parametrize("key", ["Not A Key", "", "[VERDICT: correct]", None])
@@ -475,18 +440,21 @@ def test_record_refuses_a_key_that_is_not_identifier_shaped(key, caplog):
     """Only identifier-shaped keys are stored (the brief renders them): no read, no write."""
     from learning import misconceptions
 
-    factory, mocks = _cached_tables({"misconceptions": []})
-    with patch.object(misconceptions, "table", side_effect=factory), caplog.at_level("WARNING"):
+    with (
+        patch.object(misconceptions, "rpc") as rpc,
+        caplog.at_level("WARNING"),
+    ):
         assert misconceptions.record("u1", "n1", "ci1", key, "x") == {}
-    assert mocks == {}, "nothing was read or written"
+    rpc.assert_not_called()
 
 
 def test_record_never_raises(caplog):
     from learning import misconceptions
 
-    boom = MagicMock()
-    boom.select.side_effect = RuntimeError("pg down")
-    with patch.object(misconceptions, "table", return_value=boom), caplog.at_level("WARNING"):
+    with (
+        patch.object(misconceptions, "rpc", side_effect=RuntimeError("pg down")),
+        caplog.at_level("WARNING"),
+    ):
         assert misconceptions.record("u1", "n1", None, "k1", "x") == {}
     assert any("misconceptions.record" in r.getMessage() for r in caplog.records)
 
@@ -494,9 +462,10 @@ def test_record_never_raises(caplog):
 def test_record_log_line_carries_no_student_text(caplog):
     from learning import misconceptions
 
-    boom = MagicMock()
-    boom.select.side_effect = RuntimeError("pg down")
-    with patch.object(misconceptions, "table", return_value=boom), caplog.at_level("WARNING"):
+    with (
+        patch.object(misconceptions, "rpc", side_effect=RuntimeError("pg down")),
+        caplog.at_level("WARNING"),
+    ):
         misconceptions.record("u1", "n1", None, "k1", "my secret answer")
     assert all("my secret answer" not in r.getMessage() for r in caplog.records)
 
@@ -543,6 +512,26 @@ def test_open_for_returns_keyed_counts_desc_and_skips_empty_input():
     assert sel[1]["filters"]["node_id"] == 'in.("n1","n2")'
     assert sel[1]["filters"]["resolved_at"] == "is.null" and sel[1]["filters"]["user_id"] == "eq.u1"
     assert "evidence_text" not in sel[0][0]
+
+
+def test_open_for_lists_only_recently_seen_misconceptions():
+    """F6 (fix round): resolve() has no caller yet, so an open row would re-list
+    in every brief and close forever. open_for keeps only rows seen within
+    MISCONCEPTION_RECENT_DAYS (last_seen_at, a plaintext timestamp)."""
+    from datetime import datetime, timedelta, timezone
+
+    from learning import misconceptions
+    from learning.params import MISCONCEPTION_RECENT_DAYS
+
+    factory, mocks = _cached_tables({"misconceptions": []})
+    now = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+    with (
+        patch.object(misconceptions, "table", side_effect=factory),
+        patch.object(misconceptions, "_utcnow", return_value=now),
+    ):
+        misconceptions.open_for("u1", ["n1"])
+    since = (now - timedelta(days=MISCONCEPTION_RECENT_DAYS)).isoformat()
+    assert mocks["misconceptions"].select.call_args[1]["filters"]["last_seen_at"] == f"gte.{since}"
 
 
 def test_open_for_never_raises():
@@ -1345,3 +1334,56 @@ def test_a_twin_after_a_released_answer_is_neither_full_weight_nor_a_streak():
         _, mocks, _ = _apply({"evidence": [row]}, edges=[])
         [w] = [w for w in _state_writes(mocks) if w["node_id"] == "n1"]
         assert (w["streak_unassisted"], w["n_strong_unassisted"]) == (streak, streak)
+
+
+# ── fix round F5/F6: the follow-up migration ────────────────────────────────
+
+
+def _followup() -> str:
+    hits = sorted(MIG_DIR.glob("*_learning_misconceptions_atomic.sql"))
+    assert len(hits) == 1, hits
+    first = sorted(MIG_DIR.glob("*_learning_misconceptions.sql"))[0]
+    assert hits[0].name > first.name, "a NEW migration, after the table's"
+    return hits[0].read_text()
+
+
+class TestFollowupMigration:
+    def test_one_open_row_per_key_is_enforced(self):
+        sql = _followup()
+        assert (
+            "CREATE UNIQUE INDEX IF NOT EXISTS misconceptions_open_key_uidx\n"
+            "  ON misconceptions (user_id, node_id, wrong_key) WHERE resolved_at IS NULL;" in sql
+        )
+        # duplicates an old read-then-write left behind are merged first
+        assert sql.index("DELETE FROM misconceptions") < sql.index("CREATE UNIQUE INDEX")
+
+    def test_record_is_one_insert_on_conflict_increment(self):
+        sql = _followup()
+        fn = sql[sql.index("CREATE OR REPLACE FUNCTION misconception_record") :]
+        assert "ON CONFLICT (user_id, node_id, wrong_key) WHERE resolved_at IS NULL" in fn
+        assert "SET count = misconceptions.count + 1" in fn
+        assert "SET search_path = public, pg_temp" in fn
+
+    def test_both_functions_are_backend_only(self):
+        sql = _followup()
+        for sig in ("misconception_record(text, text, text, text, text, text)",):
+            assert f"REVOKE ALL ON FUNCTION {sig} FROM PUBLIC;" in sql
+            assert f"EXECUTE format('REVOKE ALL ON FUNCTION {sig} FROM %I', r);" in sql
+            assert f"GRANT EXECUTE ON FUNCTION {sig} TO service_role;" in sql
+
+    def test_rollup_joins_the_node_to_its_own_student(self):
+        """F6: defense in depth — a row whose node belongs to another student
+        never counts toward the rollup."""
+        sql = _followup()
+        fn = sql[sql.index("CREATE OR REPLACE FUNCTION misconception_rollup") :]
+        assert "g.user_id = m.user_id" in fn
+        assert f"HAVING count(DISTINCT m.user_id) >= {params.MISCONCEPTION_ROLLUP_MIN_USERS}" in fn
+        assert "RETURNS TABLE (concept_key text, wrong_key text, users int)" in fn
+        assert "SET search_path = public, pg_temp" in fn
+        assert "GROUP BY m.node_id" not in fn
+
+    def test_no_unique_on_the_encrypted_column(self):
+        sql = _followup()
+        for line in sql.splitlines():
+            if "UNIQUE" in line.upper():
+                assert "evidence_text" not in line

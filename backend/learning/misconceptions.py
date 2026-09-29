@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -34,6 +34,7 @@ from learning.params import (
     MISCONCEPTION_CONFIDENCE,
     MISCONCEPTION_KEY_MAX_CHARS,
     MISCONCEPTION_MIN_ISOMORPHS,
+    MISCONCEPTION_RECENT_DAYS,
     NOVICE_FLOOR_IDK,
     NOVICE_FLOOR_MISSES,
 )
@@ -53,9 +54,6 @@ _ATTEMPTS = "attempts"
 _CONFRONT = "confront"
 _CONFRONT_KEYS = ("node_id", "wrong_key", "check_item_id")
 _OPEN_COLS = "node_id,wrong_key,count"
-_ROW_COLS = (
-    "id,user_id,node_id,check_item_id,wrong_key,count,first_seen_at,last_seen_at,resolved_at"
-)
 
 
 def is_key(key: object) -> bool:
@@ -207,8 +205,12 @@ def carry(loop_state: dict, diagnosis: dict | None) -> None:
 # ── the store (fails closed) ────────────────────────────────────────────────
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return _utcnow().isoformat()
 
 
 def _open_filters(user_id: str, node_id: str, wrong_key: str) -> dict:
@@ -227,41 +229,30 @@ def record(
     wrong_key: str,
     evidence_text: str | None,
 ) -> dict:
-    """Insert-or-increment on (user_id, node_id, wrong_key) among OPEN rows.
-    Read then insert/update: the index is not unique (a resolved row and a new
-    open row may share the key), so PostgREST's on_conflict cannot express it.
-    `evidence_text` (the student's answer) is encrypted here, at the write
-    boundary, and never read back. A key that is not identifier-shaped is
-    refused with nothing read or written. Returns the row as written (the
-    ciphertext in it); {} on a refusal or a DB error. Never raises."""
+    """Insert-or-increment on (user_id, node_id, wrong_key) among OPEN rows —
+    ONE atomic statement, the `misconception_record` SQL function (INSERT …
+    ON CONFLICT on the open-row partial unique index; PKG-10 fix round F5: a
+    read-then-write from here lost increments and opened duplicate rows under
+    concurrency). `evidence_text` (the student's answer) is encrypted here, at
+    the write boundary, and never read back. A key that is not
+    identifier-shaped is refused with nothing written. Returns {id, count};
+    {} on a refusal or a DB error. Never raises."""
     if not is_key(wrong_key):
         logger.warning("misconceptions.record: refused a key that is not identifier-shaped")
         return {}
     try:
-        t = table("misconceptions")
-        rows = t.select(_ROW_COLS, filters=_open_filters(user_id, node_id, wrong_key)) or []
-        enc = encrypt_if_present(evidence_text)
-        if rows:
-            row = rows[0]
-            payload = {
-                "count": int(row.get("count") or 0) + 1,
-                "last_seen_at": _now(),
-                "check_item_id": check_item_id,
-                "evidence_text": enc,
-            }
-            t.update(payload, filters={"id": f"eq.{row['id']}"})
-            return {**row, **payload}
-        payload = {
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "node_id": node_id,
-            "check_item_id": check_item_id,
-            "wrong_key": wrong_key,
-            "evidence_text": enc,
-            "count": 1,
-        }
-        t.insert(payload)
-        return payload
+        rows = rpc(
+            "misconception_record",
+            {
+                "p_id": str(uuid.uuid4()),
+                "p_user_id": user_id,
+                "p_node_id": node_id,
+                "p_check_item_id": check_item_id,
+                "p_wrong_key": wrong_key,
+                "p_evidence_text": encrypt_if_present(evidence_text),
+            },
+        )
+        return dict(rows[0]) if rows else {}
     except Exception as exc:  # fail closed: a diagnosis input, never a gate
         logger.warning(
             "misconceptions.record failed for %s/%s/%s: %s",
@@ -295,13 +286,15 @@ def resolve(user_id: str, node_id: str, wrong_key: str) -> int:
 
 
 def open_for(user_id: str, node_ids: list[str]) -> list[dict]:
-    """Open misconceptions for the student on the given nodes:
-    [{node_id, wrong_key, count}], count descending; only identifier-shaped
-    keys. No read for an empty id list. Never reads evidence_text; [] on a DB
-    error (never raises)."""
+    """Open misconceptions for the student on the given nodes, seen within
+    MISCONCEPTION_RECENT_DAYS (F6: resolve() has no caller yet, so an old row
+    would otherwise re-list forever): [{node_id, wrong_key, count}], count
+    descending; only identifier-shaped keys. No read for an empty id list.
+    Never reads evidence_text; [] on a DB error (never raises)."""
     ids = list(dict.fromkeys(n for n in node_ids or [] if n))
     if not ids:
         return []
+    since = (_utcnow() - timedelta(days=MISCONCEPTION_RECENT_DAYS)).isoformat()
     try:
         rows = (
             table("misconceptions").select(
@@ -310,6 +303,7 @@ def open_for(user_id: str, node_ids: list[str]) -> list[dict]:
                     "user_id": f"eq.{user_id}",
                     "node_id": f"in.({','.join(pg_quote_value(n) for n in ids)})",
                     "resolved_at": "is.null",
+                    "last_seen_at": f"gte.{since}",
                 },
             )
             or []

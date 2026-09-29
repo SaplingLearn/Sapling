@@ -143,6 +143,11 @@ MISCONCEPTION_KEY_MAX_CHARS = 64
 # H3-ceiling confrontation as H4) — so below H4 the ceiling wins and the
 # confrontation marker waits.
 MISCONCEPTION_CONFRONT_MIN_RUNG = 4
+# PKG-10 fix round (F6) †: the learner brief and the session close list an open
+# misconception only when it was seen within this many days. resolve() has no
+# caller yet (PKG-12 / PKG-14), so without a window an old misconception would
+# re-list forever. A/B candidate.
+MISCONCEPTION_RECENT_DAYS = 30
 # Spec §3.2 rating map / §3.3 evidence mapping: correct after H1..H3 is "assisted"
 # (FSRS Hard, WEIGHT_ASSISTED); correct after H4..H6 is FSRS Again. Name from
 # §13 A6, added by PKG-02 (fsrs.rating_for); PKG-03 Evidence.assisted and
