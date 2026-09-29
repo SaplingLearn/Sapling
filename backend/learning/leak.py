@@ -660,6 +660,13 @@ def _answer_position(text: str, start: int, end: int) -> bool:
     return bool(clause_start and _CLAUSE_CLOSE.match(text, end))
 
 
+def in_answer_position(text: str, start: int, end: int) -> bool:
+    """Public face of the served-mode answer-position rule (PKG-10 fix round 2:
+    the check-item drafting lint reads a single-token answer only where an
+    answer goes)."""
+    return _answer_position(text, start, end)
+
+
 _NEXT_WORD = re.compile(r"[\s\-]{1,4}([A-Za-z]{3,})")
 
 
