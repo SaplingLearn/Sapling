@@ -16,6 +16,14 @@ the supervisor architecture's deterministic solution stripper). Two rules:
   are not part of it), or its full value written in any notation (a number
   with an exponent right after it: "2.5 × 10^-3" and "2.5e-3" are 0.0025).
 
+- option (owner decision A38, 06 gap): for an mc_reason item whose caller
+  passes `correct_option`, that letter as a capital in an option context —
+  "(C)", "C)", "option/options/choice/letter C", "answer (is/was/…) C",
+  "pick/choose/select/go with C" (keywords any case, an optional ":" or "-",
+  and an opening quote or bracket between). A bare capital never counts, so
+  the article "A" is no leak when the key is A, and neither is a lowercase
+  letter ("option a student picks").
+
 The reference is never parsed for a final answer (A34): extracting one from
 free text is an unbounded heuristic, and the generator knows the answer, so
 it states it. A missing or empty final_answer is a programmer error
@@ -47,7 +55,7 @@ from learning.checks import (
 )
 from learning.ladder import Rung
 
-Detector = Literal["none", "ngram", "final_answer"]
+Detector = Literal["none", "ngram", "final_answer", "option"]
 WITHHELD = "[withheld]"
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
@@ -63,6 +71,37 @@ _CLOSERS = {closer: opener for opener, closer in _OPENERS.items()}
 _CANONICAL = re.compile(
     r"[-+]?((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?"
 )
+
+
+# The option-context keywords before a letter (owner decision A38, 06 gap).
+_OPTION_KEYWORDS = (
+    r"options?|choices?|letter"
+    r"|answer(?:\s+(?:is|was|would\s+be|should\s+be|must\s+be|has\s+to\s+be))?"
+    r"|pick|choose|select|go\s+with"
+)
+
+
+def _option_pattern(correct_option: str | None) -> re.Pattern[str] | None:
+    """The compiled option-context rule for the key letter, or None when the
+    caller passed no correct_option. ValueError on anything but one ASCII
+    letter (case-insensitive: "c" is key C)."""
+    if correct_option is None:
+        return None
+    letter = str(correct_option).strip().upper()
+    if not re.fullmatch(r"[A-Z]", letter):
+        raise ValueError(f"correct_option {correct_option!r} is not one option letter")
+    # group "span" is what the stripper withholds: the letter with its own
+    # brackets, never the keyword (the rest of the sentence stays readable).
+    return re.compile(
+        rf"(?i:\b(?:{_OPTION_KEYWORDS})\b)\s*(?:[:\-]\s*)?[\"'‘“]?(?P<span>\(?{letter}\)?)(?![A-Za-z0-9])"
+        rf"|(?<![A-Za-z0-9])(?P<bracket>\(?{letter}\))"
+    )
+
+
+def _option_hits(text: str, option: re.Pattern[str] | None) -> list[tuple[int, int]]:
+    if option is None:
+        return []
+    return [m.span("span") if m.group("span") else m.span("bracket") for m in option.finditer(text)]
 
 
 class LeakVerdict(NamedTuple):
@@ -147,13 +186,17 @@ def detect_leak(
     *,
     final_answer: str,
     canonical_answer: str | None = None,
+    correct_option: str | None = None,
 ) -> LeakVerdict:
     """`rung` is the rung the text is served at; at H6 the reference is the
     content (under gates.h6_allowed), so nothing is a leak. `final_answer` is
     the item's decrypted check_items.final_answer and `canonical_answer` its
-    decrypted numeric canonical_answer (None for a free item). ValueError on a
-    missing or empty final_answer, at every rung."""
+    decrypted numeric canonical_answer (None for a free item).
+    `correct_option` is an mc_reason item's key letter (None otherwise: the
+    option rule is off). ValueError on a missing or empty final_answer, or a
+    correct_option that is not one letter, at every rung."""
     answer = _answer(final_answer, canonical_answer)
+    option = _option_pattern(correct_option)
     if Rung(rung) >= Rung.H6:
         return LeakVerdict(False, "none")
     n, grams = _reference_grams(reference_answer)
@@ -161,6 +204,8 @@ def detect_leak(
         return LeakVerdict(True, "ngram")
     if _answer_hits(answer_tokens(emitted), answer):
         return LeakVerdict(True, "final_answer")
+    if _option_hits(emitted, option):
+        return LeakVerdict(True, "option")
     return LeakVerdict(False, "none")
 
 
@@ -211,7 +256,13 @@ def _paired(text: str, start: int, end: int) -> tuple[int, int]:
     return start, end
 
 
-def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: _Answer) -> str:
+def _strip_segment(
+    text: str,
+    n: int,
+    grams: set[tuple[str, ...]],
+    answer: _Answer,
+    option: re.Pattern[str] | None = None,
+) -> str:
     ascii_spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
     words = [text[a:b].lower() for a, b in ascii_spans]
     hits = [
@@ -221,6 +272,7 @@ def _strip_segment(text: str, n: int, grams: set[tuple[str, ...]], answer: _Answ
     ]
     toks = answer_tokens(text)
     hits += _answer_hits(toks, answer)
+    hits += _option_hits(text, option)
     if not hits:
         return text
     atoms = _atoms(ascii_spans + [(t.start, t.end) for t in toks])
@@ -260,18 +312,23 @@ def strip_leak(
     *,
     final_answer: str,
     canonical_answer: str | None = None,
+    correct_option: str | None = None,
 ) -> str:
     """Replace every maximal run of leaked text (an n-gram of the reference, a
-    final-answer run, a number of the canonical value — `final_answer` and
-    `canonical_answer` as in detect_leak) with WITHHELD, widened to whole
+    final-answer run, a number of the canonical value, the key letter in an
+    option context — `final_answer`, `canonical_answer` and `correct_option`
+    as in detect_leak) with WITHHELD, widened to whole
     tokens so no number or word is cut in two, and over the partner of a
     bracket it holds unpaired when only whitespace parts them (a bracket is
     no token, so this withholds nothing the detector reads); the text between
     runs is otherwise untouched. One pass leaves nothing detect_leak(reference_answer, ·, H0,
-    final_answer=<same>, canonical_answer=<same>) flags (unless the reference
+    final_answer=<same>, canonical_answer=<same>, correct_option=<same>) flags (unless the reference
     or the final answer itself holds the word "withheld"), and a second pass
     is a no-op: existing WITHHELD markers are never re-matched. ValueError on a
-    missing or empty final_answer."""
+    missing or empty final_answer, or a correct_option that is not one letter."""
     answer = _answer(final_answer, canonical_answer)
+    option = _option_pattern(correct_option)
     n, grams = _reference_grams(reference_answer)
-    return WITHHELD.join(_strip_segment(seg, n, grams, answer) for seg in emitted.split(WITHHELD))
+    return WITHHELD.join(
+        _strip_segment(seg, n, grams, answer, option) for seg in emitted.split(WITHHELD)
+    )

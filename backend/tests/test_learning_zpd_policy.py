@@ -1759,6 +1759,101 @@ def test_an_mc_reason_items_correct_option_text_leaks():
         assert detect_leak(MC_REF, clean, Rung.H3, final_answer=MC_FINAL) == (False, "none")
 
 
+# Owner decision A38 06 gap: an mc_reason item's correct option LETTER leaks
+# when the caller passes correct_option — only in an option context.
+_LETTER_LEAKS = [
+    "The answer is C.",
+    "(C)",
+    "Look again at (C) - it is right.",
+    "C) is the one.",
+    "Is it option C?",
+    "Choice C is right.",
+    "Think about letter C.",
+    "The correct answer: C",
+    "Pick C.",
+    "I would go with C here.",
+    "ANSWER IS C",
+    "It's option (C).",
+]
+_LETTER_CLEAN = [
+    "option B fails because it has a base case.",
+    "Option D is tempting, but why?",
+    "(B) and (D) share a flaw.",
+    "Can you see why it might be C-like?",  # no option context
+    "Compare the calls: C stands for calls here.",  # a bare capital
+    "option c",  # the letter must be a capital in context
+    "ABC) is not a label.",
+    "optionC is one token.",
+]
+
+
+@pytest.mark.parametrize("rung", [0, 1, 2, 3])
+@pytest.mark.parametrize("hint", _LETTER_LEAKS)
+def test_the_correct_option_letter_leaks_in_an_option_context_below_h6(hint, rung):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "C"}
+    assert detect_leak(MC_REF, hint, Rung(rung), **kw) == (True, "option"), hint
+    # without correct_option the letter is not checked (the pinned residual)
+    assert detect_leak(MC_REF, hint, Rung(rung), final_answer=MC_FINAL) == (False, "none")
+    # at H6 the answer is the content
+    assert detect_leak(MC_REF, hint, Rung.H6, **kw) == (False, "none")
+
+
+@pytest.mark.parametrize("hint", _LETTER_CLEAN)
+def test_another_letter_or_a_bare_capital_is_not_an_option_leak(hint):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "C"}
+    assert detect_leak(MC_REF, hint, Rung.H3, **kw) == (False, "none"), hint
+    assert strip_leak(hint, MC_REF, **kw) == hint
+
+
+def test_the_article_a_is_never_an_option_leak_for_key_a():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "A"}
+    for hint in (
+        "A derivative is a rate of change.",
+        "A base case stops a recursion. Is there a base case?",
+        "Answer a smaller question first.",
+    ):
+        assert detect_leak(MC_REF, hint, Rung.H1, **kw) == (False, "none"), hint
+        assert strip_leak(hint, MC_REF, **kw) == hint
+    assert detect_leak(MC_REF, "The answer is A.", Rung.H1, **kw) == (True, "option")
+
+
+@pytest.mark.parametrize("hint", _LETTER_LEAKS)
+def test_strip_leak_withholds_the_option_letter_and_is_idempotent(hint):
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    kw = {"final_answer": MC_FINAL, "correct_option": "C"}
+    once = strip_leak(hint, MC_REF, **kw)
+    assert "[withheld]" in once, once
+    assert detect_leak(MC_REF, once, Rung.H0, **kw) == (False, "none"), once
+    assert strip_leak(once, MC_REF, **kw) == once
+    assert strip_leak("The answer is C.", MC_REF, **kw) == "The answer is [withheld]."
+    assert strip_leak("Look again at (C) now.", MC_REF, **kw) == "Look again at [withheld] now."
+
+
+def test_correct_option_must_be_one_letter():
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    for bad in ("", "CD", "3", "option C"):
+        with pytest.raises(ValueError):
+            detect_leak(MC_REF, "hi", Rung.H1, final_answer=MC_FINAL, correct_option=bad)
+        with pytest.raises(ValueError):
+            strip_leak("hi", MC_REF, final_answer=MC_FINAL, correct_option=bad)
+    # a lowercase key is the same letter
+    lower = detect_leak(MC_REF, "Pick C.", Rung.H1, final_answer=MC_FINAL, correct_option="c")
+    assert lower == (True, "option")
+
+
 TB_REF = (
     "Recursion works because a function calls itself on smaller inputs until a base case stops it."
 )
@@ -1920,8 +2015,10 @@ FA_BIG_O = "Linear (O(n)) is much better than exponential (O(2^n))."
 @pytest.mark.parametrize(
     "reference,final,canonical,hint",
     [
-        # (a) an mc_reason item's correct option LETTER: the final answer is the
-        # option's text (A34), and the n-gram rule never matches one letter
+        # (a) an mc_reason item's correct option LETTER when the caller passes
+        # no correct_option: the final answer is the option's text (A34), and
+        # the n-gram rule never matches one letter (with correct_option the
+        # "option" detector flags these — owner decision A38, 06 gap)
         (MC_REF, MC_FINAL, None, "The answer is C."),
         (MC_REF, MC_FINAL, None, "Is it option C?"),
         (MC_REF, MC_FINAL, None, "Look again at (C) - it is right."),
@@ -2248,6 +2345,8 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
     numbers += ["3x^2", "6x²", "6*x**2", "6", "x", "10^23", "m/s²", "−3", "14.0"]
     numbers += ["2.5e-3", "0.0025", "25", "10⁻³", "10^-4", "e", "10", "1000", "1e3"]
     numbers += ["10^(-3)", "10^{-3}", "(10^-3)", "{2}", "(x-3)^2", "$6x^{2}$", "[", "}"]
+    # option-letter contexts (owner decision A38, 06 gap)
+    numbers += ["(C)", "C)", "option", "answer is", "A", "C", "(A)", "pick", "Choice", "letter"]
     for reference, final, canonical in _PROPERTY_CASES:
         words = reference.split() + final.split() + numbers
         for _ in range(200):
@@ -2258,7 +2357,11 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
             text = ""
             for w in picked:
                 text += (w.upper() if rng.random() < 0.2 else w) + rng.choice(seps)
-            kw = {"final_answer": final, "canonical_answer": canonical}
+            kw = {
+                "final_answer": final,
+                "canonical_answer": canonical,
+                "correct_option": rng.choice([None, "A", "C"]),
+            }
             once = strip_leak(text, reference, **kw)
             verdict = detect_leak(reference, once, Rung.H0, **kw)
             assert verdict.leaked is False, (reference, text, once)
@@ -2284,6 +2387,7 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
     alphabet += list("\u00d7\u00b7\u2212\u2013\ufb01\uff11\u212a\u0663\n")
     alphabet += ["**", "1,250", "0.5", ".5", WITHHELD, "e", "10"]
     alphabet += ["{", "}", "[", "]", "10^(-3)", "10^{-3}", "( ", " )"]
+    alphabet += ["A", "C", "option ", "answer is ", "Pick ", ": ", '"']
     checked = 0
     for _ in range(5000):
         text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 40)))
@@ -2296,6 +2400,7 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
             "canonical_answer": rng.choice(
                 [None, "1", "0.5", "-3", "1250", "6.022e23", "0.0025", "2.5e-3", "1e3", "0.1"]
             ),
+            "correct_option": rng.choice([None, "A", "C"]),
         }
         once = strip_leak(text, reference, **kw)
         assert detect_leak(reference, once, Rung.H0, **kw).leaked is False, (text, once, kw)
@@ -2322,10 +2427,12 @@ def test_leak_check_runs_in_linear_time():
         ("( " * (big // 4) + ") " * (big // 4), "a"),
         ("(1" * (big // 2) + " )" * (big // 2), "1"),  # a run holding every opener
         ("( " * (big // 2) + "1)" * (big // 2), "1"),  # and every closer
+        ("answer " + " " * big + "is", "a"),  # option keywords and whitespace
+        ("option " * (big // 7) + "(C)", "a"),
     ):
         start = time.perf_counter()
-        detect_leak(text, text, Rung.H3, final_answer=final)
-        strip_leak(text, text, final_answer=final, canonical_answer="1")
+        detect_leak(text, text, Rung.H3, final_answer=final, correct_option="C")
+        strip_leak(text, text, final_answer=final, canonical_answer="1", correct_option="C")
         assert time.perf_counter() - start < 1.0, text[:20]
 
 
