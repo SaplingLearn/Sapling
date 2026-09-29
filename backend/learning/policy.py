@@ -48,6 +48,8 @@ class CeilingReason(str, Enum):
     NOVICE_WORKED_FIRST = "novice_worked_first"
     NOVICE_PREREQ_GAP = "novice_prereq_gap"
     SHOWED_WORK_FLOOR = "showed_work_floor"
+    # PKG-14 (spec §10 rung 3): the tool-removed post-test forces H0
+    POSTTEST = "posttest"
 
 
 @dataclass
