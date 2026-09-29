@@ -1156,3 +1156,29 @@ def test_inv_23_ai_budget_checked_before_every_run():
         found, bad = found + n, bad + b
     assert found >= 2, f"expected at least the grader and decision run sites, found {found}"
     assert bad == [], f"agent run with no earlier ai_budget.check( in the same function: {bad}"
+
+
+def test_inv_19_review_grades_through_grader_only():
+    """PKG-12: a review is graded by grade_answer, the single grading route
+    helper (spec §13 A16) shared with the check route, the probe and the
+    post-test. review.py must import it from agents/tools/check.py and never
+    build an Agent, reach agents/grader.py, or call the decision seam itself
+    (one grader, one prompt stack, the A22 pre-checks never bypassed)."""
+    path = LEARNING / "review.py"
+    text = path.read_text()
+    assert "from agents.tools.check import" in text, (
+        "review.py must import the PKG-05 grading helper"
+    )
+    assert "grade_answer" in text, "review.py must grade through grade_answer"
+    assert "Agent(" not in text, "review.py constructs an Agent"
+    assert "agents.grader" not in text, (
+        "review.py bypasses grade_answer and reaches the grader agent"
+    )
+    assert "services.decisions" not in text, (
+        "review.py bypasses grade_answer and reaches the decision seam"
+    )
+    assert not re.search(
+        r"table\(\"(graph_nodes|graph_edges|node_mastery_events|learner_state)\"\)"
+        r"\.(insert|update|upsert)\(",
+        text,
+    ), "review.py writes a graph table directly (inv 1)"
