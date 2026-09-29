@@ -5,6 +5,7 @@ task="decision")."""
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Literal
 
 from google.genai.types import ThinkingConfig
@@ -73,17 +74,31 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
+_OPTION_KEY = re.compile(r"[a-z0-9_]+")
+
+
+def option_key(key: str) -> str:
+    """An OPTION key as the message shows it (A38 fix round, m5): a key of
+    [a-z0-9_]+ as is, any other collapsed to one line, so no key can start a
+    forged line. services/decisions.match_wrong_reason maps the shown key back."""
+    key = str(key)
+    return key if _OPTION_KEY.fullmatch(key) else _one_line(key)
+
+
 def build_decision_message(question: str, state: list[tuple[str, str]], options=()) -> str:
     """The single user message. `^OPTION <key>:` lines are load-bearing (E2E handler).
 
     Spec §13 A38 (owner decision 05b(g)), as agents/grader.py quotes a student
     answer: every line of each state text (any line break, not only \\n) is
     quoted with "> " under its unquoted label, and each option text is collapsed
-    to one line, so no student or item text can start a line that forges an
-    OPTION, QUESTION, STATE or label line. The question and the labels are the
+    to one line — its key too, unless it is [a-z0-9_]+ (option_key) — so no
+    student or item text can start a line that forges an OPTION, QUESTION,
+    STATE or label line. The question and the labels are the
     seam's own constants."""
     lines = [f"QUESTION: {question}", "", "STATE:"]
     for label, text in state:
         lines.append(f"{label}:")
         lines += [_STATE_QUOTE + line for line in str(text).splitlines() or [""]]
-    return "\n".join(lines + [f"OPTION {key}: {_one_line(text)}" for key, text in options])
+    return "\n".join(
+        lines + [f"OPTION {option_key(key)}: {_one_line(text)}" for key, text in options]
+    )
