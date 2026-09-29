@@ -50,7 +50,7 @@ from learning.misconceptions import (
     set_confront,
     slip_or_misconception,
 )
-from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK
+from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK, RUNG_NO_CREDIT_MIN
 from services import decisions  # a module import: tests patch its functions
 from services.decisions import GradeState, ReasonState
 
@@ -270,7 +270,10 @@ async def apply_misconception_rule(
         difficulty=int(item.difficulty),
         idk=bool(evidence.idk),
         isomorph_of=earlier[-1].get("question_hash") if earlier else None,
-        released=not evidence.correct,  # a wrong or idk grade releases the reference (A16)
+        # A76: the codebase's "revealed" rule (loop_state_store.revealed_hashes): a
+        # wrong or idk grade releases the reference (A16), and so does a worked
+        # answer shown on the way (H4 sibling / H6, max_rung >= RUNG_NO_CREDIT_MIN)
+        released=not evidence.correct or evidence.idk or evidence.max_rung >= RUNG_NO_CREDIT_MIN,
         after_release=bool(evidence.same_session_recheck),
     ).model_dump()
     log.append(attempt)
