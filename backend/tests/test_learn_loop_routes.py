@@ -3486,3 +3486,60 @@ def test_a_confronting_turn_counts_its_retries_toward_the_deep_cap(
         ).json()
     assert body["tier"] == "deep"
     assert seams.store["doc"]["deep_requests"] == counted
+
+
+def test_the_misconception_row_is_written_only_after_the_claims_save(gate_on, seams):
+    """Conformance 8 (fix round): the row is written after the grade's
+    compare-and-set save confirmed the claim was still ours — a claim another
+    request took over writes nothing."""
+    order = []
+    seams.grade.return_value = _wrong_with(_misconception_diagnosis())
+    real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
+
+    def spy_update(session_id, mutate):
+        out = real_update(session_id, mutate)
+        order.append("save")
+        return out
+
+    agent_p, usage_p, _ = _feedback_agent()
+    with (
+        agent_p,
+        usage_p,
+        patch("routes.learn_loop._update_loop_state", spy_update),
+        patch("routes.learn_loop.record", side_effect=lambda *a: order.append("record") or {}),
+    ):
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
+    # the claim's save, then the grade's save that releases it — only then the row
+    assert order.count("record") == 1
+    assert order[: order.index("record")].count("save") == 2
+
+
+def test_a_lost_claim_writes_no_misconception_row(gate_on, seams):
+    seams.grade.return_value = _wrong_with(_misconception_diagnosis())
+
+    def steal(doc):  # another request took the item's claim before the grade's save
+        doc["steps"]["qh-1"]["grading_claim"] = "someone-else"
+
+    armed = {"on": False}
+    real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
+
+    def update(session_id, mutate):
+        if armed["on"]:
+            seams.store["conflicts"], seams.store["racer"] = 1, steal
+            armed["on"] = False
+        return real_update(session_id, mutate)
+
+    def grade(*a, **kw):
+        armed["on"] = True
+        return _wrong_with(_misconception_diagnosis())
+
+    seams.grade.side_effect = grade
+    agent_p, usage_p, _ = _feedback_agent()
+    with (
+        agent_p,
+        usage_p,
+        patch("routes.learn_loop._update_loop_state", update),
+        patch("routes.learn_loop.record") as rec,
+    ):
+        client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
+    rec.assert_not_called()

@@ -2404,9 +2404,6 @@ async def _grade_submission(
             except Exception:
                 logger.warning("grading claim for %s not released", qh, exc_info=True)
         raise
-    # PKG-10 (spec §13 A75): the misconception row grade_answer marked, written
-    # only now — after the ONE flush, under the claim (never raises)
-    _write_misconception(body.user_id, outcome, _item_like(item), answer)
     correct = bool(outcome.correct)
     verdict = "idk" if idk else ("correct" if correct else "not_yet")
     evidence = outcome.evidence or {}
@@ -2437,17 +2434,24 @@ async def _grade_submission(
     under = _under_claim(qh, claim, record_grade, release=True)
     diagnosis = getattr(outcome, "diagnosis", None)
 
+    held = {"last": False}
+
     def record_grade_and_diagnosis(doc: dict) -> None:
         entry = _steps(doc).get(qh)
-        held = isinstance(entry, dict) and entry.get("grading_claim") == claim
+        held["last"] = isinstance(entry, dict) and entry.get("grading_claim") == claim
         under(doc)
-        if held:  # PKG-10: the attempt log + marker change, on the FRESH document
+        if held["last"]:  # PKG-10: the attempt log + marker change, on the FRESH document
             carry(doc, diagnosis)
 
     # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
     # conflict here is a 409 with the claim still held: the item is never
     # flushed again (it closes via /check/next once the claim is stale).
     state = _update_loop_state(body.session_id, record_grade_and_diagnosis)
+    if held["last"]:
+        # PKG-10 (spec §13 A75): the row grade_answer marked, written only now —
+        # after the ONE flush and the save that recorded the grade under OUR
+        # claim (a claim lost to another request writes nothing; never raises)
+        _write_misconception(body.user_id, outcome, _item_like(item), answer)
     return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
 
 
