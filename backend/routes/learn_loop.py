@@ -1097,9 +1097,20 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
 
 # ── PKG-10: the misconception confrontation line (spec §3.3, §13 A15) ─────
 
+#: Spec §13 A75: the tiers a confrontation line is served on — exactly the slots
+#: whose misconception_confront eval scores 1.0 on every served gate (pinned to
+#: baselines.json by tests/test_learning_misconceptions.py). A turn model_tier
+#: routes elsewhere (the §3.5 soft-level / deep-cap downgrade) carries no line,
+#: and the marker waits for one that does.
+CONFRONT_TIERS: frozenset[str] = frozenset({"deep"})
+
+#: Spec §13 A75: the confrontation mapped onto the structured turn's fields (A46).
 _CONFRONT_LINE = (
-    'The student holds misconception "{text}": create a contradiction they must '
-    "resolve; do not simply state the correction."
+    'The student holds misconception "{text}". This turn, confront it instead of '
+    "correcting it: the key idea names what to test, never the correct rule; the body sets "
+    "up ONE concrete case of this concept where the belief predicts something the student "
+    "can check, without working the case out or saying which result is right; the question "
+    "asks the student to work that case out and compare it with their belief."
 )
 
 
@@ -1129,10 +1140,13 @@ def _confrontation_line(loop_state: dict) -> str | None:
 
 def confront_line_for(text: str) -> str | None:
     """The confrontation line for one wrong-reason text: collapsed to one line,
-    its control tags neutralised; None for a text with nothing left. Shared
+    its control tags neutralised, its double quotes made single (it stays inside
+    the line's quoted span); None for a text with nothing left. Shared
     with the eval (tests/evals/misconception_confront.py) so it scores the
     line production sends."""
-    text = " ".join(neutralise_control_tags(text or "").split())
+    # one line, no control tag, and never a double quote: the text stays inside
+    # the line's one quoted span (it can never close it and write an instruction)
+    text = " ".join(neutralise_control_tags(text or "").replace('"', "'").split())
     return _CONFRONT_LINE.format(text=text) if text else None
 
 
@@ -1267,6 +1281,8 @@ class _LoopTurn:
         if self.tier == "none":
             self.paused = self.text is None
             return
+        if self.tier not in CONFRONT_TIERS:
+            self.confront_line = None  # A75: served only where its eval passes; the marker waits
         self.text = None  # the model writes this turn
         self.revealed_hash, self.served_as_h6 = None, False
         context = policy.context_policy(
