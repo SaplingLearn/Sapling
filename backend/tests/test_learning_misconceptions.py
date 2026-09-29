@@ -1387,3 +1387,22 @@ class TestFollowupMigration:
         for line in sql.splitlines():
             if "UNIQUE" in line.upper():
                 assert "evidence_text" not in line
+
+
+def test_every_unreleased_eval_case_is_a_line_production_would_send():
+    """The eval scores only lines the route would serve: an unreleased case's
+    misconception text passes the route's strict no-provenance pre-check (F3)."""
+    from learning.leak import detect_leak
+
+    mod = _confront_eval()
+    for case in mod.CASES:
+        meta = case.metadata
+        if meta.get("answer_released"):
+            continue
+        assert not detect_leak(
+            reference=meta["reference"],
+            emitted=meta["misconception"],
+            rung=case.inputs[2],
+            final_answer=meta["final_answer"],
+            strict=True,
+        ).leaked, case.name
