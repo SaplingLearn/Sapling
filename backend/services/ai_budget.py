@@ -22,7 +22,7 @@ from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
 import config
-from db.connection import page_all, table
+from db.connection import page_all, rpc, table
 from learning import params
 from learning.policy import Band, BudgetLevel, Tier
 from services.auth_guard import get_session_user_id
@@ -36,6 +36,7 @@ Scope = Literal[
     "daily_usd",
     "monthly_usd",
     "daily_tokens",
+    "daily_tutor_calls",
     "session_requests",
     "session_deep",
     "daily_grades",
@@ -62,10 +63,16 @@ _HARD_ORDER: tuple[Scope, ...] = (
     "daily_usd",
     "monthly_usd",
     "daily_tokens",
+    "daily_tutor_calls",
     "session_requests",
     "rate_limit",
 )
 _USD_SCOPES: frozenset[str] = frozenset({"daily_usd", "monthly_usd"})
+# The tutor-call COUNT cap (owner decision A38): its own table, written directly — never through
+# events_service — so it holds when llm_usage cost reads wrong (#689) or no rows are written
+# (EVENTS_LOGGING_ENABLED=false). Migration 20260929050404_learning_ai_tutor_daily_calls.sql.
+_TUTOR_CALLS_TABLE = "ai_tutor_daily_calls"
+_TUTOR_CALLS_RPC = "ai_budget_bump_tutor_calls"
 
 
 @dataclass(frozen=True)
@@ -106,6 +113,10 @@ _emitted: set[_EmitKey] = set()
 # checks fail open without another round trip
 _request_cache: dict[tuple[str, str], tuple[float, _Usage | None]] = {}
 _platform_checked_at: float | None = None
+# (user, UTC day iso) → this process's tutor calls: the fallback when the store fails, and a floor
+# under the store's count (a lost increment never lowers what this process has seen). Only
+# today's keys are kept.
+_tutor_calls_local: dict[tuple[str, str], int] = {}
 
 
 def _utcnow() -> datetime:
@@ -157,6 +168,7 @@ def reset_for_tests() -> None:
     with _lock:
         _emitted.clear()
         _request_cache.clear()
+        _tutor_calls_local.clear()
         _platform_checked_at = None
 
 
@@ -310,6 +322,66 @@ def _usage(user_id: str) -> _Usage | None:
     return summary
 
 
+# ── the tutor-call count (owner decision A38) ────────────────────────────────
+def _local_calls(user_id: str, day: str, bump: bool) -> int:
+    with _lock:
+        stale = [k for k in _tutor_calls_local if k[1] != day]
+        for k in stale:
+            del _tutor_calls_local[k]
+        key = (user_id, day)
+        if bump:
+            _tutor_calls_local[key] = _tutor_calls_local.get(key, 0) + 1
+        return _tutor_calls_local.get(key, 0)
+
+
+def _as_count(value: object) -> int:
+    """The RPC's scalar integer (PostgREST answers a bare JSON number); anything else raises."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"unexpected tutor call count {value!r}")
+    return value
+
+
+def count_tutor_call(user_id: str) -> int:
+    """Count one tutor model call for the student today (UTC) and return the new count. PKG-07
+    calls it once per tutor run; nothing else does. The store increment is one atomic statement
+    (cross-worker); if it fails, the in-process counter still counts (one WARNING), so the cap
+    is never blind. Never raises for a store failure; never creates or biases evidence."""
+    if not user_id:
+        return 0
+    day = _utcnow().date().isoformat()
+    local = _local_calls(user_id, day, bump=True)
+    try:
+        stored = _as_count(rpc(_TUTOR_CALLS_RPC, {"p_user_id": user_id, "p_day": day}))
+    except Exception as exc:
+        logger.warning(
+            "ai_budget: tutor call counter increment failed for %s, counting in-process: %s",
+            user_id,
+            exc,
+        )
+        return local
+    return max(stored, local)
+
+
+def _tutor_calls_today(user_id: str, now: datetime) -> int:
+    """Today's tutor calls: the store's count, never below this process's own; this process's
+    alone when the read fails (one WARNING per read)."""
+    day = now.date().isoformat()
+    local = _local_calls(user_id, day, bump=False)
+    try:
+        rows = table(_TUTOR_CALLS_TABLE).select(
+            "calls", filters={"user_id": f"eq.{user_id}", "day": f"eq.{day}"}
+        )
+        stored = _as_count(rows[0]["calls"]) if rows else 0
+    except Exception as exc:
+        logger.warning(
+            "ai_budget: tutor call counter read failed for %s, using the in-process count: %s",
+            user_id,
+            exc,
+        )
+        return local
+    return max(stored, local)
+
+
 # ── the ladder ────────────────────────────────────────────────────────────────
 def _grade_decision(user_id: str, usage: _Usage | None, now: datetime) -> BudgetDecision:
     """The grader cap (spec §3.5): grading has its own cap, so a tutor-hard student still grades."""
@@ -345,6 +417,7 @@ def _spend_decision(
     tutor_requests: int,
     deep_requests: int,
     arm_session: bool,
+    tutor_calls: int = 0,
 ) -> BudgetDecision:
     cap = _daily_cap(band)
     hard: dict[Scope, datetime | None] = {}
@@ -357,6 +430,8 @@ def _spend_decision(
             hard["daily_tokens"] = _next_day(now)
         if kind == "tutor" and usage.minute_rows >= config.LEARN_RATE_LIMIT_PER_MIN:
             hard["rate_limit"] = _rate_reset(usage, now)
+    if kind == "tutor" and tutor_calls >= config.STUDENT_DAILY_TUTOR_CALLS:
+        hard["daily_tutor_calls"] = _next_day(now)  # read outside llm_usage: holds when it fails
     if kind == "tutor" and tutor_requests >= params.LOOP_SESSION_MAX_TUTOR_REQUESTS:
         hard["session_requests"] = None
     if hard:
@@ -415,7 +490,9 @@ def check(
     """The degradation ladder of spec §3.5. Call it module-qualified — ``ai_budget.check(`` —
     before every grader, grader_second, decision, loop_tutor* and session_close run
     (invariant 23). ``band`` is required for ``tutor`` and ignored for the grader cap; the
-    session counters are the ints PKG-07 keeps in sessions.loop_state."""
+    session counters are the ints PKG-07 keeps in sessions.loop_state. ``tutor`` also reads
+    today's tutor-call count (``count_tutor_call``; hard at STUDENT_DAILY_TUTOR_CALLS) — one
+    more read, outside llm_usage; the grader, decision and close kinds never read it."""
     if kind not in get_args(Kind):
         raise ValueError(f"ai_budget.check: unknown kind {kind!r}")
     if kind == "tutor" and band is None:
@@ -437,6 +514,7 @@ def check(
         tutor_requests=session_tutor_requests,
         deep_requests=session_deep_requests,
         arm_session=arm_session,
+        tutor_calls=_tutor_calls_today(user_id, now) if kind == "tutor" else 0,
     )
 
 
