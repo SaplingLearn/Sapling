@@ -3,8 +3,10 @@
 // §11.3). Driven by /api/learn/loop/review/next → /review/answer → next. Rendered only
 // when the loop is on for the student (Study.tsx probes getLoopStatus first). Launch
 // polish (PKG-13): the budget pause banner (a 429 "ai budget reached", or novice
-// concepts paused at the tutor hard level per /review/summary — spec §3.5), a real
-// "All caught up" state, and a testid on every control.
+// concepts paused at the tutor hard level per /review/summary — spec §3.5, re-read
+// with every load), a real "All caught up" state, and a testid on every control.
+// The empty state claims nothing about "later": /review/summary's `due` counts what
+// is due TODAY as of its read, so a count from an earlier read was stale and wrong.
 //
 // A check item's reference answer never reaches the client until the server returns it
 // in the corrective `hint` after a wrong answer; an mc_reason item's options are shown
@@ -68,11 +70,23 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   // to the newer item.
   const seq = React.useRef(0);
 
+  // The summary only feeds the banner: re-read with EVERY load (a mount-time
+  // read went stale as the student reviewed), a failure keeps the last one.
+  const refreshSummary = React.useCallback(async (mine: number) => {
+    try {
+      const r = await getReviewSummary(userId, courseId);
+      if (mine === seq.current) setSummary(r);
+    } catch {
+      /* optional */
+    }
+  }, [userId, courseId]);
+
   const load = React.useCallback(async () => {
     if (!userId) return;
     const mine = ++seq.current;
     setBusy(true);
     setError(null);
+    void refreshSummary(mine);
     try {
       const r = await getReviewNext(userId, courseId);
       if (mine !== seq.current) return;
@@ -93,21 +107,11 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     } finally {
       if (mine === seq.current) setBusy(false);
     }
-  }, [userId, courseId]);
+  }, [userId, courseId, refreshSummary]);
 
   React.useEffect(() => {
     load();
   }, [load]);
-
-  // The summary only feeds the banner and the empty state: a failure is ignored.
-  React.useEffect(() => {
-    if (!userId) return;
-    let cancelled = false;
-    getReviewSummary(userId, courseId)
-      .then((r) => { if (!cancelled) setSummary(r); })
-      .catch(() => { /* optional */ });
-    return () => { cancelled = true; };
-  }, [userId, courseId]);
 
   const item = next?.item ?? null;
 
@@ -163,7 +167,6 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const retryable = result !== null && result.unavailable;
   const answered = alreadyGraded || (result !== null && !result.unavailable);
   const pausedConcepts = summary?.paused ?? 0;
-  const dueLater = summary ? summary.due.flashcard + summary.due.check : 0;
   const canSubmit =
     !busy &&
     !answered &&
@@ -207,7 +210,6 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       {next && !item && next.due_total === 0 && (
         <div data-testid="review-empty" style={{ fontSize: 14, color: "var(--text-muted)" }}>
           All caught up — nothing is due right now.
-          {dueLater > 0 && ` ${dueLater} more ${dueLater === 1 ? "is" : "are"} due later.`}
         </div>
       )}
 

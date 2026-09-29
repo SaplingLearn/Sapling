@@ -302,6 +302,32 @@ describe("DueQueue launch polish (PKG-13; spec §11.3, §3.5)", () => {
     expect(mockAnswer).toHaveBeenCalledWith(expect.objectContaining({ kind: "flashcard", rating: 3 }));
   });
 
+  it("the summary is re-read with every load, so the pause count is never stale", async () => {
+    mockNext.mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(next(null, 600, 0));
+    mockAnswer.mockResolvedValue(graded({ hint: null }));
+    mockSummary.mockResolvedValueOnce(summary({ paused: 2 })).mockResolvedValue(summary({ paused: 0 }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    expect((await screen.findByTestId("review-budget-paused")).textContent).toContain("2 concepts");
+    await userEvent.click(screen.getByTestId("review-flip"));
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await screen.findByTestId("review-empty");
+    await waitFor(() => expect(mockSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("review-budget-paused")).toBeNull());
+  });
+
+  it("'All caught up' makes no 'more due later' claim from a mount-time count", async () => {
+    // summary.due counts what is due TODAY (as of that read) — never "later";
+    // with nothing served and due_total 0 there is nothing more due today.
+    mockNext.mockResolvedValue(next(null, 600, 0));
+    mockSummary.mockResolvedValue(summary({ due: { flashcard: 3, check: 2 } }));
+    render(<DueQueue userId="u1" />);
+    const empty = await screen.findByTestId("review-empty");
+    await waitFor(() => expect(mockSummary).toHaveBeenCalled());
+    expect(empty.textContent).not.toMatch(/due later/i);
+    expect(empty.textContent).toContain("All caught up — nothing is due right now.");
+  });
+
   it("a failed reload never leaves the previous item on screen", async () => {
     mockNext.mockResolvedValueOnce(next(CARD)).mockRejectedValueOnce(new Error("down"));
     mockAnswer.mockResolvedValue(graded({ hint: null }));
