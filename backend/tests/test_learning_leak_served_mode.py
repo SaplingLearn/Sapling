@@ -84,3 +84,18 @@ def test_a_number_word_quantifying_the_items_own_object_is_in_answer_position():
     for — the number word is followed by the item's own noun ("terms")."""
     assert _served("It has two nonzero terms.")
     assert not _served("Add the two results together.")
+
+
+def test_a_number_word_or_letter_named_as_the_answer_after_it_is_in_answer_position():
+    """PKG-10 fix round 4 (R4-3, spec §13 A77): answer position read AFTER the
+    hit too — "<hit> as the (final) answer / as your result" names it the answer
+    exactly as "the answer is <hit>" does. Served mode missed number words and
+    key letters written that way ("Write two as the final answer.")."""
+    assert _served("You might write two as the final answer.", given="")
+    assert _served("Take two as the result here.", given="")
+    assert not _served("Treat two as a constant factor.", given="")
+    mito = dict(
+        reference="It is the mitochondrion.", final_answer="Mitochondrion", correct_option="C"
+    )
+    assert _served("Put C as your answer.", given="", **mito)
+    assert not _served("Let C be the constant, as the answer depends on it.", given="", **mito)

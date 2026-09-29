@@ -644,13 +644,19 @@ _ANSWER_LEAD = re.compile(
 # start or clause punctuation), a clause break after it.
 _CLAUSE_OPEN = re.compile(rf"(?:^|[.;:!?\n—–])\s{{0,4}}{_OPENING}$")
 _CLAUSE_CLOSE = re.compile(rf"{_CLOSING}{_CLAUSE_BREAK}")
+# Or the text names the hit the answer right after it: "<hit> as the (final)
+# answer", "<hit> as your result" (PKG-10 fix round 4, spec §13 A77) — the same
+# answer/result keywords as _ANSWER_LEAD, read after the hit.
+_ANSWER_AFTER = re.compile(
+    rf"{_CLOSING}\s+(?i:as)\s+(?:[\w'-]+\s+){{0,3}}?(?i:answers?|results?)\b"
+)
 _POSITION_WINDOW = params.LEAK_POSITION_WINDOW_CHARS
 
 
 def _answer_position(text: str, start: int, end: int) -> bool:
     """The hit at text[start:end] is where an answer goes (served mode)."""
     before = text[max(0, start - _POSITION_WINDOW) : start]
-    if _ANSWER_LEAD.search(before):
+    if _ANSWER_LEAD.search(before) or _ANSWER_AFTER.match(text, end):
         return True
     clause_start = (
         _CLAUSE_OPEN.search(before)
@@ -658,13 +664,6 @@ def _answer_position(text: str, start: int, end: int) -> bool:
         else re.search(rf"(?:(?<![\s\S])|[.;:!?\n—–])\s{{0,4}}{_OPENING}$", before)
     )
     return bool(clause_start and _CLAUSE_CLOSE.match(text, end))
-
-
-def in_answer_position(text: str, start: int, end: int) -> bool:
-    """Public face of the served-mode answer-position rule (PKG-10 fix round 2:
-    the check-item drafting lint reads a single-token answer only where an
-    answer goes)."""
-    return _answer_position(text, start, end)
 
 
 _NEXT_WORD = re.compile(r"[\s\-]{1,4}([A-Za-z]{3,})")
@@ -678,11 +677,53 @@ def _quantifies_given(text: str, end: int, given_words: set[str]) -> bool:
     return bool(m and m.group(1).lower() in given_words)
 
 
-def quantifies_given(text: str, end: int, given: str) -> bool:
-    """Public face of the served count rule (PKG-10 fix round 3): the token
-    ending at `end` quantifies a word `given` holds — the item's own object
-    ("2 nonzero terms" for "how many nonzero terms …")."""
-    return _quantifies_given(text, end, {w.lower() for w in re.findall(r"[A-Za-z]{3,}", given)})
+_THE_BEFORE = re.compile(r"(?i)(?<![A-Za-z])the\s+$")
+
+
+def _prompt_anaphor(text: str, start: int, end: int, prompt_shows: bool) -> bool:
+    """The hit text[start:end] is "the <token>" referring back to a value the
+    PROMPT itself shows ("Cancels the 2 in the numerator" for a prompt with
+    sin(2x)) — provenance, not a stated result — unless the determiner phrase
+    stands where an answer goes ("the limit is the 2 …")."""
+    if not prompt_shows:
+        return False
+    det = _THE_BEFORE.search(text[:start])
+    return det is not None and not _answer_position(text, det.start(), end)
+
+
+def confront_text_states_answer(
+    text: str,
+    *,
+    final_answer: str,
+    canonical_answer: str | None = None,
+    correct_option: str | None = None,
+    option_text: str | None = None,
+    prompt: str = "",
+) -> bool:
+    """PKG-10 fix round 4 (spec §13 A77): whether an item-drafted wrong-reason
+    text states the answer — the ONE decision behind both the drafting lint
+    (checks._wrong_text_answer_reasons refuses such a draft) and the
+    confrontation line (routes' _LoopTurn._confront_line withholds it while the
+    answer is unreleased), so what is stored is exactly what can be served.
+
+    detect_leak's strict final-answer and option rules with no reference and no
+    served-mode provenance: the answer anywhere, number words, fractions and
+    other notations included, and the correct option's letter / text. One
+    provenance: a hit written "the <token>" whose value the item's PROMPT shows
+    ("Ignores the 2." for a prompt with sin(2x)) refers back to the prompt, not
+    to a result — unless the phrase is in answer position. The reference's
+    n-grams are not read: a wrong reason shares the concept's vocabulary with
+    the reference ("the derivative of the inner function") without stating the
+    answer, and the tutor reply the line primes is leak-checked on its own."""
+    rules = _rules("", final_answer, canonical_answer, correct_option, True, option_text)
+    toks = answer_tokens(text)
+    if _option_hits(text, rules.option, strict=True) or _option_text_hits(toks, rules):
+        return True
+    hits = _final_hits(text, toks, rules)
+    if not hits:
+        return False
+    prompt_shows = bool(prompt) and bool(_final_hits(prompt, answer_tokens(prompt), rules))
+    return any(not _prompt_anaphor(text, a, b, prompt_shows) for a, b in hits)
 
 
 def _copied_runs(text: str, given: str) -> list[tuple[int, int]]:
