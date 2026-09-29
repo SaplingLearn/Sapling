@@ -465,3 +465,22 @@ LEARNER_BRIEF_RETRY_AFTER_S = 300
 # brief built on a loop turn reads this many lowest-mastery course nodes and
 # keeps the first LEARNER_BRIEF_TOP_STATES that map to a course concept
 LEARNER_BRIEF_CANDIDATE_NODES = 50
+
+# ── PKG-14 evaluation ladder (spec §3.3, §10; † = not in spec §3, HANDOFF-14) ──
+# † ZPD report LOG block ("last k=5 opportunities", the in_zone flag): the
+# nightly derive_zpd_metrics.py reads these; no validated cut-point.
+HTC_K_WINDOW = 5  # †
+ZPD_IN_ZONE_MIN_GAP = 0.25  # †
+ZPD_IN_ZONE_MIN_ASSISTED = 0.6  # †
+ZPD_IN_ZONE_MAX_UNASSISTED = 0.85  # †
+# † weeks of the admin KPI htc_k trend and the metrics script's report window (A6)
+KPI_TREND_WEEKS = 4
+# spec §10 gates (not KPIs): 0 solution reveals, ≥ 95% ceiling compliance
+GATE_LEAKS_MAX = 0
+GATE_CEILING_COMPLIANCE_MIN = 0.95
+# † research §"Measure learning…" (rung 3 is tool-removed and ≥ 2 days delayed)
+POSTTEST_MIN_AGE_DAYS = 2
+POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)
+# † the first A/B candidate (A6): variant B's independent-time gate for the
+# develop/profic bands (novice keeps GATE_INDEPENDENT_MIN_S_NOVICE for both)
+GATE_INDEPENDENT_MIN_S_VARIANT_B = 90
