@@ -3859,3 +3859,88 @@ def test_importing_the_app_loads_no_pkg06_module():
         f"the app loads PKG-06 modules beyond the sanctioned {sorted(_PKG06_SANCTIONED_APP_LOADS)}: "
         f"{sorted(loaded)}"
     )
+
+
+# ── PKG-10 post-hoc: the isomorph re-ask, the attempt log in loop_state ──────
+
+
+def _iso_item(qh, concept_key="derivative", fmt="free", difficulty=2):
+    from learning.checks import CheckItem
+
+    return CheckItem(
+        id=f"ci-{qh}",
+        course_id="c1",
+        concept_key=concept_key,
+        format=fmt,
+        difficulty=difficulty,
+        prompt="p",
+        reference_answer="r",
+        rubric=[],
+        common_wrong=[],
+        source_chunk_ids=[],
+        question_hash=qh,
+    )
+
+
+def test_next_isomorph_same_concept_format_difficulty_different_hash():
+    from learning.policy import next_isomorph
+
+    a, b = _iso_item("h1"), _iso_item("h2")
+    c = _iso_item("h3", concept_key="integral")
+    d = _iso_item("h4", fmt="teachback")
+    e = _iso_item("h5", difficulty=3)
+    assert next_isomorph(a, [a, c, d, e, b]) is b
+    assert next_isomorph(a, [b, _iso_item("h6")]) is b, "first match in the caller's order"
+
+
+def test_next_isomorph_none_when_only_self_or_mismatches():
+    from learning.policy import next_isomorph
+
+    a = _iso_item("h1")
+    assert (
+        next_isomorph(
+            a, [a, _iso_item("h3", concept_key="integral"), _iso_item("h4", fmt="teachback")]
+        )
+        is None
+    )
+    assert next_isomorph(a, []) is None
+
+
+def test_loop_state_round_trips_attempts_and_confront():
+    """PKG-10 post-hoc: two sibling keys in the sessions.loop_state document
+    (ids/enums/bools/numbers and the plaintext key only — no free text). A
+    save through PKG-06's LoopState never drops them (they ride `extra`, as
+    PKG-07/08/09's top-level keys do), and a legacy document without them
+    loads unchanged."""
+    from learning.policy import LoopState
+
+    doc = LoopState().to_json()
+    doc["attempts"] = [
+        {
+            "question_hash": "h1",
+            "node_id": "n1",
+            "correct": False,
+            "wrong_key": "k1",
+            "confidence": None,
+            "difficulty": 2,
+            "idk": False,
+            "isomorph_of": None,
+        }
+    ]
+    doc["confront"] = {"node_id": "n1", "wrong_key": "k1", "check_item_id": "ci1"}
+    back = LoopState.from_json(doc).to_json()
+    assert back["attempts"] == doc["attempts"] and back["confront"] == doc["confront"]
+    again = LoopState.from_json(LoopState().to_json()).to_json()
+    assert "attempts" not in again and "confront" not in again
+    recovered = LoopState.recover({**doc, "steps": "not an object"}).to_json()
+    assert recovered["attempts"] == doc["attempts"] and recovered["confront"] == doc["confront"]
+
+
+def test_next_isomorph_takes_no_str_parameter():
+    """Invariants 2/4: policy functions take typed state, never message text."""
+    import inspect
+
+    from learning.policy import next_isomorph
+
+    for p in inspect.signature(next_isomorph).parameters.values():
+        assert p.annotation not in ("str", str), p.name

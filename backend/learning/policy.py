@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Any, Literal, NamedTuple, Sequence, get_args
 
 from learning import params
-from learning.ladder import Rung
+from learning.ladder import ItemLike, Rung
 
 Band = Literal["novice", "develop", "profic"]
 Tier = Literal["lite", "standard", "deep", "none"]  # "none" = no model call (template or pause)
@@ -497,3 +497,22 @@ def _fresh_step(question_hash: str, raw: object) -> dict[str, StepState]:
 
 def _foreign_keys(data: dict[str, Any]) -> dict[str, Any]:
     return {k: copy.deepcopy(v) for k, v in data.items() if k not in _TOP_KEYS}
+
+
+def next_isomorph(item: ItemLike, items: Sequence[ItemLike]) -> ItemLike | None:
+    """PKG-10 (spec §3.3 "re-ask an isomorph"; §13 A27: used inside PKG-07's
+    `_activate_next_item`). The first check item in `items` that re-asks
+    `item` in a different surface: same concept_key, same format, same
+    difficulty, different question_hash (items are course assets keyed on
+    concept_key, A2). None when there is none. Pure. `items` is already
+    filtered by the caller (revealed hashes, the post-test reserve — A23 —
+    and only servable items, A34); this never widens it."""
+    for cand in items:
+        if (
+            cand.concept_key == item.concept_key
+            and cand.format == item.format
+            and cand.difficulty == item.difficulty
+            and cand.question_hash != item.question_hash
+        ):
+            return cand
+    return None
