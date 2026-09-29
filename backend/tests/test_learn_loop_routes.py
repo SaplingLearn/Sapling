@@ -3389,3 +3389,60 @@ def test_a_release_on_another_concept_is_no_recheck(gate_on, seams):
     with agent_p, usage_p:
         client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
     assert seams.grade.call_args.kwargs["same_session_recheck"] is False
+
+
+def test_a_marker_for_another_concept_never_confronts_or_routes_deep(gate_on, seams):
+    """F2 (fix round): the marker is concept-scoped — a feedback turn on node-1
+    never carries (nor is routed deep by) a marker left on node-9."""
+    other = {**CONFRONT, "node_id": "node-9"}
+    seams.store["doc"] = {**_graded("not_yet"), "confront": other}
+    agent, seen = _json_agent()
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "ok"}
+        )
+    assert seams.model_tier.call_args.args[4] is False
+    assert "holds misconception" not in seen["msg"]
+    assert seams.store["doc"]["confront"] == other
+
+
+def test_advancing_the_plan_cursor_drops_the_marker():
+    """F2: a marker never outlives its concept's place in the plan."""
+    from learning.misconceptions import confront_of
+    from routes.learn_loop import _advance_cursor
+
+    st = _plan_state(confront=dict(CONFRONT))
+    assert _advance_cursor(st) is True and confront_of(st) is None
+    st = _plan_state(confront=dict(CONFRONT), plan={"approved": ["node-1"], "cursor": 0})
+    assert _advance_cursor(st) is False and confront_of(st) is None
+
+
+def test_a_spelled_out_answer_in_the_misconception_text_is_withheld(gate_on, seams):
+    """F3 (fix round): the pre-check is strict with NO provenance, like
+    close_states_answer: "stays four, not three" states 4x^3 in words."""
+    power = ITEM.model_copy(
+        update={
+            "prompt": "What is the derivative of x^4?",
+            "reference_answer": "By the power rule the derivative of x^4 is 4x^3.",
+            "final_answer": "4x^3",
+            "common_wrong": [
+                WrongReason(key="no_base", text="Thinks the exponent stays four, not three")
+            ],
+        }
+    )
+    seams.item.return_value = power
+    seams.store["doc"] = {**_state(rung=4), "confront": dict(CONFRONT)}
+    agent, seen = _json_agent("What does your rule give for x^1?")
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        client.post(
+            "/api/learn/loop/action",
+            json={"session_id": "s1", "user_id": "u1", "action_type": "hint"},
+        )
+    assert "holds misconception" not in seen.get("msg", "")
+    assert seams.store["doc"]["confront"] == CONFRONT

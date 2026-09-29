@@ -1124,6 +1124,13 @@ def _confrontation_line(loop_state: dict) -> str | None:
     [VERDICT: …] or [STUDENT MESSAGE] block). No marker, a missing item, a
     failed read or an unknown key → None, no error. Reads only: the turn that
     serves the line clears the marker in its compare-and-set save."""
+    text = _confrontation_text(loop_state)
+    return confront_line_for(text) if text else None
+
+
+def _confrontation_text(loop_state: dict) -> str | None:
+    """The marked item's stored wrong-reason text for the marker's key, or
+    None (no marker, a missing item, a failed read, an unknown key)."""
     confront = confront_of(loop_state)
     if confront is None:
         return None
@@ -1136,7 +1143,7 @@ def _confrontation_line(loop_state: dict) -> str | None:
         return None
     for entry in item.common_wrong or []:
         if entry.key == confront["wrong_key"] and entry.text:
-            return confront_line_for(entry.text)
+            return entry.text
     return None
 
 
@@ -1349,26 +1356,30 @@ class _LoopTurn:
 
     def _confront_line(self) -> str | None:
         """The confrontation line this turn may carry (PKG-10), or None. Not on
-        a check pose (no model), a correct-answer feedback turn, or — the
-        answer unreleased — a model ceiling below MISCONCEPTION_CONFRONT_MIN_RUNG. The text is
-        model-written (item drafting), so while the active item's answer is
-        unreleased it must pass the strict served leak check, provenance = the
-        item as posed; a leaking text is withheld and its marker waits."""
+        a check pose (no model), a correct-answer feedback turn, a turn on
+        another concept than the marker's (fix round F2), or — the answer
+        unreleased — a model ceiling below MISCONCEPTION_CONFRONT_MIN_RUNG. The
+        text is model-written (item drafting), so while the active item's answer
+        is unreleased it must pass the strict leak check with NO provenance
+        (F3: number words anywhere, as close_states_answer reads close text); a
+        leaking text is withheld and its marker waits."""
         if self.phase == "check" or (self.phase == "feedback" and self.verdict == "correct"):
+            return None
+        marker = confront_of(self.state)
+        if marker is None or marker["node_id"] != self.concept_node:
             return None
         ceiling = clamp_model_ceiling(
             self.rung if self.phase == "hint" else self.ceiling, self.answer_released
         )
         if not self.answer_released and ceiling < MISCONCEPTION_CONFRONT_MIN_RUNG:
             return None  # the ceiling wins: a contradiction names specifics (H3+)
-        line = _confrontation_line(self.state)
+        text = _confrontation_text(self.state)
+        line = confront_line_for(text) if text else None
         if line is None or self.item is None or self.answer_released:
             return line
+        # the item-drafted text is checked, not the route's own wording around it
         leaked = detect_leak(
-            emitted=line,
-            rung=self._leak_rung(),
-            given=self.item.prompt,
-            **_item_check_kwargs(**self._item_answer()),
+            emitted=text, rung=self._leak_rung(), **_item_check_kwargs(**self._item_answer())
         ).leaked
         return None if leaked else line
 
@@ -1815,6 +1826,7 @@ def _advance_cursor(state: dict) -> bool:
     plan = state.get("plan")
     if not isinstance(plan, dict):
         return False
+    set_confront(state, None)  # PKG-10 (F2): a marker never outlives its concept
     approved = list(plan.get("approved") or [])
     plan["cursor"] = int(plan.get("cursor") or 0) + 1
     if plan["cursor"] >= len(approved):
