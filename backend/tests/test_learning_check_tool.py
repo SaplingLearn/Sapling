@@ -1394,7 +1394,13 @@ def test_grade_answer_then_flush_pending_reaches_the_single_writer(check, monkey
 # tests/test_learning_decisions.py::test_seam_callers_are_only_grade_answer).
 GRADING_MODULES = ("agents.grader", "agents.tools.check")
 GRADING_HELPER_CALLS = frozenset({"grade_answer", "flush_pending"})
-SANCTIONED_GRADING_CALLERS = frozenset({"agents/tools/check.py", "services/decisions.py"})
+# PKG-12 (a PKG-05 reopen): learning/review.py::grade_review grades a review
+# through grade_answer (spec §13 A16); it is reached only from the gated
+# /review/answer route (invariant 19 pins that it never reaches the grader
+# or the decision seam itself).
+SANCTIONED_GRADING_CALLERS = frozenset(
+    {"agents/tools/check.py", "services/decisions.py", "learning/review.py"}
+)
 
 
 def _grading_refs(source: str) -> list[tuple[int, str]]:
