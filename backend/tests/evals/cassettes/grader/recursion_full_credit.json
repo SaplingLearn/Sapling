@@ -12,7 +12,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "The student correctly identified both the stopping condition and the consequence of not having one. No hints needed.",
       "item_results": [
         "66871:yes",
         "67101:yes"

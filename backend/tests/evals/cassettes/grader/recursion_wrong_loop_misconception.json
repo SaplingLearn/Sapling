@@ -5,7 +5,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student claims recursion doesn't need a base case and compares it to a for loop, implying it stops on its own. This contradicts the reference answer which states the base case is necessary to stop recursion and prevent stack overflow.",
+      "feedback_hint": "The student claims recursion ends on its own, like a for loop, and doesn't need a base case. This contradicts the reference answer which states the base case stops recursion and prevents stack overflow.",
       "item_results": [
         "73324:no",
         "96768:no"

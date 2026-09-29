@@ -5,16 +5,13 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student describes the average rate of change, not the instantaneous rate of change at a single point.",
+      "feedback_hint": "The student describes the slope between two points, which is an average rate of change, not the instantaneous rate of change at a single point.",
       "item_results": [
         "93687:no",
         "43272:no"
       ],
       "matched_wrong_key": "w_avg",
-      "support": [
-        "93687: ",
-        "43272: "
-      ]
+      "support": []
     }
   ],
   "span_checks": []

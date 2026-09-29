@@ -11,24 +11,27 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "The student correctly identifies that the base case stops the recursion, but does not explain the consequences of not having one.",
+      "feedback_hint": "You've correctly identified that the base case stops recursion. To fully explain why this is necessary, consider what would happen if the function *never* stopped calling itself.",
       "item_results": [
         "89638:yes",
-        "46868:no"
+        "46868:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "89638: It's the case where the function stops recursing."
+        "89638: It's the case where the function stops recursing.",
+        "46868: It's the case where the function stops recursing."
       ]
     }
   ],
   "span_checks": [
     {
       "asserted": [
-        "89638:yes"
+        "89638:yes",
+        "46868:no"
       ],
       "item_results": [
-        "89638:yes"
+        "89638:yes",
+        "46868:no"
       ]
     }
   ]

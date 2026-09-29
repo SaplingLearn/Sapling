@@ -11,7 +11,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "You explained that the base case stops recursion, but didn't explain what happens if there is no base case.",
+      "feedback_hint": "",
       "item_results": [
         "82235:yes",
         "28137:no"

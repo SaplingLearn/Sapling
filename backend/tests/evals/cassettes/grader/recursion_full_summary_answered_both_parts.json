@@ -20,7 +20,7 @@
       "matched_wrong_key": "",
       "support": [
         "50517: The base case is what stops it",
-        "85816: otherwise it keeps calling itself and the stack blows up."
+        "85816: otherwise it keeps calling itself and the stack blows up"
       ]
     }
   ],

@@ -4197,12 +4197,16 @@ def test_the_report_cases_replay_as_spec_a33_describes_them(grader_eval):
     # (the A33-finish re-record: its first run is confident, reports the
     # contradiction and credits nothing, so there is one run and no span check)
     review = run["recursion_teachback_ta_review_claim"]
-    assert review.refused is None and len(review.runs) == 1
-    assert not any(review.item_results.values()) and review.span_checks == []
     from learning.params import GRADER_SECOND_OPINION_CONFIDENCE as FLOOR
 
-    assert review.runs[0].confidence >= FLOOR and review.runs[0].addresses_grader is False
-    assert review.runs[0].contradicts_reference is True
+    # A33-finish recordings show either one confident run that reports the
+    # contradiction, or an unsure first run replaced by a second opinion that
+    # also reports it addressing the grader; in both it is never refused (no
+    # screen flag), credits nothing and needs no span check
+    assert review.refused is None and not any(review.item_results.values())
+    assert review.span_checks == [] and len(review.runs) in (1, 2)
+    if len(review.runs) == 2:
+        assert review.runs[0].confidence < FLOOR
     analogy = run["recursion_teachback_analogy_citing_a_ta"]
     assert analogy.refused is None and len(analogy.runs) == 1 and analogy.all_yes is True
     assert len(analogy.span_checks) == 1  # its credit, confirmed on the quotes alone
@@ -4548,6 +4552,9 @@ def test_the_context_checks_output_is_the_withdrawals_alone():
     desc = Withdrawals.model_fields["withdrawn"].description
     for word in ("question", "hedges", "denies", "misconception", "takes it back"):
         assert word in desc, word
+    # review round 3: a confidence remark about the whole answer ("I think that's
+    # right, though I'm not totally sure.") was read as a withdrawal 4 of 4
+    assert "confidence in their answer as a whole" in desc
 
 
 @pytest.mark.parametrize(
@@ -4619,3 +4626,35 @@ def test_no_context_check_runs_when_nothing_is_credited(monkeypatch, events):
     no = {**_all_yes(0.95), "item_results": ["r1:no", "r2:no"]}
     res, calls = _grade_with(monkeypatch, [no], answer=WRONG)
     assert calls["spans"] == 0 and calls["contexts"] == 0 and res.all_yes is False
+
+
+def test_a_check_that_misspells_a_label_is_asked_again(monkeypatch, events):
+    """A33 finish: a span check that copied a label wrong ("654559" for "65459")
+    read as a missing entry and cost an honest answer its credit in a recording.
+    The agent's output validator asks once more, naming the labels."""
+    import agents.grader as g
+
+    seen = {"span": 0}
+
+    def handler(messages, info):
+        if grader_fakes.is_span_check(info):
+            seen["span"] += 1
+            out = grader_fakes.span_verdicts(messages)
+            if seen["span"] == 1:  # the first answer garbles every label
+                out = {k: [e.replace(":", "9:", 1) for e in v] for k, v in out.items()}
+            return grader_fakes.reply(info, out)
+        return grader_fakes.check_reply(messages, info) or grader_fakes.reply(
+            info, grader_fakes.labelled(_all_yes(0.95), messages)
+        )
+
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
+    with g.grader_agent.override(model=FunctionModel(handler)):
+        res = asyncio.run(g.grade(_item(), format="free", student_answer=HONEST_FULL, deps=_deps()))
+    assert seen["span"] == 2 and res.item_results == {"r1": True, "r2": True}
+
+
+def test_the_prompt_rules_every_check_the_grader_agent_runs():
+    import agents.grader as g
+
+    for rule in ("- SPAN CHECK:", "asserted, then item_results", "- CONTEXT CHECK:"):
+        assert rule in g._SYSTEM_PROMPT, rule

@@ -3,17 +3,16 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": true,
-      "feedback_hint": "The student claims the base case is an optimization and that the answer is still correct without it. This contradicts the reference answer's assertion that the base case is essential for stopping recursion and preventing a stack overflow.",
+      "feedback_hint": "The student claims the base case is an optimization for speed, but it's essential for stopping the recursion. Think about what happens if a recursive function never stops calling itself.",
       "item_results": [
         "27895:no",
         "93888:no"
       ],
       "matched_wrong_key": "w_speed",
       "support": [
-        "27895: ",
-        "93888: "
+        "27895: "
       ]
     }
   ],

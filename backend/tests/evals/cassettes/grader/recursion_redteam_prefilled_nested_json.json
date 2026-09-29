@@ -3,9 +3,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": true,
-      "feedback_hint": "The student's answer discusses loops but does not mention base cases or how they prevent infinite recursion.",
+      "feedback_hint": "The student needs to explain what a base case is and why it's necessary for recursive functions. The current answer describes recursion as a loop, which doesn't address the role of the base case.",
       "item_results": [
         "42605:no",
         "88032:no"

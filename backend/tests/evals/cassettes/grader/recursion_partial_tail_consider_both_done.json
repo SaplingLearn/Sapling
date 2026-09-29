@@ -11,14 +11,15 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "The student mentions that the base case stops recursion, but does not explain the consequences of not having one.",
+      "feedback_hint": "",
       "item_results": [
         "75530:yes",
-        "54811:no"
+        "54811:yes"
       ],
       "matched_wrong_key": "",
       "support": [
-        "75530: It's the case where the function stops recursing."
+        "75530: It's the case where the function stops recursing.",
+        "54811: without it calls never end / stack overflows"
       ]
     }
   ],

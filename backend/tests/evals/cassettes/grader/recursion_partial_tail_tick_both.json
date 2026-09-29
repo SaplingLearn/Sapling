@@ -11,15 +11,14 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "You clearly explained both the purpose of the base case and the consequence of not having one. Well done!",
+      "feedback_hint": "The student correctly identified that the base case stops recursion. However, they did not explain the consequence of not having a base case, which is that the calls would never end and could lead to a stack overflow.",
       "item_results": [
         "27033:yes",
-        "93675:yes"
+        "93675:no"
       ],
-      "matched_wrong_key": "",
+      "matched_wrong_key": "')))))','))))",
       "support": [
-        "27033: It's the case where the function stops recursing.",
-        "93675: without it calls never end / stack overflows"
+        "27033: It's the case where the function stops recursing."
       ]
     }
   ],

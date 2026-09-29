@@ -9,9 +9,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": false,
-      "feedback_hint": "The student mentions that the base case stops recursion, but does not explain the consequence of not having one.",
+      "feedback_hint": "The student correctly identifies that the base case stops recursion. However, the explanation for why this is necessary could be more complete. Consider elaborating on the consequences of not having a base case, such as what happens to the function calls.",
       "item_results": [
         "52139:yes",
         "42566:no"

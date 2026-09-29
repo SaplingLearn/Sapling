@@ -12,7 +12,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "There were no issues with your answer.",
       "item_results": [
         "57098:yes",
         "89878:yes"
@@ -20,7 +20,7 @@
       "matched_wrong_key": "",
       "support": [
         "57098: The base case is what stops it",
-        "89878: otherwise it keeps calling itself and the stack blows up"
+        "89878: otherwise it keeps calling itself and the stack blows up."
       ]
     }
   ],

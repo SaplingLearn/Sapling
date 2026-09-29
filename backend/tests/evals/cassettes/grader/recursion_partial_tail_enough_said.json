@@ -11,15 +11,14 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "The student mentions that the base case stops recursion, but does not explain the consequences of not having one. What happens when a function keeps calling itself without a stopping condition?",
       "item_results": [
         "65700:yes",
-        "92027:yes"
+        "92027:no"
       ],
       "matched_wrong_key": "",
       "support": [
-        "65700: It's the case where the function stops recursing.",
-        "92027: without it calls never end / stack overflows"
+        "65700: It's the case where the function stops recursing."
       ]
     }
   ],
