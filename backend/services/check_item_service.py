@@ -26,7 +26,7 @@ import logging
 import threading
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 import config
@@ -61,6 +61,7 @@ from learning.params import (
     CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
     CHECK_ITEM_MC_MIN_PER_CONCEPT,
     CHECK_ITEM_MC_TOPUP_CALLS,
+    CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS,
     CHECK_ITEM_REDRAFT_MAX_FAILURES,
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
@@ -963,27 +964,63 @@ def _top_up_mc_reason(
 #
 # A concept whose drafts always fail was redrafted on every upload and every
 # backfill. check_item_draft_failures counts its consecutive failed passes
-# against a fingerprint of the passages it is drafted from; at
-# CHECK_ITEM_REDRAFT_MAX_FAILURES on an unchanged source it is skipped. A pass
-# that stores an item resets the count, a changed source starts it over. The
+# against a fingerprint of what it is drafted from (its passages, the drafting
+# prompts' versions and the model); at CHECK_ITEM_REDRAFT_MAX_FAILURES on an
+# unchanged source it is skipped for CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS after
+# its last failure, then drafted once more. A pass that stores an item resets
+# the count; a changed source (or prompt, or model) starts it over. The
 # bookkeeping fails open: an error reading or writing it drafts as before.
+#
+# What counts (A38 fix round, M2) is an ALLOWLIST of the concept's OWN
+# outcomes: a one-concept call whose output never validated
+# (_CONCEPT_FAILURE_REASONS), or a call that answered but stored nothing for
+# that concept. A timeout, a transport or API error, a usage limit, any other
+# exception, and every failure of a multi-concept call count for no concept.
 
 _FAILURES_TABLE = "check_item_draft_failures"
 _FAILURES_ON_CONFLICT = "course_id,concept_key"
-# An Unavailable reason that says the provider failed, not the concept's drafts
-# (a Flex 429/503 that outlived its retries, a timeout's HTTP error).
-_TRANSIENT_REASONS = frozenset({"ModelHTTPError"})
+# The only Unavailable reason that is the drafts' fault: the output failed
+# validation on every retry (pydantic-ai raises UnexpectedModelBehavior).
+_CONCEPT_FAILURE_REASONS = frozenset({"UnexpectedModelBehavior"})
+
+
+def _drafting_version() -> str:
+    """The drafting prompts' versions and the model: a change to either is a
+    new source, so a concept stalled under the old one is drafted again."""
+    from agents import check_items, check_items_topup
+    from agents._providers import model_name_for
+
+    return "|".join(
+        (check_items._PROMPT_HASH, check_items_topup._PROMPT_HASH, model_name_for("check_items"))
+    )
 
 
 def _source_fingerprint(ranked: Iterable[dict]) -> str:
     """What a concept is drafted from: its ranked passages' ids and texts,
-    order-free (a re-rank of the same passages is the same source)."""
+    order-free (a re-rank of the same passages is the same source), and the
+    drafting version (_drafting_version)."""
     parts = sorted(
         f"{chunk.get('id') or ''}\x1f"
         + hashlib.sha256((chunk.get("chunk_text") or "").encode("utf-8")).hexdigest()
         for chunk in ranked
     )
+    parts.append("version\x1f" + _drafting_version())
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def _utcnow() -> datetime:
+    """The clock the expiry reads; tests monkeypatch it."""
+    return datetime.now(UTC)
+
+
+def _parse_stamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
 class _DraftFailures:
@@ -998,7 +1035,7 @@ class _DraftFailures:
             return
         try:
             rows = table(_FAILURES_TABLE).select(
-                "concept_key,failures,source_fp",
+                "concept_key,failures,source_fp,updated_at",
                 filters={
                     "course_id": f"eq.{course_id}",
                     "concept_key": f"in.({','.join(pg_quote_value(k) for k in keys)})",
@@ -1014,12 +1051,18 @@ class _DraftFailures:
         self.rows = {r["concept_key"]: r for r in rows or [] if r.get("concept_key")}
 
     def stalled(self, key: str, fp: str) -> bool:
+        """At the bound on an unchanged source, within the TTL of the last
+        failure. A row with no readable updated_at is not stalled (fail open)."""
         row = self.rows.get(key)
-        return bool(
+        if not (
             row
             and row.get("source_fp") == fp
             and (row.get("failures") or 0) >= CHECK_ITEM_REDRAFT_MAX_FAILURES
-        )
+        ):
+            return False
+        stamp = _parse_stamp(row.get("updated_at"))
+        ttl = timedelta(days=CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS)
+        return stamp is not None and _utcnow() - stamp < ttl
 
     def _write(self, key: str, failures: int, fp: str) -> None:
         row = {
@@ -1027,7 +1070,7 @@ class _DraftFailures:
             "concept_key": key,
             "failures": failures,
             "source_fp": fp,
-            "updated_at": datetime.now(UTC).isoformat(),
+            "updated_at": _utcnow().isoformat(),
         }
         try:
             table(_FAILURES_TABLE).upsert([row], on_conflict=_FAILURES_ON_CONFLICT)
@@ -1079,7 +1122,8 @@ def generate_for_concepts(
     Synchronous: it runs in a worker thread with no event loop.
     `user_id=None` (the backfill) records usage against the system actor.
     A concept at CHECK_ITEM_REDRAFT_MAX_FAILURES failed passes on an unchanged
-    source is skipped too (counted in concepts_skipped; `_DraftFailures`)."""
+    source is skipped too, within CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS of its
+    last failure (counted in concepts_skipped; `_DraftFailures`)."""
     if not config.LEARNING_LOOP_ENABLED:
         return _NOTHING
     if not chunks:
@@ -1160,9 +1204,12 @@ def generate_for_concepts(
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
             unavailable += len(batch)
-            if out.reason not in _TRANSIENT_REASONS:
-                for key, _, ranked in batch:
-                    ledger.failed(key, _source_fingerprint(ranked))
+            # Only a one-concept call's validation failure is that concept's
+            # own outcome; anything else, or any multi-concept call, is no
+            # concept's fault (M2 allowlist).
+            if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
+                key, _, ranked = batch[0]
+                ledger.failed(key, _source_fingerprint(ranked))
             continue
 
         drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}

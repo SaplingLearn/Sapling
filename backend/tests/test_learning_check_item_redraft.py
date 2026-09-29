@@ -276,3 +276,142 @@ class TestBoundedRedraft:
         assert tuple(out) == (0, 0, 0, 0, 0)
         t.assert_not_called()
         d.assert_not_called()
+
+
+# ── A38 fix round (M2): an allowlist, per-concept outcomes, and an expiry ────
+
+
+def _run_many(svc, failures, outcome, names):
+    """One pass over several concepts (one batch); returns (outcome, calls)."""
+    items = _Items()
+    calls: list = []
+
+    def factory(name):
+        return {"check_items": items, "check_item_draft_failures": failures}[name]
+
+    async def fake_draft(concepts, passages, *, deps, flex):
+        calls.append(list(concepts))
+        return outcome
+
+    chunks = [
+        {"id": f"c{i}", "chunk_index": i, "chunk_text": f"{n} text", "doc_id": "doc-1"}
+        for i, n in enumerate(names)
+    ]
+    with (
+        patch.object(svc, "table", side_effect=factory),
+        patch.object(svc, "draft_items", side_effect=fake_draft),
+    ):
+        out = svc.generate_for_concepts(
+            user_id="u1", course_id="course-1", concept_names=names, chunks=chunks, flex=True
+        )
+    return out, len(calls)
+
+
+class TestRedraftAllowlist:
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "ModelHTTPError",
+            "ModelAPIError",
+            "ReadTimeout",
+            "TimeoutException",
+            "TimeoutError",
+            "ConnectError",
+            "TransportError",
+            "UsageLimitExceeded",
+            "RuntimeError",
+            "SomethingNew",
+        ],
+    )
+    def test_only_a_validation_failure_counts(self, env, reason):
+        from agents.check_items import CheckItemsUnavailable
+
+        failures = _Failures()
+        for _ in range(5):
+            _, calls, _ = _run(env, failures, CheckItemsUnavailable(reason=reason))
+            assert calls == 1, reason
+        assert failures.rows == {}, reason
+
+    def test_a_batch_level_failure_is_charged_to_no_concept(self, env):
+        failures = _Failures()
+        names = ["Learning Rate", "Momentum", "Batch Size"]
+        for _ in range(5):
+            out, calls = _run_many(env, failures, _invalid(), names)
+            assert calls == 1 and out.concepts_attempted == 3
+        assert failures.rows == {}, "a multi-concept validation failure is nobody's"
+
+    def test_a_good_co_batched_concept_is_never_stalled(self, env):
+        from agents.check_items import CheckItemsOutput
+
+        failures = _Failures()
+        names = ["Learning Rate", "Momentum"]
+        # the call answered: Learning Rate got a draft, Momentum got none
+        half = CheckItemsOutput(items=[_draft()])
+        for _ in range(5):
+            out, calls = _run_many(env, failures, half, names)
+            assert calls == 1 and out.items_created == 1, "Learning Rate is drafted every pass"
+        assert ("course-1", _KEY) not in failures.rows
+        # Momentum's own outcome (nothing stored for it) is what counts: it stalls
+        from learning.params import CHECK_ITEM_REDRAFT_MAX_FAILURES as n
+
+        assert failures.rows[("course-1", "momentum")]["failures"] == n
+
+
+class TestRedraftExpiry:
+    def test_param(self):
+        from learning import params
+
+        assert params.CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS == 14
+
+    def test_a_stalled_concept_is_retried_after_the_ttl(self, env, monkeypatch):
+        from datetime import UTC, datetime, timedelta
+
+        from learning.params import CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS as ttl
+        from learning.params import CHECK_ITEM_REDRAFT_MAX_FAILURES as n
+
+        failures = _Failures()
+        for _ in range(n):
+            _run(env, failures, _invalid())
+        _, calls, _ = _run(env, failures, _invalid())
+        assert calls == 0
+        later = datetime.now(UTC) + timedelta(days=ttl, hours=1)
+        monkeypatch.setattr(env, "_utcnow", lambda: later)
+        _, calls, _ = _run(env, failures, _invalid())
+        assert calls == 1, "past the TTL the concept is drafted again"
+        _, calls, _ = _run(env, failures, _invalid())
+        assert calls == 0, "and a fresh failure stalls it for another TTL"
+
+    def test_a_row_with_no_readable_updated_at_is_not_stalled(self, env):
+        from learning.params import CHECK_ITEM_REDRAFT_MAX_FAILURES as n
+
+        fp = env._source_fingerprint([_CHUNK])
+        for stamp in (None, "not a date"):
+            row = {
+                "course_id": "course-1",
+                "concept_key": _KEY,
+                "failures": n,
+                "source_fp": fp,
+                "updated_at": stamp,
+            }
+            _, calls, _ = _run(env, _Failures([row]), _good())
+            assert calls == 1, stamp
+
+    def test_a_prompt_or_model_change_resets_the_count(self, env, monkeypatch):
+        from agents import check_items
+        from learning.params import CHECK_ITEM_REDRAFT_MAX_FAILURES as n
+
+        failures = _Failures()
+        for _ in range(n):
+            _run(env, failures, _invalid())
+        _, calls, _ = _run(env, failures, _invalid())
+        assert calls == 0
+        monkeypatch.setattr(check_items, "_PROMPT_HASH", "a-new-prompt")
+        _, calls, _ = _run(env, failures, _invalid())
+        assert calls == 1, "a new prompt is a new source"
+        for _ in range(n):
+            _run(env, failures, _invalid())
+        _, calls, _ = _run(env, failures, _invalid())
+        assert calls == 0
+        monkeypatch.setenv("SAPLING_MODEL_CHECK_ITEMS", "some-other-model")
+        _, calls, _ = _run(env, failures, _invalid())
+        assert calls == 1, "a new model is a new source"

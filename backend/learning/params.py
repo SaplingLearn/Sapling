@@ -233,6 +233,9 @@ CHECK_ITEM_BACKFILL_MIN_CHUNK_SCORE = 1  # † §3.5, A23 relevance floor (backf
 CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds a thread for minutes
 # † bounded redrafting of concepts whose drafts always fail (owner decision A38 low-severity 2)
 CHECK_ITEM_REDRAFT_MAX_FAILURES = 3
+# † how long a stalled concept stays skipped: past this many days since its
+# last recorded failure it is drafted once more (A38 fix round, M2 expiry)
+CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS = 14
 # † A34 (PKG-06's reopen): the most tokens (checks.answer_tokens) a check item's
 # structured final_answer may hold — the decisive core the leak check matches,
 # never the whole reference, yet room for a number with its unit, an
