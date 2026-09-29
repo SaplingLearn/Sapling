@@ -16,7 +16,7 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
-from learning.gate import learning_loop_active
+from learning.gate import learning_loop_for_request
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
@@ -636,7 +636,8 @@ async def _start_session_agent(
 async def start_session(body: StartSessionBody, request: Request):
     require_self(body.user_id, request)
     # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
-    if learning_loop_active(body.user_id):
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("start_session")(body, request)
     result = await _agent_turn_or_http_error(
         _start_session_agent(body), what="start-session agent"
@@ -929,7 +930,8 @@ async def _chat_turn_json(
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
     # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
-    if learning_loop_active(body.user_id):
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("chat")(body, request)
     _consume_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
@@ -949,7 +951,8 @@ async def chat_stream(body: ChatBody, request: Request):
     """
     require_self(body.user_id, request)
     # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
-    if learning_loop_active(body.user_id):
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("chat_stream")(body, request)
     _consume_pending(body.session_id, body.user_id)
 
@@ -1061,7 +1064,8 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     """
     require_self(body.user_id, request)
     # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
-    if learning_loop_active(body.user_id):
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("start_session_stream")(body, request)
     request_id = (
         getattr(request.state, "request_id", None)
@@ -1158,7 +1162,8 @@ def end_session(body: EndSessionBody, request: Request):
     else:
         body.user_id = get_session_user_id(request)
     # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
-    if learning_loop_active(body.user_id):
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         loop = _loop_delegate("end_session")(body, request)
         if loop is not None:
             return loop
@@ -1500,7 +1505,8 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
     # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
-    if learning_loop_active(body.user_id):
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("action")(body, request)
     _ensure_session_ready(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(

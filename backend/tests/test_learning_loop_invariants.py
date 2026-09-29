@@ -1206,10 +1206,15 @@ def _dotted(node) -> str:
     return ""
 
 
+#: The chat_stream runners a loop turn streams through (PKG-07 lane B: the
+#: structured turn streams through stream_structured_turn).
+_STREAM_RUNNERS = frozenset({"stream_agent_turn", "stream_structured_turn"})
+
+
 def _loop_run_scan(source: str, label: str) -> tuple[int, list[str]]:
     """(run sites, run sites with no earlier ``ai_budget.check(`` in the same scope)
     for ONE module: a load of ``<anything>.<Agent runner>`` (the loop route holds the
-    agent on its turn object) or a ``stream_agent_turn(`` call."""
+    agent on its turn object) or a ``stream_agent_turn(`` / ``stream_structured_turn(`` call."""
     found, bad = 0, []
     for scope in _scopes(ast.parse(source)):
         runs, checks = [], []
@@ -1220,7 +1225,7 @@ def _loop_run_scan(source: str, label: str) -> tuple[int, list[str]]:
                 and node.attr in AGENT_RUN_METHODS
             ):
                 runs.append(node.lineno)
-            elif isinstance(node, ast.Call) and _last_name(node.func) == "stream_agent_turn":
+            elif isinstance(node, ast.Call) and _last_name(node.func) in _STREAM_RUNNERS:
                 runs.append(node.lineno)
             elif isinstance(node, ast.Call) and _dotted(node.func).endswith("ai_budget.check"):
                 checks.append(node.lineno)
@@ -1269,6 +1274,8 @@ def test_inv_23_loop_run_scan_self_test():
     assert _loop_run_scan(good, "good") == (1, [])
     assert _loop_run_scan(late, "late")[1] == ["late:run_json:2"]
     assert _loop_run_scan(stream, "stream") == (1, ["stream:s:2"])
+    structured = stream.replace("stream_agent_turn", "stream_structured_turn")
+    assert _loop_run_scan(structured, "structured") == (1, ["structured:s:2"])
     assert _loop_run_scan(lam, "lam") == (1, ["lam:<lambda>:3"])
     assert _loop_run_scan(nested, "nested") == (1, ["nested:g:4"])
 

@@ -7,17 +7,30 @@ byte-identical when it is false.
 
 Routing is code: learning.policy.model_tier picks the tier slot after
 services.ai_budget.check has read the student's budget — in the same function
-as every model run (invariant 23). Context comes from
+as every model run (invariant 23); each tutor model run is counted with
+ai_budget.count_tutor_call right before it (A39). Context comes from
 learning.policy.context_policy, assembled with the legacy block builders.
-Streaming rides services.chat_stream.stream_agent_turn unchanged; the loop
-stream events are yielded AROUND it. Evidence is written ONLY by
-_grade_submission, from an explicit answer submission (invariant 26). The
-reference answer of the active check item lives only on the turn object —
-never in deps, the prefix, a log line, or an event payload.
+The tutor's output is the STRUCTURED turn (`learning.turn_shape.LoopTurnOut`),
+served as `render_turn(...)`; streaming rides
+services.chat_stream.stream_structured_turn with a leak-strip transform, and
+the loop stream events are yielded AROUND it. A tool run that ends without a
+turn (#646: flash-lite answers empty after a tool call) is finished by the
+tool-less continuation. Evidence is written ONLY by _grade_submission, from an
+explicit answer submission (invariant 26). The reference answer of the active
+check item lives only on the turn object — never in deps, the prefix, a log
+line, or an event payload.
+
+The gate (`learning.gate.learning_loop_for_request`) is read ONCE per request,
+at route entry (A38 00); a delegating legacy route carries its own read in on
+`request.state.learning_loop`, and the result rides on
+`SaplingDeps.learning_loop`.
 
 Loop state: PKG-06's `learning.loop_state_store` returns the typed `LoopState`;
-this module works on its JSON document (`LoopState.to_json()`) and saves through
-`LoopState.from_json`, so every write is validated by PKG-06's parser. The
+this module reads its JSON document (`LoopState.to_json()`) and writes ONLY
+through `update_loop_state` (compare-and-set, A38 06(q)) with a mutate closure
+over that document, re-validated by `LoopState.from_json`. A closure expresses
+this request's own change and has no side effects (it is re-applied on a
+conflict); events and message rows follow the save. The
 spec's `loop_state["active"]` is the document's `current`, and the spec's
 per-item `loop_state[qh]` entry is `steps[qh]`: PKG-06 owns its `rung`,
 `attempts` (failed genuine attempts while the step is open), `first_shown_at`,
@@ -34,8 +47,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from collections.abc import Callable
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic_ai import capture_run_messages
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.usage import RunUsage
 from sse_starlette.sse import EventSourceResponse
 
 import config
@@ -49,26 +67,28 @@ from agents.loop_tutor import (
     tier_run_kwargs,
 )
 from agents.tools.check import CheckAnswer, grade_answer
-from agents.usage import record_agent_usage
+from agents.usage import UnfinishedRun, record_agent_usage
 from db.connection import table
-from learning import gates, ladder, policy, zpd_events
+from learning import answer_guard, gates, ladder, policy, zpd_events
 from learning.bkt import band as bkt_band
 from learning.checks import CheckItem, posttest_reserve_hash, select_item
 from learning.evidence import flush_pending
-from learning.gate import learning_loop_active
+from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
 from learning.leak import detect_leak, strip_leak
 from learning.learner_state import LearnerState, read_states
 from learning.loop_state_store import (
+    LoopStateConflict,
     load_loop_state,
     revealed_hashes,
-    save_loop_state,
     seen_hashes,
+    update_loop_state,
 )
 from learning.params import (
     BAND_DEVELOP_MAX,
     BKT_L0,
     CHECK_ITEM_FORMATS,
+    CHECK_REFUSALS_AS_IDK,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     LOOP_CHECK_DIFFICULTY_BY_BAND,
     LOOP_CHECKS_PER_CONCEPT,
@@ -79,6 +99,7 @@ from learning.params import (
     LOOP_TEACH_TURNS_BEFORE_CHECK,
 )
 from learning.policy import LearnerView, LoopState, StepState
+from learning.turn_shape import clamp_model_ceiling, render_turn, turn_limits
 from models import (
     ActionBody,
     ChatBody,
@@ -99,7 +120,6 @@ from routes.learn import (  # legacy helpers, reused verbatim — never copied
     _get_course_id_for_topic,
     _get_course_info,
     _load_message_history,
-    _new_run_text,
     save_message,
 )
 from services import ai_budget, events_service
@@ -107,7 +127,7 @@ from services.academics import offering_course_id, resolve_offering
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import require_self
-from services.chat_stream import stream_agent_turn
+from services.chat_stream import stream_structured_turn
 from services.check_item_service import get_check_item, list_items
 from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
@@ -134,16 +154,21 @@ _FEEDBACK_VERDICT_LINES = {
 _FEEDBACK_ANSWER_LEAD = "The answer: "
 _FEEDBACK_NEXT_STEP = "When you're ready, try the next check."
 
-#: The idk subset of gates.NON_ATTEMPT_PATTERNS (A16: idk → idk evidence and
-#: the answer is released; any other non-attempt phrase → a hint request).
-IDK_PHRASES: tuple[str, ...] = ("idk", "i don't know")
-
 _GRADE_UNAVAILABLE_REPLY = (
     "I couldn't check that answer just now, so nothing was recorded. "
     "Please submit it again in a moment."
 )
+#: A33: the guard refused the answer (it addressed the grader). Not an outage,
+#: never a skip: the student is asked again; the CHECK_REFUSALS_AS_IDK-th
+#: refusal of the same item is recorded as idk instead.
+_ANSWER_REFUSED_REPLY = (
+    "I can only check an answer written in your own words, so nothing was recorded. "
+    "Please answer the question itself and submit again."
+)
 _IDK_RENDERED = "I don't know"
-_SUBMISSION_KINDS = ("feedback", "hint_request", "unavailable")
+_SUBMISSION_KINDS = ("feedback", "hint_request", "unavailable", "refused")
+#: A38 06(q): the 409 detail when the loop-state compare-and-set is exhausted.
+_STATE_CONFLICT = "loop state changed, retry"
 _DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
 #: The session opener served at the hard budget level (A27): no model call, so
 #: a capped student can still start a session and reach the probe (§3.5).
@@ -158,10 +183,18 @@ _ACTION_PROMPTS = {
 }
 
 
-def _gate(user_id: str, request: Request) -> None:
+def _gate(user_id: str, request: Request) -> bool:
+    """require_self, then the learning-loop gate, read ONCE per request (A38 00):
+    a delegating legacy route has already read it and carries the result on
+    `request.state.learning_loop` (routes/learn.py), so a delegated request
+    costs one `user_settings` read, not two. Returns the gate for
+    `SaplingDeps.learning_loop`; False is the spec §7 404."""
     require_self(user_id, request)
-    if not learning_loop_active(user_id):
+    carried = getattr(request.state, "learning_loop", None)
+    loop_on = carried if isinstance(carried, bool) else learning_loop_for_request(user_id)
+    if not loop_on:
         raise HTTPException(status_code=404, detail=_NOT_ENABLED)
+    return loop_on
 
 
 def _now_s() -> float:
@@ -200,8 +233,16 @@ class _BudgetPaused(HTTPException):
 
 
 def _budget_data(decision) -> dict:
+    """The pause notice (JSON `budget`, SSE `budget` data): level and reset, plus
+    the binding scope and `session_capped` for PKG-13's banner (A39, 06b(j)) —
+    the same keys the 429 body carries."""
     reset = decision.reset_at
-    return {"level": decision.level, "reset_at": reset.isoformat() if reset else None}
+    return {
+        "level": decision.level,
+        "reset_at": reset.isoformat() if reset else None,
+        "scope": decision.scope,
+        "session_capped": bool(decision.session_capped),
+    }
 
 
 def _budget_event(decision) -> SaplingEvent:
@@ -221,15 +262,46 @@ def _item_like(item):
 # ── Loop state: PKG-06's JSON document ─────────────────────────────────────
 
 
+class _StateConflict(HTTPException):
+    """update_loop_state lost the compare-and-set on every retry (A38 06(q)): a
+    409 on a JSON route; inside a stream it is a terminal `error` event (the
+    on_complete guard, or the deterministic path's). An HTTPException so
+    routes.learn._agent_turn_or_http_error passes it through."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=409, detail=_STATE_CONFLICT)
+
+
 def _load_loop_state(session_id: str) -> dict:
-    """The session's loop state as PKG-06's JSON document (`LoopState.to_json()`)."""
-    return load_loop_state(session_id).to_json()
+    """The session's loop state as PKG-06's JSON document (`LoopState.to_json()`).
+    For reading only: every write is `_update_loop_state`."""
+    return load_loop_state(session_id).state.to_json()
 
 
-def _save_loop_state(session_id: str, state: dict) -> bool:
-    """Save through PKG-06's typed parser: a malformed PKG-06 field this route
-    wrote raises ValueError here instead of reaching the database."""
-    return save_loop_state(session_id, LoopState.from_json(state))
+def _update_loop_state(session_id: str, mutate: Callable[[dict], None]) -> dict:
+    """The ONE loop-state write (A38 06(q)): `update_loop_state` with `mutate`
+    applied to the FRESH document (on a conflict it runs again on the newer
+    one), re-validated by PKG-06's typed parser — a malformed PKG-06 field
+    raises ValueError here instead of reaching the database. `mutate` changes
+    the document in place and must have no side effects. Returns the document
+    as mutated (saved, or — no sessions row, A11 — logged and not saved)."""
+    last: dict = {}
+
+    def apply(state: LoopState) -> LoopState:
+        doc = state.to_json()
+        mutate(doc)
+        last["doc"] = doc
+        return LoopState.from_json(doc)
+
+    try:
+        saved = update_loop_state(session_id, apply)
+    except LoopStateConflict as exc:
+        logger.warning("loop state for %s: compare-and-set exhausted", session_id)
+        raise _StateConflict() from exc
+    if saved is None:
+        logger.warning("loop state for %s not saved: no sessions row", session_id)
+        return last.get("doc", {})
+    return saved.state.to_json()
 
 
 def _steps(state: dict) -> dict:
@@ -260,7 +332,7 @@ def _turn_phase(kind: str, state_phase: str) -> str:
         return "feedback"
     if kind == "hint_request" or (kind == "action" and state_phase == "check"):
         return "hint"
-    if kind == "unavailable":
+    if kind in ("unavailable", "refused"):
         return "check"
     if kind == "opener":
         return "teach"
@@ -424,6 +496,8 @@ def _prepare_loop_run(
     tier: str,
     context,
     item,
+    learning_loop: bool,
+    loop_turn,
 ) -> tuple:
     deps = SaplingDeps(
         user_id=user_id,
@@ -432,8 +506,9 @@ def _prepare_loop_run(
         request_id=request_id,
         session_id=session_id,
         feature="loop_tutor",
-        learning_loop=True,
+        learning_loop=learning_loop,
         loop_state=state,
+        loop_turn=loop_turn,
     )
     blocks = _context_blocks(
         user_id=user_id, course_id=course_id, user_message=user_message, context=context, item=item
@@ -462,29 +537,61 @@ def _template_feedback(verdict: str, reference: str | None) -> str:
     return " ".join(parts)
 
 
-async def _loop_continuation_text(turn, run_result) -> str | None:
-    """The #646 twin of routes.learn._continuation_text for a loop turn: a
-    budget check FIRST (invariant 23; None at the hard level), then the same
-    tool-less continuation on the SAME slot. A twin, not a shared helper, so
-    routes/learn.py stays delegation-only; the `override(tools=[], toolsets=[])`
-    line is the safety property (pinned)."""
+def _continuation_history(messages: list) -> list | None:
+    """The failed tool run's messages up to and including its last tool
+    results (#646: what follows them is the model's empty answer and any
+    output-retry prompts). None when no tool ran — there is nothing to
+    continue from, so the turn is re-run tool-less instead."""
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts):
+            return list(messages[: i + 1])
+    return None
+
+
+async def _loop_continuation_text(turn, messages: list) -> str | None:
+    """The #646 twin of routes.learn._continuation_text for the STRUCTURED loop
+    turn. Lane B's live finding: after a tool call gemini flash-lite answered
+    with empty responses and never wrote the LoopTurnOut — Gemini only takes
+    the structured (JSON) turn with no tools declared. So: a budget check
+    FIRST (invariant 23; None at the hard level), one counted tutor call (A39),
+    then a run on the SAME slot with every tool removed — the safety property,
+    `override(tools=[], toolsets=[])` (pinned) — that continues from the tool
+    results with the nudge, or, when no tool ran (`messages` has none; the
+    stream's Rung-1 fallback), re-runs the turn itself. Returns the rendered
+    turn (the output validator still judges it against deps.loop_turn)."""
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
     if decision.level == "hard":
         return None
     carried = {k: turn.run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in turn.run_kwargs}
+    # no tools, so no tool_choice (a tool_config with nothing to choose)
+    carried["model_settings"] = {
+        k: v for k, v in (carried.get("model_settings") or {}).items() if k != "tool_choice"
+    }
+    history = _continuation_history(messages)
+    if history is None:
+        prompt, limits, feature = turn.assembled, turn.run_kwargs.get("usage_limits"), "loop_tutor"
+        history = list(turn.run_kwargs.get("message_history") or [])
+    else:
+        prompt, limits, feature = (
+            _CONTINUATION_NUDGE,
+            CONTINUATION_LIMITS,
+            "loop_tutor_continuation",
+        )
+    ai_budget.count_tutor_call(turn.user_id)
     with turn.agent.override(tools=[], toolsets=[]):
         result = record_agent_usage(
             await turn.agent.run(
-                _CONTINUATION_NUDGE,
-                message_history=run_result.all_messages(),
-                usage_limits=CONTINUATION_LIMITS,
+                prompt,
+                message_history=history,
+                usage_limits=limits,
                 **carried,
             ),
-            feature="loop_tutor_continuation",
+            feature=feature,
             task=turn.slot,
             user_id=turn.user_id,
         )
-    return _new_run_text(result).strip() or None
+    return render_turn(result.output)
 
 
 # ── The turn ───────────────────────────────────────────────────────────────
@@ -511,10 +618,13 @@ class _LoopTurn:
         state: dict | None = None,
         verdict: str | None = None,
         scope: tuple[str, str] | None = None,
+        loop_on: bool,
+        refused: bool = False,
     ):
         self.user_id, self.session_id = body.user_id, body.session_id
         self.mode = body.mode
         self.message, self.kind, self.persist_user_row = message, kind, persist_user_row
+        self.loop_on, self.refused = loop_on, refused
         self.request_id = _request_id(request)
         self.offering_id, self.course_id = scope or _session_scope(body.session_id, body.user_id)
         self.state = state if state is not None else _load_loop_state(body.session_id)
@@ -525,6 +635,7 @@ class _LoopTurn:
         active = self.state.get("current")
         entry = (self.state.get("steps") or {}).get(active) if active else None
         self.item = None
+        self.deps = None
         if isinstance(entry, dict) and entry.get("check_item_id"):
             self.item = get_check_item(entry["check_item_id"])
         # A23 withdrawal: the active item is gone — drop it; the entry stays.
@@ -606,10 +717,16 @@ class _LoopTurn:
             self.phase, opener=self.kind == "opener", budget_level=decision.level
         )
         item_phase = self.phase in ("hint", "feedback")
+        # model text never writes H6 before the answer is released (clamp_model_ceiling)
+        model_ceiling = Rung(
+            clamp_model_ceiling(
+                self.rung if self.phase == "hint" else self.ceiling, self.answer_released
+            )
+        )
         self.prefix = phase_prefix(
             phase=self.phase,
             band=self.band,
-            ceiling=self.rung if self.phase == "hint" else self.ceiling,
+            ceiling=model_ceiling,
             item_prompt=self.item.prompt if (item_phase and self.item) else None,
             item_format=self.item.format if (item_phase and self.item) else None,
             answer_released=self.answer_released,
@@ -627,6 +744,8 @@ class _LoopTurn:
             tier=self.tier,
             context=context,
             item=self.item,
+            learning_loop=self.loop_on,
+            loop_turn=turn_limits(self.phase, model_ceiling, self.answer_released),
         )
 
     def _tier_phase(self) -> str:
@@ -640,6 +759,8 @@ class _LoopTurn:
     def _deterministic_text(self, *, hard: bool) -> str | None:
         if self.kind == "unavailable":
             return _GRADE_UNAVAILABLE_REPLY
+        if self.kind == "refused":
+            return _ANSWER_REFUSED_REPLY
         if self.phase == "check" and self.item is not None:
             return ladder.check_pose(self.item.prompt)
         if self.phase == "hint" and self.item is not None and self.rung in _DETERMINISTIC_RUNGS:
@@ -692,40 +813,52 @@ class _LoopTurn:
     def record_usage(self, run_result) -> None:
         record_agent_usage(run_result, feature="loop_tutor", task=self.slot, user_id=self.user_id)
 
+    def _leak_rung(self) -> Rung:
+        """The rung model text is served at: H6 once the answer is released, the
+        hint rung on a hint turn, else the ceiling — clamped below H6 while the
+        answer is unreleased (clamp_model_ceiling: model text never writes H6)."""
+        rung = self.rung if self.phase == "hint" else self.ceiling
+        if self.answer_released:
+            rung = Rung.H6
+        return Rung(clamp_model_ceiling(rung, self.answer_released))
+
+    def _item_leak_kwargs(self) -> dict:
+        """The active item's answer forms (A34) and, for an mc_reason item, its
+        correct option letter (A38 06 gap)."""
+        return {
+            "reference": self.item.reference_answer,
+            "final_answer": self.item.final_answer,
+            "canonical_answer": self.item.canonical_answer,
+            "correct_option": self.item.correct_option,
+        }
+
+    def _leak_verdict(self, text: str):
+        return detect_leak(emitted=text, rung=self._leak_rung(), **self._item_leak_kwargs())
+
+    def redact(self, text: str) -> str:
+        """stream_structured_turn's `transform`: the streamed (cumulative) text,
+        leak-stripped BEFORE any token is sent. No event — `complete` records
+        the one zpd.leak for the turn."""
+        if self.tier == "none" or self.item is None or not self._leak_verdict(text).leaked:
+            return text
+        return strip_leak(emitted=text, **self._item_leak_kwargs())
+
     def _leak_checked(self, reply: str) -> tuple[str, bool]:
         """Model-written text is leak-checked against the ACTIVE item at the rung
-        it is served at: H6 once the answer is released, the hint rung on a hint
-        turn, else the ceiling (A34: the item's structured final answer)."""
+        it is served at (`_leak_rung`; A34: the item's structured final answer)."""
         if self.tier == "none" or self.item is None:
             return reply, False
-        leak_rung = (
-            Rung.H6
-            if self.answer_released
-            else (self.rung if self.phase == "hint" else self.ceiling)
-        )
-        verdict = detect_leak(
-            self.item.reference_answer,
-            reply,
-            leak_rung,
-            final_answer=self.item.final_answer,
-            canonical_answer=self.item.canonical_answer,
-        )
+        verdict = self._leak_verdict(reply)
         if not verdict.leaked:
             return reply, False
         zpd_events.emit_zpd_leak(
             user_id=self.user_id,
             request_id=self.request_id,
-            rung_emitted=leak_rung,
+            rung_emitted=self._leak_rung(),
             ceiling=self.ceiling,
             detector=verdict.detector,
         )
-        stripped = strip_leak(
-            reply,
-            self.item.reference_answer,
-            final_answer=self.item.final_answer,
-            canonical_answer=self.item.canonical_answer,
-        )
-        return stripped, True
+        return strip_leak(emitted=reply, **self._item_leak_kwargs()), True
 
     def _emit_step(self, entry: dict) -> None:
         """zpd.step for the ONE feedback turn (spec §6), from what
@@ -774,20 +907,65 @@ class _LoopTurn:
             logger.warning("zpd.step not emitted for %s: incomplete step record", self.active)
 
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
-        """Called exactly once per served turn: leak check, feedback bookkeeping,
-        counters, persistence. Applies this turn's changes to a FRESH load of
-        the document (HANDOFF-06: never save a state loaded before a long stream
-        without re-loading)."""
+        """Called exactly once per served turn: leak check, then this turn's
+        changes applied to the FRESH document by ONE compare-and-set write
+        (`_apply_turn`, re-run on a conflict), then — after the save — the
+        zpd.step, the message rows and the usage event."""
         reply, redacted = self._leak_checked(reply)
-        state = _load_loop_state(self.session_id)
+        out: dict = {}
+        self._now = _now_s()
+        _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out))
+        if out.get("step") is not None:
+            self._emit_step(out["step"])
+        check = None
+        if out.get("activated"):
+            item = get_check_item(out["activated"])
+            check = _pose_payload(item) if item is not None else None
+        if self.persist_user_row:
+            save_message(self.session_id, "user", self.message)
+        save_message(self.session_id, "assistant", reply, merged or None)
+        if check is not None:
+            save_message(self.session_id, "assistant", check["prompt"])
+        if self.persist_user_row:
+            events_service.log_event(
+                "chat.message_sent",
+                category="usage",
+                user_id=self.user_id,
+                request_id=self.request_id,
+                payload={"mode": self.mode, "session_id": self.session_id},
+                content=self.message,
+            )
+        offer_rung = out.get("offer_rung")
+        return {
+            **self._submission_extra(),
+            "reply": reply,
+            "leak_redacted": redacted,
+            "phase": self.phase,
+            "tier": self.tier,
+            "ceiling": int(self.ceiling),
+            "learner_state": (
+                [{"node_id": self.node_id, "p_known": self.p_known, "band": self.band}]
+                if self.node_id
+                else []
+            ),
+            "hint_offer": {"rung": offer_rung} if offer_rung is not None else None,
+            "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
+            "check": check,
+        }
+
+    def _apply_turn(self, state: dict, out: dict) -> None:
+        """This turn's change to the loop document — the compare-and-set mutate,
+        so it may run more than once (each time on a fresher document): it
+        changes `state` in place, records what the caller emits after the save
+        in `out`, and has no side effects."""
+        out.clear()
         steps = _steps(state)
-        offer_rung = None
         if self.phase == "feedback" and self.active in steps:
             entry = steps[self.active]
-            self._emit_step(entry)
+            out["step"] = dict(entry)  # the zpd.step record, emitted after the save
             if gates.offer_allowed(self.band, self.verdict != "correct"):
                 entry["offered"] = True
-                offer_rung = min(int(self.ceiling), int(entry.get("rung") or 0) + 1)
+                out["offer_rung"] = min(int(self.ceiling), int(entry.get("rung") or 0) + 1)
             entry["feedback_given"] = True
             if state.get("current") == self.active:
                 state["current"] = None
@@ -809,45 +987,14 @@ class _LoopTurn:
             steps[self.active]["rung"] = int(Rung.H6)
         if self.withdrawn and state.get("current") == self.withdrawn:
             state["current"] = None
-        check = None
         if self.phase == "teach" and not state.get("current"):
             # A27 trigger 1: a served teach turn on the current concept; the
             # LOOP_TEACH_TURNS_BEFORE_CHECK-th activates its next check item
             state["teach_turns"] = int(state.get("teach_turns") or 0) + 1
             if state["teach_turns"] >= LOOP_TEACH_TURNS_BEFORE_CHECK:
-                check = _activated_pose(self.user_id, self.course_id, state)
-        if self.persist_user_row:
-            save_message(self.session_id, "user", self.message)
-        save_message(self.session_id, "assistant", reply, merged or None)
-        if check is not None:
-            save_message(self.session_id, "assistant", check["prompt"])
-        if self.persist_user_row:
-            events_service.log_event(
-                "chat.message_sent",
-                category="usage",
-                user_id=self.user_id,
-                request_id=self.request_id,
-                payload={"mode": self.mode, "session_id": self.session_id},
-                content=self.message,
-            )
-        _save_loop_state(self.session_id, state)
-        extra = self._submission_extra()
-        return {
-            **extra,
-            "reply": reply,
-            "leak_redacted": redacted,
-            "phase": self.phase,
-            "tier": self.tier,
-            "ceiling": int(self.ceiling),
-            "learner_state": (
-                [{"node_id": self.node_id, "p_known": self.p_known, "band": self.band}]
-                if self.node_id
-                else []
-            ),
-            "hint_offer": {"rung": offer_rung} if offer_rung is not None else None,
-            "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
-            "check": check,
-        }
+                qh = _activate_next_item(self.user_id, self.course_id, state, now=self._now)
+                if qh is not None:
+                    out["activated"] = state["steps"][qh]["check_item_id"]
 
     def _submission_extra(self) -> dict:
         """The check-answer response keys (A16) — only on a submission's turn."""
@@ -856,7 +1003,8 @@ class _LoopTurn:
         return {
             "graded": self.kind == "feedback",
             "verdict": self.verdict,
-            "unavailable": self.kind == "unavailable",
+            "unavailable": self.kind == "unavailable",  # the outage flag only
+            "refused": self.refused,  # A33: a refusal, or the idk it became
             "answer_released": self.answer_released,
         }
 
@@ -867,11 +1015,19 @@ class _LoopOpener(_LoopTurn):
     legacy lazy-session contract — `complete` stashes PENDING_SESSIONS and
     persists and counts nothing (no sessions row exists yet)."""
 
-    def __init__(self, *, body: StartSessionBody, request: Request, session_id: str | None = None):
+    def __init__(
+        self,
+        *,
+        body: StartSessionBody,
+        request: Request,
+        loop_on: bool,
+        session_id: str | None = None,
+    ):
         self.start = body
         self.user_id, self.session_id = body.user_id, session_id or str(uuid.uuid4())
         self.mode = body.mode
         self.kind, self.persist_user_row = "opener", False
+        self.loop_on, self.refused = loop_on, False
         self.request_id = _request_id(request)
         self.course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
         self.offering_id = resolve_offering(self.course_id, create=True) if self.course_id else ""
@@ -954,11 +1110,12 @@ def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | No
     if payload is None:
         return None, False
     verdict = detect_leak(
-        reference or "",
-        payload.text,
-        rung,
+        reference=reference or "",
+        emitted=payload.text,
+        rung=rung,
         final_answer=item.final_answer,
         canonical_answer=item.canonical_answer,
+        correct_option=item.correct_option,
     )
     return payload, verdict.leaked
 
@@ -1065,14 +1222,6 @@ def _pose_payload(item) -> dict:
     }
 
 
-def _activated_pose(user_id: str, course_id: str, state: dict) -> dict | None:
-    qh = _activate_next_item(user_id, course_id, state, now=_now_s())
-    if qh is None:
-        return None
-    item = get_check_item(state["steps"][qh]["check_item_id"])
-    return _pose_payload(item) if item is not None else None
-
-
 def _ms(seconds: float) -> int:
     """Whole milliseconds, never negative (zpd.step's *_ms keys)."""
     return max(0, round(timedelta(seconds=seconds) / timedelta(milliseconds=1)))
@@ -1081,32 +1230,43 @@ def _ms(seconds: float) -> int:
 # ── Run sites ──────────────────────────────────────────────────────────────
 
 
-async def _run_turn_json(turn: _LoopTurn) -> dict:
+async def _run_turn_json(turn: _LoopTurn, *, tool_less: bool = False) -> dict:
     """The JSON run site (chat, action, check-answer turns, opener) and the
     stream's Rung-1 fallback: budget → plan → deterministic text or ONE model
-    run → complete. Persist ordering mirrors routes.learn._chat_turn_json."""
+    run → complete. The model run is counted (A39) right before it. A tool run
+    that ends without a structured turn (#646; UnexpectedModelBehavior — the
+    run is still billed) is finished by the tool-less continuation;
+    `tool_less=True` (the stream's fallback, whose streamed tool run already
+    failed) goes straight to it. Persist ordering mirrors
+    routes.learn._chat_turn_json."""
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
     turn.plan(decision)
     if turn.paused:
         raise _BudgetPaused(decision)
     if turn.tier == "none":
-        extra = turn.complete(turn.text, {}, [])
-    else:
-        result = await turn.agent.run(turn.assembled, **turn.run_kwargs)
-        turn.record_usage(result)
-        new_text = _new_run_text(result)
-        reply = result.output if new_text.strip() else new_text
-        if not reply.strip():
+        return {"graph_update": {}, "mastery_changes": [], **turn.complete(turn.text, {}, [])}
+    reply, messages = None, []
+    if not tool_less:
+        usage = RunUsage()
+        ai_budget.count_tutor_call(turn.user_id)
+        with capture_run_messages() as messages:
             try:
-                rescued = await _loop_continuation_text(turn, result)
-            except Exception:
-                logger.warning("Continuation after a textless loop turn failed", exc_info=True)
-                rescued = None
-            if not rescued:
-                raise UnexpectedModelBehavior("loop_tutor produced no reply text this turn")
-            reply = rescued
-        extra = turn.complete(reply, {}, [])
-    return {"graph_update": {}, "mastery_changes": [], **extra}
+                result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
+            except UnexpectedModelBehavior:
+                logger.warning("Loop tool run ended without a structured turn", exc_info=True)
+                turn.record_usage(UnfinishedRun(usage))
+            else:
+                turn.record_usage(result)
+                reply = render_turn(result.output)
+    if reply is None:
+        try:
+            reply = await _loop_continuation_text(turn, list(messages))
+        except UnexpectedModelBehavior:
+            logger.warning("Tool-less loop continuation failed", exc_info=True)
+            reply = None
+        if not reply:
+            raise UnexpectedModelBehavior("loop_tutor produced no structured turn")
+    return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
 
 
 def _pre_done_events(data: dict) -> list[SaplingEvent]:
@@ -1135,7 +1295,10 @@ def _pre_done_events(data: dict) -> list[SaplingEvent]:
 
 async def _stream_turn(turn: _LoopTurn):
     """The SSE run site (chat, check-answer turns, opener). Loop events are
-    yielded AROUND stream_agent_turn, never from inside it."""
+    yielded AROUND stream_structured_turn, never from inside it. The stream's
+    `transform` is the turn's leak strip, applied to the cumulative text before
+    any token is sent; `complete` gets the raw render and records the leak.
+    Its Rung-1 fallback is the tool-less JSON turn (#646)."""
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
     try:
         turn.plan(decision)
@@ -1167,16 +1330,17 @@ async def _stream_turn(turn: _LoopTurn):
             SaplingEvent(type="done", step="reply", message="Complete.", data=data)
         )
         return
-    async for ev in stream_agent_turn(
+    ai_budget.count_tutor_call(turn.user_id)
+    async for ev in stream_structured_turn(
         agent=turn.agent,
         user_message=turn.assembled,
         run_kwargs=turn.run_kwargs,
         deps=turn.deps,
         on_complete=turn.complete,
-        nonstream_fallback=lambda: _run_turn_json(turn),
+        nonstream_fallback=lambda: _run_turn_json(turn, tool_less=True),
         on_usage=turn.record_usage,
         request_id=turn.request_id,
-        continuation=lambda rr: _loop_continuation_text(turn, rr),
+        transform=turn.redact,
     ):
         if ev.type == "done":
             for extra_ev in _pre_done_events(ev.data or {}):
@@ -1272,18 +1436,19 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
 
 @router.post("/chat", dependencies=_RATE_LIMITED)
 async def chat(body: ChatBody, request: Request):
-    _gate(body.user_id, request)
+    loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
     return await _json_turn(
-        lambda: _LoopTurn(body=body, request=request, message=body.message), "loop chat agent"
+        lambda: _LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on),
+        "loop chat agent",
     )
 
 
 @router.post("/chat/stream", dependencies=_RATE_LIMITED)
 async def chat_stream(body: ChatBody, request: Request):
-    _gate(body.user_id, request)
+    loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
-    return _sse(_LoopTurn(body=body, request=request, message=body.message))
+    return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
 
 
 # ── The explicit-submission route (A16) ───────────────────────────────────
@@ -1291,19 +1456,21 @@ async def chat_stream(body: ChatBody, request: Request):
 
 @dataclass
 class _Submission:
-    kind: str  # "feedback" | "hint_request" | "unavailable"
+    kind: str  # "feedback" | "hint_request" | "unavailable" | "refused"
     state: dict
     rendered: str  # the user row persisted for this submission
     scope: tuple[str, str]
     verdict: str | None = None
+    refused: bool = False  # A33: refused, or the idk its CHECK_REFUSALS_AS_IDK-th refusal became
 
 
 def _is_idk_phrase(text: str) -> bool:
     """A16's idk split, as HANDOFF-06 defines it: the submission routes to idk
     when gates.non_attempt_phrases (the A16 routing rule, which fails toward
-    grading) returns an IDK_PHRASES phrase — so a hedged answer ("idk maybe
-    7") is graded, never turned into idk evidence."""
-    return any(p in IDK_PHRASES for p in gates.non_attempt_phrases(text or ""))
+    grading) returns a gates.IDK_PATTERNS phrase (A40 06(b): "idk", "i don't
+    know", "no idea", "dunno") — so a hedged answer ("idk maybe 7") is graded,
+    never turned into idk evidence."""
+    return any(p in gates.IDK_PATTERNS for p in gates.non_attempt_phrases(text or ""))
 
 
 def _render_submission(body: LoopCheckAnswerBody, *, idk: bool) -> str:
@@ -1325,15 +1492,33 @@ def _record_attempt(entry: dict, now: float, *, failed: bool) -> None:
         entry["attempts"] = int(entry.get("attempts") or 0) + 1
 
 
-async def _grade_submission(body: LoopCheckAnswerBody, request: Request) -> _Submission:
+def _on_step(qh: str, change: Callable[[dict], None]) -> Callable[[dict], None]:
+    """A compare-and-set mutate that applies `change` to the item's per-step
+    entry in the FRESH document (nothing when the entry is gone)."""
+
+    def mutate(state: dict) -> None:
+        entry = _steps(state).get(qh)
+        if isinstance(entry, dict):
+            change(entry)
+
+    return mutate
+
+
+async def _grade_submission(
+    body: LoopCheckAnswerBody, request: Request, *, loop_on: bool
+) -> _Submission:
     """The ONLY loop-chat evidence path (spec A16; invariant 26's allow-list):
     grade ONE explicit submission and persist its evidence with ONE
-    flush_pending, before any feedback turn or stream starts."""
+    flush_pending, before any feedback turn or stream starts. A33: a guard
+    refusal (checked BEFORE `unavailable`, which it also sets) is no credit, no
+    evidence and never a genuine attempt; it is counted on the item, and the
+    CHECK_REFUSALS_AS_IDK-th refusal of the same item is graded as idk."""
     scope = _session_scope(body.session_id, body.user_id)
     course_id = scope[1]
     state = _load_loop_state(body.session_id)
-    entry = _steps(state).get(body.question_hash)
-    if not isinstance(entry, dict) or state.get("current") != body.question_hash:
+    qh = body.question_hash
+    entry = _steps(state).get(qh)
+    if not isinstance(entry, dict) or state.get("current") != qh:
         raise HTTPException(status_code=404, detail="No such check item in this session")
     item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
     if item is None:  # A23 withdrawal: nothing is graded
@@ -1357,13 +1542,13 @@ async def _grade_submission(body: LoopCheckAnswerBody, request: Request) -> _Sub
         request_id=_request_id(request),
         session_id=body.session_id,
         feature="loop_check",
-        learning_loop=True,
+        learning_loop=loop_on,
     )
     rung = int(entry.get("rung") or 0)
     outcome = await grade_answer(
         _item_like(item),
         CheckAnswer(
-            question_hash=body.question_hash,
+            question_hash=qh,
             answer_text=body.answer,
             selected_option=body.option,
             reason=body.reason,
@@ -1373,42 +1558,67 @@ async def _grade_submission(body: LoopCheckAnswerBody, request: Request) -> _Sub
         node_id=node_id,
         max_rung=rung,
     )
+    refused = bool(outcome.refused)
+    if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
+
+        def count_refusal(e: dict) -> None:
+            e["refusals"] = int(e.get("refusals") or 0) + 1
+
+        state = _update_loop_state(body.session_id, _on_step(qh, count_refusal))
+        refusals = int((_steps(state).get(qh) or {}).get("refusals") or 0)
+        if refusals < CHECK_REFUSALS_AS_IDK:
+            return _Submission("refused", state, rendered, scope, refused=True)
+        # never a skip: the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
+        idk, genuine = True, False
+        outcome = await grade_answer(
+            _item_like(item),
+            CheckAnswer(question_hash=qh, idk=True),
+            deps=deps,
+            node_id=node_id,
+            max_rung=rung,
+        )
     if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
         if genuine:
-            _record_attempt(entry, now, failed=True)
-        _save_loop_state(body.session_id, state)
-        return _Submission("unavailable", state, rendered, scope)
+            state = _update_loop_state(
+                body.session_id, _on_step(qh, lambda e: _record_attempt(e, now, failed=True))
+            )
+        return _Submission("unavailable", state, rendered, scope, refused=refused)
     flush_pending(deps, course_id or None)  # ONE call: the loop's only evidence write
     correct = bool(outcome.correct)
     verdict = "idk" if idk else ("correct" if correct else "not_yet")
-    if genuine:
-        _record_attempt(entry, now, failed=not correct)
     evidence = outcome.evidence or {}
-    if entry.get("graded_at") is None:
-        entry["first_attempt_correct"] = correct
-    entry.update(
-        {
-            "graded": int(entry.get("graded") or 0) + 1,
-            "wrong": int(entry.get("wrong") or 0) + (0 if correct else 1),
-            "graded_at": now,
-            "last_correct": correct,
-            "last_verdict": verdict,
-            "max_rung": rung,
-            "assisted": bool(evidence.get("assisted")),
-            "node_id": node_id,
-            "channel": evidence.get("channel"),
-            "confidence": outcome.confidence,
-            "grader_backend": outcome.grader_backend,
-            "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
-            "p_before": p_before,
-            "feedback_given": False,
-        }
-    )
-    _save_loop_state(body.session_id, state)  # a failed feedback turn is recovered by _phase_for
-    return _Submission("feedback", state, rendered, scope, verdict)
+    graded = {
+        "graded_at": now,
+        "last_correct": correct,
+        "last_verdict": verdict,
+        "max_rung": rung,
+        "assisted": bool(evidence.get("assisted")),
+        "node_id": node_id,
+        "channel": evidence.get("channel"),
+        "confidence": outcome.confidence,
+        "grader_backend": outcome.grader_backend,
+        "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
+        "p_before": p_before,
+        "feedback_given": False,
+    }
+
+    def record_grade(e: dict) -> None:
+        if genuine:
+            _record_attempt(e, now, failed=not correct)
+        if e.get("graded_at") is None:
+            e["first_attempt_correct"] = correct
+        e["graded"] = int(e.get("graded") or 0) + 1
+        e["wrong"] = int(e.get("wrong") or 0) + (0 if correct else 1)
+        e.update(graded)
+
+    # saved NOW: a failed feedback turn is recovered by _phase_for
+    state = _update_loop_state(body.session_id, _on_step(qh, record_grade))
+    return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
 
 
-def _submission_turn(sub: _Submission, body: LoopCheckAnswerBody, request: Request) -> _LoopTurn:
+def _submission_turn(
+    sub: _Submission, body: LoopCheckAnswerBody, request: Request, *, loop_on: bool
+) -> _LoopTurn:
     chat_body = ChatBody(session_id=body.session_id, user_id=body.user_id, message=sub.rendered)
     return _LoopTurn(
         body=chat_body,
@@ -1418,46 +1628,69 @@ def _submission_turn(sub: _Submission, body: LoopCheckAnswerBody, request: Reque
         state=sub.state,
         verdict=sub.verdict,
         scope=sub.scope,
+        loop_on=loop_on,
+        refused=sub.refused,
     )
 
 
 @router.post("/check/answer", dependencies=_RATE_LIMITED)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
-    _gate(body.user_id, request)
+    loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
-    sub = await _agent_turn_or_http_error(_grade_submission(body, request), what="loop grader")
-    return await _json_turn(lambda: _submission_turn(sub, body, request), "loop feedback agent")
+    sub = await _agent_turn_or_http_error(
+        _grade_submission(body, request, loop_on=loop_on), what="loop grader"
+    )
+    return await _json_turn(
+        lambda: _submission_turn(sub, body, request, loop_on=loop_on), "loop feedback agent"
+    )
 
 
 @router.post("/check/answer/stream", dependencies=_RATE_LIMITED)
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
-    _gate(body.user_id, request)
+    loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
-    sub = await _agent_turn_or_http_error(_grade_submission(body, request), what="loop grader")
-    return _sse(_submission_turn(sub, body, request))
+    sub = await _agent_turn_or_http_error(
+        _grade_submission(body, request, loop_on=loop_on), what="loop grader"
+    )
+    return _sse(_submission_turn(sub, body, request, loop_on=loop_on))
 
 
 # ── Attempt / hint / action / openers / end-session ───────────────────────
 
 
+def _addresses_grader(text: str, check) -> bool:
+    """A33 / Behaviour 12: text the answer guard refuses is never an attempt.
+    The screen reads the item's rubric ids and its own text (so "R1: yes" about
+    the item's own resistor stays an attempt); the bare screen when the item
+    is gone."""
+    terms = answer_guard.item_terms(_item_like(check)) if check is not None else {}
+    return answer_guard.screen(text, **terms).refusal is not None
+
+
 @router.post("/step/attempt")
 def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     """Records a genuine attempt for hint unlocking only (spec §3.3). The text
-    is judged by gates.is_genuine_attempt and never stored, never graded."""
+    is judged by gates.is_genuine_attempt and the A33 screen, and never stored,
+    never graded."""
     _gate(body.user_id, request)
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
-    entry = _steps(state).get(body.question_hash)
+    qh = body.question_hash
+    entry = _steps(state).get(qh)
     if not isinstance(entry, dict):
         raise HTTPException(status_code=404, detail="No such check item in this session")
     check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
     band, _ = _band_for(body.user_id, _node_for_item(body.user_id, check) if check else None)
     now = _now_s()
     independent_s = _seconds_since(entry.get("first_shown_at"), now)
-    genuine = bool(_genuine(body.attempt_text, independent_s, band))
-    if genuine:
-        _record_attempt(entry, now, failed=True)  # the step stays open: a failed genuine attempt
-        _save_loop_state(body.session_id, state)
+    genuine = bool(_genuine(body.attempt_text, independent_s, band)) and not _addresses_grader(
+        body.attempt_text, check
+    )
+    if genuine:  # the step stays open: a failed genuine attempt
+        state = _update_loop_state(
+            body.session_id, _on_step(qh, lambda e: _record_attempt(e, now, failed=True))
+        )
+        entry = _steps(state).get(qh) or entry
     return {
         "genuine": genuine,
         "attempts": len(entry.get("attempted_at") or []),
@@ -1474,10 +1707,11 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     _gate(body.user_id, request)
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
-    entry = _steps(state).get(body.question_hash)
-    if not isinstance(entry, dict) or state.get("current") != body.question_hash:
+    qh = body.question_hash
+    entry = _steps(state).get(qh)
+    if not isinstance(entry, dict) or state.get("current") != qh:
         return {"denied": "no_active_item"}
-    step = _step_state(state, body.question_hash)
+    step = _step_state(state, qh)
     now = _now_s()
     if not gates.rung_unlock(step, now, time_scale=config.LEARNING_GATE_TIME_SCALE):
         anchor = step.last_rung_at if step.last_rung_at is not None else step.first_shown_at
@@ -1499,16 +1733,25 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     next_rung = int(step.rung) + 1
     if next_rung > int(ceiling):
         return {"denied": "ceiling"}
-    if next_rung == int(Rung.H6) and not _h6_ok(state, body.question_hash, entry, check):
+    if next_rung == int(Rung.H6) and not _h6_ok(state, qh, entry, check):
         return {"denied": "h6_gate"}
-    entry["rung"], entry["last_rung_at"] = next_rung, now
-    entry["rungs"] = [*(entry.get("rungs") or []), {"rung": next_rung, "at": now}]
-    if entry.get("offered"):
-        entry["offered"] = False
+    accepted: dict = {}
+
+    def unlock(e: dict) -> None:
+        accepted.clear()
+        if int(e.get("rung") or 0) >= next_rung:
+            return  # a concurrent request already moved it this far
+        e["rung"], e["last_rung_at"] = next_rung, now
+        e["rungs"] = [*(e.get("rungs") or []), {"rung": next_rung, "at": now}]
+        if e.get("offered"):
+            e["offered"] = False
+            accepted["offer"] = True
+
+    _update_loop_state(body.session_id, _on_step(qh, unlock))
+    if accepted.get("offer"):
         zpd_events.emit_zpd_offer(
             user_id=body.user_id, request_id=_request_id(request), accepted=True, band=band
         )
-    _save_loop_state(body.session_id, state)
     return {"rung": next_rung, "intent": ladder.intent(Rung(next_rung))}
 
 
@@ -1517,7 +1760,7 @@ async def action(body: ActionBody, request: Request):
     """An "[ACTION: ...]" turn: in the check phase a hint at the item's current
     rung, otherwise the current phase. Assistant-only persistence; never graded
     (invariant 26)."""
-    _gate(body.user_id, request)
+    loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
     chat_body = ChatBody(
@@ -1529,7 +1772,12 @@ async def action(body: ActionBody, request: Request):
     )
     return await _json_turn(
         lambda: _LoopTurn(
-            body=chat_body, request=request, message=message, kind="action", persist_user_row=False
+            body=chat_body,
+            request=request,
+            message=message,
+            kind="action",
+            persist_user_row=False,
+            loop_on=loop_on,
         ),
         "loop action agent",
     )
@@ -1537,9 +1785,10 @@ async def action(body: ActionBody, request: Request):
 
 @router.post("/start-session", dependencies=_RATE_LIMITED)
 async def start_session(body: StartSessionBody, request: Request):
-    _gate(body.user_id, request)
+    loop_on = _gate(body.user_id, request)
     result = await _json_turn(
-        lambda: _LoopOpener(body=body, request=request), "loop start-session agent"
+        lambda: _LoopOpener(body=body, request=request, loop_on=loop_on),
+        "loop start-session agent",
     )
     out = {
         "session_id": result["session_id"],
@@ -1553,8 +1802,8 @@ async def start_session(body: StartSessionBody, request: Request):
 
 @router.post("/start-session/stream", dependencies=_RATE_LIMITED)
 async def start_session_stream(body: StartSessionBody, request: Request):
-    _gate(body.user_id, request)
-    return _sse(_LoopOpener(body=body, request=request))
+    loop_on = _gate(body.user_id, request)
+    return _sse(_LoopOpener(body=body, request=request, loop_on=loop_on))
 
 
 @router.post("/check/next")
@@ -1562,7 +1811,9 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     """ "Check me" (spec §9, A27): the current concept's next check item and its
     pose. No model call, so no rate limit and no invariant-23 run site; the
     budget is read only for the novice pause (§3.5): a novice-band concept is
-    not activated at the hard level."""
+    not activated at the hard level. The activation is tried on a read copy
+    first (the budget read is not a mutate's business), then applied to the
+    fresh document by one compare-and-set write."""
     _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
@@ -1573,29 +1824,43 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
         item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
         if item is not None:
             return {"phase": "check", "check": _pose_payload(item)}  # idempotent
-        state["current"] = None  # withdrawn (A23): drop it; the entry stays
-    qh = _activate_next_item(body.user_id, course_id, state, now=_now_s())
-    if qh is None:
-        _save_loop_state(body.session_id, state)  # the cursor may have moved
-        plan = state.get("plan") if isinstance(state.get("plan"), dict) else {}
+
+    def activate(st: dict, out: dict) -> None:
+        out.clear()
+        cur = st.get("current")
+        cur_entry = (st.get("steps") or {}).get(cur) if cur else None
+        if isinstance(cur_entry, dict) and cur_entry.get("graded_at") is None:
+            if cur_entry.get("check_item_id") and get_check_item(cur_entry["check_item_id"]):
+                out["qh"] = cur  # another request activated one meanwhile
+                return
+        if cur:
+            st["current"] = None  # withdrawn (A23) or graded: drop it; the entry stays
+        out["qh"] = _activate_next_item(body.user_id, course_id, st, now=_now_s())
+
+    trial: dict = {}
+    activate(state, trial)
+    if trial.get("qh") is not None:
+        band, _ = _band_for(body.user_id, state["steps"][trial["qh"]]["node_id"])
+        if band == "novice":
+            decision = ai_budget.check(
+                body.user_id,
+                "tutor",
+                "novice",
+                session_tutor_requests=int(state.get("tutor_requests") or 0),
+                session_deep_requests=int(state.get("deep_requests") or 0),
+                arm_session=False,
+            )
+            if decision.pause_novice:
+                raise AIBudgetExceeded(decision)  # nothing activated, nothing saved
+    out: dict = {}
+    saved = _update_loop_state(body.session_id, lambda st: activate(st, out))
+    qh = out.get("qh")
+    if qh is None:  # the cursor may have moved
+        plan = saved.get("plan") if isinstance(saved.get("plan"), dict) else {}
         return {"phase": "teach", "plan_done": bool(plan.get("done")), "check": None}
-    new_entry = state["steps"][qh]
-    band, _ = _band_for(body.user_id, new_entry["node_id"])
-    if band == "novice":
-        decision = ai_budget.check(
-            body.user_id,
-            "tutor",
-            "novice",
-            session_tutor_requests=int(state.get("tutor_requests") or 0),
-            session_deep_requests=int(state.get("deep_requests") or 0),
-            arm_session=False,
-        )
-        if decision.pause_novice:
-            raise AIBudgetExceeded(decision)  # nothing activated, nothing saved
-    item = get_check_item(new_entry["check_item_id"])
+    item = get_check_item(saved["steps"][qh]["check_item_id"])
     pose = _pose_payload(item)
     save_message(body.session_id, "assistant", pose["prompt"])
-    _save_loop_state(body.session_id, state)
     return {"phase": "check", "check": pose}
 
 
