@@ -24,7 +24,9 @@ the supervisor architecture's deterministic solution stripper). Three rules:
   A38 fix round 4 replaced every word-list reading with position and
   punctuation (the only lists: the option keywords and the closed class of
   copulas/modals):
-  1. keyword context — the letter is the pick, any case, whatever follows:
+  1. keyword context — a capital letter is the pick whatever follows; a
+     lowercase one only when no word follows it ("the answer is a.",
+     "option a", never "It's a trap" or "Choose a function"):
      after "option", "opt.", "choice", "letter", "correct/right option",
      "pick", "choose", "select", "go with", "it's/it is/it was" (a copula
      and separators may come between), and after "answer", "key",
@@ -40,9 +42,8 @@ the supervisor architecture's deterministic solution stripper). Three rules:
      or a copula/modal ("C is right", "A seems best", "I would …", "C.").
   Never: a letter followed by "+" or "#" ("C++", "C#"), one of an
   enumeration ("(A, B, C)", "a, b or c"). No article or pronoun reading in
-  default mode: rule 1 flags "It's A good idea", "Choose a function",
-  "Answer: A function maps…" (accepted false positives, structurally a
-  pick); rule 2 cannot fire on "A student…", "A base case…", "I think…",
+  default mode: rule 1 flags "It's A good idea" and "Answer: A function
+  maps…" (accepted false positives: a capital after a keyword is a pick); rule 2 cannot fire on "A student…", "A base case…", "I think…",
   "What would I expect", "Plan A is the best", "vitamin C".
 
   `strict=True` (the grader hint, where a false positive only drops a hint)
@@ -238,7 +239,10 @@ def _option_rule(correct_option: str | None) -> _OptionRule | None:
     lower = upper.lower()
     letter = f"[{upper}{lower}]"
     b, a, e = _NOT_ALNUM_BEFORE, _NOT_ALNUM_AFTER, _NOT_ENUM_AFTER
-    pick = rf"{_OPENING}(?P<span>{letter}){a}{e}"
+    # in a keyword context a capital is always the pick; a lowercase letter
+    # only when no word follows it ("the answer is a." — never "It's a trap")
+    keyed = rf"(?:{upper}|{lower}(?!\s{{1,8}}[A-Za-z]))"
+    pick = rf"{_OPENING}(?P<span>{keyed}){a}{e}"
     context = (
         # 1. keyword context: the letter is the pick, whatever follows it
         re.compile(rf"(?i:{b}(?:{_STRONG_KEYWORDS})(?![A-Za-z0-9])){_SEPARATORS}{pick}"),

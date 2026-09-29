@@ -88,14 +88,17 @@ DEFAULT_CLEAN_KEY_A = [
     "A derivative is a rate of change.",
     "Answer a smaller question first.",
     "Pick an option you can defend.",
+    # final tweak: a lowercase letter before a word is no pick, even after a keyword
+    "Choose a function that stops.",
+    "The answer is a function of n.",
+    "It's a trap.",
+    # structurally "The answer is a function of n." — clean since the final tweak
+    "The answer is a because it grows",
 ]
 # Fix round 4 (structural rule): a keyword context makes the letter the pick
 # whatever follows it, so these honest phrasings are flagged for key A now —
 # accepted false positives, structurally a pick ("choose a", "is a", "it's a").
 KEY_A_KEYWORD_FALSE_POSITIVES = [
-    "Choose a function that stops.",
-    "The answer is a function of n.",
-    "It's a trap.",
     "It's A good idea",
     "Answer: A function maps each input to one output.",
 ]
@@ -407,7 +410,7 @@ KEY_A_LEAKS = [
     "It's A because",
     "go with A here",
     "choose A over B",
-    "The answer is a because it grows",
+    "The answer is A because it grows",
 ]
 KEY_I_LEAKS = [
     "Option I is correct",
@@ -497,3 +500,17 @@ def test_round4_true_positives_in_both_modes(template, key, strict):
 @pytest.mark.parametrize("strict", [False, True])
 def test_the_right_one_is_i_given_x(strict):
     assert _detect("the right one is I given x", key="I", strict=strict) == (True, "option")
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("hint", DEFAULT_CLEAN_KEY_A)
+def test_a_lowercase_a_before_a_word_is_clean_in_both_modes(hint, strict):
+    assert _detect(hint, key="A", strict=strict) == (False, "none"), hint
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "hint", ["the answer is a.", "option a", "pick (a)", "answer: a", "It's a!", "choose 'a'"]
+)
+def test_a_lowercase_key_letter_not_before_a_word_is_still_the_pick(hint, strict):
+    assert _detect(hint, key="A", strict=strict) == (True, "option"), hint
