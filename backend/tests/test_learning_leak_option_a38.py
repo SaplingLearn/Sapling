@@ -87,10 +87,17 @@ DEFAULT_CLEAN = [
 DEFAULT_CLEAN_KEY_A = [
     "A derivative is a rate of change.",
     "Answer a smaller question first.",
+    "Pick an option you can defend.",
+]
+# Fix round 4 (structural rule): a keyword context makes the letter the pick
+# whatever follows it, so these honest phrasings are flagged for key A now —
+# accepted false positives, structurally a pick ("choose a", "is a", "it's a").
+KEY_A_KEYWORD_FALSE_POSITIVES = [
     "Choose a function that stops.",
     "The answer is a function of n.",
     "It's a trap.",
-    "Pick an option you can defend.",
+    "It's A good idea",
+    "Answer: A function maps each input to one output.",
 ]
 
 
@@ -166,7 +173,6 @@ DEFAULT_CLEAN_ROUND2 = [
     ("(i) first (ii) second", "I"),
     ("copyright (c) 2024", "C"),
     ("the string 'a' in Python", "A"),
-    ("It's A good idea", "A"),
     ("choose a, b or c freely", "A"),
     ("choose a, b or c freely", "B"),
     ("choose a, b or c freely", "C"),
@@ -177,10 +183,11 @@ DEFAULT_CLEAN_ROUND2 = [
     ("the letters (A, B, C) label options", "A"),
     ("the letters (A, B, C) label options", "B"),
     ("the letters (A, B, C) label options", "C"),
-    ("Ｃ", "C"),
-    ("C.", "C"),
-    ("(C", "C"),
+    ("answer A works", "A"),  # "answer" needs a copula or ":" (as "the answer I gave")
 ]
+# Fix round 4: a clause-initial letter before a clause break is flagged now
+# (it was a documented bare letter in round 2).
+CLAUSE_BREAK_NOW_FLAGGED = [("Ｃ", "C"), ("C.", "C"), ("(C", "C"), ("I would start here.", "I")]
 
 
 @pytest.mark.parametrize("hint, key", DEFAULT_CLEAN_ROUND2)
@@ -400,7 +407,6 @@ KEY_A_LEAKS = [
     "It's A because",
     "go with A here",
     "choose A over B",
-    "answer A works",
     "The answer is a because it grows",
 ]
 KEY_I_LEAKS = [
@@ -426,11 +432,11 @@ def test_key_i_in_a_keyword_context_leaks_in_both_modes(hint, strict):
     assert _detect(hint, key="I", strict=strict) == (True, "option"), hint
 
 
-def test_a_fits_best_is_flagged_in_strict_and_clean_in_default():
-    """Decision (fix round 3): a sentence-initial capital before a predicate word
-    ("fits", "is", "works", "because", …) is the letter in strict mode; default
-    mode reads no option context there (a bare letter), so it stays clean."""
-    assert _detect("A fits best.", key="A", strict=True) == (True, "option")
+def test_a_fits_best_is_clean_in_both_modes():
+    """Fix round 4: no word list — a clause-initial "A" before a word that is no
+    copula/modal is no option context (default), and a capital A before a
+    lowercase word outside a keyword context is the article (strict)."""
+    assert _detect("A fits best.", key="A", strict=True) == (False, "none")
     assert _detect("A fits best.", key="A") == (False, "none")
 
 
@@ -440,17 +446,54 @@ def test_a_fits_best_is_flagged_in_strict_and_clean_in_default():
         ("A base case is what ends the calls.", "A"),
         ("Check whether a stopping rule exists.", "A"),
         ("What would I expect after one call?", "I"),
-        ("Answer: A function maps each input to one output.", "A"),
         ("A student might try a loop.", "A"),
-        ("It's A good idea", "A"),
+        ("A student often starts with a loop.", "A"),
         ("the answer I gave", "I"),
+        ("I think the calls pile up.", "I"),
+        ("Plan A is the best approach", "A"),
     ],
 )
 @pytest.mark.parametrize("strict", [False, True])
 def test_the_article_and_pronoun_stay_clean_in_both_modes(hint, key, strict):
-    if strict and hint == "It's A good idea":
-        # decision: strict mode exempts a capital "A" only where it starts a
-        # sentence, so a mid-sentence one drops the hint (over-dropping is fine)
-        assert _detect(hint, key=key, strict=True) == (True, "option")
-        return
+    if strict and hint == "Plan A is the best approach":
+        return  # strict: a mid-sentence capital before "is" is dropped (over-drop is fine)
     assert _detect(hint, key=key, strict=strict) == (False, "none"), (hint, strict)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("hint", KEY_A_KEYWORD_FALSE_POSITIVES)
+def test_round4_keyword_context_false_positives_are_pinned(hint, strict):
+    assert _detect(hint, key="A", strict=strict) == (True, "option"), hint
+
+
+@pytest.mark.parametrize("hint, key", CLAUSE_BREAK_NOW_FLAGGED)
+def test_round4_clause_initial_letter_before_a_break_or_modal_is_flagged(hint, key):
+    assert _detect(hint, key=key) == (True, "option"), hint
+
+
+ROUND4_TEMPLATES = [
+    "answer is {x} given x",
+    "the answer must be {x} given x",
+    "The answer: {x} given that",
+    "{x} seems best",
+    "{x} would be it",
+    "{x}: yes",
+    "so the answer's {x}",
+    "answer: {x}",
+    "answer is {x}",
+]
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("key", ["A", "C", "I"])
+@pytest.mark.parametrize("template", ROUND4_TEMPLATES)
+def test_round4_true_positives_in_both_modes(template, key, strict):
+    hint = template.format(x=key)
+    assert _detect(hint, key=key, strict=strict) == (True, "option"), hint
+    once = _strip(hint, key=key, strict=strict)
+    assert _detect(once, key=key, strict=strict) == (False, "none"), once
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_the_right_one_is_i_given_x(strict):
+    assert _detect("the right one is I given x", key="I", strict=strict) == (True, "option")

@@ -236,6 +236,10 @@ CHECK_ITEM_REDRAFT_MAX_FAILURES = 3
 # † how long a stalled concept stays skipped: past this many days since its
 # last recorded failure it is drafted once more (A38 fix round, M2 expiry)
 CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS = 14
+# † leak.py (A38 fix round 4): how far back the option rule looks for the
+# enumeration a letter continues ("A, B", "b or c") — a letter (or a masked
+# "[withheld]"), markup, a separator and markup
+LEAK_ENUM_LOOKBACK_CHARS = 26
 # † A34 (PKG-06's reopen): the most tokens (checks.answer_tokens) a check item's
 # structured final_answer may hold — the decisive core the leak check matches,
 # never the whole reference, yet room for a number with its unit, an

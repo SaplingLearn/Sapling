@@ -21,35 +21,35 @@ the supervisor architecture's deterministic solution stripper). Three rules:
   context, read on an NFKC-decomposed copy with combining marks and format
   characters dropped and look-alikes folded (learning._confusables, the table
   answer_guard reads; "Ｃ", Cyrillic "С" and "C\u200b" are C):
-  after a keyword ("option", "opt.", "choice", "letter", "key", "correct",
-  "answer (is/was/…)", "pick", "choose", "select", "go with"), with
-  separators (":", "=", ">", dashes) and opening markup (quotes, brackets,
-  "*", "_", "`", "#") between; after an arrow ("→", "=>", "->") that starts
-  its clause or follows a list of letters ("A/B/C/D → C", never "x → c" or
-  "f(x) -> c"); a CAPITAL inside brackets, quotes or emphasis ("(C)", "[C]",
-  "'C'", "**C**"; a lowercase "(a)", "(c)", "'a'" counts only after a
-  keyword); before "is/was (the) correct/right/answer/one/key/best" when the
-  letter starts its clause ("C is right", never "Plan A is the best"); after
-  "it's/it is/it was"; or as a capital list label "C)" first on its line or
-  right after a sentence's end ("(see part C)" names a part). Case-
-  insensitive after a keyword. Never: a letter followed by "+" or "#" ("C++",
-  "C#"), one of an enumeration ("(A, B, C)", "a, b or c"), the article or
-  pronoun (a lowercase "a"/"i" before any word, a capital "A"/"I" before a
-  lowercase word: "choose a function", "It's A good idea", "the answer I
-  gave") — unless that word is a predicate (_PREDICATE_WORDS: "is",
-  "because", "over", "here", "fits", …), which makes it the letter even
-  after a keyword ("pick A because", "Option A is correct", "go with A
-  here"; A38 fix round 3). A bare letter never counts in this default mode (tutor prose:
-  "vitamin C", "grade C", "C.", "Ｃ", an unclosed "(C" — by design).
+  A38 fix round 4 replaced every word-list reading with position and
+  punctuation (the only lists: the option keywords and the closed class of
+  copulas/modals):
+  1. keyword context — the letter is the pick, any case, whatever follows:
+     after "option", "opt.", "choice", "letter", "correct/right option",
+     "pick", "choose", "select", "go with", "it's/it is/it was" (a copula
+     and separators may come between), and after "answer", "key",
+     "correct", "correct/right one" only with a copula/modal ("the answer
+     must be A", "so the answer's C") or a punctuation separator ("answer:
+     A", "answer => C") between — so "the answer I gave" and "answer A
+     works" are clean; after an arrow that starts its clause or follows a
+     list of letters ("A/B/C/D → C", never "x → c" or "f(x) -> c").
+  2. otherwise, in default mode, only (a) a capital in brackets, quotes or
+     emphasis ("(C)", "[C]", "'C'", "**C**"), (b) a capital list label "C)"
+     first on its line or after a sentence's end, or (c) a clause-initial
+     letter followed by a clause break (":", ".", ",", ";", a dash, the end)
+     or a copula/modal ("C is right", "A seems best", "I would …", "C.").
+  Never: a letter followed by "+" or "#" ("C++", "C#"), one of an
+  enumeration ("(A, B, C)", "a, b or c"). No article or pronoun reading in
+  default mode: rule 1 flags "It's A good idea", "Choose a function",
+  "Answer: A function maps…" (accepted false positives, structurally a
+  pick); rule 2 cannot fire on "A student…", "A base case…", "I think…",
+  "What would I expect", "Plan A is the best", "vitamin C".
 
-  `strict=True` (the grader hint, A38 fix round M1(b)/(d) and m7, where a
-  false positive only drops a hint) adds: ANY standalone key letter but the
-  article/pronoun reading — a lowercase "a"/"i" before a non-predicate word,
-  a capital "I" before a lowercase non-predicate word, and a capital "A"
-  only where it also STARTS a sentence (so "vitamin C", "C++", "A.", "(a)",
-  "A fits best" and a mid-sentence "It's A good idea" drop the hint; "A base
-  case …", "Check whether a stopping rule exists." and "What would I
-  expect …" do not); the key's ordinal position
+  `strict=True` (the grader hint, where a false positive only drops a hint)
+  adds: EVERY standalone key letter, any case, except a capital "A"/"I"
+  before a lowercase word or a lowercase "a"/"i" before any word outside a
+  keyword context ("A base case…", "Check whether a stopping rule exists.",
+  "What would I expect…" are kept); the key's ordinal position
   ("the third one", "second choice", "the 3rd option" for C);
   the correct option's text (`option_text`) as a run of answer tokens; and,
   when the answer is numeric (its canonical_answer, else the value its
@@ -142,21 +142,42 @@ def _folded(text: str) -> tuple[str, list[int]]:
     return "".join(out), origin
 
 
-# Keywords before the letter (any case, whole words).
-_COPULA = r"(?:\s{1,4}(?:is|was|would\s+be|should\s+be|must\s+be|has\s+to\s+be))?"
-_OPTION_KEYWORDS = (
-    r"(?:options?|opt\.?|choices?|letters?|keys?"
-    r"|correct(?:\s+(?:one|option|choice|answer|letter))?"
-    rf"|answers?){_COPULA}"
-    r"|pick|choose|select|go\s+with"
+# ── keyword contexts (A38 fix round 4: position and punctuation only) ───────
+# The one word list besides the keywords: the closed class of copulas and
+# modals that may part a keyword from its letter ("the answer must be A").
+_COPULA = (
+    r"(?:\s{0,4}'s|\s{1,4}(?:is|was|are|were|would\s+be|should\s+be|must\s+be"
+    r"|has\s+to\s+be|will\s+be|might\s+be|could\s+be|can\s+be|seems(?:\s+to\s+be)?))"
 )
+# Strong keywords: the letter may follow directly ("option C", "choose A over
+# B", "go with a"), a copula and punctuation optional.
+_STRONG_KEYWORDS = (
+    rf"(?:options?|opt\.?|choices?|letters?"
+    rf"|(?:correct|right)\s{{1,4}}(?:option|choice|letter)){_COPULA}?"
+    r"|pick|choose|select|go\s+with"
+    r"|it(?:'s|\s{1,4}(?:is|was|would\s+be|should\s+be|must\s+be))"
+)
+# Weak keywords need a copula or a punctuation separator before the letter:
+# "the answer is A", "answer: A", "so the answer's A" — never "the answer I
+# gave" or "answer a smaller question".
+_WEAK_KEYWORDS = r"answers?|keys?|correct|(?:correct|right)\s{1,4}(?:one|answer)"
+_PUNCTUATION_SEPARATOR = r"\s{0,4}[:=>\-–—→⇒][\s:=>\-–—→⇒]{0,11}"
 _NOT_ALNUM_BEFORE = r"(?<![A-Za-z0-9])"
 # After the letter: no letter or digit, and no "+" or "#" ("C++", "C#").
 _NOT_ALNUM_AFTER = r"(?![A-Za-z0-9+#])"
-# An enumeration of letters is no pick of one ("(A, B, C)", "a, b or c").
+# An enumeration of letters is no pick of one ("(A, B, C)", "a, b or c"):
+# neither a letter an enumeration continues after, nor (_enumerated) one it
+# reaches.
 _NOT_ENUM_AFTER = (
     r"(?![\"'`)\]*_]{0,4}\s{0,2}[,/|]\s{0,2}[\"'`(\[*_]{0,4}[A-Za-z](?![A-Za-z0-9]))"
     r"(?!\s{1,3}(?:or|and|/)\s{1,3}[A-Za-z](?![A-Za-z0-9]))"
+)
+# A masked token (_MASKED) may have been a letter: after a strip, the letter
+# it parted from another keeps its enumeration reading, so a second pass
+# finds nothing new.
+_ENUM_BEFORE = re.compile(
+    r"(?:(?<![A-Za-z0-9])[A-Za-z]|x{%d})[\"'`)\]*_]{0,4}\s{0,2}(?:[,/|]|\s(?:or|and))"
+    r"\s{0,2}[\"'`(\[*_]{0,4}$" % len(WITHHELD)
 )
 # What may part a keyword from its letter: separators, then opening markup.
 # Bounded and disjoint, so no pattern backtracks more than a few characters.
@@ -165,45 +186,35 @@ _OPENING = r"[\"'`(\[*_#]{0,4}"
 _CLOSING = r"[\"'`)\]*_]{0,4}"
 _ARROW = r"(?:→|⇒|=>|->)"
 # The letter starts its clause: the text's start, or only spaces and opening
-# markup after punctuation — never a word or a closing bracket ("Plan A is
-# the best", "x → c", "f(x) -> c").
-_CLAUSE_START = r"(?:(?<![\s\S])|(?<=[^\sA-Za-z0-9\"'`(\[*_#)\]}]))\s{0,4}"
+# markup after punctuation — never a word, a closing bracket or a math
+# operator ("Plan A is the best", "x → c", "f(x) -> c", "x = c").
+_CLAUSE_START = r"(?:(?<![\s\S])|(?<=[^\sA-Za-z0-9\"'`(\[*_#)\]}<>=+\-/^~|→⇒]))\s{0,4}"
+# After a clause-initial letter: a clause break (":", ".", ",", ";", "!",
+# "?", a dash, the end) or a copula/modal ("C is", "A seems", "I would").
+_CLAUSE_BREAK = r"\s{0,4}(?:[:,;!?—–]|\.(?![A-Za-z0-9])|$)"
+_CLAUSE_VERB = (
+    r"(?:'s|\s{1,4}(?:is|was|would|should|must|seems|could|might|will|can)(?![A-Za-z0-9]))"
+)
 # A list of option letters before an arrow ("A/B/C/D → C").
 _LETTER_LIST = r"(?<![A-Za-z0-9])[A-Z](?:\s{0,2}[/,|]\s{0,2}[A-Z]){1,25}(?![A-Za-z0-9])\s{0,4}"
 _POSITION_NOUNS = r"one|option|choice|answer|letter"
-# Words that make a following capital "A"/"I" the subject or object of a pick
-# rather than an article or pronoun: "A is right", "pick A because", "choose A
-# over B", "A fits best" (A38 fix round 3). A lowercase word NOT listed here
-# after the letter reads as the article/pronoun ("A base case", "I think").
-_PREDICATE_WORDS = (
-    r"is|was|are|were|'s|be|would|should|must|might|could|can|will|does|did|do|has|had"
-    r"|fits|fit|works|work|wins|matches|holds|seems|looks|gives|stands|remains|goes"
-    r"|because|since|as|and|or|but|nor|not|over|than|then|here|there|instead|rather"
-    r"|too|also|so|for|with|vs|versus|now|again|only|obviously|clearly|definitely"
-)
-# The letter reads as the article/pronoun: a word follows that is no
-# predicate (any case after a lowercase letter, lowercase after a capital).
-_ARTICLE_AFTER_LOWER = rf"\s{{1,8}}(?!(?:{_PREDICATE_WORDS})(?![A-Za-z]))[A-Za-z]"
-_ARTICLE_AFTER_UPPER = rf"\s{{1,8}}(?!(?:{_PREDICATE_WORDS})(?![A-Za-z]))[a-z]"
-_ARTICLE_UPPER = re.compile(_ARTICLE_AFTER_UPPER)
-_SENTENCE_BREAKS = frozenset(".:!?\n")
-_SENTENCE_MARKUP = frozenset(" \t\"'`([*_#")
+# Strict mode's one exemption: a capital A/I before a lowercase word, or a
+# lowercase a/i before any word, outside a keyword context ("A base case…",
+# "I think…", "Check whether a stopping rule exists.").
+_ARTICLE_AFTER = {True: re.compile(r"\s{1,8}[a-z]"), False: re.compile(r"\s{1,8}[A-Za-z]")}
 
 
-def _starts_sentence(text: str, pos: int) -> bool:
-    """Only spaces and opening markup between `pos` and the text's start or a
-    sentence break (. : ! ? or a line break)."""
-    i = pos
-    while i > 0 and text[i - 1] in _SENTENCE_MARKUP:
-        i -= 1
-    return i == 0 or text[i - 1] in _SENTENCE_BREAKS
+def _enumerated(text: str, start: int) -> bool:
+    """The letter at `start` continues an enumeration ("A, B", "b or c")."""
+    return bool(_ENUM_BEFORE.search(text, max(0, start - params.LEAK_ENUM_LOOKBACK_CHARS), start))
 
 
 class _OptionRule(NamedTuple):
     context: tuple[re.Pattern[str], ...]  # group "span" (or the whole match) is withheld
     label: re.Pattern[str]  # "C)" as a list label, never "(see part C)"
-    standalone: re.Pattern[str]  # strict mode: any standalone key letter (articles aside)
+    standalone: re.Pattern[str]  # strict mode: any standalone key letter
     position: re.Pattern[str] | None  # strict mode: "the third one" for key C
+    article: bool  # the key is A or I: strict mode's article/pronoun exemption
 
 
 def _position_pattern(index: int) -> re.Pattern[str] | None:
@@ -225,51 +236,33 @@ def _option_rule(correct_option: str | None) -> _OptionRule | None:
     if not re.fullmatch(r"[A-Z]", upper):
         raise ValueError(f"correct_option {correct_option!r} is not one option letter")
     lower = upper.lower()
-    any_case = f"[{upper}{lower}]"
-    # The article "a"/"A" and the pronoun "i"/"I": a lowercase one before any
-    # word, a capital one before a lowercase word — unless that word is a
-    # predicate ("because", "is", "over", "here", …): then it is the letter,
-    # the more so after a keyword ("pick A because", "go with A here").
-    if upper in "AI":
-        guarded = rf"(?:{upper}(?!{_ARTICLE_AFTER_UPPER})|{lower}(?!{_ARTICLE_AFTER_LOWER}))"
-    else:
-        guarded = any_case
+    letter = f"[{upper}{lower}]"
     b, a, e = _NOT_ALNUM_BEFORE, _NOT_ALNUM_AFTER, _NOT_ENUM_AFTER
+    pick = rf"{_OPENING}(?P<span>{letter}){a}{e}"
     context = (
-        # after a keyword (any case)
+        # 1. keyword context: the letter is the pick, whatever follows it
+        re.compile(rf"(?i:{b}(?:{_STRONG_KEYWORDS})(?![A-Za-z0-9])){_SEPARATORS}{pick}"),
         re.compile(
-            rf"(?i:{b}(?:{_OPTION_KEYWORDS})(?![A-Za-z0-9]))"
-            rf"{_SEPARATORS}{_OPENING}(?P<span>{guarded}){a}{e}"
+            rf"(?i:{b}(?:{_WEAK_KEYWORDS})(?:{_COPULA}{_SEPARATORS}|{_PUNCTUATION_SEPARATOR}))"
+            rf"{pick}"
         ),
-        # after an arrow that starts its clause or follows a list of letters
-        re.compile(
-            rf"(?:{_CLAUSE_START}|{_LETTER_LIST}){_ARROW}\s{{0,4}}{_OPENING}"
-            rf"(?P<span>{guarded}){a}{e}"
-        ),
-        # a capital inside brackets, quotes or emphasis
+        # an arrow that starts its clause or follows a list of letters
+        re.compile(rf"(?:{_CLAUSE_START}|{_LETTER_LIST}){_ARROW}\s{{0,4}}{pick}"),
+        # 2a. a capital inside brackets, quotes or emphasis
         re.compile(rf"{b}(?:\(\s?{upper}\s?\)|\[\s?{upper}\s?\])(?![+#])"),
         re.compile(rf"{b}([\"'`]){upper}\1(?![A-Za-z0-9\"'`+#])"),
         re.compile(rf"(?<![A-Za-z0-9*_])(\*{{1,2}}|_{{1,2}}){upper}\1(?![A-Za-z0-9*_+#])"),
-        # "C is right", "c was the correct one" — the letter starts its clause
+        # 2c. clause-initial, then a clause break or a copula/modal
         re.compile(
-            rf"{_CLAUSE_START}{_OPENING}(?P<span>{any_case}){_CLOSING}\s{{1,4}}"
-            rf"(?i:is|was|'s|would\s+be)\s{{1,4}}(?i:the\s{{1,4}})?"
-            rf"(?i:correct|right|answer|one|key|best)(?![A-Za-z0-9])"
-        ),
-        # "it's C", "it is c"
-        re.compile(
-            rf"(?i:{b}it(?:'s|\s{{1,4}}(?:is|was|must\s+be|should\s+be)))"
-            rf"\s{{1,4}}{_OPENING}(?P<span>{guarded}){a}{e}"
+            rf"{_CLAUSE_START}{_OPENING}(?P<span>{letter}){a}{e}{_CLOSING}"
+            rf"(?:{_CLAUSE_BREAK}|(?i:{_CLAUSE_VERB}))"
         ),
     )
-    # a list label: "C)" first on its line or right after a sentence's end
+    # 2b. a list label: "C)" first on its line or right after a sentence's end
     label = re.compile(rf"(?:(?<=[\n.;:!?])|(?<![\s\S]))[ \t]{{0,4}}(?P<span>{upper}\))")
-    # strict: every key letter; a capital "A"/"I" read as the article or
-    # pronoun is dropped in _option_hits ("A" only where it starts a sentence)
-    loose = rf"(?:{upper}|{lower}(?!{_ARTICLE_AFTER_LOWER}))" if upper in "AI" else any_case
-    standalone = re.compile(rf"{b}{loose}(?![A-Za-z0-9])")
+    standalone = re.compile(rf"{b}{letter}(?![A-Za-z0-9])")
     position = _position_pattern(ord(upper) - ord("A"))
-    return _OptionRule(context, label, standalone, position)
+    return _OptionRule(context, label, standalone, position, upper in "AI")
 
 
 # A WITHHELD marker reads as one lowercase word: what the stripper masked was
@@ -299,17 +292,18 @@ def _option_hits(
     found: list[tuple[int, int]] = []
     for pattern in option.context:
         for m in pattern.finditer(folded):
-            found.append(m.span("span") if "span" in pattern.groupindex else m.span())
+            if "span" in pattern.groupindex:
+                if not _enumerated(folded, m.start("span")):
+                    found.append(m.span("span"))
+            else:
+                found.append(m.span())
     found += [m.span("span") for m in option.label.finditer(folded)]
     if strict:
         for m in option.standalone.finditer(folded):
-            letter = m.group()
-            if letter in "AI" and _ARTICLE_UPPER.match(folded, m.end()):
-                # "I" before a non-predicate word is the pronoun anywhere
-                # ("What would I expect"); "A" the article only where it
-                # starts a sentence ("A base case …"; "the model A fits" drops)
-                if letter == "I" or _starts_sentence(folded, m.start()):
-                    continue
+            # 3. every standalone key letter but the article/pronoun reading
+            # (a keyword context was flagged above, whatever follows it)
+            if option.article and _ARTICLE_AFTER[m.group().isupper()].match(folded, m.end()):
+                continue
             found.append(m.span())
         if option.position is not None:
             found += [m.span() for m in option.position.finditer(folded)]
