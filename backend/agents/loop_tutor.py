@@ -23,9 +23,7 @@ fast/smart knob on the loop (invariant 22).
 from __future__ import annotations
 
 import hashlib
-import re
 import secrets
-import unicodedata
 from collections.abc import Sequence
 from typing import Literal
 
@@ -58,7 +56,9 @@ from learning.turn_shape import (
     turn_limits,
     validate_turn,
 )
-from services.prompt_safety import INJECTION_GUARD_PROMPT
+# neutralise_control_tags moved to services.prompt_safety (PKG-09 reopen): the learner
+# brief (learning/, which never imports agents/) neutralises the same tags.
+from services.prompt_safety import INJECTION_GUARD_PROMPT, neutralise_control_tags
 
 Phase = Literal["teach", "hint", "feedback"]
 Band = Literal["novice", "develop", "profic"]
@@ -468,40 +468,9 @@ ENVELOPE_REMINDER = (
 )
 _ENVELOPE_OPEN = "<<student_text {nonce}>>"
 _ENVELOPE_CLOSE = "<<end_student_text {nonce}>>"
-#: The opening bracket of anything shaped like a control tag — "[" (or a
-#: look-alike opener) followed by a word and then ":" or a closing bracket —
-#: in any case and spacing. Only the opener is replaced, so the student's words
-#: survive and "[0, 1]" (no word) is untouched.
-_TAG_OPENER = re.compile(
-    r"[\[\uff3b\u27e6\u3014\u3010\u301a]"
-    r"(?=\s*[A-Za-z][A-Za-z0-9 _\-]*\s*[:\]\uff3d\u27e7\u3015\u3011\u301b])"
-)
-
-
 def new_nonce() -> str:
     """A fresh, unguessable envelope delimiter (one per model call)."""
     return secrets.token_hex(12)
-
-
-def neutralise_control_tags(text: str) -> str:
-    """Replace the opening bracket of every tag-shaped run in `text` with "(",
-    so no student byte can open a control block ([LOOP PHASE], [VERDICT],
-    [CHECK ITEM], [ACTION], [STUDENT QUESTION], [GRAPH CONTEXT], or any other
-    bracket tag). Fix round 2 (n1): format characters (Unicode category Cf —
-    zero-width spaces and joiners, BOM, word joiner, bidi marks) are dropped,
-    and tags are matched on each character's NFKC form, so neither an
-    invisible character nor a compatibility form ("[\u200bLOOP", fullwidth
-    letters) can hide one; every other character is kept as written."""
-    kept = [c for c in (text or "") if unicodedata.category(c) != "Cf"]
-    folded: list[str] = []
-    origin: list[int] = []
-    for i, c in enumerate(kept):
-        form = unicodedata.normalize("NFKC", c)
-        folded.append(form)
-        origin.extend([i] * len(form))
-    for m in _TAG_OPENER.finditer("".join(folded)):
-        kept[origin[m.start()]] = "("
-    return "".join(kept)
 
 
 def student_envelope(text: str, *, nonce: str) -> str:
