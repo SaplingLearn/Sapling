@@ -5906,3 +5906,29 @@ class TestProjectRef:
             assert module._project_ref() == ref
         finally:
             sys.modules.pop("scripts.backfill_check_items", None)
+
+
+# ── PKG-10 fix round F3: a wrong reason never states the final answer ──────
+
+
+def test_a_wrong_reason_stating_the_final_answer_fails_validation():
+    """The confrontation line (PKG-10) puts a stored wrong reason in front of the
+    tutor while the answer may be unreleased; a wrong reason that states the
+    final answer — in strict form, number words included — is refused at drafting."""
+    from learning.checks import CheckItemDraft, validate_draft
+
+    base = dict(
+        concept="power rule",
+        format="free",
+        difficulty=2,
+        prompt="What is the derivative of x^4?",
+        reference_answer="By the power rule the derivative of x^4 is 4x^3.",
+        final_answer="4x^3",
+        rubric=["multiplies by the exponent", "lowers the exponent by one"],
+        wrong_keys=["keeps_exponent"],
+        answer_kind="free",
+    )
+    leaky = CheckItemDraft(**base, wrong_texts=["Thinks the exponent stays four, not three"])
+    clean = CheckItemDraft(**base, wrong_texts=["Keeps the exponent unchanged"])
+    assert any("states the final answer" in r for r in validate_draft(leaky))
+    assert not any("states the final answer" in r for r in validate_draft(clean))

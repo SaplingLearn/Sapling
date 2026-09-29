@@ -1425,7 +1425,35 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
                 f"needs >= {CHECK_ITEM_STEPWISE_MIN_STEPS}"
             )
     reasons.extend(_final_answer_reasons(draft))
+    reasons.extend(_wrong_text_answer_reasons(draft))
     return reasons
+
+
+def _wrong_text_answer_reasons(draft: CheckItemDraft) -> list[str]:
+    """PKG-10 fix round (F3): a common wrong reason never states the final
+    answer — in strict form (number words, fractions, percentages), with no
+    provenance. The confrontation line puts a stored wrong reason in front of
+    the tutor while the answer may still be unreleased, so the text must never
+    carry it. No stated final answer: _final_answer_reasons refuses the draft."""
+    if not answer_run(draft.final_answer):
+        return []
+    # lazy: learning.leak imports this module
+    from learning.ladder import Rung
+    from learning.leak import detect_leak
+
+    return [
+        f"wrong reason {w.key!r} states the final answer"
+        for w in common_wrong(draft)
+        if w.text
+        and detect_leak(
+            reference="",
+            emitted=w.text,
+            rung=Rung.H0,
+            final_answer=draft.final_answer,
+            canonical_answer=draft.canonical_answer,
+            strict=True,
+        ).leaked
+    ]
 
 
 def parse_tolerance(draft: CheckItemDraft) -> float | None:
