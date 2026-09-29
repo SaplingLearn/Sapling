@@ -79,13 +79,15 @@ from agents.loop_tutor import (
     student_envelope,
     tier_run_kwargs,
 )
-from agents.tools.check import CheckAnswer, grade_answer
+from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer
 from agents.usage import UnfinishedRun, record_agent_usage
 from db.connection import table
-from learning import answer_guard, gates, ladder, policy, zpd_events
+from learning import answer_guard, gates, ladder, planner, policy, zpd_events
+from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
-from learning.checks import CheckItem, posttest_reserve_hash, select_item
-from learning.evidence import flush_pending
+from learning.checks import CheckItem, is_servable, posttest_reserve_hash, select_item
+from learning.evidence import PREREQ_RELATIONSHIP_TYPE, flush_pending
+from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
 from learning.leak import detect_leak, leak_spans
@@ -100,6 +102,7 @@ from learning.loop_state_store import (
 from learning.params import (
     BAND_DEVELOP_MAX,
     BKT_L0,
+    BKT_PROFICIENT,
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
@@ -111,6 +114,10 @@ from learning.params import (
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     LOOP_SOURCE_CHUNKS_MAX,
     LOOP_TEACH_TURNS_BEFORE_CHECK,
+    PLAN_ORDER,
+    PROBE_MAX_SKILLS,
+    REVIEW_DAILY_BUDGET_MIN,
+    REVIEW_SECONDS_PER_CHECK,
 )
 from learning.policy import LearnerView, LoopState, StepState
 from learning.turn_shape import (
@@ -128,6 +135,9 @@ from models import (
     LoopCheckAnswerBody,
     LoopCheckNextBody,
     LoopHintBody,
+    PlanApproveBody,
+    ProbeAnswerBody,
+    ProbeNextBody,
     StartSessionBody,
 )
 from routes.learn import (  # legacy helpers, reused verbatim — never copied
@@ -148,7 +158,12 @@ from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event
 from services.ai_budget import AIBudgetExceeded, enforce_rate_limit
 from services.auth_guard import require_self
 from services.chat_stream import stream_structured_turn
-from services.check_item_service import get_check_item, list_items
+from services.check_item_service import (
+    course_has_items,
+    get_check_item,
+    items_for_concepts,
+    list_items,
+)
 from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
 from services.prompt_safety import wrap_untrusted
@@ -2315,3 +2330,599 @@ def end_session(body: EndSessionBody, request: Request) -> dict | None:
     """PKG-07 pass-through: the legacy end_session body runs unchanged.
     PKG-09 returns the close payload (summary + brief) from here."""
     return None
+
+
+# ── Probe and plan (PKG-08; spec §3.3 probe row, §3.4, §9; A16, A20, A23, A27, A33, A34) ──
+#
+# The session document's top-level `phase` is PKG-08's: `probe` → `plan` →
+# `teach` (a missing key reads `probe`, unless the plan is already approved).
+# The probe lives under `probe` = {skills, history, current, unavailable,
+# refusals} and the plan under `plan` = {proposed, proposed_kinds, approved,
+# cursor} plus PKG-07's `concept`/`teach_turns`/`concept_checks`. Nothing here
+# writes PKG-07's top-level `current` or `steps` (only `_activate_next_item`
+# sets `current`, A27). No handler here reads the tutor budget or counts a tutor
+# call (A20: the probe runs at every budget level; the grader's own cap lives
+# inside grade(), PKG-06b) — `/probe/answer`, the one route that can run a
+# model, carries the rate limit.
+
+#: A /probe/answer whose question_hash is not the posed item's (stale client,
+#: or the item was answered or moved past meanwhile).
+_PROBE_NOT_POSED = "not the posed probe item"
+
+
+@dataclass(frozen=True)
+class _BoundItem:
+    """A course check item bound to the student's graph node (A2: stored items
+    key on concept_key, never node_id). Satisfies `learning.probe.ProbeItem`;
+    every other attribute is the item's own. `item` is what grade_answer takes."""
+
+    item: CheckItem
+    node_id: str
+
+    def __getattr__(self, name: str):
+        return getattr(self.item, name)
+
+
+def _loop_phase(doc: dict) -> str:
+    phase = doc.get("phase")
+    if isinstance(phase, str) and phase:
+        return phase
+    plan = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
+    return "teach" if plan.get("approved") else "probe"
+
+
+def _require_phase(doc: dict, phase: str) -> None:
+    current = _loop_phase(doc)
+    if current != phase:
+        raise HTTPException(status_code=409, detail=f"phase is {current}")
+
+
+def _probe_doc(doc: dict) -> dict:
+    """The document's `probe` object with every list/map present (in place)."""
+    pr = doc.get("probe")
+    if not isinstance(pr, dict):
+        pr = doc["probe"] = {}
+    pr.setdefault("history", [])
+    pr.setdefault("unavailable", [])
+    pr.setdefault("refusals", {})
+    pr.setdefault("current", None)
+    return pr
+
+
+def _plan_states(user_id: str, course_id: str) -> dict[str, float]:
+    """Decayed p_known for every graph node of (user, course) — one
+    `graph_nodes` read, one `learner_state` read (PKG-03); BKT_L0 for a node
+    with no learner_state row."""
+    rows = (
+        table("graph_nodes").select(
+            "id", filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
+        )
+        or []
+    )
+    ids = [r["id"] for r in rows if r.get("id")]
+    states = read_states(user_id, ids)
+    return {n: (states[n].p_known if n in states else BKT_L0) for n in ids}
+
+
+def _plan_prereq_edges(user_id: str, node_ids: list[str]) -> list[tuple[str, str]]:
+    """The user's prerequisite edges among `node_ids`, oriented (prerequisite,
+    dependent) by EDGE_PREREQ_SOURCE_IS_PREREQ — the direction PKG-03's
+    propagation and PKG-07's `_prereq_proficient` read. One `graph_edges` read."""
+    rows = (
+        table("graph_edges").select(
+            "source_node_id,target_node_id",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "relationship_type": f"eq.{PREREQ_RELATIONSHIP_TYPE}",
+            },
+        )
+        or []
+    )
+    keep = set(node_ids)
+    out = []
+    for e in rows:
+        src, tgt = e.get("source_node_id"), e.get("target_node_id")
+        if src in keep and tgt in keep:
+            out.append((src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src))
+    return out
+
+
+def _probe_course_has_items(course_id: str) -> bool:
+    """A23: one `limit=1` read; False for a session with no course."""
+    return bool(course_id) and course_has_items(course_id)
+
+
+def _probe_items(user_id: str, course_id: str, node_ids: list[str]) -> list[_BoundItem]:
+    """PKG-08's node → concept_key → items resolver (A2; the inverse of PKG-07's
+    `_node_for_item`): one `graph_nodes` read for the nodes' names, one
+    `check_items` read for their normalised keys, each item bound to the node.
+    Unfiltered — the handlers drop the reserve, unavailable, revealed and
+    unservable items (they must still COUNT an asked one)."""
+    if not node_ids:
+        return []
+    rows = (
+        table("graph_nodes").select(
+            "id,concept_name",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "course_id": f"eq.{course_id}",
+                "id": f"in.({','.join(sorted(set(node_ids)))})",
+            },
+        )
+        or []
+    )
+    node_for_key: dict[str, str] = {}
+    for row in sorted(rows, key=lambda r: r.get("id") or ""):
+        key = _normalize_concept(row.get("concept_name") or "")
+        if key and row.get("id"):
+            node_for_key.setdefault(key, row["id"])  # one node per concept key
+    by_key = items_for_concepts(course_id, list(node_for_key))
+    return [
+        _BoundItem(item, node_for_key[key])
+        for key, items in by_key.items()
+        if key in node_for_key
+        for item in items
+    ]
+
+
+def _plan_node_names(user_id: str, node_ids: list[str]) -> dict[str, str]:
+    """id → concept_name for the student's nodes (one `graph_nodes` read)."""
+    if not node_ids:
+        return {}
+    rows = (
+        table("graph_nodes").select(
+            "id,concept_name",
+            filters={"user_id": f"eq.{user_id}", "id": f"in.({','.join(sorted(set(node_ids)))})"},
+        )
+        or []
+    )
+    return {r["id"]: r.get("concept_name") or "" for r in rows if r.get("id")}
+
+
+def _plan_due_reviews(
+    user_id: str, node_ids: list[str], *, now: datetime | None = None
+) -> list[str]:
+    """The plan's review section: nodes whose FSRS review is due now
+    (`fsrs_due_at ≤ now`; never reviewed = not due), in PKG-02's `order_due`
+    order, capped by `budget_select` (REVIEW_DAILY_BUDGET_MIN /
+    REVIEW_SECONDS_PER_CHECK). One `learner_state` read."""
+    now = now or datetime.now(timezone.utc)
+    due = [
+        {"node_id": n, "fsrs_s": st.fsrs_s, "fsrs_last_review_at": st.fsrs_last_review_at}
+        for n, st in read_states(user_id, node_ids, now=now).items()
+        if st.fsrs_due_at is not None and st.fsrs_due_at <= now
+    ]
+    ordered = order_due(sorted(due, key=lambda r: r["node_id"]), now)
+    return [
+        r["node_id"]
+        for r in budget_select(ordered, REVIEW_DAILY_BUDGET_MIN, REVIEW_SECONDS_PER_CHECK)
+    ]
+
+
+def _probe_done_payload(pr: dict) -> dict:
+    """learn.probe_done (spec §6): ids and counts only."""
+    history = list(pr.get("history") or [])
+    return {
+        "items": len(history),
+        "misses": sum(1 for h in history if not h.get("correct")),
+        "novice_floor": probe_policy.novice_floor(history),
+        "skills": list(pr.get("skills") or []),
+    }
+
+
+def _emit_probe_done(saved: dict, user_id: str, request_id: str) -> None:
+    events_service.log_event(
+        "learn.probe_done",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload=_probe_done_payload(_probe_doc(dict(saved))),
+    )
+
+
+def _claim_live(current: dict, now: float) -> bool:
+    claimed_at = current.get("grading_claim_at")
+    return bool(current.get("grading_claim")) and (
+        now - float(claimed_at or 0) <= LOOP_GRADING_CLAIM_STALE_S
+    )
+
+
+@router.post("/probe/next")
+def probe_next(body: ProbeNextBody, request: Request) -> dict:
+    """The next probe item (Behaviour 10): no model call, so no rate limit. The
+    skill set is fixed on the first call — the outer fringe of the course graph,
+    capped at PROBE_MAX_SKILLS — or, for a course with no check items, the probe
+    ends at once (`no_check_items`, A23/A26). A posed item is served again until
+    it is answered (never a skip); one left under a stale grading claim is
+    moved past. Selection never serves a concept's post-test reserve (A23), an
+    item whose answer this student has been shown (`revealed_hashes`), one the
+    grader could not grade (`unavailable`), or one with no final answer (A34)."""
+    _gate(body.user_id, request)
+    _consume_pending(body.session_id, body.user_id)
+    _, course_id = _session_scope(body.session_id, body.user_id)
+    state = _load_loop_state(body.session_id)
+    _require_phase(state, "probe")
+    request_id = _request_id(request)
+    fixed = (
+        (state.get("probe") or {}).get("skills") if isinstance(state.get("probe"), dict) else None
+    )
+    if fixed is None and not _probe_course_has_items(course_id):
+
+        def finish_empty(doc: dict) -> None:
+            _require_phase(doc, "probe")
+            pr = _probe_doc(doc)
+            pr["skills"] = []
+            pr["current"] = None
+            doc["phase"] = "plan"
+
+        saved = _update_loop_state(body.session_id, finish_empty)
+        _emit_probe_done(saved, body.user_id, request_id)
+        return {"done": True, "phase": "plan", "no_check_items": True}
+
+    states = _plan_states(body.user_id, course_id)
+    if fixed is None:
+        edges = _plan_prereq_edges(body.user_id, list(states))
+        skills = planner.outer_fringe(states, edges)[:PROBE_MAX_SKILLS]
+    else:
+        skills = [s for s in fixed if isinstance(s, str)]
+    items = _probe_items(body.user_id, course_id, skills)
+    revealed = revealed_hashes(body.user_id) if items else set()
+    reserves = {
+        posttest_reserve_hash([it for it in items if it.node_id == n])
+        for n in {it.node_id for it in items}
+    } - {None}
+    by_hash = {it.question_hash: it for it in items}
+    now = _now_s()
+    out: dict = {}
+
+    def select(doc: dict) -> None:
+        out.clear()
+        _require_phase(doc, "probe")
+        doc["phase"] = "probe"  # explicit from the first item on
+        pr = _probe_doc(doc)
+        if pr.get("skills") is None:
+            pr["skills"] = list(skills)
+        cur = pr.get("current")
+        if isinstance(cur, dict) and cur.get("question_hash"):
+            qh = cur["question_hash"]
+            if (not cur.get("grading_claim") or _claim_live(cur, now)) and qh in by_hash:
+                out["item"] = by_hash[qh]  # posed and not answered: the same item again
+                return
+            # withdrawn (A23) or left under a stale claim (C2): never asked again
+            if qh not in pr["unavailable"]:
+                pr["unavailable"].append(qh)
+            pr["current"] = None
+        asked = {h.get("question_hash") for h in pr["history"]}
+        never = (reserves | revealed | set(pr["unavailable"])) - asked
+        candidates = [
+            it
+            for it in items
+            if it.question_hash in asked or (it.question_hash not in never and is_servable(it))
+        ]
+        skill_states = {n: states.get(n, BKT_L0) for n in pr["skills"]}
+        item = probe_policy.next_probe_item(
+            skill_states, candidates, asked, channel_for_format=CHANNEL_FOR_FORMAT
+        )
+        if item is None:
+            doc["phase"] = "plan"
+            out["done"] = True
+            return
+        pr["current"] = {
+            "check_item_id": item.id,
+            "question_hash": item.question_hash,
+            "node_id": item.node_id,
+            "difficulty": item.difficulty,
+            "channel": CHANNEL_FOR_FORMAT[item.format],
+        }
+        out["item"] = item
+
+    saved = _update_loop_state(body.session_id, select)
+    if out.get("done"):
+        _emit_probe_done(saved, body.user_id, request_id)
+        return {"done": True, "phase": "plan"}
+    item = out["item"]
+    pose = _pose_payload(item)  # prompt + letter/text options only (A22), never the key
+    return {
+        "done": False,
+        "check_item_id": item.id,
+        "question_hash": pose["question_hash"],
+        "node_id": item.node_id,
+        "format": pose["format"],
+        "difficulty": pose["difficulty"],
+        "prompt": pose["prompt"],
+        "options": pose["options"],
+    }
+
+
+def _on_posed(qh: str, change: Callable[[dict, dict], None]) -> Callable[[dict], None]:
+    """A compare-and-set mutate over the probe's posed item `qh`: `change(pr,
+    current)` runs only while `qh` is still the posed item."""
+
+    def mutate(doc: dict) -> None:
+        pr = _probe_doc(doc)
+        cur = pr.get("current")
+        if isinstance(cur, dict) and cur.get("question_hash") == qh:
+            change(pr, cur)
+
+    return mutate
+
+
+def _under_probe_claim(
+    qh: str, claim: str, change: Callable[[dict, dict], None]
+) -> Callable[[dict], None]:
+    """`_on_posed`, applied only while `claim` holds the item (PKG-07's
+    `_under_claim` for the probe's posed item)."""
+
+    def guarded(pr: dict, cur: dict) -> None:
+        if cur.get("grading_claim") == claim:
+            change(pr, cur)
+
+    return _on_posed(qh, guarded)
+
+
+def _release(_pr: dict, cur: dict) -> None:
+    cur.pop("grading_claim", None)
+    cur.pop("grading_claim_at", None)
+
+
+def _not_asked(pr: dict, cur: dict) -> None:
+    """Invariant 28 / Behaviour 11: the item counts as not asked — excluded from
+    selection, never counted toward a cap; the next /probe/next serves another."""
+    if cur["question_hash"] not in pr["unavailable"]:
+        pr["unavailable"].append(cur["question_hash"])
+    pr["current"] = None
+
+
+async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on: bool) -> dict:
+    """Grade ONE explicit probe answer (A16) and persist its evidence with ONE
+    flush_pending — invariant 26's probe writer. Grading is a CLAIM on the posed
+    item (PKG-07's C2 discipline, A52): taken by compare-and-set before
+    grade_answer, so a double submit, a resubmission or a concurrent refusal can
+    never grade or write the item twice (409). A33: a refusal (read BEFORE
+    `unavailable`, which it also sets) keeps the item posed, counts on
+    `probe.refusals[qh]` and releases the claim; the CHECK_REFUSALS_AS_IDK-th
+    refusal of the item in this probe is graded as idk. `unavailable` (an
+    outage, a missing second opinion, the grader cap) and a withdrawn item count
+    as not asked: no evidence for either outcome. After the flush the claim is
+    released only by the write that records the observation, so a lost record
+    never admits a second write (the item is moved past once the claim is
+    stale)."""
+    _, course_id = _session_scope(body.session_id, body.user_id)
+    state = _load_loop_state(body.session_id)
+    _require_phase(state, "probe")
+    qh = body.question_hash
+    posed = _probe_doc(state).get("current")
+    if not isinstance(posed, dict) or posed.get("question_hash") != qh:
+        raise HTTPException(status_code=409, detail=_PROBE_NOT_POSED)
+    if posed.get("grading_claim"):
+        raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+    skills = list(_probe_doc(state).get("skills") or [])
+    node_id = posed["node_id"]
+    item = next(
+        (
+            it
+            for it in _probe_items(body.user_id, course_id, skills)
+            if it.id == posed.get("check_item_id")
+        ),
+        None,
+    )
+    now = _now_s()
+    claim = str(uuid.uuid4())
+
+    def take(pr: dict, cur: dict) -> None:
+        if cur.get("grading_claim"):
+            raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+        cur["grading_claim"], cur["grading_claim_at"] = claim, now
+
+    def take_posed(doc: dict) -> None:
+        _require_phase(doc, "probe")
+        cur = _probe_doc(doc).get("current")
+        if not isinstance(cur, dict) or cur.get("question_hash") != qh:
+            raise HTTPException(status_code=409, detail=_PROBE_NOT_POSED)
+        take(doc["probe"], cur)
+
+    _update_loop_state(body.session_id, take_posed)
+    if item is None:  # A23 withdrawal: nothing is graded
+        _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))
+        return {"graded": False, "unavailable": True}
+
+    text = body.answer or body.reason
+    idk = body.idk or _is_idk_phrase(text)
+    deps = SaplingDeps(
+        user_id=body.user_id,
+        course_id=course_id or None,
+        supabase=None,
+        request_id=_request_id(request),
+        session_id=body.session_id,
+        feature="loop_probe",
+        learning_loop=loop_on,
+    )
+    written = False
+    try:
+        outcome = await grade_answer(
+            item.item,
+            CheckAnswer(
+                question_hash=qh,
+                answer_text=body.answer,
+                selected_option=body.option,
+                reason=body.reason,
+                idk=idk,
+            ),
+            deps=deps,
+            node_id=node_id,
+        )
+        if outcome.refused:  # A33, read BEFORE `unavailable`: never a skip
+
+            def count_refusal(pr: dict, cur: dict) -> None:
+                pr["refusals"][qh] = int(pr["refusals"].get(qh) or 0) + 1
+                if pr["refusals"][qh] < CHECK_REFUSALS_AS_IDK:
+                    _release(pr, cur)  # nothing was graded: asked again
+
+            state = _update_loop_state(
+                body.session_id, _under_probe_claim(qh, claim, count_refusal)
+            )
+            if (_probe_doc(state).get("current") or {}).get("grading_claim") != claim:
+                return {"graded": False, "refused": True}
+            idk = True  # the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
+            outcome = await grade_answer(
+                item.item, CheckAnswer(question_hash=qh, idk=True), deps=deps, node_id=node_id
+            )
+        if outcome.unavailable:  # invariant 28: nothing for either outcome
+            _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))
+            return {"graded": False, "unavailable": True}
+        written = True
+        flush_pending(deps, course_id or None)  # ONE call: the probe's only evidence write
+    except BaseException:
+        if not written:  # nothing was written: the student may answer again
+            try:
+                _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _release))
+            except Exception:
+                logger.warning("probe grading claim for %s not released", qh, exc_info=True)
+        raise
+
+    correct = bool(outcome.correct)
+    evidence = outcome.evidence or {}
+    _, p_after = _band_for(body.user_id, node_id)  # re-read after the write (decayed)
+    observation = {
+        "node_id": node_id,
+        "question_hash": qh,
+        "difficulty": int(posed["difficulty"]),
+        "channel": posed["channel"],  # the item's channel (A1: no "idk" channel)
+        "correct": correct,
+        "idk": bool(evidence.get("idk", idk)),
+        "p_after": p_after,
+    }
+    out: dict = {}
+
+    def record(pr: dict, _cur: dict) -> None:
+        pr["history"].append(observation)
+        pr["current"] = None
+        out["done"] = probe_policy.probe_done(pr["history"], skills=pr.get("skills") or [])
+        out["novice_floor"] = probe_policy.novice_floor(pr["history"])
+
+    def record_posed(doc: dict) -> None:
+        out.clear()
+        _under_probe_claim(qh, claim, record)(doc)
+        if out.get("done"):
+            doc["phase"] = "plan"
+
+    saved = _update_loop_state(body.session_id, record_posed)
+    if out.get("done"):
+        _emit_probe_done(saved, body.user_id, deps.request_id)
+    response = {
+        "graded": True,
+        "correct": correct,
+        "p_known": p_after,
+        "probe_done": bool(out.get("done")),
+        "novice_floor": bool(out.get("novice_floor")),
+    }
+    if not correct:  # spec §3.3: a wrong answer or an idk gets the answer at once
+        response["reference_answer"] = item.reference_answer
+    return response
+
+
+@router.post("/probe/answer", dependencies=_RATE_LIMITED)
+async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
+    """Behaviour 11: grade_answer only (A16) — no tutor turn, no tutor budget
+    (A20); the rate limit is the one model-cost guard here (spec §9)."""
+    loop_on = _gate(body.user_id, request)
+    _consume_pending(body.session_id, body.user_id)
+    return await _agent_turn_or_http_error(
+        _probe_submission(body, request, loop_on=loop_on), what="probe grader"
+    )
+
+
+@router.get("/plan")
+def plan_get(request: Request, user_id: str = Query(...), session_id: str = Query(...)) -> dict:
+    """Behaviour 13: the proposed plan — due reviews, then the outer fringe's new
+    material (coupled cap), then interleaved proficient siblings, in PLAN_ORDER.
+    The proposal is stored so /plan/approve can check the student's choice
+    against it. No goal filter yet (Non-goals: nothing maps a syllabus week to
+    concepts)."""
+    _gate(user_id, request)
+    _, course_id = _session_scope(session_id, user_id)
+    _require_phase(_load_loop_state(session_id), "plan")
+    states = _plan_states(user_id, course_id)
+    edges = _plan_prereq_edges(user_id, list(states))
+    parents: dict[str, set[str]] = {}
+    for prereq, dependent in edges:
+        if prereq != dependent:
+            parents.setdefault(dependent, set()).add(prereq)
+
+    def siblings(node_id: str) -> list[str]:
+        mine = parents.get(node_id, set())
+        return sorted(m for m, ps in parents.items() if m != node_id and ps & mine)
+
+    proposal = planner.plan(
+        planner.outer_fringe(states, edges),
+        _plan_due_reviews(user_id, list(states)),
+        siblings,
+        None,
+        proficient=frozenset(n for n, p in states.items() if p >= BKT_PROFICIENT),
+    )
+    ids = [c.node_id for c in proposal.concepts]
+    kinds = {c.node_id: c.kind for c in proposal.concepts}
+
+    def store(doc: dict) -> None:
+        _require_phase(doc, "plan")
+        plan_doc = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
+        plan_doc["proposed"], plan_doc["proposed_kinds"] = list(ids), dict(kinds)
+        doc["plan"] = plan_doc
+
+    _update_loop_state(session_id, store)
+    names = _plan_node_names(user_id, ids)
+    return {
+        "concepts": [
+            {
+                "node_id": n,
+                "concept_name": names.get(n, ""),
+                "kind": kinds[n],
+                "p_known": states.get(n, BKT_L0),
+            }
+            for n in ids
+        ],
+        "order": list(PLAN_ORDER),
+    }
+
+
+@router.post("/plan/approve")
+def plan_approve(body: PlanApproveBody, request: Request) -> dict:
+    """Behaviour 14 / A27: store the approved concepts (a non-empty, duplicate-
+    free subset of the proposal, in the student's order), point PKG-07's
+    activation at the first one (`plan.cursor` 0, `concept`, counters 0), and
+    move to `teach`. Activates nothing and builds no brief (PKG-09, A19)."""
+    _gate(body.user_id, request)
+    _session_scope(body.session_id, body.user_id)
+    chosen = list(body.concept_ids)
+    out: dict = {}
+
+    def approve(doc: dict) -> None:
+        _require_phase(doc, "plan")
+        plan_doc = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
+        proposed = plan_doc.get("proposed") or []
+        if len(set(chosen)) != len(chosen) or not set(chosen) <= set(proposed):
+            raise HTTPException(
+                status_code=422, detail="concept_ids must be distinct ids from the proposed plan"
+            )
+        kinds = plan_doc.get("proposed_kinds") or {}
+        lead = 0
+        while lead < len(chosen) and kinds.get(chosen[lead]) == "review":
+            lead += 1
+        out["n_reviews_first"] = lead
+        plan_doc["approved"], plan_doc["cursor"] = list(chosen), 0
+        plan_doc.pop("done", None)
+        doc["plan"] = plan_doc
+        doc["concept"] = chosen[0]
+        doc["teach_turns"] = 0
+        doc["concept_checks"] = 0
+        doc["phase"] = "teach"
+
+    _update_loop_state(body.session_id, approve)
+    events_service.log_event(
+        "learn.plan_approved",
+        category="usage",
+        user_id=body.user_id,
+        request_id=_request_id(request),
+        payload={"concept_ids": chosen, "n_reviews_first": out["n_reviews_first"]},
+    )
+    return {"phase": "teach", "concept_ids": chosen}

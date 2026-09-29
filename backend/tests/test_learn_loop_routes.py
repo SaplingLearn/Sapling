@@ -132,8 +132,9 @@ MODEL_ROUTES = [
     "/start-session",
     "/start-session/stream",
     "/action",
+    "/probe/answer",  # PKG-08: runs the grader (spec §9)
 ]
-NO_MODEL_ROUTES = ["/status", "/hint", "/check/next"]
+NO_MODEL_ROUTES = ["/status", "/hint", "/check/next", "/probe/next", "/plan", "/plan/approve"]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
 

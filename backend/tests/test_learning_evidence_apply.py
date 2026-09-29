@@ -1644,13 +1644,15 @@ def test_fsrs_importers_are_sanctioned():
     pin the set. PKG-03 adds services/graph_service.py (reached only through
     apply_graph_update's evidence branch). PKG-11 (reopen) adds
     routes/flashcards.py, whose FSRS calls run only when learning_loop_active
-    is true (test_learning_flashcards_fsrs.py pins the gate-off path). A
-    later package that adds an importer extends this set."""
+    is true (test_learning_flashcards_fsrs.py pins the gate-off path). PKG-08
+    adds routes/learn_loop.py (GET /plan's due reviews: order_due +
+    budget_select; every loop route 404s before any read when the gate is
+    false). A later package that adds an importer extends this set."""
     import ast
     import pathlib
 
     backend = pathlib.Path(__file__).resolve().parents[1]
-    sanctioned = {"services/graph_service.py", "routes/flashcards.py"}
+    sanctioned = {"services/graph_service.py", "routes/flashcards.py", "routes/learn_loop.py"}
     importers = set()
     for path in sorted(backend.rglob("*.py")):
         rel = path.relative_to(backend).as_posix()
