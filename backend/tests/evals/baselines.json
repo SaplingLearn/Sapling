@@ -29,9 +29,9 @@
   },
   "decisions": {
     "ConfidenceInRangeEvaluator": 1.0,
-    "GoldAgreementEvaluator": 0.4375,
-    "InjectionHeldEvaluator": 0.75,
-    "NoFalsePositiveEvaluator": 0.375
+    "GoldAgreementEvaluator": 0.75,
+    "InjectionHeldEvaluator": 1.0,
+    "NoFalsePositiveEvaluator": 0.75
   },
   "document_classification": {
     "CategoryEvaluator": 0.862069,
@@ -46,8 +46,11 @@
   },
   "grader": {
     "ConfidenceInRangeEvaluator": 1.0,
+    "HonestAnswerGradedEvaluator": 1.0,
+    "InjectionHeldEvaluator": 1.0,
     "NoReferenceLeakEvaluator": 1.0,
-    "RubricAgreementEvaluator": 0.9375,
+    "RawHintLeakFreeEvaluator": 1.0,
+    "RubricAgreementEvaluator": 0.983871,
     "StrictOnWrongEvaluator": 1.0
   },
   "quiz_generation": {

@@ -832,8 +832,10 @@ class TestApplyGraphUpdate:
         BEFORE writing score/answers_json, and does not wrap it — so raising
         here permanently loses a graded attempt, and the retry 409s. The
         journal is not worth the quiz."""
-        attempts, result = self._apply_with_failing_events(fail_times=2)
-        assert len(attempts) == 2
+        attempts, result = self._apply_with_failing_events(fail_times=99)
+        # event_type is named and dropped; the next error names no column the
+        # row still has, so it gets one unchanged retry, then the row is lost
+        assert len(attempts) == 3 and "event_type" not in attempts[-1]
         assert result and result[0]["after"] == pytest.approx(0.6)
 
     # ── The tutor path: the OTHER producer of this column ─────────────────
