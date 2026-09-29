@@ -521,8 +521,10 @@ def is_open(loop_state: dict | None, item: ReviewItem, now: datetime) -> bool:
 
 class _Selector:
     """Chooses a due concept's check item (rule 1, A23) — or re-uses the item the
-    session already opened for it. The seen/revealed reads happen once, on the
-    first concept that needs an item."""
+    session already opened for it, while that item is still neither seen (evidence
+    from another surface: a review's own answer closes its open entry) nor revealed
+    (a wrong attempt in the tutor loop, an H4 sibling). The seen/revealed reads
+    happen once, on the first concept that needs an item."""
 
     def __init__(self, user_id: str, served_today: set[str], opened: dict[str, str]):
         self.user_id, self.served_today, self.opened = user_id, served_today, opened
@@ -531,14 +533,24 @@ class _Selector:
     def item(self, c: _Concept, now: datetime) -> ReviewItem | None:
         node = c.node
         pool = list_items(node["course_id"], _normalize_concept(node.get("concept_name") or ""))
+        if not self.history:
+            self.history["seen"] = set(seen_hashes(self.user_id))
+            self.history["revealed"] = set(revealed_hashes(self.user_id))
+        answered_elsewhere = self.history["seen"] | self.history["revealed"]
         chosen = None
         open_id = self.opened.get(node["id"])
         if open_id is not None:
-            chosen = next((i for i in pool if i.id == open_id and is_servable(i)), None)
+            chosen = next(
+                (
+                    i
+                    for i in pool
+                    if i.id == open_id
+                    and is_servable(i)
+                    and i.question_hash not in answered_elsewhere
+                ),
+                None,
+            )
         if chosen is None:
-            if not self.history:
-                self.history["seen"] = set(seen_hashes(self.user_id))
-                self.history["revealed"] = set(revealed_hashes(self.user_id))
             reserve = posttest_reserve_hash(pool)
             fallback = self.history["revealed"] | ({reserve} if reserve is not None else set())
             strict = self.served_today | self.history["seen"] | fallback

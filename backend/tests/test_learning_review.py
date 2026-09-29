@@ -2655,3 +2655,39 @@ def test_fsrs_writers_never_store_an_invalid_stability():
             {"fsrs_d": None, "fsrs_s": None, "last_reviewed_at": None}, rating, now=NOW
         )
         assert math.isfinite(cols["fsrs_s"]) and cols["fsrs_s"] > 0
+
+
+# ── Round 2: an open item whose answer surfaced elsewhere is never re-served ──
+
+
+@pytest.mark.parametrize("where", ["revealed", "seen"])
+def test_an_open_item_answered_or_revealed_elsewhere_is_replaced(monkeypatch, where):
+    """A70 amended: the open item is re-served only while it is still unseen and
+    unrevealed. A wrong tutor-loop attempt or an H4 sibling reveal (revealed), or an
+    answer on another surface (seen: evidence exists, and a review's own answer
+    closes its open entry), drops it and a fresh item is chosen — else a student
+    who was shown the answer earns credit for it here."""
+    from learning import review
+
+    past = (NOW - timedelta(days=3)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [],
+            "learner_state": [_due_row("n1", 0.5, past)],
+            "graph_nodes": [{"id": "n1", "course_id": COURSE, "concept_name": "N1"}],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q1", "q2")]
+    monkeypatch.setattr(review, "list_items", lambda course, key, **kw: pool)
+    monkeypatch.setattr(review, f"{where}_hashes", lambda uid: {"q1"})
+    state = {
+        "open": {"n1": {"item_id": "ci-q1", "served_at": NOW.timestamp()}},
+        "review": {"served_hashes": ["q1"]},
+    }
+    queue, _ = review.due_queue_with_stats(USER, COURSE, NOW, loop_state=state)
+    assert [i.id for i in queue] == ["ci-q2"]
+    # still clean → the open item comes back
+    monkeypatch.setattr(review, f"{where}_hashes", lambda uid: set())
+    queue, _ = review.due_queue_with_stats(USER, COURSE, NOW, loop_state=state)
+    assert [i.id for i in queue] == ["ci-q1"]
