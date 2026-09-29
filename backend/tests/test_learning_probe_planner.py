@@ -41,6 +41,19 @@ def _obs(node_id, p_after, *, correct=True, idk=False, difficulty=2, k=0):
     }
 
 
+# ── constants ───────────────────────────────────────────────────────────────
+
+
+def test_probe_difficulty_shift_covers_exactly_the_item_difficulties():
+    """Every stored difficulty has a shift and no shift is orphaned (moved out of
+    an import-time assert in params.py)."""
+    assert set(P.PROBE_DIFFICULTY_SHIFT) == set(P.CHECK_ITEM_DIFFICULTIES)
+
+
+def test_probe_plan_read_limit_is_a_positive_int():
+    assert isinstance(P.PROBE_PLAN_READS_PER_MIN, int) and P.PROBE_PLAN_READS_PER_MIN > 0
+
+
 # ── expected_success ────────────────────────────────────────────────────────
 
 

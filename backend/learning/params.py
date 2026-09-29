@@ -235,7 +235,9 @@ NOVICE_FLOOR_IDK = 2
 # Derived, so no literal repeats the spec's "difficulty 1" or the skill count.
 PROBE_EASIEST_DIFFICULTY = min(CHECK_ITEM_DIFFICULTIES)
 PROBE_MAX_SKILLS = PROBE_SESSION_CAP // PROBE_ITEMS_PER_SKILL_MIN
-assert set(PROBE_DIFFICULTY_SHIFT) == set(CHECK_ITEM_DIFFICULTIES)
+# PKG-08 † — per-user calls a minute to /probe/next and GET /plan, the two
+# no-model loop routes that write state (services/request_limits sliding window).
+PROBE_PLAN_READS_PER_MIN = 30
 CHECK_ITEM_MIN_RUBRIC = 2
 CHECK_ITEM_MIN_WRONG = 1
 MISCONCEPTION_ROLLUP_MIN_USERS = 5
