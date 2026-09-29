@@ -143,7 +143,6 @@ _TAG_OPENER = re.compile(
 )
 
 
-
 def neutralise_control_tags(text: str) -> str:
     """Replace the opening bracket of every tag-shaped run in `text` with "(",
     so no student byte can open a control block ([LOOP PHASE], [VERDICT],
