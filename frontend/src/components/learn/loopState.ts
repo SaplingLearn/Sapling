@@ -6,15 +6,14 @@ import type { LoopBudgetPause, LoopCheckItem, LoopLearnerState, LoopPhase } from
 
 export interface LoopUiState {
   phase: LoopPhase;
-  /** The current check item's pose (A27); null when no item is current. */
+  /** The current check item's pose (A27); null when no item is current. Never
+   *  promptless: a `check` event for an item whose pose is not known yet leaves
+   *  it null until done.check (or GET /status) brings the pose. */
   item: LoopCheckItem | null;
-  /** The rung a `hint_offer` event offered (novice band only, spec §3.3). */
-  hintOffer: number | null;
   learnerState: Record<string, LoopLearnerState>;
   /** The node the last `learner_state` event named — the turn's concept (the
    *  pose itself never names its node). */
   focusNodeId: string | null;
-  leakRedacted: boolean;
   /** The tutor hard level (A20/A26): chat paused; practice keeps working. */
   budgetPause: LoopBudgetPause | null;
 }
@@ -22,10 +21,7 @@ export interface LoopUiState {
 export type LoopUiEvent =
   | { type: "phase"; phase: string }
   | { type: "check"; item: LoopCheckItem | null }
-  | { type: "hint_offer"; rung: number }
-  | { type: "hint_taken" }
   | { type: "learner_state"; state: LoopLearnerState }
-  | { type: "done"; leakRedacted: boolean }
   | { type: "budget"; level: string; resetAt: string | null; sessionCapped?: boolean }
   | { type: "budget_clear" }
   | { type: "reset" };
@@ -43,10 +39,8 @@ export function initialLoopState(): LoopUiState {
   return {
     phase: "probe",
     item: null,
-    hintOffer: null,
     learnerState: {},
     focusNodeId: null,
-    leakRedacted: false,
     budgetPause: null,
   };
 }
@@ -58,32 +52,25 @@ export function reduceLoopEvent(state: LoopUiState, ev: LoopUiEvent): LoopUiStat
       return phase && phase !== state.phase ? { ...state, phase } : state;
     }
     case "check": {
-      if (ev.item === null) return { ...state, item: null, hintOffer: null };
+      if (ev.item === null) return state.item === null ? state : { ...state, item: null };
       // The stream's `check` event carries only hash/format/difficulty; keep the
       // pose already known for the same item instead of blanking its prompt.
       const same = state.item?.question_hash === ev.item.question_hash ? state.item : null;
+      const prompt = ev.item.prompt ?? same?.prompt;
+      // No pose known for this item: nothing to render yet (and a different
+      // hash means the server moved on — the old pose is stale).
+      if (!prompt) return state.item === null ? state : { ...state, item: null };
       return {
         ...state,
-        item: {
-          ...ev.item,
-          prompt: ev.item.prompt ?? same?.prompt,
-          options: ev.item.options ?? same?.options ?? null,
-        },
-        hintOffer: same ? state.hintOffer : null,
+        item: { ...ev.item, prompt, options: ev.item.options ?? same?.options ?? null },
       };
     }
-    case "hint_offer":
-      return { ...state, hintOffer: Number.isFinite(ev.rung) ? ev.rung : null };
-    case "hint_taken":
-      return state.hintOffer === null ? state : { ...state, hintOffer: null };
     case "learner_state":
       return {
         ...state,
         learnerState: { ...state.learnerState, [ev.state.node_id]: ev.state },
         focusNodeId: ev.state.node_id,
       };
-    case "done":
-      return { ...state, leakRedacted: ev.leakRedacted };
     case "budget":
       // soft = the invisible downgrade (spec §3.5): nothing renders
       if (ev.level !== "hard") return state;

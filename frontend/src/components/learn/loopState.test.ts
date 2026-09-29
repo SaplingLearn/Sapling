@@ -6,8 +6,8 @@ const item = { question_hash: 'qh1', format: 'free' as const, difficulty: 1 as c
 
 describe('reduceLoopEvent', () => {
   it('starts in probe with no item', () => {
-    expect(initialLoopState()).toMatchObject({
-      phase: 'probe', item: null, hintOffer: null, leakRedacted: false, budgetPause: null, focusNodeId: null,
+    expect(initialLoopState()).toEqual({
+      phase: 'probe', item: null, learnerState: {}, budgetPause: null, focusNodeId: null,
     });
   });
 
@@ -27,10 +27,9 @@ describe('reduceLoopEvent', () => {
     expect(reduceLoopEvent(start, { type: 'phase', phase: 'bogus' })).toBe(start);
   });
 
-  it('check sets the current item and clears a stale hint offer', () => {
-    const s = reduceLoopEvent({ ...initialLoopState(), hintOffer: 1 }, { type: 'check', item });
+  it('check sets the current item', () => {
+    const s = reduceLoopEvent(initialLoopState(), { type: 'check', item });
     expect(s.item).toEqual({ ...item, options: null });
-    expect(s.hintOffer).toBeNull();
   });
 
   it('a partial check event (hash only) keeps the pose it already has for that hash', () => {
@@ -39,14 +38,17 @@ describe('reduceLoopEvent', () => {
     expect(s1.item?.prompt).toBe('p');
   });
 
-  it('check null clears the item (graded)', () => {
-    expect(reduceLoopEvent({ ...initialLoopState(), item }, { type: 'check', item: null }).item).toBeNull();
+  it('a partial check event for an item with no known pose never makes a promptless item', () => {
+    // The `check` stream event carries only hash/format/difficulty; the pose comes
+    // from done.check (or /status). Until then there is no card to render.
+    const s = reduceLoopEvent(initialLoopState(), { type: 'check', item: { question_hash: 'qh9', format: 'free', difficulty: 1 } });
+    expect(s.item).toBeNull();
+    const other = reduceLoopEvent({ ...initialLoopState(), item }, { type: 'check', item: { question_hash: 'qh9', format: 'free', difficulty: 1 } });
+    expect(other.item).toBeNull(); // the server moved on from qh1: never keep the stale pose
   });
 
-  it('hint_offer records the rung; hint_taken clears it', () => {
-    const offered = reduceLoopEvent(initialLoopState(), { type: 'hint_offer', rung: 1 });
-    expect(offered.hintOffer).toBe(1);
-    expect(reduceLoopEvent(offered, { type: 'hint_taken' }).hintOffer).toBeNull();
+  it('check null clears the item (graded)', () => {
+    expect(reduceLoopEvent({ ...initialLoopState(), item }, { type: 'check', item: null }).item).toBeNull();
   });
 
   it('learner_state is keyed by node_id, overwrites, and focuses the node', () => {
@@ -54,12 +56,6 @@ describe('reduceLoopEvent', () => {
     s = reduceLoopEvent(s, { type: 'learner_state', state: { node_id: 'n1', p_known: 0.6, band: 'develop' } });
     expect(s.learnerState.n1.p_known).toBe(0.6);
     expect(s.focusNodeId).toBe('n1');
-  });
-
-  it('done with leak_redacted flips the flag; without it clears', () => {
-    const on = reduceLoopEvent(initialLoopState(), { type: 'done', leakRedacted: true });
-    expect(on.leakRedacted).toBe(true);
-    expect(reduceLoopEvent(on, { type: 'done', leakRedacted: false }).leakRedacted).toBe(false);
   });
 
   it('a hard budget event pauses; a soft one changes nothing (spec §3.5)', () => {
@@ -74,7 +70,7 @@ describe('reduceLoopEvent', () => {
     expect(s.budgetPause).toEqual({ resetAt: null, sessionCapped: true });
   });
 
-  it('budget_clear lifts the pause (the next successful tutor turn)', () => {
+  it('budget_clear lifts the pause (the next successful tutor turn, or its reset time)', () => {
     const hard = reduceLoopEvent(initialLoopState(), { type: 'budget', level: 'hard', resetAt: null });
     expect(reduceLoopEvent(hard, { type: 'budget_clear' }).budgetPause).toBeNull();
   });
@@ -98,7 +94,7 @@ describe('reduceLoopEvent', () => {
   });
 
   it('never advances the phase on its own', () => {
-    const s = reduceLoopEvent(initialLoopState(), { type: 'done', leakRedacted: false });
+    const s = reduceLoopEvent(initialLoopState(), { type: 'learner_state', state: { node_id: 'n1', p_known: 0.9, band: 'profic' } });
     expect(s.phase).toBe('probe');
   });
 });

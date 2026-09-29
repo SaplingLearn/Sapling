@@ -953,9 +953,11 @@ export const getReviewSummary = (userId: string, courseId?: string) =>
   fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewQuery(userId, courseId)}`);
 
 /** Is the learning loop on for this student? Probes GET /review/active — a
- *  gate-only route that builds nothing (PKG-07's /status needs a loop session id):
- *  200 → active, the gate's 404 → inactive. Any other failure rejects; callers
- *  treat that as inactive too. */
+ *  gate-only route that builds nothing (PKG-07's /status needs a loop session id).
+ *  It answers `{active}` with 200 either way (PKG-13 fix round: a 404 for "off"
+ *  logged an error.4xx on every legacy visit); a 404 from an older backend still
+ *  reads as inactive. Any other failure rejects — the caller decides (useLoopStatus
+ *  times out and retries). */
 export const getLoopStatus = async (userId: string): Promise<{ active: boolean }> => {
   try {
     return await fetchJSON<{ active: boolean }>(
@@ -1110,8 +1112,52 @@ export const listLoopSessions = async (userId: string, courseId: string): Promis
   return r.sessions ?? [];
 };
 
-export const startLoopSession = (userId: string, courseId: string, topic: string) =>
-  loopPost<LoopStartResult>('/start-session', { user_id: userId, topic, course_id: courseId });
+/** An open loop session `?resume=` named, wherever it lives (another course,
+ *  past the list limit): the listed shape plus its abstract course. */
+export interface LoopResumeSession extends LoopOpenSession { course_id: string }
+export interface LoopSessionList { sessions: LoopOpenSession[]; resume: LoopResumeSession | null }
+
+/** GET /sessions plus, for a `/learn?resume=<id>` deep link, that session when
+ *  it is the student's open loop session in ANY course (null: a legacy or closed
+ *  one — shown read-only). */
+export const listLoopSessionsFor = async (
+  userId: string, courseId: string, resumeId: string | null,
+): Promise<LoopSessionList> => {
+  const params = new URLSearchParams({ user_id: userId, course_id: courseId });
+  if (resumeId) params.set('resume', resumeId);
+  const r = await fetchJSON<{ sessions?: LoopOpenSession[]; resume?: LoopResumeSession | null }>(
+    `/api/learn/loop/sessions?${params}`,
+  );
+  return { sessions: r.sessions ?? [], resume: r.resume ?? null };
+};
+
+/** GET /status for one session (read-only): where it stands and, while an item
+ *  takes answers, its pose. The resume restore and the post-submission reconcile. */
+export interface LoopSessionStatus {
+  active: boolean;
+  session_id: string;
+  /** PKG-08's phase: probe | plan | teach | close. */
+  loop_phase: string;
+  /** PKG-07's teach refinement: teach | check | feedback. */
+  phase: string;
+  active_question_hash?: string | null;
+  check?: LoopCheckItem | null;
+}
+export const getLoopSessionStatus = (sessionId: string, userId: string) =>
+  fetchJSON<LoopSessionStatus>(
+    `/api/learn/loop/status?${new URLSearchParams({ user_id: userId, session_id: sessionId })}`,
+  );
+
+/** The teaching modes StartSessionBody.mode knows (the legacy deep links' ?mode=). */
+export const LOOP_DEEP_LINK_MODES = ['socratic', 'expository', 'teachback'] as const;
+
+export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null) =>
+  loopPost<LoopStartResult>('/start-session', {
+    user_id: userId,
+    topic,
+    course_id: courseId,
+    ...(mode && (LOOP_DEEP_LINK_MODES as readonly string[]).includes(mode) ? { mode } : {}),
+  });
 
 export const nextLoopProbe = (sessionId: string, userId: string) =>
   loopPost<LoopProbeNext>('/probe/next', { session_id: sessionId, user_id: userId });
@@ -1148,7 +1194,8 @@ export const postLoopAttempt = (sessionId: string, userId: string, questionHash:
     session_id: sessionId, user_id: userId, question_hash: questionHash, attempt_text: attemptText,
   });
 
-/** "Check me" (A27): activates the current concept's next item and returns its pose. */
+/** "Check me" (A27): activates the current concept's next item and returns its pose.
+ *  It WRITES (activation) — a resume restores through getLoopSessionStatus instead. */
 export const nextLoopCheck = (sessionId: string, userId: string) =>
   loopPost<LoopCheckNext>('/check/next', { session_id: sessionId, user_id: userId });
 

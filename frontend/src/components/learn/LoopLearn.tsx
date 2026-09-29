@@ -3,15 +3,17 @@
 // staff/QA toggle; after launch: every student — spec §13 A14). The flow is
 // probe → plan → teach ⇄ check → feedback → close, and the phase is
 // SERVER-DRIVEN: every change comes from a loop route's response, a stream
-// event or a listed session (`reduceLoopEvent` never advances it on its own).
-// No model toggle and no tier preference is sent (A15/A26). Resume before probe: a reload
-// of /learn never starts a probe while an open loop session exists (§11.3).
-// The attempt box grades only through /check/answer/stream, never as a chat
-// turn (A16). Spec: docs/superpowers/specs/2026-09-26-learning-loop-design.md
-// §9, §11.3; routes: backend/routes/learn_loop.py.
+// event, a listed session or GET /status (`reduceLoopEvent` never advances it
+// on its own). No model toggle and no tier preference is sent (A15/A26).
+// Resume before probe: a reload of /learn never starts a probe while an open
+// loop session exists (§11.3), and a resume only READS (GET /status restores a
+// check's pose). The attempt box grades only through /check/answer/stream,
+// never as a chat turn (A16). Spec:
+// docs/superpowers/specs/2026-09-26-learning-loop-design.md §9, §11.3; routes:
+// backend/routes/learn_loop.py.
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
@@ -34,7 +36,8 @@ import {
   getCourses,
   getGraph,
   getLoopPlan,
-  listLoopSessions,
+  getLoopSessionStatus,
+  listLoopSessionsFor,
   nextLoopCheck,
   nextLoopProbe,
   postLoopAttempt,
@@ -52,6 +55,7 @@ import {
   type LoopPhase,
   type LoopPlanConcept,
   type LoopProbeItem,
+  type LoopSessionStatus,
   type LoopTurnResult,
   type StreamChatHandlers,
 } from "@/lib/api";
@@ -66,6 +70,7 @@ const PLAN_DONE_COPY = "That's every concept in today's plan — close the sessi
 const NO_ITEM_COPY = "No check is ready for this concept yet — keep going with the tutor.";
 const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
+const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
 const CONTINUE_MESSAGE = "Let's continue.";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
@@ -83,6 +88,12 @@ const CLOSE_RETRY_COPY: Record<string, string> = {
   "a check is being graded; close again in a moment": "A check is still being graded — close again in a moment.",
   "session close in progress": "This session is already closing — try again in a moment.",
 };
+/** routes/learn_loop.py `_SESSION_CLOSED`: every teaching route after the close (A60). */
+const SESSION_CLOSED_DETAIL = "this session is closed";
+/** routes/learn_loop.py `_ALREADY_GRADED`: the submission was graded (maybe by an earlier request). */
+const ALREADY_GRADED_DETAIL = "already graded";
+/** setTimeout's ceiling (2^31 − 1 ms): a later reset time is never armed early. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
 const KIND_LABEL: Record<string, { label: string; chip: string }> = {
@@ -128,12 +139,30 @@ type Draft = { answer: string; option: string; reason: string };
 const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "" };
 type HintView = { denied: string } | { reply: string } | null;
 
+/** The Learn deep links (Dashboard, Tree, notetaker, quiz): read ONCE at mount,
+ *  so a consumed `?resume=` never re-applies on a session or course switch. */
+type DeepLink = { resume: string | null; topic: string; course: string; mode: string; suggest: string };
+const readDeepLink = (p: { get(name: string): string | null }): DeepLink => ({
+  resume: readResumeParam(p),
+  topic: (p.get("topic") ?? "").trim(),
+  course: (p.get("course") ?? "").trim(),
+  mode: (p.get("mode") ?? "").trim(),
+  suggest: (p.get("suggest") ?? "").trim(),
+});
+const hasDeepLink = (d: DeepLink) => !!(d.resume || d.topic || d.course || d.mode || d.suggest);
+
+/** The phase GET /status reports for a document, in the UI's vocabulary. */
+const statusPhase = (st: LoopSessionStatus) => (st.loop_phase === "teach" ? st.phase : st.loop_phase);
+
 export function LoopLearn() {
   const { userId } = useUser();
   const toast = useToast();
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const isMobile = useIsMobile();
   const [state, dispatch] = useReducer(reduceLoopEvent, undefined, initialLoopState);
+  const [deepLink] = useState(() => readDeepLink(searchParams));
 
   // Course + sessions
   const [courses, setCourses] = useState<EnrolledCourse[] | null>(null);
@@ -143,6 +172,9 @@ export function LoopLearn() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState<{ id: string; topic: string; messages: ChatMsg[] } | null>(null);
   const [starting, setStarting] = useState(false);
+  // A route the current view is waiting on failed (not a budget pause): the
+  // panel offers a retry instead of sitting empty.
+  const [loadError, setLoadError] = useState<"start" | "probe" | "plan" | null>(null);
 
   // Probe
   const [probeItem, setProbeItem] = useState<LoopProbeItem | null>(null);
@@ -180,6 +212,8 @@ export function LoopLearn() {
   // response for the previous one is dropped instead of landing on the new one.
   const gen = useRef(0);
   const bootKey = useRef<string | null>(null);
+  const resumePending = useRef(true); // the deep link's ?resume= is honoured once
+  const sessionRef = useRef<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
   const countedAttempt = useRef<string | null>(null); // `${qh}:${text}` the server counted
   const mounted = useRef(true);
@@ -190,20 +224,33 @@ export function LoopLearn() {
       streamAbort.current?.abort();
     };
   }, []);
+  useEffect(() => {
+    sessionRef.current = sessionId;
+  }, [sessionId]);
+
+  // The deep link is consumed at mount: drop it from the URL so a reload, or a
+  // later session/course switch, never re-applies it (it was sticky).
+  const urlCleaned = useRef(false);
+  useEffect(() => {
+    if (urlCleaned.current || !hasDeepLink(deepLink)) return;
+    urlCleaned.current = true;
+    router.replace(pathname || "/learn", { scroll: false });
+  }, [deepLink, router, pathname]);
 
   const course = useMemo(() => courses?.find((c) => c.course_id === courseId) ?? null, [courses, courseId]);
   const paused = state.budgetPause;
   const item = state.item;
 
-  // ── Error routing: a budget 429 is the banner, never a toast ─────────────
-  const reportError = useCallback((err: unknown, fallback: string) => {
-    const pause = budgetPauseOf(err);
-    if (pause) {
-      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped });
-      return;
-    }
-    toast.error(humanizeError(err, fallback));
-  }, [toast]);
+  // A daily (or per-minute) pause lifts at its reset time — never earlier, and
+  // a session cap never (a new session starts fresh, A39). Owner question in
+  // HANDOFF-13: whether a pause with no reset time should re-check on a timer.
+  useEffect(() => {
+    if (!paused || paused.sessionCapped || !paused.resetAt) return;
+    const ms = Date.parse(paused.resetAt) - Date.now();
+    if (Number.isNaN(ms) || ms > MAX_TIMER_MS) return;
+    const t = setTimeout(() => dispatch({ type: "budget_clear" }), Math.max(0, ms));
+    return () => clearTimeout(t);
+  }, [paused]);
 
   // ── Knowledge map ──────────────────────────────────────────────────────
   const refreshGraph = useCallback(async () => {
@@ -221,43 +268,114 @@ export function LoopLearn() {
     }
   }, [userId, courses]);
 
+  const dropFromPicker = useCallback((sid: string) => {
+    setOpenSessions((prev) => (prev ?? []).filter((s) => s.session_id !== sid));
+  }, []);
+
+  /** The session is closed (a 409 from any teaching route, or /status): show its
+   *  stored close — POST /close is idempotent (A60) — and drop it from the picker. */
+  const enterClosed = useCallback(async (sid: string) => {
+    const g = gen.current;
+    streamAbort.current?.abort();
+    dispatch({ type: "check", item: null });
+    dispatch({ type: "phase", phase: "close" });
+    dropFromPicker(sid);
+    try {
+      const r = await closeLoopSession(sid, userId);
+      if (g === gen.current) setClose(r);
+    } catch {
+      if (g === gen.current) setCloseNote(CLOSED_ELSEWHERE_COPY);
+    }
+  }, [userId, dropFromPicker]);
+
+  // ── Error routing: a budget 429 is the banner, a closed session is the
+  // close, anything else a toast ─────────────────────────────────────────
+  const reportError = useCallback((err: unknown, fallback: string) => {
+    const pause = budgetPauseOf(err);
+    if (pause) {
+      dispatch({ type: "budget", level: "hard", resetAt: pause.resetAt, sessionCapped: pause.sessionCapped });
+      return;
+    }
+    const { status, detail } = extractErrorDetail(err);
+    const sid = sessionRef.current;
+    if (status === 409 && detail === SESSION_CLOSED_DETAIL && sid) {
+      void enterClosed(sid);
+      return;
+    }
+    toast.error(humanizeError(err, fallback));
+  }, [toast, enterClosed]);
+
+  /** Apply GET /status: the phase, and the open item's pose or none. */
+  const applyStatus = useCallback((sid: string, st: LoopSessionStatus) => {
+    if (st.loop_phase === "close") {
+      void enterClosed(sid);
+      return;
+    }
+    dispatch({ type: "check", item: st.check ?? null });
+    dispatch({ type: "phase", phase: statusPhase(st) });
+  }, [enterClosed]);
+
+  /** After a submission that did not settle (a 409, a stream error, Stop): the
+   *  server may already have graded it, so re-read where the session stands.
+   *  Read-only. If even that fails, the item is cleared (fail closed): "Check
+   *  me" re-poses it while it is still open (/check/next is idempotent then). */
+  const reconcile = useCallback(async (sid: string, g: number) => {
+    try {
+      const st = await getLoopSessionStatus(sid, userId);
+      if (g === gen.current) applyStatus(sid, st);
+    } catch {
+      if (g === gen.current) dispatch({ type: "check", item: null });
+    }
+  }, [userId, applyStatus]);
+
   // ── Session lifecycle ──────────────────────────────────────────────────
   const clearSessionView = useCallback(() => {
     streamAbort.current?.abort();
     streamAbort.current = null;
     dispatch({ type: "reset" });
     setReadOnly(null);
+    setLoadError(null);
     setProbeItem(null);
     setProbeDraft(EMPTY_DRAFT);
     setProbeReference(null);
     setProbeNote(null);
     setProbeCount(0);
+    setProbeBusy(false);
     setProbeFinished(false);
     setNoCheckItems(false);
     setPlan(null);
+    setPlanBusy(false);
     setMessages([]);
     setStreamingText(null);
     setAttempt(EMPTY_DRAFT);
+    setAttemptBusy(false);
     setHint(null);
+    setHintBusy(false);
     setCheckNote(null);
+    setCheckBusy(false);
     setClose(null);
+    setCloseBusy(false);
     setCloseNote(null);
     countedAttempt.current = null;
   }, []);
 
   const loadPlan = useCallback(async (sid: string, g: number) => {
+    setLoadError(null);
     try {
       const r = await getLoopPlan(sid, userId);
       if (g !== gen.current) return;
       setPlan(r.concepts ?? []);
       if (r.phase) dispatch({ type: "phase", phase: r.phase }); // an empty plan teaches at once
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't load today's plan.");
+      if (g !== gen.current) return;
+      setLoadError("plan");
+      reportError(err, "Couldn't load today's plan.");
     }
   }, [userId, reportError]);
 
   const nextProbe = useCallback(async (sid: string, g: number) => {
     setProbeBusy(true);
+    setLoadError(null);
     try {
       const r = await nextLoopProbe(sid, userId);
       if (g !== gen.current) return;
@@ -272,29 +390,30 @@ export function LoopLearn() {
         setProbeDraft(EMPTY_DRAFT);
       }
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't load the next question.");
+      if (g !== gen.current) return;
+      setLoadError("probe");
+      reportError(err, "Couldn't load the next question.");
     } finally {
       if (g === gen.current) setProbeBusy(false);
     }
   }, [userId, loadPlan, reportError]);
 
-  /** A resumed check phase restores the open item's pose: /check/next returns
-   *  the item being answered unchanged (no write, no model call). */
+  /** A resumed check phase restores the open item's pose READ-ONLY (GET
+   *  /status) — POST /check/next may activate another item (a write). */
   const restoreCheck = useCallback(async (sid: string, g: number) => {
     try {
-      const r = await nextLoopCheck(sid, userId);
-      if (g !== gen.current) return;
-      dispatch({ type: "check", item: r.check });
-      dispatch({ type: "phase", phase: r.phase });
+      const st = await getLoopSessionStatus(sid, userId);
+      if (g === gen.current) applyStatus(sid, st);
     } catch (err) {
       if (g === gen.current) reportError(err, "Couldn't restore the current question.");
     }
-  }, [userId, reportError]);
+  }, [userId, applyStatus, reportError]);
 
   const resume = useCallback(async (s: LoopOpenSession) => {
     const g = ++gen.current;
     clearSessionView();
     setSessionId(s.session_id);
+    sessionRef.current = s.session_id;
     dispatch({ type: "phase", phase: s.phase });
     try {
       const r = await resumeSession(s.session_id);
@@ -313,6 +432,7 @@ export function LoopLearn() {
     const g = ++gen.current;
     clearSessionView();
     setSessionId(null);
+    sessionRef.current = null;
     try {
       const r = await resumeSession(id);
       if (g !== gen.current) return;
@@ -323,18 +443,47 @@ export function LoopLearn() {
     }
   }, [clearSessionView]);
 
-  const newSession = useCallback(async () => {
+  /** Start a session and its probe. `closeCurrent` (the "New session" button):
+   *  the open session being left is closed first (A60's wrap-up), so sessions
+   *  do not pile up open; a close that cannot run now (409) starts nothing. */
+  const newSession = useCallback(async (
+    { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
+  ) => {
     if (!courseId || !userId) return;
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
+    const leaving = sessionRef.current;
+    if (closeCurrent && leaving && isOpenPhase(state.phase)) {
+      const g0 = gen.current;
+      setStarting(true);
+      try {
+        await closeLoopSession(leaving, userId);
+      } catch (err) {
+        if (g0 !== gen.current) return;
+        setStarting(false);
+        const { status, detail } = extractErrorDetail(err);
+        if (status === 409 && detail === SESSION_CLOSED_DETAIL) {
+          // already closed elsewhere: nothing to wrap up
+        } else if (status === 409 && detail) {
+          setCloseNote(CLOSE_RETRY_COPY[detail] ?? detail);
+          return;
+        } else {
+          reportError(err, "Couldn't wrap up the current session.");
+          return;
+        }
+      }
+      dropFromPicker(leaving);
+    }
     const g = ++gen.current;
     clearSessionView();
     setSessionId(null);
+    sessionRef.current = null;
     setStarting(true);
     try {
-      const r = await startLoopSession(userId, courseId, course?.course_name ?? "");
+      const r = await startLoopSession(userId, courseId, topic || course?.course_name || "", mode);
       if (g !== gen.current) return;
       setSessionId(r.session_id);
+      sessionRef.current = r.session_id;
       if (r.initial_message) setMessages([asMsg("assistant", r.initial_message)]);
       if (r.budget?.level === "hard") {
         // A27: a capped student still gets the template opener and the probe
@@ -349,40 +498,64 @@ export function LoopLearn() {
         if (list.some((x) => x.session_id === r.session_id)) return list;
         const row: LoopOpenSession = {
           session_id: r.session_id,
-          topic: course?.course_name ?? "",
+          topic: topic || course?.course_name || "",
           started_at: new Date().toISOString(),
           phase: "probe",
         };
         return [row, ...list];
       });
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't start a session.");
+      if (g !== gen.current) return;
+      setLoadError("start"); // never an empty probe: the start card offers a retry
+      reportError(err, "Couldn't start a session.");
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, clearSessionView, nextProbe, reportError]);
+  }, [courseId, userId, course, state.phase, clearSessionView, nextProbe, reportError, dropFromPicker]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
     const g = ++gen.current;
-    let list: LoopOpenSession[];
+    const wanted = resumePending.current ? deepLink.resume : null;
+    let listed: Awaited<ReturnType<typeof listLoopSessionsFor>>;
     try {
-      list = await listLoopSessions(userId, courseId);
+      listed = await listLoopSessionsFor(userId, courseId, wanted);
     } catch {
       // never falls through to a new session or a probe (spec §11.3)
       if (g === gen.current) setSessionsError(true);
       return;
     }
     if (g !== gen.current) return;
+    resumePending.current = false;
+    const list = listed.sessions;
     setSessionsError(false);
     setOpenSessions(list);
-    const wanted = readResumeParam(searchParams);
-    const named = wanted ? list.find((s) => s.session_id === wanted) : undefined;
-    if (wanted && !named) await openReadOnly(wanted); // a legacy (or closed) session: read-only
-    else if (named) await resume(named);
-    else if (list.length > 0) await resume(list[0]);
-    else await newSession();
-  }, [courseId, userId, searchParams, openReadOnly, resume, newSession]);
+    const found = wanted ? listed.resume : null;
+    if (found) {
+      if (found.course_id !== courseId && courses?.some((c) => c.course_id === found.course_id)) {
+        // an open loop session in another of the student's courses: switch to it
+        bootKey.current = `${userId}:${found.course_id}`;
+        setCourseId(found.course_id);
+        let others: LoopOpenSession[] = [];
+        try {
+          others = (await listLoopSessionsFor(userId, found.course_id, null)).sessions;
+        } catch {
+          // the picker is a convenience; the named session still resumes
+        }
+        if (g !== gen.current) return;
+        setOpenSessions(others.some((s) => s.session_id === found.session_id) ? others : [found, ...others]);
+      } else if (!list.some((s) => s.session_id === found.session_id)) {
+        setOpenSessions([...list, found]); // past the picker's limit: list it too
+      }
+      await resume(found);
+    } else if (wanted) {
+      await openReadOnly(wanted); // a legacy (or closed) session: read-only
+    } else if (list.length > 0) {
+      await resume(list[0]);
+    } else {
+      await newSession({ topic: deepLink.topic, mode: deepLink.mode });
+    }
+  }, [courseId, userId, courses, deepLink, openReadOnly, resume, newSession]);
 
   const loadCourses = useCallback(async () => {
     if (!userId) return;
@@ -391,11 +564,13 @@ export function LoopLearn() {
       if (!mounted.current) return;
       const list = r.courses ?? [];
       setCourses(list);
-      setCourseId((prev) => prev ?? list[0]?.course_id ?? null);
+      // ?course= picks the course when the student is enrolled in it
+      const linked = list.find((c) => c.course_id === deepLink.course)?.course_id;
+      setCourseId((prev) => prev ?? linked ?? list[0]?.course_id ?? null);
     } catch {
       if (mounted.current) setSessionsError(true);
     }
-  }, [userId]);
+  }, [userId, deepLink]);
 
   // ── Boot: courses → sessions (once per user + course) ───────────────────
   useEffect(() => {
@@ -403,12 +578,12 @@ export function LoopLearn() {
   }, [loadCourses]);
 
   useEffect(() => {
-    if (!userId || !courseId) return;
+    if (!userId || !courseId || !courses) return;
     const key = `${userId}:${courseId}`;
     if (bootKey.current === key) return; // StrictMode re-runs must not start twice
     bootKey.current = key;
     void loadSessions();
-  }, [userId, courseId, loadSessions]);
+  }, [userId, courseId, courses, loadSessions]);
 
   useEffect(() => {
     if (courses) void refreshGraph();
@@ -488,12 +663,15 @@ export function LoopLearn() {
   };
 
   // ── Streamed turns (chat + explicit submissions) ─────────────────────────
+  /** A check the server activated (a teach turn's done.check, or "Check me"):
+   *  the pose, which the server also saved as an assistant row. The document
+   *  is now in `check` (PKG-07 `_phase_for`), whatever the turn's own phase. */
   const applyActivated = useCallback((check: LoopCheckItem | null | undefined) => {
-    if (!check) return;
+    if (!check?.prompt) return;
     dispatch({ type: "check", item: check });
-    // the server stores the pose as an assistant row too, so a reload shows it
+    dispatch({ type: "phase", phase: "check" });
     const pose = check.prompt;
-    if (pose) setMessages((prev) => [...prev, asMsg("assistant", pose)]);
+    setMessages((prev) => [...prev, asMsg("assistant", pose)]);
     setAttempt(EMPTY_DRAFT);
     setHint(null);
     setCheckNote(null);
@@ -507,6 +685,7 @@ export function LoopLearn() {
     const controller = new AbortController();
     streamAbort.current = controller;
     const g = gen.current;
+    const sid = sessionRef.current;
     let streamed = "";
     let hardSeen = false;
     setStreamingText("");
@@ -523,7 +702,6 @@ export function LoopLearn() {
       },
       onPhase: (p) => dispatch({ type: "phase", phase: p }),
       onCheck: (c) => dispatch({ type: "check", item: c }),
-      onHintOffer: (rung) => dispatch({ type: "hint_offer", rung }),
       onLearnerState: (s) => dispatch({ type: "learner_state", state: s }),
       onBudget: (b) => {
         if (b.level === "hard") hardSeen = true;
@@ -536,14 +714,15 @@ export function LoopLearn() {
       // done.reply is always the final, leak-stripped text (A46) — never the tokens
       const text = res.reply ?? streamed;
       if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
-      dispatch({ type: "done", leakRedacted: res.leak_redacted === true });
-      if (submission && res.graded && !res.unavailable && !res.refused) {
-        dispatch({ type: "check", item: null }); // graded: the item is closed
+      if (submission && res.graded) {
+        // graded — correct, not yet, idk, or a refusal the server graded as idk:
+        // the item takes no more answers
+        dispatch({ type: "check", item: null });
         setAttempt(EMPTY_DRAFT);
         setHint(null);
       }
-      applyActivated(res.check);
       if (res.phase) dispatch({ type: "phase", phase: res.phase });
+      applyActivated(res.check);
       if (res.budget?.level === "hard") {
         dispatch({ type: "budget", level: "hard", resetAt: res.budget.reset_at, sessionCapped: res.budget.session_capped });
       } else if (!hardSeen) {
@@ -553,9 +732,15 @@ export function LoopLearn() {
     } catch (err) {
       if (g !== gen.current) return null;
       if (streamed) setMessages((prev) => [...prev, { ...asMsg("assistant", streamed), interrupted: true }]);
+      // The grade lands BEFORE the feedback stream starts: a submission that did
+      // not settle (409 already graded, a mid-stream error, Stop) re-reads the
+      // session so the answer box never sticks on a graded item.
+      if (submission && sid) void reconcile(sid, g);
       if (controller.signal.aborted) return null;
       // At the hard level the stream ends with no `done`: that is the pause, not an error.
       if (hardSeen) return null;
+      const { status, detail } = extractErrorDetail(err);
+      if (submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return null;
       reportError(err, "The tutor couldn't answer. Try again.");
       return null;
     } finally {
@@ -564,7 +749,7 @@ export function LoopLearn() {
         setStreamingText(null);
       }
     }
-  }, [applyActivated, reportError]);
+  }, [applyActivated, reportError, reconcile]);
 
   const send = (text: string) => {
     if (!sessionId || paused) return;
@@ -576,6 +761,7 @@ export function LoopLearn() {
 
   const submitAttempt = async (idk: boolean) => {
     if (!sessionId || !item || attemptBusy) return;
+    const g = gen.current;
     const a: LoopCheckAnswer = idk
       ? { idk: true }
       : item.format === "mc_reason"
@@ -592,7 +778,7 @@ export function LoopLearn() {
       (h) => streamLoopCheckAnswer(sessionId, userId, item.question_hash, a, h),
       { submission: true },
     );
-    if (mounted.current) setAttemptBusy(false);
+    if (g === gen.current) setAttemptBusy(false);
     if (res?.graded) void refreshGraph();
   };
 
@@ -602,7 +788,6 @@ export function LoopLearn() {
     const qh = item.question_hash;
     setHintBusy(true);
     setHint(null);
-    dispatch({ type: "hint_taken" });
     try {
       // The draft is the student's work: record it as an attempt first so the
       // hint gate can see it (judged for the gate only; never stored or graded).
@@ -621,6 +806,8 @@ export function LoopLearn() {
       }
       const t = await requestLoopHintTurn(sessionId, userId);
       if (g !== gen.current) return;
+      // In the card while the item is current; the log hides this row until then
+      // (the server saved it as an assistant row, so a reload shows it there).
       setHint({ reply: t.reply });
       setMessages((prev) => [...prev, asMsg("assistant", t.reply)]);
       if (t.phase) dispatch({ type: "phase", phase: t.phase });
@@ -642,9 +829,9 @@ export function LoopLearn() {
     try {
       const r = await nextLoopCheck(sessionId, userId);
       if (g !== gen.current) return;
+      dispatch({ type: "phase", phase: r.phase });
       if (r.check) applyActivated(r.check);
       else setCheckNote(r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
-      dispatch({ type: "phase", phase: r.phase });
     } catch (err) {
       if (g === gen.current) reportError(err, "Couldn't get a check question.");
     } finally {
@@ -660,17 +847,18 @@ export function LoopLearn() {
     setCloseNote(null);
     try {
       const r = await closeLoopSession(sid, userId);
+      // closed whatever the screen shows now: never leave it in the picker
+      dropFromPicker(sid);
       if (g !== gen.current) return;
       streamAbort.current?.abort();
       setClose(r);
       dispatch({ type: "check", item: null });
       dispatch({ type: "phase", phase: "close" });
-      setOpenSessions((prev) => (prev ?? []).filter((s) => s.session_id !== sid));
       void refreshGraph();
     } catch (err) {
       if (g !== gen.current) return;
       const { status, detail } = extractErrorDetail(err);
-      if (status === 409 && detail) {
+      if (status === 409 && detail && detail !== SESSION_CLOSED_DETAIL) {
         setCloseNote(CLOSE_RETRY_COPY[detail] ?? detail);
         return;
       }
@@ -693,17 +881,35 @@ export function LoopLearn() {
     const ids = new Set(nodes.map((n) => n.id));
     return { nodes, edges: graph.edges.filter((e) => ids.has(e.source as string) && ids.has(e.target as string)) };
   }, [graph, courseId]);
-  const focusNodeId = state.focusNodeId;
-  const learner = focusNodeId ? state.learnerState[focusNodeId] : undefined;
+  // The deep link's ?suggest= / ?topic= concept, until a turn names one (legacy parity).
+  const linkedNodeId = useMemo(() => {
+    const want = (deepLink.suggest || deepLink.topic).toLowerCase();
+    return want ? graph.nodes.find((n) => n.name.toLowerCase() === want)?.id ?? null : null;
+  }, [graph.nodes, deepLink]);
+  const focusNodeId = state.focusNodeId ?? linkedNodeId;
+  const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
   const treeHref = focusNodeId ? `/tree?node=${encodeURIComponent(focusNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
   const stepIndex = STEPS.findIndex((s) => s.phases.includes(state.phase));
   const streaming = streamingText !== null;
+  // The card shows the current pose and hint; the log hides those rows while
+  // the item is current (live and after a reload alike), so nothing renders twice.
+  const visibleMessages = useMemo(() => {
+    const inCard = new Set<string>();
+    if (item?.prompt) inCard.add(item.prompt);
+    if (item && hint && "reply" in hint) inCard.add(hint.reply);
+    return inCard.size === 0
+      ? messages
+      : messages.filter((m) => !(m.role === "assistant" && inCard.has(m.content)));
+  }, [messages, item, hint]);
+  const topicOffer =
+    deepLink.topic && sessionId && teaching && !starting && openSessions !== null ? deepLink.topic : null;
 
   // ── Render ─────────────────────────────────────────────────────────────
   const noCourses = courses !== null && courses.length === 0;
   const loadingSessions =
-    !sessionsError && !noCourses && !readOnly && (openSessions === null || (!sessionId && starting));
+    !sessionsError && !noCourses && !readOnly && loadError !== "start" &&
+    (openSessions === null || (!sessionId && starting));
 
   const header = (
     <TopBar
@@ -730,6 +936,7 @@ export function LoopLearn() {
         <>
           {courses && courses.length > 1 && (
             <CustomSelect<string>
+              testId="loop-course-select"
               value={courseId ?? ""}
               options={courses.map((c) => ({ value: c.course_id, label: c.course_code || c.course_name }))}
               onChange={(v) => setCourseId(v)}
@@ -796,15 +1003,16 @@ export function LoopLearn() {
         data-testid="loop-new-session"
         className="btn btn--sm"
         style={{ flexShrink: 0 }}
-        onClick={() => void newSession()}
+        onClick={() => void newSession({ closeCurrent: true })}
         disabled={!courseId || starting}
+        title="Wrap up this session and start a new one"
       >
         + New session
       </button>
     </div>
   );
 
-  const notices = (paused || noCheckItems) && (
+  const notices = (paused || noCheckItems || topicOffer) && (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" }}>
       {paused && (
         <BudgetPausedBanner
@@ -830,6 +1038,25 @@ export function LoopLearn() {
           style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
         >
           {NO_CHECK_ITEMS_COPY}
+        </div>
+      )}
+      {topicOffer && (
+        // ?topic= while a session is open: resume won (a reload never starts a
+        // probe, §11.3); the link's concept is one click away, never automatic.
+        <div
+          data-testid="loop-topic-offer"
+          role="status"
+          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}
+        >
+          <span style={{ color: "var(--text-dim)" }}>You picked “{topicOffer}”. This session is still open.</span>
+          <button
+            data-testid="loop-topic-start"
+            className="btn btn--sm"
+            disabled={starting}
+            onClick={() => void newSession({ closeCurrent: true, topic: topicOffer, mode: deepLink.mode })}
+          >
+            Start a session on {topicOffer}
+          </button>
         </div>
       )}
     </div>
@@ -868,7 +1095,8 @@ export function LoopLearn() {
       <CenteredCard testId="loop-no-course">
         <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Add a course to start learning</div>
         <p style={{ color: "var(--text-dim)", fontSize: 14, margin: 0 }}>
-          The tutor works course by course — add one from your <Link href="/tree">knowledge map</Link>.
+          The tutor works course by course — add one from your{" "}
+          <Link data-testid="loop-no-course-link" href="/tree">knowledge map</Link>.
         </p>
       </CenteredCard>
     );
@@ -918,6 +1146,23 @@ export function LoopLearn() {
         </div>
       </div>
     );
+  } else if (loadError === "start" && !sessionId) {
+    body = (
+      <CenteredCard testId="loop-start-error">
+        <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Couldn&apos;t start a session</div>
+        <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
+          Nothing was started. Try again in a moment.
+        </p>
+        <button
+          data-testid="loop-start-retry"
+          className="btn btn--primary"
+          disabled={starting}
+          onClick={() => void newSession({ topic: deepLink.topic, mode: deepLink.mode })}
+        >
+          Try again
+        </button>
+      </CenteredCard>
+    );
   } else if (loadingSessions) {
     body = <div style={{ padding: 40, color: "var(--text-dim)" }}>{starting ? "Starting your session…" : "Loading…"}</div>;
   } else if (state.phase === "probe") {
@@ -930,16 +1175,26 @@ export function LoopLearn() {
         reference={probeReference}
         note={probeNote}
         busy={probeBusy}
+        loadFailed={loadError === "probe"}
         greeting={messages.find((m) => m.role === "assistant")?.content ?? null}
         onSubmit={() => void submitProbe(false)}
         onIdk={() => void submitProbe(true)}
         onNext={() => void advanceProbe(probeFinished, gen.current)}
+        onRetry={() => { if (sessionId) void nextProbe(sessionId, gen.current); }}
       />
     );
   } else if (state.phase === "plan") {
-    body = <PlanPanel plan={plan} busy={planBusy} onApprove={() => void approvePlan()} />;
+    body = (
+      <PlanPanel
+        plan={plan}
+        busy={planBusy}
+        loadFailed={loadError === "plan"}
+        onApprove={() => void approvePlan()}
+        onRetry={() => { if (sessionId) void loadPlan(sessionId, gen.current); }}
+      />
+    );
   } else if (state.phase === "close") {
-    body = <ClosePanel close={close} names={conceptNames} />;
+    body = <ClosePanel close={close} note={closeNote} names={conceptNames} />;
   } else {
     const firstConcept = plan?.[0];
     const chatHeader = (
@@ -952,7 +1207,6 @@ export function LoopLearn() {
             busy={attemptBusy || streaming}
             hint={hint}
             hintBusy={hintBusy}
-            hintOffer={state.hintOffer}
             onSubmit={() => void submitAttempt(false)}
             onIdk={() => void submitAttempt(true)}
             onHint={() => void askHint()}
@@ -997,7 +1251,7 @@ export function LoopLearn() {
     body = (
       <div data-testid="loop-messages" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <ChatPanel
-          messages={messages}
+          messages={visibleMessages}
           onSend={send}
           header={chatHeader}
           streamingText={streamingText}
@@ -1058,6 +1312,11 @@ export function LoopLearn() {
       </div>
     </FullHeightScreen>
   );
+}
+
+/** A session the "New session" button should wrap up first: one the student is in. */
+function isOpenPhase(phase: LoopPhase): boolean {
+  return phase !== "close";
 }
 
 // ── Pieces ─────────────────────────────────────────────────────────────────
@@ -1144,7 +1403,7 @@ function OptionList({
 }
 
 function ProbePanel({
-  item, count, draft, setDraft, reference, note, busy, greeting, onSubmit, onIdk, onNext,
+  item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
 }: {
   item: LoopProbeItem | null;
   count: number;
@@ -1153,11 +1412,14 @@ function ProbePanel({
   reference: string | null;
   note: string | null;
   busy: boolean;
+  /** The next item failed to load (not a pause): offer a retry, never an empty card. */
+  loadFailed: boolean;
   /** The session opener (model-written, or the hard-level template, A27). */
   greeting: string | null;
   onSubmit: () => void;
   onIdk: () => void;
   onNext: () => void;
+  onRetry: () => void;
 }) {
   const mc = item?.format === "mc_reason";
   const canSubmit = !!item && !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
@@ -1187,6 +1449,14 @@ function ProbePanel({
           </div>
         )}
         {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
+        {!item && !busy && loadFailed && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
+            <span>The next question didn&apos;t load.</span>
+            <button data-testid="loop-probe-retry" className="btn btn--sm" onClick={onRetry}>
+              Try again
+            </button>
+          </div>
+        )}
         {item && (
           <div
             data-testid="loop-probe-item"
@@ -1273,7 +1543,15 @@ function ProbePanel({
   );
 }
 
-function PlanPanel({ plan, busy, onApprove }: { plan: LoopPlanConcept[] | null; busy: boolean; onApprove: () => void }) {
+function PlanPanel({
+  plan, busy, loadFailed, onApprove, onRetry,
+}: {
+  plan: LoopPlanConcept[] | null;
+  busy: boolean;
+  loadFailed: boolean;
+  onApprove: () => void;
+  onRetry: () => void;
+}) {
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
       <div
@@ -1286,7 +1564,15 @@ function PlanPanel({ plan, busy, onApprove }: { plan: LoopPlanConcept[] | null; 
             Built from your check-in: anything due for review first, then what&apos;s next to learn.
           </p>
         </div>
-        {plan === null && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Building your plan…</div>}
+        {plan === null && !loadFailed && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Building your plan…</div>}
+        {plan === null && loadFailed && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
+            <span>Today&apos;s plan didn&apos;t load.</span>
+            <button data-testid="loop-plan-retry" className="btn btn--sm" onClick={onRetry}>
+              Try again
+            </button>
+          </div>
+        )}
         {plan !== null && plan.length === 0 && (
           <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Nothing to plan right now — ask the tutor anything.</div>
         )}
@@ -1333,7 +1619,7 @@ function PlanPanel({ plan, busy, onApprove }: { plan: LoopPlanConcept[] | null; 
 }
 
 function CheckCard({
-  item, draft, setDraft, busy, hint, hintBusy, hintOffer, onSubmit, onIdk, onHint,
+  item, draft, setDraft, busy, hint, hintBusy, onSubmit, onIdk, onHint,
 }: {
   item: LoopCheckItem;
   draft: Draft;
@@ -1341,7 +1627,6 @@ function CheckCard({
   busy: boolean;
   hint: HintView;
   hintBusy: boolean;
-  hintOffer: number | null;
   onSubmit: () => void;
   onIdk: () => void;
   onHint: () => void;
@@ -1360,7 +1645,7 @@ function CheckCard({
         style={{ display: "flex", flexDirection: "column", gap: 4 }}
       >
         <div className="label-micro">Check your understanding</div>
-        <div style={{ fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt ?? ""}</div>
+        <div style={{ fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
       </div>
       {mc ? (
         <>
@@ -1402,11 +1687,6 @@ function CheckCard({
           I don&apos;t know
         </button>
         <div style={{ flex: 1 }} />
-        {hintOffer !== null && (
-          <button data-testid="loop-hint-offer" className="btn btn--sm btn--ghost" disabled={hintBusy || busy} onClick={onHint}>
-            Want a hint?
-          </button>
-        )}
         <button data-testid="loop-hint-button" className="btn btn--sm" disabled={hintBusy || busy} onClick={onHint}>
           {hintBusy ? "Hint…" : "Hint"}
         </button>
@@ -1439,8 +1719,25 @@ function CheckCard({
   );
 }
 
-function ClosePanel({ close, names }: { close: LoopCloseResponse | null; names: Map<string, string> }) {
-  if (!close) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Wrapping up…</div>;
+function ClosePanel({
+  close, note, names,
+}: {
+  close: LoopCloseResponse | null;
+  /** Set when the stored close could not be read (the session was closed elsewhere). */
+  note: string | null;
+  names: Map<string, string>;
+}) {
+  if (!close) {
+    if (!note) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Wrapping up…</div>;
+    return (
+      <CenteredCard testId="loop-close-done">
+        <p style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-dim)" }}>{note}</p>
+        <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
+          Review what&apos;s due
+        </Link>
+      </CenteredCard>
+    );
+  }
   const rec = close.close;
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
@@ -1495,7 +1792,9 @@ function ClosePanel({ close, names }: { close: LoopCloseResponse | null; names: 
           style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 14, color: "var(--text-dim)" }}
         >
           <span>Session closed.</span>
-          <Link href="/study?mode=cards" style={{ color: "var(--accent)" }}>Review what&apos;s due</Link>
+          <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
+            Review what&apos;s due
+          </Link>
         </div>
       </div>
     </div>

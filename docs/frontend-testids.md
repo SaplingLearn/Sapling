@@ -465,7 +465,7 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | --- | --- |
 | `review-due-panel` | the "Due today" panel root |
 | `review-budget` | chip: minutes left of today's review budget |
-| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item) |
+| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read) |
 | `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` ("AI tutor paused until <time>. Flashcards and review keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until your daily AI budget resets. …"); `role="status"`, `data-reset-at`, `data-session-capped` |
 | `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
 | `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
@@ -492,10 +492,16 @@ screen otherwise. The chat log inside `loop-messages` is `ChatPanel`, whose own
 | `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists) |
 | `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3) |
 | `loop-session-{sessionId}` | one open session (topic, start date); `aria-current="true"` on the one shown; a click resumes it |
-| `loop-new-session` | start a new session — the only path to a new probe while a session is open |
+| `loop-new-session` | start a new session — the only path to a new probe while a session is open; it wraps up (`/close`) the open session being left first, so sessions do not pile up open (a 409 there starts nothing) |
+| `loop-course-select` | the course switcher (`CustomSelect`'s trigger; `testId` prop), shown with more than one enrolled course; options are `loop-course-select-option-{courseId}` |
 | `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
 | `loop-sessions-retry` | retry — never falls through to a new session or probe |
 | `loop-no-course` | the student has no enrolled course |
+| `loop-no-course-link` | the knowledge-map link inside `loop-no-course` |
+| `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
+| `loop-start-retry` | retry the start |
+| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered |
+| `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
 | `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
@@ -511,8 +517,10 @@ screen otherwise. The chat log inside `loop-messages` is `ChatPanel`, whose own
 | `loop-probe-submit` | submit the probe answer (`/probe/answer`) |
 | `loop-probe-idk` | "I don't know" (submits `idk: true`, no answer text) |
 | `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
+| `loop-probe-retry` | the next probe item failed to load — retry (`/probe/next`, same session) |
 | `loop-probe-next` | "Next" under the reference — the next probe item, or the plan after the probe's last answer |
 | `loop-plan-concept-{nodeId}` | one planned concept (name, kind chip: Review / New / Related; a band chip only when the response carries one) |
+| `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
 | `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
 | `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`) |
 | `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
@@ -526,13 +534,18 @@ screen otherwise. The chat log inside `loop-messages` is `ChatPanel`, whose own
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
 | `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
-| `loop-hint-offer` | "Want a hint?" (a `hint_offer` stream event; novice band) |
 | `loop-continue` | "Continue" after feedback — sends the next chat turn |
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
 | `loop-close-summary` | the close summary text |
 | `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |
 | `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
-| `loop-close-done` | the closed state ("Session closed." + a link to the review queue) |
+| `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
+| `loop-close-study-link` | the "Review what's due" link inside `loop-close-done` (`/study?mode=cards`) |
+
+`loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
+on the FEEDBACK turn, after the item closed, so the affordance (inside the check
+card) could never render, and a hint then has no item (`/hint` → `no_active_item`).
+Where a novice offer should live is PKG-07's open question (HANDOFF-13).
 
 ### `landing-graph`
 

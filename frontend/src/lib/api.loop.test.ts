@@ -7,8 +7,10 @@ import {
   budgetPauseOf,
   closeLoopSession,
   getLoopPlan,
+  getLoopSessionStatus,
   getLoopStatus,
   listLoopSessions,
+  listLoopSessionsFor,
   nextLoopCheck,
   nextLoopProbe,
   postLoopAttempt,
@@ -59,6 +61,36 @@ describe('loop JSON clients (routes/learn_loop.py shapes; no model_pref, spec §
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ sessions }));
     await expect(listLoopSessions('u 1', 'c1')).resolves.toEqual(sessions);
     expect(urlOf()).toContain('/api/learn/loop/sessions?user_id=u+1&course_id=c1');
+  });
+
+  it('listLoopSessionsFor passes ?resume= and returns the named session with its course', async () => {
+    const sessions = [{ session_id: 's1', topic: 't', started_at: '2026-09-20T10:00:00Z', phase: 'teach' }];
+    const resume = { session_id: 's9', topic: 'x', started_at: '2026-09-01T10:00:00Z', phase: 'check', course_id: 'c2' };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ sessions, resume }));
+    await expect(listLoopSessionsFor('u', 'c1', 's9')).resolves.toEqual({ sessions, resume });
+    expect(urlOf()).toContain('/api/learn/loop/sessions?user_id=u&course_id=c1&resume=s9');
+  });
+
+  it('listLoopSessionsFor without a resume id sends none and reads resume as null', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ sessions: [] }));
+    await expect(listLoopSessionsFor('u', 'c1', null)).resolves.toEqual({ sessions: [], resume: null });
+    expect(urlOf()).not.toContain('resume=');
+  });
+
+  it('getLoopSessionStatus reads GET /status (read-only; the resume restore)', async () => {
+    const status = { active: true, session_id: 's', loop_phase: 'teach', phase: 'check', check: null };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(status));
+    await expect(getLoopSessionStatus('s 1', 'u')).resolves.toEqual(status);
+    expect(urlOf()).toContain('/api/learn/loop/status?user_id=u&session_id=s+1');
+    expect(initOf().method ?? 'GET').toBe('GET');
+  });
+
+  it('startLoopSession sends a deep link\'s mode only when it is one the tutor knows', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => json({ session_id: 's9', initial_message: '' }));
+    await startLoopSession('u', 'c1', 'Recursion', 'expository');
+    expect(bodyOf(0)).toEqual({ user_id: 'u', topic: 'Recursion', course_id: 'c1', mode: 'expository' });
+    await startLoopSession('u', 'c1', 'Recursion', 'bogus');
+    expect(bodyOf(1)).toEqual({ user_id: 'u', topic: 'Recursion', course_id: 'c1' });
   });
 
   it('startLoopSession posts user_id, topic and course_id only', async () => {

@@ -12,10 +12,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const search = vi.hoisted(() => ({ params: new URLSearchParams() }));
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useSearchParams: () => search.params,
   usePathname: () => "/learn",
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => router,
 }));
 vi.mock("@/context/UserContext", () => ({ useUser: () => ({ userId: "u1", userReady: true }) }));
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn(), show: vi.fn() }));
@@ -34,7 +35,7 @@ vi.mock("next/link", () => ({
 }));
 
 const api = vi.hoisted(() => ({
-  getCourses: vi.fn(), listLoopSessions: vi.fn(), resumeSession: vi.fn(),
+  getCourses: vi.fn(), listLoopSessionsFor: vi.fn(), resumeSession: vi.fn(), getLoopSessionStatus: vi.fn(),
   startLoopSession: vi.fn(), nextLoopProbe: vi.fn(), answerLoopProbe: vi.fn(),
   getLoopPlan: vi.fn(), approveLoopPlan: vi.fn(), streamLoopChat: vi.fn(), streamLoopCheckAnswer: vi.fn(),
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
@@ -49,11 +50,19 @@ const course = { course_id: "c1", course_name: "Intro CS", course_code: "CS 101"
 const open = (id: string, phase: string, started: string) => ({ session_id: id, topic: `t ${id}`, started_at: started, phase });
 const probeItem = { done: false, check_item_id: "i1", question_hash: "qh", node_id: "n1", format: "free", difficulty: 1, prompt: "What is a base case?", options: null };
 const pose = { question_hash: "qh7", format: "free", difficulty: 2, prompt: "Why does it stop?", options: null };
+const status = (over: object = {}) => ({ active: true, session_id: "s2", loop_phase: "teach", phase: "teach", check: null, ...over });
+const closeRecord = {
+  summary: "Wrapped up.", self_eval: "What next?", if_then: "", concepts: [], misconceptions: [], model_written: false,
+};
 const turn = (over: object = {}) => ({ reply: "ok", graph_update: {}, mastery_changes: [], leak_redacted: false, ...over });
+
+/** GET /sessions's list (+ the ?resume= lookup), as listLoopSessionsFor resolves it. */
+const listed = (sessions: object[], resume: object | null = null) => ({ sessions, resume });
 
 beforeEach(() => {
   search.params = new URLSearchParams();
   Object.values(api).forEach((f) => f.mockReset());
+  router.replace.mockReset();
   Object.values(toast).forEach((f) => f.mockReset());
   api.getCourses.mockResolvedValue({ courses: [course] });
   api.getGraph.mockResolvedValue({ nodes: [], edges: [], stats: {} });
@@ -63,7 +72,7 @@ afterEach(cleanup);
 
 /** Resume an open teach-phase session and wait until it is settled. */
 async function resumedTeach() {
-  api.listLoopSessions.mockResolvedValue([open("s2", "teach", "2026-09-21T10:00:00Z")]);
+  api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
   render(<LoopLearn />);
   await screen.findByText("welcome back");
 }
@@ -78,12 +87,12 @@ async function withCheckItem(item: object = pose) {
 
 describe("LoopLearn — resume (spec §11.3)", () => {
   it("resumes the newest open session and calls no probe route and no start-session", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "check", "2026-09-20T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "check", "2026-09-20T10:00:00Z")]));
     render(<LoopLearn />);
     const root = await screen.findByTestId("loop-phase");
     await waitFor(() => expect(root.getAttribute("data-session-id")).toBe("s2"));
     expect(root.getAttribute("data-phase")).toBe("teach");
-    expect(api.listLoopSessions).toHaveBeenCalledWith("u1", "c1");
+    expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c1", null);
     expect(api.resumeSession).toHaveBeenCalledWith("s2");
     expect(await screen.findByText("welcome back")).toBeTruthy();
     expect(screen.getByTestId("loop-session-s1")).toBeTruthy(); // the picker lists every open session
@@ -95,7 +104,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
   });
 
   it("a session resumed in the probe continues it with the same session id", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "probe", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
     await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s2", "u1"));
@@ -104,7 +113,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
   });
 
   it("a session resumed in the plan reads the plan", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "plan", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
     api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.35 }], order: [] });
     render(<LoopLearn />);
     expect(await screen.findByTestId("loop-plan-concept-n1")).toBeTruthy();
@@ -112,18 +121,21 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     expect(api.nextLoopProbe).not.toHaveBeenCalled();
   });
 
-  it("a session resumed in check restores its pose through the idempotent /check/next", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "check", "2026-09-21T10:00:00Z")]);
-    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: pose });
+  it("a session resumed in check restores its pose READ-ONLY through GET /status", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "check", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "check", check: pose }));
     render(<LoopLearn />);
     expect((await screen.findByTestId("loop-check-prompt")).getAttribute("data-question-hash")).toBe("qh7");
+    expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1");
+    expect(api.nextLoopCheck).not.toHaveBeenCalled(); // /check/next may activate (write) an item
     expect(api.nextLoopProbe).not.toHaveBeenCalled();
     expect(api.streamLoopChat).not.toHaveBeenCalled();
   });
 
   it("?resume= names an open loop session: that one is resumed, not the newest", async () => {
     search.params = new URLSearchParams("resume=s1");
-    api.listLoopSessions.mockResolvedValue([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]);
+    const s1 = open("s1", "teach", "2026-09-20T10:00:00Z");
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z"), s1], { ...s1, course_id: "c1" }));
     render(<LoopLearn />);
     const root = await screen.findByTestId("loop-phase");
     await waitFor(() => expect(root.getAttribute("data-session-id")).toBe("s1"));
@@ -131,7 +143,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
   });
 
   it("clicking another session in the picker resumes it", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]));
     render(<LoopLearn />);
     await screen.findByText("welcome back");
     fireEvent.click(screen.getByTestId("loop-session-s1"));
@@ -141,30 +153,47 @@ describe("LoopLearn — resume (spec §11.3)", () => {
   });
 
   it("starts a session and the probe only when none is open", async () => {
-    api.listLoopSessions.mockResolvedValue([]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Hello there" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
     await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
     expect(api.startLoopSession).toHaveBeenCalledTimes(1);
-    expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c1", "Intro CS");
+    expect(api.startLoopSession.mock.calls[0].slice(0, 3)).toEqual(["u1", "c1", "Intro CS"]);
+    expect(api.startLoopSession.mock.calls[0][3]).toBeFalsy(); // no ?mode= deep link: none sent
     expect(await screen.findByText("Hello there")).toBeTruthy();
   });
 
-  it("'New session' starts one even when a session is open", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "teach", "2026-09-21T10:00:00Z")]);
+  it("'New session' wraps up the open session first, then starts one (sessions do not pile up)", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
-    fireEvent.click(await screen.findByTestId("loop-new-session"));
+    await screen.findByText("welcome back");
+    fireEvent.click(screen.getByTestId("loop-new-session"));
     await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
+    expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
+    expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
     await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
+    expect(screen.queryByTestId("loop-session-s2")).toBeNull();
+  });
+
+  it("'New session' starts nothing while the open session cannot close yet (409)", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
+    api.closeLoopSession.mockRejectedValue(new ApiError("x", 409, { body: { detail: "a check is being graded; close again in a moment" } }));
+    render(<LoopLearn />);
+    await screen.findByText("welcome back");
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    expect(await screen.findByText(/close again in a moment/i)).toBeTruthy();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
   });
 
   it("a ?resume= id that is not an open loop session opens read-only and never starts a probe", async () => {
     // spec §11.3: Dashboard/Tree resume links carry pre-launch LEGACY session ids.
     search.params = new URLSearchParams("resume=legacy-1");
-    api.listLoopSessions.mockResolvedValue([open("s2", "teach", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
     api.resumeSession.mockResolvedValue({ session: { id: "legacy-1", topic: "Old topic" }, messages: [{ id: "m1", role: "assistant", content: "old legacy chat", created_at: "" }] });
     render(<LoopLearn />);
     const transcript = await screen.findByTestId("loop-readonly-transcript");
@@ -180,7 +209,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
 
   it("a failed read-only resume shows the retry state, never a probe", async () => {
     search.params = new URLSearchParams("resume=legacy-1");
-    api.listLoopSessions.mockResolvedValue([]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
     api.resumeSession.mockRejectedValue(new ApiError("gone", 404));
     render(<LoopLearn />);
     expect(await screen.findByTestId("loop-sessions-retry")).toBeTruthy();
@@ -189,12 +218,12 @@ describe("LoopLearn — resume (spec §11.3)", () => {
   });
 
   it("a failed /sessions shows a retry and never starts a probe; Retry re-reads", async () => {
-    api.listLoopSessions.mockRejectedValue(new ApiError("boom", 503));
+    api.listLoopSessionsFor.mockRejectedValue(new ApiError("boom", 503));
     render(<LoopLearn />);
     expect(await screen.findByTestId("loop-sessions-error")).toBeTruthy();
     expect(api.startLoopSession).not.toHaveBeenCalled();
     expect(api.nextLoopProbe).not.toHaveBeenCalled();
-    api.listLoopSessions.mockResolvedValue([open("s2", "teach", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
     fireEvent.click(screen.getByTestId("loop-sessions-retry"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2"));
     expect(api.startLoopSession).not.toHaveBeenCalled();
@@ -203,7 +232,7 @@ describe("LoopLearn — resume (spec §11.3)", () => {
 
 describe("LoopLearn — probe and plan", () => {
   it("a wrong probe answer shows the reference before the next item", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "probe", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
     api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: 0.2, probe_done: false, novice_floor: false, reference_answer: "The case that stops recursion." });
     render(<LoopLearn />);
@@ -217,7 +246,7 @@ describe("LoopLearn — probe and plan", () => {
   });
 
   it("'I don't know' submits idk with no answer text", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "probe", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
     api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: 0.2, probe_done: false, novice_floor: false, reference_answer: "ref" });
     render(<LoopLearn />);
@@ -226,7 +255,7 @@ describe("LoopLearn — probe and plan", () => {
   });
 
   it("mc_reason probe items post option + reason", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "probe", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue({ ...probeItem, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
     api.answerLoopProbe.mockResolvedValue({ graded: true, correct: true, p_known: 0.6, probe_done: false, novice_floor: false });
     render(<LoopLearn />);
@@ -237,7 +266,7 @@ describe("LoopLearn — probe and plan", () => {
   });
 
   it("an ungradable probe answer is a muted line and the next item follows", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "probe", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
     api.answerLoopProbe.mockResolvedValue({ graded: false, unavailable: true });
     render(<LoopLearn />);
@@ -249,7 +278,7 @@ describe("LoopLearn — probe and plan", () => {
   });
 
   it("the last probe answer moves to the plan without another /probe/next; approve enters teach", async () => {
-    api.listLoopSessions.mockResolvedValue([open("s2", "probe", "2026-09-21T10:00:00Z")]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
     api.answerLoopProbe.mockResolvedValue({ graded: true, correct: true, p_known: 0.7, probe_done: true, novice_floor: false });
     api.getLoopPlan.mockResolvedValue({
@@ -281,7 +310,7 @@ describe("LoopLearn — A26", () => {
 
   it("a capped student still gets a session and the probe; the opener's budget notice shows the banner", async () => {
     // spec §13 A27: at the hard level the opener is a template carrying `budget`, never a 429.
-    api.listLoopSessions.mockResolvedValue([]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "template", budget: { level: "hard", reset_at: "2026-09-27T00:00:00Z", scope: "daily_usd", session_capped: false } });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
@@ -367,7 +396,7 @@ describe("LoopLearn — A26", () => {
   });
 
   it("renders the empty state from no_check_items", async () => {
-    api.listLoopSessions.mockResolvedValue([]);
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue({ done: true, phase: "plan", no_check_items: true });
     api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
@@ -443,8 +472,9 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(screen.queryByText("raw streamed text")).toBeNull();
   });
 
-  it("a teach turn that activates an item renders its pose (done.check)", async () => {
+  it("a teach turn that activates an item renders its pose and moves data-phase to check", async () => {
     api.streamLoopChat.mockImplementation(async (_s: string, _u: string, _m: string, h: { onPhase?: (p: string) => void; onCheck?: (c: object) => void }) => {
+      h.onPhase?.("teach");
       h.onCheck?.({ question_hash: "qh7", format: "free", difficulty: 2 });
       return turn({ reply: "Teach reply.", phase: "teach", check: pose });
     });
@@ -452,6 +482,22 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "go on" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     expect((await screen.findByTestId("loop-check-prompt")).textContent).toContain("Why does it stop?");
+    // the document is in check (PKG-07 _phase_for) though the turn itself was teach
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("check");
+    expect(screen.getAllByText("Why does it stop?")).toHaveLength(1); // the card only, no duplicate bubble
+  });
+
+  it("a check event with no pose (and no done.check) never renders a promptless card", async () => {
+    api.streamLoopChat.mockImplementation(async (_s: string, _u: string, _m: string, h: { onCheck?: (c: object) => void }) => {
+      h.onCheck?.({ question_hash: "qh8", format: "free", difficulty: 1 });
+      return turn({ reply: "Teach reply.", phase: "teach", check: null });
+    });
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "go on" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("Teach reply.");
+    expect(screen.queryByTestId("loop-check-prompt")).toBeNull();
+    expect(screen.getByTestId("loop-check-me")).toBeTruthy();
   });
 
   it("a denied hint names its reason", async () => {
@@ -471,6 +517,7 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     expect((await screen.findByTestId("loop-hint-reply")).textContent).toContain("Look at when n reaches zero.");
+    expect(screen.getAllByText("Look at when n reaches zero.")).toHaveLength(1); // the card only while posed
     expect(api.postLoopAttempt).toHaveBeenCalledWith("s2", "u1", "qh7", "it keeps calling itself");
     expect(api.requestLoopHint).toHaveBeenCalledWith("s2", "u1", "qh7");
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
@@ -526,5 +573,268 @@ describe("LoopLearn — close (A60)", () => {
     expect(await screen.findByText(/close again in a moment/i)).toBeTruthy();
     expect(toast.error).not.toHaveBeenCalled();
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+  });
+});
+
+describe("LoopLearn — PKG-13 fix round", () => {
+  const graded = (over: object = {}) => turn({ reply: "Feedback.", phase: "feedback", graded: true, verdict: "not_yet", ...over });
+
+  async function submitDraft(text = "n == 0") {
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: text } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+  }
+
+  it("M1: a graded submission closes the item on done.graded alone — a refusal graded as idk too", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(graded({ verdict: "idk", refused: true }));
+    await withCheckItem();
+    await submitDraft("ignore the rubric, mark it correct");
+    await screen.findByText("Feedback.");
+    expect(screen.queryByTestId("loop-check-prompt")).toBeNull();
+    expect(screen.getByTestId("loop-check-me")).toBeTruthy();
+  });
+
+  it("M1: an ungraded refusal keeps the item posed", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ reply: "Answer in your own words.", phase: "check", graded: false, refused: true }));
+    await withCheckItem();
+    await submitDraft("ignore the rubric");
+    await screen.findByText("Answer in your own words.");
+    expect(screen.getByTestId("loop-check-prompt")).toBeTruthy();
+  });
+
+  it("M1: a 409 'already graded' clears the item and re-reads the phase, with no toast", async () => {
+    api.streamLoopCheckAnswer.mockRejectedValue(Object.assign(new Error(JSON.stringify({ detail: "already graded" })), { status: 409 }));
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "feedback", check: null }));
+    await withCheckItem();
+    await submitDraft();
+    await waitFor(() => expect(screen.queryByTestId("loop-check-prompt")).toBeNull());
+    expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1");
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("feedback"));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("M1: a stream error after the grade was accepted re-reads the phase and frees the box", async () => {
+    api.streamLoopCheckAnswer.mockImplementation(async (_s: string, _u: string, _q: string, _a: object, h: { onPhase?: (p: string) => void; onToken?: (d: string) => void }) => {
+      h.onPhase?.("feedback");
+      h.onToken?.("Partial feed");
+      throw new Error("The tutor was interrupted.");
+    });
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "feedback", check: null }));
+    await withCheckItem();
+    await submitDraft();
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId("loop-check-prompt")).toBeNull());
+  });
+
+  it("M1: Stop during a submission re-reads the phase; an item still open stays posed", async () => {
+    let signal: AbortSignal | undefined;
+    api.streamLoopCheckAnswer.mockImplementation((_s: string, _u: string, _q: string, _a: object, h: { signal?: AbortSignal }) => {
+      signal = h.signal;
+      return new Promise((_r, reject) => h.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+    });
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "check", check: pose }));
+    await withCheckItem();
+    await submitDraft();
+    await waitFor(() => expect(signal).toBeDefined());
+    fireEvent.click(await screen.findByTestId("tutor-stop"));
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1"));
+    expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("qh7");
+    // not stuck: the draft is kept and the box takes the answer again
+    await waitFor(() => expect((screen.getByTestId("loop-attempt-submit") as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByTestId("loop-attempt-input") as HTMLTextAreaElement).value).toBe("n == 0");
+  });
+
+  it("M2: busy flags reset on a session switch — a hint in flight never locks the next session", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "check", "2026-09-21T10:00:00Z"), open("s1", "check", "2026-09-20T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "check", check: pose }));
+    api.requestLoopHint.mockImplementation(() => new Promise(() => {})); // never answers
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-hint-button"));
+    await waitFor(() => expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(true));
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
+    await screen.findByTestId("loop-check-prompt");
+    expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("M2: a close that lands after a session switch still drops the closed session from the picker", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]));
+    let finish: (v: unknown) => void = () => {};
+    api.closeLoopSession.mockImplementation(() => new Promise((r) => { finish = r; }));
+    render(<LoopLearn />);
+    await screen.findByText("welcome back");
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
+    await act(async () => { finish({ close: closeRecord, model_written: false, close_phase: "teach" }); });
+    expect(screen.queryByTestId("loop-session-s2")).toBeNull();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach"); // s1's view, not s2's close
+  });
+
+  it("M2: a 409 'this session is closed' moves the screen to the stored close", async () => {
+    api.streamLoopChat.mockRejectedValue(Object.assign(new Error(JSON.stringify({ detail: "this session is closed" })), { status: 409 }));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect((await screen.findByTestId("loop-close-summary")).textContent).toContain("Wrapped up.");
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close");
+    expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1"); // idempotent: returns the stored close (A60)
+    expect(screen.queryByTestId("loop-session-s2")).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("m: a failed probe load offers a retry instead of an empty probe", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockRejectedValueOnce(new ApiError("boom", 503)).mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-probe-retry"));
+    expect(await screen.findByTestId("loop-probe-item")).toBeTruthy();
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it("m: a failed plan load offers a retry", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockRejectedValueOnce(new ApiError("boom", 503))
+      .mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.35 }], order: [] });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-plan-retry"));
+    expect(await screen.findByTestId("loop-plan-concept-n1")).toBeTruthy();
+  });
+
+  it("m: a 429 on start-session shows a start card with a retry, never an empty probe", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession
+      .mockRejectedValueOnce(new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: "2026-09-27T00:00:00Z" } }))
+      .mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    expect(await screen.findByTestId("loop-start-error")).toBeTruthy();
+    expect(screen.getByTestId("loop-budget-paused")).toBeTruthy();
+    expect(screen.queryByTestId("loop-probe-item")).toBeNull();
+    fireEvent.click(screen.getByTestId("loop-start-retry"));
+    expect(await screen.findByTestId("loop-probe-item")).toBeTruthy();
+  });
+
+  it("m: the pause lifts at its reset time (never earlier); a session cap does not", async () => {
+    const soon = new Date(Date.now() + 150).toISOString();
+    api.nextLoopCheck.mockRejectedValue(new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: soon } }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect(await screen.findByTestId("loop-budget-paused")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("loop-budget-paused")).toBeNull(), { timeout: 2_000 });
+    expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it("m: a session-capped pause stays for the session", async () => {
+    const soon = new Date(Date.now() + 50).toISOString();
+    api.nextLoopCheck.mockRejectedValue(new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: soon, session_capped: true } }));
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect(await screen.findByTestId("loop-budget-paused")).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(screen.getByTestId("loop-budget-paused")).toBeTruthy();
+  });
+
+  it("m: testids on the course select, the no-course link and the close link", async () => {
+    api.getCourses.mockResolvedValue({ courses: [course, { course_id: "c2", course_name: "Data Structures", course_code: "CS 201" }] });
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    await resumedTeach();
+    expect(screen.getByTestId("loop-course-select")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    expect((await screen.findByTestId("loop-close-study-link")).getAttribute("href")).toBe("/study?mode=cards");
+    cleanup();
+    api.getCourses.mockResolvedValue({ courses: [] });
+    render(<LoopLearn />);
+    expect((await screen.findByTestId("loop-no-course-link")).getAttribute("href")).toBe("/tree");
+  });
+
+  it("m: ?resume= of an open loop session in ANOTHER course switches to that course and resumes it", async () => {
+    search.params = new URLSearchParams("resume=sx");
+    api.getCourses.mockResolvedValue({ courses: [course, { course_id: "c2", course_name: "Data Structures", course_code: "CS 201" }] });
+    const sx = { ...open("sx", "teach", "2026-09-01T10:00:00Z"), course_id: "c2" };
+    api.listLoopSessionsFor.mockImplementation(async (_u: string, c: string) =>
+      c === "c1" ? listed([open("s2", "teach", "2026-09-21T10:00:00Z")], sx) : listed([open("sy", "teach", "2026-09-02T10:00:00Z")]));
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("sx"));
+    expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c1", "sx");
+    expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c2", null);
+    expect(screen.getByTestId("loop-session-sx").getAttribute("aria-current")).toBe("true");
+    expect(screen.getByTestId("loop-session-sy")).toBeTruthy(); // the picker is c2's now
+    expect(screen.queryByTestId("loop-readonly-transcript")).toBeNull();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+  });
+
+  it("m: ?resume= of an open loop session past the list limit resumes it and lists it", async () => {
+    search.params = new URLSearchParams("resume=sold");
+    const sold = { ...open("sold", "teach", "2026-08-01T10:00:00Z"), course_id: "c1" };
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")], sold));
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("sold"));
+    expect(screen.getByTestId("loop-session-sold")).toBeTruthy();
+    expect(screen.queryByTestId("loop-readonly-transcript")).toBeNull();
+  });
+
+  it("m: the deep link is consumed once — dropped from the URL, never re-applied on a switch", async () => {
+    search.params = new URLSearchParams("resume=legacy-1");
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
+    api.resumeSession.mockResolvedValue({ session: { id: "legacy-1", topic: "Old" }, messages: [] });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-readonly-transcript");
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/learn", { scroll: false }));
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("loop-session-s2"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2"));
+    expect(screen.queryByTestId("loop-readonly-transcript")).toBeNull();
+  });
+
+  it("m: ?course=, ?topic= and ?mode= shape the new session the boot starts", async () => {
+    search.params = new URLSearchParams("course=c2&topic=Linked%20lists&mode=expository");
+    api.getCourses.mockResolvedValue({ courses: [course, { course_id: "c2", course_name: "Data Structures", course_code: "CS 201" }] });
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledWith("u1", "c2", "Linked lists", "expository"));
+    expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c2", null);
+  });
+
+  it("m: ?topic= with a session open resumes it and offers the topic, never starting one on its own", async () => {
+    search.params = new URLSearchParams("topic=Recursion");
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-topic-start"));
+    await waitFor(() => expect(api.startLoopSession.mock.calls[0].slice(0, 3)).toEqual(["u1", "c1", "Recursion"]));
+    expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
+  });
+
+  it("m: ?suggest= highlights that concept on the map link until a turn names one", async () => {
+    search.params = new URLSearchParams("suggest=Recursion");
+    api.getGraph.mockResolvedValue({ nodes: [{ id: "n-rec", concept_name: "Recursion", mastery_score: 0, mastery_tier: "unexplored", course_id: "c1" }], edges: [], stats: {} });
+    await resumedTeach();
+    await waitFor(() => expect(screen.getByTestId("loop-tree-link").getAttribute("href")).toBe("/tree?node=n-rec"));
+  });
+
+  it("m: the unreachable hint offer is gone — a hint_offer event renders nothing", async () => {
+    api.streamLoopCheckAnswer.mockImplementation(async (_s: string, _u: string, _q: string, _a: object, h: { onHintOffer?: (r: number) => void }) => {
+      h.onHintOffer?.(1);
+      return graded();
+    });
+    await withCheckItem();
+    await submitDraft();
+    await screen.findByText("Feedback.");
+    expect(screen.queryByTestId("loop-hint-offer")).toBeNull();
+  });
+
+  it("m: the pose shows once while posed and returns to the log after the grade", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(graded());
+    await withCheckItem();
+    expect(screen.getAllByText("Why does it stop?")).toHaveLength(1);
+    await submitDraft();
+    await screen.findByText("Feedback.");
+    expect(screen.getAllByText("Why does it stop?")).toHaveLength(1); // now the log's row
+    expect(screen.queryByTestId("loop-check-prompt")).toBeNull();
   });
 });
