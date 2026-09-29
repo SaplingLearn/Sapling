@@ -126,6 +126,16 @@ PI_MIN_ROOM = 5
 WHEELSPIN_OPPS = 10
 MISCONCEPTION_CONFIDENCE = 0.7
 NOVICE_FLOOR_MISSES = 3
+# PKG-10 (spec §3.3 "wrong on >= 2 isomorphs with the same wrong_key").
+MISCONCEPTION_MIN_ISOMORPHS = 2
+# PKG-10 † (spec §13 A6): spec §3.3 says "wrong with low confidence -> gap" with
+# no cut-point. Student-stated confidence at or below this is "low"; above it
+# and below MISCONCEPTION_CONFIDENCE is "unknown" (re-ask an isomorph). A/B
+# candidate. Unused on the served path until a student confidence field exists.
+GAP_CONFIDENCE_MAX = 0.4
+# PKG-10: the longest wrong_key the misconception store keeps and the learner
+# brief renders (an identifier: [a-z0-9][a-z0-9_]*; PKG-09's brief pattern).
+MISCONCEPTION_KEY_MAX_CHARS = 64
 # Spec §3.2 rating map / §3.3 evidence mapping: correct after H1..H3 is "assisted"
 # (FSRS Hard, WEIGHT_ASSISTED); correct after H4..H6 is FSRS Again. Name from
 # §13 A6, added by PKG-02 (fsrs.rating_for); PKG-03 Evidence.assisted and
