@@ -10,10 +10,11 @@ Every graded explicit submission on the loop check route now runs the spec §3.3
 
 - `backend/learning/misconceptions.py` (was a stub):
   - `Verdict` (= `learning.evidence.MisconceptionVerdict`: `none|unknown|slip|misconception|gap|not_known|novice`), `KEY_PATTERN` (`[a-z0-9][a-z0-9_]{0,63}`), `is_key(key) -> bool`.
-  - `Attempt` (pydantic, `extra="forbid"`): `question_hash, node_id, correct, wrong_key, confidence (0..1, STUDENT-stated), difficulty, idk, isomorph_of` — no free text.
+  - `Attempt` (pydantic, `extra="forbid"`): `question_hash, node_id, correct, wrong_key, confidence (0..1, STUDENT-stated), difficulty, idk, isomorph_of, released, after_release` — no free text. `released`: the attempt released its concept's reference (not correct, idk, or max_rung ≥ RUNG_NO_CREDIT_MIN — A76); `after_release`: it was graded as a re-check.
   - `slip_or_misconception(history: list[Attempt]) -> Verdict` — pure, one node's history (ValueError on mixed nodes), first match wins (PKG-10 Behaviour 2).
   - `attempts_of(loop_state) -> list` (the live log; a malformed stored value is replaced by `[]`), `attempts_for_node(log, node_id) -> list[Attempt]` (skips malformed rows), `confront_of(loop_state) -> dict | None` (a malformed/incomplete marker or a non-identifier key reads as None), `set_confront(loop_state, marker | None)`, `carry(loop_state, diagnosis | None)` (the route's CAS mutate: appends the attempt, sets the marker, or clears the marker it cleared only while the fresh document still holds that same marker).
   - `record(user_id, node_id, check_item_id, wrong_key, evidence_text) -> dict` (open-row insert-or-increment; `evidence_text` encrypted here; a non-identifier key is refused with no read; `{}` on any DB error; the log line carries no student text), `resolve(user_id, node_id, wrong_key) -> int` (no caller yet), `open_for(user_id, node_ids) -> [{node_id, wrong_key, count}]` (count desc, identifier keys only, no read for `[]`, `[]` on error, never reads `evidence_text`), `rollup(course_id) -> list[dict]` (`rpc("misconception_rollup", …)`, `[]` on error; backend-only).
+- Fix-round symbols: `learning/misconceptions.py::last_release_on_node(loop_state, node_id) -> bool | None` (A76; replaces fix round 1's `released_on_node`), `record()` now one rpc to `misconception_record`, `open_for` filters `last_seen_at >= now − MISCONCEPTION_RECENT_DAYS`, `_utcnow()`; `learning/loop_state_store.py::latest_evidence_released(user_id, node_id, *, since) -> bool | None` (A76 R2-2); `learning/leak.py::in_answer_position(text, start, end)` (PKG-06 reopen); `learning/checks.py::_wrong_text_answer_reasons`, `_single_token_answer`, `_RESULT_VERB`, `_CONDITION_AFTER` (PKG-04 reopen); `routes/learn_loop.py::_recheck_after_release`, `_requests_of`, `_confrontation_text`, `_LoopTurn.run_requests`; SQL `misconception_record(p_id, p_user_id, p_node_id, p_check_item_id, p_wrong_key, p_evidence_text) RETURNS TABLE (id text, count int)` and index `misconceptions_open_key_uidx` (migration `20260929143810_learning_misconceptions_atomic.sql`); `decision.made` payload key `prior`; params `MISCONCEPTION_RECENT_DAYS = 30 †`, `RECHECK_RELEASE_WINDOW_HOURS = 24 †`, `MISCONCEPTION_CONFRONT_MIN_RUNG = 4`.
 - `backend/learning/evidence.py::MisconceptionVerdict`, `Evidence.verdict`, `Evidence.wrong_key` (PKG-03 reopen).
 - `backend/learning/policy.py::next_isomorph(item, items) -> ItemLike | None` (PKG-06 reopen). Loop-state top-level keys `attempts` (list of Attempt dicts) and `confront` (`{node_id, wrong_key, check_item_id}` | null), riding `LoopState.extra`.
 - `backend/agents/tools/check.py` (PKG-05 reopen): `grader_answer_text(item, answer) -> str`; `async match_wrong_key(item, *, prior, answer_text, deps) -> str | None`; `async apply_misconception_rule(deps, *, item, grade, evidence) -> Verdict | None`; `GradeOutcome.verdict`, `GradeOutcome.diagnosis` (`{attempt, confront, cleared, record}`); `_record` is async.
@@ -29,6 +30,7 @@ Every graded explicit submission on the loop check route now runs the spec §3.3
 
 - `MISCONCEPTION_MIN_ISOMORPHS = 2` (spec §3.3 "≥ 2 isomorphs").
 - `MISCONCEPTION_RECENT_DAYS = 30 †` (fix round F6; spec §13 A75(i); A/B candidate).
+- `RECHECK_RELEASE_WINDOW_HOURS = 24 †` (fix round 2 R2-2; spec §13 A76; A/B candidate).
 - `GAP_CONFIDENCE_MAX = 0.4 †` (spec §13 A6; A/B candidate; unused on the served path until a student-confidence field exists).
 - `NOVICE_FLOOR_IDK = 2 †` (spec §13 A6; PKG-08 added it — verified present).
 - `MISCONCEPTION_KEY_MAX_CHARS = 64` (the PKG-09 brief's key pattern, now the store's).
@@ -54,6 +56,8 @@ Every graded explicit submission on the loop check route now runs the spec §3.3
 
 ## Known gaps
 
+- An exhausted compare-and-set on the grade's save (409, the grading claim still held) loses the misconception row: it is written only after that save confirms our claim (conformance 8), and the item is never graded again. The evidence itself is already flushed.
+- The re-check rule's journal half (A76) is one extra owner-scoped read on the first graded item of a concept in a session; a failed read decides nothing (graded normally).
 - Student-stated confidence is `None` (A16's body has no confidence field; post-series reason/confidence tier), so only the two-isomorph path yields `misconception` today, and `gap` never fires on the served path.
 - A misconception recorded mid-session reaches the learner brief only from the next session (the brief is built once, A19); in-session the confrontation line carries it.
 - A marker waits while no turn has room (develop-band teach turns sit below H4; soft budget/deep cap downgrade to standard): the confrontation may never happen in that session; the store row and the next brief still carry the key.
@@ -91,6 +95,16 @@ grep -cE "^def (record|slip_or_misconception|rollup)\(" backend/learning/misconc
 - **Formatting** the whole-file ruff reflows of `agents/function_handlers_e2e.py`, `tests/test_e2e_function_handlers.py` and two `routes/learn_loop.py` hunks are reverted. — e15dfc12, 2ba00440
 - **Conformance 2 (eval record, stated in full)** standard's three runs: run 1 Confronts 0.43 (RetriesUsed 0.57); run 2 Confronts 0.50 with `_raised: true` (a case errored); run 3 Confronts 0.43, FeedbackNeverEndsInAnswer 0.857 (RetriesUsed 0.57). Deep: every served gate 1.0 in all three (RetriesUsed 0.57 / 0.86 / 0.71). Deep-cap interaction: a develop/profic session that has spent `LOOP_SESSION_MAX_DEEP_REQUESTS` routes the confronting turn to standard, which carries no line — the marker waits the rest of the session.
 - Suite after the fix round: 7862 passed, 140 skipped (the 2 new skips are the integration-marked tests); `run_all` replay 16/16 PASS; no re-recording (≤ $1 cap: $0 spent).
+
+## Fix round 2 (2026-09-29)
+
+- PKG-09 integration test: `tests/integration/test_session_close_db.py` used mode `exam`, which violates `sessions_mode_check` before ON CONFLICT runs; now `expository` — 9ed50732.
+- **R2-1** `released` uses the revealed rule (wrong, idk, or a worked H4/H6 answer shown) — 3557a43c, f0249d18.
+- **R2-2** a session hop no longer bypasses the rule: with no attempt on the concept this session, the node's newest evidence row within `RECHECK_RELEASE_WINDOW_HOURS` decides — ad48ac1a.
+- **R2-3 (decided)** only the NEXT graded item on the concept after a release is a re-check; the one after is normal — 3557a43c, ad48ac1a. Recorded as spec §13 **A76** (with a §3.3 cross-reference).
+- **R2-4** the drafting lint reads a single-token numeric/boolean answer only as a stated result (answer position via `leak.in_answer_position`, a result verb, never before a condition); the reviewer's honest cases are clean, multi-token answers stay strict — 06a52643, 919afcaf.
+- Docs: A75 header names the PKG-04 reopen and 05b's code change; §4's DDL block points at A75(f); A76 added.
+- Suite 7889 passed, 140 skipped; replay run_all 16/16 PASS; $0 live.
 
 ## Open questions for the series owner
 
