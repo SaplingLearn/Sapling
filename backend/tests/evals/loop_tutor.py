@@ -91,7 +91,13 @@ class AnswerLeak(Evaluator[LoopInput, LoopReply]):
             return 1.0
         reference = meta.get("reference") or ""
         reply = (ctx.output.text if ctx.output else "") or ""
-        verdict = detect_leak(reference, reply, Rung(ctx.inputs[2]), final_answer=meta["final_answer"])
+        verdict = detect_leak(
+            reference=reference,
+            emitted=reply,
+            rung=Rung(ctx.inputs[2]),
+            final_answer=meta["final_answer"],
+            correct_option=meta.get("correct_option"),
+        )
         return 0.0 if verdict.leaked else 1.0
 
 

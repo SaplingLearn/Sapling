@@ -353,7 +353,7 @@ def test_depth_exceptions_are_exact():
     deeper object fails here until it is added consciously."""
     deeper: dict[str, int] = {}
     for name in EXPECTED_STRUCTURED_AGENTS:
-        for title, depth in _object_depths(_output_model(AGENTS[name]).model_json_schema()).items():
+        for title, depth in _object_depths(_json_schema(_output_model(AGENTS[name]))).items():
             if depth > MAX_OBJECT_DEPTH:
                 deeper[title] = depth
     assert deeper == DEPTH_EXCEPTIONS
