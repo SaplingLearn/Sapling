@@ -397,10 +397,11 @@ do_up() {
   echo "▶ Booting the E2E stack (scripts/e2e-up.sh)…"
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
-  # Learning loop build phase (PKG-13): the flag ON, only the seeded loop users
-  # carry the staff/QA toggle; PKG-14b removes this export. Spec §13 A5: the E2E
-  # env scales the ZPD gate seconds. e2e-up.sh defaults both; set here so the
-  # explorer's stack is visibly the lane's.
+  # Learning loop build phase (PKG-13): the flag ON — the per-student gate only for
+  # the seeded loop users, but the process-wide branches (upload check-item
+  # drafting, A35 course context) for everyone; see e2e-up.sh. PKG-14b removes
+  # this export. Spec §13 A5: the E2E env scales the ZPD gate seconds. e2e-up.sh
+  # defaults both; set here so the explorer's stack is visibly the lane's.
   export LEARNING_LOOP_ENABLED=true
   export LEARNING_GATE_TIME_SCALE=0.01
   # Unconditional (matches CI's unconditional dummy, #439): the below-seam RAG

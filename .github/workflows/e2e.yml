@@ -112,7 +112,9 @@ jobs:
           # last 429. e2e-up.sh sets the same value; kept here so what the
           # lane actually runs under is visible beside the rest of the seam.
           QUIZ_GENERATE_RATE_LIMIT: "1000"
-          # build phase (PKG-13); PKG-14b replaces this with the default/kill-switch matrix
+          # build phase (PKG-13): the gate only for the seeded loop users, but the
+          # process-wide branches (upload check items, A35 course context) for
+          # everyone — no flag-off leg until PKG-14b's default/kill-switch matrix
           LEARNING_LOOP_ENABLED: "true"
           # spec §13 A5: the E2E env scales the ZPD gate seconds (e2e-up.sh sets the same)
           LEARNING_GATE_TIME_SCALE: "0.01"

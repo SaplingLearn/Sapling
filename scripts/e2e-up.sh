@@ -249,13 +249,22 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
 # Learning loop series (PKG-13), build phase: the lane boots with the loop flag ON.
-# Only the seeded loop users carry the staff/QA toggle; PKG-14b removes this export
-# (spec §11.4: the default lane then runs the code default). The loop users are
-# rich-user-loop and rich-user-capped (user_settings.learning_loop_beta), so every
-# legacy spec keeps the pre-series path; frontend/e2e/learn-loop.spec.ts holds the
-# loop's journeys. Exported, so it beats backend/.env.
+# Two things follow, and only the first is per student:
+#  - the per-student GATE (learning.gate) is on only for the seeded loop users
+#    (rich-user-loop, rich-user-capped: user_settings.learning_loop_beta), so a
+#    legacy user's tutor, quiz and Learn/Study screens keep the pre-series path;
+#  - the PROCESS-WIDE flag branches are on for EVERYONE: every upload indexes and
+#    drafts check items inline (routes/documents.py `_index_then_check_items`, run
+#    inline in function mode), and course context writes the numbers-only
+#    offering_summary (services/course_context_service.py, spec §13 A35).
+# So the legacy upload / course-context specs exercise the loop's branches here,
+# not the flag-off path production still runs. That flag-off leg is NOT covered by
+# this lane until PKG-14b adds the kill-switch lane (spec §11.4; recorded in
+# HANDOFF-13 Known gaps). PKG-14b also removes this export (the default lane then
+# runs the code default). frontend/e2e/learn-loop.spec.ts holds the loop's
+# journeys. Exported, so it beats backend/.env.
 export LEARNING_LOOP_ENABLED="${LEARNING_LOOP_ENABLED:-true}"
-echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED for this stack (PKG-13 build phase; only the seeded loop users carry the staff/QA toggle)"
+echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED for this stack (PKG-13 build phase: the gate only for the seeded loop users; upload check items + A35 course context for everyone)"
 # Spec §13 A5: the E2E env scales every GATE_* seconds constant (the ZPD hint
 # gates' independent-work and dwell times) by 0.01, so a journey waits a
 # fraction of a second where a student waits a minute. Production never sets it

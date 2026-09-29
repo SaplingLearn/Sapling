@@ -81,9 +81,11 @@ COURSE_CS_CODE = "CS101"
 # Learning loop (PKG-13): the loop users (staff/QA toggle, build phase; spec
 # §13 A14). The loop is dark behind LEARNING_LOOP_ENABLED during the build and
 # user_settings.learning_loop_beta is a staff/QA toggle set by SQL or this seed
-# (spec §7). Only these users carry it, so every legacy rich-* user stays on the
-# pre-series path — the E2E lane runs with LEARNING_LOOP_ENABLED=true and relies
-# on that split to keep tutor/quiz specs untouched. PKG-14b rewrites this
+# (spec §7). Only these users carry it, so every legacy rich-* user's GATE stays
+# off — the E2E lane runs with LEARNING_LOOP_ENABLED=true and relies on that split
+# to keep the tutor/quiz/Learn paths of legacy users untouched. The flag's
+# process-wide branches (upload check-item drafting, A35 course context) are on
+# for everyone in the lane regardless (scripts/e2e-up.sh). PKG-14b rewrites this
 # comment: after launch the gate ignores the toggle (spec §11.2).
 USER_LOOP = "rich-user-loop"
 USER_CAPPED = "rich-user-capped"
