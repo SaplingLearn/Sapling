@@ -364,6 +364,36 @@ def _phase_for(state: dict) -> str:
     return "check"
 
 
+def _loop_phase(doc: dict) -> str:
+    """The session's loop phase (PKG-08's top-level `phase`: probe → plan →
+    teach). A document without the key is probing, unless its plan is already
+    approved (a document /plan/approve wrote before the key existed)."""
+    phase = doc.get("phase")
+    if isinstance(phase, str) and phase:
+        return phase
+    plan = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
+    return "teach" if plan.get("approved") else "probe"
+
+
+#: PKG-08 reopen: the teaching routes' 409 while the probe or the plan is open.
+#: A posed probe item lives under `probe.current`, not PKG-07's `current`, so a
+#: teach turn then would run with no guarded item (it could hand out the answer).
+_TEACHING_CLOSED = {"probe": "finish the probe first", "plan": "finish the plan first"}
+
+
+def _require_teaching(state: dict) -> None:
+    detail = _TEACHING_CLOSED.get(_loop_phase(state))
+    if detail:
+        raise HTTPException(status_code=409, detail=detail)
+
+
+def _teaching_open(session_id: str, user_id: str) -> None:
+    """Ownership, then the phase: a teaching route runs only once the plan is
+    approved (spec §9: probe → plan → teach). Reads only; writes nothing."""
+    _session_scope(session_id, user_id)
+    _require_teaching(_load_loop_state(session_id))
+
+
 def _turn_phase(kind: str, state_phase: str) -> str:
     """The phase a turn of `kind` runs in, given the document's phase."""
     if kind == "feedback":
@@ -1777,6 +1807,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
     return {
         "active": True,
         "session_id": session_id,
+        "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
         "phase": _phase_for(dict(state, current=active if item is not None else None)),
         "band": band,
         "ceiling": int(ceiling),
@@ -1791,6 +1822,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
 async def chat(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
+    _teaching_open(body.session_id, body.user_id)
     return await _json_turn(
         lambda: _LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on),
         "loop chat agent",
@@ -1801,6 +1833,7 @@ async def chat(body: ChatBody, request: Request):
 async def chat_stream(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
+    _teaching_open(body.session_id, body.user_id)
     return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
 
 
@@ -2167,6 +2200,7 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     _gate(body.user_id, request)
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
+    _require_teaching(state)
     qh = body.question_hash
     entry = _steps(state).get(qh)
     if not isinstance(entry, dict) or state.get("current") != qh:
@@ -2222,6 +2256,7 @@ async def action(body: ActionBody, request: Request):
     (invariant 26)."""
     loop_on = _gate(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
+    _teaching_open(body.session_id, body.user_id)
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
     chat_body = ChatBody(
         session_id=body.session_id,
@@ -2278,6 +2313,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     _consume_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
+    _require_teaching(state)
     active = state.get("current")
     entry = (state.get("steps") or {}).get(active) if active else None
     now = _now_s()
@@ -2361,14 +2397,6 @@ class _BoundItem:
 
     def __getattr__(self, name: str):
         return getattr(self.item, name)
-
-
-def _loop_phase(doc: dict) -> str:
-    phase = doc.get("phase")
-    if isinstance(phase, str) and phase:
-        return phase
-    plan = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
-    return "teach" if plan.get("approved") else "probe"
 
 
 def _require_phase(doc: dict, phase: str) -> None:
