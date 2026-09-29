@@ -5999,3 +5999,93 @@ def test_a_multi_token_answer_keeps_the_strict_check(wrong_text):
         "4x^3", wrong_text, reference="By the power rule the derivative of x^4 is 4x^3."
     )
     assert _states_answer(draft)
+
+
+# ── PKG-10 fix round 3 (R3-2): a single token is a stated result by default ──
+
+
+@pytest.mark.parametrize(
+    "final_answer,wrong_text",
+    [
+        # the adversarial reviewer's misses: a result verb the old list lacked...
+        ("2", "Concludes 2."),
+        ("2", "Writes 2 as the final answer."),
+        ("2", "Picks 2 because it looks right."),
+        ("2", "Arrives at 2 by guessing."),
+        ("2", "Answers two."),
+        # ...and a number followed by a condition (the exemption is boolean-only)
+        ("2", "Says the limit is 2 for this function."),
+        ("2", "The limit equals 2 if you simplify, but thinks it does not exist."),
+        ("2", "Gets 2 only by luck."),
+        ("2", "Gets 2 when simplifying first, but claims DNE."),
+        ("6", "Computes 18/3 = 6 but then reports the median."),
+        ("true", "Says it is true."),
+        ("true", "Concludes true."),
+        ("no", "Says no."),
+        ("2", "Settles on 2 without checking."),
+    ],
+)
+def test_a_single_token_stated_as_the_result_is_caught_whatever_the_verb(final_answer, wrong_text):
+    """R3-2: the verb list could never be complete (concludes, writes, picks,
+    arrives at, answers, says, settles on, …). A single numeric/boolean token is
+    now read as STATED unless its position shows a structural non-result role,
+    and the condition exemption ("true only for positive n") is for a boolean
+    answer only — "2 only by luck" still says 2."""
+    assert _states_answer(_wrong_reason_draft(final_answer, wrong_text))
+
+
+@pytest.mark.parametrize(
+    "final_answer,wrong_text",
+    [
+        ("1", "Is off by one on the last index"),  # operand of "by"
+        ("2", "Adds 2 to both sides instead of subtracting"),  # operand before "to"
+        ("1", "Subtracts 1 from n before recursing"),
+        ("1", "Treats 1 as a prime number"),
+        ("2", "Adds 2 and 3 instead of multiplying them"),  # arithmetic operand
+        ("2", "Computes 3 + 2 instead of 3 * 2"),
+        ("2", "Writes x^2 instead of 2x"),  # inside an expression
+        ("2", "Uses 2n+1 terms"),
+        ("1", "Misses one of the cases"),  # partitive
+        ("2", "Skips step 2 of the proof"),
+        ("3", "Incorrectly calculates 3 squared."),  # the eval cassette's wrong text
+        ("2", "Uses a 2-step rule"),
+        ("no", "Writes no base case at all"),  # a boolean as a determiner
+        ("true", "Returns true for every input"),  # a boolean with a condition
+    ],
+)
+def test_a_single_token_in_a_structural_non_result_role_stays_clean(final_answer, wrong_text):
+    """R3-2 negatives: an operand ("by 2", "2 to both sides", "3 + 2"), a token
+    inside an expression ("x^2", "2n+1"), a quantifier of a noun ("one step",
+    "one of the cases", "a 2-step rule") or a boolean with a condition is not a
+    stated result — those honest misconceptions still draft."""
+    assert not _states_answer(_wrong_reason_draft(final_answer, wrong_text))
+
+
+def test_a_count_of_the_thing_the_prompt_asks_for_is_the_answer():
+    """A quantifier exempts a token only when its noun is NOT the item's own
+    object: "Counts 2 nonzero terms" for "How many nonzero terms …?" (answer 2)
+    states the count asked for (the served rule's _quantifies_given)."""
+    from learning.checks import CheckItemDraft
+
+    base = dict(
+        concept="polynomials",
+        format="free",
+        difficulty=2,
+        reference_answer="Expanding, only x^2 and 1 survive, so the result is 2.",
+        final_answer="2",
+        rubric=["expands the product", "counts the surviving terms"],
+        wrong_keys=["some_mistake"],
+        answer_kind="free",
+    )
+    asks_terms = CheckItemDraft(
+        **base,
+        prompt="How many nonzero terms does (x+1)(x-1)+2 have?",
+        wrong_texts=["Counts 2 nonzero terms after cancelling"],
+    )
+    asks_other = CheckItemDraft(
+        **base,
+        prompt="Expand the product and report the result.",
+        wrong_texts=["Counts 2 nonzero terms after cancelling"],
+    )
+    assert _states_answer(asks_terms)
+    assert not _states_answer(asks_other)

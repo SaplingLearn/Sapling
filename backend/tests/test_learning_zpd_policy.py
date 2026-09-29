@@ -3546,9 +3546,11 @@ _PKG06_SANCTIONED_IMPORTS = {
     # that states the final answer (strict detect_leak) — a lazy import inside
     # checks._wrong_text_answer_reasons; drafting runs only with LEARNING_LOOP_ENABLED.
     # Fix round 2 (R2-4): a single-token answer counts only in answer position.
+    # Fix round 3 (R3-2): ...or outside a structural non-result role, where a count
+    # of the prompt's own object is still stated (quantifies_given).
     "learning/checks.py": (
         "learning.leak",
-        frozenset({"detect_leak", "in_answer_position", "leak_spans"}),
+        frozenset({"detect_leak", "in_answer_position", "leak_spans", "quantifies_given"}),
     ),
     # PKG-10 fix round 3 (R3-1, spec §13 A76): recheck_after_release — the one
     # re-check decision every grader caller passes — reads the evidence journal
