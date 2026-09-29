@@ -248,6 +248,20 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# Learning loop series (PKG-13), build phase: the lane boots with the loop flag ON.
+# Only the seeded loop users carry the staff/QA toggle; PKG-14b removes this export
+# (spec §11.4: the default lane then runs the code default). The loop users are
+# rich-user-loop and rich-user-capped (user_settings.learning_loop_beta), so every
+# legacy spec keeps the pre-series path; frontend/e2e/learn-loop.spec.ts holds the
+# loop's journeys. Exported, so it beats backend/.env.
+export LEARNING_LOOP_ENABLED="${LEARNING_LOOP_ENABLED:-true}"
+echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED for this stack (PKG-13 build phase; only the seeded loop users carry the staff/QA toggle)"
+# Spec §13 A5: the E2E env scales every GATE_* seconds constant (the ZPD hint
+# gates' independent-work and dwell times) by 0.01, so a journey waits a
+# fraction of a second where a student waits a minute. Production never sets it
+# (config.LEARNING_GATE_TIME_SCALE defaults to 1.0); only the loop reads it.
+export LEARNING_GATE_TIME_SCALE="${LEARNING_GATE_TIME_SCALE:-0.01}"
+echo "  ℹ LEARNING_GATE_TIME_SCALE=$LEARNING_GATE_TIME_SCALE for this stack (spec §13 A5; production is 1.0)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

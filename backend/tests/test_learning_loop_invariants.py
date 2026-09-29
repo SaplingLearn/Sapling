@@ -72,7 +72,11 @@ _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
 #: Modules that WRITE check_items.source_chunk_ids at generation (PKG-04; HANDOFF-04
 #: §Symbols: services/check_item_service.py::_build_row copies the draft's chunk ids —
 #: agents/check_items.py only drafts them as `chunk_ids` and never names the column).
-CHECK_ITEM_WRITERS = {"services/check_item_service.py"}
+#: PKG-13: the local rich seed writes its seeded items' source_chunk_ids beside the
+#: course_chunks rows it seeds, through db/seed_helpers only — it never reads a chunk
+#: back (tests/test_learning_seed_loop_user.py pins that seed_learning_loop has no
+#: select of its own).
+CHECK_ITEM_WRITERS = {"services/check_item_service.py", "db/seed_local_rich.py"}
 # spec §8.9: encrypted learning columns — never UNIQUE, never a PostgREST filter
 ENCRYPTED_LEARNING_COLUMNS = (
     "prompt",
