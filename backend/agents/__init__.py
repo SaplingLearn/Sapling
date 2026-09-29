@@ -142,6 +142,18 @@ LOOP_LIMITS = UsageLimits(
     total_tokens_limit=40_000,
 )
 
+# Learning loop PKG-09 (spec §3.4 tool-less shape, mirrors GRADER_LIMITS): the
+# session-close agent is ONE structured run with no tools. tool_calls_limit=0 is
+# belt-and-braces — a regression that registers a tool fails loudly instead of
+# looping; request 2 with the agent's retries=2 means a second validation retry
+# trips UsageLimitExceeded, which run_session_close degrades to the
+# deterministic fallback close exactly like UnexpectedModelBehavior (ADR 0024).
+CLOSE_LIMITS = UsageLimits(
+    request_limit=2,
+    tool_calls_limit=0,
+    total_tokens_limit=20_000,
+)
+
 __all__ = [
     "WORKER_LIMITS",
     "ORCHESTRATOR_LIMITS",
@@ -149,4 +161,5 @@ __all__ = [
     "CONTINUATION_LIMITS",
     "GRADER_LIMITS",
     "LOOP_LIMITS",
+    "CLOSE_LIMITS",
 ]

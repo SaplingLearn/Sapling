@@ -47,6 +47,9 @@ DATASETS = [
     "check_items",
     "grader",
     "decisions",
+    # PKG-09: the session-close agent, gated on the SERVED close
+    # (routes.learn_loop.served_close).
+    "session_close",
 ]
 
 

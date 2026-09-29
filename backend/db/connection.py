@@ -89,6 +89,15 @@ class SupabaseTable:
         r.raise_for_status()
         return r.json()
 
+    def insert_ignore_duplicates(self, data, on_conflict: str = "id") -> list:
+        """INSERT … ON CONFLICT (on_conflict) DO NOTHING (PostgREST
+        `resolution=ignore-duplicates`): never overwrites an existing row, unlike
+        `upsert`. Returns the rows actually inserted ([] when one existed)."""
+        headers = {"Prefer": "return=representation,resolution=ignore-duplicates"}
+        r = _client.post(self.url, headers=headers, params={"on_conflict": on_conflict}, json=data)
+        r.raise_for_status()
+        return r.json()
+
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
         """PATCH matching rows; returns the updated rows.
 

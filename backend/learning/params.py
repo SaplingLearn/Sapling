@@ -408,8 +408,33 @@ LOOP_STATE_CAS_RETRIES = 3
 # twice. Once its claim is older than this, /check/next treats the item as
 # closed and activates the next one (longer than any grader call).
 LOOP_GRADING_CLAIM_STALE_S = 120
+# ── PKG-09 close + brief (spec §3.4, §3.5, §4, §9, §13 A19/A25) ────────────
+CLOSE_PHASES = ("probe", "plan", "teach", "check", "feedback", "close")  # spec §4 CHECK / §9
+# † engineering choice, no validated cut-point (PKG-09): one close (summary +
+# plan) fits in half a LEARNER_BRIEF_MAX_CHARS brief, so the newest close
+# always renders; older closes are cut by the brief's hard bound
+CLOSE_SUMMARY_MAX_CHARS = 500
+CLOSE_SELF_EVAL_MAX_CHARS = 200  # † engineering choice, no validated cut-point (PKG-09)
+CLOSE_IF_THEN_MAX_CHARS = 200  # † engineering choice, no validated cut-point (PKG-09)
+# † engineering choice, no validated cut-point (PKG-09): per-turn cap in the close draft
+CLOSE_TRANSCRIPT_TURN_MAX_CHARS = 400
+# † engineering choice, no validated cut-point (PKG-09): spec §3.5 / §13 A19 —
+# the loop history keeps n messages when n < 10, else 10 + (n mod 10) (10–19),
+# so the window start moves in blocks and consecutive turns share their prefix
+LOOP_HISTORY_TRIM_BLOCK = 10
 
 # ── PKG-12 review surfaces (spec §3.2; † = engineering choice, see HANDOFF-12) ──
 REVIEW_SECONDS_PER_FLASHCARD = 15  # † budget cost of one self-rated card
 REVIEW_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}  # †
 REVIEW_FORMAT_BY_BAND = {"novice": "mc_reason", "develop": "mc_reason", "profic": "free"}  # †
+# † engineering choice, no validated cut-point (PKG-09 fix round): the close
+# model run's wall-clock bound (flash-lite, one structured request + one retry);
+# a timed-out run is the unavailable agent — the deterministic close is stored
+CLOSE_RUN_TIMEOUT_S = 20
+# † engineering choice (PKG-09 fix round, review M1): a failed learner-brief
+# build is retried after this many seconds, not on every loop turn
+LEARNER_BRIEF_RETRY_AFTER_S = 300
+# † engineering choice (PKG-09 fix round 2): the weakest-nodes fallback of a
+# brief built on a loop turn reads this many lowest-mastery course nodes and
+# keeps the first LEARNER_BRIEF_TOP_STATES that map to a course concept
+LEARNER_BRIEF_CANDIDATE_NODES = 50

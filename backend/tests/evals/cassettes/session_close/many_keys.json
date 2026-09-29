@@ -1,0 +1,14 @@
+{
+  "input_sha256": "6b752d4b6d9e65120de63fce7cbb16a8dd5b83f7d0f7685f95a1d8110b9b55c8",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If you are unsure about list indexing, then review how to determine the last index of a list.",
+    "open_misconception_keys": [
+      "off_by_one"
+    ],
+    "self_eval_prompt": "Which part of calculating the last index of a list did you find most uncertain?",
+    "summary": "The student was checked on the definition of factorial and list indexing. The Base Case concept probability increased, while the Recursive Step concept probability decreased. List indexing remains an open concept."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}

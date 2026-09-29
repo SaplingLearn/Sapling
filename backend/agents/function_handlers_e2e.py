@@ -593,3 +593,34 @@ def _loop_tutor_handler(messages, info) -> ModelResponse:
 register_function_handler("loop_tutor_lite", _loop_tutor_handler)
 register_function_handler("loop_tutor", _loop_tutor_handler)
 register_function_handler("loop_tutor_deep", _loop_tutor_handler)
+
+
+# ── Session close (PKG-09) ─────────────────────────────────────────────────
+# The close agent runs on POST /api/learn/loop/close and the loop end_session
+# when the session has evidence (spec §13 A25). Its structured output passes
+# agents.session_close.served_close unchanged: one question, an "If …, then …"
+# plan, no key it was not given. PKG-13's journey asserts E2E_CLOSE_IF_THEN in
+# the rendered close. Keep in sync with tests/test_e2e_function_handlers.py.
+E2E_CLOSE_SUMMARY = (
+    "[e2e-function-model] Deterministic session close: the student checked "
+    "recursion base cases and moved from unsure to mostly sure; the off-by-one "
+    "boundary is still open."
+)
+E2E_CLOSE_SELF_EVAL = (
+    "[e2e-function-model] Which step of the base-case argument were you least sure of?"
+)
+E2E_CLOSE_IF_THEN = (
+    "If the next session opens with a recursion check, then write the base case "
+    "before the recursive step."
+)
+E2E_CLOSE_MISCONCEPTIONS: list[str] = []
+
+register_function_handler(
+    "session_close",
+    _structured_output({
+        "summary": E2E_CLOSE_SUMMARY,
+        "self_eval_prompt": E2E_CLOSE_SELF_EVAL,
+        "if_then_plan": E2E_CLOSE_IF_THEN,
+        "open_misconception_keys": E2E_CLOSE_MISCONCEPTIONS,
+    }),
+)

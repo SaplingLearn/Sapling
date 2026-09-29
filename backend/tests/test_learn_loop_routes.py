@@ -144,6 +144,9 @@ NO_MODEL_ROUTES = [
     "/probe/answer",
     "/plan",
     "/plan/approve",
+    # PKG-09: runs the close model only with evidence, past an INLINE A20 check
+    # after the gate (spec §9: inline where only some bodies run a model).
+    "/close",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
@@ -556,12 +559,20 @@ def test_failed_on_concept_counts_the_session_across_isomorphs():
 
 
 def test_load_loop_history_is_bounded():
-    from routes.learn_loop import _load_loop_history
+    """Rewritten by PKG-09 for spec §13 A19: brief + block-trimmed window. Read-only
+    (no user_id) with no stored brief, the history is the block-trimmed window."""
+    from routes.learn_loop import _history_window, _load_loop_history
 
     rows = [f"m{i}" for i in range(LOOP_HISTORY_MAX_MESSAGES + 7)]
-    with patch("routes.learn_loop._load_message_history", return_value=rows):
+    sessions = MagicMock()
+    sessions.select.return_value = [{"id": "s1", "loop_brief": None}]
+    with (
+        patch("routes.learn_loop._load_message_history", return_value=rows),
+        patch("routes.learn_loop.table", return_value=sessions),
+    ):
         got = _load_loop_history("s1")
-    assert got == rows[-LOOP_HISTORY_MAX_MESSAGES:]
+    assert got == rows[len(rows) - _history_window(len(rows)) :]
+    assert len(got) <= LOOP_HISTORY_MAX_MESSAGES
 
 
 def test_loop_state_adapters_go_through_the_cas_store(seams):
@@ -2875,3 +2886,29 @@ def test_status_exposes_the_loop_phase(gate_on, seams, doc, phase):
     seams.store["doc"] = doc
     r = client.get("/api/learn/loop/status?user_id=u1&session_id=s1")
     assert r.status_code == 200 and r.json()["loop_phase"] == phase
+
+
+# ── PKG-09 reopen: a grading claim is refused while the session closes ─────
+
+
+@pytest.mark.parametrize(
+    "extra, detail",
+    [
+        ({"close_claim": "c", "close_claim_at": 10.0}, "session close in progress"),
+        ({"phase": "close"}, "this session is closed"),
+    ],
+)
+def test_claim_grading_refuses_while_the_session_closes(seams, extra, detail):
+    """Grading and closing exclude each other on the one session document: the
+    close refuses a live grading claim (PKG-09), and the grading claim refuses a
+    live close claim or a closed session — so no evidence lands outside a close."""
+    from routes.learn_loop import _claim_grading
+
+    doc = _state()
+    doc.update(extra)
+    doc.setdefault("steps", {})["qh-x"] = {"check_item_id": "ci", "first_shown_at": 1.0}
+    seams.store["doc"] = doc
+    with pytest.raises(HTTPException) as exc:
+        _claim_grading("s1", "qh-x", "claim", 11.0)
+    assert exc.value.status_code == 409 and exc.value.detail == detail
+    assert "grading_claim" not in seams.store["doc"]["steps"]["qh-x"]
