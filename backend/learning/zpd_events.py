@@ -101,6 +101,7 @@ def emit_zpd_step(
     tier: Tier | None = None,
     grader_backend: GraderBackend | None = None,
     variant: Variant | None = None,
+    session_id: str | None = None,
 ) -> None:
     def build() -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -134,6 +135,10 @@ def emit_zpd_step(
         # PKG-14 (A8): the concept's within-student arm variant, as the route knew it
         if variant is not None:
             payload["variant"] = variant
+        # PKG-14 (A82): the loop session, so cost can be attributed per session;
+        # omitted when there is none (the post-test), never blanked
+        if session_id is not None:
+            payload["session_id"] = session_id
         return payload
 
     _emit("zpd.step", "usage", user_id, request_id, build)

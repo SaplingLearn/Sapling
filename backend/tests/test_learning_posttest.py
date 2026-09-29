@@ -618,3 +618,16 @@ def test_posttest_is_a_step_phase_value_not_a_close_phase():
 
     assert "posttest" in learn_loop.STEP_PHASES
     assert "posttest" not in params.CLOSE_PHASES
+
+
+def test_answer_decides_the_recheck_through_the_one_helper(gate_on, one_item, grader_says, applied):
+    """A76: every grading caller passes recheck_after_release's decision to
+    grade_answer as same_session_recheck — the post-test with no session log."""
+    grader_says(correct=True, confidence=0.9)
+    with patch("routes.learn_loop.recheck_after_release", return_value=True) as rc:
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 200
+    args, kw = rc.call_args
+    assert args[:3] == ("u", "n1", None) and kw["now"] == NOW and kw["item"].question_hash == "q1"
+    (ev,) = applied[0]["graph_update"]["evidence"]
+    assert ev["same_session_recheck"] is True

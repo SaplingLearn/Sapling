@@ -328,19 +328,42 @@ def test_report_never_guesses_a_band_for_a_request_with_two():
     assert out["cost_per_band"] == {"unknown": pytest.approx(0.002)}
 
 
-def test_report_falls_back_to_user_day_without_a_session_key():
+def test_report_groups_per_session_and_falls_back_per_row():
+    """Spec §13 A82: a loop row whose request maps to a session is costed per
+    session; only a row with no session key (older rows, before zpd.step
+    carried one) falls back to its user-day."""
     out = _script().report(USAGE, STEPS, CAPS, sessions_by_request={"r1": "s1"})  # r2 unmapped
-    assert "cost_per_session" not in out
+    assert out["cost_per_session"] == {"s1": pytest.approx(0.011)}
+    assert out["cost_per_user_day"] == {"u/2026-09-21": pytest.approx(0.030)}
+
+
+def test_report_uses_sessions_when_every_row_maps():
+    out = _script().report(USAGE, STEPS, CAPS, sessions_by_request={"r1": "s1", "r2": "s2"})
+    assert out["cost_per_session"] == {"s1": pytest.approx(0.011), "s2": pytest.approx(0.030)}
+    assert out["cost_per_user_day"] == {}
+
+
+def test_report_without_any_session_key_is_all_user_day():
+    out = _script().report(USAGE, STEPS, CAPS, sessions_by_request={})
+    assert out["cost_per_session"] == {}
     assert out["cost_per_user_day"] == {
         "u/2026-09-20": pytest.approx(0.011),
         "u/2026-09-21": pytest.approx(0.030),
     }
 
 
-def test_report_uses_sessions_when_every_row_maps():
-    out = _script().report(USAGE, STEPS, CAPS, sessions_by_request={"r1": "s1", "r2": "s2"})
-    assert out["cost_per_session"] == {"s1": pytest.approx(0.011), "s2": pytest.approx(0.030)}
-    assert "cost_per_user_day" not in out
+def test_sessions_by_request_reads_every_event_carrying_a_session():
+    s = _script()
+    events = [
+        {"request_id": "r1", "payload": {"session_id": "s1"}},  # zpd.step (A82)
+        {
+            "request_id": "r2",
+            "payload": {"mode": "socratic", "session_id": "s2"},
+        },  # chat.message_sent
+        {"request_id": "r3", "payload": {"band": "develop"}},  # no session
+        {"request_id": None, "payload": {"session_id": "s9"}},  # no request
+    ]
+    assert s.sessions_by_request(events) == {"r1": "s1", "r2": "s2"}
 
 
 def test_series_slots_are_invariant_6():
@@ -374,7 +397,8 @@ def test_main_prints_the_report_with_coverage(world, capsys):
         {
             "id": "x1",
             "event_type": "zpd.step",
-            **STEPS[0],
+            "request_id": "r1",
+            "payload": {**STEPS[0]["payload"], "session_id": "s1"},
             "created_at": "2026-09-20T10:00:00+00:00",
         },
         {
@@ -397,7 +421,8 @@ def test_main_prints_the_report_with_coverage(world, capsys):
     rep = _report_line(capsys.readouterr().out)
     assert rep["check_item_coverage"] == {"c1": [1, 2], "c2": [0, 3]}
     assert rep["cap_hits"] == {"daily_usd/soft": 1}
-    assert rep["cost_per_user_day"]  # r2 has no session key → per user-day
+    assert rep["cost_per_session"] == {"s1": pytest.approx(0.011)}  # r1: zpd.step's session
+    assert rep["cost_per_user_day"] == {"u/2026-09-21": pytest.approx(0.030)}  # r2 has none
     usage_call = [c for c in world["handles"]["llm_usage"].calls if c[0] == "select_with_count"][0]
     assert usage_call[2]["created_at"] == [
         "gte.2026-09-01T00:00:00+00:00",
@@ -405,7 +430,10 @@ def test_main_prints_the_report_with_coverage(world, capsys):
     ]
     assert usage_call[3] == "created_at,id"
     events_call = [c for c in world["handles"]["events"].calls if c[0] == "select_with_count"][0]
-    assert events_call[2]["event_type"] == "in.(zpd.step,ai.budget_capped,learn.session_closed)"
+    assert (
+        events_call[2]["event_type"]
+        == "in.(zpd.step,ai.budget_capped,learn.session_closed,chat.message_sent)"
+    )
 
 
 def test_default_window_is_kpi_trend_weeks(world, monkeypatch):
