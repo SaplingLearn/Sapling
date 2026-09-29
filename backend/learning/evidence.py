@@ -34,6 +34,13 @@ Channel = Literal["free_response", "mc_reasoned", "mc", "teachback_llm", "chat_t
 #: Equal to the node_mastery_events.grader_backend CHECK list (pinned by test).
 GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]
 
+#: PKG-10 (spec §3.3): the slip / misconception / novice rule's verdict on one
+#: graded attempt — the six §3.3 verdicts plus "none" for a plain correct
+#: answer with nothing to diagnose. learning.misconceptions.Verdict is this.
+MisconceptionVerdict = Literal[
+    "none", "unknown", "slip", "misconception", "gap", "not_known", "novice"
+]
+
 #: node_mastery_events.event_type for rows written by the evidence path (spec §4).
 EVIDENCE_EVENT_TYPE = "evidence"
 #: graph_edges.relationship_type the propagation walks (spec §3.1).
@@ -46,6 +53,7 @@ __all__ = [
     "Channel",
     "Evidence",
     "GraderBackend",
+    "MisconceptionVerdict",
     "evidence_weight",
     "flush_pending",
     "is_strong_channel",
@@ -66,6 +74,11 @@ class Evidence(BaseModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)  # grader confidence
     same_session_recheck: bool = False
     grader_backend: GraderBackend | None = None  # A22 provenance; PKG-05 reopen of PKG-03
+    # PKG-10 reopen of PKG-03 (spec §5): the rule's verdict (None when it did not
+    # run) and the key the student's reason matched (A22). No column journals
+    # them (spec §4): the durable record is the `misconceptions` row.
+    verdict: MisconceptionVerdict | None = None
+    wrong_key: str | None = None
 
     @model_validator(mode="after")
     def _consistency(self) -> Evidence:
