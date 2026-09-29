@@ -216,6 +216,7 @@ CHECK_ITEM_MC_MIN_PER_CONCEPT = 2
 # † focused mc_reason-only top-up calls per concept per pass, each for exactly
 # the missing count; a concept still below is left to the next run or backfill.
 CHECK_ITEM_MC_TOPUP_CALLS = 1
+CHECK_ITEM_REDRAFT_MAX_FAILURES = 3  # † bounded redrafting of concepts whose drafts always fail (owner decision A38 low-severity 2)
 
 # ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
 # FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating

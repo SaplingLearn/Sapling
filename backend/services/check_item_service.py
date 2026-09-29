@@ -20,11 +20,13 @@ here — and only from its SHARED chunks.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 import threading
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import NamedTuple
 
 import config
@@ -59,6 +61,7 @@ from learning.params import (
     CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
     CHECK_ITEM_MC_MIN_PER_CONCEPT,
     CHECK_ITEM_MC_TOPUP_CALLS,
+    CHECK_ITEM_REDRAFT_MAX_FAILURES,
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
@@ -956,6 +959,99 @@ def _top_up_mc_reason(
     return created
 
 
+# ── bounded redrafting (owner decision A38, low-severity 2) ─────────────────
+#
+# A concept whose drafts always fail was redrafted on every upload and every
+# backfill. check_item_draft_failures counts its consecutive failed passes
+# against a fingerprint of the passages it is drafted from; at
+# CHECK_ITEM_REDRAFT_MAX_FAILURES on an unchanged source it is skipped. A pass
+# that stores an item resets the count, a changed source starts it over. The
+# bookkeeping fails open: an error reading or writing it drafts as before.
+
+_FAILURES_TABLE = "check_item_draft_failures"
+_FAILURES_ON_CONFLICT = "course_id,concept_key"
+# An Unavailable reason that says the provider failed, not the concept's drafts
+# (a Flex 429/503 that outlived its retries, a timeout's HTTP error).
+_TRANSIENT_REASONS = frozenset({"ModelHTTPError"})
+
+
+def _source_fingerprint(ranked: Iterable[dict]) -> str:
+    """What a concept is drafted from: its ranked passages' ids and texts,
+    order-free (a re-rank of the same passages is the same source)."""
+    parts = sorted(
+        f"{chunk.get('id') or ''}\x1f"
+        + hashlib.sha256((chunk.get("chunk_text") or "").encode("utf-8")).hexdigest()
+        for chunk in ranked
+    )
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+class _DraftFailures:
+    """One run's view of check_item_draft_failures for its candidate concepts:
+    ONE read up front, a write per concept whose count changes. Every error
+    is a WARNING and leaves the concept draftable (fail open)."""
+
+    def __init__(self, course_id: str, keys: list[str]):
+        self.course_id = course_id
+        self.rows: dict[str, dict] = {}
+        if not keys:
+            return
+        try:
+            rows = table(_FAILURES_TABLE).select(
+                "concept_key,failures,source_fp",
+                filters={
+                    "course_id": f"eq.{course_id}",
+                    "concept_key": f"in.({','.join(pg_quote_value(k) for k in keys)})",
+                },
+            )
+        except Exception:
+            logger.warning(
+                "check items: draft-failure read failed (course=%s); drafting every concept",
+                course_id,
+                exc_info=True,
+            )
+            return
+        self.rows = {r["concept_key"]: r for r in rows or [] if r.get("concept_key")}
+
+    def stalled(self, key: str, fp: str) -> bool:
+        row = self.rows.get(key)
+        return bool(
+            row
+            and row.get("source_fp") == fp
+            and (row.get("failures") or 0) >= CHECK_ITEM_REDRAFT_MAX_FAILURES
+        )
+
+    def _write(self, key: str, failures: int, fp: str) -> None:
+        row = {
+            "course_id": self.course_id,
+            "concept_key": key,
+            "failures": failures,
+            "source_fp": fp,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        try:
+            table(_FAILURES_TABLE).upsert([row], on_conflict=_FAILURES_ON_CONFLICT)
+        except Exception:
+            logger.warning(
+                "check items: draft-failure write failed (course=%s concept=%s)",
+                self.course_id,
+                key,
+                exc_info=True,
+            )
+            return
+        self.rows[key] = row
+
+    def failed(self, key: str, fp: str) -> None:
+        row = self.rows.get(key)
+        before = (row.get("failures") or 0) if row and row.get("source_fp") == fp else 0
+        self._write(key, before + 1, fp)
+
+    def succeeded(self, key: str, fp: str) -> None:
+        row = self.rows.get(key)
+        if row and (row.get("failures") or 0) > 0:  # no record, nothing to reset
+            self._write(key, 0, fp)
+
+
 def generate_for_concepts(
     *,
     user_id: str | None,
@@ -981,7 +1077,9 @@ def generate_for_concepts(
     topped up right after it (`_top_up_mc_reason`, A37); `items_created`
     counts the top-up's items too.
     Synchronous: it runs in a worker thread with no event loop.
-    `user_id=None` (the backfill) records usage against the system actor."""
+    `user_id=None` (the backfill) records usage against the system actor.
+    A concept at CHECK_ITEM_REDRAFT_MAX_FAILURES failed passes on an unchanged
+    source is skipped too (counted in concepts_skipped; `_DraftFailures`)."""
     if not config.LEARNING_LOOP_ENABLED:
         return _NOTHING
     if not chunks:
@@ -1010,6 +1108,19 @@ def generate_for_concepts(
             unmatched += 1
             continue
         todo.append((key, names_by_key[key], ranked))
+    ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
+    stalled = [key for key, _, ranked in todo if ledger.stalled(key, _source_fingerprint(ranked))]
+    if stalled:
+        logger.info(
+            "check items: %d concept(s) skipped after %d failed drafting passes on an "
+            "unchanged source (course=%s): %s",
+            len(stalled),
+            CHECK_ITEM_REDRAFT_MAX_FAILURES,
+            course_id,
+            stalled,
+        )
+        skipped += len(stalled)
+        todo = [t for t in todo if t[0] not in stalled]
 
     deps = SaplingDeps(
         user_id=user_id or "",
@@ -1049,6 +1160,9 @@ def generate_for_concepts(
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
             unavailable += len(batch)
+            if out.reason not in _TRANSIENT_REASONS:
+                for key, _, ranked in batch:
+                    ledger.failed(key, _source_fingerprint(ranked))
             continue
 
         drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
@@ -1080,7 +1194,7 @@ def generate_for_concepts(
         # A37: a concept this call left below the mc_reason floor is topped up.
         for key, name, ranked in batch:
             if key in write.stored:
-                created += _top_up_mc_reason(
+                topped = _top_up_mc_reason(
                     key,
                     name,
                     ranked,
@@ -1092,6 +1206,14 @@ def generate_for_concepts(
                     document_id=document_id,
                     course_id=course_id,
                 )
+                created += topped
+                # A write that failed (StorageError) is not the drafts' fault:
+                # only a concept whose write ran is counted either way.
+                fp = _source_fingerprint(ranked)
+                if write.stored[key].ids or topped:
+                    ledger.succeeded(key, fp)
+                else:
+                    ledger.failed(key, fp)
 
     outcome = GenerationOutcome(created, attempted, unavailable, skipped, unmatched)
     logger.info(
