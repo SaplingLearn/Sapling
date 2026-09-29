@@ -217,6 +217,17 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     # always ciphertext" is one invariant, while "ciphertext unless
     # category='catalog'" is a rule this oracle could not express.
     ("course_chunks", "id", "chunk_text"),
+    # Learning loop PKG-04 (owner decision A38, low-severity 3): every check
+    # item column services/check_item_service._build_row encrypts. question_hash
+    # is the plaintext lookup key and stays off this list.
+    ("check_items", "id", "prompt"),
+    ("check_items", "id", "reference_answer"),
+    ("check_items", "id", "final_answer"),
+    ("check_items", "id", "rubric_json"),
+    ("check_items", "id", "common_wrong_json"),
+    ("check_items", "id", "options_json"),
+    ("check_items", "id", "correct_option"),
+    ("check_items", "id", "canonical_answer"),
 )
 
 

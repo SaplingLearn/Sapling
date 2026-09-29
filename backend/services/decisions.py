@@ -57,6 +57,7 @@ from agents.decision import (
     DecisionYesNoOutput,
     build_decision_message,
     decision_agent,
+    option_keys,
 )
 from agents.grader import GradeResult
 from agents.usage import record_agent_usage
@@ -113,6 +114,24 @@ EVENT_ENUM_MAX_CHARS = 64  # a sha256 hex id (PKG-06's bound on event enum value
 _ENUM_VALUE = re.compile(rf"[A-Za-z0-9_.:-]{{0,{EVENT_ENUM_MAX_CHARS}}}")
 _MS_PER_S = 1000
 _FALLBACK_TO_NONE = "none"  # decision.fallback to_backend when no backend answered
+# decision.fallback reasons when no backend answered: every backend failed, or the AI
+# budget cap refused the call before any model run (spec §13 A39, owner decision 06b(f)).
+_REASON_BOTH_FAILED = "both_failed"
+_REASON_BUDGET = "budget"
+
+
+class _BudgetCapped:
+    """`_run_decision`'s answer when ai_budget.check refused the run (A39): no model
+    ran; the caller reports decision.fallback{reason: budget}."""
+
+    def __repr__(self) -> str:
+        return "BUDGET_CAPPED"
+
+    def __bool__(self) -> bool:
+        return False  # no answer: a truthiness test never reads a capped decision as one
+
+
+BUDGET_CAPPED = _BudgetCapped()
 # A decision run degrades on exactly what grade() degrades on (UsageLimitExceeded,
 # UnexpectedModelBehavior, ModelAPIError ⊃ ModelHTTPError, httpx.TransportError): one
 # tuple, so a provider outage is an honest None on every decision, never a route 500.
@@ -170,7 +189,9 @@ class _State(BaseModel):
 
 
 class GradeState(_State):
-    """grade_rubric_items. `rubric` (id → text) and `wrong` (key → text) keep item order."""
+    """grade_rubric_items. `rubric` (id → text) and `wrong` (key → text) keep item order.
+    `final_answer` / `canonical_answer` (A34) never reach the grader's message: grade()
+    checks its hint against them (leak.detect_leak, spec §13 A38); None → no hint."""
 
     question: str
     reference: str
@@ -178,6 +199,8 @@ class GradeState(_State):
     wrong: dict[str, str]
     answer: str
     format: str
+    final_answer: str | None = None
+    canonical_answer: str | None = None
 
 
 class ReasonState(_State):
@@ -193,6 +216,8 @@ class ReasonState(_State):
     correct_option: str
     reason: str
     options: dict[str, str] = {}
+    final_answer: str | None = None  # the hint's leak check only (A38), as on GradeState
+    canonical_answer: str | None = None
 
 
 class WrongReasonState(_State):
@@ -256,7 +281,10 @@ class GraderItem:
     State. `id` is a log label only. rubric / common_wrong are learning.checks
     models (the grader reads r.id / r.text / w.key / w.text, HANDOFF-05).
     `options` holds an mc_reason item's option texts for grade()'s answer screen
-    (answer_guard.item_terms; never in the message)."""
+    (answer_guard.item_terms; never in the message). `final_answer`,
+    `canonical_answer`, `correct_option` and `correct_option_text` (the key
+    option's text, from ReasonState.options) feed only grade()'s hint leak
+    check (spec §13 A38; never in the message)."""
 
     id: str
     prompt: str
@@ -264,6 +292,16 @@ class GraderItem:
     rubric: list[RubricItem]
     common_wrong: list[WrongReason]
     options: tuple[str, ...] = ()
+    final_answer: str | None = None
+    canonical_answer: str | None = None
+    correct_option: str | None = None
+    correct_option_text: str | None = None  # the hint's strict leak check only (A38 M1)
+
+
+def _correct_option_text(state: GradeState | ReasonState) -> str | None:
+    letter = (getattr(state, "correct_option", None) or "").strip().upper()
+    options = {k.strip().upper(): v for k, v in (getattr(state, "options", {}) or {}).items()}
+    return options.get(letter) or None
 
 
 def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> GraderItem:
@@ -274,6 +312,10 @@ def grader_item_from(state: GradeState | ReasonState, *, item_id: str = "-") -> 
         rubric=[RubricItem(id=k, text=v) for k, v in state.rubric.items()],
         common_wrong=[WrongReason(key=k, text=v) for k, v in state.wrong.items()],
         options=tuple(getattr(state, "options", {}).values()),
+        final_answer=state.final_answer,
+        canonical_answer=state.canonical_answer,
+        correct_option=getattr(state, "correct_option", None) or None,
+        correct_option_text=_correct_option_text(state),
     )
 
 
@@ -359,9 +401,11 @@ def _select(decision: str, deps) -> Selection:
     return sel
 
 
-def _unavailable(decision: str, sel: Selection, deps) -> None:
-    """No backend answered († in the series every available backend failed)."""
-    _fallback(decision, sel.served, _FALLBACK_TO_NONE, "both_failed", deps)
+def _unavailable(decision: str, sel: Selection, deps, *, budget: bool = False) -> None:
+    """No backend answered († in the series every available backend failed), or the AI
+    budget cap refused the call (`budget`: reason "budget", A39)."""
+    reason = _REASON_BUDGET if budget else _REASON_BOTH_FAILED
+    _fallback(decision, sel.served, _FALLBACK_TO_NONE, reason, deps)
     return None
 
 
@@ -411,7 +455,7 @@ async def grade_rubric_items(
     if result.refused:
         return _refused("grade_rubric_items", sel, result, t0, deps)
     if result.unavailable:
-        return _unavailable("grade_rubric_items", sel, deps)
+        return _unavailable("grade_rubric_items", sel, deps, budget=result.budget_capped)
     ms = _ms(t0)
     verdict = RubricVerdict(
         backend=sel.served,
@@ -443,7 +487,7 @@ async def reason_is_correct(
     if result.refused:
         return _refused("reason_is_correct", sel, result, t0, deps)
     if result.unavailable:
-        return _unavailable("reason_is_correct", sel, deps)
+        return _unavailable("reason_is_correct", sel, deps, budget=result.budget_capped)
     ms = _ms(t0)
     value = result.all_yes
     verdict = ReasonVerdict(
@@ -471,9 +515,11 @@ async def match_wrong_reason(
         key, conf, ms = prior.matched_wrong_key, prior.confidence, 0
     else:
         out = await _run_decision("match_wrong_reason", state, deps)
-        if out is None:
-            return _unavailable("match_wrong_reason", sel, deps)
-        key, conf, ms = out.choice, out.confidence, _ms(t0)
+        if out is None or out is BUDGET_CAPPED:
+            return _unavailable("match_wrong_reason", sel, deps, budget=out is BUDGET_CAPPED)
+        # the model answers with the key it was SHOWN (agents.decision.option_keys)
+        shown = option_keys(state.wrong)
+        key, conf, ms = shown.get(out.choice, NO_MATCH), out.confidence, _ms(t0)
     key = key if key in state.wrong else NO_MATCH
     verdict = Pick(
         backend=sel.served,
@@ -493,15 +539,19 @@ async def item_answerable(state: AnswerableState, *, deps) -> YesNo | None:
 
 
 async def judge_leak(state: LeakState, *, deps) -> YesNo | None:
-    """Unwired and additive: a caller may only BLOCK on it, never release on it."""
-    return await _yes_no_decision("judge_leak", state, deps)
+    """Unwired and additive: a caller may only BLOCK on it, never release on it.
+    An `unclear` answer blocks (value True, fail closed; spec §13 A38, owner decision
+    05b(d)); its p_yes stays P_YES_UNCLEAR."""
+    return await _yes_no_decision("judge_leak", state, deps, unclear_value=True)
 
 
-async def _yes_no_decision(decision: str, state, deps) -> YesNo | None:
+async def _yes_no_decision(
+    decision: str, state, deps, *, unclear_value: bool = False
+) -> YesNo | None:
     sel, t0 = _select(decision, deps), time.monotonic()
     out = await _run_decision(decision, state, deps)
-    if out is None:
-        return _unavailable(decision, sel, deps)
+    if out is None or out is BUDGET_CAPPED:
+        return _unavailable(decision, sel, deps, budget=out is BUDGET_CAPPED)
     ms = _ms(t0)
     if out.answer == "unclear":
         verdict = YesNo(
@@ -509,7 +559,7 @@ async def _yes_no_decision(decision: str, state, deps) -> YesNo | None:
             confidence=out.confidence,
             latency_ms=ms,
             fallback=sel.fallback_reason is not None,
-            value=False,
+            value=unclear_value,
             p_yes=P_YES_UNCLEAR,
         )
     else:
@@ -550,7 +600,8 @@ def decision_request(decision: str, state) -> tuple[str, type[BaseModel]]:
 
 async def _run_decision(decision: str, state, deps):
     """The ONLY decision_agent.run site; PKG-06b makes ai_budget.check(deps.user_id, "decision")
-    its first statement (inv 23). A failure grade() degrades on (`_DECISION_FAILURES`: the
+    its first statement (inv 23); a hard cap → BUDGET_CAPPED, no run (the callers report
+    decision.fallback{reason: budget}, A39). A failure grade() degrades on (`_DECISION_FAILURES`: the
     budget, output that never validated, the provider or the network under it) → WARNING +
     None; anything else propagates, exactly as from agents.grader.grade.
 
@@ -560,7 +611,7 @@ async def _run_decision(decision: str, state, deps):
     cost analytics read llm_usage only — the agents.grader._run_once posture."""
     # spec §3.5: decisions count as grades (STUDENT_DAILY_GRADES); PKG-06b, invariant 23
     if ai_budget.check(deps.user_id, "decision").level == "hard":
-        return None  # the callers' existing unavailable path runs
+        return BUDGET_CAPPED  # the callers' unavailable path runs, reason "budget"
     message, output_type = decision_request(decision, state)
     usage = RunUsage()
     try:

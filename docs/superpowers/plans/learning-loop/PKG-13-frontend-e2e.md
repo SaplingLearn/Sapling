@@ -2281,3 +2281,7 @@ Green = all seven clean. Max 5 iterations per loop; then write a `BLOCKED` row i
 4. Three failed iterations on one task → append a `BLOCKED` row to `LEDGER.md` (hypothesis, commands run, outputs), commit what is green, open the PR as draft, stop.
 5. Never widen scope to unblock. Never disable a test to unblock.
 6. Ambiguity → choose the option closest to the spec, mark it `†` in the hand-off, continue.
+
+## A38 amendments (2026-09-29)
+
+Spec §13 A39 (owner decision 06b(j)) binds Behaviour 15 (budget pause banner). The 429 body and the `budget` stream event carry `session_capped: bool` (true when this session's tutor-request counter is at `LOOP_SESSION_MAX_TUTOR_REQUESTS`, whatever `scope` says). When it is true, the banner copy is "Tutor chat paused for this session. Practice and review keep working." (`data-session-capped="true"`, no reset time, since a new session starts fresh); otherwise the copy stays "Tutor chat paused until <reset_at in local time>. …" (`data-session-capped="false"`). A missing field reads as false. Add a vitest for both copies; the budget-cap journey keeps asserting the daily copy for `rich-user-capped`. A 429 whose `scope` is `daily_tutor_calls` (the new count cap, A39) renders the daily copy with its `reset_at` like any other daily scope.

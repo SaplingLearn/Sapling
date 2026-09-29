@@ -20,11 +20,14 @@ here — and only from its SHARED chunks.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 import threading
+from collections import deque
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 import config
@@ -59,6 +62,8 @@ from learning.params import (
     CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
     CHECK_ITEM_MC_MIN_PER_CONCEPT,
     CHECK_ITEM_MC_TOPUP_CALLS,
+    CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS,
+    CHECK_ITEM_REDRAFT_MAX_FAILURES,
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
@@ -956,6 +961,177 @@ def _top_up_mc_reason(
     return created
 
 
+# ── bounded redrafting (owner decision A38, low-severity 2) ─────────────────
+#
+# A concept whose drafts always fail was redrafted on every upload and every
+# backfill. check_item_draft_failures counts its consecutive failed passes
+# against a fingerprint of what it is drafted from (its passages, the drafting
+# prompts' versions and the model); at CHECK_ITEM_REDRAFT_MAX_FAILURES on an
+# unchanged source it is skipped for CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS after
+# its last failure, then drafted once more. A pass that stores an item resets
+# the count; a changed source (or prompt, or model) starts it over. The
+# bookkeeping fails open: an error reading or writing it drafts as before.
+#
+# What counts (A38 fix round, M2) is an ALLOWLIST of the concept's OWN
+# outcomes: a one-concept call whose output never validated
+# (_CONCEPT_FAILURE_REASONS), or a call that answered but stored nothing for
+# that concept. A timeout, a transport or API error, a usage limit, any other
+# exception count for no concept. A multi-concept call whose output never
+# validated is split and each concept re-run alone once (A38 fix round 2), so
+# only the concept that fails on its own is counted.
+
+_FAILURES_TABLE = "check_item_draft_failures"
+_FAILURES_ON_CONFLICT = "course_id,concept_key"
+# The only Unavailable reason that is the drafts' fault: the output failed
+# validation on every retry (pydantic-ai raises UnexpectedModelBehavior).
+_CONCEPT_FAILURE_REASONS = frozenset({"UnexpectedModelBehavior"})
+
+
+def _drafting_version() -> str:
+    """The drafting prompts' versions and the model: a change to either is a
+    new source, so a concept stalled under the old one is drafted again."""
+    from agents import check_items, check_items_topup
+    from agents._providers import model_name_for
+
+    return "|".join(
+        (check_items._PROMPT_HASH, check_items_topup._PROMPT_HASH, model_name_for("check_items"))
+    )
+
+
+def _source_fingerprint(ranked: Iterable[dict]) -> str:
+    """What a concept is drafted from: its ranked passages' ids and texts,
+    order-free (a re-rank of the same passages is the same source), and the
+    drafting version (_drafting_version)."""
+    parts = sorted(
+        f"{chunk.get('id') or ''}\x1f"
+        + hashlib.sha256((chunk.get("chunk_text") or "").encode("utf-8")).hexdigest()
+        for chunk in ranked
+    )
+    parts.append("version\x1f" + _drafting_version())
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def _utcnow() -> datetime:
+    """The clock the expiry reads; tests monkeypatch it."""
+    return datetime.now(UTC)
+
+
+def _parse_stamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
+
+
+class _DraftFailures:
+    """One run's view of check_item_draft_failures for its candidate concepts:
+    ONE read up front, a write per concept whose count changes. Every error
+    is a WARNING and leaves the concept draftable (fail open)."""
+
+    def __init__(self, course_id: str, keys: list[str]):
+        self.course_id = course_id
+        self.rows: dict[str, dict] = {}
+        if not keys:
+            return
+        try:
+            rows = table(_FAILURES_TABLE).select(
+                "concept_key,failures,source_fp,updated_at,solo",
+                filters={
+                    "course_id": f"eq.{course_id}",
+                    "concept_key": f"in.({','.join(pg_quote_value(k) for k in keys)})",
+                },
+            )
+        except Exception:
+            logger.warning(
+                "check items: draft-failure read failed (course=%s); drafting every concept",
+                course_id,
+                exc_info=True,
+            )
+            return
+        self.rows = {r["concept_key"]: r for r in rows or [] if r.get("concept_key")}
+
+    def _fresh(self, row: dict) -> bool:
+        stamp = _parse_stamp(row.get("updated_at"))
+        ttl = timedelta(days=CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS)
+        return stamp is not None and _utcnow() - stamp < ttl
+
+    def solo(self, key: str, fp: str) -> bool:
+        """Drafted alone: a split rescued it and every batch-mate on an
+        unchanged source, within the TTL (A38 fix round 3)."""
+        row = self.rows.get(key)
+        return bool(row and row.get("solo") and row.get("source_fp") == fp and self._fresh(row))
+
+    def stalled(self, key: str, fp: str) -> bool:
+        """At the bound on an unchanged source, within the TTL of the last
+        failure. A row with no readable updated_at is not stalled (fail open)."""
+        row = self.rows.get(key)
+        if not (
+            row
+            and row.get("source_fp") == fp
+            and (row.get("failures") or 0) >= CHECK_ITEM_REDRAFT_MAX_FAILURES
+        ):
+            return False
+        return self._fresh(row)
+
+    def _write(self, key: str, failures: int, fp: str, *, solo: bool | None = None) -> None:
+        old = self.rows.get(key) or {}
+        if solo is None:  # kept while the source is unchanged
+            solo = bool(old.get("solo")) and old.get("source_fp") == fp
+        row = {
+            "course_id": self.course_id,
+            "concept_key": key,
+            "failures": failures,
+            "source_fp": fp,
+            "solo": solo,
+            "updated_at": _utcnow().isoformat(),
+        }
+        try:
+            table(_FAILURES_TABLE).upsert([row], on_conflict=_FAILURES_ON_CONFLICT)
+        except Exception:
+            logger.warning(
+                "check items: draft-failure write failed (course=%s concept=%s)",
+                self.course_id,
+                key,
+                exc_info=True,
+            )
+            return
+        self.rows[key] = row
+
+    def failed(self, key: str, fp: str) -> None:
+        row = self.rows.get(key)
+        before = (row.get("failures") or 0) if row and row.get("source_fp") == fp else 0
+        self._write(key, before + 1, fp)
+
+    def succeeded(self, key: str, fp: str) -> None:
+        row = self.rows.get(key)
+        if row and (row.get("failures") or 0) > 0:  # no record, nothing to reset
+            self._write(key, 0, fp)
+
+    def mark_solo(self, key: str, fp: str) -> None:
+        self._write(key, 0, fp, solo=True)
+
+
+class _SplitGroup:
+    """The concepts of one split batch, as their solo re-runs settle. When the
+    last one settles and every one stored items alone, the failure was the
+    combination's: each is marked solo (A38 fix round 3)."""
+
+    def __init__(self, batch: list):
+        self.fps = {key: _source_fingerprint(ranked) for key, _, ranked in batch}
+        self.ok: dict[str, bool] = {}
+
+    def settle(self, key: str, *, ok: bool, ledger: _DraftFailures) -> None:
+        if key not in self.fps or key in self.ok:
+            return
+        self.ok[key] = ok
+        if len(self.ok) == len(self.fps) and all(self.ok.values()):
+            for k, fp in self.fps.items():
+                ledger.mark_solo(k, fp)
+
+
 def generate_for_concepts(
     *,
     user_id: str | None,
@@ -981,7 +1157,10 @@ def generate_for_concepts(
     topped up right after it (`_top_up_mc_reason`, A37); `items_created`
     counts the top-up's items too.
     Synchronous: it runs in a worker thread with no event loop.
-    `user_id=None` (the backfill) records usage against the system actor."""
+    `user_id=None` (the backfill) records usage against the system actor.
+    A concept at CHECK_ITEM_REDRAFT_MAX_FAILURES failed passes on an unchanged
+    source is skipped too, within CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS of its
+    last failure (counted in concepts_skipped; `_DraftFailures`)."""
     if not config.LEARNING_LOOP_ENABLED:
         return _NOTHING
     if not chunks:
@@ -1010,6 +1189,19 @@ def generate_for_concepts(
             unmatched += 1
             continue
         todo.append((key, names_by_key[key], ranked))
+    ledger = _DraftFailures(course_id, [key for key, _, _ in todo])
+    stalled = [key for key, _, ranked in todo if ledger.stalled(key, _source_fingerprint(ranked))]
+    if stalled:
+        logger.info(
+            "check items: %d concept(s) skipped after %d failed drafting passes on an "
+            "unchanged source (course=%s): %s",
+            len(stalled),
+            CHECK_ITEM_REDRAFT_MAX_FAILURES,
+            course_id,
+            stalled,
+        )
+        skipped += len(stalled)
+        todo = [t for t in todo if t[0] not in stalled]
 
     deps = SaplingDeps(
         user_id=user_id or "",
@@ -1025,8 +1217,25 @@ def generate_for_concepts(
     # concept they alone covered counts unmatched instead of costing a call
     # whose drafts would be dropped.
     gone: set[str] = set()
-    for start in range(0, len(todo), CHECK_ITEM_CONCEPTS_PER_CALL):
-        batch = todo[start : start + CHECK_ITEM_CONCEPTS_PER_CALL]
+    # (batch, split): a multi-concept call whose output never validated is
+    # re-run one concept at a time, once, so the failure lands on the concept
+    # that caused it and its batch-mates still get items this pass (A38 fix
+    # round 2). At most 1 + CHECK_ITEM_CONCEPTS_PER_CALL calls per batch.
+    # A concept whose last split rescued its whole batch (it and its mates
+    # each drafted fine alone) is drafted alone while that holds (A38 fix
+    # round 3), so a combination-only failure does not cost 1 + N calls a pass.
+    solo = [t for t in todo if ledger.solo(t[0], _source_fingerprint(t[2]))]
+    rest = [t for t in todo if t not in solo]
+    queue: deque[tuple[list, _SplitGroup | None]] = deque(
+        [([t], None) for t in solo]
+        + [
+            (rest[start : start + CHECK_ITEM_CONCEPTS_PER_CALL], None)
+            for start in range(0, len(rest), CHECK_ITEM_CONCEPTS_PER_CALL)
+        ]
+    )
+    while queue:
+        batch, group = queue.popleft()
+        split = group is not None
         if gone:
             remaining = [c for c in chunks if c.get("doc_id") not in gone]
             kept = []
@@ -1045,10 +1254,22 @@ def generate_for_concepts(
         sources = _call_sources(ranked for _, _, ranked in batch)
 
         out = run_agent_sync(draft_items(names, sources.passages, deps=deps, flex=flex))
-        attempted += len(batch)
+        if not split:  # a split re-run is the same concepts' same attempt
+            attempted += len(batch)
         if isinstance(out, CheckItemsUnavailable):
             _report_failure(user_id, document_id, course_id, out.reason)
+            if out.reason in _CONCEPT_FAILURE_REASONS and len(batch) > 1:
+                new_group = _SplitGroup(list(batch))
+                queue.extendleft(([concept], new_group) for concept in reversed(batch))
+                continue
+            if group is not None:
+                group.settle(batch[0][0], ok=False, ledger=ledger)
             unavailable += len(batch)
+            # Only a one-concept call's validation failure is that concept's
+            # own outcome; anything else is no concept's fault (M2 allowlist).
+            if len(batch) == 1 and out.reason in _CONCEPT_FAILURE_REASONS:
+                key, _, ranked = batch[0]
+                ledger.failed(key, _source_fingerprint(ranked))
             continue
 
         drafts_by_key: dict[str, list[CheckItemDraft]] = {key: [] for key, _, _ in batch}
@@ -1080,7 +1301,7 @@ def generate_for_concepts(
         # A37: a concept this call left below the mc_reason floor is topped up.
         for key, name, ranked in batch:
             if key in write.stored:
-                created += _top_up_mc_reason(
+                topped = _top_up_mc_reason(
                     key,
                     name,
                     ranked,
@@ -1092,6 +1313,18 @@ def generate_for_concepts(
                     document_id=document_id,
                     course_id=course_id,
                 )
+                created += topped
+                # A write that failed (StorageError) is not the drafts' fault:
+                # only a concept whose write ran is counted either way.
+                fp = _source_fingerprint(ranked)
+                if write.stored[key].ids or topped:
+                    ledger.succeeded(key, fp)
+                else:
+                    ledger.failed(key, fp)
+                if group is not None:
+                    group.settle(key, ok=bool(write.stored[key].ids or topped), ledger=ledger)
+            elif group is not None:
+                group.settle(key, ok=False, ledger=ledger)
 
     outcome = GenerationOutcome(created, attempted, unavailable, skipped, unmatched)
     logger.info(
@@ -1152,10 +1385,12 @@ def generate_for_document(
 # (the next upload's extraction and persist among them), so real-mode drafting
 # runs HERE, CHECK_ITEM_DRAFT_WORKERS at a time; the rest wait in the queue.
 # The workers are not daemons: concurrent.futures joins them at interpreter
-# exit after they drain the queue, so a graceful shutdown (a deploy's SIGTERM,
-# a `reload=True` restart) waits for every queued drafting to finish, and only
-# the platform's kill after its grace period drops what is still queued or in
-# flight. The nightly `--all-courses` backfill (spec §11.7) drafts that then.
+# exit. So the app's shutdown hook (main.py's lifespan) calls
+# `shutdown_draft_pool`, which drops every QUEUED drafting (owner decision A38,
+# low-severity 4) instead of letting a deploy's SIGTERM wait for the whole
+# queue; a run already in flight still finishes or dies with the platform's
+# kill after its grace period. The nightly `--all-courses` backfill (spec
+# §11.7) drafts what was dropped.
 
 _draft_pool_instance: ThreadPoolExecutor | None = None
 _draft_pool_lock = threading.Lock()
@@ -1169,6 +1404,17 @@ def _draft_pool() -> ThreadPoolExecutor:
                 max_workers=CHECK_ITEM_DRAFT_WORKERS, thread_name_prefix="check-items"
             )
         return _draft_pool_instance
+
+
+def shutdown_draft_pool() -> None:
+    """Drop the queued drafting and let the pool go without waiting (the app's
+    shutdown hook). Idempotent; a later upload builds a new pool."""
+    global _draft_pool_instance
+    with _draft_pool_lock:
+        pool, _draft_pool_instance = _draft_pool_instance, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+        logger.info("check items: drafting pool shut down; queued drafting dropped")
 
 
 def _generate_for_document_logged(document_id: str, **kwargs) -> None:

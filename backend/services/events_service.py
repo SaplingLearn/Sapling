@@ -96,7 +96,8 @@ decision.shadow               usage     decision, request_id, primary_value, sha
                                         shadow_latency_ms, shadow_input_tokens, error_code —
                                         PKG-15 plumbing, never fired in the series; enums only
 decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
-                                        / both_failed; PKG-15 adds the Jev error enums), request_id
+                                        / both_failed / budget = the AI budget cap refused the
+                                        call; PKG-15 adds the Jev error enums), request_id
 ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
 ============================  ========  =====================================================
 
@@ -233,7 +234,8 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
     # (services/decisions.py). `made` = one answered decision, with the backend
     # that answered; `fallback` = served by another backend (reason jev_absent)
-    # or by none (both_failed: nothing is recorded for either outcome);
+    # or by none (both_failed: nothing is recorded for either outcome; budget: the AI
+    # budget cap refused the call before any run, spec §13 A39);
     # `shadow` = PKG-15 plumbing, never fired in the series. Payloads carry
     # ids, enums and numbers only — never state text.
     "decision.made",

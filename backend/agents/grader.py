@@ -95,6 +95,7 @@ from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from learning import answer_guard
 from learning.answer_guard import Refusal
+from learning.leak import detect_leak  # the one sanctioned PKG-06 import here (A38)
 from learning.params import (
     FEEDBACK_HINT_MAX_SENTENCES,
     GRADER_ANSWER_MAX_CHARS,
@@ -134,6 +135,14 @@ _GRADER_FAILURES = (
     ModelAPIError,
     httpx.TransportError,
 )
+
+
+class BudgetCapped(UsageLimitExceeded):
+    """_run_once's refusal when ai_budget.check says the student's grader cap is hard
+    (spec §3.5, A39): no model ran. A UsageLimitExceeded, so every _GRADER_FAILURES
+    handler still degrades on it; grade() maps it to budget_capped=True, so the seam's
+    decision.fallback says "budget". GRADER_LIMITS' own per-run UsageLimitExceeded is
+    not one: it stays an outage (both_failed)."""
 
 
 class GraderOutput(BaseModel):
@@ -261,10 +270,13 @@ class GradeResult:
     """Code-side result of grade(); `unavailable=True` is the ADR 0024 degrade.
     `backend` names the run whose verdict is used (A22 provenance). `refused`
     (A33) names why the answer was not graded; a refused result is also
-    `unavailable`, so a caller that reads only that flag still records nothing."""
+    `unavailable`, so a caller that reads only that flag still records nothing.
+    `budget_capped` (A39): unavailable because the grader cap was hard, before any
+    run (the decision seam reports it as decision.fallback{reason: budget})."""
 
     unavailable: bool = False
     refused: Refusal | None = None
+    budget_capped: bool = False
     item_results: dict[str, bool] = field(default_factory=dict)
     all_yes: bool = False
     confidence: float = 0.0
@@ -600,6 +612,53 @@ def _echoes_reference(hint: str, reference: str) -> bool:
     return any(tuple(got[i : i + n]) in windows for i in range(len(got) - n + 1))
 
 
+# The rung a grader hint is checked at: H0, the strictest (learning.ladder.Rung.H0; an
+# int, since the PKG-06 inertness scan sanctions detect_leak alone here).
+_HINT_RUNG = 0
+
+
+def _correct_option_text(item) -> str | None:
+    """The key option's text: the seam's GraderItem carries it; a CheckItem's
+    lettered options hold it."""
+    text = getattr(item, "correct_option_text", None)
+    if text:
+        return text
+    letter = (getattr(item, "correct_option", None) or "").strip().upper()
+    for option in getattr(item, "options", None) or ():
+        if getattr(option, "letter", "").strip().upper() == letter and letter:
+            return getattr(option, "text", None) or None
+    return None
+
+
+def _hint_leaks(item, hint: str, *, format: str) -> bool:
+    """Spec §13 A38 (the grader-hint owner decision; HANDOFF-05 (b), invariant 27):
+    True when leak.detect_leak flags `hint` at H0 in STRICT mode (A38 fix round
+    M1/m7: a false positive here only drops a hint) — the reference's LEAK_NGRAM
+    windows, the item's structured final_answer (and canonical_answer, in any
+    notation: "seven", "\\frac{1}{2}", "50%", "5/10"), and on an mc_reason item
+    ANY standalone correct option letter and the correct option's text. The
+    6-gram check alone misses a short final answer such as "O(n)" or "7". Fail
+    closed: an item with no final_answer (or an mc_reason item with no
+    correct_option) cannot be vouched for, so its hint counts as leaking."""
+    correct_option = getattr(item, "correct_option", None) or None
+    if format == "mc_reason" and correct_option is None:
+        return True
+    try:
+        verdict = detect_leak(
+            reference=item.reference_answer,
+            emitted=hint,
+            rung=_HINT_RUNG,
+            final_answer=getattr(item, "final_answer", None),
+            canonical_answer=getattr(item, "canonical_answer", None),
+            correct_option=correct_option if format == "mc_reason" else None,
+            strict=True,
+            option_text=_correct_option_text(item) if format == "mc_reason" else None,
+        )
+    except ValueError:  # no final_answer (A34), or a correct_option that is not one letter
+        return True
+    return verdict.leaked
+
+
 def _refuse(
     item,
     *,
@@ -670,8 +729,8 @@ async def _run_once(
     (`second_opinion`). `output_type=SpanVerdicts` makes it the span check (round
     a33) and `Withdrawals` the context check (A33 finish): the same agent and
     prompt, its own output type, chosen per run."""
-    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps this to unavailable
-        raise UsageLimitExceeded("ai budget: grader cap reached")
+    if ai_budget.check(deps.user_id, "grader").level == "hard":  # grade() maps it to budget
+        raise BudgetCapped("ai budget: grader cap reached")
     task = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
     # Passed in, so a run that raises still says what the provider billed: the
     # token cap is checked AFTER a response (pydantic-ai), and a validation
@@ -806,6 +865,12 @@ async def _run_check(
     return out
 
 
+def _unavailable_after(exc: BaseException) -> GradeResult:
+    """A run that failed (_GRADER_FAILURES): a cap hit inside _run_once is the budget
+    (A39: decision.fallback "budget"); anything else is an outage."""
+    return GradeResult(unavailable=True, budget_capped=isinstance(exc, BudgetCapped))
+
+
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
@@ -834,7 +899,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     run, so a capped attempt is unavailable whatever its outcome (spec §3.5, A22, inv 28)."""
     # spec §3.5 grader cap (PKG-06b), invariant 28
     if ai_budget.check(deps.user_id, "grader").level == "hard":
-        return GradeResult(unavailable=True)
+        return GradeResult(unavailable=True, budget_capped=True)
     if not item.rubric:
         # Nothing to judge: all_yes could never be true, so every answer would
         # come back a full-weight "incorrect" (check_item_service falls back to
@@ -888,7 +953,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             backend = "gemini_second"
     except _GRADER_FAILURES as exc:
         logger.warning("grader unavailable for item %s: %s", item.id, exc)
-        return GradeResult(unavailable=True)
+        return _unavailable_after(exc)
     if screen.exempted and any(run.addresses_grader for run in runs):
         # A33 (ruling point 3; CONTINUE §4.1 (a)): the report refuses only beside
         # a screen flag — a directive or role/format marker the screen matched and
@@ -967,7 +1032,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             logger.warning(
                 "grader unavailable for item %s: the span check failed: %s", item.id, exc
             )
-            return GradeResult(unavailable=True)
+            return _unavailable_after(exc)
         confirmed = parse_labelled(check.item_results, span_labels)
         asserted = parse_labelled(check.asserted, span_labels)
         confirmed = {rid: ok and asserted.get(rid, False) for rid, ok in confirmed.items()}
@@ -996,7 +1061,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
                 logger.warning(
                     "grader unavailable for item %s: the context check failed: %s", item.id, exc
                 )
-                return GradeResult(unavailable=True)
+                return _unavailable_after(exc)
             # fail closed: only an explicit "no" keeps the credit, so each entry's
             # verdict is flipped and a missing or unreadable one reads as withdrawn
             standing = parse_labelled(
@@ -1023,6 +1088,9 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         hint = ""
     if _echoes_reference(hint, item.reference_answer):  # the prompt forbids it; code enforces it
         logger.warning("grader hint for item %s repeated the reference; dropped", item.id)
+        hint = ""
+    if hint and _hint_leaks(item, hint, format=format):  # A38: the final answer, the key letter
+        logger.warning("grader hint for item %s failed the leak check; dropped", item.id)
         hint = ""
     return GradeResult(
         item_results=results,
