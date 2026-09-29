@@ -46,14 +46,28 @@ MAX_TOTAL_PROPERTIES = 20
 # Per-object ceilings above MAX_PROPERTIES_PER_OBJECT, keyed by the object's
 # schema title. Each is a deliberate, evidenced exception that the exact count
 # pins (test_per_object_exceptions_are_exact), so it cannot grow silently.
-# CheckItemDraft (learning loop PKG-04, spec §13 A22): FLAT by design —
-# str/int/bool/list[str] only, no nesting, no optional models — because the A22
-# answer structure (options with a wrong_key each, correct_option, answer_kind,
-# canonical_answer, tolerance, stepwise) has to come out of one call, and so
-# does A34's final_answer (18). Recorded live against gemini-2.5-flash-lite
-# with no schema rejection (tests/evals/cassettes/check_items). Every other
-# budget rule still applies.
-PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 18}
+# CheckItemDraft (learning loop PKG-04, spec §13 A22): flat scalars and
+# string lists, no optional models, because the A22 answer structure
+# (answer_kind, canonical_answer, tolerance, stepwise) has to come out of one
+# call, and so does A34's final_answer — plus ONE list of small option objects
+# (A37, below) that replaced the four parallel option arrays (18 -> 15).
+# Recorded live against gemini-2.5-flash-lite with no schema rejection
+# (tests/evals/cassettes/check_items). Every other budget rule still applies.
+PER_OBJECT_EXCEPTIONS = {"CheckItemDraft": 15}
+
+# Per-object nesting ceilings above MAX_OBJECT_DEPTH, keyed by schema title,
+# each pinned exactly (test_depth_exceptions_are_exact). OptionDraft (spec §13
+# A37): one mc_reason option — {text, is_correct, misconception_key,
+# misconception_text}, four scalars — one level below CheckItemDraft. Parallel
+# option arrays let the model drift a key off its option (live sequence test
+# 2026-09-27: 0 of 12 mc_reason drafts stored), and a key that had to name an
+# entry of the item's wrong_keys was the one cross-reference left (round 4); an
+# object per option carrying its own misconception makes both unrepresentable
+# and brings the whole check_items output to exactly 20 properties. Recorded live
+# against gemini-2.5-flash-lite with no schema rejection
+# (tests/evals/cassettes/check_items) and exercised end to end on the local
+# stack (A37's live numbers).
+DEPTH_EXCEPTIONS = {"OptionDraft": 3}
 
 # Modules that never define agents. The `function_handlers_*` modules
 # self-register per-task handlers on the #391 seam as an IMPORT SIDE EFFECT,
@@ -72,7 +86,8 @@ _SKIP_PREFIX = "function_handlers"
 # output validation to retry; the streaming tutor's failure handling belongs
 # to chat_stream's rung ladder, never a hidden re-roll.
 EXPECTED_STRUCTURED_AGENTS = {
-    "check_items_agent",  # learning loop PKG-04 (flat 18-field draft; see PER_OBJECT_EXCEPTIONS)
+    "check_items_agent",  # learning loop PKG-04 (15-field draft + A37 option objects; see the exceptions)
+    "check_items_topup_agent",  # A37 top-up: the same CheckItemsOutput, one concept's mc_reason items
     "classifier_agent",
     "concept_describe_agent",
     "concept_extraction_agent",
@@ -215,10 +230,11 @@ def schema_violations(model: type[BaseModel]) -> list[str]:
                 "agent or compose in route code instead"
             )
         object_depth = depth + 1
-        if object_depth > MAX_OBJECT_DEPTH:
+        depth_ceiling = DEPTH_EXCEPTIONS.get(node.get("title"), MAX_OBJECT_DEPTH)
+        if object_depth > depth_ceiling:
             violations.append(
                 f"{path}: object nesting depth {object_depth} exceeds "
-                f"{MAX_OBJECT_DEPTH} (root -> list[Item] is the ceiling)"
+                f"{depth_ceiling} (root -> list[Item] is the ceiling)"
             )
         properties = node.get("properties", {})
         ceiling = PER_OBJECT_EXCEPTIONS.get(node.get("title"), MAX_PROPERTIES_PER_OBJECT)
@@ -291,6 +307,57 @@ def test_per_object_exceptions_are_exact():
                 counts[node["title"]] = len(node.get("properties", {}))
     assert counts == PER_OBJECT_EXCEPTIONS
     assert all(n > MAX_PROPERTIES_PER_OBJECT for n in counts.values())
+
+
+def _object_depths(schema: dict) -> dict[str, int]:
+    """Every object title in `schema` -> the deepest level it sits at (root = 1)."""
+    defs = schema.get("$defs", {})
+    depths: dict[str, int] = {}
+
+    def walk(node: dict, depth: int) -> None:
+        node = _resolve(node, defs)
+        for key in ("anyOf", "oneOf", "allOf"):
+            for branch in node.get(key, []):
+                walk(branch, depth)
+        if node.get("type") == "array":
+            walk(node.get("items", {}), depth)
+            return
+        if node.get("type") != "object" and "properties" not in node:
+            return
+        title = node.get("title", "?")
+        depths[title] = max(depths.get(title, 0), depth + 1)
+        for sub in node.get("properties", {}).values():
+            walk(sub, depth + 1)
+
+    walk(schema, 0)
+    return depths
+
+
+def test_depth_exceptions_are_exact():
+    """Each depth exception names a real structured output object at EXACTLY
+    the allowed depth, and no other object sits below MAX_OBJECT_DEPTH: a new
+    deeper object fails here until it is added consciously."""
+    deeper: dict[str, int] = {}
+    for name in EXPECTED_STRUCTURED_AGENTS:
+        for title, depth in _object_depths(_output_model(AGENTS[name]).model_json_schema()).items():
+            if depth > MAX_OBJECT_DEPTH:
+                deeper[title] = depth
+    assert deeper == DEPTH_EXCEPTIONS
+
+
+def test_the_depth_exception_is_one_small_flat_object():
+    """OptionDraft may sit one level deeper only while it stays four scalar
+    fields: no list, no object, no optional model inside it. A distractor's
+    misconception is two flat scalars, not a nested {key, text} model: that
+    would be an optional nested model on the correct option and would take
+    the schema to 21 properties (spec §13 A37, round 4)."""
+    from learning.checks import OptionDraft
+
+    props = OptionDraft.model_json_schema()["properties"]
+    assert set(props) == {"text", "is_correct", "misconception_key", "misconception_text"}
+    for spec in props.values():
+        kinds = [spec.get("type")] + [b.get("type") for b in spec.get("anyOf", [])]
+        assert not {"array", "object"} & set(kinds), spec
 
 
 def test_negative_control_rich_schema_is_rejected():

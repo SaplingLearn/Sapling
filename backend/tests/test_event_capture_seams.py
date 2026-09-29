@@ -125,6 +125,8 @@ def test_event_taxonomy_is_pinned():
         # PKG-05 reopen (spec §6, §13 A33): an answer that addressed the grader
         # was refused before grading. Emit coverage: test_learning_answer_guard.py.
         "learn.answer_refused",
+        # A37 (coordinator's ruling, 2026-09-28): one mc_reason top-up call, its counts.
+        "learn.check_items_topup",
         # PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py
         "zpd.step",
         "zpd.offer",

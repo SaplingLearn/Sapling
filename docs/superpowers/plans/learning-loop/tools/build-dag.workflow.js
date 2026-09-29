@@ -1,7 +1,7 @@
-// Claude Code Workflow script used to build learning-loop PKG-04..06 (see CONTINUE.md).
-// Run with the Workflow tool: args = { repo, scratch, integration_worktree, e2e_env?, packages: [{num, slug, file, after:[...], extra?, resume?, decision?}] }
+// Claude Code Workflow script that built learning-loop PKG-04..06b, A37 (see CONTINUE.md §5).
+// Run with the Workflow tool: args = { repo, scratch, integration_worktree, e2e_env?, packages: [{num, slug, file, after:[...], extra?, resume?, decision?, lane?, branch?}] }
 export const meta = {
-  name: 'learning-loop-build-dag3',
+  name: 'learning-loop-build-dag4',
   description: 'Build learning-loop PKG-04..14 in dependency order in lane worktrees: implement, 3-lens verify, fix, E2E gate on the local stack, merge into PR #673 branch and push',
   whenToUse: 'Executing the remaining learning-loop PKG prompts with per-package integration into feat/learning-loop',
   phases: [
@@ -22,8 +22,8 @@ const INT = 'feat/learning-loop'
 const FULL_SUITE = 'cd backend && venv/bin/python -m pytest tests/ -q -p no:cacheprovider --ignore=tests/evals --ignore=tests/test_docling_integration.py --ignore=tests/test_ocr_pipeline.py --ignore=tests/test_extraction_backends.py'
 const TRAILER = 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 
-const lane = p => SP + '/lanes/pkg-' + p.num
-const branchOf = p => 'feat/learning-loop-' + p.num + '-' + p.slug
+const lane = p => p.lane || (SP + '/lanes/pkg-' + p.num)
+const branchOf = p => p.branch || ('feat/learning-loop-' + p.num + '-' + p.slug)
 
 function mutex() {
   let tail = Promise.resolve()
@@ -105,7 +105,7 @@ const OVERRIDES = p => `SESSION OVERRIDES (these beat the prompt file and the RE
 5. Secrets. backend/.env holds LOCAL values incl. a real GEMINI_API_KEY. Never print, echo, copy or commit any .env value; never git add a .env file or the venv/node_modules links; before every commit \`git diff --cached | grep -cE "AIza[S]y|GOC[S]PX"\` must print 0. Stage explicit paths only.
 6. ${STACK_RULES} Run a cycle whenever your prompt's self-check requires one (request-path route/agent touched, migrations, E2E specs) and while developing Playwright specs; the pipeline ALSO runs an E2E gate after review, so a cycle you cannot get green for reasons outside your diff is reported, not hidden.
 7. Evals — only if this package adds or changes an agent prompt or tool description: record cassettes for THIS package's dataset only (SAPLING_EVAL_MODE=record, ≤ 8 cases, real GEMINI_API_KEY from backend/.env), replay, then refresh baselines for that dataset only (SAPLING_EVAL_UPDATE_BASELINES=1). Never re-record another dataset. If recording fails for a reason outside your code (quota, network), keep the dataset module + evaluator unit tests, leave it out of run_all.py/baselines.json and record it as deferred.
-8. Precedence when sources disagree: spec §13 Amendments (A1–A32) > the actual symbols in earlier HANDOFF-*.md files and the code on disk > the prompt text. Adapt names to what earlier packages actually shipped and record each adaptation as a Deviation. Ledger: a package's state is its LATEST row; "verified" or "done" or "reopened" as the latest row all count as satisfied.
+8. Precedence when sources disagree: spec §13 Amendments (every row, A1 onward) > the actual symbols in earlier HANDOFF-*.md files and the code on disk > the prompt text. Adapt names to what earlier packages actually shipped and record each adaptation as a Deviation. Ledger: a package's state is its LATEST row; "verified" or "done" or "reopened" as the latest row all count as satisfied.
 9. Scope: change only files in this package's Files lists, plus LEDGER.md, HANDOFF-${p.num}.md, and earlier-package reopens done exactly per the README protocol.
 10. Blocked after 3 honest iterations on one task: follow "If you get stuck", commit what is green, report status "blocked".${p.extra ? '\n\nPACKAGE-SPECIFIC OVERRIDES:\n' + p.extra : ''}`
 

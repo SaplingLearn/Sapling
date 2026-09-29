@@ -38,7 +38,11 @@ from agents._providers import (
     register_function_handler,
     set_function_stream_delay_ms,
 )
-from learning.params import CHECK_ITEM_DIFFICULTIES, CHECK_ITEM_FORMATS
+from learning.params import (
+    CHECK_ITEM_DIFFICULTIES,
+    CHECK_ITEM_FORMATS,
+    CHECK_ITEM_MC_MIN_PER_CONCEPT,
+)
 
 # Streamed-replay pacing (#356): re-chunk streamed text into small deltas with
 # 150ms between them, giving the mid-stream journeys (Stop a turn, switch
@@ -355,9 +359,14 @@ register_function_handler("note_chat", _note_chat_handler)
 # synchronously inside the upload when SAPLING_MODEL_MODE=function, since
 # post-response handlers stay unregistered by design. Inert unless
 # LEARNING_LOOP_ENABLED=true (unset in the E2E stack until PKG-13, spec §7).
-# One item per format for each E2E_DOC_CONCEPTS name — the function-mode
-# upload's concepts — so each draft's `concept` matches the call's batch.
-# Prompts differ per (concept, format) so every question_hash differs.
+# For each E2E_DOC_CONCEPTS name — the function-mode upload's concepts, so
+# each draft's `concept` matches the call's batch — one free and one teachback
+# item, and CHECK_ITEM_MC_MIN_PER_CONCEPT mc_reason items (difficulties 1, 2):
+# a function-mode pass leaves no concept below the A37 mc_reason floor, so it
+# makes no top-up call. The top-up agent rides this same handler (it runs on
+# the check_items slot) and keeps only its concept's mc_reason drafts.
+# Prompts differ per (concept, format, difficulty) so every question_hash
+# differs; the difficulty-1 prompts are the ones PKG-04 shipped.
 # Backend contract test: tests/test_e2e_function_handlers.py. Keep in sync.
 
 E2E_CHECK_ITEM_PROMPT_TEMPLATE = (
@@ -377,16 +386,16 @@ E2E_CHECK_ITEM_RUBRIC = [
 ]
 E2E_CHECK_ITEM_WRONG_KEY = "rate_is_iteration_count"
 E2E_CHECK_ITEM_WRONG_TEXT = "Confuses the learning rate with the number of iterations."
-# mc_reason (A22): four options A–D, exactly one correct, every distractor keyed
-# to one of the item's own wrong_keys.
-E2E_CHECK_ITEM_OPTION_LETTERS = ["A", "B", "C", "D"]
-E2E_CHECK_ITEM_OPTION_TEXTS = [
-    E2E_CHECK_ITEM_FINAL_ANSWER,
-    "The number of iterations to run",
-    "The value of the loss",
-    "The sign of the gradient",
-]
-E2E_CHECK_ITEM_CORRECT_OPTION = "A"
+# mc_reason (A22, A37): four option OBJECTS — the correct one first, flagged
+# is_correct with no misconception, then three distractors, each stating its
+# own misconception (a key and a sentence). The item lists no wrong_keys /
+# wrong_texts of its own: code takes its common wrong reasons from the
+# distractors (checks.common_wrong), so the stored common_wrong_json is
+# E2E_CHECK_ITEM_MC_WRONG_KEYS paired with E2E_CHECK_ITEM_MC_WRONG_TEXTS. No
+# letters: code letters the options and places the correct one at a slot keyed
+# by the server secret over the question_hash (checks.lettered_options), so the
+# stored letter of each concept's item is fixed by its prompt and the stack's
+# ENCRYPTION_KEY.
 E2E_CHECK_ITEM_MC_WRONG_KEYS = [
     E2E_CHECK_ITEM_WRONG_KEY,
     "rate_is_loss_value",
@@ -397,15 +406,30 @@ E2E_CHECK_ITEM_MC_WRONG_TEXTS = [
     "Treats the learning rate as the loss being minimised.",
     "Thinks the learning rate sets the direction of the step.",
 ]
-E2E_CHECK_ITEM_MC_REFERENCE = f"{E2E_CHECK_ITEM_CORRECT_OPTION}: {E2E_CHECK_ITEM_REFERENCE}"
+E2E_CHECK_ITEM_OPTIONS = [
+    {"text": E2E_CHECK_ITEM_FINAL_ANSWER, "is_correct": True,
+     "misconception_key": None, "misconception_text": None},
+    {"text": "The number of iterations to run", "is_correct": False,
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[0],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[0]},
+    {"text": "The value of the loss", "is_correct": False,
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[1],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[1]},
+    {"text": "The sign of the gradient", "is_correct": False,
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[2],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[2]},
+]
 
 
-def _e2e_check_item(concept: str, fmt: str) -> dict:
+def _e2e_check_item(
+    concept: str, fmt: str, difficulty: int = CHECK_ITEM_DIFFICULTIES[0]
+) -> dict:
+    label = fmt if difficulty == CHECK_ITEM_DIFFICULTIES[0] else f"{fmt} {difficulty}"
     item = {
         "concept": concept,
         "format": fmt,
-        "difficulty": CHECK_ITEM_DIFFICULTIES[0],
-        "prompt": E2E_CHECK_ITEM_PROMPT_TEMPLATE.format(concept=concept, format=fmt),
+        "difficulty": difficulty,
+        "prompt": E2E_CHECK_ITEM_PROMPT_TEMPLATE.format(concept=concept, format=label),
         "reference_answer": E2E_CHECK_ITEM_REFERENCE,
         "final_answer": E2E_CHECK_ITEM_FINAL_ANSWER,
         "rubric": E2E_CHECK_ITEM_RUBRIC,
@@ -416,15 +440,8 @@ def _e2e_check_item(concept: str, fmt: str) -> dict:
         "chunk_ids": [],
     }
     if fmt == "mc_reason":
-        item.update({
-            "reference_answer": E2E_CHECK_ITEM_MC_REFERENCE,
-            "wrong_keys": E2E_CHECK_ITEM_MC_WRONG_KEYS,
-            "wrong_texts": E2E_CHECK_ITEM_MC_WRONG_TEXTS,
-            "option_letters": E2E_CHECK_ITEM_OPTION_LETTERS,
-            "option_texts": E2E_CHECK_ITEM_OPTION_TEXTS,
-            "option_wrong_keys": [""] + E2E_CHECK_ITEM_MC_WRONG_KEYS,
-            "correct_option": E2E_CHECK_ITEM_CORRECT_OPTION,
-        })
+        # The reference quotes the correct option's text and names no letter.
+        item.update({"wrong_keys": [], "wrong_texts": [], "options": E2E_CHECK_ITEM_OPTIONS})
     return item
 
 
@@ -432,9 +449,15 @@ register_function_handler(
     "check_items",
     _structured_output({
         "items": [
-            _e2e_check_item(name, fmt)
+            item
             for name, _, _ in E2E_DOC_CONCEPTS
-            for fmt in CHECK_ITEM_FORMATS
+            for item in [
+                *(_e2e_check_item(name, fmt) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
+                *(
+                    _e2e_check_item(name, "mc_reason", level)
+                    for level in CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
+                ),
+            ]
         ],
     }),
 )

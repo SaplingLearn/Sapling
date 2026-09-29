@@ -233,6 +233,16 @@ CHECK_ITEM_DRAFT_WORKERS = 2  # † upload-time drafting pool; a Flex run holds 
 # never the whole reference, yet room for a number with its unit, an
 # expression, an mc_reason option's text or a teachback claim.
 CHECK_ITEM_FINAL_ANSWER_MAX_TOKENS = 20
+# † A37: options per mc_reason item — A22's four (A–D). The agent writes them as
+# objects; code letters them and places the correct one (checks.lettered_options).
+CHECK_ITEM_MC_OPTIONS = 4
+# A37 (series coordinator's ruling, 2026-09-28): a generation pass leaves every
+# concept it drafted with at least this many stored mc_reason items, or tops it
+# up (services/check_item_service.py; agents/check_items_topup.py).
+CHECK_ITEM_MC_MIN_PER_CONCEPT = 2
+# † focused mc_reason-only top-up calls per concept per pass, each for exactly
+# the missing count; a concept still below is left to the next run or backfill.
+CHECK_ITEM_MC_TOPUP_CALLS = 1
 
 # ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
 # FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating
