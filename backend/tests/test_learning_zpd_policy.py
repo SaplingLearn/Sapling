@@ -1702,7 +1702,7 @@ def test_detect_leak_catches(reference, final, emitted, detector):
     from learning.ladder import Rung
     from learning.leak import detect_leak
 
-    v = detect_leak(reference, emitted, Rung.H3, final_answer=final)
+    v = detect_leak(reference=reference, emitted=emitted, rung=Rung.H3, final_answer=final)
     assert (v.leaked, v.detector) == (True, detector)
 
 
@@ -1711,7 +1711,10 @@ def test_detect_leak_zero_false_positives(reference, final, emitted):
     from learning.ladder import Rung
     from learning.leak import detect_leak, tokens
 
-    assert detect_leak(reference, emitted, Rung.H0, final_answer=final) == (False, "none")
+    assert detect_leak(reference=reference, emitted=emitted, rung=Rung.H0, final_answer=final) == (
+        False,
+        "none",
+    )
     ref, em = tokens(reference), tokens(emitted)
     n = min(params.LEAK_NGRAM, len(ref))
     em_grams = {tuple(em[j : j + n]) for j in range(len(em) - n + 1)}
@@ -1722,8 +1725,14 @@ def test_h6_is_never_a_leak():
     from learning.ladder import Rung
     from learning.leak import detect_leak
 
-    assert detect_leak(REF_EQ, REF_EQ, Rung.H6, final_answer=FA_EQ).leaked is False
-    assert detect_leak(REF_EQ, REF_EQ, Rung.H5, final_answer=FA_EQ).leaked is True
+    assert (
+        detect_leak(reference=REF_EQ, emitted=REF_EQ, rung=Rung.H6, final_answer=FA_EQ).leaked
+        is False
+    )
+    assert (
+        detect_leak(reference=REF_EQ, emitted=REF_EQ, rung=Rung.H5, final_answer=FA_EQ).leaked
+        is True
+    )
 
 
 def test_a_final_answer_is_required():
@@ -1737,11 +1746,11 @@ def test_a_final_answer_is_required():
 
     for missing in (None, "", "   ", "...", "“ ”"):
         with pytest.raises(ValueError):
-            detect_leak(REF_EQ, "hint", Rung.H3, final_answer=missing)
+            detect_leak(reference=REF_EQ, emitted="hint", rung=Rung.H3, final_answer=missing)
         with pytest.raises(ValueError):
-            detect_leak(REF_EQ, "hint", Rung.H6, final_answer=missing)
+            detect_leak(reference=REF_EQ, emitted="hint", rung=Rung.H6, final_answer=missing)
         with pytest.raises(ValueError):
-            strip_leak("hint", REF_EQ, final_answer=missing)
+            strip_leak(emitted="hint", reference=REF_EQ, final_answer=missing)
     for fn in (detect_leak, strip_leak):
         params_ = inspect.signature(fn).parameters
         assert params_["final_answer"].kind is inspect.Parameter.KEYWORD_ONLY
@@ -1749,11 +1758,31 @@ def test_a_final_answer_is_required():
         assert params_["canonical_answer"].kind is inspect.Parameter.KEYWORD_ONLY
         assert params_["canonical_answer"].default is None
     with pytest.raises(TypeError):
-        detect_leak(REF_EQ, "hint", Rung.H3)
+        detect_leak(reference=REF_EQ, emitted="hint", rung=Rung.H3)
     with pytest.raises(TypeError):
         detect_leak(REF_EQ, "hint", Rung.H3, "7")
     with pytest.raises(TypeError):
         strip_leak("hint", REF_EQ, "7")
+
+
+def test_reference_and_emitted_are_keyword_only():
+    """A38 fix round (m6): detect_leak takes (reference, emitted) and strip_leak
+    (emitted, reference) — opposite orders — so neither may be passed by position."""
+    import inspect
+
+    from learning.ladder import Rung
+    from learning.leak import detect_leak, strip_leak
+
+    for fn in (detect_leak, strip_leak):
+        kinds = {p.kind for p in inspect.signature(fn).parameters.values()}
+        assert kinds == {inspect.Parameter.KEYWORD_ONLY}, fn.__name__
+    with pytest.raises(TypeError):
+        detect_leak(REF_EQ, "hint", Rung.H3, final_answer=FA_EQ)
+    with pytest.raises(TypeError):
+        strip_leak("hint", REF_EQ, final_answer=FA_EQ)
+    kw = {"final_answer": FA_EQ}
+    assert detect_leak(reference=REF_EQ, emitted="hint", rung=Rung.H3, **kw) == (False, "none")
+    assert strip_leak(emitted="hint", reference=REF_EQ, **kw) == "hint"
 
 
 def test_the_reference_is_never_parsed_for_a_final_answer():
@@ -1767,11 +1796,21 @@ def test_the_reference_is_never_parsed_for_a_final_answer():
     for gone in ("final_answer", "_final_answer_text", "_pick", "_CUE", "_ASIDE", "_eq_clauses"):
         assert not hasattr(leak, gone), gone
     ref = "x + 3 = 10, so x = 7"
-    assert detect_leak(ref, "What is 10 minus 3?", Rung.H3, final_answer="7") == (False, "none")
-    assert detect_leak(ref, "It is 7.", Rung.H3, final_answer="7") == (True, "final_answer")
+    assert detect_leak(
+        reference=ref, emitted="What is 10 minus 3?", rung=Rung.H3, final_answer="7"
+    ) == (False, "none")
+    assert detect_leak(reference=ref, emitted="It is 7.", rung=Rung.H3, final_answer="7") == (
+        True,
+        "final_answer",
+    )
     # a final answer the reference text states differently is still the answer
-    assert detect_leak(ref, "Is it 3?", Rung.H3, final_answer="x = 7") == (False, "none")
-    assert detect_leak(ref, "So x=7 then.", Rung.H3, final_answer="x = 7").leaked
+    assert detect_leak(reference=ref, emitted="Is it 3?", rung=Rung.H3, final_answer="x = 7") == (
+        False,
+        "none",
+    )
+    assert detect_leak(
+        reference=ref, emitted="So x=7 then.", rung=Rung.H3, final_answer="x = 7"
+    ).leaked
 
 
 DIFF_REF = "Differentiate term by term: the derivative of 2x^3 + 5 is 6x^2."
@@ -1785,11 +1824,17 @@ def test_a_symbolic_final_answer_leaks_in_any_spelling(hint):
     from learning.ladder import Rung
     from learning.leak import WITHHELD, detect_leak, strip_leak
 
-    assert detect_leak(DIFF_REF, hint, Rung.H3, final_answer="6x^2") == (True, "final_answer")
-    once = strip_leak(hint, DIFF_REF, final_answer="6x^2")
+    assert detect_leak(reference=DIFF_REF, emitted=hint, rung=Rung.H3, final_answer="6x^2") == (
+        True,
+        "final_answer",
+    )
+    once = strip_leak(emitted=hint, reference=DIFF_REF, final_answer="6x^2")
     assert WITHHELD in once and "6" not in once, once
-    assert detect_leak(DIFF_REF, once, Rung.H0, final_answer="6x^2") == (False, "none")
-    assert strip_leak(once, DIFF_REF, final_answer="6x^2") == once
+    assert detect_leak(reference=DIFF_REF, emitted=once, rung=Rung.H0, final_answer="6x^2") == (
+        False,
+        "none",
+    )
+    assert strip_leak(emitted=once, reference=DIFF_REF, final_answer="6x^2") == once
 
 
 def test_a_hint_about_the_steps_is_clean():
@@ -1797,10 +1842,15 @@ def test_a_hint_about_the_steps_is_clean():
     from learning.leak import detect_leak, strip_leak
 
     hint = "What happens to the constant 5 when you differentiate?"
-    assert detect_leak(DIFF_REF, hint, Rung.H3, final_answer="6x^2") == (False, "none")
-    assert strip_leak(hint, DIFF_REF, final_answer="6x^2") == hint
+    assert detect_leak(reference=DIFF_REF, emitted=hint, rung=Rung.H3, final_answer="6x^2") == (
+        False,
+        "none",
+    )
+    assert strip_leak(emitted=hint, reference=DIFF_REF, final_answer="6x^2") == hint
     for clean in ("Bring the exponent 3 down.", "What is 2 times 3?", "Try x^2 first.", "12x^2?"):
-        assert detect_leak(DIFF_REF, clean, Rung.H1, final_answer="6x^2") == (False, "none"), clean
+        assert detect_leak(
+            reference=DIFF_REF, emitted=clean, rung=Rung.H1, final_answer="6x^2"
+        ) == (False, "none"), clean
 
 
 def test_a_final_answer_with_a_unit_leaks_reformatted():
@@ -1809,16 +1859,27 @@ def test_a_final_answer_with_a_unit_leaks_reformatted():
 
     final = "9.8 m/s^2"
     for hint in ("It is 9.80 m/s².", "that gives 9.8 m/s**2", "about 9.8 m / s ^ 2 here"):
-        assert detect_leak(G_REF, hint, Rung.H3, final_answer=final) == (True, "final_answer")
-        once = strip_leak(hint, G_REF, final_answer=final)
+        assert detect_leak(reference=G_REF, emitted=hint, rung=Rung.H3, final_answer=final) == (
+            True,
+            "final_answer",
+        )
+        once = strip_leak(emitted=hint, reference=G_REF, final_answer=final)
         assert (
-            WITHHELD in once and detect_leak(G_REF, once, Rung.H0, final_answer=final)[0] is False
+            WITHHELD in once
+            and detect_leak(reference=G_REF, emitted=once, rung=Rung.H0, final_answer=final)[0]
+            is False
         )
     # a free item's answer is its whole run: the bare number alone is not it
     # (a numeric item's canonical_answer catches that, below)
-    assert detect_leak(G_REF, "Use 9.8 for g.", Rung.H3, final_answer=final) == (False, "none")
     assert detect_leak(
-        G_REF, "Use 9.8 for g.", Rung.H3, final_answer=final, canonical_answer="9.8"
+        reference=G_REF, emitted="Use 9.8 for g.", rung=Rung.H3, final_answer=final
+    ) == (False, "none")
+    assert detect_leak(
+        reference=G_REF,
+        emitted="Use 9.8 for g.",
+        rung=Rung.H3,
+        final_answer=final,
+        canonical_answer="9.8",
     ) == (True, "final_answer")
 
 
@@ -1831,10 +1892,15 @@ def test_an_mc_reason_items_correct_option_text_leaks():
     from learning.leak import detect_leak, strip_leak
 
     hint = "So it never terminates?"
-    assert detect_leak(MC_REF, hint, Rung.H3, final_answer=MC_FINAL) == (True, "final_answer")
-    assert strip_leak(hint, MC_REF, final_answer=MC_FINAL) == "So [withheld]?"
+    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung.H3, final_answer=MC_FINAL) == (
+        True,
+        "final_answer",
+    )
+    assert strip_leak(emitted=hint, reference=MC_REF, final_answer=MC_FINAL) == "So [withheld]?"
     for clean in ("What stops the calls?", "Which option describes the missing base case?"):
-        assert detect_leak(MC_REF, clean, Rung.H3, final_answer=MC_FINAL) == (False, "none")
+        assert detect_leak(
+            reference=MC_REF, emitted=clean, rung=Rung.H3, final_answer=MC_FINAL
+        ) == (False, "none")
 
 
 # Owner decision A38 06 gap: an mc_reason item's correct option LETTER leaks
@@ -1872,11 +1938,16 @@ def test_the_correct_option_letter_leaks_in_an_option_context_below_h6(hint, run
     from learning.leak import detect_leak
 
     kw = {"final_answer": MC_FINAL, "correct_option": "C"}
-    assert detect_leak(MC_REF, hint, Rung(rung), **kw) == (True, "option"), hint
+    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung(rung), **kw) == (True, "option"), (
+        hint
+    )
     # without correct_option the letter is not checked (the pinned residual)
-    assert detect_leak(MC_REF, hint, Rung(rung), final_answer=MC_FINAL) == (False, "none")
+    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung(rung), final_answer=MC_FINAL) == (
+        False,
+        "none",
+    )
     # at H6 the answer is the content
-    assert detect_leak(MC_REF, hint, Rung.H6, **kw) == (False, "none")
+    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung.H6, **kw) == (False, "none")
 
 
 @pytest.mark.parametrize("hint", _LETTER_CLEAN)
@@ -1885,8 +1956,8 @@ def test_another_letter_or_a_bare_capital_is_not_an_option_leak(hint):
     from learning.leak import detect_leak, strip_leak
 
     kw = {"final_answer": MC_FINAL, "correct_option": "C"}
-    assert detect_leak(MC_REF, hint, Rung.H3, **kw) == (False, "none"), hint
-    assert strip_leak(hint, MC_REF, **kw) == hint
+    assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung.H3, **kw) == (False, "none"), hint
+    assert strip_leak(emitted=hint, reference=MC_REF, **kw) == hint
 
 
 def test_the_article_a_is_never_an_option_leak_for_key_a():
@@ -1899,9 +1970,14 @@ def test_the_article_a_is_never_an_option_leak_for_key_a():
         "A base case stops a recursion. Is there a base case?",
         "Answer a smaller question first.",
     ):
-        assert detect_leak(MC_REF, hint, Rung.H1, **kw) == (False, "none"), hint
-        assert strip_leak(hint, MC_REF, **kw) == hint
-    assert detect_leak(MC_REF, "The answer is A.", Rung.H1, **kw) == (True, "option")
+        assert detect_leak(reference=MC_REF, emitted=hint, rung=Rung.H1, **kw) == (False, "none"), (
+            hint
+        )
+        assert strip_leak(emitted=hint, reference=MC_REF, **kw) == hint
+    assert detect_leak(reference=MC_REF, emitted="The answer is A.", rung=Rung.H1, **kw) == (
+        True,
+        "option",
+    )
 
 
 @pytest.mark.parametrize("hint", _LETTER_LEAKS)
@@ -1910,12 +1986,18 @@ def test_strip_leak_withholds_the_option_letter_and_is_idempotent(hint):
     from learning.leak import detect_leak, strip_leak
 
     kw = {"final_answer": MC_FINAL, "correct_option": "C"}
-    once = strip_leak(hint, MC_REF, **kw)
+    once = strip_leak(emitted=hint, reference=MC_REF, **kw)
     assert "[withheld]" in once, once
-    assert detect_leak(MC_REF, once, Rung.H0, **kw) == (False, "none"), once
-    assert strip_leak(once, MC_REF, **kw) == once
-    assert strip_leak("The answer is C.", MC_REF, **kw) == "The answer is [withheld]."
-    assert strip_leak("Look again at (C) now.", MC_REF, **kw) == "Look again at [withheld] now."
+    assert detect_leak(reference=MC_REF, emitted=once, rung=Rung.H0, **kw) == (False, "none"), once
+    assert strip_leak(emitted=once, reference=MC_REF, **kw) == once
+    assert (
+        strip_leak(emitted="The answer is C.", reference=MC_REF, **kw)
+        == "The answer is [withheld]."
+    )
+    assert (
+        strip_leak(emitted="Look again at (C) now.", reference=MC_REF, **kw)
+        == "Look again at [withheld] now."
+    )
 
 
 def test_correct_option_must_be_one_letter():
@@ -1924,11 +2006,19 @@ def test_correct_option_must_be_one_letter():
 
     for bad in ("", "CD", "3", "option C"):
         with pytest.raises(ValueError):
-            detect_leak(MC_REF, "hi", Rung.H1, final_answer=MC_FINAL, correct_option=bad)
+            detect_leak(
+                reference=MC_REF,
+                emitted="hi",
+                rung=Rung.H1,
+                final_answer=MC_FINAL,
+                correct_option=bad,
+            )
         with pytest.raises(ValueError):
-            strip_leak("hi", MC_REF, final_answer=MC_FINAL, correct_option=bad)
+            strip_leak(emitted="hi", reference=MC_REF, final_answer=MC_FINAL, correct_option=bad)
     # a lowercase key is the same letter
-    lower = detect_leak(MC_REF, "Pick C.", Rung.H1, final_answer=MC_FINAL, correct_option="c")
+    lower = detect_leak(
+        reference=MC_REF, emitted="Pick C.", rung=Rung.H1, final_answer=MC_FINAL, correct_option="c"
+    )
     assert lower == (True, "option")
 
 
@@ -1945,12 +2035,17 @@ def test_a_teachback_claim_leaks_but_the_concept_name_alone_is_clean():
     from learning.leak import detect_leak
 
     leak_ = "It calls itself on smaller inputs."
-    assert detect_leak(TB_REF, leak_, Rung.H3, final_answer=TB_FINAL) == (True, "final_answer")
+    assert detect_leak(reference=TB_REF, emitted=leak_, rung=Rung.H3, final_answer=TB_FINAL) == (
+        True,
+        "final_answer",
+    )
     for clean in (
         "Think about recursion: what does the function do each time?",
         "Recursion needs a stopping point. What is it here?",
     ):
-        assert detect_leak(TB_REF, clean, Rung.H3, final_answer=TB_FINAL) == (False, "none")
+        assert detect_leak(
+            reference=TB_REF, emitted=clean, rung=Rung.H3, final_answer=TB_FINAL
+        ) == (False, "none")
 
 
 REF_SLIDE = "The block slides 14 m before it stops; friction removes 3 J per metre of travel."
@@ -1967,15 +2062,27 @@ def test_canonical_answer_is_matched_by_value():
     hint_3 = "Where do the 3 J go?"  # an intermediate number is no leak
     for canonical in (None, "14"):
         v = detect_leak(
-            REF_SLIDE, hint_3, Rung.H3, final_answer=FA_SLIDE, canonical_answer=canonical
+            reference=REF_SLIDE,
+            emitted=hint_3,
+            rung=Rung.H3,
+            final_answer=FA_SLIDE,
+            canonical_answer=canonical,
         )
         assert v == (False, "none")
     hint_14 = "So it should travel about 14.0 metres."
-    assert detect_leak(REF_SLIDE, hint_14, Rung.H3, final_answer=FA_SLIDE) == (False, "none")
     assert detect_leak(
-        REF_SLIDE, hint_14, Rung.H3, final_answer=FA_SLIDE, canonical_answer="14"
+        reference=REF_SLIDE, emitted=hint_14, rung=Rung.H3, final_answer=FA_SLIDE
+    ) == (False, "none")
+    assert detect_leak(
+        reference=REF_SLIDE,
+        emitted=hint_14,
+        rung=Rung.H3,
+        final_answer=FA_SLIDE,
+        canonical_answer="14",
     ) == (True, "final_answer")
-    once = strip_leak(hint_14, REF_SLIDE, final_answer=FA_SLIDE, canonical_answer="14")
+    once = strip_leak(
+        emitted=hint_14, reference=REF_SLIDE, final_answer=FA_SLIDE, canonical_answer="14"
+    )
     assert once == f"So it should travel about {WITHHELD} metres."
     for canonical, hint in (
         ("1250", "It comes to 1,250 J."),
@@ -1988,25 +2095,51 @@ def test_canonical_answer_is_matched_by_value():
         ("6.022e23", "About 6.022 x 10^23 of them."),
         (" 7 ", "Is it 7?"),
     ):
-        v = detect_leak(REF_SLIDE, hint, Rung.H3, final_answer=FA_SLIDE, canonical_answer=canonical)
+        v = detect_leak(
+            reference=REF_SLIDE,
+            emitted=hint,
+            rung=Rung.H3,
+            final_answer=FA_SLIDE,
+            canonical_answer=canonical,
+        )
         assert v == (True, "final_answer"), (canonical, hint)
-        once = strip_leak(hint, REF_SLIDE, final_answer=FA_SLIDE, canonical_answer=canonical)
+        once = strip_leak(
+            emitted=hint, reference=REF_SLIDE, final_answer=FA_SLIDE, canonical_answer=canonical
+        )
         assert WITHHELD in once, (canonical, once)
         assert not detect_leak(
-            REF_SLIDE, once, Rung.H0, final_answer=FA_SLIDE, canonical_answer=canonical
+            reference=REF_SLIDE,
+            emitted=once,
+            rung=Rung.H0,
+            final_answer=FA_SLIDE,
+            canonical_answer=canonical,
         ).leaked
     assert detect_leak(
-        REF_SLIDE, "It is 12,500 J.", Rung.H3, final_answer=FA_SLIDE, canonical_answer="1250"
+        reference=REF_SLIDE,
+        emitted="It is 12,500 J.",
+        rung=Rung.H3,
+        final_answer=FA_SLIDE,
+        canonical_answer="1250",
     ) == (False, "none")
     # a blank or non-numeric canonical_answer adds no value match
     for canonical in ("", "   ", "abc", "nan", "x = 7"):
         v = detect_leak(
-            REF_SLIDE, "Is it 7?", Rung.H3, final_answer=FA_SLIDE, canonical_answer=canonical
+            reference=REF_SLIDE,
+            emitted="Is it 7?",
+            rung=Rung.H3,
+            final_answer=FA_SLIDE,
+            canonical_answer=canonical,
         )
         assert v == (False, "none"), canonical
     # the n-gram rule still reads the reference
     copied = "It slides 14 m before it stops, see?"
-    v = detect_leak(REF_SLIDE, copied, Rung.H3, final_answer="99 m", canonical_answer="99")
+    v = detect_leak(
+        reference=REF_SLIDE,
+        emitted=copied,
+        rung=Rung.H3,
+        final_answer="99 m",
+        canonical_answer="99",
+    )
     assert v == (True, "ngram")
 
 
@@ -2042,11 +2175,14 @@ def test_canonical_answer_is_matched_by_value_in_any_notation(canonical, hint, s
     from learning.leak import detect_leak, strip_leak
 
     kw = {"final_answer": FA_CURRENT, "canonical_answer": canonical}
-    assert detect_leak(REF_CURRENT, hint, Rung.H3, **kw) == (True, "final_answer")
-    once = strip_leak(hint, REF_CURRENT, **kw)
+    assert detect_leak(reference=REF_CURRENT, emitted=hint, rung=Rung.H3, **kw) == (
+        True,
+        "final_answer",
+    )
+    once = strip_leak(emitted=hint, reference=REF_CURRENT, **kw)
     assert once == stripped
-    assert detect_leak(REF_CURRENT, once, Rung.H0, **kw) == (False, "none")
-    assert strip_leak(once, REF_CURRENT, **kw) == once
+    assert detect_leak(reference=REF_CURRENT, emitted=once, rung=Rung.H0, **kw) == (False, "none")
+    assert strip_leak(emitted=once, reference=REF_CURRENT, **kw) == once
 
 
 def test_a_number_is_its_value_whatever_exponent_follows_it():
@@ -2060,10 +2196,13 @@ def test_a_number_is_its_value_whatever_exponent_follows_it():
 
     kw = {"final_answer": "10", "canonical_answer": "1e-1"}
     text = "Use 0.1, 10\u207b\u00b3 here."
-    assert detect_leak("x", text, Rung.H3, **kw) == (True, "final_answer")
-    once = strip_leak(text, "x", **kw)
-    assert "0.1" not in once and detect_leak("x", once, Rung.H0, **kw) == (False, "none")
-    assert strip_leak(once, "x", **kw) == once
+    assert detect_leak(reference="x", emitted=text, rung=Rung.H3, **kw) == (True, "final_answer")
+    once = strip_leak(emitted=text, reference="x", **kw)
+    assert "0.1" not in once and detect_leak(reference="x", emitted=once, rung=Rung.H0, **kw) == (
+        False,
+        "none",
+    )
+    assert strip_leak(emitted=once, reference="x", **kw) == once
 
 
 @pytest.mark.parametrize(
@@ -2080,7 +2219,10 @@ def test_canonical_value_in_notation_is_not_a_partial_match(canonical, hint):
     from learning.leak import detect_leak
 
     kw = {"final_answer": FA_CURRENT, "canonical_answer": canonical}
-    assert detect_leak(REF_CURRENT, hint, Rung.H3, **kw) == (False, "none"), hint
+    assert detect_leak(reference=REF_CURRENT, emitted=hint, rung=Rung.H3, **kw) == (
+        False,
+        "none",
+    ), hint
 
 
 REF_BIG_O = (
@@ -2160,7 +2302,9 @@ def test_known_gaps_of_the_final_answer_rule_are_pinned(reference, final, canoni
     from learning.leak import detect_leak
 
     kw = {"final_answer": final, "canonical_answer": canonical}
-    assert detect_leak(reference, hint, Rung.H3, **kw) == (False, "none"), hint
+    assert detect_leak(reference=reference, emitted=hint, rung=Rung.H3, **kw) == (False, "none"), (
+        hint
+    )
 
 
 @pytest.mark.parametrize(
@@ -2182,7 +2326,10 @@ def test_known_over_matches_of_the_final_answer_rule_are_pinned(reference, final
     from learning.leak import detect_leak
 
     kw = {"final_answer": final, "canonical_answer": canonical}
-    assert detect_leak(reference, hint, Rung.H3, **kw) == (True, "final_answer"), hint
+    assert detect_leak(reference=reference, emitted=hint, rung=Rung.H3, **kw) == (
+        True,
+        "final_answer",
+    ), hint
 
 
 REF_FACTOR = "Expand x^2 - 6x + 9: it factors as (x-3)^2."
@@ -2217,10 +2364,10 @@ def test_strip_leak_keeps_brackets_paired(reference, final, canonical, emitted, 
     from learning.leak import detect_leak, strip_leak
 
     kw = {"final_answer": final, "canonical_answer": canonical}
-    once = strip_leak(emitted, reference, **kw)
+    once = strip_leak(emitted=emitted, reference=reference, **kw)
     assert once == stripped
-    assert detect_leak(reference, once, Rung.H0, **kw) == (False, "none")
-    assert strip_leak(once, reference, **kw) == once
+    assert detect_leak(reference=reference, emitted=once, rung=Rung.H0, **kw) == (False, "none")
+    assert strip_leak(emitted=once, reference=reference, **kw) == once
 
 
 def test_strip_leak_may_leave_a_bracket_a_token_parts_from_the_run():
@@ -2231,9 +2378,9 @@ def test_strip_leak_may_leave_a_bracket_a_token_parts_from_the_run():
     from learning.leak import detect_leak, strip_leak
 
     kw = {"final_answer": FA_CURRENT, "canonical_answer": "0.0025"}
-    once = strip_leak("I = 2.5 × 10^(-3 + 1)", REF_CURRENT, **kw)
+    once = strip_leak(emitted="I = 2.5 × 10^(-3 + 1)", reference=REF_CURRENT, **kw)
     assert once == "I = [withheld] + 1)"
-    assert detect_leak(REF_CURRENT, once, Rung.H0, **kw) == (False, "none")
+    assert detect_leak(reference=REF_CURRENT, emitted=once, rung=Rung.H0, **kw) == (False, "none")
 
 
 def test_a_short_reference_leaks_when_it_appears_whole():
@@ -2247,21 +2394,31 @@ def test_a_short_reference_leaks_when_it_appears_whole():
     passage = "Cellular respiration happens in the mitochondria, which produce most ATP."
     payload = deterministic_content(Rung.H2, item, [], [passage])
     verdict = detect_leak(
-        item.reference_answer, payload.text, payload.rung, final_answer=item.final_answer
+        reference=item.reference_answer,
+        emitted=payload.text,
+        rung=payload.rung,
+        final_answer=item.final_answer,
     )
     assert verdict == (True, "ngram")
-    assert strip_leak("It is the mitochondria.", REF_SHORT, final_answer=FA_SHORT) == (
-        "It is [withheld]."
-    )
-    assert detect_leak(REF_LAW, "Think about the law.", Rung.H1, final_answer=FA_LAW) == (
+    assert strip_leak(
+        emitted="It is the mitochondria.", reference=REF_SHORT, final_answer=FA_SHORT
+    ) == ("It is [withheld].")
+    assert detect_leak(
+        reference=REF_LAW, emitted="Think about the law.", rung=Rung.H1, final_answer=FA_LAW
+    ) == (
         False,
         "none",
     )
-    assert detect_leak("Paris", "The capital is Paris.", Rung.H1, final_answer="Paris") == (
+    assert detect_leak(
+        reference="Paris", emitted="The capital is Paris.", rung=Rung.H1, final_answer="Paris"
+    ) == (
         True,
         "ngram",
     )
-    assert detect_leak("", "anything at all", Rung.H1, final_answer="x") == (False, "none")
+    assert detect_leak(reference="", emitted="anything at all", rung=Rung.H1, final_answer="x") == (
+        False,
+        "none",
+    )
 
 
 REF_STEPS = (
@@ -2280,12 +2437,19 @@ def test_a_stepwise_reference_leaks_its_final_answer_not_its_step_labels():
         "Nitrogen reacts with hydrogen...\n\n1. Convert each mass to moles.\n"
         "2. Compare against the balanced equation..."
     )
-    assert detect_leak(REF_STEPS, sibling, Rung.H4, final_answer=FA_STEPS) == (False, "none")
+    assert detect_leak(
+        reference=REF_STEPS, emitted=sibling, rung=Rung.H4, final_answer=FA_STEPS
+    ) == (False, "none")
     hint = "What should step 2 of your plan be?"
-    assert detect_leak(REF_STEPS, hint, Rung.H3, final_answer=FA_STEPS) == (False, "none")
-    assert strip_leak(hint, REF_STEPS, final_answer=FA_STEPS) == hint
+    assert detect_leak(reference=REF_STEPS, emitted=hint, rung=Rung.H3, final_answer=FA_STEPS) == (
+        False,
+        "none",
+    )
+    assert strip_leak(emitted=hint, reference=REF_STEPS, final_answer=FA_STEPS) == hint
     leaked = "Then you get the theoretical yield."
-    assert detect_leak(REF_STEPS, leaked, Rung.H3, final_answer=FA_STEPS) == (True, "final_answer")
+    assert detect_leak(
+        reference=REF_STEPS, emitted=leaked, rung=Rung.H3, final_answer=FA_STEPS
+    ) == (True, "final_answer")
 
 
 REF_WORK = "The work done is 1,250 J"
@@ -2314,10 +2478,16 @@ def test_final_answer_matches_numbers_by_value(reference, final, emitted, stripp
     from learning.ladder import Rung
     from learning.leak import detect_leak, strip_leak
 
-    assert detect_leak(reference, emitted, Rung.H1, final_answer=final) == (True, "final_answer")
-    assert strip_leak(emitted, reference, final_answer=final) == stripped
-    assert detect_leak(reference, stripped, Rung.H0, final_answer=final) == (False, "none")
-    assert strip_leak(stripped, reference, final_answer=final) == stripped
+    assert detect_leak(reference=reference, emitted=emitted, rung=Rung.H1, final_answer=final) == (
+        True,
+        "final_answer",
+    )
+    assert strip_leak(emitted=emitted, reference=reference, final_answer=final) == stripped
+    assert detect_leak(reference=reference, emitted=stripped, rung=Rung.H0, final_answer=final) == (
+        False,
+        "none",
+    )
+    assert strip_leak(emitted=stripped, reference=reference, final_answer=final) == stripped
 
 
 def test_final_answer_by_value_is_not_a_prefix_or_part_match():
@@ -2325,21 +2495,33 @@ def test_final_answer_by_value_is_not_a_prefix_or_part_match():
     from learning.leak import detect_leak, strip_leak
 
     for safe in ("It is 12,500 J.", "Use 1.25 kJ as a check?", "2.05 m/s is too slow", "250 J"):
-        assert detect_leak(REF_WORK, safe, Rung.H1, final_answer=FA_WORK) == (False, "none"), safe
-        assert detect_leak(REF_SPEED, safe, Rung.H1, final_answer=FA_SPEED) == (False, "none"), safe
+        assert detect_leak(
+            reference=REF_WORK, emitted=safe, rung=Rung.H1, final_answer=FA_WORK
+        ) == (False, "none"), safe
+        assert detect_leak(
+            reference=REF_SPEED, emitted=safe, rung=Rung.H1, final_answer=FA_SPEED
+        ) == (False, "none"), safe
     # "1,250" is one number, never "1" and "250"
-    assert strip_leak("Add 1,250 to it", "x = 250", final_answer="250") == "Add 1,250 to it"
+    assert (
+        strip_leak(emitted="Add 1,250 to it", reference="x = 250", final_answer="250")
+        == "Add 1,250 to it"
+    )
     # an n-gram run that touches a number withholds the whole number
     ref = "the measured work comes to 1,250 joules on the ramp"
     once = strip_leak(
-        "so it comes to 1,250 joules on the ramp today", ref, final_answer="1,250 joules"
+        emitted="so it comes to 1,250 joules on the ramp today",
+        reference=ref,
+        final_answer="1,250 joules",
     )
     assert once == "so it [withheld] today", once
     # non-ASCII digits are never tokens, so stripping stays detect-clean
     for reference, final, emitted in (("x = ٣", "x", "x٣ is it"), ("x = 7", "7", "x٣7 or ٣ 7")):
-        once = strip_leak(emitted, reference, final_answer=final)
-        assert detect_leak(reference, once, Rung.H0, final_answer=final) == (False, "none"), once
-        assert strip_leak(once, reference, final_answer=final) == once
+        once = strip_leak(emitted=emitted, reference=reference, final_answer=final)
+        assert detect_leak(reference=reference, emitted=once, rung=Rung.H0, final_answer=final) == (
+            False,
+            "none",
+        ), once
+        assert strip_leak(emitted=once, reference=reference, final_answer=final) == once
 
 
 @pytest.mark.parametrize("reference,final,emitted,_", LEAKS)
@@ -2347,37 +2529,45 @@ def test_strip_leak_makes_text_safe_and_is_idempotent(reference, final, emitted,
     from learning.ladder import Rung
     from learning.leak import detect_leak, strip_leak
 
-    once = strip_leak(emitted, reference, final_answer=final)
+    once = strip_leak(emitted=emitted, reference=reference, final_answer=final)
     assert "[withheld]" in once
-    assert detect_leak(reference, once, Rung.H0, final_answer=final).leaked is False
-    assert strip_leak(once, reference, final_answer=final) == once
+    assert (
+        detect_leak(reference=reference, emitted=once, rung=Rung.H0, final_answer=final).leaked
+        is False
+    )
+    assert strip_leak(emitted=once, reference=reference, final_answer=final) == once
 
 
 @pytest.mark.parametrize("reference,final,emitted", SAFE)
 def test_strip_leak_leaves_safe_text_unchanged(reference, final, emitted):
     from learning.leak import strip_leak
 
-    assert strip_leak(emitted, reference, final_answer=final) == emitted
+    assert strip_leak(emitted=emitted, reference=reference, final_answer=final) == emitted
 
 
 def test_strip_leak_withholds_only_the_leaked_runs():
     from learning.leak import strip_leak
 
-    assert strip_leak("So x must be 7.", REF_EQ, final_answer=FA_EQ) == "So x must be [withheld]."
     assert (
-        strip_leak("Plug in and you get 9.8 m/s.", REF_VEL, final_answer=FA_VEL)
+        strip_leak(emitted="So x must be 7.", reference=REF_EQ, final_answer=FA_EQ)
+        == "So x must be [withheld]."
+    )
+    assert (
+        strip_leak(emitted="Plug in and you get 9.8 m/s.", reference=REF_VEL, final_answer=FA_VEL)
         == "Plug in and you get [withheld]."
     )
     assert (
         strip_leak(
-            "Remember: The Power Rule brings the exponent down, so try that.",
-            REF_POWER,
+            emitted="Remember: The Power Rule brings the exponent down, so try that.",
+            reference=REF_POWER,
             final_answer=FA_POWER,
         )
         == "Remember: [withheld], so try that."
     )
     assert (
-        strip_leak("It is 6*x**2, or 6x² if you like.", DIFF_REF, final_answer="6x^2")
+        strip_leak(
+            emitted="It is 6*x**2, or 6x² if you like.", reference=DIFF_REF, final_answer="6x^2"
+        )
         == "It is [withheld], or [withheld] if you like."
     )
 
@@ -2440,10 +2630,10 @@ def test_strip_leak_is_safe_and_idempotent_on_shuffled_reference_text():
                 "canonical_answer": canonical,
                 "correct_option": rng.choice([None, "A", "C"]),
             }
-            once = strip_leak(text, reference, **kw)
-            verdict = detect_leak(reference, once, Rung.H0, **kw)
+            once = strip_leak(emitted=text, reference=reference, **kw)
+            verdict = detect_leak(reference=reference, emitted=once, rung=Rung.H0, **kw)
             assert verdict.leaked is False, (reference, text, once)
-            assert strip_leak(once, reference, **kw) == once
+            assert strip_leak(emitted=once, reference=reference, **kw) == once
 
 
 def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
@@ -2480,9 +2670,13 @@ def test_strip_leak_is_safe_and_idempotent_on_random_unicode_math():
             ),
             "correct_option": rng.choice([None, "A", "C"]),
         }
-        once = strip_leak(text, reference, **kw)
-        assert detect_leak(reference, once, Rung.H0, **kw).leaked is False, (text, once, kw)
-        assert strip_leak(once, reference, **kw) == once
+        once = strip_leak(emitted=text, reference=reference, **kw)
+        assert detect_leak(reference=reference, emitted=once, rung=Rung.H0, **kw).leaked is False, (
+            text,
+            once,
+            kw,
+        )
+        assert strip_leak(emitted=once, reference=reference, **kw) == once
         checked += 1
     assert checked > 1000  # not vacuous
 
@@ -2509,8 +2703,16 @@ def test_leak_check_runs_in_linear_time():
         ("option " * (big // 7) + "(C)", "a"),
     ):
         start = time.perf_counter()
-        detect_leak(text, text, Rung.H3, final_answer=final, correct_option="C")
-        strip_leak(text, text, final_answer=final, canonical_answer="1", correct_option="C")
+        detect_leak(
+            reference=text, emitted=text, rung=Rung.H3, final_answer=final, correct_option="C"
+        )
+        strip_leak(
+            emitted=text,
+            reference=text,
+            final_answer=final,
+            canonical_answer="1",
+            correct_option="C",
+        )
         assert time.perf_counter() - start < 1.0, text[:20]
 
 
@@ -2639,9 +2841,9 @@ def test_deterministic_payloads_are_leak_checked_by_the_caller():
 
     def check(payload):
         return detect_leak(
-            item.reference_answer,
-            payload.text,
-            payload.rung,
+            reference=item.reference_answer,
+            emitted=payload.text,
+            rung=payload.rung,
             final_answer=item.final_answer,
             canonical_answer=item.canonical_answer,
         )

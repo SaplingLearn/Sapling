@@ -180,15 +180,18 @@ def _reference_grams(reference: str) -> tuple[int, set[tuple[str, ...]]]:
 
 
 def detect_leak(
-    reference_answer: str,
+    *,
+    reference: str,
     emitted: str,
     rung: Rung,
-    *,
     final_answer: str,
     canonical_answer: str | None = None,
     correct_option: str | None = None,
 ) -> LeakVerdict:
-    """`rung` is the rung the text is served at; at H6 the reference is the
+    """Every parameter is keyword-only (A38 fix round, m6): detect_leak and
+    strip_leak name `reference` and `emitted` in opposite orders, so a
+    positional call could swap them silently. `reference` is the item's
+    decrypted reference answer. `rung` is the rung the text is served at; at H6 the reference is the
     content (under gates.h6_allowed), so nothing is a leak. `final_answer` is
     the item's decrypted check_items.final_answer and `canonical_answer` its
     decrypted numeric canonical_answer (None for a free item).
@@ -199,7 +202,7 @@ def detect_leak(
     option = _option_pattern(correct_option)
     if Rung(rung) >= Rung.H6:
         return LeakVerdict(False, "none")
-    n, grams = _reference_grams(reference_answer)
+    n, grams = _reference_grams(reference)
     if grams & _ngrams(tokens(emitted), n):
         return LeakVerdict(True, "ngram")
     if _answer_hits(answer_tokens(emitted), answer):
@@ -307,9 +310,9 @@ def _strip_segment(
 
 
 def strip_leak(
-    emitted: str,
-    reference_answer: str,
     *,
+    emitted: str,
+    reference: str,
     final_answer: str,
     canonical_answer: str | None = None,
     correct_option: str | None = None,
@@ -321,14 +324,15 @@ def strip_leak(
     tokens so no number or word is cut in two, and over the partner of a
     bracket it holds unpaired when only whitespace parts them (a bracket is
     no token, so this withholds nothing the detector reads); the text between
-    runs is otherwise untouched. One pass leaves nothing detect_leak(reference_answer, ·, H0,
-    final_answer=<same>, canonical_answer=<same>, correct_option=<same>) flags (unless the reference
+    runs is otherwise untouched. One pass leaves nothing detect_leak(reference=<same>,
+    emitted=·, rung=H0, final_answer=<same>, canonical_answer=<same>,
+    correct_option=<same>) flags (unless the reference
     or the final answer itself holds the word "withheld"), and a second pass
     is a no-op: existing WITHHELD markers are never re-matched. ValueError on a
     missing or empty final_answer, or a correct_option that is not one letter."""
     answer = _answer(final_answer, canonical_answer)
     option = _option_pattern(correct_option)
-    n, grams = _reference_grams(reference_answer)
+    n, grams = _reference_grams(reference)
     return WITHHELD.join(
         _strip_segment(seg, n, grams, answer, option) for seg in emitted.split(WITHHELD)
     )

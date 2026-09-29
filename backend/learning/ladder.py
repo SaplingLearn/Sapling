@@ -97,8 +97,8 @@ def deterministic_content(
 ) -> DeterministicPayload | None:
     """Template content for H2/H4/H6 (spec A17). `passages` is resolved,
     visibility-filtered, decrypted text passed in (invariant 2). The caller runs
-    leak.detect_leak(item.reference_answer, payload.text, payload.rung,
-    final_answer=item.final_answer, canonical_answer=item.canonical_answer,
+    leak.detect_leak(reference=item.reference_answer, emitted=payload.text,
+    rung=payload.rung, final_answer=item.final_answer, canonical_answer=item.canonical_answer,
     correct_option=item.correct_option) — the ACTIVE item's decrypted
     structured answer (A34; selection serves only items that have one) and, for
     an mc_reason item, its key letter (owner decision A38, 06 gap: detector

@@ -630,9 +630,9 @@ def _hint_leaks(item, hint: str, *, format: str) -> bool:
         return True
     try:
         verdict = detect_leak(
-            item.reference_answer,
-            hint,
-            _HINT_RUNG,
+            reference=item.reference_answer,
+            emitted=hint,
+            rung=_HINT_RUNG,
             final_answer=getattr(item, "final_answer", None),
             canonical_answer=getattr(item, "canonical_answer", None),
             correct_option=correct_option if format == "mc_reason" else None,
