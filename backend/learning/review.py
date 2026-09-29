@@ -55,6 +55,7 @@ from learning.bkt import band, decayed_p
 from learning.checks import is_servable, posttest_reserve_hash, select_item
 from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PKG-11
 from learning.loop_state_store import update_loop_state
+from learning.misconceptions import recheck_after_release  # PKG-10 (A76)
 from learning.params import (
     FSRS_S0_GOOD,
     LOOP_GRADING_CLAIM_STALE_S,
@@ -1047,7 +1048,8 @@ async def grade_review(
     claim: str | None = None,
 ) -> ReviewOutcome:
     """Rule 6. A check item is graded by grade_answer ONCE (unassisted:
-    max_rung 0, no same-session recheck) and its Evidence persisted by ONE
+    max_rung 0; a re-check only when it is the next graded item on its concept
+    after a release — misconceptions.recheck_after_release, spec §13 A76) and its Evidence persisted by ONE
     apply_graph_update call; unavailable/refused writes nothing. A flashcard
     goes through flashcard_fsrs_update.
 
@@ -1078,6 +1080,11 @@ async def grade_review(
                 ),
                 deps=deps,
                 node_id=item.node_id,
+                # spec §13 A76 (fix round 3): a due item right after a release on
+                # its concept (a wrong loop answer this morning) is the re-check
+                same_session_recheck=recheck_after_release(
+                    user_id, item.node_id, loop_state, now=now
+                ),
             )
             if outcome.refused is not None or outcome.unavailable:
                 # A33 (refused: never graded, never a skip) and invariant 28

@@ -1485,3 +1485,116 @@ def test_latest_evidence_released_never_raises():
     t.select.side_effect = RuntimeError("pg down")
     with patch.object(store, "table", return_value=t):
         assert store.latest_evidence_released("u1", "n1", since="x") is None
+
+
+# ── fix round 3 (R3-1): ONE re-check decision for every grading caller ──────
+
+
+def test_recheck_after_release_reads_the_session_log_then_the_journal():
+    """A76: the concept's latest attempt in the session decides when there is
+    one; otherwise the journal's latest row on the node within
+    RECHECK_RELEASE_WINDOW_HOURS of `now`. A failed read (None) is no re-check."""
+    from datetime import datetime, timedelta, timezone
+
+    from learning import loop_state_store as store
+    from learning.misconceptions import recheck_after_release
+    from learning.params import RECHECK_RELEASE_WINDOW_HOURS
+
+    now = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+    released = {"attempts": [{**_prior_attempt("h1"), "released": True}]}
+    with patch.object(store, "latest_evidence_released", return_value=False) as journal:
+        assert recheck_after_release("u1", "n1", released, now=now) is True
+        journal.assert_not_called()  # the session's own log answers first
+    for answer, expected in ((True, True), (False, False), (None, False)):
+        with patch.object(store, "latest_evidence_released", return_value=answer) as journal:
+            assert recheck_after_release("u1", "n1", {}, now=now) is expected
+            assert recheck_after_release("u1", "n1", None, now=now) is expected
+        since = (now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)).isoformat()
+        journal.assert_called_with("u1", "n1", since=since)
+
+
+def test_recheck_after_release_never_mutates_the_loop_state():
+    """The review and the probe pass their own session documents: reading the
+    rule must not add an `attempts` key to them."""
+    from learning import loop_state_store as store
+    from learning.misconceptions import last_release_on_node, recheck_after_release
+
+    doc: dict = {"review": {}}
+    with patch.object(store, "latest_evidence_released", return_value=None):
+        recheck_after_release("u1", "n1", doc, now=_utc_now())
+    assert last_release_on_node(doc, "n1") is None
+    assert doc == {"review": {}}
+
+
+def _utc_now():
+    from datetime import datetime, timezone
+
+    return datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+
+
+def test_every_grading_caller_decides_the_recheck_through_the_one_helper():
+    """R3-1: the review and the probe graded at full weight after a release
+    because only the check route asked. Structurally: every production call of
+    grade_answer passes `same_session_recheck=`, and the function making it
+    calls `recheck_after_release` — a new grading caller cannot forget A76."""
+    import ast
+
+    callers = []
+    for path in sorted(BACKEND.rglob("*.py")):
+        rel = path.relative_to(BACKEND).as_posix()
+        if rel.startswith(("tests/", "venv/", ".venv/")) or "/site-packages/" in rel:
+            continue
+        tree = ast.parse(path.read_text())
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = [
+                n
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Call)
+                and (getattr(n.func, "id", None) or getattr(n.func, "attr", None))
+                in ("grade_answer", "recheck_after_release")
+            ]
+            grades = [
+                c
+                for c in calls
+                if (getattr(c.func, "id", None) or getattr(c.func, "attr", None)) == "grade_answer"
+            ]
+            if not grades:
+                continue
+            callers.append(f"{rel}::{fn.name}")
+            assert len(calls) > len(grades), f"{rel}::{fn.name} never calls recheck_after_release"
+            for c in grades:
+                assert any(k.arg == "same_session_recheck" for k in c.keywords), (
+                    f"{rel}:{c.lineno} grade_answer without same_session_recheck"
+                )
+    assert {c.split("::")[1] for c in callers} >= {
+        "_grade_submission",
+        "_probe_submission",
+        "grade_review",
+    }, callers
+
+
+def test_the_review_after_a_release_is_the_recheck_and_the_twin_after_it_is_not():
+    """R3-1 sequence (A76 'only the next item'): wrong in session A (a released
+    journal row) → a due review item on the concept is THE re-check (down-
+    weighted); its own row (correct, no worked answer) is now the newest, so a
+    session-B twin after it is graded normally — exactly as a check-route twin
+    after a graded re-check is. Nothing is full weight right after a release."""
+    from learning import loop_state_store as store
+    from learning.misconceptions import recheck_after_release
+    from learning.params import WEIGHT_SAME_SESSION_RECHECK
+
+    journal: list[dict] = [{"correct": False, "max_rung": 0}]  # session A: wrong
+
+    class _Journal:
+        def select(self, *_a, **_k):
+            return journal[-1:]
+
+    with patch.object(store, "table", return_value=_Journal()):
+        review_recheck = recheck_after_release("u1", "n1", {"review": {}}, now=_utc_now())
+        assert review_recheck is True
+        review_row = _twin_evidence(review_recheck)
+        assert review_row["weight"] == WEIGHT_SAME_SESSION_RECHECK
+        journal.append({"correct": review_row["correct"], "max_rung": review_row["max_rung"]})
+        assert recheck_after_release("u1", "n1", {}, now=_utc_now()) is False

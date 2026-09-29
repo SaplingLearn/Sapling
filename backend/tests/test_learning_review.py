@@ -2691,3 +2691,37 @@ def test_an_open_item_answered_or_revealed_elsewhere_is_replaced(monkeypatch, wh
     monkeypatch.setattr(review, f"{where}_hashes", lambda uid: set())
     queue, _ = review.due_queue_with_stats(USER, COURSE, NOW, loop_state=state)
     assert [i.id for i in queue] == ["ci-q1"]
+
+
+@pytest.mark.parametrize("journal,recheck", [(True, True), (False, False), (None, False)])
+def test_a_review_after_a_release_is_graded_as_a_recheck(monkeypatch, journal, recheck):
+    """R3-1 (spec §13 A76): a due review item on a concept whose reference was
+    released within RECHECK_RELEASE_WINDOW_HOURS (a wrong loop answer this
+    morning) is the next graded item after a release — graded as a re-check,
+    never a full-weight unassisted first attempt. The review session keeps no
+    attempt log, so the evidence journal decides."""
+    from learning import loop_state_store, review
+
+    grade, calls = _grade(correct=True)
+    monkeypatch.setattr(review, "grade_answer", grade)
+    monkeypatch.setattr(review, "apply_graph_update", lambda *a, **k: [])
+    factory, _ = _tables({"learner_state": []})
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    reads = []
+    monkeypatch.setattr(
+        loop_state_store,
+        "latest_evidence_released",
+        lambda user, node, *, since: reads.append((user, node, since)) or journal,
+    )
+    item = _item("check", 0.4, id="ci-qh-1", node_id="n-due", question_hash="qh-1", format="free")
+    loop_state = {
+        "sr": {"n-due": {"correct": 0, "target": params.SR_INITIAL_CRITERION, "served": 1}},
+        "review": {"spent_s": 0, "retention": params.FSRS_RETENTION_DEFAULT},
+    }
+    _grade_check(item, _check_item("n-due", "qh-1"), loop_state, answer="because")
+    (call,) = calls
+    assert call["same_session_recheck"] is recheck and call["max_rung"] == 0
+    since = (NOW - timedelta(hours=params.RECHECK_RELEASE_WINDOW_HOURS)).isoformat()
+    assert reads == [(USER, "n-due", since)]
+    assert "attempts" not in loop_state  # the rule only reads the review's document

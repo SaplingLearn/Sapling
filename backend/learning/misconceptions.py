@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from db.connection import pg_quote_value, rpc, table
+from learning import loop_state_store
 from learning.evidence import MisconceptionVerdict
 from learning.params import (
     GAP_CONFIDENCE_MAX,
@@ -37,6 +38,7 @@ from learning.params import (
     MISCONCEPTION_RECENT_DAYS,
     NOVICE_FLOOR_IDK,
     NOVICE_FLOOR_MISSES,
+    RECHECK_RELEASE_WINDOW_HOURS,
 )
 from services.encryption import encrypt_if_present
 
@@ -152,8 +154,32 @@ def last_release_on_node(loop_state: dict, node_id: str) -> bool | None:
     release is a re-check — the copy risk — so an older release no longer
     counts once another item on the concept was graded. None: the check route
     reads the evidence journal (a release in another session, R2-2)."""
-    tail = attempts_for_node(attempts_of(loop_state), node_id)
+    log = loop_state.get(_ATTEMPTS) if isinstance(loop_state, dict) else None
+    tail = attempts_for_node(log if isinstance(log, list) else [], node_id)
     return tail[-1].released if tail else None
+
+
+def recheck_after_release(
+    user_id: str, node_id: str, loop_state: dict | None, *, now: datetime
+) -> bool:
+    """Spec §13 A76 — the ONE re-check decision every grading caller passes to
+    grade_answer as `same_session_recheck` (the check route, the probe and the
+    review; fix round 3 R3-1: a caller that did not ask graded the next item
+    after a release at full weight, and its row reset the journal's answer).
+    The concept's latest attempt in THIS session's log decides when there is
+    one (released → this is the next item after a release; the one after is
+    normal again); otherwise the student's latest evidence row on the node
+    journaled within RECHECK_RELEASE_WINDOW_HOURS of `now` (a release in
+    another session the same day — a session hop never bypasses the rule). A
+    failed read decides nothing (False). Reads only: `loop_state` is never
+    changed."""
+    last = last_release_on_node(loop_state or {}, node_id)
+    if last is not None:
+        return last
+    since = now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)
+    return (
+        loop_state_store.latest_evidence_released(user_id, node_id, since=since.isoformat()) is True
+    )
 
 
 def attempts_for_node(log: list, node_id: str) -> list[Attempt]:
