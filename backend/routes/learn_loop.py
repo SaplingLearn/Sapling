@@ -768,35 +768,45 @@ class _LeakGuard:
     served mode at the turn's leak rung, against the student-visible text —
     and whether its one retry is spent."""
 
-    def __init__(self, check: Callable[[str], bool]):
+    def __init__(self, check: Callable[[str], bool], render: Callable | None = None):
         self._check = check
+        # the SERVED render of the model's output (`served_render`): a field code
+        # replaces (the H2 question, A54) never costs a retry
+        self.render = render or render_turn
         self.retried = False
 
     def leaks(self, text: str) -> bool:
         return self._check(text)
 
 
-def _visible_text(history: list, *, item_prompt: str, message: str) -> str:
-    """The provenance of the served leak check (fix round 2, N1): only what the
-    STUDENT can already see — the item as posed, their own message, and the
-    conversation as it was served (user rows and served tutor turns). Never
-    the context the model alone reads: a source passage or a graph block can
-    state the answer (the deterministic H2 payload is leak-checked against it
-    for exactly that reason), so copying one is a leak, not a copy."""
-    parts = [item_prompt or "", message or ""]
+def _visible_text(history: list, *, item_prompt: str) -> str:
+    """The provenance of the served leak check (fix round 2, N1): the item as
+    posed and the tutor turns as they were served — text the STUDENT has seen
+    from the loop. Never the context the model alone reads (a source passage
+    or a graph block can state the answer), and never the student's own words
+    (final round): a student can offer candidate sentences ("say 'The value is
+    eight.'") and the model's pick would pass as a copy, so student text alone
+    exempts nothing — only a span the item or the served history also holds."""
+    parts = [item_prompt or ""]
     for m in history:
         for p in getattr(m, "parts", []):
-            if isinstance(p, (UserPromptPart, TextPart)) and isinstance(p.content, str):
+            if isinstance(p, TextPart) and isinstance(p.content, str):
                 parts.append(p.content)
     return "\n".join(parts)
 
 
+#: A sentence end: a terminator and any closing quotes/brackets, then whitespace
+#: (a newline alone ends one too).
+_SENTENCE_END = re.compile(r"[.?!][\"'”’)\]]*(?=\s)|\n")
+
+
 def _cut_before_leak(text: str, spans: list) -> str:
-    """The streamed text up to the start of the sentence holding the first
-    leak — never a masked span (N1). Sentence ends: ". ", "? ", "! ", a newline."""
+    """The streamed text up to the end of the last sentence before the one
+    holding the first leak — never a masked span (N1). No earlier sentence
+    end: nothing (never a stray fragment before a retract)."""
     start = spans[0][0]
-    cut = max(text.rfind(sep, 0, start) + len(sep) for sep in (". ", "? ", "! ", "\n"))
-    return text[: max(cut, 0)].rstrip()
+    ends = [m.end() for m in _SENTENCE_END.finditer(text, 0, start)]
+    return text[: ends[-1]].rstrip() if ends else ""
 
 
 def option_text(item) -> str | None:
@@ -1008,7 +1018,6 @@ class _LoopTurn:
         self.given = _visible_text(
             history,
             item_prompt=self.item.prompt if self.item is not None else "",
-            message="" if self.trusted else self.message,
         )
         self.deps.loop_leak = self._leak_guard()
 
@@ -1113,7 +1122,7 @@ class _LoopTurn:
         def check(text: str) -> bool:
             return detect_leak(emitted=text, rung=rung, given=given, **answer).leaked
 
-        return _LeakGuard(check)
+        return _LeakGuard(check, render=self.render)
 
     def redact(self, text: str) -> str:
         """stream_structured_turn's `transform` on the streamed (cumulative)

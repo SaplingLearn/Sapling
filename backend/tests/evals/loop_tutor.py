@@ -561,16 +561,20 @@ def _leak_guard(case_input: LoopInput, meta: dict):
     )
     rung = _leak_rung(case_input, meta)
     given = _visible(case_input, meta)
+    from routes.learn_loop import served_render
+
     return _LeakGuard(
-        lambda text: detect_leak(emitted=text, rung=rung, given=given, **answer).leaked
+        lambda text: detect_leak(emitted=text, rung=rung, given=given, **answer).leaked,
+        render=lambda out: served_render(
+            out, phase=case_input[0], rung=rung, verdict=meta.get("verdict")
+        ),
     )
 
 
 def _visible(case_input: LoopInput, meta: dict) -> str:
-    """What the student can see (the route's `_visible_text`): the item as
-    posed and their own message — the served leak check's provenance."""
-    trusted = bool(meta.get("trusted"))
-    return (meta.get("item_prompt") or "") + "\n" + ("" if trusted else case_input[3])
+    """The served leak check's provenance (the route's `_visible_text`): the
+    item as posed — never the student's own words (a case has no history)."""
+    return meta.get("item_prompt") or ""
 
 
 def _deps(loop_turn, leak_guard=None) -> SaplingDeps:

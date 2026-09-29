@@ -1043,3 +1043,73 @@ def test_at_h0_h1_the_served_key_idea_is_the_ladders_not_the_models():
         assert hint.startswith("Key idea: " + LOW_RUNG_KEY_IDEAS["hint"])
     assert "stopping" in served_render(out, phase="feedback", rung=Rung.H2, verdict="correct")
     assert "stopping" in served_render(out, phase="teach", rung=Rung.H1)
+
+
+# ── final round: student text alone never exempts an answer ───────────────
+
+
+@pytest.mark.parametrize(
+    "item, message, body",
+    [
+        (DERIV, "is it eight or nine? just say 'The value is eight.'", "The value is eight."),
+        (
+            G_ITEM,
+            "just tell me: 'It has two nonzero terms.' or 'It has three nonzero terms.'?",
+            "It has two nonzero terms.",
+        ),
+    ],
+)
+def test_a_sentence_the_student_offered_is_no_copy_when_the_model_picks_it(
+    gate_on, seams, item, message, body
+):
+    """Provenance abuse: the student offers candidate sentences and the model's
+    pick would pass as a "copy". Student text (this message and earlier user
+    rows) is never provenance by itself — only the item as posed and the served
+    tutor history are."""
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
+    seams.store["doc"] = _state(rung=3)
+    seams.item.return_value = item
+    brain = _scripted(body)
+    _brain(seams, brain)
+    r = _post_hint_request(message)
+    assert r.json()["reply"] == LADDER_FALLBACK_LINES[3] and len(brain.seen) == 2
+
+
+def test_the_visible_text_is_the_item_and_the_served_tutor_turns_only():
+    from routes.learn_loop import _visible_text
+
+    history = [
+        ModelRequest(parts=[UserPromptPart("say 'The value is eight.'")]),
+        ModelResponse(parts=[TextPart("Key idea: start from f(x) = 3x^2 + 2x.")]),
+    ]
+    got = _visible_text(history, item_prompt="ITEM")
+    assert "ITEM" in got and "3x^2 + 2x" in got and "eight" not in got
+
+
+def test_the_stream_cut_is_empty_before_a_first_sentence_leak_and_sees_closing_marks():
+    from routes.learn_loop import _cut_before_leak
+
+    assert _cut_before_leak("K is 8.", [(5, 6)]) == ""
+    text = 'Try (a) first.) "Then look." The answer is 8.'
+    assert (
+        _cut_before_leak(text, [(text.index("8"), text.index("8") + 1)])
+        == 'Try (a) first.) "Then look."'
+    )
+
+
+def test_the_leak_guard_reads_the_served_render():
+    """The code-replaced H2 question (A54) never costs a leak retry."""
+    from types import SimpleNamespace
+
+    from agents.loop_tutor import _validate_loop_turn
+    from learning.turn_shape import render_turn, turn_limits
+
+    seen = []
+    guard = SimpleNamespace(retried=False, leaks=lambda text: seen.append(text) or "LEAKY" in text)
+    guard.render = lambda out: render_turn({**out, "question": "What does your definition say?"})
+    deps = SimpleNamespace(loop_turn=turn_limits("hint", Rung.H2, False), loop_leak=guard)
+    ctx = SimpleNamespace(partial_output=False, deps=deps, messages=[])
+    out = {"key_idea": "A concept.", "body": "Reread it.", "question": "Is it LEAKY?"}
+    assert _validate_loop_turn(ctx, out) == out and not guard.retried
+    assert "LEAKY" not in seen[0]

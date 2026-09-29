@@ -610,7 +610,8 @@ def _validate_loop_turn(ctx: RunContext[SaplingDeps], output: LoopTurnOut) -> Lo
     if problems:
         raise ModelRetry(_retry_message(problems, limits))
     guard = getattr(ctx.deps, "loop_leak", None)
-    if guard is not None and not guard.retried and guard.leaks(render_turn(output)):
+    render = getattr(guard, "render", render_turn)  # the SERVED render (A54 fields)
+    if guard is not None and not guard.retried and guard.leaks(render(output)):
         # fix round 2 (N1): a leak is never masked in place — the turn is
         # re-run ONCE with the problem named; the route serves the rung's ladder
         # line if it still leaks
