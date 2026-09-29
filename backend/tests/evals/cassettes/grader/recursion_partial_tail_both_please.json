@@ -2,17 +2,16 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "The student correctly states that the base case stops the recursion. However, the explanation for why this is necessary is incomplete. Consider elaborating on the consequences of the recursion not stopping.",
       "item_results": [
         "57192:yes",
-        "33074:yes"
+        "33074:no"
       ],
       "matched_wrong_key": "",
       "support": [
-        "57192: It's the case where the function stops recursing.",
-        "33074: Both, please."
+        "57192: It's the case where the function stops recursing."
       ]
     }
   ],

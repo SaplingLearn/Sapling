@@ -4,7 +4,7 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": false,
-      "feedback_hint": "The student mentions recursion but does not explain why a base case is needed. They also state that recursion is like a for loop that ends on its own, which is incorrect.",
+      "feedback_hint": "The student needs to explain what a base case is and why it is important for recursive functions. They should also explain what happens if a base case is missing.",
       "item_results": [
         "42605:no",
         "60874:no"

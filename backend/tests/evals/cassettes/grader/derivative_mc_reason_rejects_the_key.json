@@ -2,21 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 0.0,
-      "contradicts_reference": true,
-      "feedback_hint": "The student claims the derivative represents the area under the curve, which contradicts the reference answer stating it represents the rate of change or slope.",
-      "item_results": [
-        "item_results: 62464:no",
-        "item_results: 45712:no"
-      ],
-      "matched_wrong_key": "w_area",
-      "support": []
-    },
-    {
-      "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "Think about what the derivative represents, and how that relates to the geometric interpretation of a function.",
+      "feedback_hint": "The student claims the derivative represents the area under the curve, which contradicts the reference answer stating it represents the rate of change or slope. The student also mentions the rate of change and slope of the tangent at a single point, but then dismisses this as what \"people say,\" undermining their own statement.",
       "item_results": [
         "62464:no",
         "45712:no"

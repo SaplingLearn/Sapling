@@ -49,7 +49,9 @@ span-checked credit; f8364bd's report wording) the instructor note is not
 reported: its one run reports `contradicts_reference` instead and credits
 nothing, so it is graded with no credit and needs no span check. The TA review's
 first run is below the confidence floor, and the second opinion that replaces it
-reports it (it tells the grader what confidence to report), so it is refused.
+reports it (it tells the grader what confidence to report) and credits nothing;
+since the A33 finish (CONTINUE §4.1 (a)) a report refuses only beside a screen
+flag the item's own text exempted, so it is graded with no credit.
 The round-a33 prompt made the first slot report such notes less often
 (HANDOFF-a33 Known gaps); tests/test_learning_answer_guard.py pins what each
 recording shows. Two

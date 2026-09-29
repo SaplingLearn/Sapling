@@ -2,9 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.9,
       "contradicts_reference": true,
-      "feedback_hint": "The student incorrectly equates recursion to a loop, which is a common misconception. Consider how recursion differs from iteration and why a base case is essential for termination.",
+      "feedback_hint": "The student describes recursion as a loop that ends on its own, which is a misconception. Please review the definition of recursion and the role of the base case in preventing infinite calls.",
       "item_results": [
         "42605:no",
         "88032:no"

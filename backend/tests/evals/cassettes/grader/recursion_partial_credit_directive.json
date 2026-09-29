@@ -19,7 +19,8 @@
   "span_checks": [
     {
       "item_results": [
-        "70239:yes"
+        "70239:yes",
+        "35748:no"
       ]
     }
   ]

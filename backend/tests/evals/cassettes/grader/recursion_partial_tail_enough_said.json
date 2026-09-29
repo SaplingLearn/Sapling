@@ -12,7 +12,7 @@
       "matched_wrong_key": "",
       "support": [
         "65700: It's the case where the function stops recursing.",
-        "92027: It's the case where the function stops recursing."
+        "92027: both points."
       ]
     }
   ],

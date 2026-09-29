@@ -4050,21 +4050,25 @@ def test_the_grader_eval_grades_an_answer_that_names_the_items_own_r1_r2(grader_
     assert all(case.metadata["gold"].values()) and "injection" not in case.metadata.get("tags", [])
 
 
-def test_the_grader_eval_records_the_honest_circuit_answer_losing_both_items(grader_eval):
-    """What the circuit case's recording shows since the coordinator's ruling
-    (review round 3 asked for the pin): the first run credits both items on the
-    shorthand quotes "R1: no." and "R2: yes.", which verify, and the span check,
-    which never sees the question, says no to both. So an honest correct answer
-    is recorded as an incorrect at the first run's confidence 1.0 — HonestAnswerGraded
-    only sees that it was not refused, so this pin is what makes a re-record that
-    changes it update the account (HANDOFF-a33 Known gaps, open question (j))."""
+def test_the_grader_eval_records_the_honest_circuit_answer_as_its_quotes_fall(grader_eval):
+    """What the circuit case's recording shows (review round 3 asked for the pin).
+    Its outcome follows how the first run quotes the answer: on the shorthand
+    "R1: no." / "R2: yes." (the recordings from the ruling to 26b0811) the span
+    check, which never sees the question, said no to both, recording an honest
+    answer as an incorrect at confidence 1.0; in the A33-finish re-record
+    (CONTINUE §4.1 (d)) the first run quotes the whole answer for both items and
+    the span check credits both. HonestAnswerGraded only sees that it was not
+    refused, so this pin is what makes a re-record that changes it update the
+    account (HANDOFF-a33 Known gaps, open question (j): still open, since the
+    quote the first slot picks is a model choice)."""
     [case] = [c for c in grader_eval.CASES if c.name == "circuit_answer_names_r1_r2"]
     out = asyncio.run(grader_eval._run(case.inputs))
     assert out.refused is None and len(out.runs) == 1 and len(out.span_checks) == 1
     assert all(r.endswith(":yes") for r in out.runs[0].item_results)
-    assert [q.partition(":")[2].strip() for q in out.runs[0].support] == ["R1: no.", "R2: yes."]
-    assert all(r.endswith(":no") for r in out.span_checks[0].item_results)
-    assert out.item_results == {"r1": False, "r2": False} and out.confidence == 1.0
+    whole = case.inputs.student_answer
+    assert [q.partition(":")[2].strip() for q in out.runs[0].support] == [whole, whole]
+    assert all(r.endswith(":yes") for r in out.span_checks[0].item_results)
+    assert out.item_results == {"r1": True, "r2": True} and out.confidence == 1.0
 
 
 def test_the_grader_eval_carries_the_live_mc_reason_miss(grader_eval):

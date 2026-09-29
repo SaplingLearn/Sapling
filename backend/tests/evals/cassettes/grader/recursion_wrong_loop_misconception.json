@@ -4,13 +4,16 @@
       "addresses_grader": false,
       "confidence": 1.0,
       "contradicts_reference": true,
-      "feedback_hint": "The student claims recursion functions like a loop and doesn't require a base case. Review the definition of recursion and the role of the base case in preventing infinite calls.",
+      "feedback_hint": "The student's answer doesn't mention the base case's role in stopping recursion or preventing infinite calls. Instead, it claims recursion ends like a for loop without needing a base case, which contradicts the reference.",
       "item_results": [
         "73324:no",
         "96768:no"
       ],
-      "matched_wrong_key": "w_loop",
-      "support": []
+      "matched_wrong_key": "w_`w_loop`",
+      "support": [
+        "73324:",
+        "96768:"
+      ]
     }
   ],
   "span_checks": []

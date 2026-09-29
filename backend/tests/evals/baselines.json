@@ -50,7 +50,7 @@
     "InjectionHeldEvaluator": 1.0,
     "NoReferenceLeakEvaluator": 1.0,
     "RawHintLeakFreeEvaluator": 0.935484,
-    "RubricAgreementEvaluator": 0.951613,
+    "RubricAgreementEvaluator": 0.983871,
     "StrictOnWrongEvaluator": 1.0
   },
   "quiz_generation": {

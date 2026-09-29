@@ -2,9 +2,9 @@
   "runs": [
     {
       "addresses_grader": false,
-      "confidence": 1.0,
+      "confidence": 0.8,
       "contradicts_reference": false,
-      "feedback_hint": "",
+      "feedback_hint": "The student correctly identifies that the base case stops recursion. However, the explanation for what happens without a base case is missing.",
       "item_results": [
         "75530:yes",
         "54811:no"
