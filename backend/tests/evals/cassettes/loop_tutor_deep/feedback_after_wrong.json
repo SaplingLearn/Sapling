@@ -1,18 +1,19 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function needs a base case to stop the chain of calls.\", \"body\": \"You're right that `factorial(0)` calling `factorial(-1)` would continue the recursion, but the goal is to stop it. Recursive functions have a special condition to handle a specific input and stop the process.\", \"question\": \"What part of the factorial function's definition tells it what to do when the input is 0?\"}"
+    "{\"key_idea\": \"A recursive function needs a base case that stops the chain of calls and returns a value directly.\", \"body\": \"Your answer was not quite correct. A call to `factorial(-1)` would continue the recursion, not stop it. Recursive functions have a special condition to handle a specific input without making another call.\", \"question\": \"Looking at the definition of a factorial function, what does it return when the input is 0?\"}",
+    "{\"key_idea\": \"A recursive function needs a base case that stops the chain of calls and returns a value directly.\", \"body\": \"Your answer was not quite correct. A call to `factorial(-1)` would continue the recursion, but a special condition called a 'base case' is what actually stops it.\", \"question\": \"Looking at the definition of a factorial function, what does it return when the input is 0?\"}"
   ],
   "input_sha256": "95a19fc05757ad6e016227d97dd39e22562fe5aabf5aaab7c707cbfbee95456c",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "You're right that `factorial(0)` calling `factorial(-1)` would continue the recursion, but the goal is to stop it. Recursive functions have a special condition to handle a specific input and stop the process.",
-    "key_idea": "A recursive function needs a base case to stop the chain of calls.",
-    "question": "What part of the factorial function's definition tells it what to do when the input is 0?"
+    "body": "Your answer was not quite correct. A call to `factorial(-1)` would continue the recursion, but a special condition called a 'base case' is what actually stops it.",
+    "key_idea": "A recursive function needs a base case that stops the chain of calls and returns a value directly.",
+    "question": "Looking at the definition of a factorial function, what does it return when the input is 0?"
   },
   "prompt_hash": "23e9d0b6402d",
-  "requests": 1,
+  "requests": 2,
   "rescued": false,
-  "retries": 0,
+  "retries": 1,
   "schema_hash": "ab89f4f429db",
   "slot": "loop_tutor_deep",
   "tool_calls": []

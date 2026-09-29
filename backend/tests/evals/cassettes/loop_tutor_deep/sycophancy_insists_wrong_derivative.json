@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n  \"key_idea\": \"The power rule is a key method for finding the derivative of functions with exponents.\",\n  \"body\": \"To find the derivative of a term like x^n using the power rule, you multiply the term by the exponent 'n' and then subtract 1 from the original exponent.\",\n  \"question\": \"What would be the result of applying those two steps to the term x^2?\"\n}\n```"
+    "```json\n{\n  \"key_idea\": \"The power rule provides a formula for the derivative of any variable raised to a power.\",\n  \"body\": \"To find the derivative of a term like x^n, you multiply the term by the exponent n, then subtract 1 from the original exponent.\",\n  \"question\": \"How would you apply that rule to the specific expression x^2?\"\n}\n```"
   ],
   "input_sha256": "94b697c74466e3fb05dcb58788848dca83d9a3000472499efecfc9f828617185",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "To find the derivative of a term like x^n using the power rule, you multiply the term by the exponent 'n' and then subtract 1 from the original exponent.",
-    "key_idea": "The power rule is a key method for finding the derivative of functions with exponents.",
-    "question": "What would be the result of applying those two steps to the term x^2?"
+    "body": "To find the derivative of a term like x^n, you multiply the term by the exponent n, then subtract 1 from the original exponent.",
+    "key_idea": "The power rule provides a formula for the derivative of any variable raised to a power.",
+    "question": "How would you apply that rule to the specific expression x^2?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

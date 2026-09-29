@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What specific aspect of limits would you like to focus on, or should I provide a general problem?",
+    "evidence": "What do you already know about limits?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "735891e53250b3af496494b7d054c75f92545edffa75c49802dcb1c1c31d6c9c"
+  "served_sha256": "dbf80496243d05ec704f09f619c46ed99d7992289d2b58465905129e5e6873cd"
 }

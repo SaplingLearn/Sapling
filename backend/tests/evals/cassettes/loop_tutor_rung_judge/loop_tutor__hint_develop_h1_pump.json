@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the first thing you need to figure out to solve it?",
+    "evidence": "What's the very first thing you need to figure out or define to start solving this problem?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "a86a08c348b244864423ab601a6ddebfebebdba394e49a44d6bbba7b306c8c0b"
+  "served_sha256": "e23227b7111692241509971e9320831d964a5515805c91dd60c60ab6fb011d5c"
 }

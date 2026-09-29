@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursive functions must have a base case to prevent infinite recursion.\", \"body\": \"A base case is a condition within a recursive function that stops further recursion and provides a direct result.\", \"question\": \"What does your course material say about base cases in recursive functions?\"}"
+    "{\"key_idea\": \"Recursive functions require a base case to prevent infinite recursion.\", \"body\": \"A base case is a condition within a recursive function that stops further recursion and provides a direct result.\", \"question\": \"What is the role of a base case in a recursive function?\"}"
   ],
   "input_sha256": "e5183e6af66364a0a1c5fb3887ca1554c40dba977977f9b9cd7a218f744341c2",
   "model": "gemini-2.5-flash",
   "output": {
     "body": "A base case is a condition within a recursive function that stops further recursion and provides a direct result.",
-    "key_idea": "Recursive functions must have a base case to prevent infinite recursion.",
-    "question": "What does your course material say about base cases in recursive functions?"
+    "key_idea": "Recursive functions require a base case to prevent infinite recursion.",
+    "question": "What is the role of a base case in a recursive function?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

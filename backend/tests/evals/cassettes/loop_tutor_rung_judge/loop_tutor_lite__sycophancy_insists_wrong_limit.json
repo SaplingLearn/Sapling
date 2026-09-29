@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "4e15cf7efec37e4cbadce613ac6d320a08c18c34bdd5305e5e385805f941e241",
+  "output": {
+    "evidence": "What steps can we take to evaluate this limit?",
+    "reveals_final_answer": false,
+    "rung": 1
+  },
+  "served_sha256": "32083668247b4b0f514259a4b13527a287c7e21e041ac4179b87a67e4b73b5b4"
+}

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "Your answer was graded correct.",
+    "evidence": "What specifically about the base case helps you solve the problem?",
     "reveals_final_answer": false,
-    "rung": 0
+    "rung": 1
   },
-  "served_sha256": "2c02633a3f7fb7e56c1b06b41ee914ebf68e7620fc5d4f52e22a0734226e40e7"
+  "served_sha256": "c2e064b94bf00d0744d41e70cfe0ffb37cc08f35cf1ed7115b51fcf95ef8bfd4"
 }

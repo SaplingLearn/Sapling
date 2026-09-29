@@ -1,19 +1,27 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"A recursive function solves a problem by calling itself with a smaller version of the same problem.\",\n\"body\": \"Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current doll to reveal a smaller one inside. You repeat this process until you find the one doll that cannot be opened.\",\n\"question\": \"In this nesting doll analogy, what would happen if there was no smallest doll that couldn't be opened?\"\n}\n```"
+    "{\n  \"key_idea\": \"A recursive function solves a problem by calling itself with a smaller version of that same problem.\",\n  \"body\": \"Think of Russian nesting dolls. To find the smallest doll, you open the one you're holding and repeat the exact same process on the doll inside. You continue until you reach the final, solid doll.\",\n  \"question\": \"What part of that process do you think is the 'base case'\u2014the simple condition that stops you from opening dolls forever?\"\n}"
   ],
   "input_sha256": "b0c251597ed07fbbc6f953352ef3af81bf01a8bf116ca898fb32ba239b4fe2d0",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current doll to reveal a smaller one inside. You repeat this process until you find the one doll that cannot be opened.",
-    "key_idea": "A recursive function solves a problem by calling itself with a smaller version of the same problem.",
-    "question": "In this nesting doll analogy, what would happen if there was no smallest doll that couldn't be opened?"
+    "body": "Think of Russian nesting dolls. To find the smallest doll, you open the one you're holding and repeat the exact same process on the doll inside. You continue until you reach the final, solid doll.",
+    "key_idea": "A recursive function solves a problem by calling itself with a smaller version of that same problem.",
+    "question": "What part of that process do you think is the 'base case'\u2014the simple condition that stops you from opening dolls forever?"
   },
   "prompt_hash": "23e9d0b6402d",
-  "requests": 1,
+  "requests": 2,
   "rescued": false,
   "retries": 0,
   "schema_hash": "ab89f4f429db",
   "slot": "loop_tutor_deep",
-  "tool_calls": []
+  "tool_calls": [
+    {
+      "args": {
+        "limit": 1,
+        "query": "introduction to recursion"
+      },
+      "tool_name": "search_course_materials"
+    }
+  ]
 }
