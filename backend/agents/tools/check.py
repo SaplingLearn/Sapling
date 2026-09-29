@@ -29,6 +29,7 @@ route's own rule records the CHECK_REFUSALS_AS_IDK-th refusal of an item as
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -39,12 +40,24 @@ from agents.deps import SaplingDeps
 from agents.grader import GradeResult
 from learning.answer_guard import Refusal
 from learning.evidence import Evidence, GraderBackend
-from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK
+from learning.misconceptions import (
+    Attempt,
+    Verdict,
+    attempts_for_node,
+    attempts_of,
+    confront_of,
+    is_key,
+    set_confront,
+    slip_or_misconception,
+)
+from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK, RUNG_NO_CREDIT_MIN
 from services import decisions  # a module import: tests patch its functions
 from services.decisions import GradeState, ReasonState
 
 if TYPE_CHECKING:
     from learning.checks import CheckItem
+
+logger = logging.getLogger("sapling.agents.tools.check")
 
 #: The item's format → its evidence channel (spec §3.1 channel table).
 CHANNEL_FOR_FORMAT: dict[str, str] = {
@@ -87,6 +100,12 @@ class GradeOutcome:
     refused: Refusal | None = None
     grader_backend: GraderBackend | None = None
     evidence: dict | None = None  # the Evidence dict appended to deps.pending_evidence
+    # PKG-10: the slip/misconception rule's verdict (None when the rule did not
+    # run) and the change it made to deps.loop_state ({"attempt", "confront"}),
+    # which the route re-applies to the FRESH document of its compare-and-set
+    # save (learning.misconceptions.carry). Code-side; never reaches a model.
+    verdict: Verdict | None = None
+    diagnosis: dict | None = None
 
 
 def _norm(text: str | None) -> str:
@@ -175,12 +194,128 @@ async def _reason_grade(item, *, selected_option: str, reason: str, deps: Saplin
     return _via_seam(await decisions.reason_is_correct(state, deps=deps, item_id=item.id))
 
 
-def _record(deps: SaplingDeps, outcome: GradeOutcome, ev: Evidence) -> GradeOutcome:
+def grader_answer_text(item, answer: CheckAnswer) -> str:
+    """The text the grader sees for `answer` (mc_reason: PKG-05's byte-identical
+    "Selected option: …\nReason: …", decisions.mc_reason_answer). PKG-10: the
+    wrong-reason match reads it, and the check route stores it (encrypted) as a
+    misconception's evidence_text."""
+    if item.format == _MC_REASON:
+        return decisions.mc_reason_answer(answer.selected_option or "", answer.reason or "")
+    return answer.answer_text
+
+
+async def match_wrong_key(item, *, prior, answer_text: str | None, deps: SaplingDeps) -> str | None:
+    """PKG-10 (spec §13 A22/A24): the ONLY source of a wrong_key. The student's
+    reason is matched against the item's listed wrong reasons through the
+    decision seam. `prior` is the grader's result for this same answer, so
+    every backend reuses its matched_wrong_key with NO model call — without it
+    nothing is called (that would be an extra `decision` run against the grade
+    cap). "none", a key the item does not list or that is not identifier-shaped,
+    no listed keys, or a seam failure → None (WARNING on a failure): a lost key
+    loses a diagnosis, never evidence, and never for only one outcome."""
+    wrong = {w.key: w.text for w in item.common_wrong or [] if w.key}
+    if not wrong or prior is None:
+        return None
+    state = decisions.WrongReasonState(question=item.prompt, answer=answer_text or "", wrong=wrong)
+    try:
+        pick = await decisions.match_wrong_reason(state, deps=deps, prior=prior)
+    except Exception as exc:  # the seam has its own fallbacks; this is the last guard
+        logger.warning("match_wrong_reason failed for item %s: %s", item.id, type(exc).__name__)
+        return None
+    if pick is None:  # unavailable (PKG-05b); never after a returned grade
+        return None
+    key = pick.value
+    return key if key in wrong and is_key(key) else None  # NO_MATCH ("none") is never listed
+
+
+async def apply_misconception_rule(
+    deps: SaplingDeps,
+    *,
+    item,
+    grade: GradeOutcome,
+    evidence: Evidence,
+) -> Verdict | None:
+    """PKG-10 (spec §3.3; A16: the hook lives in grade_answer). Append this
+    attempt to the session attempt log on `deps.loop_state`, run the rule over
+    this concept's attempts, and on a keyed `misconception` set the
+    confrontation marker and mark the store row to write
+    (`grade.diagnosis["record"]`). grade_answer never persists (spec §13 A75):
+    the check route writes the row with learning.misconceptions.record AFTER
+    its one flush_pending, under the grading claim, so a failed flush never
+    leaves a row behind for a resubmission to count twice. The key is grade.wrong_key — the seam-matched key
+    after PKG-05's A22 option filter; the option → key map alone never reaches
+    here. Student-stated confidence only: CheckAnswer has none yet, and
+    grade.confidence is the grader's, deliberately not read. The change is
+    also left on `grade.diagnosis` for the route's compare-and-set save.
+    None (inert, nothing read or written) unless the loop is on and the caller
+    loaded a loop state (only the check route does: the probe and the review
+    pass none)."""
+    if not deps.learning_loop or deps.loop_state is None:
+        return None
+    log = attempts_of(deps.loop_state)
+    node_id = evidence.node_id  # the student's graph node; items are course assets (A2)
+    earlier = [
+        a
+        for a in log
+        if isinstance(a, dict)
+        and a.get("node_id") == node_id
+        and a.get("question_hash") != item.question_hash
+    ]
+    attempt = Attempt(
+        question_hash=item.question_hash,
+        node_id=node_id,
+        correct=bool(evidence.correct),
+        wrong_key=grade.wrong_key,
+        confidence=None,
+        difficulty=int(item.difficulty),
+        idk=bool(evidence.idk),
+        isomorph_of=earlier[-1].get("question_hash") if earlier else None,
+        # A76: the codebase's "revealed" rule (loop_state_store.revealed_hashes): a
+        # wrong or idk grade releases the reference (A16), and so does a worked
+        # answer shown on the way (H4 sibling / H6, max_rung >= RUNG_NO_CREDIT_MIN)
+        released=not evidence.correct or evidence.idk or evidence.max_rung >= RUNG_NO_CREDIT_MIN,
+        after_release=bool(evidence.same_session_recheck),
+    ).model_dump()
+    log.append(attempt)
+    verdict = slip_or_misconception(attempts_for_node(log, node_id))
+    marker = cleared = to_record = None
+    if verdict == "misconception" and grade.wrong_key:
+        marker = {"node_id": node_id, "wrong_key": grade.wrong_key, "check_item_id": item.id}
+        to_record = dict(marker)  # the store row the route writes after the flush
+        set_confront(deps.loop_state, marker)
+    elif evidence.correct:
+        # a marker still waiting for a model turn (its feedback turn was a template)
+        # never confronts a student who has since answered this concept right
+        pending = confront_of(deps.loop_state)
+        if pending is not None and pending["node_id"] == node_id:
+            cleared = pending
+            set_confront(deps.loop_state, None)
+    grade.diagnosis = {
+        "attempt": dict(attempt),
+        "confront": marker,
+        "cleared": cleared,
+        "record": to_record,
+    }
+    return verdict
+
+
+async def _record(
+    deps: SaplingDeps,
+    outcome: GradeOutcome,
+    ev: Evidence,
+    *,
+    item,
+) -> GradeOutcome:
     """Append the Evidence dict. Its weight is PKG-03's evidence_weight(ev),
     derived by the model at validation from the flags: assisted (a correct
     answer at H1–H3), the same-session re-check, the grader's confidence for
-    BOTH outcomes, and 0.0 for a correct answer after H4–H6."""
-    row = ev.model_dump()
+    BOTH outcomes, and 0.0 for a correct answer after H4–H6. PKG-10: the
+    slip/misconception rule runs first; its verdict and the matched key ride
+    the Evidence dict (spec §5) — nothing journals them (no column), the
+    misconceptions row is the durable record."""
+    outcome.verdict = await apply_misconception_rule(deps, item=item, grade=outcome, evidence=ev)
+    row = ev.model_copy(update={"verdict": outcome.verdict, "wrong_key": outcome.wrong_key})
+    row = Evidence.model_validate(row.model_dump()).model_dump()
     deps.pending_evidence.append(row)
     outcome.evidence = row
     return outcome
@@ -219,8 +354,15 @@ async def grade_answer(
         same_session_recheck=same_session_recheck,
     )
 
+    answer_text = grader_answer_text(item, answer)  # PKG-10: the wrong-reason match
+
     if answer.idk:  # A1: an incorrect observation on the item's channel; no grader call
-        return _record(deps, GradeOutcome(correct=False), Evidence(idk=True, correct=False, **base))
+        return await _record(
+            deps,
+            GradeOutcome(correct=False),
+            Evidence(idk=True, correct=False, **base),
+            item=item,
+        )
 
     if item.format == _MC_REASON:  # the reason check runs for BOTH option outcomes (A22)
         result, backend = await _reason_grade(
@@ -241,7 +383,9 @@ async def grade_answer(
     correct = result.all_yes
     if item.format == _MC_REASON:
         correct = correct and _option_matches(answer.selected_option, item.correct_option)
-    matched = result.matched_wrong_key or None
+    # A22/A24 (PKG-10): the key comes only from the decision seam, handed the
+    # grader's own result as `prior` (no model call); PKG-05's option filter below.
+    matched = await match_wrong_key(item, prior=result, answer_text=answer_text, deps=deps)
     confidence: float | None = result.confidence
     if item.format != _MC_REASON and _numeric_mismatch(item, answer):
         # A22 numeric gate, AFTER the grader returned (it ran for both outcomes, so an
@@ -260,4 +404,4 @@ async def grade_answer(
         grader_backend=backend,
     )
     ev = Evidence(correct=correct, confidence=confidence, grader_backend=backend, **base)
-    return _record(deps, outcome, ev)
+    return await _record(deps, outcome, ev, item=item)

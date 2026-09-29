@@ -126,6 +126,33 @@ PI_MIN_ROOM = 5
 WHEELSPIN_OPPS = 10
 MISCONCEPTION_CONFIDENCE = 0.7
 NOVICE_FLOOR_MISSES = 3
+# PKG-10 (spec §3.3 "wrong on >= 2 isomorphs with the same wrong_key").
+MISCONCEPTION_MIN_ISOMORPHS = 2
+# PKG-10 † (spec §13 A6): spec §3.3 says "wrong with low confidence -> gap" with
+# no cut-point. Student-stated confidence at or below this is "low"; above it
+# and below MISCONCEPTION_CONFIDENCE is "unknown" (re-ask an isomorph). A/B
+# candidate. Unused on the served path until a student confidence field exists.
+GAP_CONFIDENCE_MAX = 0.4
+# PKG-10: the longest wrong_key the misconception store keeps and the learner
+# brief renders (an identifier: [a-z0-9][a-z0-9_]*; PKG-09's brief pattern).
+MISCONCEPTION_KEY_MAX_CHARS = 64
+# PKG-10 (spec §13 A75): the lowest model ceiling a confrontation turn may run
+# at while the answer is unreleased. A confrontation poses a concrete case the
+# belief gets wrong — a different problem of the concept, H4 content in
+# ladder.RUNG_INTENT (the misconception_confront eval's rung judge read every
+# H3-ceiling confrontation as H4) — so below H4 the ceiling wins and the
+# confrontation marker waits.
+MISCONCEPTION_CONFRONT_MIN_RUNG = 4
+# PKG-10 fix round (F6) †: the learner brief and the session close list an open
+# misconception only when it was seen within this many days. resolve() has no
+# caller yet (PKG-12 / PKG-14), so without a window an old misconception would
+# re-list forever. A/B candidate.
+MISCONCEPTION_RECENT_DAYS = 30
+# PKG-10 (spec §13 A76) †: a release (a wrong/idk answer, or a worked answer
+# shown) on a concept in ANOTHER session makes the next graded item on that
+# concept a re-check when it was journaled within this many hours (the
+# session-hop half of the copy-risk rule).
+RECHECK_RELEASE_WINDOW_HOURS = 24
 # Spec §3.2 rating map / §3.3 evidence mapping: correct after H1..H3 is "assisted"
 # (FSRS Hard, WEIGHT_ASSISTED); correct after H4..H6 is FSRS Again. Name from
 # §13 A6, added by PKG-02 (fsrs.rating_for); PKG-03 Evidence.assisted and

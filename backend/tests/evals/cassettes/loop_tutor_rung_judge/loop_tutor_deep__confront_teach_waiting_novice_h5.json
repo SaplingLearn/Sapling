@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "71530d86d71daaecad405563f53fdab3f424bf8124ff0b35fb8f6237f943b326",
+  "output": {
+    "evidence": "Let's test the rule for exponents with the function f(x) = x^2. ... For f(x) = x^2, the expression is lim(h->0) [(x+h)^2 - x^2] / h.",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "32fac8fc003f54989d39b49b0a7007fc2b1a1eab3d3d21dace2ec0736fe63f6c"
+}

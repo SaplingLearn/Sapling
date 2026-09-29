@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "aceaf975414a905af57fc4b66638ced52e25f1855d1352de01eebd6fd3a95603",
+  "output": {
+    "evidence": "The answer: The mean is (2 + 4 + 9) / 3 = 5.",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "ee4cf4e5961952b59b611100e2ddd88517b09b33f11ad064863b93e9f8e1b93e"
+}

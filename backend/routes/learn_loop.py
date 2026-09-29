@@ -84,7 +84,7 @@ from agents.loop_tutor import (
     student_envelope,
     tier_run_kwargs,
 )
-from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer
+from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage
 from db.connection import table
 from learning import answer_guard, gates, ladder, planner, policy, review, zpd_events
@@ -95,9 +95,21 @@ from learning.evidence import PREREQ_RELATIONSHIP_TYPE, flush_pending
 from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
-from learning.leak import detect_leak, leak_spans
+from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.learner_brief import course_concept_names, store_brief
 from learning.learner_state import LearnerState, read_states
+from learning.misconceptions import (
+    attempts_for_node,
+    attempts_of,
+    carry,
+    confront_of,
+    is_key,
+    open_for,
+    record,
+    recheck_after_release,
+    set_confront,
+    slip_or_misconception,
+)
 from learning.loop_state_store import (
     LoopStateConflict,
     load_loop_state,
@@ -109,6 +121,7 @@ from learning.params import (
     BAND_DEVELOP_MAX,
     BKT_L0,
     BKT_PROFICIENT,
+    MISCONCEPTION_CONFRONT_MIN_RUNG,
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_PHASES,
@@ -192,7 +205,7 @@ from services.check_item_service import (
 )
 from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
-from services.prompt_safety import wrap_untrusted
+from services.prompt_safety import neutralise_control_tags, wrap_untrusted
 from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
@@ -1084,6 +1097,74 @@ def _guard_history(messages: list, *, nonce: str, withheld: str | None) -> list:
 # ── The turn ───────────────────────────────────────────────────────────────
 
 
+# ── PKG-10: the misconception confrontation line (spec §3.3, §13 A15) ─────
+
+#: Spec §13 A75: the tiers a confrontation line is served on — exactly the slots
+#: whose misconception_confront eval scores 1.0 on every served gate (pinned to
+#: baselines.json by tests/test_learning_misconceptions.py). A turn model_tier
+#: routes elsewhere (the §3.5 soft-level / deep-cap downgrade) carries no line,
+#: and the marker waits for one that does.
+CONFRONT_TIERS: frozenset[str] = frozenset({"deep"})
+
+#: Spec §13 A75: the confrontation mapped onto the structured turn's fields (A46).
+_CONFRONT_LINE = (
+    'The student holds misconception "{text}". This turn, confront it instead of '
+    "correcting it: the key idea names what to test, never the correct rule; the body sets "
+    "up ONE concrete case of this concept where the belief predicts something the student "
+    "can check, without working the case out or saying which result is right; the question "
+    "asks the student to work that case out and compare it with their belief."
+)
+
+
+def _confrontation_line(loop_state: dict) -> str | None:
+    """PKG-10: the line for the misconception grade_answer recorded (the
+    loop state's `confront` marker), or None. The text is the marked item's
+    decrypted `common_wrong` entry for the marker's key, collapsed to one line
+    with its control tags neutralised (item-drafted text may never forge a
+    [VERDICT: …] or [STUDENT MESSAGE] block). No marker, a missing item, a
+    failed read or an unknown key → None, no error. Reads only: the turn that
+    serves the line clears the marker in its compare-and-set save."""
+    text = _confrontation_text(loop_state)
+    return confront_line_for(text) if text else None
+
+
+def _confrontation_text(loop_state: dict) -> str | None:
+    """The marked item's stored wrong-reason text for the marker's key, or
+    None (no marker, a missing item, a failed read, an unknown key)."""
+    confront = confront_of(loop_state)
+    if confront is None:
+        return None
+    try:
+        item = get_check_item(confront["check_item_id"])
+    except Exception as exc:
+        logger.warning("confrontation: check item read failed (%s)", type(exc).__name__)
+        return None
+    if item is None:
+        return None
+    for entry in item.common_wrong or []:
+        if entry.key == confront["wrong_key"] and entry.text:
+            return entry.text
+    return None
+
+
+def confront_line_for(text: str) -> str | None:
+    """The confrontation line for one wrong-reason text: collapsed to one line,
+    its control tags neutralised, its double quotes made single (it stays inside
+    the line's quoted span); None for a text with nothing left. Shared
+    with the eval (tests/evals/misconception_confront.py) so it scores the
+    line production sends."""
+    # one line, no control tag, and never a double quote: the text stays inside
+    # the line's one quoted span (it can never close it and write an instruction)
+    text = " ".join(neutralise_control_tags(text or "").replace('"', "'").split())
+    return _CONFRONT_LINE.format(text=text) if text else None
+
+
+def with_confrontation(prefix: str, line: str | None) -> str:
+    """The turn prefix with the confrontation line right after the phase
+    instruction (before the context blocks and the student's words)."""
+    return f"{prefix}\n{line}" if line else prefix
+
+
 class _LoopTurn:
     """One loop turn, shared by the JSON and streamed paths.
 
@@ -1153,6 +1234,8 @@ class _LoopTurn:
         )
         self.planned = None
         self.given = ""
+        self.confront_line, self.confront_used = None, None
+        self.run_requests = 0
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
 
@@ -1187,6 +1270,8 @@ class _LoopTurn:
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
         self.text = self._deterministic_text(hard=decision.level == "hard")
+        # PKG-10 (A15): a recorded misconception makes this a confronting turn
+        self.confront_line = self._confront_line()
         if self.phase != "check":  # the pose never reaches the model (A17)
             deep = self.budget_counters()["session_deep_requests"]
             self.tier = routable_tier(
@@ -1195,7 +1280,7 @@ class _LoopTurn:
                     self.band,
                     self.rung,
                     _failed_on_concept(self.state, self.concept_node),
-                    False,  # misconception_active: PKG-10
+                    self.confront_line is not None,  # misconception_active (PKG-10)
                     deterministic_payload=self.text is not None,
                     budget_level=decision.level,
                     deep_cap_reached=deep >= LOOP_SESSION_MAX_DEEP_REQUESTS,
@@ -1206,6 +1291,8 @@ class _LoopTurn:
         if self.tier == "none":
             self.paused = self.text is None
             return
+        if self.tier not in CONFRONT_TIERS:
+            self.confront_line = None  # A75: served only where its eval passes; the marker waits
         self.text = None  # the model writes this turn
         self.revealed_hash, self.served_as_h6 = None, False
         context = policy.context_policy(
@@ -1235,6 +1322,12 @@ class _LoopTurn:
             answer_released=self.answer_released,
             verdict=self.verdict if self.phase == "feedback" else None,
         )
+        if self.confront_line:
+            # PKG-10: right after the phase instruction, before the context blocks
+            # and the student's words — trusted route text for THIS turn only
+            # (never the stored brief, the history or the system prompt, A19)
+            self.prefix = with_confrontation(self.prefix, self.confront_line)
+            self.confront_used = confront_of(self.state)
         self.agent, self.assembled, self.run_kwargs, self.deps = _prepare_loop_run(
             user_id=self.user_id,
             session_id=self.session_id,
@@ -1261,6 +1354,38 @@ class _LoopTurn:
             item_prompt=self.item.prompt if self.item is not None else "",
         )
         self.deps.loop_leak = self._leak_guard()
+
+    def _confront_line(self) -> str | None:
+        """The confrontation line this turn may carry (PKG-10), or None. Not on
+        a check pose (no model), a correct-answer feedback turn, a turn on
+        another concept than the marker's (fix round F2), or — the answer
+        unreleased — a model ceiling below MISCONCEPTION_CONFRONT_MIN_RUNG. The
+        text is model-written (item drafting), so while the active item's answer
+        is unreleased it must not state it — leak.confront_text_states_answer,
+        the strict check drafting also refuses with (F3, spec §13 A77: number
+        words anywhere, no provenance — fix round 5); a text that states it is
+        withheld and its marker waits."""
+        if self.phase == "check" or (self.phase == "feedback" and self.verdict == "correct"):
+            return None
+        marker = confront_of(self.state)
+        if marker is None or marker["node_id"] != self.concept_node:
+            return None
+        ceiling = clamp_model_ceiling(
+            self.rung if self.phase == "hint" else self.ceiling, self.answer_released
+        )
+        if not self.answer_released and ceiling < MISCONCEPTION_CONFRONT_MIN_RUNG:
+            return None  # the ceiling wins: a contradiction names specifics (H3+)
+        text = _confrontation_text(self.state)
+        line = confront_line_for(text) if text else None
+        if line is None or self.item is None or self.answer_released:
+            return line
+        # the item-drafted text is checked, not the route's own wording around it —
+        # by the one function drafting also refuses with (spec §13 A77): stored ==
+        # servable. Answer unreleased here, so the rung is below H6.
+        answer = self._item_answer()
+        answer.pop("reference")
+        leaked = confront_text_states_answer(text, **answer)
+        return None if leaked else line
 
     def _tier_phase(self) -> str:
         """PKG-06's TurnPhase: the feedback verdict rides the phase value."""
@@ -1325,6 +1450,9 @@ class _LoopTurn:
         return evs
 
     def record_usage(self, run_result) -> None:
+        # PKG-10 (fix round F4): the model requests this turn cost (a run, its
+        # output/leak retries, a continuation) — a confronting turn counts them all
+        self.run_requests += _requests_of(run_result)
         record_agent_usage(run_result, feature="loop_tutor", task=self.slot, user_id=self.user_id)
 
     def _leak_rung(self) -> Rung:
@@ -1533,10 +1661,14 @@ class _LoopTurn:
             if state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
                 _advance_cursor(state)
         state["phase_served"] = self.phase
+        if self.confront_used is not None and confront_of(state) == self.confront_used:
+            set_confront(state, None)  # PKG-10: used once (a newer marker is kept)
         if self.tier != "none":
             state["tutor_requests"] = int(state.get("tutor_requests") or 0) + 1
             if self.tier == "deep":
-                state["deep_requests"] = int(state.get("deep_requests") or 0) + 1
+                # A39: one per run; PKG-10 (F4): a confronting run counts every request
+                spent = max(1, self.run_requests) if self.confront_used is not None else 1
+                state["deep_requests"] = int(state.get("deep_requests") or 0) + spent
         if self.revealed_hash:  # an H4 sibling shown: never a future check (A23)
             revealed = list(state.get("revealed") or [])
             if self.revealed_hash not in revealed:
@@ -1703,6 +1835,7 @@ def _advance_cursor(state: dict) -> bool:
     plan = state.get("plan")
     if not isinstance(plan, dict):
         return False
+    set_confront(state, None)  # PKG-10 (F2): a marker never outlives its concept
     approved = list(plan.get("approved") or [])
     plan["cursor"] = int(plan.get("cursor") or 0) + 1
     if plan["cursor"] >= len(approved):
@@ -1713,6 +1846,22 @@ def _advance_cursor(state: dict) -> bool:
     state["teach_turns"] = 0
     state["concept_checks"] = 0
     return True
+
+
+def _isomorph_after_unknown(state: dict, node_id: str, items: list, exclude: set):
+    """PKG-10 (spec §3.3 "unknown → re-ask an isomorph"; §13 A27): when the
+    session's last attempt on this concept was `unknown`, the isomorph of that
+    attempt's item (policy.next_isomorph) among the site's own candidates —
+    everything `exclude` leaves (seen, revealed, session hashes, the post-test
+    reserve; A23), servable only (A34) — else None (the normal pick)."""
+    tail = attempts_for_node(attempts_of(state), node_id)
+    if not tail or slip_or_misconception(tail) != "unknown":
+        return None
+    last = next((i for i in items if i.question_hash == tail[-1].question_hash), None)
+    if last is None:
+        return None
+    candidates = [i for i in items if i.question_hash not in exclude and is_servable(i)]
+    return policy.next_isomorph(last, candidates)
 
 
 def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float) -> str | None:
@@ -1735,10 +1884,11 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
             items = list_items(course_id, key)
             reserve = posttest_reserve_hash(items)
             exclude = excluded | ({reserve} if reserve else set())
+            item = _isomorph_after_unknown(state, concept, items, exclude)
             band, _ = _band_for(user_id, concept)
             rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
             formats = CHECK_ITEM_FORMATS[rotation:] + CHECK_ITEM_FORMATS[:rotation]
-            for fmt in formats:
+            for fmt in formats if item is None else ():
                 item = select_item(
                     items,
                     format=fmt,
@@ -2183,24 +2333,38 @@ async def _grade_submission(
         session_id=body.session_id,
         feature="loop_check",
         learning_loop=loop_on,
+        # PKG-10: the hook's attempt log + marker; its change rides
+        # outcome.diagnosis into the grade's compare-and-set save below
+        loop_state=copy.deepcopy(state),
     )
     rung = int(entry.get("rung") or 0)
+    # PKG-10 (spec §13 A76): the next graded item on a concept after a release
+    # is a re-check, never a full-weight unassisted first attempt
+    recheck = recheck_after_release(
+        body.user_id,
+        node_id,
+        state,
+        now=datetime.fromtimestamp(now, tz=timezone.utc),
+        item=item,
+    )
     claim = str(uuid.uuid4())
     _claim_grading(body.session_id, qh, claim, now)
     flushed = False
+    answer = CheckAnswer(
+        question_hash=qh,
+        answer_text=body.answer,
+        selected_option=body.option,
+        reason=body.reason,
+        idk=idk,
+    )
     try:
         outcome = await grade_answer(
             _item_like(item),
-            CheckAnswer(
-                question_hash=qh,
-                answer_text=body.answer,
-                selected_option=body.option,
-                reason=body.reason,
-                idk=idk,
-            ),
+            answer,
             deps=deps,
             node_id=node_id,
             max_rung=rung,
+            same_session_recheck=recheck,
         )
         refused = bool(outcome.refused)
         if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
@@ -2219,12 +2383,14 @@ async def _grade_submission(
                 return _Submission("refused", state, rendered, scope, refused=True)
             # never a skip: the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
             idk, genuine = True, False
+            answer = CheckAnswer(question_hash=qh, idk=True)
             outcome = await grade_answer(
                 _item_like(item),
-                CheckAnswer(question_hash=qh, idk=True),
+                answer,
                 deps=deps,
                 node_id=node_id,
                 max_rung=rung,
+                same_session_recheck=recheck,
             )
         if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
 
@@ -2274,11 +2440,56 @@ async def _grade_submission(
         e["wrong"] = int(e.get("wrong") or 0) + (0 if correct else 1)
         e.update(graded)
 
+    under = _under_claim(qh, claim, record_grade, release=True)
+    diagnosis = getattr(outcome, "diagnosis", None)
+
+    held = {"last": False}
+
+    def record_grade_and_diagnosis(doc: dict) -> None:
+        entry = _steps(doc).get(qh)
+        held["last"] = isinstance(entry, dict) and entry.get("grading_claim") == claim
+        under(doc)
+        if held["last"]:  # PKG-10: the attempt log + marker change, on the FRESH document
+            carry(doc, diagnosis)
+
     # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
     # conflict here is a 409 with the claim still held: the item is never
     # flushed again (it closes via /check/next once the claim is stale).
-    state = _update_loop_state(body.session_id, _under_claim(qh, claim, record_grade, release=True))
+    state = _update_loop_state(body.session_id, record_grade_and_diagnosis)
+    if held["last"]:
+        # PKG-10 (spec §13 A75): the row grade_answer marked, written only now —
+        # after the ONE flush and the save that recorded the grade under OUR
+        # claim (a claim lost to another request writes nothing; never raises)
+        _write_misconception(body.user_id, outcome, _item_like(item), answer)
     return _Submission("feedback", state, rendered, scope, verdict, refused=refused)
+
+
+def _requests_of(run_result) -> int:
+    """Model requests a run reports (RunResult.usage / UnfinishedRun.usage()); 0 unknown."""
+    usage = getattr(run_result, "usage", None)
+    if not hasattr(usage, "requests") and callable(usage):  # UnfinishedRun.usage()
+        usage = usage()
+    try:
+        return int(getattr(usage, "requests", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _write_misconception(user_id: str, outcome, item, answer: CheckAnswer) -> None:
+    """PKG-10: write the misconceptions row the grade marked
+    (`outcome.diagnosis["record"]`), its evidence_text the text the grader saw
+    (encrypted by learning.misconceptions.record). Nothing marked, nothing
+    written; the store never raises."""
+    mark = (getattr(outcome, "diagnosis", None) or {}).get("record")
+    if not mark:
+        return
+    record(
+        user_id,
+        mark["node_id"],
+        mark["check_item_id"],
+        mark["wrong_key"],
+        grader_answer_text(item, answer),
+    )
 
 
 def _submission_turn(
@@ -2630,9 +2841,13 @@ def _unreleased_items(doc: dict | None) -> list:
     return out
 
 
-def _close_misconception_keys(user_id: str, session_id: str) -> list[str]:
-    """PKG-10 repoints this at the session's matched wrong keys. Empty until then."""
-    return []
+def _close_misconception_keys(user_id: str, evidence: list[dict]) -> list[str]:
+    """PKG-10: the student's OPEN misconception keys on the concepts this
+    session's evidence rows touched (`open_for`; identifier-shaped keys only,
+    count descending). No evidence → no read, []. Never raises."""
+    node_ids = sorted({e.get("node_id") for e in evidence or [] if e.get("node_id")})
+    keys = [r["wrong_key"] for r in open_for(user_id, node_ids) if is_key(r.get("wrong_key"))]
+    return list(dict.fromkeys(keys))  # one key open on two nodes is listed once
 
 
 def _stored_close(row: dict) -> dict:
@@ -2831,7 +3046,7 @@ async def close_session(
             draft = build_close(
                 transcript,
                 evidence,
-                _close_misconception_keys(user_id, session_id),
+                _close_misconception_keys(user_id, evidence),
                 {},
                 concept_names=_concept_names(user_id, [e.get("node_id") for e in evidence]),
             )
@@ -3369,6 +3584,15 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         feature="loop_probe",
         learning_loop=loop_on,
     )
+    # PKG-10 (spec §13 A76, fix round 3): a probe item is the next graded item
+    # on its concept after a release too — the same rule as the check route
+    recheck = recheck_after_release(
+        body.user_id,
+        node_id,
+        state,
+        now=datetime.fromtimestamp(now, tz=timezone.utc),
+        item=item.item,
+    )
     written = False
     try:
         outcome = await grade_answer(
@@ -3382,6 +3606,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
             ),
             deps=deps,
             node_id=node_id,
+            same_session_recheck=recheck,
         )
         if outcome.refused:  # A33, read BEFORE `unavailable`: never a skip
 
@@ -3397,7 +3622,11 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                 return {"graded": False, "refused": True}
             idk = True  # the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
             outcome = await grade_answer(
-                item.item, CheckAnswer(question_hash=qh, idk=True), deps=deps, node_id=node_id
+                item.item,
+                CheckAnswer(question_hash=qh, idk=True),
+                deps=deps,
+                node_id=node_id,
+                same_session_recheck=recheck,
             )
         if outcome.unavailable:  # invariant 28: nothing for either outcome
             _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))

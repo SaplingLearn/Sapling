@@ -5906,3 +5906,242 @@ class TestProjectRef:
             assert module._project_ref() == ref
         finally:
             sys.modules.pop("scripts.backfill_check_items", None)
+
+
+# ── PKG-10 fix round F3: a wrong reason never states the final answer ──────
+
+
+def test_a_wrong_reason_stating_the_final_answer_fails_validation():
+    """The confrontation line (PKG-10) puts a stored wrong reason in front of the
+    tutor while the answer may be unreleased; a wrong reason that states the
+    final answer — in strict form, number words included — is refused at drafting."""
+    from learning.checks import CheckItemDraft, validate_draft
+
+    base = dict(
+        concept="power rule",
+        format="free",
+        difficulty=2,
+        prompt="What is the derivative of x^4?",
+        reference_answer="By the power rule the derivative of x^4 is 4x^3.",
+        final_answer="4x^3",
+        rubric=["multiplies by the exponent", "lowers the exponent by one"],
+        wrong_keys=["keeps_exponent"],
+        answer_kind="free",
+    )
+    leaky = CheckItemDraft(**base, wrong_texts=["Thinks the exponent stays four, not three"])
+    clean = CheckItemDraft(**base, wrong_texts=["Keeps the exponent unchanged"])
+    assert any("states the final answer" in r for r in validate_draft(leaky))
+    assert not any("states the final answer" in r for r in validate_draft(clean))
+
+
+def _wrong_reason_draft(
+    final_answer: str,
+    wrong_text: str,
+    reference: str | None = None,
+    prompt: str = "Work the problem out and state the result.",
+):
+    from learning.checks import CheckItemDraft
+
+    return CheckItemDraft(
+        concept="counting",
+        format="free",
+        difficulty=2,
+        prompt=prompt,
+        reference_answer=reference or f"Working it through, the result is {final_answer}.",
+        final_answer=final_answer,
+        rubric=["sets the problem up", "states the result"],
+        wrong_keys=["some_mistake"],
+        wrong_texts=[wrong_text],
+        answer_kind="free",
+    )
+
+
+def _states_answer(draft) -> bool:
+    from learning.checks import validate_draft
+
+    return any("states the final answer" in r for r in validate_draft(draft))
+
+
+# ── PKG-10 fix round 4 (R4-2/R4-3, spec §13 A77): the lint IS the serve check ──
+# Rounds 2 and 3 grew a drafting-only role heuristic that disagreed with the
+# serve-time confrontation check in both directions. Now both call ONE function,
+# leak.confront_text_states_answer, so a stored wrong reason is exactly one the
+# confrontation line can serve. The cases are every reviewer case of rounds 2–4.
+
+_P2 = "What is the limit of sin(2x)/x as x approaches 0?"
+_GENERIC = "Work the problem out and state the result."
+
+#: (final_answer, prompt, text) that STATE the answer — refused at drafting and
+#: withheld at serve (lint3.py, lint4.py leaky, the round-2/3 positives).
+_STATED = [
+    ("2", _GENERIC, "Thinks the answer is 2"),
+    ("2", _GENERIC, "Thinks x = 2"),
+    ("2", _GENERIC, "Thinks it gives 2"),
+    ("2", _GENERIC, "Gets 2"),
+    ("true", _GENERIC, "Believes the statement is true"),
+    ("5", _GENERIC, "Concludes the mean is five"),
+    ("2", _GENERIC, "Concludes 2."),
+    ("2", _GENERIC, "Writes 2 as the final answer."),
+    ("2", _GENERIC, "Says the limit is 2 for this function."),
+    ("2", _GENERIC, "Picks 2 because it looks right."),
+    ("2", _GENERIC, "Arrives at 2 by guessing."),
+    ("2", _GENERIC, "Answers two."),
+    ("2", _GENERIC, "Gets 2 only by luck."),
+    ("2", _GENERIC, "The limit equals 2 if you simplify, but thinks it does not exist."),
+    ("true", _GENERIC, "Says it is true."),
+    ("6", _GENERIC, "Computes 18/3 = 6 but then reports the median."),
+    ("2", _GENERIC, "Gets 2 when simplifying first, but claims DNE."),
+    ("2", _P2, "Gets 2 quickly."),
+    ("2", _P2, "Concludes 2."),
+    ("2", _P2, "Settles on 2."),
+    ("2", _P2, "Arrives at 2 by guessing."),
+    ("2", _P2, "Picks 2 because it looks right."),
+    ("2", _P2, "Writes two as the final answer."),
+    (
+        "True",
+        "Is every square a rectangle?",
+        "Answers true only because squares look like rectangles.",
+    ),
+    ("2", _P2, "Reports 2 cases."),
+    ("2", _P2, "Guesses 2, then doubts it."),
+    ("2", _P2, "Says 2 and stops."),
+    ("2", _P2, "Goes with 2 over 1."),
+    ("2", _P2, "Thinks it is 2 x, not 2."),
+    ("2", _P2, "Chooses 2 rather than 1."),
+    ("2", _P2, "Thinks sin(2x)/x tends to 2 only when x is large."),
+    ("2", _P2, "Thinks the limit is the 2 from sin(2x)."),  # "the 2" in answer position
+    ("2", _P2, "Gives 2 as its answer."),
+    ("2", _P2, "Takes 2 as the limit."),
+]
+
+#: Texts that refer, with "the", to a number the PROMPT itself shows. Round 4
+#: stored them (a "the <prompt value>" provenance); round 5 (R5-1) removed that
+#: exemption — the same shape primes the answer ("Treats the 2 as the final
+#: value.") — so every one is refused and re-drafted: fail closed.
+_PROMPT_ANAPHORS = [
+    ("2", _P2, "Cancels the 2 in the numerator with the x."),
+    ("2", _P2, "Drops the 2 because it is a constant."),
+    ("2", _P2, "Ignores the 2."),
+    ("2", _P2, "Uses the 2 from the denominator twice."),
+    ("2", _P2, "Adds the two limits instead of dividing."),
+    # the round-5 review's primers (lint5.py): stored in round 4
+    ("2", _P2, "Misses that only the 2 survives the limit."),
+    ("2", _P2, "Treats the 2 as the final value."),
+    ("2", _P2, "Thinks the limit tends to the 2 in the argument, not 1."),
+    ("2", _P2, "Doesn't see that the 2 comes out in front and is what remains."),
+    ("2", _P2, "Forgets the 2 is all that is left."),
+    ("2", _P2, "Pulls the 2 out, leaving the 2 as what the limit tends to."),
+    ("2", "What is the derivative of x^2 at x = 1?", "Forgets to bring down the 2."),
+    ("2", "What is the derivative of x^2 at x = 1?", "Forgets the 2 multiplies to give the slope."),
+    ("2", _P2, "Leaves the 2 as the answer."),
+]
+
+#: Honest texts with no answer token at all: stored, and servable.
+_NO_TOKEN = [
+    ("1", "What is 0!?", "Thinks 0! is 0 because zero times anything is zero."),
+    ("1", "What is 0!?", "Believes the empty product is 0, not the identity."),
+    (
+        "0",
+        "What is the derivative of a constant?",
+        "Treats the constant like x and uses the power rule.",
+    ),
+    (
+        "True",
+        "Is every square a rectangle?",
+        "Thinks squares are not rectangles because the sides are equal.",
+    ),
+    ("False", "Is 1 prime?", "Believes 1 is prime because it divides only by itself."),
+    ("4", "How many moles...?", "Divides by 2 instead of multiplying, halving the ratio."),
+    # lint5.py: names the OTHER boolean, never the answer
+    ("False", "Is 1 prime? (true/false)", "Treats the true in the prompt as its conclusion."),
+]
+
+#: Honest by intent, but they name the answer's value where the prompt does not
+#: show it (or not anaphorically): the confrontation line could never serve them
+#: while the answer is unreleased, so drafting refuses them too (re-drafted).
+_UNSERVABLE_HONEST = [
+    ("2", _P2, "Forgets to multiply by 2 from the chain rule."),
+    ("1", "How many base cases does factorial need?", "Thinks the base case is one step too late."),
+    ("3", "How many sides does a triangle have?", "Counts three sides instead of angles."),
+    ("1", "What is P(sure event)?", "Confuses probability with odds, writing 1:1."),
+    (
+        "2",
+        "How many roots does x^2-4 have?",
+        "Only finds the positive root, x = 2, and forgets the negative one.",
+    ),
+    ("0", "Limit of 1/x as x->inf?", "Plugs in 0 directly and gets a division error."),
+    ("2", _GENERIC, "Forgets to multiply by 2"),
+    ("1", _GENERIC, "Stops one step too late"),
+    ("true", _GENERIC, "Thinks it is true only for positive n"),
+    ("2", _GENERIC, "Adds 2 to both sides instead of subtracting"),
+]
+
+
+def _serve_withholds(final_answer, prompt, text) -> bool:
+    from learning.leak import confront_text_states_answer
+
+    return confront_text_states_answer(text, final_answer=final_answer)
+
+
+@pytest.mark.parametrize(
+    "final_answer,prompt,text", _STATED + _PROMPT_ANAPHORS + _NO_TOKEN + _UNSERVABLE_HONEST
+)
+def test_the_drafting_lint_agrees_with_the_serve_time_check(final_answer, prompt, text):
+    """R4-2/3: stored == servable, case by case."""
+    draft = _wrong_reason_draft(final_answer, text, prompt=prompt)
+    assert _states_answer(draft) is _serve_withholds(final_answer, prompt, text)
+
+
+@pytest.mark.parametrize("final_answer,prompt,text", _STATED)
+def test_a_stated_answer_is_refused_whatever_the_wording(final_answer, prompt, text):
+    assert _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
+
+
+@pytest.mark.parametrize("final_answer,prompt,text", _PROMPT_ANAPHORS)
+def test_a_reason_naming_the_prompt_s_value_is_refused_too(final_answer, prompt, text):
+    """R5-1: no provenance exemption — the answer's value in any form is refused."""
+    assert _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
+
+
+@pytest.mark.parametrize("final_answer,prompt,text", _NO_TOKEN)
+def test_an_honest_reason_the_confrontation_can_serve_is_stored(final_answer, prompt, text):
+    assert not _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
+
+
+@pytest.mark.parametrize("final_answer,prompt,text", _UNSERVABLE_HONEST)
+def test_a_reason_the_confrontation_could_never_serve_is_not_stored(final_answer, prompt, text):
+    assert _states_answer(_wrong_reason_draft(final_answer, text, prompt=prompt))
+
+
+@pytest.mark.parametrize(
+    "wrong_text",
+    ["Writes 4x^3 instead of lowering the exponent", "Thinks the exponent stays four, not three"],
+)
+def test_a_multi_token_answer_keeps_the_strict_check(wrong_text):
+    draft = _wrong_reason_draft(
+        "4x^3", wrong_text, reference="By the power rule the derivative of x^4 is 4x^3."
+    )
+    assert _states_answer(draft)
+
+
+def test_validate_draft_and_the_confront_route_call_the_one_function():
+    """Structural: checks._wrong_text_answer_reasons and the route's
+    _LoopTurn._confront_line both decide through confront_text_states_answer,
+    and neither calls detect_leak / leak_spans for the wrong-reason text."""
+    import ast
+    import inspect
+    import textwrap
+
+    from learning import checks
+    from routes import learn_loop
+
+    for fn in (checks._wrong_text_answer_reasons, learn_loop._LoopTurn._confront_line):
+        src = inspect.getsource(fn)
+        tree = ast.parse(textwrap.dedent(src))
+        called = {
+            getattr(n.func, "id", None) or getattr(n.func, "attr", None)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+        }
+        assert "confront_text_states_answer" in called, fn.__qualname__
+        assert not called & {"detect_leak", "leak_spans"}, fn.__qualname__

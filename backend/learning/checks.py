@@ -1425,7 +1425,39 @@ def validate_draft(draft: CheckItemDraft) -> list[str]:
                 f"needs >= {CHECK_ITEM_STEPWISE_MIN_STEPS}"
             )
     reasons.extend(_final_answer_reasons(draft))
+    reasons.extend(_wrong_text_answer_reasons(draft))
     return reasons
+
+
+def _wrong_text_answer_reasons(draft: CheckItemDraft) -> list[str]:
+    """PKG-10 fix round F3, decided in fix round 4 (spec §13 A77): a common
+    wrong reason never states the final answer. The confrontation line puts a
+    stored wrong reason in front of the tutor while the answer may still be
+    unreleased, and it withholds a text that states it — through
+    learning.leak.confront_text_states_answer, the SAME function this lint
+    calls, so a stored wrong reason is exactly one the line can serve (rounds 2
+    and 3 kept a drafting-only role heuristic that drifted from the serve check
+    in both directions). The drafter has no option letter yet (letters are
+    placed after validation, A37): the correct option's TEXT is checked, the
+    letter only at serve. No stated final answer: _final_answer_reasons
+    refuses the draft."""
+    if not answer_run(draft.final_answer):
+        return []
+    # lazy (learning.leak imports this module); drafting runs only with the loop on
+    from learning.leak import confront_text_states_answer
+
+    correct = next((o.text for o in draft.options if o.is_correct), None)
+    return [
+        f"wrong reason {w.key!r} states the final answer"
+        for w in common_wrong(draft)
+        if w.text
+        and confront_text_states_answer(
+            w.text,
+            final_answer=draft.final_answer,
+            canonical_answer=draft.canonical_answer,
+            option_text=correct if draft.format == _MC_REASON else None,
+        )
+    ]
 
 
 def parse_tolerance(draft: CheckItemDraft) -> float | None:

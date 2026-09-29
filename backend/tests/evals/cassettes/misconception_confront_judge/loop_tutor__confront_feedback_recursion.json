@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "59ea877759515c5dc619e30ae8b5388ab6da5eaf11ba2a4e5d4be1b0b7097e58",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What would be the very next calculation if `factorial(0)` tried to use the recursive step `n * factorial(n-1)`?",
+    "only_states_correction": false
+  },
+  "served_sha256": "0c0f9b285c291840cb3bb3f037144edac8fedd6e73624e52ef0f8e5aefdb769c"
+}

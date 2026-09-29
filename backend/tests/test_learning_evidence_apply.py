@@ -2116,3 +2116,54 @@ class TestEvidenceSeq:
         legacy_row, evidence_row = _event_rows(mocks)
         assert legacy_row["event_type"] == "quiz_correct" and "evidence_seq" not in legacy_row
         assert evidence_row["evidence_seq"] == 0
+
+
+# ── PKG-10 post-hoc: the rule's verdict and the matched key ride the Evidence ──
+
+
+def test_evidence_verdict_and_wrong_key_default_none():
+    """PKG-10 post-hoc: two optional diagnosis fields; nothing existing changes."""
+    from learning.evidence import Evidence
+
+    e = Evidence(node_id="n1", channel="free_response", correct=False)
+    assert e.verdict is None and e.wrong_key is None
+    ok = Evidence(node_id="n1", channel="mc", correct=True, verdict="slip", wrong_key="k1")
+    assert ok.verdict == "slip" and ok.wrong_key == "k1"
+
+
+def test_evidence_verdict_is_one_of_the_rules_verdicts():
+    """Spec §3.3's six verdicts plus `none` (PKG-10 Deviation): anything else is refused."""
+    from learning.evidence import Evidence, MisconceptionVerdict
+
+    assert set(get_args(MisconceptionVerdict)) == {
+        "none",
+        "unknown",
+        "slip",
+        "misconception",
+        "gap",
+        "not_known",
+        "novice",
+    }
+    with pytest.raises(ValidationError):
+        Evidence(node_id="n1", channel="mc", correct=False, verdict="confused")
+
+
+def test_verdict_and_wrong_key_are_never_journaled():
+    """Spec §4: no column carries them; the durable record is the misconceptions
+    row. The evidence path validates them and journals its named columns only."""
+    _, mocks, _ = _apply(
+        {
+            "evidence": [
+                {
+                    "node_id": "n1",
+                    "channel": "free_response",
+                    "correct": False,
+                    "verdict": "misconception",
+                    "wrong_key": "k1",
+                }
+            ]
+        },
+        edges=[],
+    )
+    [row] = _event_rows(mocks)
+    assert "verdict" not in row and "wrong_key" not in row

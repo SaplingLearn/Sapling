@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "59ea877759515c5dc619e30ae8b5388ab6da5eaf11ba2a4e5d4be1b0b7097e58",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What number would `factorial(-1)` then try to call?",
+    "only_states_correction": false
+  },
+  "served_sha256": "269289e4050a7cb1f76aa8581ebe10178193e28eae2d59e9d9017703eb2d6f7f"
+}

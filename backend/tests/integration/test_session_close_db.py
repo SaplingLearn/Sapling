@@ -28,7 +28,7 @@ def test_insert_ignore_duplicates_never_overwrites(db_conn):
     sid = str(uuid.uuid4())
     table("sessions").insert({"id": sid, "user_id": USER, "mode": "socratic", "topic": "First"})
     again = table("sessions").insert_ignore_duplicates(
-        {"id": sid, "user_id": USER, "mode": "exam", "topic": "Second"}, on_conflict="id"
+        {"id": sid, "user_id": USER, "mode": "expository", "topic": "Second"}, on_conflict="id"
     )
     assert again == []
     row = _row(db_conn, sid)
@@ -41,7 +41,7 @@ def test_ensure_session_row_inserts_once_and_store_close_writes_once(db_conn):
     sid = str(uuid.uuid4())
     defaults = {"mode": "socratic", "topic": "Recursion"}
     assert ensure_session_row(sid, USER, defaults) is True
-    assert ensure_session_row(sid, USER, {"mode": "exam", "topic": "Other"}) is True
+    assert ensure_session_row(sid, USER, {"mode": "expository", "topic": "Other"}) is True
     assert _row(db_conn, sid)["topic"] == "Recursion"
 
     rec = CloseRecord(

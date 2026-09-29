@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "{\"key_idea\": \"The power rule is a common differentiation technique that involves both multiplying by the exponent and reducing the exponent by one.\", \"body\": \"To find the derivative of a term like x^n, you typically multiply the coefficient by the exponent 'n' and then subtract one from the exponent. For example, if you were to differentiate x^3, you would get 3x^2.\", \"question\": \"What happens when you apply this rule to x^4?\"}"
+  ],
+  "input_sha256": "bbe71f8f1f145683af6e71384a2c9cdc764bd8b21800cdaa1d4ef471118f1757",
+  "model": "gemini-2.5-flash",
+  "output": {
+    "body": "To find the derivative of a term like x^n, you typically multiply the coefficient by the exponent 'n' and then subtract one from the exponent. For example, if you were to differentiate x^3, you would get 3x^2.",
+    "key_idea": "The power rule is a common differentiation technique that involves both multiplying by the exponent and reducing the exponent by one.",
+    "question": "What happens when you apply this rule to x^4?"
+  },
+  "prompt_hash": "23e9d0b6402d",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor",
+  "tool_calls": []
+}

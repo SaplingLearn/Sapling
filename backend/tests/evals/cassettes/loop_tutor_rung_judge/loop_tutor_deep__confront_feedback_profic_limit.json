@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "38930a148fbe7ed93c6150144fbba9eb200ecf9ffdfbedf6f648cf7f85a81814",
+  "output": {
+    "evidence": "The answer: The limit of sin x over x as x goes to 0 is 1.",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "6b7e8696a481108943cf7b092fcfb2451541780e36e3cc327b95c83f36b1a6b3"
+}

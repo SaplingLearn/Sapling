@@ -89,8 +89,10 @@ zpd.leak                      error     rung_emitted, ceiling, detector, request
 zpd.rating                    usage     rating (too_easy / appropriate / too_hard),
                                         checks_since_last
 decision.made                 usage     decision, backend, request_id, latency_ms, confidence,
-                                        fallback — one answered decision of the learning loop's
-                                        typed decision seam (PKG-05b, spec §6, §13 A24)
+                                        fallback, prior — one answered decision of the learning
+                                        loop's typed decision seam (PKG-05b, spec §6, §13 A24);
+                                        prior=true: answered from a result the caller held (no
+                                        model run; PKG-10 match_wrong_reason), backend = its source
 decision.shadow               usage     decision, request_id, primary_value, shadow_value,
                                         primary_confidence, shadow_confidence, agreement,
                                         shadow_latency_ms, shadow_input_tokens, error_code —

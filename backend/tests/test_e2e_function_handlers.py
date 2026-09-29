@@ -777,3 +777,87 @@ def test_env_module_serves_session_close(monkeypatch):
     assert result.output.open_misconception_keys == E2E_CLOSE_MISCONCEPTIONS
     assert E2E_CLOSE_IF_THEN.startswith("If ") and ", then " in E2E_CLOSE_IF_THEN
     assert E2E_CLOSE_SELF_EVAL.endswith("?") and E2E_CLOSE_SELF_EVAL.count("?") == 1
+
+
+# ── PKG-10: the misconception path on the E2E lane ─────────────────────────
+
+
+def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch):
+    """PKG-10 wires decisions.match_wrong_reason on the request path (with the
+    grader's result as `prior`, so no decision-agent run). The E2E lane makes
+    the matched key deterministic: an answer holding
+    E2E_GRADER_WRONG_REASON_TOKEN is graded wrong with the item's FIRST listed
+    common wrong reason matched; two such answers on two isomorphs of one
+    concept are a misconception (PKG-13's journey types the token)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from agents.grader import grader_agent
+    from agents.tools.check import CheckAnswer, grade_answer
+    from learning.misconceptions import confront_of
+    from learning.policy import LoopState
+    from services import decisions
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.function_handlers_e2e import (
+        E2E_GRADER_CORRECT_TOKEN,
+        E2E_GRADER_WRONG_REASON_TOKEN,
+    )
+    from tests.test_learning_check_tool import _item
+    from learning.checks import WrongReason
+
+    wrong = [WrongReason(key="w_loop", text="loops"), WrongReason(key="w_speed", text="speed")]
+    items = [
+        _item(id=f"ci-{qh}", question_hash=qh, difficulty=2, common_wrong=wrong)
+        for qh in ("h1", "h2")
+    ]
+    deps = SaplingDeps(
+        user_id="e2e-user",
+        course_id="e2e-course",
+        supabase=None,
+        request_id="e2e-req",
+        session_id="e2e-session",
+        learning_loop=True,
+        loop_state=LoopState().to_json(),
+    )
+    with (
+        grader_agent.override(model=model_for("grader")),
+        patch("learning.misconceptions.record", side_effect=AssertionError("route-only")),
+        patch.object(decisions, "_run_decision") as run,
+    ):
+        outs = [
+            asyncio.run(
+                grade_answer(
+                    it,
+                    CheckAnswer(
+                        question_hash=it.question_hash,
+                        answer_text=f"{E2E_GRADER_WRONG_REASON_TOKEN}: it just loops",
+                    ),
+                    deps=deps,
+                    node_id="n1",
+                )
+            )
+            for it in items
+        ]
+        right = asyncio.run(
+            grade_answer(
+                items[0],
+                CheckAnswer(question_hash="h1", answer_text=f"{E2E_GRADER_CORRECT_TOKEN} stops"),
+                deps=deps,
+                node_id="n2",
+            )
+        )
+    run.assert_not_called()
+    assert [(o.correct, o.wrong_key, o.verdict) for o in outs] == [
+        (False, "w_loop", "unknown"),
+        (False, "w_loop", "misconception"),
+    ]
+    assert outs[0].diagnosis["record"] is None
+    assert outs[1].diagnosis["record"] == {
+        "node_id": "n1",
+        "check_item_id": "ci-h2",
+        "wrong_key": "w_loop",
+    }
+    assert confront_of(deps.loop_state)["wrong_key"] == "w_loop"
+    assert right.correct is True and right.wrong_key is None and right.matched_wrong_key is None

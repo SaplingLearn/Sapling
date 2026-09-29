@@ -679,8 +679,17 @@ def test_decision_made_payload_is_ids_enums_numbers(seam, grader_spy, events):
     [(et, kw)] = events
     assert (et, kw["category"], kw["user_id"]) == ("decision.made", "usage", "u1")
     p = kw["payload"]
-    assert set(p) == {"decision", "backend", "request_id", "latency_ms", "confidence", "fallback"}
+    assert set(p) == {
+        "decision",
+        "backend",
+        "request_id",
+        "latency_ms",
+        "confidence",
+        "fallback",
+        "prior",
+    }
     assert (p["decision"], p["backend"], p["fallback"]) == ("grade_rubric_items", "gemini", False)
+    assert p["prior"] is False, "PKG-10: only a decision answered from `prior` is tagged"
     assert isinstance(p["latency_ms"], int)
     assert all(not isinstance(v, str) or len(v) <= seam.EVENT_ENUM_MAX_CHARS for v in p.values())
     assert not any(t in json.dumps(kw) for t in (QUESTION, REFERENCE, "It stops the calls."))
@@ -889,8 +898,11 @@ def test_grade_answer_numeric_mismatch_is_stamped_deterministic(seam, monkeypatc
     )
     assert len(calls) == 1
     assert (out.correct, out.grader_backend) == (False, "deterministic")
-    assert [(et, kw["payload"]["backend"]) for et, kw in events] == [
-        ("decision.made", "deterministic")
+    # PKG-10: grade_answer takes the wrong key from match_wrong_reason, handed the
+    # grader's result as `prior` (no model call, latency 0) — one more decision.made.
+    assert [(et, kw["payload"]["decision"], kw["payload"]["backend"]) for et, kw in events] == [
+        ("decision.made", "match_wrong_reason", "gemini"),
+        ("decision.made", "numeric_gate", "deterministic"),
     ]
 
 
@@ -1205,7 +1217,13 @@ def test_grade_answer_through_the_seam_on_the_e2e_lane(_function_lane, events):
         out = asyncio.run(c.grade_answer(_pkg05("_item"), answer, deps=deps, node_id=NODE))
     assert (out.unavailable, out.correct, out.grader_backend) == (False, True, "gemini")
     assert deps.pending_evidence[-1]["grader_backend"] == "gemini"
-    assert [(et, kw["payload"]["backend"]) for et, kw in events] == [("decision.made", "function")]
+    # PKG-10: the wrong-key match rides the grader's result (`prior`): no run of its own.
+    assert [(et, kw["payload"]["decision"], kw["payload"]["backend"]) for et, kw in events] == [
+        ("decision.made", "grade_rubric_items", "function"),
+        ("decision.made", "match_wrong_reason", "gemini"),  # the prior's provenance
+    ]
+    assert events[1][1]["payload"]["latency_ms"] == 0
+    assert (events[0][1]["payload"]["prior"], events[1][1]["payload"]["prior"]) == (False, True)
 
 
 # ── A38 fix round (m3): a cap hit inside _run_once is "budget" too ───────────
@@ -1372,3 +1390,23 @@ def test_a_key_named_none_is_aliased_so_it_never_reads_as_no_match(seam, monkeyp
         assert "OPTION none:" not in message and "OPTION k1:" in message
         pick = asyncio.run(seam.match_wrong_reason(state, deps=_deps()))
         assert pick is not None and pick.value == expected, shown
+
+
+def test_a_decision_answered_from_prior_is_tagged_with_the_priors_provenance(seam, events):
+    """PKG-10 fix round (conformance 3): match_wrong_reason with `prior` runs no
+    model; its decision.made says so (`prior: true`) and names the backend the
+    prior came from — the grader's, "gemini" for both grader slots — not the
+    seam's selected backend (which, on the function-mode lane, is "function")."""
+    st = seam.WrongReasonState(question=QUESTION, answer="it just loops", wrong=WRONG)
+    for backend in ("gemini", "gemini_second"):
+        asyncio.run(
+            seam.match_wrong_reason(
+                st,
+                deps=_deps(),
+                prior=_grade_result(False, matched_wrong_key="w_loop", backend=backend),
+            )
+        )
+    assert [(kw["payload"]["prior"], kw["payload"]["backend"]) for _, kw in events] == [
+        (True, "gemini"),
+        (True, "gemini"),
+    ]

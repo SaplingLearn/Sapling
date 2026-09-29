@@ -644,13 +644,19 @@ _ANSWER_LEAD = re.compile(
 # start or clause punctuation), a clause break after it.
 _CLAUSE_OPEN = re.compile(rf"(?:^|[.;:!?\n—–])\s{{0,4}}{_OPENING}$")
 _CLAUSE_CLOSE = re.compile(rf"{_CLOSING}{_CLAUSE_BREAK}")
+# Or the text names the hit the answer right after it: "<hit> as the (final)
+# answer", "<hit> as your result" (PKG-10 fix round 4, spec §13 A77) — the same
+# answer/result keywords as _ANSWER_LEAD, read after the hit.
+_ANSWER_AFTER = re.compile(
+    rf"{_CLOSING}\s+(?i:as)\s+(?:[\w'-]+\s+){{0,3}}?(?i:answers?|results?)\b"
+)
 _POSITION_WINDOW = params.LEAK_POSITION_WINDOW_CHARS
 
 
 def _answer_position(text: str, start: int, end: int) -> bool:
     """The hit at text[start:end] is where an answer goes (served mode)."""
     before = text[max(0, start - _POSITION_WINDOW) : start]
-    if _ANSWER_LEAD.search(before):
+    if _ANSWER_LEAD.search(before) or _ANSWER_AFTER.match(text, end):
         return True
     clause_start = (
         _CLAUSE_OPEN.search(before)
@@ -669,6 +675,36 @@ def _quantifies_given(text: str, end: int, given_words: set[str]) -> bool:
     count the item asks for (final round)."""
     m = _NEXT_WORD.match(text, end)
     return bool(m and m.group(1).lower() in given_words)
+
+
+def confront_text_states_answer(
+    text: str,
+    *,
+    final_answer: str,
+    canonical_answer: str | None = None,
+    correct_option: str | None = None,
+    option_text: str | None = None,
+) -> bool:
+    """PKG-10 fix round 4 (spec §13 A77): whether an item-drafted wrong-reason
+    text states the answer — the ONE decision behind both the drafting lint
+    (checks._wrong_text_answer_reasons refuses such a draft) and the
+    confrontation line (routes' _LoopTurn._confront_line withholds it while the
+    answer is unreleased), so what is stored is exactly what can be served.
+
+    detect_leak's strict final-answer and option rules with no reference and no
+    provenance of any kind: the answer anywhere, number words, fractions and
+    other notations included, and the correct option's letter / text — fail
+    closed. Round 4's "the <value the prompt shows>" exemption was removed in
+    round 5 (R5-1): the same shape primes the answer ("Treats the 2 as the
+    final value."), so such a reason is re-drafted. The reference's n-grams are not read:
+    a wrong reason shares the concept's vocabulary with the reference ("the
+    derivative of the inner function") without stating the answer, and the
+    tutor reply the line primes is leak-checked on its own."""
+    rules = _rules("", final_answer, canonical_answer, correct_option, True, option_text)
+    toks = answer_tokens(text)
+    if _option_hits(text, rules.option, strict=True) or _option_text_hits(toks, rules):
+        return True
+    return bool(_final_hits(text, toks, rules))
 
 
 def _copied_runs(text: str, given: str) -> list[tuple[int, int]]:

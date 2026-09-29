@@ -489,12 +489,22 @@ register_function_handler(
 # the OUTPUT tool → the real schema validates. Request-path once PKG-07's
 # /check/answer calls grade_answer (no route does yet). Contract:
 # tests/test_learning_check_tool.py; PKG-13's learn-loop.spec.ts types the token.
+#
+# PKG-10: a (not correct) answer holding E2E_GRADER_WRONG_REASON_TOKEN asserts the
+# item's FIRST listed common wrong reason (`matched_wrong_key` = the first
+# `COMMON WRONG REASON <key>:` line of the message); grade_answer then takes the
+# key through decisions.match_wrong_reason with this result as `prior` (no
+# decision run). Two such answers on two isomorphs of one concept record a
+# misconception and make the next feedback turn a confronting one. Contract:
+# tests/test_e2e_function_handlers.py.
 
 E2E_GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT"
+E2E_GRADER_WRONG_REASON_TOKEN = "E2E_GRADER_WRONG_REASON"
 E2E_GRADER_CONFIDENCE = 0.95
 E2E_GRADER_HINT = "[e2e-function-model] Deterministic grader hint: check the base case first."
 
 _RUBRIC_ID_RE = re.compile(r"^RUBRIC ITEM (\S+):", re.M)
+_WRONG_KEY_RE = re.compile(r"^COMMON WRONG REASON (\S+):", re.M)
 
 
 def _grader_handler(messages, info) -> ModelResponse:
@@ -516,6 +526,9 @@ def _grader_handler(messages, info) -> ModelResponse:
         }
         return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
     answer = " ".join(line[2:] for line in text.splitlines() if line.startswith("> "))
+    listed = _WRONG_KEY_RE.findall(text)  # never a quoted answer line ("> " first)
+    hit = verdict == "no" and E2E_GRADER_WRONG_REASON_TOKEN in answer
+    matched = listed[0] if hit and listed else ""
     args = {
         "addresses_grader": False,  # A33: an E2E answer never addresses the grader
         "contradicts_reference": False,  # A33 (round a33): nor contradicts the reference
@@ -523,7 +536,7 @@ def _grader_handler(messages, info) -> ModelResponse:
         # round a33: each credited item quotes the whole answer, which holds the token
         "support": [f"{rid}: {answer}" for rid in labels] if verdict == "yes" else [],
         "confidence": E2E_GRADER_CONFIDENCE,
-        "matched_wrong_key": "",
+        "matched_wrong_key": matched,
         "feedback_hint": E2E_GRADER_HINT,
     }
     return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])

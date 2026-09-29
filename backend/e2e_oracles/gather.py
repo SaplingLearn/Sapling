@@ -232,6 +232,9 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     # brief (encrypted text; "" is still a ciphertext, so null = not built yet).
     ("sessions", "id", "close_json"),
     ("sessions", "id", "loop_brief"),
+    # Learning loop PKG-10: the student's answer that a misconception was
+    # recorded from (learning/misconceptions.record encrypts it at the write).
+    ("misconceptions", "id", "evidence_text"),
 )
 
 

@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "319990a6d7767961429f61ca42d9b9fb1af2c02e2e64a3e51ac8d3a67b945101",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "The median is the middle value in an ordered set, but the mean considers all values through a calculation.",
+    "only_states_correction": true
+  },
+  "served_sha256": "dd55640906c2e89807a75a95a837b9d379a4f71372fb4f68745a5c39f49d4b63"
+}
