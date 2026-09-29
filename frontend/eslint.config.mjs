@@ -92,6 +92,8 @@ const eslintConfig = [
       "src/components/Gradebook/AssignmentModal.tsx",
       "src/components/screens/AdminAnalytics.tsx",
       "src/components/screens/Tree.tsx",
+      // Learning loop review queue (PKG-12) — the launch Study surface.
+      "src/components/learn/DueQueue.tsx",
       "src/components/marketing/graph/KnowledgeGraphDemo.tsx",
       "src/components/marketing/FeatureBand.tsx",
       "src/components/marketing/SurfaceBento.tsx",

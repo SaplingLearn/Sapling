@@ -66,12 +66,14 @@ import {
   rateFlashcard,
   deleteFlashcard,
   getDocuments,
+  getLoopStatus,
   type EnrolledCourse,
   type StudyGuideContent,
   type StudyGuideExam,
   type StudyGuideCacheEntry,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
+import { DueQueue } from "../learn/DueQueue";
 
 type Mode = "guide" | "cards";
 
@@ -617,6 +619,16 @@ function FlashcardsMode({
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
+  // Learning loop (PKG-12): the "Due today" queue renders only when the loop is on
+  // for this student; a 404 (loop off) or any error keeps the legacy UI unchanged.
+  const [loopActive, setLoopActive] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!userId) return;
+    getLoopStatus(userId)
+      .then(r => setLoopActive(!!r.active))
+      .catch(() => setLoopActive(false));
+  }, [userId]);
 
   React.useEffect(() => {
     if (!userId) return;
@@ -733,6 +745,7 @@ function FlashcardsMode({
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {loopActive && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <FilterPills
             options={[

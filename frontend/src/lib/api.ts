@@ -842,6 +842,102 @@ export const deleteFlashcard = (userId: string, cardId: string) =>
     { method: 'DELETE' },
   );
 
+// Learning loop (PKG-12): the daily review queue (backend/routes/learn_loop.py
+// /review/*). Every route 404s while the loop is off for this student (spec §7),
+// so callers treat a 404 as "inactive", never as an error.
+export interface ReviewSr {
+  stage: 'acquire' | 'relearn' | 'done';
+  correct: number;
+  target: number;
+}
+export interface ReviewItemPayload {
+  kind: 'flashcard' | 'check';
+  id: string;
+  cost_s: number;
+  sr: ReviewSr;
+  // check items
+  node_id?: string | null;
+  concept_name?: string | null;
+  format?: 'free' | 'mc_reason' | null;
+  difficulty?: number | null;
+  prompt?: string | null;
+  // mc_reason only: the stored options in stored order; correctness is never marked (A22)
+  options?: { letter: string; text: string }[] | null;
+  // flashcards
+  topic?: string | null;
+  front?: string | null;
+  back?: string | null;
+}
+export interface ReviewNextResponse {
+  item: ReviewItemPayload | null;
+  remaining_budget_s: number;
+  session_id: string;
+  retention_target: number;
+  due_total: number;
+}
+export interface ReviewAnswerBody {
+  user_id: string;
+  session_id: string;
+  course_id?: string;
+  kind: 'flashcard' | 'check';
+  item_id: string;
+  answer?: string;
+  selected_option?: string;
+  reason?: string;
+  rating?: number;
+}
+export interface ReviewAnswerResponse {
+  correct: boolean | null;
+  hint: string | null;
+  next_due_at: string | null;
+  rating: number | null;
+  remaining_budget_s: number;
+  sr: ReviewSr | Record<string, never>;
+  unavailable: boolean;
+  // A33: the answer read as instructions to the grader — ask for it in the
+  // student's own words (nothing was recorded; the item stays answerable)
+  refused: boolean;
+}
+export interface ReviewSummaryResponse {
+  due: { flashcard: number; check: number };
+  unservable: number;
+  paused: number;
+  budget_min: number;
+  remaining_budget_s: number;
+  retention_target: number;
+}
+
+const reviewQuery = (userId: string, courseId?: string) => {
+  const params = new URLSearchParams({ user_id: userId });
+  if (courseId) params.set('course_id', courseId);
+  return params.toString();
+};
+
+export const getReviewNext = (userId: string, courseId?: string) =>
+  fetchJSON<ReviewNextResponse>(`/api/learn/loop/review/next?${reviewQuery(userId, courseId)}`);
+
+export const answerReview = (body: ReviewAnswerBody) =>
+  fetchJSON<ReviewAnswerResponse>('/api/learn/loop/review/answer', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+export const getReviewSummary = (userId: string, courseId?: string) =>
+  fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewQuery(userId, courseId)}`);
+
+/** Is the learning loop on for this student? Probes GET /review/summary (PKG-07's
+ *  /status is per loop session): 200 → active, the gate's 404 → inactive. Any other
+ *  failure rejects; callers treat that as inactive too. */
+export const getLoopStatus = async (userId: string): Promise<{ active: boolean }> => {
+  try {
+    await getReviewSummary(userId);
+    return { active: true };
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return { active: false };
+    throw err;
+  }
+};
+
 // Flashcard import
 export interface ImportCard { front: string; back: string }
 export interface ImportParseResponse { cards: ImportCard[]; errors: { row: number; message: string }[] }
