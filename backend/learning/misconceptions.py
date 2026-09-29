@@ -79,6 +79,11 @@ class Attempt(BaseModel):
     difficulty: int
     idk: bool = False
     isomorph_of: str | None = None  # the question_hash this attempt re-asks
+    # the reference was released after this attempt (a wrong or idk grade, A16)
+    released: bool = False
+    # graded as a same-session re-check: served after a released answer on
+    # this concept (fix round F1: never a full-weight unassisted first attempt)
+    after_release: bool = False
 
 
 # ── the rule (pure) ─────────────────────────────────────────────────────────
@@ -138,6 +143,15 @@ def attempts_of(loop_state: dict) -> list:
         log = []
         loop_state[_ATTEMPTS] = log
     return log
+
+
+def released_on_node(loop_state: dict, node_id: str) -> bool:
+    """True when an earlier attempt on this concept in this session had its
+    reference released (a wrong or idk grade). An item graded after it is a
+    same-session re-check: the student has just read a worked answer of the
+    concept, so its correct answer is neither full-weight nor a streak (the
+    check route passes `same_session_recheck=True`, graph_service's rule)."""
+    return any(a.released for a in attempts_for_node(attempts_of(loop_state), node_id))
 
 
 def attempts_for_node(log: list, node_id: str) -> list[Attempt]:

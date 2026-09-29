@@ -294,6 +294,8 @@ def test_attempt_holds_no_free_text_and_bounds_confidence():
         "difficulty",
         "idk",
         "isomorph_of",
+        "released",
+        "after_release",
     }
     with pytest.raises(ValidationError):
         _att("h1", confidence=1.5)
@@ -1255,3 +1257,64 @@ def test_every_confrontation_cassette_is_fresh():
             body = load_cassette(mod._cassette_dataset(slot), case.name)
             assert body is not None, f"{slot}/{case.name} not recorded"
             mod.check_fresh(LoopRecording.model_validate(body), slot, case.inputs)
+
+
+# ── fix round F1: an item served after a released answer is a re-check ──────
+
+
+def test_released_on_node_reads_the_attempt_log():
+    """The attempt log records whether the reference was released after each
+    attempt (a wrong or idk grade releases it, A16); `released_on_node` says a
+    concept had one earlier in this session."""
+    from learning.misconceptions import released_on_node
+
+    wrong = {**_prior_attempt("h1"), "released": True}
+    right = {**_prior_attempt("h2"), "correct": True, "wrong_key": None, "released": False}
+    assert released_on_node({"attempts": [wrong]}, "n1") is True
+    assert released_on_node({"attempts": [right]}, "n1") is False
+    assert released_on_node({"attempts": [wrong]}, "n2") is False
+    assert released_on_node({}, "n1") is False
+    assert released_on_node({"attempts": ["junk", {"node_id": "n1"}]}, "n1") is False
+
+
+def _twin_evidence(recheck: bool) -> dict:
+    """The Evidence dict grade_answer builds for a correct free answer on a twin."""
+    from agents.tools.check import CheckAnswer, grade_answer
+    from tests.test_learning_check_tool import _result
+
+    import agents.grader
+
+    async def _grade(item, *, format, student_answer, deps):
+        return _result()
+
+    deps = _loop_deps()
+    with patch.object(agents.grader, "grade", _grade):
+        _run(
+            grade_answer(
+                _free("h2"),
+                CheckAnswer(question_hash="h2", answer_text="right"),
+                deps=deps,
+                node_id="n1",
+                same_session_recheck=recheck,
+            )
+        )
+    return deps.pending_evidence[-1]
+
+
+def test_a_twin_after_a_released_answer_is_neither_full_weight_nor_a_streak():
+    """F1: wrong → the reference is shown → the twin answered right. Graded as a
+    same-session re-check it is down-weighted and the unassisted streak and the
+    strong-channel count do not grow (graph_service's rule for a re-check)."""
+    from learning.params import WEIGHT_SAME_SESSION_RECHECK
+    from tests.test_learning_evidence_apply import _apply, _state_writes
+
+    twin = _twin_evidence(True)
+    assert twin["same_session_recheck"] is True
+    assert twin["weight"] == WEIGHT_SAME_SESSION_RECHECK < 1.0
+    fresh = _twin_evidence(False)
+    assert fresh["weight"] == 1.0
+    for ev, streak in ((twin, 0), (fresh, 1)):
+        row = {**ev, "node_id": "n1"}
+        _, mocks, _ = _apply({"evidence": [row]}, edges=[])
+        [w] = [w for w in _state_writes(mocks) if w["node_id"] == "n1"]
+        assert (w["streak_unassisted"], w["n_strong_unassisted"]) == (streak, streak)
