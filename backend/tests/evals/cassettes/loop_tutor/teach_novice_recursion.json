@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself to solve a smaller version of the same problem until a base case is reached.\", \"body\": \"A recursive function defines a problem in terms of itself. It breaks down a complex problem into smaller, more manageable subproblems that are identical in nature. This process continues until the problem becomes simple enough to solve directly, which is known as the base case.\", \"question\": \"What do you think is the purpose of the base case in a recursive function?\"}"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve a problem by breaking it into smaller, identical subproblems.\", \"body\": \"To understand recursion, consider how a large task can be completed by repeatedly performing a simpler version of the same task. Each time the function calls itself, it works on a smaller piece of the original problem. This continues until a 'base case' is reached, which is a simple problem that can be solved directly without further recursion.\", \"question\": \"What do you think is the purpose of the 'base case' in a recursive function?\"}"
   ],
   "input_sha256": "914c5e3cfc226d4c6064e4672d8ea57400c69d249f863fa0f548c0c000fa4886",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "A recursive function defines a problem in terms of itself. It breaks down a complex problem into smaller, more manageable subproblems that are identical in nature. This process continues until the problem becomes simple enough to solve directly, which is known as the base case.",
-    "key_idea": "Recursion involves a function calling itself to solve a smaller version of the same problem until a base case is reached.",
-    "question": "What do you think is the purpose of the base case in a recursive function?"
+    "body": "To understand recursion, consider how a large task can be completed by repeatedly performing a simpler version of the same task. Each time the function calls itself, it works on a smaller piece of the original problem. This continues until a 'base case' is reached, which is a simple problem that can be solved directly without further recursion.",
+    "key_idea": "Recursion involves a function calling itself to solve a problem by breaking it into smaller, identical subproblems.",
+    "question": "What do you think is the purpose of the 'base case' in a recursive function?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

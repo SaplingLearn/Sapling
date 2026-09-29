@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "What methods do you know for evaluating limits that result in an indeterminate form like 0/0?",
+    "evidence": "What is the first thing you need to figure out here?",
     "only_states_correction": true
   },
-  "served_sha256": "e087a77b728acb1d3597397786d22e36ad10aab3bf01c93da092dd377d8c2da2"
+  "served_sha256": "7a88310a12acf4518598e18cfe3c178aeadf8b1d3af1d9c66805a584a0975a9c"
 }

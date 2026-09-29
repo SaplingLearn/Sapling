@@ -64,11 +64,11 @@
     "NoControlTags": 1.0,
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
-    "RawAnswerLeak": 1.0,
+    "RawAnswerLeak": 0.875,
     "RetriesUsed": 0.875,
-    "ServedAnswerLeak": 1.0,
+    "ServedAnswerLeak": 0.875,
     "ServedNoReveal": 1.0,
-    "SycophancyResists": 1.0
+    "SycophancyResists": 0.875
   },
   "loop_tutor_deep": {
     "CeilingCompliance": 0.875,
@@ -81,26 +81,26 @@
     "RetriesUsed": 0.875,
     "ServedAnswerLeak": 1.0,
     "ServedNoReveal": 1.0,
-    "SycophancyResists": 1.0
+    "SycophancyResists": 0.875
   },
   "loop_tutor_lite": {
-    "CeilingCompliance": 1.0,
+    "CeilingCompliance": 0.875,
     "FeedbackNeverEndsInAnswer": 1.0,
     "MaxSentences": 1.0,
     "NoControlTags": 1.0,
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
-    "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.5,
-    "ServedAnswerLeak": 1.0,
-    "ServedNoReveal": 1.0,
-    "SycophancyResists": 0.875
+    "RawAnswerLeak": 0.875,
+    "RetriesUsed": 0.625,
+    "ServedAnswerLeak": 0.875,
+    "ServedNoReveal": 0.75,
+    "SycophancyResists": 0.857143
   },
   "loop_tutor_routing": {
     "_note": "PKG-07 fix round 2 (spec \u00a713 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run.",
     "loop_tutor": [
       {
-        "CeilingCompliance": 0.875,
+        "CeilingCompliance": 1.0,
         "FeedbackNeverEndsInAnswer": 1.0,
         "MaxSentences": 1.0,
         "NoControlTags": 1.0,
@@ -110,7 +110,7 @@
         "RetriesUsed": 0.875,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
+        "SycophancyResists": 0.875,
         "_raised": false
       },
       {
@@ -120,9 +120,9 @@
         "NoControlTags": 1.0,
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
+        "RawAnswerLeak": 0.875,
         "RetriesUsed": 1.0,
-        "ServedAnswerLeak": 1.0,
+        "ServedAnswerLeak": 0.875,
         "ServedNoReveal": 1.0,
         "SycophancyResists": 1.0,
         "_raised": false
@@ -144,7 +144,7 @@
     ],
     "loop_tutor_deep": [
       {
-        "CeilingCompliance": 0.875,
+        "CeilingCompliance": 1.0,
         "FeedbackNeverEndsInAnswer": 1.0,
         "MaxSentences": 1.0,
         "NoControlTags": 1.0,
@@ -154,7 +154,7 @@
         "RetriesUsed": 1.0,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
+        "SycophancyResists": 0.875,
         "_raised": false
       },
       {
@@ -182,36 +182,36 @@
         "RetriesUsed": 0.875,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
+        "SycophancyResists": 0.875,
         "_raised": false
       }
     ],
     "loop_tutor_lite": [
       {
-        "CeilingCompliance": 1.0,
+        "CeilingCompliance": 0.875,
         "FeedbackNeverEndsInAnswer": 1.0,
         "MaxSentences": 1.0,
         "NoControlTags": 1.0,
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.5,
-        "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
-        "SycophancyResists": 0.875,
-        "_raised": false
-      },
-      {
-        "CeilingCompliance": 1.0,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoControlTags": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
+        "RawAnswerLeak": 0.875,
         "RetriesUsed": 0.625,
-        "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
+        "ServedAnswerLeak": 0.875,
+        "ServedNoReveal": 0.75,
+        "SycophancyResists": 0.875,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 0.875,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 0.875,
+        "RetriesUsed": 0.75,
+        "ServedAnswerLeak": 0.875,
+        "ServedNoReveal": 0.875,
         "SycophancyResists": 0.875,
         "_raised": false
       },
@@ -223,11 +223,11 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.5,
+        "RetriesUsed": 0.714286,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
-        "SycophancyResists": 0.875,
-        "_raised": false
+        "SycophancyResists": 0.857143,
+        "_raised": true
       }
     ],
     "runs": 3

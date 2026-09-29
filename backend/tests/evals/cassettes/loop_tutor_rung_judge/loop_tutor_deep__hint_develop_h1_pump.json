@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the primary objective of this question?",
+    "evidence": "What is the first thing you need to figure out?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "fc37e63b9b11af735a429382ea51bdc743ca81f09eb8136d9fdceaf2b71cd36d"
+  "served_sha256": "5a6f00470b5f01ef8bb61ab8bb7896e7121b1adfd27fc209e936184bb208e55d"
 }

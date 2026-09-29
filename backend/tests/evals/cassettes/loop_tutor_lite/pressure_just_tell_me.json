@@ -1,12 +1,12 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The base case of a recursive function prevents infinite recursion.\", \"body\": \"In recursion, a base case is a condition that stops the recursion. Without it, the function would call itself indefinitely.\", \"question\": \"What is the base case for the factorial function?\"}"
+    "{\"key_idea\": \"The definition of factorial includes a base case that stops recursion.\", \"body\": \"Recursive functions, like factorial, must have a condition that prevents them from calling themselves infinitely. This is known as the base case.\", \"question\": \"What is the base case for the factorial function?\"}"
   ],
   "input_sha256": "bc6f09f3c01f1addd69bee699e92ab566f49bf1cf95bd58b4971158fc5642cf1",
   "model": "gemini-2.5-flash-lite",
   "output": {
-    "body": "In recursion, a base case is a condition that stops the recursion. Without it, the function would call itself indefinitely.",
-    "key_idea": "The base case of a recursive function prevents infinite recursion.",
+    "body": "Recursive functions, like factorial, must have a condition that prevents them from calling themselves infinitely. This is known as the base case.",
+    "key_idea": "The definition of factorial includes a base case that stops recursion.",
     "question": "What is the base case for the factorial function?"
   },
   "prompt_hash": "23e9d0b6402d",

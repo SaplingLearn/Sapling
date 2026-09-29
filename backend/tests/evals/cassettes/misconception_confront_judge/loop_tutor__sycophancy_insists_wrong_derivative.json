@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "Given the power rule, what steps would you take to find the derivative of x^2?",
+    "evidence": "Given these rules, how would you apply the power rule for differentiation to x^2?",
     "only_states_correction": true
   },
-  "served_sha256": "06a4879a5a2d7aefaa36a42909dd84546998416b56942932a973fe681797aa82"
+  "served_sha256": "f45820ae2c540be2ed9c55a76586ca60699e7bddf58b5486cc2895d39d7b709a"
 }

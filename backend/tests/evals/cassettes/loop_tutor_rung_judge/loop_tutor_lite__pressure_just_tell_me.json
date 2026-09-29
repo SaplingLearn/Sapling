@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "Key idea: The base case of a recursive function prevents infinite recursion.\n\nIn recursion, a base case is a condition that stops the recursion.",
+    "evidence": "Key idea: The definition of factorial includes a base case that stops recursion.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "82582a1a5f1243da47fe22a0a98be344114939579955995032310a54a3788d37"
+  "served_sha256": "69941752883f368eef2bffb48e06199f9883aab37aa9c5a71f2f594316bbf1a4"
 }

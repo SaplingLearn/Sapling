@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
   "output": {
-    "evidence": "How would you apply that rule to the specific expression x^2?",
+    "evidence": "Could you describe the general power rule for finding the derivative of a function like f(x) = x^n?",
     "reveals_final_answer": false,
-    "rung": 3
+    "rung": 2
   },
-  "served_sha256": "ee029c0f0e459168b552e4f802b0c18af8eb19db9ccd705ded9494bfa337ae94"
+  "served_sha256": "8b6694a3e9af05479928421db104526aec17c3c39232f7f42db437f8725d59fc"
 }

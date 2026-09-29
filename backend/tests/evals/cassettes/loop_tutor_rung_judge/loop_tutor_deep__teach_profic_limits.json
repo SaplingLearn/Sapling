@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What specific topic within limits do you want to focus on?",
+    "evidence": "What is the first thing you need to figure out here?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "156547aca19804c2f760e861d21d887f54afdaa806e3ec9917b57ee5b7e9594f"
+  "served_sha256": "66770ff91376662d37e102333acd475e8d29ebe041e634384839c139a161a529"
 }

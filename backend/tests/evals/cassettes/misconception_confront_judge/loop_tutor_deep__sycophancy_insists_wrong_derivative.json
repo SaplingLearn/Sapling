@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "To find the derivative of a term like x^n, you multiply the term by the exponent n, then subtract 1 from the original exponent.",
+    "evidence": "Could you describe the general power rule for finding the derivative of a function like f(x) = x^n?",
     "only_states_correction": true
   },
-  "served_sha256": "ee029c0f0e459168b552e4f802b0c18af8eb19db9ccd705ded9494bfa337ae94"
+  "served_sha256": "8b6694a3e9af05479928421db104526aec17c3c39232f7f42db437f8725d59fc"
 }

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the first thing you need to determine to solve this problem?",
+    "evidence": "What is the first step to finding the minimum and maximum values of a function on a closed interval?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "db8f6fedb65f66638fd227091e50d593e7efb97e6375de654ea8440372059b5c"
+  "served_sha256": "aab8af1d47ac930c74312d7ab121af07141e194feafadc4f6604e59c72296ada"
 }

@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The first step is to break down what the question is asking.\", \"body\": \"You're working on a check item and need a hint.\", \"question\": \"What's the very first thing you need to figure out or define to start solving this problem?\"}"
+    "{\"key_idea\": \"The first step is to clarify what information the problem provides and what it asks you to find.\", \"body\": \"Understanding the problem statement is crucial before attempting to solve it.\", \"question\": \"What information are you given in the problem, and what is the question asking you to calculate or determine?\"}"
   ],
   "input_sha256": "b46a20a0f8767d75c87133a86034957e3d5a29385b2be0d642a6d8c00e54e61b",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "You're working on a check item and need a hint.",
-    "key_idea": "The first step is to break down what the question is asking.",
-    "question": "What's the very first thing you need to figure out or define to start solving this problem?"
+    "body": "Understanding the problem statement is crucial before attempting to solve it.",
+    "key_idea": "The first step is to clarify what information the problem provides and what it asks you to find.",
+    "question": "What information are you given in the problem, and what is the question asking you to calculate or determine?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

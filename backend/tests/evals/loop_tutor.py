@@ -201,12 +201,17 @@ def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, 
     through served_model_text (strict, served mode with the student-visible
     text as `given`, at the route's leak rung — a leak is the rung's
     ladder line, never masked; the released answer's lead in front); `turn`
-    is served minus that lead."""
+    is served minus that lead. A teach turn is `served_render` only (A81: its
+    H0/H1 question is code's)."""
     from routes.learn_loop import released_lead, served_model_text, served_render
 
     raw = render_turn(output)
     if case_input[0] == "teach":
-        return raw, raw, raw
+        # no active item, so nothing is leak-stripped (m4); the served render
+        # still applies — at a teach ceiling of H0/H1 the question is the
+        # ladder's (spec §13 A81)
+        served = served_render(output, phase="teach", rung=_leak_rung(case_input, meta))
+        return raw, served, served
     rendered = served_render(
         output, phase=case_input[0], rung=_leak_rung(case_input, meta), verdict=meta.get("verdict")
     )

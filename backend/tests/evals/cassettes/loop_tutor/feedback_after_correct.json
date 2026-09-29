@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Your answer correctly identified the base case.\", \"body\": \"The base case you described is correct.\", \"question\": \"What specifically about the base case helps you solve the problem?\"}"
+    "{\"key_idea\": \"Your answer correctly identified the base case.\", \"body\": \"The grader marked your answer as correct.\", \"question\": \"What specifically about n == 0 makes it the base case?\"}"
   ],
   "input_sha256": "0e7d80f6fc27a8ad8981a9a46a5487a75416a27738f110a1e5dc3648573dd619",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "The base case you described is correct.",
+    "body": "The grader marked your answer as correct.",
     "key_idea": "Your answer correctly identified the base case.",
-    "question": "What specifically about the base case helps you solve the problem?"
+    "question": "What specifically about n == 0 makes it the base case?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

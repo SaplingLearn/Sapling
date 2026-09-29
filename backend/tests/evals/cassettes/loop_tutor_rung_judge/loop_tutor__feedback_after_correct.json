@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What specifically about the base case helps you solve the problem?",
+    "evidence": "What specifically about n == 0 makes it the base case?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "c2e064b94bf00d0744d41e70cfe0ffb37cc08f35cf1ed7115b51fcf95ef8bfd4"
+  "served_sha256": "93c46d5e85437ba592159c14cd8d59a981143a6ffc7a401757a99a6a1cfe2ad1"
 }

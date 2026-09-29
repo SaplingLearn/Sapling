@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Key idea: Recursion involves a function calling itself to solve a smaller version of the same problem until a base case is reached.",
+    "evidence": "What do you think is the purpose of the 'base case' in a recursive function?",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 3
   },
-  "served_sha256": "01c209e799f7e1e25638d89d8193f25afb5db80922caff81bf29031f7e375d39"
+  "served_sha256": "206da872c43ef5a23b817a9758095980fe4592a628d45697665abe4bc720f204"
 }

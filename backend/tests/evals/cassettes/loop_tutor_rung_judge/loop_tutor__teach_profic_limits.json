@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What type of limits problem would you like to try?",
+    "evidence": "What is the first thing you need to figure out here?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "3bcae64f9aefa99d4069ca852fdde558010720a3a13d994ca4ccb9f16d60ca4d"
+  "served_sha256": "ed50e2d2591f7bbcc5a027d6955a618cdb684fb020c4ac99e9567ae905a6582a"
 }
