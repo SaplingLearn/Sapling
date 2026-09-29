@@ -188,17 +188,51 @@ def render_turn(out: Mapping[str, str]) -> str:
 
 
 _CONTROL_TAG = re.compile(
-    r"\[(LOOP PHASE|VERDICT|CHECK ITEM|ACTION|STUDENT QUESTION|GRAPH CONTEXT)"
+    r"\[(LOOP PHASE|VERDICT|CHECK ITEM|ACTION|STUDENT QUESTION|STUDENT MESSAGE|GRAPH CONTEXT)"
+    r"|<<(?:end_)?student_text"
 )
 # A backslash macro (\frac, \cdot), a \( or \[ math delimiter, or $…$ inline math.
 _LATEX = re.compile(r"\\[A-Za-z]+|\\[(\[]|\$[^$\n]+\$")
 
 
-def validate_turn(out: Mapping[str, str], limits: TurnLimits) -> list[str]:
+# A math expression of the model's own (review round 3): a run of letters,
+# digits, "^" and "." that is a power with a digit ("x^3", "3x^2", "n^2") or a
+# coefficient on a one-letter variable ("2x", "0.5n"). Letters-only notation
+# ("x^n", "n*x^(n-1)" splits into "x^", "n", "1") and chemical formulas
+# ("H2O") are not expressions of this kind.
+_MATH_RUN = re.compile(r"[A-Za-z0-9^.]+")
+_COEFFICIENT = re.compile(r"[0-9]+(?:\.[0-9]+)?[a-z]")
+
+
+def _math_atoms(text: str) -> list[str]:
+    atoms: list[str] = []
+    for m in _MATH_RUN.finditer(text or ""):
+        run = m.group().strip(".")
+        power = "^" in run and any(c.isdigit() for c in run)
+        if (power or _COEFFICIENT.fullmatch(run)) and run not in atoms:
+            atoms.append(run)
+    return atoms
+
+
+def invented_math(out: Mapping[str, str], source: str) -> list[str]:
+    """The math expressions in the turn that `source` (everything the model was
+    given: the prompt, the history, tool results) never wrote — an example or
+    exercise of the model's own. Structural provenance, no word list."""
+    given = set(_math_atoms(source))
+    text = " ".join((out.get(k) or "") for k in TURN_FIELDS)
+    return [a for a in _math_atoms(text) if a not in given]
+
+
+def validate_turn(
+    out: Mapping[str, str], limits: TurnLimits, *, source: str | None = None
+) -> list[str]:
     """Named problems with a FINAL turn ([] = valid). Codes, "code:detail":
     missing:<field>, control_tag:<field>, latex:<field>,
     question_outside_question:<field>, key_idea_sentences:<n>>max,
-    body_sentences:<n>>max, question_shape:<why>."""
+    body_sentences:<n>>max, question_shape:<why>, and — when `source` (what
+    the model was given) is passed and the model ceiling is below H4, where no
+    worked example, isomorph or practice problem is allowed —
+    invented_math:<expr,...> (`invented_math`)."""
     problems: list[str] = []
     text = {k: (out.get(k) or "").strip() for k in TURN_FIELDS}
     problems += [f"missing:{k}" for k in TURN_FIELDS if not text[k]]
@@ -224,6 +258,14 @@ def validate_turn(out: Mapping[str, str], limits: TurnLimits) -> list[str]:
             problems.append(f"question_shape:{n_q} sentences")
         elif marks != params.STEP_QUESTIONS_PER_TURN or not q.endswith("?"):
             problems.append(f"question_shape:{marks} '?', ends {q[-1]!r}")
+    if (
+        source is not None
+        and limits.ceiling < params.TURN_OWN_EXAMPLE_MIN_RUNG
+        and not limits.latex_ok
+    ):
+        own = invented_math(out, source)
+        if own:
+            problems.append("invented_math:" + ",".join(own))
     return problems
 
 

@@ -361,6 +361,10 @@ TURN_BODY_MAX_SENTENCES_BY_RUNG = {0: 1, 1: 1, 2: 2, 3: 2}
 # (H6, the full solution, only once released; turn_shape.validate_turn also
 # holds math to plain text below H6 — owner decision A38 06(r))
 TURN_MODEL_CEILING_UNRELEASED = 5
+# † first rung at which model text may carry an example of its own — H4, the
+# isomorph worked example (spec §3.3); below it turn_shape.validate_turn retries
+# a math expression the model's inputs never wrote (review round 3)
+TURN_OWN_EXAMPLE_MIN_RUNG = 4
 # † per-field character caps (LoopTurnOut max_length); together under
 # LOOP_MAX_VISIBLE_TOKENS at ~4 characters per token (1340 chars ≈ 335 tokens)
 TURN_KEY_IDEA_MAX_CHARS = 200
@@ -376,3 +380,9 @@ LOOP_CHECK_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}
 # † Owner decision A38 06(q): update_loop_state's compare-and-set retries after
 # the first conflict on sessions.loop_state_rev; exhausted -> LoopStateConflict.
 LOOP_STATE_CAS_RETRIES = 3
+# † PKG-07 review round 3 (C2): /check/answer grades under a per-item claim in
+# loop_state (steps[qh].grading_claim); a claim is never re-taken, so an item
+# left claimed (a crash mid-grade, a conflict after the flush) is never graded
+# twice. Once its claim is older than this, /check/next treats the item as
+# closed and activates the next one (longer than any grader call).
+LOOP_GRADING_CLAIM_STALE_S = 120

@@ -12,6 +12,7 @@ real store validates it.
 from __future__ import annotations
 
 import json
+import re
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -132,7 +133,9 @@ MODEL_ROUTES = [
     "/start-session/stream",
     "/action",
 ]
-NO_MODEL_ROUTES = ["/status", "/step/attempt", "/hint", "/check/next"]
+NO_MODEL_ROUTES = ["/status", "/hint", "/check/next"]
+#: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
+RATE_LIMITED_NO_MODEL = ["/step/attempt"]
 
 
 def _sse_events(text: str) -> list[dict]:
@@ -215,7 +218,10 @@ def no_rate_limit():
     """The A20 dependency reads llm_usage; route tests override it (a dedicated
     test proves which routes declare it)."""
     app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
-    yield
+    # the delegation lines' inline check (review round 3, m3); pinned in
+    # tests/test_learn_loop_hardening.py
+    with patch("services.ai_budget.enforce_rate_limit_for", return_value=None):
+        yield
     app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
 
 
@@ -396,8 +402,10 @@ def test_router_mounted_under_learn_loop_prefix():
 
 def test_rate_limit_dependency_on_model_routes_only():
     declared = _declared()
-    assert set(declared) == {"/api/learn/loop" + s for s in (*MODEL_ROUTES, *NO_MODEL_ROUTES)}
-    for suffix in MODEL_ROUTES:
+    assert set(declared) == {
+        "/api/learn/loop" + s for s in (*MODEL_ROUTES, *NO_MODEL_ROUTES, *RATE_LIMITED_NO_MODEL)
+    }
+    for suffix in (*MODEL_ROUTES, *RATE_LIMITED_NO_MODEL):
         assert ai_budget.enforce_rate_limit in declared["/api/learn/loop" + suffix], suffix
     for suffix in NO_MODEL_ROUTES:
         assert ai_budget.enforce_rate_limit not in declared["/api/learn/loop" + suffix], suffix
@@ -658,7 +666,7 @@ def test_context_blocks_follow_the_policy():
 
 
 def test_prepare_loop_run_uses_the_tier_slot_and_loop_limits():
-    from agents.loop_tutor import loop_tutor_agent
+    from agents.loop_tutor import ENVELOPE_REMINDER, loop_tutor_agent
     from routes.learn_loop import _prepare_loop_run
 
     from learning.turn_shape import turn_limits
@@ -681,7 +689,11 @@ def test_prepare_loop_run_uses_the_tier_slot_and_loop_limits():
             loop_turn=limits,
         )
     assert agent is loop_tutor_agent
-    assert assembled == "[LOOP PHASE: teach]\nrule\n\nCTX\n\n[STUDENT QUESTION]\nhi"
+    nonce = re.search(r"<<student_text (\w+)>>", assembled).group(1)
+    assert assembled == (
+        "[LOOP PHASE: teach]\nrule\n\nCTX\n\n[STUDENT MESSAGE]\n"
+        f"<<student_text {nonce}>>\nhi\n<<end_student_text {nonce}>>\n\n{ENVELOPE_REMINDER}"
+    ), "the student's words ride the nonce envelope (review round 3, C1(a))"
     assert run_kwargs["usage_limits"] is LOOP_LIMITS
     assert run_kwargs["model_settings"]["tool_choice"] == "none"
     assert (
@@ -709,7 +721,11 @@ def test_prepare_loop_run_uses_the_tier_slot_and_loop_limits():
             learning_loop=True,
             loop_turn=limits,
         )
-    assert bare == "P\n\nhi"
+    assert re.fullmatch(
+        r"P\n\n\[STUDENT MESSAGE\]\n<<student_text (\w+)>>\nhi\n<<end_student_text \1>>\n\n"
+        + re.escape(ENVELOPE_REMINDER),
+        bare,
+    )
 
 
 def test_template_feedback_shapes():
@@ -1001,8 +1017,9 @@ def test_feedback_after_correct_runs_lite(gate_on, seams):
 
 
 def test_a_policy_tier_whose_slot_failed_its_evals_routes_to_a_routable_one(gate_on, seams):
-    """A15/§10 through the route: with the committed LOOP_ROUTABLE_TIERS
-    ({"standard"}, Task 9), a lite feedback turn is served on the standard slot."""
+    """A15/§10 through the route: with only the standard slot routable (the
+    Task 9 value; review round 3 added deep), a lite feedback turn is served on
+    the standard slot."""
     seams.store["doc"] = _graded("correct")
     with (
         patch("agents.loop_tutor.LOOP_ROUTABLE_TIERS", frozenset({"standard"})),
@@ -1049,10 +1066,13 @@ def test_a_deterministic_stream_whose_persistence_fails_ends_in_a_terminal_error
 
 
 def test_rung1_fallback_is_the_json_turn_on_the_same_tier(gate_on, seams):
+    """The Rung-1 fallback is the SAME planned turn (review round 3, m2): no
+    second plan or budget read of its own; with no tool result to continue
+    from, the continuation re-runs the turn tool-less on the same slot."""
     seams.store["doc"] = {}
 
     async def fake(**kwargs):
-        result = await kwargs["nonstream_fallback"]()
+        result = await kwargs["nonstream_fallback"]([])
         yield SaplingEvent(type="done", step="reply", message="Complete.", data=result)
 
     agent, seen = _json_agent("fb")
@@ -1069,9 +1089,9 @@ def test_rung1_fallback_is_the_json_turn_on_the_same_tier(gate_on, seams):
     assert (
         seen["kw"]["model"] == "MODEL:standard" and usage.call_args.kwargs["task"] == "loop_tutor"
     )
-    # every run site checks the budget (invariant 23): the stream, the fallback turn, and
-    # the tool-less run the fallback is (the streamed tool run already failed once)
-    assert seams.ai_budget.check.call_count == 3
+    # every run site checks the budget (invariant 23): the stream and the tool-less
+    # continuation the fallback runs — the fallback itself re-plans nothing
+    assert seams.ai_budget.check.call_count == 2
     assert seams.store["doc"]["tutor_requests"] == 1, "the re-run is the same turn"
 
 
@@ -1228,7 +1248,9 @@ def test_the_real_agent_after_a_tool_round_answers_tool_less_in_one_run(gate_on,
     assert r.status_code == 200, r.text
     assert r.json()["reply"] == render_turn(_TOOL_TURN)
     assert calls == [(True, False), (False, True)], "tool round, then a tool-less answer"
-    assert seams.ai_budget.count_tutor_call.call_count == 1, "one model run, one count"
+    assert seams.ai_budget.count_tutor_call.call_count == 2, (
+        "one run, two requests, two counts (m2)"
+    )
 
 
 def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_turn(gate_on, seams):
@@ -1249,7 +1271,7 @@ def test_the_real_agent_after_an_empty_post_tool_response_serves_a_structured_tu
     assert r.status_code == 200, r.text
     assert r.json()["reply"] == render_turn(_TOOL_TURN)
     assert calls[0] == (True, False) and calls[-1] == (False, True), "rescued from the tool result"
-    assert seams.ai_budget.count_tutor_call.call_count == 2, "two model runs, two counts"
+    assert seams.ai_budget.count_tutor_call.call_count == len(calls), "every request counts (m2)"
 
 
 def test_loop_continuation_is_tool_less_budget_checked_and_capped():
@@ -1478,7 +1500,12 @@ def test_check_answer_wrong_releases_the_answer_in_the_feedback_turn(gate_on, se
         and body["answer_released"] is True
         and body["tier"] == "standard"
     )
-    assert "[VERDICT: not_yet]" in seen["msg"] and "state the correct answer" in seen["msg"].lower()
+    from agents.loop_tutor import _ANSWER_RELEASED
+    from routes.learn_loop import released_lead
+
+    assert "[VERDICT: not_yet]" in seen["msg"] and _ANSWER_RELEASED in seen["msg"]
+    assert ITEM.reference_answer not in seen["msg"], "m1: the model is never handed the answer"
+    assert body["reply"].startswith(released_lead(ITEM.reference_answer)), "served from code"
     assert seams.detect.call_args.kwargs["rung"] == Rung.H6
     entry = seams.store["doc"]["steps"]["qh-1"]
     assert entry["wrong"] == 1 and entry["last_correct"] is False and entry["attempts"] == 1
@@ -1881,7 +1908,11 @@ def test_a_model_turn_runs_with_turn_limits_and_serves_the_render(gate_on, seams
         body = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "ok"}
         ).json()
-    assert body["reply"] == render_turn(out)
+    from routes.learn_loop import released_lead
+
+    assert body["reply"] == released_lead(ITEM.reference_answer) + render_turn(out), (
+        "the released answer is served from code above the model's render (m1)"
+    )
     deps = seen["kw"]["deps"]
     assert deps.loop_turn == turn_limits("feedback", Rung.H3, True)
 
@@ -1975,7 +2006,7 @@ def test_step_attempt_records_a_genuine_attempt(gate_on, seams):
     with patch("routes.learn_loop.gates.is_genuine_attempt", wraps=gates.is_genuine_attempt) as gen:
         r = client.post("/api/learn/loop/step/attempt", json=_attempt())
     assert r.status_code == 200
-    assert r.json() == {"genuine": True, "attempts": 1, "independent_s": 600.0}
+    assert r.json() == {"genuine": True, "counted": True, "attempts": 1, "independent_s": 600.0}
     entry = seams.store["doc"]["steps"]["qh-1"]
     assert entry["attempted_at"] == [NOW] and entry["attempts"] == 1, (
         "a failed genuine attempt while open"
@@ -2237,9 +2268,10 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
     assert pending["course_id"] == "c1" and pending["offering_id"] == "off-1"
     assert seams.context_policy.call_args.kwargs["opener"] is True
     assert seams.model_tier.call_args.args[0] == "opener"
-    assert (
-        seen["kw"]["message_history"] == []
-        and "Student wants to learn about: Recursion" in seen["msg"]
+    assert seen["kw"]["message_history"] == []
+    assert "Begin the session with a warm greeting" in seen["msg"]
+    assert re.search(r"<<student_text (\w+)>>\nRecursion\n<<end_student_text \1>>", seen["msg"]), (
+        "the topic is the student's text: it rides the envelope (review round 3, C1)"
     )
     seams.ai_budget.check.assert_called_once_with(
         "u1",

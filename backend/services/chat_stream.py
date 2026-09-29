@@ -29,7 +29,6 @@ import contextlib
 import logging
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from learning import turn_shape
 from services.agent_events import SaplingEvent
 
 logger = logging.getLogger(__name__)
@@ -522,12 +521,12 @@ async def stream_structured_turn(
     run_kwargs: dict,
     deps: Any,
     on_complete: Callable[[str, dict, list], dict | None],
-    nonstream_fallback: Callable[[], Awaitable[dict]] | None = None,
+    nonstream_fallback: Callable[[list], Awaitable[dict]] | None = None,
     on_usage: Callable[[Any], None] | None = None,
     request_id: str = "",
     transform: Callable[[str], str] | None = None,
-    render_final: Callable[[Any], str] = turn_shape.render_turn,
-    render_partial: Callable[[Any], str] = turn_shape.render_partial,
+    render_final: Callable[[Any], str] | None = None,
+    render_partial: Callable[[Any], str] | None = None,
 ) -> AsyncIterator[SaplingEvent]:
     """Stream one STRUCTURED agent turn (an agent whose output is a typed
     object, e.g. a `LoopTurnOut` through `PromptedOutput`) as SaplingEvents.
@@ -562,11 +561,17 @@ async def stream_structured_turn(
     `on_usage(run.result)` runs once after the run completes, before
     on_complete (guarded, as in stream_agent_turn).
 
+    `render_final` / `render_partial` default to learning.turn_shape's
+    `render_turn` / `render_partial`, imported here lazily so the legacy
+    stream never loads learning/ (PKG-07 review round 3, m6).
+
     Failure ladder (stream_agent_turn's, minus the textless-turn rungs — a
     structured output that is missing fields is an output retry, not a blank
     reply):
       - failure before the first token, no tool writes → the caller's
-        `nonstream_fallback` (Rung 1; it persists itself), else a terminal
+        `nonstream_fallback(messages)` (Rung 1; it persists itself), handed
+        the failed run's messages so it can CONTINUE from its tool results
+        instead of replaying the turn (review round 3, m2), else a terminal
         retryable `error`;
       - failure before the first token AFTER tool writes → terminal `error`,
         `retryable: False` (the fallback would re-apply them);
@@ -576,6 +581,12 @@ async def stream_structured_turn(
     At most one of on_complete / nonstream_fallback runs; the error rungs run
     neither. asyncio.CancelledError propagates (a disconnect persists nothing).
     """
+    from pydantic_ai import capture_run_messages
+
+    from learning import turn_shape  # lazy (m6): only structured turns need it
+
+    render_final = render_final or turn_shape.render_turn
+    render_partial = render_partial or turn_shape.render_partial
     yield SaplingEvent(type="status", step="start", message="Starting.")
 
     xf = transform or (lambda text: text)
@@ -591,49 +602,51 @@ async def stream_structured_turn(
         shown = ""  # the transformed text the client currently displays
         marks = [0, 0]  # graph / mastery high-water marks
         try:
-            async with agent.iter(user_message, **run_kwargs) as run:
-                async for node in run:
-                    if type(agent).is_model_request_node(node):
-                        if shown:
-                            # A new model request after shown text: that text
-                            # was not the answer (an output retry, or text
-                            # before a tool call). Discard it first.
-                            queue.put_nowait(_retract("retry"))
-                            shown = ""
-                        async with node.stream(run.ctx) as stream:
-                            async for response in stream.stream_response(debounce_by=None):
-                                try:
-                                    partial = await stream.validate_response_output(
-                                        response, allow_partial=True
+            with capture_run_messages() as captured:
+                outcome["messages"] = captured
+                async with agent.iter(user_message, **run_kwargs) as run:
+                    async for node in run:
+                        if type(agent).is_model_request_node(node):
+                            if shown:
+                                # A new model request after shown text: that text
+                                # was not the answer (an output retry, or text
+                                # before a tool call). Discard it first.
+                                queue.put_nowait(_retract("retry"))
+                                shown = ""
+                            async with node.stream(run.ctx) as stream:
+                                async for response in stream.stream_response(debounce_by=None):
+                                    try:
+                                        partial = await stream.validate_response_output(
+                                            response, allow_partial=True
+                                        )
+                                    except Exception:
+                                        # Not parseable yet (or not output at all,
+                                        # e.g. a tool call): the graph validates
+                                        # the final response for real.
+                                        continue
+                                    text = xf(render_partial(partial))
+                                    if not text or text == shown:
+                                        continue
+                                    if not text.startswith(shown):
+                                        queue.put_nowait(_retract("transform"))
+                                        shown = ""
+                                    queue.put_nowait(_token(text[len(shown):]))
+                                    shown = text
+                        elif type(agent).is_call_tools_node(node):
+                            for ev in _new_graph_events(deps, marks):
+                                queue.put_nowait(ev)
+                            for part in node.model_response.parts:
+                                if getattr(part, "part_kind", None) == "tool-call":
+                                    tool = getattr(part, "tool_name", None) or "tool"
+                                    queue.put_nowait(
+                                        SaplingEvent(
+                                            type="progress", step=tool, message=f"Calling {tool}."
+                                        )
                                     )
-                                except Exception:
-                                    # Not parseable yet (or not output at all,
-                                    # e.g. a tool call): the graph validates
-                                    # the final response for real.
-                                    continue
-                                text = xf(render_partial(partial))
-                                if not text or text == shown:
-                                    continue
-                                if not text.startswith(shown):
-                                    queue.put_nowait(_retract("transform"))
-                                    shown = ""
-                                queue.put_nowait(_token(text[len(shown):]))
-                                shown = text
-                    elif type(agent).is_call_tools_node(node):
-                        for ev in _new_graph_events(deps, marks):
-                            queue.put_nowait(ev)
-                        for part in node.model_response.parts:
-                            if getattr(part, "part_kind", None) == "tool-call":
-                                tool = getattr(part, "tool_name", None) or "tool"
-                                queue.put_nowait(
-                                    SaplingEvent(
-                                        type="progress", step=tool, message=f"Calling {tool}."
-                                    )
-                                )
-                for ev in _new_graph_events(deps, marks):
-                    queue.put_nowait(ev)
-                outcome["result"] = run.result
-                outcome["shown"] = shown
+                    for ev in _new_graph_events(deps, marks):
+                        queue.put_nowait(ev)
+                    outcome["result"] = run.result
+                    outcome["shown"] = shown
         # Exception, never BaseException: cancelling the producer must stay a
         # cancellation.
         except Exception as exc:
@@ -695,7 +708,13 @@ async def stream_structured_turn(
             "Structured agent failed before first token; using the nonstream "
             "fallback", exc_info=exc,
         )
-        async for ev in _rung1_fallback_events(nonstream_fallback, request_id):
+        failed_messages = list(outcome.get("messages") or [])
+        fallback = (
+            (lambda: nonstream_fallback(failed_messages))
+            if nonstream_fallback is not None
+            else None
+        )
+        async for ev in _rung1_fallback_events(fallback, request_id):
             yield ev
         return
 

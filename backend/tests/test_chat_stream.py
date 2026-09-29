@@ -1185,11 +1185,15 @@ def test_structured_stream_retract_on_retry():
 
 
 def test_structured_stream_fallback_before_first_token():
+    """The fallback is handed the failed run's messages (PKG-07 review round 3,
+    m2) so the caller can continue from them instead of replaying the turn."""
     model, _ = _streamed_model([_TURN], fail_at=(0, 0))
     persisted, fallback_calls, usage = [], [], []
 
-    async def fallback():
+    async def fallback(messages):
         fallback_calls.append(1)
+        prompts = [p.content for m in messages for p in m.parts if p.part_kind == "user-prompt"]
+        assert prompts, "the failed run's own request is among the messages"
         return {"reply": "Fallback reply.", "message_id": "fb"}
 
     events = asyncio.run(
@@ -1223,7 +1227,7 @@ def test_structured_stream_error_after_tokens():
     model, _ = _streamed_model([_TURN], fail_at=(0, late))
     persisted, fallback_calls = [], []
 
-    async def fallback():
+    async def fallback(messages):
         fallback_calls.append(1)
         return {"reply": "x"}
 

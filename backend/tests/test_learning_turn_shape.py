@@ -278,3 +278,43 @@ def test_render_partial_is_a_prefix_of_the_final_render():
             assert full.startswith(text), (key, n, text)
             assert text.startswith(seen), (key, n)  # monotone: deltas only append
             seen = text
+
+
+# ── review round 3: below H4 no math of the model's own (provenance) ────────
+
+
+def test_invented_math_is_a_letter_digit_expression_the_inputs_never_wrote():
+    from learning.turn_shape import invented_math
+
+    turn = {
+        "key_idea": "The power rule turns x^n into n*x^(n-1).",
+        "body": "For example, the derivative of x^3 is 3x^2.",
+        "question": "How would the rule apply to your 5x^4?",
+    }
+    source = "Student: can we practise derivatives like 5x^4?"
+    assert invented_math(turn, source) == ["x^3", "3x^2"], (
+        "x^n, n-1 and the student's 5x^4 are fine"
+    )
+    assert (
+        invented_math({"key_idea": "At n == 0 it stops.", "body": "", "question": "Why?"}, "") == []
+    )
+    assert (
+        invented_math({"key_idea": "It is O(n^2).", "body": "", "question": "Why?"}, "O(n^2) time")
+        == []
+    )
+
+
+def test_validate_turn_retries_invented_math_below_h4_only():
+    from learning.turn_shape import turn_limits, validate_turn
+
+    turn = {
+        "key_idea": "The power rule differentiates a power.",
+        "body": "For example, x^3 becomes 3x^2.",
+        "question": "Where would you use it?",
+    }
+    below = validate_turn(turn, turn_limits("teach", 3, False), source="practise derivatives")
+    assert "invented_math:x^3,3x^2" in below
+    assert validate_turn(turn, turn_limits("teach", 4, False), source="practise derivatives") == []
+    released = turn_limits("feedback", 3, True)
+    assert not any(p.startswith("invented_math") for p in validate_turn(turn, released, source=""))
+    assert validate_turn(turn, turn_limits("teach", 3, False)) == [], "no source: not judged"

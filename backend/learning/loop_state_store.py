@@ -174,8 +174,14 @@ def revealed_hashes(user_id: str) -> set[str]:
         if r.get("question_hash")
         and (r.get("correct") is False or (r.get("max_rung") or 0) >= params.RUNG_NO_CREDIT_MIN)
     }
+    # Bounded to what is needed (PKG-07 review round 3, m7): only the user's
+    # sessions whose loop_state carries a revealed list, and only that list —
+    # never every session's whole loop_state document.
     for row in page_all(
-        table("sessions"), "id,loop_state", filters={"user_id": f"eq.{user_id}"}, order="id"
+        table("sessions"),
+        "id,revealed:loop_state->revealed",
+        filters={"user_id": f"eq.{user_id}", "loop_state->revealed": "not.is.null"},
+        order="id",
     ):
-        revealed.update((row.get("loop_state") or {}).get("revealed") or [])
+        revealed.update(row.get("revealed") or [])
     return revealed

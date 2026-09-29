@@ -132,10 +132,9 @@ def evidence_db(monkeypatch):
             {"question_hash": "qc", "correct": True, "max_rung": RUNG_NO_CREDIT_MIN},
             {"question_hash": "qe", "correct": True, "max_rung": None},
         ],
-        "sessions": [
-            {"loop_state": {"revealed": ["qd"]}},
-            {"loop_state": {}},
-            {"loop_state": None},
+        "sessions": [  # the projected revealed list (m7: only reveal-bearing rows are read)
+            {"revealed": ["qd"]},
+            {"revealed": []},
         ],
     }
     seen_filters: list = []
