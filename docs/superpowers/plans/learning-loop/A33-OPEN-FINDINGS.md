@@ -1,5 +1,7 @@
 # A33 grader guard — open review findings (review round 2 of the 2026-09-28 run)
 
+> **Resolved 2026-09-29 by the A33 finish** (CONTINUE §4.1; commits 9fbbb4d, aaabbb8, a9c9499 on `fix/coderabbit-r2`; HANDOFF-a33 "The A33 finish"). Findings 2, 4, 5 and 6 are closed by ruling point 3 as implemented: a report refuses only beside a screen flag the item's own text exempted, and the `_CREDIT_ASK` allotment arm is dropped. Findings 1 and 3 are closed by the structural span check: the claim filter is removed, the span check judges every claim, and a dash or punctuated glue ends a span. Live, N = 6 per wording: 35 claim or glued tails credited the missing item 0 of 210 times; 13 honest self-assessments were credited 78 of 78, with 0 refused.
+
 Branch `fix/coderabbit-r2` @ `421aa63` (not merged). Full lane hand-off: `docs/superpowers/plans/learning-loop/HANDOFF-a33.md` on that branch. These are the blocking findings the last review round left open, verbatim.
 
 ## 1. major — `backend/learning/answer_guard.py:1485`
