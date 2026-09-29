@@ -65,9 +65,25 @@ decision_agent = Agent[SaplingDeps, DecisionYesNoOutput](
 )
 
 
+_STATE_QUOTE = "> "
+
+
+def _one_line(text: str) -> str:
+    """Every run of whitespace (any line break included) → one space."""
+    return " ".join(str(text).split())
+
+
 def build_decision_message(question: str, state: list[tuple[str, str]], options=()) -> str:
-    """The single user message. `^OPTION <key>:` lines are load-bearing (E2E handler)."""
+    """The single user message. `^OPTION <key>:` lines are load-bearing (E2E handler).
+
+    Spec §13 A38 (owner decision 05b(g)), as agents/grader.py quotes a student
+    answer: every line of each state text (any line break, not only \\n) is
+    quoted with "> " under its unquoted label, and each option text is collapsed
+    to one line, so no student or item text can start a line that forges an
+    OPTION, QUESTION, STATE or label line. The question and the labels are the
+    seam's own constants."""
     lines = [f"QUESTION: {question}", "", "STATE:"]
     for label, text in state:
-        lines += [f"{label}:", text]
-    return "\n".join(lines + [f"OPTION {key}: {text}" for key, text in options])
+        lines.append(f"{label}:")
+        lines += [_STATE_QUOTE + line for line in str(text).splitlines() or [""]]
+    return "\n".join(lines + [f"OPTION {key}: {_one_line(text)}" for key, text in options])
