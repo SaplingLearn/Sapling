@@ -2163,6 +2163,63 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
     }
 
 
+# ── Open loop sessions (PKG-13; spec §9, §11.3, §13 A26) ────────────────────
+# What LoopLearn resumes instead of starting a new probe: the student's loop
+# sessions for the course that have loop_state, no close record and no end.
+# Read-only — no write, no model, no event — and never rate-limited (A20: a
+# failure here must not push a student off the loop UI). mode='review' rows are
+# PKG-12's daily review sessions, not resumable loop sessions (NOT_REVIEW). A
+# lazy session (spec §9) has no row until its first loop write, so it is not
+# listed. `phase` is the phase GET /status reports for the same document:
+# `_loop_phase` (probe | plan | teach), refined in teach by `_phase_for`
+# (teach | check | feedback); a stored `close_phase` wins; a document whose
+# close is being stored (`phase: close`) is not open.
+LOOP_OPEN_SESSIONS_LIMIT = 10  # † picker length; mirrors the legacy getSessions(limit=10)
+
+
+@router.get("/sessions")
+def list_open_sessions(
+    request: Request, user_id: str = Query(...), course_id: str = Query(...)
+) -> dict:
+    _gate(user_id, request)  # require_self, then the spec §7 404
+    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    if not offering_ids:
+        return {"sessions": []}
+    rows = (
+        table("sessions").select(
+            "id,topic,started_at,loop_state,close_phase",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "offering_id": f"in.({','.join(offering_ids)})",
+                "close_json": "is.null",  # never an equality on the ciphertext (invariant 9)
+                "ended_at": "is.null",
+                **NOT_REVIEW,
+            },
+            order="started_at.desc",
+            limit=LOOP_OPEN_SESSIONS_LIMIT,
+        )
+        or []
+    )
+    sessions = []
+    for row in rows:
+        state = row.get("loop_state")
+        if not isinstance(state, dict) or not state:
+            continue
+        loop_phase = _loop_phase(state)
+        if loop_phase == "close":
+            continue
+        sessions.append(
+            {
+                "session_id": row["id"],
+                "topic": row.get("topic") or "",
+                "started_at": row.get("started_at"),
+                "phase": row.get("close_phase")
+                or (_phase_for(state) if loop_phase == "teach" else loop_phase),
+            }
+        )
+    return {"sessions": sessions}
+
+
 @router.post("/chat", dependencies=_RATE_LIMITED)
 async def chat(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)

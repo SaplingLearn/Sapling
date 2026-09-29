@@ -147,6 +147,8 @@ NO_MODEL_ROUTES = [
     # PKG-09: runs the close model only with evidence, past an INLINE A20 check
     # after the gate (spec §9: inline where only some bodies run a model).
     "/close",
+    # PKG-13: the open loop sessions (read-only; never rate-limited, spec §13 A20).
+    "/sessions",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = ["/step/attempt"]
