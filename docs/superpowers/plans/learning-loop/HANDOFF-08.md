@@ -109,3 +109,4 @@ grep -c '"learn\.probe_done"\|"learn\.plan_approved"' backend/services/events_se
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+- PKG-09 2026-09-29 (spec §13 A19): `POST /plan/approve` now calls `learning.learner_brief.store_brief(session_id, user_id, course_id, concept_ids)` after saving the approved plan (the course is `_session_scope`'s return, which the handler already read — no `_session_course_id` seam); failures are logged (exception class only) and never change the response, its event or its status codes. Tests: `tests/test_learning_probe_planner.py` +3 (stores the brief; survives a brief failure; a rejected approve stores none) — commit <sha-approve>

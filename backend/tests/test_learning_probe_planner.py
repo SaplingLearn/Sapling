@@ -1557,3 +1557,52 @@ def test_a_non_empty_proposal_stays_in_plan(probe):
     body = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
     assert "empty" not in body and body["concepts"]
     assert probe.store["doc"]["phase"] == "plan"
+
+
+# ── PKG-09 post-hoc (spec §13 A19): the learner brief is stored at plan approval ──
+
+
+def test_plan_approve_stores_the_learner_brief(probe):
+    _planning(probe, proposed=["R1", "N1", "N2", "K"])
+    calls = []
+    with patch(
+        "routes.learn_loop.store_brief",
+        side_effect=lambda session_id, user_id, course_id, node_ids, **kw: calls.append(
+            (session_id, user_id, course_id, list(node_ids))
+        )
+        or "B",
+    ):
+        r = client.post(
+            f"{LOOP}/plan/approve",
+            json={"session_id": "s1", "user_id": UID, "concept_ids": ["R1", "N2"]},
+        )
+    assert r.status_code == 200 and r.json() == {"phase": "teach", "concept_ids": ["R1", "N2"]}
+    assert calls == [("s1", UID, "c1", ["R1", "N2"])]  # the course is _session_scope's
+    assert probe.events.call_count == 1  # the brief adds no event
+    assert "loop_brief" not in json.dumps(probe.store["doc"])  # never in loop_state (A19)
+
+
+def test_plan_approve_survives_a_brief_failure(probe, caplog):
+    _planning(probe, proposed=["R1", "N1"])
+    with (
+        patch("routes.learn_loop.store_brief", side_effect=RuntimeError("pg down")),
+        caplog.at_level("WARNING"),
+    ):
+        r = client.post(
+            f"{LOOP}/plan/approve",
+            json={"session_id": "s1", "user_id": UID, "concept_ids": ["R1"]},
+        )
+    assert r.status_code == 200 and r.json() == {"phase": "teach", "concept_ids": ["R1"]}
+    assert any("brief" in rec.getMessage() for rec in caplog.records)
+    assert not any("pg down" in rec.getMessage() for rec in caplog.records)
+
+
+def test_plan_approve_rejected_stores_no_brief(probe):
+    _planning(probe, proposed=["R1", "N1"])
+    with patch("routes.learn_loop.store_brief") as store:
+        r = client.post(
+            f"{LOOP}/plan/approve",
+            json={"session_id": "s1", "user_id": UID, "concept_ids": ["ZZ"]},
+        )
+    assert r.status_code == 422
+    store.assert_not_called()

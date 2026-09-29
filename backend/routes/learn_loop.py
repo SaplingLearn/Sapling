@@ -94,6 +94,7 @@ from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_for_request
 from learning.ladder import Rung
 from learning.leak import detect_leak, leak_spans
+from learning.learner_brief import store_brief
 from learning.learner_state import LearnerState, read_states
 from learning.loop_state_store import (
     LoopStateConflict,
@@ -3025,9 +3026,11 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
     """Behaviour 14 / A27: store the approved concepts (a non-empty, duplicate-
     free subset of the proposal, in the student's order), point PKG-07's
     activation at the first one (`plan.cursor` 0, `concept`, counters 0), and
-    move to `teach`. Activates nothing and builds no brief (PKG-09, A19)."""
+    move to `teach`. Activates nothing. PKG-09 post-hoc (spec §13 A19): after
+    the plan is saved the learner brief is built and stored once for the
+    session; a brief failure never changes the response."""
     _gate(body.user_id, request)
-    _session_scope(body.session_id, body.user_id)
+    _, course_id = _session_scope(body.session_id, body.user_id)
     chosen = list(body.concept_ids)
     out: dict = {}
 
@@ -3053,6 +3056,14 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
         doc["phase"] = "teach"
 
     _update_loop_state(body.session_id, approve)
+    # PKG-09 post-hoc (spec §13 A19): the learner brief is built once per session, here.
+    try:
+        store_brief(body.session_id, body.user_id, course_id or None, chosen)
+    except Exception as exc:
+        logger.warning(
+            "learner brief not stored at plan approval (%s); the first loop turn builds it",
+            type(exc).__name__,
+        )
     events_service.log_event(
         "learn.plan_approved",
         category="usage",
