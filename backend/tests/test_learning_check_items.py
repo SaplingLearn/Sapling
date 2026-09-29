@@ -5378,15 +5378,18 @@ class TestBackfill:
             nodes=[{"course_id": "course-1", "concept_name": "Gradient descent"}],
             chunks=(off_topic,),
         )
-        empty, _ = _cached_tables({"check_items": []})
+        empty, tables = _cached_tables({"check_items": []})
         with (
             patch("services.check_item_service.table", side_effect=empty),
             patch("services.check_item_service.draft_items") as draft,
-            patch("services.check_item_service.create_items") as create,
+            patch("services.check_item_service.draft_mc_topup") as topup,
+            patch("services.check_item_service._store_drafts") as store,
         ):
             backfill.main(["--course", "course-1", "--project", "proj-a"])
         draft.assert_not_called()
-        create.assert_not_called()
+        topup.assert_not_called()
+        store.assert_not_called()  # every write of a generation run goes through it
+        tables["check_items"].upsert.assert_not_called()
         assert "unmatched 1" in capsys.readouterr().out
 
 
