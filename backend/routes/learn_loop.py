@@ -87,7 +87,7 @@ from agents.loop_tutor import (
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage
 from db.connection import table
-from learning import answer_guard, gates, ladder, planner, policy, review, zpd_events
+from learning import answer_guard, arms, gates, ladder, planner, policy, review, zpd_events
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
 from learning.checks import CheckItem, is_servable, posttest_reserve_hash, select_item
@@ -284,6 +284,31 @@ def _gate_value(user_id: str, request: Request) -> bool:
 
 def _now_s() -> float:
     return datetime.now(timezone.utc).timestamp()
+
+
+def _loop_arm(user_id: str) -> str | None:
+    """The student's within-student arm label (`user_settings.loop_arm`, PKG-14;
+    set by the series owner in SQL, in no settings API field — A31's reason).
+    Only a non-empty string is an arm; a missing row, a non-string value or a
+    read error is no arm (variant A everywhere, no budget exemption), so the
+    plumbing can never turn a student into an arm session by accident."""
+    try:
+        rows = table("user_settings").select("loop_arm", filters={"user_id": f"eq.{user_id}"})
+    except Exception as exc:  # the arm is plumbing: a failed read is "no experiment"
+        logger.warning("loop_arm read failed for %s: %s", user_id, type(exc).__name__)
+        return None
+    raw = rows[0].get("loop_arm") if rows and isinstance(rows[0], dict) else None
+    return raw if isinstance(raw, str) and raw else None
+
+
+def _arm_for(user_id: str, request: Request) -> str | None:
+    """`_loop_arm`, read ONCE per request (carried on `request.state`)."""
+    cache = getattr(request.state, "loop_arm", None)
+    if isinstance(cache, tuple) and len(cache) == 2 and cache[0] == user_id:
+        return cache[1]
+    arm = _loop_arm(user_id)
+    request.state.loop_arm = (user_id, arm)
+    return arm
 
 
 def _request_id(request: Request) -> str:
@@ -640,7 +665,7 @@ def _learner_view(state: LearnerState | None, *, band: str, prereq_proficient: b
     )
 
 
-def _genuine(text: str, independent_s: float, band: str) -> bool:
+def _genuine(text: str, independent_s: float, band: str, variant: str = "A") -> bool:
     """Spec §3.3 genuine attempt, for hint unlocking and the shown-work floor
     only (never a grading gate, A16). `matched_non_attempt` is
     `has_non_attempt_phrase` — never `matches_non_attempt` (HANDOFF-06)."""
@@ -651,16 +676,22 @@ def _genuine(text: str, independent_s: float, band: str) -> bool:
         independent_s,
         band,
         time_scale=config.LEARNING_GATE_TIME_SCALE,
+        variant=variant,  # PKG-14: the concept's within-student arm (learning.arms.variant_for)
     )
 
 
 def _ceiling_for(
-    *, step: StepState, learner: LearnerView, message: str, independent_s: float
+    *,
+    step: StepState,
+    learner: LearnerView,
+    message: str,
+    independent_s: float,
+    variant: str = "A",
 ) -> tuple[Rung, policy.CeilingReason]:
     """policy.ceiling_with_reason on typed state only (invariant 4). The shown-work
     floor applies when the step already records shown work or this message is a
     genuine attempt; exam mode is the step's own flag (False until PKG-08)."""
-    showed = step.showed_work or _genuine(message, independent_s, learner.band)
+    showed = step.showed_work or _genuine(message, independent_s, learner.band, variant)
     return policy.ceiling_with_reason(learner, dataclasses.replace(step, showed_work=showed))
 
 
@@ -1202,6 +1233,8 @@ class _LoopTurn:
         self.trusted, self.instruction = kind == "action", None
         self.loop_on, self.refused = loop_on, refused
         self.request_id = _request_id(request)
+        # PKG-14 (A20): an arm session is never downgraded; it pauses at hard
+        self.arm = _arm_for(body.user_id, request)
         self.offering_id, self.course_id = scope or _session_scope(body.session_id, body.user_id)
         self.state = state if state is not None else _load_loop_state(body.session_id)
         self._derive(verdict)
@@ -1226,6 +1259,7 @@ class _LoopTurn:
         self.concept_node = self.node_id or self.state.get("concept")
         learner = _learner_state(self.user_id, self.concept_node)
         self.band, self.p_known = _band_of(learner)
+        self.variant = arms.variant_for(self.user_id, self.concept_node or "", self.arm)
         self.verdict = verdict or (
             self.entry.get("last_verdict") if self.phase == "feedback" else None
         )
@@ -1237,6 +1271,7 @@ class _LoopTurn:
             learner=_learner_view(learner, band=self.band, prereq_proficient=prereq),
             message=self.message,
             independent_s=_seconds_since(self.step.first_shown_at, _now_s()),
+            variant=self.variant,
         )
         self.planned = None
         self.given = ""
@@ -1253,7 +1288,7 @@ class _LoopTurn:
         return {
             "session_tutor_requests": int(self.state.get("tutor_requests") or 0),
             "session_deep_requests": int(self.state.get("deep_requests") or 0),
-            "arm_session": False,  # loop_arm arrives with PKG-14a
+            "arm_session": bool(self.arm),  # PKG-14 (A20): both variants of an arm alike
         }
 
     def history(self) -> list:
@@ -1291,7 +1326,7 @@ class _LoopTurn:
                     budget_level=decision.level,
                     deep_cap_reached=deep >= LOOP_SESSION_MAX_DEEP_REQUESTS,
                     novice_deep_cap_reached=deep >= LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
-                    arm_session=False,
+                    arm_session=bool(self.arm),
                 )
             )
         if self.tier == "none":
@@ -1594,6 +1629,9 @@ class _LoopTurn:
                 item_difficulty=self.item.difficulty,
                 tier=self.tier,
                 grader_backend=entry.get("grader_backend"),
+                variant=arms.variant_for(
+                    self.user_id, entry.get("node_id") or self.node_id or "", self.arm
+                ),
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("zpd.step not emitted for %s: incomplete step record", self.active)
@@ -1725,6 +1763,7 @@ class _LoopOpener(_LoopTurn):
         self.kind, self.persist_user_row = "opener", False
         self.loop_on, self.refused = loop_on, False
         self.request_id = _request_id(request)
+        self.arm = _arm_for(body.user_id, request)  # PKG-14 (A20), as _LoopTurn
         self.course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
         self.offering_id = resolve_offering(self.course_id, create=True) if self.course_id else ""
         # routes/learn.py::_start_session_agent (:540–543)'s cue, as server text;
@@ -2438,7 +2477,10 @@ async def _grade_submission(
     band, p_before = _band_for(body.user_id, node_id)
     now = _now_s()
     # hint-unlock bookkeeping only: the independent-time gate never blocks grading (A16)
-    genuine = not idk and _genuine(text, _seconds_since(entry.get("first_shown_at"), now), band)
+    variant = arms.variant_for(body.user_id, node_id, _arm_for(body.user_id, request))
+    genuine = not idk and _genuine(
+        text, _seconds_since(entry.get("first_shown_at"), now), band, variant
+    )
     deps = SaplingDeps(
         user_id=body.user_id,
         course_id=course_id or None,
@@ -2682,12 +2724,14 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     if not isinstance(entry, dict):
         raise HTTPException(status_code=404, detail="No such check item in this session")
     check = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
-    band, _ = _band_for(body.user_id, _node_for_item(body.user_id, check) if check else None)
+    node_id = _node_for_item(body.user_id, check) if check else None
+    band, _ = _band_for(body.user_id, node_id)
+    variant = arms.variant_for(body.user_id, node_id or "", _arm_for(body.user_id, request))
     now = _now_s()
     independent_s = _seconds_since(entry.get("first_shown_at"), now)
-    genuine = bool(_genuine(body.attempt_text, independent_s, band)) and not _addresses_grader(
-        body.attempt_text, check
-    )
+    genuine = bool(
+        _genuine(body.attempt_text, independent_s, band, variant)
+    ) and not _addresses_grader(body.attempt_text, check)
     digest = _attempt_hash(body.attempt_text)
     counted: dict = {}
 
@@ -2870,7 +2914,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
                 "novice",
                 session_tutor_requests=int(state.get("tutor_requests") or 0),
                 session_deep_requests=int(state.get("deep_requests") or 0),
-                arm_session=False,
+                arm_session=bool(_arm_for(body.user_id, request)),
             )
             if decision.pause_novice:
                 raise AIBudgetExceeded(decision)  # nothing activated, nothing saved
