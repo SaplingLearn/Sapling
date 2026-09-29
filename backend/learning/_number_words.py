@@ -47,3 +47,7 @@ DENOMINATORS = {
 HALF_WORDS = frozenset({"half", "halves"})
 PERCENT_WORDS = frozenset({"percent", "pct"})
 PERCENT = 100  # "50%" is 50 / PERCENT
+# Option positions, in order (A38 fix round 2): strict mode reads "the third
+# one" as option C. The numeral form is built from the position.
+ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth")
+ORDINAL_SUFFIXES = ("st", "nd", "rd", "th", "th", "th", "th", "th")

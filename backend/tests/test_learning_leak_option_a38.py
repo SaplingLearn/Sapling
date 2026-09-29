@@ -63,6 +63,9 @@ DEFAULT_LEAKS = [p for p in OWNER_PHRASINGS if p != "Ｃ"] + [
     "option С",  # Cyrillic Es reads as C
     "the answer is (c).",
     "Pick c",
+    "choice #C",  # fix round 2: "#" is opening markup after a keyword
+    "The answer: C is right",
+    "C) is the one.",
 ]
 # Honest non-leaks in default mode (key C unless noted). Documented decisions:
 # a bare capital or a letter inside a word is no option context; "part C" and
@@ -129,7 +132,15 @@ def test_the_article_a_is_no_leak_for_key_a_in_default_mode(hint):
 
 
 def test_the_letter_a_still_leaks_for_key_a_where_it_is_a_label():
-    for hint in ("The answer is a.", "option a", "(a)", "It's A.", "A is correct", "pick a!"):
+    # fix round 2: a lowercase "(a)" with no keyword is a part label ("in part (a)")
+    for hint in (
+        "The answer is a.",
+        "option a",
+        "option (a)",
+        "It's A.",
+        "A is correct",
+        "pick a!",
+    ):
         assert _detect(hint, key="A") == (True, "option"), hint
 
 
@@ -137,6 +148,88 @@ def test_the_letter_a_still_leaks_for_key_a_where_it_is_a_label():
 def test_strict_mode_flags_any_standalone_key_letter(hint):
     """The hint is dropped on these (a false positive costs one hint), by design."""
     assert _detect(hint, strict=True) == (True, "option"), hint
+
+
+# ── A38 fix round 2 (MEDIUM): honest tutor prose is clean in default mode ────
+# (text, key). Documented: bare letters ("Ｃ", "C.") and an unclosed "(C" stay
+# allowed in default mode by design — a bare letter is no option context.
+DEFAULT_CLEAN_ROUND2 = [
+    ("Plan A is the best approach", "A"),
+    ("Vitamin D is key", "D"),
+    ("Section C is the best reference", "C"),
+    ("Type A is correct for blood", "A"),
+    ("the constant C is the key term", "C"),
+    ("King Henry V is the one", "V"),
+    ("as x → c the limit is 0", "C"),
+    ("f(x) -> c", "C"),
+    ("in part (a), find x", "A"),
+    ("(i) first (ii) second", "I"),
+    ("copyright (c) 2024", "C"),
+    ("the string 'a' in Python", "A"),
+    ("It's A good idea", "A"),
+    ("choose a, b or c freely", "A"),
+    ("choose a, b or c freely", "B"),
+    ("choose a, b or c freely", "C"),
+    ("the answer I gave", "I"),
+    ("it's C++ code", "C"),
+    ("the answer is C++", "C"),
+    ("the answer is C#", "C"),
+    ("the letters (A, B, C) label options", "A"),
+    ("the letters (A, B, C) label options", "B"),
+    ("the letters (A, B, C) label options", "C"),
+    ("Ｃ", "C"),
+    ("C.", "C"),
+    ("(C", "C"),
+]
+
+
+@pytest.mark.parametrize("hint, key", DEFAULT_CLEAN_ROUND2)
+def test_round2_honest_prose_is_clean_in_default_mode(hint, key):
+    assert _detect(hint, key=key) == (False, "none"), (hint, key)
+    assert _strip(hint, key=key) == hint
+
+
+# ── A38 fix round 2 (MAJOR 2): strict mode keeps the article exemption ──────
+
+
+@pytest.mark.parametrize(
+    "hint, key",
+    [
+        ("Check whether a stopping rule exists.", "A"),
+        ("Is there a smaller subproblem?", "A"),
+        ("A base case is what ends the calls.", "A"),
+        ("What would I expect after one call?", "I"),
+        ("I think the calls pile up.", "I"),
+    ],
+)
+def test_strict_mode_keeps_articles_and_the_pronoun(hint, key):
+    assert _detect(hint, strict=True, key=key) == (False, "none"), hint
+
+
+@pytest.mark.parametrize(
+    "hint", ["A.", "A,", "(A)", "It's A.", "The answer is a.", "option a", "a!", "A"]
+)
+def test_strict_mode_still_flags_the_standalone_key_a(hint):
+    assert _detect(hint, strict=True, key="A") == (True, "option"), hint
+
+
+@pytest.mark.parametrize(
+    "hint, key, leaks",
+    [
+        ("Is it the third one?", "C", True),
+        ("Look at the third option.", "C", True),
+        ("Third choice, maybe?", "C", True),
+        ("the 3rd option", "C", True),
+        ("the second one", "B", True),
+        ("the first answer", "A", True),
+        ("Is it the second one?", "C", False),
+        ("Do the third step first.", "C", False),
+        ("the fourth option", "D", True),
+    ],
+)
+def test_strict_mode_flags_the_keys_ordinal_position(hint, key, leaks):
+    assert _detect(hint, strict=True, key=key).leaked is leaks, hint
+    assert _detect(hint, key=key) == (False, "none"), "ordinals are strict mode only"
 
 
 def test_strict_mode_never_flags_the_letter_inside_a_word_or_another_letter():
@@ -177,6 +270,7 @@ def test_random_texts_strip_clean_and_idempotent_in_both_modes():
     nothing the same mode flags, and a second pass is a no-op."""
     pieces = [
         "option", "opt.", "choice", "answer", "answer is", "correct:", "it's", "It is",
+        "the third one", "second choice", "#", "++", ", b or", "Plan", "(A, B, C)", "x",
         "pick", "is right", "was the answer", "→", "=>", "->", "—", "–", ":", "-",
         "(", ")", "[", "]", "**", "*", "_", "`", "'", '"', "“", "”",
         "A", "a", "B", "c", "C", "Ｃ", "С", "D", "​", "́", "part", "see",

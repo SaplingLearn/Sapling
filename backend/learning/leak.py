@@ -22,21 +22,28 @@ the supervisor architecture's deterministic solution stripper). Three rules:
   characters dropped and look-alikes folded (learning._confusables, the table
   answer_guard reads; "Ｃ", Cyrillic "С" and "C\u200b" are C):
   after a keyword ("option", "opt.", "choice", "letter", "key", "correct",
-  "answer (is/was/…)", "pick", "choose", "select", "go with") or an arrow
-  ("→", "=>", "->"), with separators (":", "=", ">", dashes) and opening
-  markup (quotes, brackets, "*", "_", "`") between; inside brackets, quotes
-  or emphasis ("(c)", "[C]", "'C'", "**C**"); before "is/was (the)
-  correct/right/answer/one/key/best"; after "it's/it is/it was"; or as a
-  capital list label "C)" first on its line or right after a clause's end
-  ("(see part C)" names a part). Case-insensitive in every context, except that a
-  lowercase "a" or "i" followed by a word is the article or pronoun ("choose
-  a function", "answer a smaller question"). A bare letter never counts in
-  this default mode (tutor prose: "vitamin C", "C++", "grade C", "A
-  derivative is…").
+  "answer (is/was/…)", "pick", "choose", "select", "go with"), with
+  separators (":", "=", ">", dashes) and opening markup (quotes, brackets,
+  "*", "_", "`", "#") between; after an arrow ("→", "=>", "->") that starts
+  its clause or follows a list of letters ("A/B/C/D → C", never "x → c" or
+  "f(x) -> c"); a CAPITAL inside brackets, quotes or emphasis ("(C)", "[C]",
+  "'C'", "**C**"; a lowercase "(a)", "(c)", "'a'" counts only after a
+  keyword); before "is/was (the) correct/right/answer/one/key/best" when the
+  letter starts its clause ("C is right", never "Plan A is the best"); after
+  "it's/it is/it was"; or as a capital list label "C)" first on its line or
+  right after a sentence's end ("(see part C)" names a part). Case-
+  insensitive after a keyword. Never: a letter followed by "+" or "#" ("C++",
+  "C#"), one of an enumeration ("(A, B, C)", "a, b or c"), the article or
+  pronoun (a lowercase "a"/"i" before any word, a capital "A"/"I" before a
+  lowercase word: "choose a function", "It's A good idea", "the answer I
+  gave"). A bare letter never counts in this default mode (tutor prose:
+  "vitamin C", "grade C", "C.", "Ｃ", an unclosed "(C" — by design).
 
   `strict=True` (the grader hint, A38 fix round M1(b)/(d) and m7, where a
-  false positive only drops a hint) adds: ANY standalone key letter (so
-  "vitamin C" and, for key A, the article "A" drop the hint — by design);
+  false positive only drops a hint) adds: ANY standalone key letter but the
+  article/pronoun reading above (so "vitamin C", "C++", "A." and "(a)" drop
+  the hint, "A base case" and "I think" do not); the key's ordinal position
+  ("the third one", "second choice", "the 3rd option" for C);
   the correct option's text (`option_text`) as a run of answer tokens; and,
   when the answer is numeric (its canonical_answer, else the value its
   final_answer states), that value written as a number word ("seven", "one
@@ -136,19 +143,42 @@ _OPTION_KEYWORDS = (
     r"|pick|choose|select|go\s+with"
 )
 _NOT_ALNUM_BEFORE = r"(?<![A-Za-z0-9])"
-_NOT_ALNUM_AFTER = r"(?![A-Za-z0-9])"
+# After the letter: no letter or digit, and no "+" or "#" ("C++", "C#").
+_NOT_ALNUM_AFTER = r"(?![A-Za-z0-9+#])"
+# An enumeration of letters is no pick of one ("(A, B, C)", "a, b or c").
+_NOT_ENUM_AFTER = (
+    r"(?![\"'`)\]*_]{0,4}\s{0,2}[,/|]\s{0,2}[\"'`(\[*_]{0,4}[A-Za-z](?![A-Za-z0-9]))"
+    r"(?!\s{1,3}(?:or|and|/)\s{1,3}[A-Za-z](?![A-Za-z0-9]))"
+)
 # What may part a keyword from its letter: separators, then opening markup.
 # Bounded and disjoint, so no pattern backtracks more than a few characters.
 _SEPARATORS = r"[\s:=>\-–—→⇒]{0,12}"
-_OPENING = r"[\"'`(\[*_]{0,4}"
+_OPENING = r"[\"'`(\[*_#]{0,4}"
 _CLOSING = r"[\"'`)\]*_]{0,4}"
 _ARROW = r"(?:→|⇒|=>|->)"
+# The letter starts its clause: the text's start, or only spaces and opening
+# markup after punctuation — never a word or a closing bracket ("Plan A is
+# the best", "x → c", "f(x) -> c").
+_CLAUSE_START = r"(?:(?<![\s\S])|(?<=[^\sA-Za-z0-9\"'`(\[*_#)\]}]))\s{0,4}"
+# A list of option letters before an arrow ("A/B/C/D → C").
+_LETTER_LIST = r"(?<![A-Za-z0-9])[A-Z](?:\s{0,2}[/,|]\s{0,2}[A-Z]){1,25}(?![A-Za-z0-9])\s{0,4}"
+_POSITION_NOUNS = r"one|option|choice|answer|letter"
 
 
 class _OptionRule(NamedTuple):
     context: tuple[re.Pattern[str], ...]  # group "span" (or the whole match) is withheld
     label: re.Pattern[str]  # "C)" as a list label, never "(see part C)"
-    standalone: re.Pattern[str]  # strict mode: any standalone key letter
+    standalone: re.Pattern[str]  # strict mode: any standalone key letter (articles aside)
+    position: re.Pattern[str] | None  # strict mode: "the third one" for key C
+
+
+def _position_pattern(index: int) -> re.Pattern[str] | None:
+    """Strict mode: the key's position by ordinal ("the third option",
+    "second choice", "the 3rd one"); None past the listed ordinals."""
+    if index >= len(nw.ORDINALS):
+        return None
+    ordinal = f"{nw.ORDINALS[index]}|{index + 1}{nw.ORDINAL_SUFFIXES[index]}"
+    return re.compile(rf"(?i:\b(?:{ordinal})\s{{1,4}}(?:{_POSITION_NOUNS})s?\b)")
 
 
 def _option_rule(correct_option: str | None) -> _OptionRule | None:
@@ -162,38 +192,53 @@ def _option_rule(correct_option: str | None) -> _OptionRule | None:
         raise ValueError(f"correct_option {correct_option!r} is not one option letter")
     lower = upper.lower()
     any_case = f"[{upper}{lower}]"
-    # a lowercase "a"/"i" before a word is the article or the pronoun
-    guarded = f"(?:{upper}|{lower}(?!\\s+[A-Za-z]))" if upper in "AI" else any_case
-    b, a = _NOT_ALNUM_BEFORE, _NOT_ALNUM_AFTER
+    # The article "a"/"A" and the pronoun "i"/"I" before a word: a lowercase
+    # one before any word, a capital one before a lowercase word ("A base
+    # case", "I think"); an option letter is followed by punctuation or a
+    # capitalised word, or it is the subject of "is/was …" (its own rule).
+    if upper in "AI":
+        guarded = rf"(?:{upper}(?!\s{{1,8}}[a-z])|{lower}(?!\s{{1,8}}[A-Za-z]))"
+    else:
+        guarded = any_case
+    b, a, e = _NOT_ALNUM_BEFORE, _NOT_ALNUM_AFTER, _NOT_ENUM_AFTER
     context = (
-        # after a keyword or an arrow
+        # after a keyword (any case)
         re.compile(
-            rf"(?i:{b}(?:{_OPTION_KEYWORDS}){a}){_SEPARATORS}{_OPENING}(?P<span>{guarded}){a}"
+            rf"(?i:{b}(?:{_OPTION_KEYWORDS})(?![A-Za-z0-9]))"
+            rf"{_SEPARATORS}{_OPENING}(?P<span>{guarded}){a}{e}"
         ),
-        re.compile(rf"{_ARROW}\s{{0,4}}{_OPENING}(?P<span>{guarded}){a}"),
-        # inside brackets, quotes or emphasis
-        re.compile(rf"{b}(?:\(\s?{any_case}\s?\)|\[\s?{any_case}\s?\])"),
-        re.compile(rf"{b}([\"'`]){any_case}\1(?![A-Za-z0-9\"'`])"),
-        re.compile(rf"(?<![A-Za-z0-9*_])(\*{{1,2}}|_{{1,2}}){any_case}\1(?![A-Za-z0-9*_])"),
-        # "C is right", "c was the correct one"
+        # after an arrow that starts its clause or follows a list of letters
         re.compile(
-            rf"{b}{_OPENING}(?P<span>{any_case}){_CLOSING}\s{{1,4}}"
+            rf"(?:{_CLAUSE_START}|{_LETTER_LIST}){_ARROW}\s{{0,4}}{_OPENING}"
+            rf"(?P<span>{guarded}){a}{e}"
+        ),
+        # a capital inside brackets, quotes or emphasis
+        re.compile(rf"{b}(?:\(\s?{upper}\s?\)|\[\s?{upper}\s?\])(?![+#])"),
+        re.compile(rf"{b}([\"'`]){upper}\1(?![A-Za-z0-9\"'`+#])"),
+        re.compile(rf"(?<![A-Za-z0-9*_])(\*{{1,2}}|_{{1,2}}){upper}\1(?![A-Za-z0-9*_+#])"),
+        # "C is right", "c was the correct one" — the letter starts its clause
+        re.compile(
+            rf"{_CLAUSE_START}{_OPENING}(?P<span>{any_case}){_CLOSING}\s{{1,4}}"
             rf"(?i:is|was|'s|would\s+be)\s{{1,4}}(?i:the\s{{1,4}})?"
-            rf"(?i:correct|right|answer|one|key|best){a}"
+            rf"(?i:correct|right|answer|one|key|best)(?![A-Za-z0-9])"
         ),
         # "it's C", "it is c"
         re.compile(
             rf"(?i:{b}it(?:'s|\s{{1,4}}(?:is|was|must\s+be|should\s+be)))"
-            rf"\s{{1,4}}{_OPENING}(?P<span>{guarded}){a}"
+            rf"\s{{1,4}}{_OPENING}(?P<span>{guarded}){a}{e}"
         ),
     )
-    # a list label: "C)" first on its line or right after a clause's end
-    label = re.compile(rf"(?:(?<=[\n.;:!?,])|(?<![\s\S]))[ \t]{{0,4}}(?P<span>{upper}\))")
-    standalone = re.compile(rf"{b}{any_case}{a}")
-    return _OptionRule(context, label, standalone)
+    # a list label: "C)" first on its line or right after a sentence's end
+    label = re.compile(rf"(?:(?<=[\n.;:!?])|(?<![\s\S]))[ \t]{{0,4}}(?P<span>{upper}\))")
+    standalone = re.compile(rf"{b}{guarded}(?![A-Za-z0-9])")
+    position = _position_pattern(ord(upper) - ord("A"))
+    return _OptionRule(context, label, standalone, position)
 
 
-_MASKED = "0" * len(WITHHELD)
+# A WITHHELD marker reads as one lowercase word: what the stripper masked was
+# a token, so the letters around a marker keep the context they had ("9.8(A)"
+# is no bracketed "(A)", and "a [withheld]" keeps its article reading).
+_MASKED = "x" * len(WITHHELD)
 
 
 def _folded_token_spans(text: str) -> list[tuple[int, int]]:
@@ -207,9 +252,7 @@ def _option_hits(
 ) -> list[tuple[int, int]]:
     """The spans (in `text`) of the key letter in an option context — any
     standalone key letter too when `strict` — read on the folded copy, where
-    every WITHHELD marker reads as a run of digits: what the stripper masked
-    was a token, so the letter beside a marker keeps the context it had
-    ("9.8(A)" is no bracketed "(A)", and neither is "[withheld](A)").
+    every WITHHELD marker reads as one lowercase word (_MASKED).
     strip_leak reads it on the WHOLE text, markers and all, as detect_leak
     does, so the two always agree."""
     if option is None:
@@ -223,6 +266,8 @@ def _option_hits(
     found += [m.span("span") for m in option.label.finditer(folded)]
     if strict:
         found += [m.span() for m in option.standalone.finditer(folded)]
+        if option.position is not None:
+            found += [m.span() for m in option.position.finditer(folded)]
     return [(origin[start], origin[end - 1] + 1) for start, end in found if end > start]
 
 
