@@ -1,5 +1,5 @@
 from typing import Optional, Union, List, Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 from learning.params import GRADER_ANSWER_MAX_CHARS
@@ -118,6 +118,36 @@ class PlanApproveBody(BaseModel):
     session_id: str
     user_id: str
     concept_ids: List[str] = Field(..., min_length=1)
+
+
+class ReviewAnswerBody(BaseModel):
+    """PKG-12 /api/learn/loop/review/answer — one answer to a served review item
+    (spec §3.2, A16, A22, A33). The item, its node and its reference are re-loaded
+    on the server by `item_id`; no field names a node, a reference or model_pref.
+    Free text is bounded by the grader's own answer bound (an over-long answer is
+    a 422 and the item stays due). A check needs `answer` or `selected_option`
+    (which of the two its format needs is checked after the item loads); a
+    flashcard needs a legacy self-rating 1/2/3. Unknown fields are a 422: a
+    client can never pass a node, a reference or a model preference."""
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    session_id: str
+    course_id: Optional[str] = None
+    kind: Literal["flashcard", "check"]
+    item_id: str
+    answer: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    rating: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _answer_fits_kind(self):
+        if self.kind == "check" and not (self.answer or self.selected_option):
+            raise ValueError("a check answer needs answer or selected_option")
+        if self.kind == "flashcard" and self.rating not in (1, 2, 3):
+            raise ValueError("a flashcard answer needs rating 1, 2 or 3")
+        return self
 
 
 # ── Quiz ──────────────────────────────────────────────────────────────────────

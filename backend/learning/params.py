@@ -93,6 +93,8 @@ MC_STABILITY_GAIN_CAP = 2.0
 FSRS_STABILITY_MIN = 0.001
 SR_INITIAL_CRITERION = 3
 SR_RELEARN_SESSIONS = 3
+# spec §3.2: each relearn (and done) session needs one correct recall (PKG-12)
+SR_RELEARN_SESSION_TARGET = 1
 # PKG-11 † — flashcard UI rating (1 forgot / 2 hard / 3 easy, routes/flashcards.py)
 # → FSRS rating (1 Again / 2 Hard / 3 Good; learning.fsrs.Rating, which this
 # module cannot import: fsrs imports params). Easy(4) is never emitted in v1
@@ -406,3 +408,8 @@ LOOP_STATE_CAS_RETRIES = 3
 # twice. Once its claim is older than this, /check/next treats the item as
 # closed and activates the next one (longer than any grader call).
 LOOP_GRADING_CLAIM_STALE_S = 120
+
+# ── PKG-12 review surfaces (spec §3.2; † = engineering choice, see HANDOFF-12) ──
+REVIEW_SECONDS_PER_FLASHCARD = 15  # † budget cost of one self-rated card
+REVIEW_DIFFICULTY_BY_BAND = {"novice": 1, "develop": 2, "profic": 3}  # †
+REVIEW_FORMAT_BY_BAND = {"novice": "mc_reason", "develop": "mc_reason", "profic": "free"}  # †

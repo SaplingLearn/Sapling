@@ -104,6 +104,10 @@ learn.probe_done              usage     items, misses (not-correct incl. idk), n
                                         loop PKG-08, spec §6)
 learn.plan_approved           usage     concept_ids, n_reviews_first — the student approved a
                                         plan (PKG-08, spec §6)
+review.session_started        usage     session_id, offering_id (a daily review session row; never
+                                        session.started — it is not a tutor session)
+review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
+review.graded                 usage     kind, correct, rating
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -255,6 +259,12 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # lives in test_learning_probe_planner.py.
     "learn.probe_done",
     "learn.plan_approved",
+    # Learning loop PKG-12: the daily review queue. `served` once per kind in
+    # a built queue (n = how many), `graded` per answer. Reviews are evidence,
+    # so `graded` is the countable twin of the node_mastery_events row.
+    "review.session_started",
+    "review.served",
+    "review.graded",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

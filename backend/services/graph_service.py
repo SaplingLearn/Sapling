@@ -810,14 +810,17 @@ def _propagation_targets(user_id: str, ev: Evidence) -> list[bkt.Propagation]:
     return bkt.propagate_prereq(ev.correct, parents, children)
 
 
-def _fsrs_after(st: LearnerState, ev: Evidence, now: datetime) -> None:
+def _fsrs_after(
+    st: LearnerState, ev: Evidence, now: datetime, retention: float | None = None
+) -> None:
     """ADAPTER — the one place fsrs.next_state's signature is assumed
     (HANDOFF-02: `next_state(d, s, rating, days_since, *, same_day,
     mc_unassisted) -> (D', S')`; nothing is scheduled there). Mutates st's
     fsrs_* fields in place. A review less than one day after the last one
     takes FSRS's same-day branch (py-fsrs: `(now − last_review).days < 1`).
-    The due date is at FSRS_RETENTION_DEFAULT; retention selection by exam
-    window or set size is PKG-12's."""
+    The due date is at `retention` (FSRS_RETENTION_DEFAULT when None); the
+    caller picks it by exam window or set size (PKG-12's review passes
+    learning.review.retention_target's value through apply_graph_update)."""
     rating = fsrs.rating_for(ev.channel, ev.correct, ev.max_rung, idk=ev.idk)
     mc_unassisted = fsrs.mc_cap_applies(ev.channel, ev.correct, ev.max_rung, idk=ev.idk)
     last = st.fsrs_last_review_at
@@ -832,7 +835,8 @@ def _fsrs_after(st: LearnerState, ev: Evidence, now: datetime) -> None:
     )
     st.fsrs_d, st.fsrs_s = new_d, new_s
     st.fsrs_last_review_at = now
-    st.fsrs_due_at = now + timedelta(days=fsrs.interval(FSRS_RETENTION_DEFAULT, new_s))
+    target = FSRS_RETENTION_DEFAULT if retention is None else retention
+    st.fsrs_due_at = now + timedelta(days=fsrs.interval(target, new_s))
 
 
 def _keep_decay_anchor(st: LearnerState, p_now: float, now: datetime) -> tuple[float, datetime]:
@@ -871,6 +875,7 @@ def _apply_evidence(
     by_id: dict[str, dict],
     touched_courses: set,
     now: datetime,
+    retention: float | None = None,
 ) -> list[dict]:
     """PKG-03: the BKT + FSRS write path (spec §5). ONLY caller: apply_graph_update.
 
@@ -932,7 +937,7 @@ def _apply_evidence(
         st.max_streak_unassisted = max(st.max_streak_unassisted, st.streak_unassisted)
         st.p_known = p_after
         st.last_evidence_at = now
-        _fsrs_after(st, ev, now)
+        _fsrs_after(st, ev, now, retention)
         write_state(st, now=now)
         st.exists = True
 
@@ -1007,10 +1012,20 @@ def _apply_evidence(
     return changes
 
 
-def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
+def apply_graph_update(
+    user_id: str,
+    graph_update: dict,
+    course_id: str | None = None,
+    *,
+    retention: float | None = None,
+) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
     If course_id is provided, all new/updated nodes will be associated with that course.
+
+    `retention` (PKG-12, a PKG-03 reopen) is the FSRS retention target the
+    evidence branch schedules `fsrs_due_at` at; None keeps
+    FSRS_RETENTION_DEFAULT. Only the evidence branch reads it.
 
     Concept dedup is case- and whitespace-insensitive: "Linear Regression",
     "linear regression", and " Linear  Regression " all resolve to the same node.
@@ -1193,6 +1208,7 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
                 by_id,
                 touched_courses,
                 datetime.now(timezone.utc),
+                retention,
             )
         )
 

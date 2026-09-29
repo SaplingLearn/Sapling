@@ -144,6 +144,9 @@ def test_event_taxonomy_is_pinned():
         # lives in test_learning_probe_planner.py.
         "learn.probe_done",
         "learn.plan_approved",
+        "review.session_started",     # PKG-12: a daily review session row (not session.started)
+        "review.served",              # PKG-12: one per kind in a built review queue
+        "review.graded",              # PKG-12: one per graded review answer
     })
 
 
