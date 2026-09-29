@@ -836,7 +836,7 @@ IND, IND_N, DWELL = (
 def test_matches_non_attempt(text, expected):
     from learning.gates import NON_ATTEMPT_PATTERNS, matches_non_attempt
 
-    assert len(NON_ATTEMPT_PATTERNS) == 5
+    assert len(NON_ATTEMPT_PATTERNS) == 7  # the spec's five + "no idea", "dunno" (A38 06(b))
     assert matches_non_attempt(text) is expected
 
 
@@ -1095,8 +1095,9 @@ def test_a_non_attempt_may_carry_filler_and_names_its_phrases(text, phrases):
 
 _PLEAS = (
     ("I don't know. Where do I start?", ("i don't know",)),
-    ("idk, no idea", ("idk",)),
-    ("no idea, just tell me", ("just tell me",)),
+    # "no idea" / "dunno" are idk phrases since owner decision A38 06(b)
+    ("idk, no idea", ("idk", "no idea")),
+    ("no idea, just tell me", ("just tell me", "no idea")),
     ("give me the answer, I give up", ("give me the answer",)),
     ("What's the answer? I have no clue", ("what's the answer",)),
     ("Can you just tell me? I really don't get it", ("just tell me",)),
@@ -1104,11 +1105,11 @@ _PLEAS = (
     ("I don't get it, just tell me", ("just tell me",)),
     ("I give up. What's the answer?", ("what's the answer",)),
     ("this is too hard, give me the answer", ("give me the answer",)),
-    ("I have no idea what to do, idk", ("idk",)),
+    ("I have no idea what to do, idk", ("idk", "no idea")),
     ("I'm tired, just tell me", ("just tell me",)),
     ("no clue, just tell me the answer", ("just tell me",)),
     ("Just tell me. I've spent an hour on this", ("just tell me",)),
-    ("i dunno, idk", ("idk",)),
+    ("i dunno, idk", ("idk", "dunno")),
     ("idk, what do I do?", ("idk",)),
     ("I don't know, can you give me a hint?", ("i don't know",)),
     ("idk. where do I start?", ("idk",)),
@@ -1250,15 +1251,64 @@ def test_a_hedged_answer_is_graded_but_never_unlocks_hints(text):
 
 @pytest.mark.parametrize(
     "text",
-    ["no idea", "Where do I start?", "I really don't know", "dunno", "not sure", "I give up",
+    ["Where do I start?", "I really don't know", "not sure", "I give up",
      "this is too hard", "I'm lost", "I've been at this for hours"],
 )  # fmt: skip
 def test_a_plea_without_a_pattern_phrase_is_graded_but_no_attempt(text):
-    """NON_ATTEMPT_PATTERNS is exactly the spec's five, so a plea without one
-    routes to grading (Known gaps); a _PLEA plea still vetoes the attempt."""
+    """NON_ATTEMPT_PATTERNS is the spec's five plus "no idea" / "dunno"
+    (owner decision A38 06(b)), so any other plea without one routes to
+    grading (Known gaps); a _PLEA plea still vetoes the attempt."""
     from learning.gates import has_non_attempt_phrase, non_attempt_phrases
 
     assert non_attempt_phrases(text) == ()
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "text,phrases",
+    [
+        ("dunno", ("dunno",)),
+        ("no idea", ("no idea",)),
+        ("no idea lol", ("no idea",)),
+        ("No idea!", ("no idea",)),
+        ("i dunno man", ("dunno",)),
+        ("idk, no idea", ("idk", "no idea")),
+    ],
+)
+def test_no_idea_and_dunno_route_as_idk(text, phrases):
+    """Owner decision A38 06(b): "no idea" / "dunno" are idk phrases for
+    A16 routing (non_attempt_phrases), and still veto the attempt
+    (has_non_attempt_phrase, fail closed)."""
+    from learning.gates import (
+        IDK_PATTERNS,
+        has_non_attempt_phrase,
+        matches_non_attempt,
+        non_attempt_phrases,
+    )
+
+    assert non_attempt_phrases(text) == phrases
+    assert set(phrases) <= IDK_PATTERNS
+    assert matches_non_attempt(text) is True
+    assert has_non_attempt_phrase(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "dunno, 7",
+        "no idea, maybe x = 3",
+        "It diverges by the ratio test, no idea if that is right",
+        "no idea if the mitochondria is right",
+        "the mitochondria? dunno",
+    ],
+)
+def test_no_idea_or_dunno_beside_an_answer_is_graded(text):
+    """The mixed-answer rule is the idk phrases' (decision (B)): a digit, a
+    relation or a content word beside the phrase is an answer; it is graded
+    and still no genuine attempt."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    assert non_attempt_phrases(text) == (), text
     assert has_non_attempt_phrase(text) is True
 
 
@@ -1453,6 +1503,8 @@ def test_non_attempt_patterns_are_exactly_the_spec_list():
         "idk",
         "i don't know",
         "what's the answer",
+        "no idea",  # owner decision A38 06(b)
+        "dunno",
     )
 
 
