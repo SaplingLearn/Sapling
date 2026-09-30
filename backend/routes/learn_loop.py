@@ -2250,35 +2250,35 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
     — the run is still billed) is finished by the tool-less continuation.
     Persist ordering mirrors routes.learn._chat_turn_json."""
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
-    turn.plan(decision)
+    try:
+        turn.plan(decision)
+    except BaseException:
+        turn.touch_served_at()  # A85: a failed plan moves the anchor
+        raise
     if turn.paused:
         turn.touch_served_at()  # A85: a paused turn moves the anchor
         raise _BudgetPaused(decision)
     if turn.tier == "none":
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(turn.text, {}, [])}
     try:
-        return await _json_model_turn(turn)
+        reply = None
+        usage = RunUsage()
+        ai_budget.count_tutor_call(turn.user_id)
+        with capture_run_messages() as messages:
+            try:
+                result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
+            except UnexpectedModelBehavior:
+                logger.warning("Loop tool run ended without a structured turn", exc_info=True)
+                turn.record_usage(UnfinishedRun(usage))
+            else:
+                turn.record_usage(result)
+                reply = turn.render(result.output)
+        if reply is None:
+            reply = await _continue_turn(turn, list(messages))
+        return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
     except BaseException:
         turn.touch_served_at()  # A85: so does a failed one
         raise
-
-
-async def _json_model_turn(turn: _LoopTurn) -> dict:
-    reply = None
-    usage = RunUsage()
-    ai_budget.count_tutor_call(turn.user_id)
-    with capture_run_messages() as messages:
-        try:
-            result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
-        except UnexpectedModelBehavior:
-            logger.warning("Loop tool run ended without a structured turn", exc_info=True)
-            turn.record_usage(UnfinishedRun(usage))
-        else:
-            turn.record_usage(result)
-            reply = turn.render(result.output)
-    if reply is None:
-        reply = await _continue_turn(turn, list(messages))
-    return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
 
 
 async def _continue_turn(turn: _LoopTurn, messages: list) -> str:
