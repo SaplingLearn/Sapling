@@ -1030,6 +1030,8 @@ ANY_COURSE = "*"  # a failed marker read: every course is unresolved
 PENDING_REVEALS_MAX = LOOP_PENDING_REVEALS_MAX
 #: session id → {"user_id", "hashes", "mark"} for an opener (no session row yet)
 _PENDING_REVEALS: dict[str, dict] = {}
+#: A85 (review fix round): session id → when its last turn failed or paused
+_FAILED_TURN_ANCHORS: dict[str, float] = {}
 
 
 def teach_reveals(text: str, items, *, rung: Rung, given: str) -> list[str]:
@@ -1463,6 +1465,11 @@ class _LoopTurn:
             return False
         anchor = self.state.get("served_at")
         if isinstance(anchor, bool) or not isinstance(anchor, (int, float)):
+            anchor = None
+        failed = _FAILED_TURN_ANCHORS.get(self.session_id)
+        if failed is not None:
+            anchor = failed if anchor is None else max(float(anchor), failed)
+        if anchor is None:
             return False
         return gates.teach_attempt(
             self.message,
@@ -1878,6 +1885,18 @@ class _LoopTurn:
             "check": check,
         }
 
+    def touch_served_at(self) -> None:
+        """A85 (review fix round): a failed or paused turn moves the teach
+        independent-time anchor too, so an immediate retry is timed from the
+        failure and never passes the gate on the strength of the lost turn. In
+        memory (bounded, `_FAILED_TURN_ANCHORS`): a failed turn writes nothing
+        to the session (ADR 0024) — the backend is one process (B9 lists the
+        multi-process precondition)."""
+        _FAILED_TURN_ANCHORS.pop(self.session_id, None)
+        _FAILED_TURN_ANCHORS[self.session_id] = _now_s()
+        while len(_FAILED_TURN_ANCHORS) > PENDING_REVEALS_MAX:
+            _FAILED_TURN_ANCHORS.pop(next(iter(_FAILED_TURN_ANCHORS)))
+
     def _teach_scanned(self) -> bool:
         """A model-written teach turn with no active item (A86)."""
         return self.phase == "teach" and self.item is None and self.tier != "none"
@@ -2233,9 +2252,18 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
     turn.plan(decision)
     if turn.paused:
+        turn.touch_served_at()  # A85: a paused turn moves the anchor
         raise _BudgetPaused(decision)
     if turn.tier == "none":
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(turn.text, {}, [])}
+    try:
+        return await _json_model_turn(turn)
+    except BaseException:
+        turn.touch_served_at()  # A85: so does a failed one
+        raise
+
+
+async def _json_model_turn(turn: _LoopTurn) -> dict:
     reply = None
     usage = RunUsage()
     ai_budget.count_tutor_call(turn.user_id)
@@ -2302,11 +2330,13 @@ async def _stream_turn(turn: _LoopTurn):
     except Exception:
         # ADR 0024 honest degrade: nothing was shown or written — one terminal error
         logger.exception("Loop turn could not be planned")
+        turn.touch_served_at()  # A85
         yield sapling_event_to_sse(_stream_error(turn, _STREAM_UNAVAILABLE))
         return
     for ev in turn.pre_events():
         yield sapling_event_to_sse(ev)
     if turn.paused:
+        turn.touch_served_at()  # A85
         yield sapling_event_to_sse(_budget_event(decision))
         return
     if decision.level == "hard":
@@ -2355,6 +2385,8 @@ async def _stream_turn(turn: _LoopTurn):
         if ev.type == "done":
             for extra_ev in _pre_done_events(ev.data or {}):
                 yield sapling_event_to_sse(extra_ev)
+        elif ev.type == "error":
+            turn.touch_served_at()  # A85: a stream error moves the anchor
         yield sapling_event_to_sse(ev)
 
 
