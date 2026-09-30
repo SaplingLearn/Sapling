@@ -1,6 +1,12 @@
 # 0030: The learning loop replaces LLM-moved mastery, and becomes every student's default
 
 - Status: accepted
+  - learning_loop_beta retired: 2026-09-30 (PKG-14b) — the gate no longer
+    reads it; the column stays dead.
+  - Cutover executed: 2026-09-30, PR #673 — the half B code
+    (`feat/learning-loop-14b-cutover`) merges into `feat/learning-loop` with
+    half A after the B6 two-lane E2E gate; nothing is merged to `main` yet.
+    The owner's runbook (HANDOFF-14 §Launch runbook) appends `Launched: <date>`.
 - Date: 2026-09-29
 - Relates to: `docs/superpowers/specs/2026-09-26-learning-loop-design.md` (the
   spec; §1, §5, §7, §10, §11, §13 A14–A23, A33, A40, A45, A79), ADR 0024 (honest
@@ -96,6 +102,15 @@ It does NOT restore:
 No legacy writer exists after half B, so the legacy tutor records no
 mastery at all. The kill-switch path is cost-bounded too: the rate limit, and
 `ai_budget.check(user, "tutor", "develop")` before any legacy agent runs (A20).
+A passing check also counts one tutor call (`ai_budget.count_tutor_call`), so
+the A39 daily call-count cap holds on that path even when `llm_usage` reads
+nothing (spec §13 A88).
+
+**After launch, the Learn screen never fails open to the legacy tree** (spec
+§11.2, §13 A88). Only `/api/learn/loop/status` 404 or `{active: false}` — the
+kill switch — renders it; a 5xx, a network error or a timeout renders a retry
+state (`loop-status-error`), because the backend delegates the legacy calls to
+the loop and a legacy screen over them would be a hybrid.
 
 **The cost guardrails the launch gate requires (spec §11.1 item 4).**
 
@@ -229,8 +244,26 @@ follow-up that deletes `LEARNING_LOOP_ENABLED`.
   (A82), joined on (user_id, request_id). A loop request none of them names
   (the opener, the probe and review grades, a hint action) is still costed
   per user-day. **`llm_usage.session_id` is built in half B (owner
-  decision):** a migration, the writes in `agents/usage.py::record_agent_usage`,
-  and the report preferring the column.
+  decision, spec §13 A89):** migration
+  `20260930042516_learning_llm_usage_session_id.sql` (additive, nullable),
+  the writes in `agents/usage.py::record_agent_usage` wherever a session is
+  known, and the report preferring the column. It is the one migration half B
+  adds, against spec §11.7's "half B adds no migration": a Rollback revert of
+  half B leaves the column in place (additive; the build-phase code never
+  names it). A deploy ahead of the migration drops the column from its
+  `llm_usage` inserts and retries, so no usage row is lost.
+- **Tests deleted with their code in half B** (each named in its commit): the
+  mastery-tool and `updated_nodes` tests (B2), the flat-delta and gate-branch
+  quiz/flashcard tests (B3), `test_tier_for_is_not_the_legacy_tier` (B4), the
+  build-phase gate tests (`test_env_on_row_true_is_true`,
+  `test_env_on_row_false_is_false`, `test_env_on_missing_row_is_false`,
+  `test_env_on_missing_key_is_false`, `test_read_error_fails_closed` and their
+  route-entry, settings-flag and meta twins, B5) and
+  `test_legacy_users_are_not_opted_in` (B5b).
+- **Stored tiers from the old cuts.** `graph_nodes.mastery_tier` rows written
+  before half B carry the 0.1 / 0.45 / 0.75 cuts until each node's next write
+  (a new node, a graded evidence). Whether to re-derive them once is an owner
+  question (spec §13 A88, recorded, not decided).
 - **Served teach turns are never withheld** (spec §13 A86, superseding A84).
   The text is served unchanged, and every item of the student's course that it
   states is marked revealed (A23), so it is never a check or a post-test item.

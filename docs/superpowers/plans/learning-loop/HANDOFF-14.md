@@ -1,4 +1,4 @@
-Half A only — half B (cutover) pending the series owner's confirmation.
+Half A and half B (the cutover) are both BUILT. Half B was built before the §11.1 launch gate is met, on the owner's instruction (2026-09-29): building, not launching. Neither half is merged; they merge into `feat/learning-loop` together after the B6 two-lane E2E gate. See `## Half B` and `## Launch runbook` below.
 
 # HANDOFF-14 — eval-ladder-cutover (half A)
 
@@ -186,7 +186,7 @@ Not †: `GATE_LEAKS_MAX = 0` and `GATE_CEILING_COMPLIANCE_MIN = 0.95` (spec §1
 - **Floors.** Only `loop_tutor` was re-recorded live. The other datasets' floors are still single-recording, because half A re-set none of them.
 - **No E2E** ran in half A. B6 is the gate.
 
-## Verify commands
+## Verify commands (half A — superseded by the half B block below)
 
 ```
 cd backend && venv/bin/python -m pytest tests/test_learning_zpd_metrics_script.py tests/test_admin_learning_loop_kpis.py tests/test_learn_loop_rating.py tests/test_learning_posttest.py tests/test_learning_arms.py tests/test_learning_step_session.py tests/test_learning_teach_attempt.py tests/test_learning_teach_reveal.py tests/test_eval_floors.py -q → 189 passed
@@ -251,3 +251,234 @@ Still open:
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+
+## Half B
+
+Written by the session that built half B of `PKG-14-eval-ladder-cutover.md` (Tasks B1–B5b, B7; B9 as the runbook only), 2026-09-30. Branch `feat/learning-loop-14b-cutover` (worktree `~/Projects/sapling-wt-14b`), cut from half A's tip `585a6740` and pushed after every commit.
+
+### Status
+
+- **B1 done** (`fa2cf011`): `test_inv_21_no_legacy_mastery_writers`; `test_inv_11_gate_false_when_env_unset` rewritten in place over the §7 parse table (both gate entry points, no `table` import, no DB-client call).
+- **B2 done, except the re-record** (`ce125b3e`): the mastery tool, the preamble paragraph and `apply_graph_update`'s `updated_nodes` branch are gone (a key is a loud `ValueError` before any I/O); `MasteryUpdateEmittedEvaluator` is retired. **BLOCKED: the `chat_tutor` cassette re-record** — `chat_tutor` runs on `gemini-2.5-pro`, whose daily request quota is exhausted (the key is shared with staging). No live call was made. Resume steps under Known gaps.
+- **B3 done** (`59d7695c`): quiz and flashcards are evidence-only for every student (no gate); `p_delta` replaces the legacy key; the quiz E2E expects the BKT posterior.
+- **B4 done** (`e780b859`): one tier function, `learning.bkt.tier_for` (0.10 / 0.30 / 0.95), with the three frontend mirrors pinned.
+- **B5 done** (`fd003ed4`): the env-only gate with the exact §7 parse; the kill-switch suite marker; the legacy routes' rate limit + budget check; the learning-style step and the empty summary lists removed; `Learn()` never fails open.
+- **B5b done** (`dd1a1a9e`): the two E2E lanes (scripts, CI matrix, one lane parse, the global-setup assertion, lane guards).
+- **Owner decision: `llm_usage.session_id`, done** (`c2704750`): migration, writer, report preference, plus the required real-SQL integration tests (the A87 claim; the migrations replaying from empty).
+- **B6 prepared, NOT run** (`1e3ec043`, session override): the integrator runs both lanes, the kill-switch drill, the integration tests and the smoke in ONE flock'd cycle — commands below. Playwright specs type-check (`npx tsc --noEmit` clean) and parse in both lanes (`npx playwright test --list`: 107 tests / 29 files).
+- **B7 done** (this commit): this section, the LEDGER rows, spec §13 A88–A89, the ADR 0030 half-B lines, HANDOFF-00/11/13 Post-hoc lines.
+- **B8 skipped** (session override: no PR). **B9 written only** (`## Launch runbook` below), never run.
+- **Base deviation** (CONTINUE §4.0 override 9 / session override): the prompt says "branch from main after half A merged"; half B is cut from half A's tip and merges with it into `feat/learning-loop` after B6. Nothing merges to `main`; staging and production were never touched.
+
+### Launch gate (spec §11.1) — status at the end of this session
+
+Git cannot show most of these; nothing here is inferred, and the owner's go-ahead was neither written nor simulated.
+
+| item | status |
+|---|---|
+| 1. half A merged; LEDGER row 14 `done (half A)`; 00–13/05b/06b latest rows fine | **OPEN.** Half A is not merged; row 14's latest state is `blocked` (the A7 loop_tutor re-record waits on the `gemini-2.5-pro` daily quota). The other packages' latest rows are `verified`/`reopened`. |
+| 2. CI green on `main` incl. every `learn-loop.spec.ts` test and the oracles | **OPEN.** Nothing is on `main`; B6 (local) has not run. |
+| 3. staging backfill + staging smoke | **OPEN** (owner). |
+| 3b. staging kill-switch drill | **OPEN** (owner). The local drill is in the B6 cycle. |
+| 4. cost guardrails | **OPEN.** A18 limits, A20 caps/ladder (invariants 23, 28) and A21 token columns are implemented; half B adds the kill-switch path's rate limit + budget check + tutor-call count. Not met: A15 "each tier passed the per-tier evals" (the A7 re-record), the PKG-13 budget-cap journey on this code (B6), the staging smoke's `llm_usage` rows, the owner's cost approval, and the staging proof that the `ai.budget_capped{scope: platform}` alert arrives (production value decided: `PLATFORM_DAILY_BUDGET_USD=5`, A39 (e)). |
+| 5. launch UI readiness (§11.3) merged | **Met on `feat/learning-loop`** (PKG-13 verified, `b6c0ed39`); not on `main`. |
+| 6. production pinned `LEARNING_LOOP_ENABLED=false`; §11.7 opening paragraph read | **OPEN** (owner). |
+| 7. the owner's explicit go-ahead | **OPEN.** Not given in this session. |
+
+Also for the owner at the gate (A45): `STUDENT_DAILY_GRADES` counts `llm_usage` rows, so the grader cap is blind if the launch config sets `EVENTS_LOGGING_ENABLED=false` (half B's tutor-call count covers the tutor, not the grader).
+
+### What changed
+
+- **Evidence-only rule** (spec §11.2). No code path moves a mastery score except graded evidence through `apply_graph_update`: the tutor mastery tool, the `updated_nodes` branch, the flat quiz deltas and their gate branches are gone. `inv_21` greps the retired names across `backend/` (outside `learning/`); the absence checks in tests read the names from `LEGACY_MASTERY_SYMBOLS` instead of spelling them.
+- **Quiz** (`routes/quiz.py::submit_quiz`): one `mc` Evidence per question, for every student and under the kill switch. `quiz_attempts.mastery_before/after` are the evidence span; `quiz.completed`, the attempt history and the submit response carry `p_delta`. Flashcards list and rate on FSRS for every student.
+- **Tiers**: `learning.bkt.tier_for` + `in_mastered_tier` + `is_weak`; `config.py`'s tier block deleted; `Learn.tsx::tierForScore`, `lib/graph/nodeStyle.ts::tierFor` and `e2e/graph.spec.ts::tierFor` use 0.95 / 0.3 / 0.1.
+- **Gate** (`learning/gate.py`): `return bool(config.LEARNING_LOOP_ENABLED)`, no DB import; `config.py` has the exact three lines of §7.
+- **Kill-switch path** (`routes/learn.py`): `start_session`, `/start-session/stream`, `/chat`, `/chat/stream`, `/action` carry `Depends(ai_budget.enforce_rate_limit)` and call `_kill_switch_budget(user_id)` after the loop delegation and before any agent run or stream — `ai_budget.check(user, "tutor", KILL_SWITCH_BUDGET_BAND)`; hard → `AIBudgetExceeded` (429); a pass counts one tutor call.
+- **Removed**: the learning-style onboarding step (and its reads/writes; `OnboardingBody.learning_style` is Optional and ignored); `end_session`'s three empty lists and their `SessionSummary.tsx` sections.
+- **`Learn()`**: `useLoopStatus` → `{status, retry}`; legacy only on 404/`{active: false}`; otherwise `loop-status-error` + `loop-status-retry`.
+- **E2E lanes**: `scripts/e2e-up.sh` exports nothing (fail-fast on a `backend/.env` line); `explore.sh` likewise; `e2e.yml` matrix `lane: [default, kill-switch]`; `frontend/e2e/support/lane.ts::killSwitchLane` (re-exported by `fixtures.ts`); `global-setup.ts` asserts the lane against `/status`; guards on `tutor.spec.ts`, `streaming.spec.ts`, the `shot-learn` recipe, every `learn-loop.spec.ts` journey; lane-aware `study-semester.spec.ts`, AskPanel (`quiz-integration`, `quiz-journeys`) and `upload.spec.ts` (kill lane: no check items drafted).
+- **Hermetic suite**: the `kill_switch` marker + autouse fixture (`tests/conftest.py`); marked modules listed in `fd003ed4`. The suite passes with `LEARNING_LOOP_ENABLED` unset AND with it `false`.
+- **`llm_usage.session_id`** (A89): migration `20260930042516_learning_llm_usage_session_id.sql`; `record_agent_usage(session_id=)`; the degrade-and-retry for a deploy ahead of the migration; the report prefers the row's session.
+
+### Symbols added
+
+- `backend/learning/bkt.py`: `in_mastered_tier(p)`, `is_weak(p)`.
+- `backend/routes/learn.py`: `KILL_SWITCH_BUDGET_BAND = "develop"` †, `_kill_switch_budget(user_id)`.
+- `backend/agents/usage.py::record_agent_usage(..., session_id=None)`; `backend/services/events_service.py::log_llm_usage(..., session_id=None)`, `_OPTIONAL_COLUMNS`, `_unknown_optional_columns`.
+- `backend/db/migrations/20260930042516_learning_llm_usage_session_id.sql`.
+- `backend/tests/conftest.py`: marker `kill_switch`, fixture `_kill_switch`.
+- Frontend: `components/learn/useLoopStatus.ts` → `LoopStatus`, `{status, retry}`; testids `loop-status-error`, `loop-status-retry` (`docs/frontend-testids.md`); `e2e/support/lane.ts::killSwitchLane`; `e2e/support/quiz.ts`: `BKT_L0`, `BKT_T`, `MC_G`, `MC_S`, `bktAfterCorrect`, `LOOP_TUTOR_REPLY`, `ASK_PANEL_REPLY`, `ASK_PANEL_REPLY_TAIL`, `expectAskReply`.
+- Tooling: `docs/superpowers/plans/learning-loop/tools/pkg14b-b6-cycle.sh`.
+- Tests (new modules): `test_cutover_tutor.py` 9, `test_quiz_evidence_only.py` 9, `test_cutover_removals.py` 22, `test_learning_llm_usage_session_id.py` 20; integration `test_posttest_claim_db.py` 10, `test_learning_migrations_replay_db.py` 6. `test_learning_gate.py` → 20 (`-k defaults_on` → 9).
+
+### Constants chosen
+
+- `KILL_SWITCH_BUDGET_BAND = "develop"` † (`routes/learn.py`; a band name, never a dollar figure): the kill-switch path has no concept band, so it takes the develop/profic allowance, as `check(…, "close")` does for a session with no novice concept.
+- `LOOP_STATUS_TIMEOUT_MS = 2_500` † stays (PKG-13); `LOOP_STATUS_RETRY_MS` is retired (no automatic retries after launch).
+- No new `learning/params.py` constant.
+
+### Deviations from spec
+
+- **Built before the §11.1 gate** (owner, 2026-09-29): no `blocked` STOP-gate row was appended; the gate's status is the table above.
+- **Base**: half A's tip, not `main` after half A merged (CONTINUE §4.0 override 9).
+- **`inv_11` semantics**: rewritten in place over the §7 parse table; the name is historical.
+- **`p_delta` rename**: also added to the submit response (the prompt's own test asserts it).
+- **Kill-switch budget**: `band="develop"` †; plus `count_tutor_call` on a passing check (A88) — the prompt named only the check.
+- **Tier predicate name**: `in_mastered_tier(p)`, because `bkt.is_mastered(p, n_strong_unassisted)` (PKG-01) exists.
+- **Half B adds one migration** (A89) against §11.7's "half B adds no migration"; the Rollback revert leaves the additive column.
+- **Modules the regression guard lists as unmodified that half B had to touch** (each pins build-phase behaviour §11.2 removes, or the new session kwarg): `test_learning_evidence_apply.py` (the `updated_nodes` legacy trace; `submit_quiz` moved to the sanctioned persisters), `test_learning_fsrs.py` (`UNGATED_FSRS_ROUTES = {"flashcards.py"}`, asserted non-stale), `test_learning_bkt.py` (`test_tier_for_is_not_the_legacy_tier` deleted), `test_learn_loop_routes.py` (a gate-table spy re-pointed at `db.connection.table`; a fake turn gains `session_id`), `test_learning_check_tool.py` and `test_learning_decisions.py` (the recorded-usage pins gain `session_id`).
+- **`test_documents_routes.py`** is marked `kill_switch` (the prompt's first option), not updated to the default.
+- **E2E**: the lane parse lives in `support/lane.ts` (re-exported by `fixtures.ts`), so `global-setup.ts` never imports a Playwright `test`; the global-setup probe is `/status` with a fresh `session_id` (the route needs one); the AskPanel reply is asserted per paragraph.
+- **Deleted tests**: B2's mastery-tool / `updated_nodes` tests, B3's flat-delta and gate-branch tests, B4's `test_tier_for_is_not_the_legacy_tier`, B5's five gate tests (`test_env_on_row_true_is_true`, `test_env_on_row_false_is_false`, `test_env_on_missing_row_is_false`, `test_env_on_missing_key_is_false`, `test_read_error_fails_closed`) and their route-entry, settings-flag and meta twins, B5b's `test_legacy_users_are_not_opted_in` — each named in its commit.
+- **`chat_tutor` kept for the kill switch** until the env-var-removal ticket (its `AgentTask`, `_DEFAULTS` entry and `E2E_TUTOR_REPLY` handler stay).
+
+### Known gaps
+
+- **BLOCKED — the `chat_tutor` re-record (B2).** The committed cassettes were recorded against the pre-B2 preamble (they contain `update_mastery_tool` calls, which the evaluators ignore); `baselines.json` dropped only the retired evaluator's key (every other value unchanged). **Resume** after the `gemini-2.5-pro` daily quota resets (midnight Pacific, ≈ 07:00 UTC), with the real key, spending about 16 runs:
+  1. `cd backend && git rm -q tests/evals/cassettes/chat_tutor/*.json`
+  2. `SAPLING_EVAL_MODE=record venv/bin/python tests/evals/chat_tutor.py`
+  3. `SAPLING_EVAL_MODE=replay SAPLING_EVAL_UPDATE_BASELINES=1 venv/bin/python tests/evals/chat_tutor.py` (chat_tutor only)
+  4. `SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/run_all.py` → 16/16 PASS; the other datasets' baselines must not move.
+  5. Commit cassettes + `baselines.json` together; if an evaluator drops, STOP and report (no bar is lowered).
+- **B6 not run** (owner consolidates E2E): the Playwright journeys, the oracles, the integration tests and the drill are unproven on this code until the integrator's cycle.
+- **The A7 loop_tutor re-record** (half A) is still blocked; §11.1 item 4 stays open.
+- **`LEARNING_LOOP_ENABLED` removal ticket** (it also folds the `chat_tutor` mode prompts into `loop_tutor`).
+- **Dead columns**: `user_profiles.learning_style`, `user_settings.learning_loop_beta`.
+- **The kill switch restores** no quiz/flashcard deltas, no old tier cuts and no tutor mastery recording (spec §11.6).
+- **`SaplingDeps.mastery_changes`** is kept (always empty): `services/chat_stream.py` and the chat wire shape read it.
+- **Stored tiers**: `graph_nodes.mastery_tier` rows written before half B keep the old cuts until the node's next write (owner question 2).
+- **Landing copy**: `frontend/src/lib/landing/companionContent.ts` (`WIKI_MASTERY_FORMULA`, `WIKI_MASTERY_MOVES`) still describes the retired flat model and the tutor's mastery range (owner question 3; copy is UI/UX's).
+- **In-memory state** (half A): `_PENDING_REVEALS` and `_FAILED_TURN_ANCHORS` — the half A fix round in flight persists the reveals; re-check after the merge. B9 keeps the multi-process precondition.
+- **Integration tests** are written against the post-test pose helpers as they stand at `585a6740`; if the half A fix round changes `_claim_pose` / `_settle_pose` (TTL, re-validation), re-point them in the merge.
+
+### Verify commands
+
+```
+cd backend && venv/bin/python -m pytest tests/ -q                                                → zero failures
+ls docs/decisions/*learning-loop-cutover*.md                                                      → 1 file
+grep -c "update_mastery_tool" backend/agents/tools/graph.py                                      → 0
+grep -c "MASTERY_DELTA_PER" backend/services/quiz_config.py                                      → 0
+grep -cE "^from db|table\(" backend/learning/gate.py                                             → 0
+cd backend && venv/bin/python -m pytest tests/test_learning_gate.py -q -k defaults_on            → 9 passed
+grep -c "export LEARNING_LOOP_ENABLED" scripts/e2e-up.sh                                          → 0
+```
+(The two E2E lanes are run in Task B6, not in this block.)
+
+Observed at the end of this session (no stack; hermetic override command; neither `SAPLING_MODEL_MODE` nor `SAPLING_FUNCTION_HANDLERS` set):
+
+- Backend: **8377 passed, 156 skipped, 0 failed** with `LEARNING_LOOP_ENABLED` unset, and the same with it `false` (N₀ at half A's tip: 8323 / 140; +16 skips are the new integration tests). Invariants **45 passed, 1 skipped** (`inv_10`). `ruff check .` clean.
+- `SAPLING_EVAL_MODE=replay tests/evals/run_all.py`: **16/16 PASS** (chat_tutor on the pre-B2 cassettes — see Known gaps).
+- Frontend: `npx tsc --noEmit` clean; `npx vitest run` **1262 passed, 2 skipped**; `npm run lint` exit 0 (warnings only, none new); `npx playwright test --list` 107 tests in both lanes.
+- Live spend this session: **$0** (no model call).
+
+### B6 — the integrator's cycle (not run here)
+
+One flock, one script, from the worktree root (Linux / Podman):
+
+```
+cd ~/Projects/sapling-wt-14b
+flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock \
+  bash docs/superpowers/plans/learning-loop/tools/pkg14b-b6-cycle.sh
+```
+
+(`FRONTEND_PORT=3100 E2E_FRONTEND_URL=http://localhost:3100` in front of `bash` if `:3000` is taken.) The script: `supabase stop --no-backup` (fresh volumes, so every migration replays from empty) → default lane with no `LEARNING_LOOP_ENABLED`: `make e2e-up` → `npx playwright test` → `python -m e2e_oracles` → `/status` = 200 → `RUN_INTEGRATION=1 pytest -m integration tests/integration/test_posttest_claim_db.py tests/integration/test_learning_migrations_replay_db.py tests/integration/test_migrations_ledger.py` → `make e2e-down` → kill-switch lane with `LEARNING_LOOP_ENABLED=false` exported for the stack AND Playwright: `make e2e-up` → Playwright → oracles → `/status` = 404 → `make e2e-down`. It exports `SAPLING_MODEL_MODE=function` and `SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e` for the stack, strips them for pytest, and ends with the gate line:
+
+```
+default: playwright=0 oracles=0 integration=0 drill=0  kill-switch: playwright=0 oracles=0 drill=0
+```
+
+Equivalent inline (the prompt's B6 form plus the integration tests):
+
+```
+flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock bash -c '
+  export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
+  supabase stop --no-backup >/dev/null 2>&1 || true
+  unset LEARNING_LOOP_ENABLED
+  make e2e-up && (cd frontend && npx playwright test); s1=$?
+  (cd backend && venv/bin/python -m e2e_oracles); o1=$?
+  (cd backend && env -u SAPLING_MODEL_MODE -u SAPLING_FUNCTION_HANDLERS RUN_INTEGRATION=1 venv/bin/python -m pytest -m integration -q -p no:cacheprovider tests/integration/test_posttest_claim_db.py tests/integration/test_learning_migrations_replay_db.py tests/integration/test_migrations_ledger.py); i1=$?
+  make e2e-down
+  export LEARNING_LOOP_ENABLED=false
+  make e2e-up && (cd frontend && npx playwright test); s2=$?
+  (cd backend && venv/bin/python -m e2e_oracles); o2=$?
+  make e2e-down
+  echo "default: playwright=$s1 oracles=$o1 integration=$i1  kill-switch: playwright=$s2 oracles=$o2"
+  exit $((s1|o1|i1|s2|o2))'
+```
+
+**What to watch** (first run of these journeys on this code):
+
+- **Default lane, legacy-only tests skipped**: exactly `tutor.spec.ts`, `streaming.spec.ts`, the `shot-learn` gallery recipe and "kill switch restores the legacy Learn screen". Kill-switch lane: the four `learn-loop.spec.ts` loop journeys and "every student gets the loop by default" skipped.
+- **Quiz** (both lanes): `p_after` 0.978259 (`toBeCloseTo(…, 5)`), three `evidence`/`mc` rows with `evidence_seq` order, `times_studied` 3, the results line's "before" at 35 % (the BKT prior — not the seeded 25 %), the Tree row `+63% mastery`. A mismatch here means HANDOFF-03's prior rule or the per-question evidence changed.
+- **AskPanel default lane**: `quiz-integration` / `quiz-journeys` expect the loop opener's `E2E_LOOP_TUTOR_REPLY` paragraphs, and the follow-up counted by its last paragraph ("Which input should stop the recursion?"). If the loop opener serves something else (a probe item, a no-items template) this is the first place it shows.
+- **global-setup** throws if the stack and Playwright disagree about the lane (`/status` for `rich-user-active` with a fresh `session_id`: 404 vs `{active: true}`) — check `backend/.env` has no `LEARNING_LOOP_ENABLED` line (e2e-up exits 2 on one).
+- **Onboarding** has five steps; `study-semester` default lane expects `review-due-panel` beside the deck; `upload.spec` kill lane expects zero `check_items` for the uploaded doc.
+- **Oracles in the kill-switch lane**: the course-context refresh runs the legacy prose regime (`course_summary` handler is registered); `logscan` must stay clean with its `ALLOWLIST` untouched.
+- **Integration**: `test_learning_migrations_replay_db.py` expects the fresh-volume stack (the ledger order of the three PKG-14 migrations); `test_posttest_claim_db.py` proves the PostgREST `or=(claim.is.null,claimed_at.lt.…)` claim, including 8 concurrent submitters → one winner.
+- **Known pre-existing flake**: `e2e/gradebook.spec.ts:35` (fixed on main by #691).
+- After the half A re-review fixes merge (`git merge origin/feat/learning-loop-14a-eval-ladder`), re-run this whole cycle.
+
+### Open questions for the series owner
+
+1. **The launch gate** (above): items 1, 2, 3, 3b, 4, 6 and 7 are open; only you can close 3–7, and item 7 is your written go-ahead.
+2. **Stored tiers**: re-derive `graph_nodes.mastery_tier` once for rows written under the old cuts (an idempotent data migration from `mastery_score`), or let each node update on its next write? Until then the Tree can label a 0.8 node "mastered" (old cut) while a fresh 0.8 node reads "learning".
+3. **Landing copy** (`companionContent.ts` `WIKI_MASTERY_*`) still explains the flat quiz deltas and the tutor's mastery range — a UI/UX copy change.
+4. **A45**: will the launch config ever set `EVENTS_LOGGING_ENABLED=false`? The grader cap is blind then.
+5. The `chat_tutor` re-record and the half A A7 re-record both wait on the `gemini-2.5-pro` quota — run them in the same window?
+6. Carried from the prompt: the first `loop_arm` experiment (the variant-B gate, owner-chosen); whether `LEARNING_LOOP_ENABLED` is removed next sprint; whether earnest-revise gets a signal; whether stored `messages.graph_update_json` `updated_nodes` keys need a read-side migration (they do not today — `end_session` and `quiz_signals` only read names).
+
+### Post-hoc changes
+
+(Appended by later packages. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+
+## Launch runbook
+
+Owner-run (spec §11.7; PKG-14 Task B9). A build session writes it and never runs any step: no deployed env var, no `make promote`, no staging or production backfill, no revert.
+
+### Preconditions
+
+Every line is green on the half B merge commit.
+
+```
+cd backend && venv/bin/python -m pytest tests/ -q                                                → zero failures
+ls docs/decisions/*learning-loop-cutover*.md                                                      → 1 file
+grep -c "update_mastery_tool" backend/agents/tools/graph.py                                      → 0
+grep -c "MASTERY_DELTA_PER" backend/services/quiz_config.py                                      → 0
+grep -cE "^from db|table\(" backend/learning/gate.py                                             → 0
+cd backend && venv/bin/python -m pytest tests/test_learning_gate.py -q -k defaults_on            → 9 passed
+grep -c "export LEARNING_LOOP_ENABLED" scripts/e2e-up.sh                                          → 0
+```
+(The two E2E lanes are run in Task B6, not in this block.)
+
+Also before step 1 (half A preconditions, kept):
+
+- [ ] **One backend process until the in-memory maps move to the database.** `_PENDING_REVEALS` (the openers' pending A86 reveals) and `_FAILED_TURN_ANCHORS` (the A85 failed-turn anchors) live in process memory (bounded by `LOOP_PENDING_REVEALS_MAX`). Before production runs more than one backend process or replica, both must move to the database (`grep -n "_PENDING_REVEALS\|_FAILED_TURN_ANCHORS" backend/routes/learn_loop.py`; the half A fix round in flight persists the reveals — check what is left after it merges). The post-test claim is already in the database (A87, `posttest_poses`).
+- [ ] **Migrations before code** on each environment (A89): `llm_usage.session_id` is additive; code ahead of it degrades (drops the column and retries), but run the migrations first anyway — `dotenv -f .env.staging run -- python -m db.migrate` before the merge (#651: `migrate-staging.yml` races the deploy).
+
+§11.7, verbatim:
+
+Merging half B to `main` launches STAGING (`main` = staging). The first `make promote` after that merge — step 6 below, or ANY unrelated promote — carries half B to production. The production pin (`LEARNING_LOOP_ENABLED=false`) turns off only what the gate controls: the loop UI and the `/api/learn/loop/*` routes. It does NOT hold back half B's ungated changes, which reach every production student with that promote: quiz and flashcards become evidence-only (no per-item mastery deltas), the tier cuts become 0.10/0.30/0.95 on every graph and Learn screen, the legacy tutor — the only tutor while pinned — records no mastery, the learning-style onboarding step disappears, and the legacy tutor routes gain the budget check and rate limit. The kill switch cannot undo those (§11.6); only the Rollback below can. Therefore: merge half B only when steps 3–10 can run in one owner-attended window, and run NO unrelated `make promote` between the half B merge and step 8.
+1. **Pin production off; set the platform alert.** Before the half B PR merges, the owner sets `LEARNING_LOOP_ENABLED=false` on the production host and the production `PLATFORM_DAILY_BUDGET_USD` chosen at §11.1 item 4, and confirms both in the session.
+2. **Merge half B** (only inside the window above). Staging now runs the loop for everyone (staging env `true` or unset).
+3. **Staging backfill, then staging smoke.** Re-run the §11.1 item 3 staging backfill (dry run first; the `Project:` line is the staging ref; idempotent — covers uploads since). Then, on an account with NO `learning_loop_beta` and pre-existing legacy sessions and graph: `/api/learn/loop/status` → `{"active": true}`; `/learn` shows `loop-phase`; probe → plan → teach → check (the pose appears; `/check/answer` grades) → close completes; clicking a pre-launch "Where you left off" card on the Dashboard shows its transcript read-only (`loop-readonly-transcript`) with no `/probe/*` call; `/study` shows the DueQueue panel; the session's `llm_usage` rows carry tier slot names and token columns.
+4. **Kill-switch drill on staging — go/no-go before any production step.** Set staging `LEARNING_LOOP_ENABLED=false` and redeploy → `/api/learn/loop/status` 404; `/learn` shows `tutor-topic-picker` and one legacy tutor turn completes; `/study` hides `review-due-panel`; an upload drafts no `check_items` rows. Remove the override, redeploy, `/status` active again. Any failure → STOP: no promote; fix forward on `main` or take the Rollback.
+5. **Abort criteria agreed.** The owner writes them into the session before step 6 (defaults below, under Rollback).
+6. **`make promote`** (still pinned). Production now runs half B code with the loop off — and half B's ungated changes are live for every production student (intro). The abort-criteria watch starts now. Production gets PKG-04's `check_items` migration only here, so the production backfill must follow this step.
+7. **Production check-items backfill.** First confirm, by name only (never print values), that the production env file the promotion runbook uses (`.env.production`) defines `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ENCRYPTION_KEY`, `GEMINI_API_KEY` and `SAPLING_MODEL_MODE=real` — the script fills anything missing from `.env.staging` and `backend/.env`, which would encrypt with the wrong key or write to the wrong project. Then `cd backend && dotenv -f .env.production run -- env LEARNING_LOOP_ENABLED=true venv/bin/python scripts/backfill_check_items.py --all-courses --project <production ref> --dry-run` and confirm the printed `Project:` line is the production ref (the script refuses to run when `--project` differs from the project `SUPABASE_URL` points at); then the same command without `--dry-run`; the owner reviews the `coverage <course_id> <with_items>/<concepts>` lines (A23).
+8. **Unpin:** delete the production variable (or set it to `true`; under the §7 parse an empty value also means ON) and redeploy; `make promote ARGS="--verify-only"`.
+9. **Re-run the step-7 backfill** (idempotent; covers uploads made between steps 7 and 8).
+10. **Production smoke on a non-staff account:** `/api/learn/loop/status` → `{"active": true}`; one probe item answered; one check posed and graded; one review served; `llm_usage` rows for the tiers used.
+11. **Keep coverage complete.** The owner schedules the idempotent `--all-courses` backfill as a recurring production job (nightly, beside `scripts/derive_zpd_metrics.py`; it runs on the flex tier with `user_id=None`, and a covered concept costs nothing). The upload hook drafts at most `CHECK_ITEM_MAX_CONCEPTS_PER_DOC` concepts per upload and nothing else adds items, so without it coverage erodes; PKG-14's metrics REPORT prints per-course coverage so erosion is visible.
+12. Append `Launched: <date>` to the cutover ADR.
+
+**Rollback (the owner decides; the session never does).**
+- Abort criteria (defaults; the owner may tighten them at step 5), watched for 7 days from step 6: the 5xx rate on `/api/learn/*` or `/api/learn/loop/*` above 2× its pre-launch 7-day baseline for 15 minutes; an `ai.budget_capped{scope: platform}` alert; measured `llm_usage` cost per active student-day above 2× the target (the target is $0.36/student-month ≈ $0.012/day) for a full UTC day; any `zpd.leak` event or an e2e-oracle data-integrity finding on production data.
+- Loop only (after step 8): `LEARNING_LOOP_ENABLED=false` + redeploy — the kill switch (§11.6).
+- Everything half B changed (after step 6; this is the only way back from the ungated changes): `git revert -m 1 <half B merge sha>` on `main` (staging), verify staging, then `make promote`. The revert restores the build-phase gate (env AND `learning_loop_beta`), so production is off whatever the variable says. Evidence rows, `learner_state` and the backfilled `check_items` stay (append-only; the legacy path ignores them; `graph_nodes.mastery_score` keeps the BKT values written meanwhile, and legacy deltas resume from them). Half B adds no migration, so none is reverted.
+
+Owner amendments in force for these steps (spec §13 A39 (e), A89; PKG-14 "A38 amendments" 3):
+
+- [ ] **Step 1, platform budget:** production `PLATFORM_DAILY_BUDGET_USD=5` (owner decision; replaces the "suggested ≈ 3×" wording). BEFORE setting it, prove the alert on staging: set a deliberately low staging value (e.g. `0.01`), drive one tutor turn, confirm the `ai.budget_capped{scope: platform}` alert reaches you, then restore the staging value.
+- [ ] **Rollback:** "Half B adds no migration" no longer holds — `20260930042516_learning_llm_usage_session_id.sql` is half B's. A revert of the half B merge leaves the column (additive and nullable; the build-phase code never names it); nothing to revert.
+
+Owner checklist: - [ ] 1 · - [ ] 2 · - [ ] 3 · - [ ] 4 (go/no-go) · - [ ] 5 · - [ ] 6 · - [ ] 7 · - [ ] 8 · - [ ] 9 · - [ ] 10 · - [ ] 11 · - [ ] 12
