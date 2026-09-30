@@ -225,9 +225,11 @@ def test_kill_switch_path_counts_one_tutor_call_per_model_request(monkeypatch, l
 def test_default_path_delegates_before_the_legacy_budget_check(monkeypatch, legacy_client, legacy_chat_body):
     """Default ON: the legacy handler delegates to the loop, and the loop's own
     budget code runs — the legacy develop-band check is the kill-switch path's."""
+    import config
     from routes import learn
     from services import ai_budget
 
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)  # the code default, pinned
     seen = []
     monkeypatch.setattr(ai_budget, "check", lambda *a, **k: seen.append(a) or _hard())
 
