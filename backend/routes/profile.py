@@ -41,7 +41,7 @@ _USERS_COLS = "id,email,streak_count,created_at"
 # Profile columns live on `user_profiles` (1:1 with users). 🔒 = encrypted at rest.
 _PROFILE_COLS = (
     "user_id,username,name,first_name,last_name,avatar_url,"
-    "year,majors,minors,bio,location,website,learning_style"
+    "year,majors,minors,bio,location,website"
 )
 _PROFILE_ENCRYPTED = ("name", "first_name", "last_name", "bio", "location")
 

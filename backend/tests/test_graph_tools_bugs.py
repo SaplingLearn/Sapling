@@ -22,6 +22,11 @@ from agents.tools.graph import (
     GraphUpdateInput,
     apply_graph_update_tool,
 )
+import pytest
+
+# Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
+# upload hook's flag-off branch), so it runs as an explicit kill-switch test.
+pytestmark = pytest.mark.kill_switch
 
 
 def _run(coro):

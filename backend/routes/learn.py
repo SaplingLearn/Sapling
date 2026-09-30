@@ -5,7 +5,7 @@ import uuid
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
@@ -66,6 +66,26 @@ def _loop_delegate(name: str):
     module's helpers, so a top-level import would be circular."""
     from routes import learn_loop
     return getattr(learn_loop, name)
+
+
+#: PKG-14b (spec §11.2, A20 †): the kill-switch path has no concept band, so it
+#: takes the develop/profic allowance — the same one `check(…, "close")` uses
+#: for a session with no novice-band concept. A band NAME, never a dollar figure.
+KILL_SWITCH_BUDGET_BAND = "develop"
+
+
+def _kill_switch_budget(user_id: str) -> None:
+    """The kill-switch path's cost bound (spec §11.2, A20; PKG-14b). Called by every
+    legacy model-calling handler AFTER the loop delegation and BEFORE any agent runs
+    or any stream opens: a hard decision is the §3.5 429 (`AIBudgetExceeded`, never a
+    mid-stream event); soft changes nothing (the legacy path has no tiers). A passing
+    check counts one tutor call (A39: the daily call-count cap holds even when
+    `llm_usage` cost reads wrong or EVENTS_LOGGING_ENABLED=false). It never creates or
+    biases evidence — the legacy tutor records none."""
+    decision = ai_budget.check(user_id, "tutor", KILL_SWITCH_BUDGET_BAND)
+    if decision.level == "hard":
+        raise ai_budget.AIBudgetExceeded(decision)
+    ai_budget.count_tutor_call(user_id)
 
 
 def _resolve_model_pref(model_pref: str | None):
@@ -173,9 +193,9 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
 
     `override(tools=[], toolsets=[])` is what makes that a guarantee rather
     than a hope: the continuation is handed NO tools, so it cannot write even
-    if the model tries. Without it the model could call `update_mastery_tool`
-    again and reintroduce the exact double-apply the writes-guard exists to
-    prevent — a re-run by a quieter name.
+    if the model tries. Without it the model could call a graph writer
+    (`apply_graph_update_tool`) again and reintroduce the exact double-apply
+    the writes-guard exists to prevent — a re-run by a quieter name.
 
     It has to be `override`, NOT `run(toolsets=[])`. A run-level `toolsets`
     ADDS to the agent's own tools rather than replacing them, so
@@ -633,15 +653,17 @@ async def _start_session_agent(
     }
 
 
-@router.post("/start-session")
+@router.post("/start-session", dependencies=[Depends(ai_budget.enforce_rate_limit)])
 async def start_session(body: StartSessionBody, request: Request):
     require_self(body.user_id, request)
-    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         # the loop route's rate-limit dependency does not run on a delegated call
         ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("start_session")(body, request)
+    _kill_switch_budget(body.user_id)
     result = await _agent_turn_or_http_error(
         _start_session_agent(body), what="start-session agent"
     )
@@ -762,11 +784,11 @@ async def _chat_via_agent(
 
     Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
     Graph changes are persisted in-band during the agent run by
-    `apply_graph_update_tool` / `update_mastery_tool` (registered on
-    chat_tutor); the tools also accumulate their payloads on `deps` so the
-    route can echo `graph_update` (for graph_update_json / concepts_covered)
-    and the real `mastery_changes` deltas back to the client. Both are
-    empty when nothing changed this turn.
+    `apply_graph_update_tool` (registered on chat_tutor); the tool also
+    accumulates its payload on `deps` so the route can echo `graph_update`
+    (for graph_update_json / concepts_covered). `mastery_changes` is always
+    empty since PKG-14b (no tutor tool moves mastery; spec §11.6) and stays
+    in the wire shape.
 
     `use_shared_context=False` flips the model into "no class-aggregate"
     mode by appending a constraint instruction to the user message —
@@ -855,8 +877,7 @@ async def _chat_via_agent(
     return {
         "reply": reply,
         "graph_update": merged_graph_update,
-        # Real before/after deltas accumulated by update_mastery_tool.
-        # Empty when no mastery moved this turn.
+        # Always empty since PKG-14b (update_mastery_tool is gone, spec §11.6).
         "mastery_changes": deps.mastery_changes,
     }
 
@@ -929,22 +950,24 @@ async def _chat_turn_json(
     return response
 
 
-@router.post("/chat")
+@router.post("/chat", dependencies=[Depends(ai_budget.enforce_rate_limit)])
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
-    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         # the loop route's rate-limit dependency does not run on a delegated call
         ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("chat")(body, request)
+    _kill_switch_budget(body.user_id)
     _consume_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _chat_turn_json(body, request), what="chat agent"
     )
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", dependencies=[Depends(ai_budget.enforce_rate_limit)])
 async def chat_stream(body: ChatBody, request: Request):
     """SSE token-streaming chat turn (#70) with live graph deltas (#74).
 
@@ -955,12 +978,14 @@ async def chat_stream(body: ChatBody, request: Request):
     (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
     """
     require_self(body.user_id, request)
-    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         # the loop route's rate-limit dependency does not run on a delegated call
         ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("chat_stream")(body, request)
+    _kill_switch_budget(body.user_id)
     _consume_pending(body.session_id, body.user_id)
 
     request_id = (
@@ -1048,7 +1073,7 @@ async def chat_stream(body: ChatBody, request: Request):
     )
 
 
-@router.post("/start-session/stream")
+@router.post("/start-session/stream", dependencies=[Depends(ai_budget.enforce_rate_limit)])
 async def start_session_stream(body: StartSessionBody, request: Request):
     """Streamed session opener — runs chat_tutor_agent and streams the
     greeting (#152/#151).
@@ -1070,12 +1095,14 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     a fresh session.
     """
     require_self(body.user_id, request)
-    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         # the loop route's rate-limit dependency does not run on a delegated call
         ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("start_session_stream")(body, request)
+    _kill_switch_budget(body.user_id)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
@@ -1170,7 +1197,8 @@ def end_session(body: EndSessionBody, request: Request):
         require_self(body.user_id, request)
     else:
         body.user_id = get_session_user_id(request)
-    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6). No model runs here, so no budget check.
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         loop = _loop_delegate("end_session")(body, request)
@@ -1181,12 +1209,10 @@ def end_session(body: EndSessionBody, request: Request):
         if body.user_id and pending["user_id"] != body.user_id:
             raise HTTPException(status_code=403, detail="Session user mismatch")
         PENDING_SESSIONS.pop(body.session_id, None)
+        # PKG-14b (spec §11.2): the three always-empty lists are gone.
         empty = {
             "concepts_covered": [],
-            "mastery_changes": [],
-            "new_connections": [],
             "time_spent_minutes": 0,
-            "recommended_next": [],
         }
         return {"summary": empty}
 
@@ -1243,12 +1269,10 @@ def end_session(body: EndSessionBody, request: Request):
             except Exception:
                 pass
 
+    # PKG-14b (spec §11.2): the three always-empty lists are gone.
     summary = {
         "concepts_covered": list(concepts_covered),
-        "mastery_changes": [],
-        "new_connections": [],
         "time_spent_minutes": elapsed_minutes,
-        "recommended_next": [],
     }
 
     # #117: session.ended for real (materialized) sessions only — the pending
@@ -1514,15 +1538,17 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     return {"reply": reply, "graph_update": graph_update}
 
 
-@router.post("/action")
+@router.post("/action", dependencies=[Depends(ai_budget.enforce_rate_limit)])
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
-    # Learning loop (spec §7): delegate when the gate is true; byte-identical below when it is false.
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         # the loop route's rate-limit dependency does not run on a delegated call
         ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("action")(body, request)
+    _kill_switch_budget(body.user_id)
     _ensure_session_ready(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"

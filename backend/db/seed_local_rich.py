@@ -212,13 +212,11 @@ _USERS = [
         "name": "Rich Active", "first_name": "Rich", "last_name": "Active",
         "username": "rich-active", "year": "Junior",
         "majors": ["Computer Science"], "minors": ["Mathematics"],
-        "learning_style": "visual",
     }),
     (USER_SECOND, "rich.second@richlocal.test", True, True, 5, {
         "name": "Sam Second", "first_name": "Sam", "last_name": "Second",
         "username": "rich-second", "year": "Senior",
         "majors": ["Biology"], "minors": [],
-        "learning_style": "kinesthetic",
     }),
     (USER_NEW, "rich.new@richlocal.test", False, True, 0, {
         "name": "Newt Newman",
@@ -230,25 +228,22 @@ _USERS = [
         "name": "Lou Loop", "first_name": "Lou", "last_name": "Loop",
         "username": "rich-loop", "year": "Sophomore",
         "majors": ["Computer Science"], "minors": [],
-        "learning_style": "visual",
     }),
     (USER_CAPPED, "rich.capped@richlocal.test", True, True, 1, {
         "name": "Casey Cap", "first_name": "Casey", "last_name": "Cap",
         "username": "rich-capped", "year": "Freshman",
         "majors": ["Computer Science"], "minors": [],
-        "learning_style": "visual",
     }),
     (USER_ADMIN, "rich.admin@richlocal.test", True, True, 30, {
         "name": "Ada Admin", "first_name": "Ada", "last_name": "Admin",
         "username": "rich-admin", "year": "Staff",
         "majors": [], "minors": [],
-        "learning_style": "reading_writing",
     }),
 ]
 
 # Profile fields that are 🔒 (column-encrypted) vs. plaintext.
 _PROFILE_ENCRYPTED_FIELDS = ("name", "first_name", "last_name")
-_PROFILE_PLAIN_FIELDS = ("username", "year", "majors", "minors", "learning_style")
+_PROFILE_PLAIN_FIELDS = ("username", "year", "majors", "minors")  # PKG-14b: no learning_style
 
 
 def seed_users() -> None:

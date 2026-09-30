@@ -282,7 +282,7 @@ app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_
 
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(learn.router,       prefix="/api/learn")
-# Learning loop (PKG-07): 404 unless learning_loop_active (build phase: env + staff/QA toggle, spec §7).
+# Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch).
 app.include_router(learn_loop.router, prefix="/api/learn/loop")
 app.include_router(quiz.router,        prefix="/api/quiz")
 app.include_router(calendar.router,    prefix="/api/calendar")

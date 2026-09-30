@@ -448,7 +448,10 @@ class OnboardingBody(BaseModel):
     majors: list[str] = Field(min_length=1)
     minors: list[str] = []
     course_ids: list[str] = Field(min_length=1)  # abstract catalog course ids; enroll resolves each to a current-term offering
-    learning_style: str
+    # PKG-14b (spec §11.2): the learning-style step is gone for everyone; an older
+    # client that still sends the field is accepted and the value ignored
+    # (user_profiles.learning_style stays, dead — ADR 0030).
+    learning_style: Optional[str] = None
 
 
 # ── Profile & Settings ───────────────────────────────────────────────────────

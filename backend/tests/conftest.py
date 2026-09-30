@@ -45,6 +45,21 @@ def pytest_configure(config):
         "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
         "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
     )
+    config.addinivalue_line(
+        "markers",
+        "kill_switch: legacy /api/learn path under LEARNING_LOOP_ENABLED=false (spec §11.5)",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _kill_switch(request, monkeypatch):
+    """Spec §11.5 (PKG-14b): tests marked kill_switch drive the legacy /api/learn/*
+    path — the loop is the default for everyone after launch, so a module that
+    exercises the legacy handlers pins the kill switch explicitly."""
+    if request.node.get_closest_marker("kill_switch"):
+        import config
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)

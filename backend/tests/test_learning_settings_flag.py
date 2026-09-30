@@ -135,13 +135,15 @@ def test_models_have_no_learning_loop_beta_field():
     assert FLAG not in SettingsResponse.model_fields
 
 
-def test_gate_fails_closed_when_the_column_is_missing(monkeypatch, caplog):
-    """Code deployed before the migration: PostgREST answers the gate's select
-    with 400 / 42703. Through the real db.connection path (not a stub table)
-    the gate returns False, raises nothing, and logs the failure."""
+def test_gate_never_reads_the_column(monkeypatch):
+    """PKG-14b (spec §7 "After launch"): the retired toggle is never read, so
+    code deployed before (or after) the column's migration behaves the same —
+    even with PostgREST answering 400 / 42703 for the column, the gate is ON
+    and db.connection is never reached. (Replaces the build-phase
+    test_gate_fails_closed_when_the_column_is_missing.)"""
     import db.connection as dbconn
 
-    gate = reload_gate(monkeypatch, "true")
+    gate = reload_gate(monkeypatch, None)
 
     def missing_column(url, **kwargs):
         return httpx.Response(
@@ -151,7 +153,5 @@ def test_gate_fails_closed_when_the_column_is_missing(monkeypatch, caplog):
         )
 
     dbconn._client.get.side_effect = missing_column
-    with caplog.at_level("WARNING"):
-        assert gate.learning_loop_active("user_andres") is False
-    assert dbconn._client.get.called, "the gate never reached db.connection"
-    assert any("learning_loop_active" in r.getMessage() for r in caplog.records)
+    assert gate.learning_loop_active("user_andres") is True
+    assert not dbconn._client.get.called, "the post-launch gate reached db.connection"

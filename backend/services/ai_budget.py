@@ -352,7 +352,8 @@ def _as_count(value: object) -> int:
 
 def count_tutor_call(user_id: str) -> int:
     """Count one tutor model call for the student today (UTC) and return the new count. PKG-07
-    calls it once per tutor run; nothing else does. The store increment is one atomic statement
+    calls it once per tutor run, and PKG-14b's kill-switch path (routes/learn.py::
+    _kill_switch_budget) once per legacy model request; nothing else does. The store increment is one atomic statement
     (cross-worker); if it fails, the in-process counter still counts (one WARNING), so the cap
     is never blind. Never raises for a store failure; never creates or biases evidence."""
     if not user_id:

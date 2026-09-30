@@ -39,48 +39,51 @@ def _leave_config_and_gate_as_found():
 
 
 @pytest.fixture
-def dotenv_turns_loop_on(monkeypatch):
-    """Stands in for a backend/.env that holds LEARNING_LOOP_ENABLED=true.
+def dotenv_turns_loop_off(monkeypatch):
+    """Stands in for a backend/.env that holds LEARNING_LOOP_ENABLED=false —
+    post-launch (PKG-14b) the dangerous direction: the default is ON, so a
+    .env that refills the variable would silently turn an "unset" case off.
     Like load_dotenv's default (override=False), it only fills a missing var."""
 
     def fake_load_dotenv(*args, **kwargs):
         if "LEARNING_LOOP_ENABLED" not in os.environ:
-            monkeypatch.setenv("LEARNING_LOOP_ENABLED", "true")
+            monkeypatch.setenv("LEARNING_LOOP_ENABLED", "false")
         return True
 
     monkeypatch.setattr(dotenv, "load_dotenv", fake_load_dotenv)
 
 
-def test_gate_reload_ignores_a_dotenv_that_turns_the_loop_on(monkeypatch, dotenv_turns_loop_on):
+def test_gate_reload_ignores_a_dotenv_that_turns_the_loop_off(monkeypatch, dotenv_turns_loop_off):
+    """(Formerly ..._turns_the_loop_on: the build-phase default was OFF.)"""
     gate = gate_tests._reload(monkeypatch, None)
-    assert gate.config.LEARNING_LOOP_ENABLED is False
+    assert gate.config.LEARNING_LOOP_ENABLED is True
 
 
-def test_inv_11_holds_when_a_dotenv_turns_the_loop_on(dotenv_turns_loop_on):
+def test_inv_11_holds_when_a_dotenv_turns_the_loop_off(dotenv_turns_loop_off):
     with pytest.MonkeyPatch.context() as mp:
-        inv.test_inv_11_gate_false_when_env_unset(mp)
+        inv.test_inv_11_gate_false_when_env_unset(mp, None, True)
 
 
 def test_gate_reload_restores_the_flag_afterwards(monkeypatch):
     import config
 
     monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
-    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
-    with pytest.MonkeyPatch.context() as mp:
-        gate_tests._reload(mp, "true")
-    assert config.LEARNING_LOOP_ENABLED is False, "a 'true' case left the flag ON"
-
-
-def test_inv_11_restores_the_flag_afterwards(monkeypatch):
-    """A lane that runs with LEARNING_LOOP_ENABLED=true must still see True
-    in every test that runs after inv_11."""
-    import config
-
-    monkeypatch.setenv("LEARNING_LOOP_ENABLED", "true")
     monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", True)
     with pytest.MonkeyPatch.context() as mp:
-        inv.test_inv_11_gate_false_when_env_unset(mp)
-    assert config.LEARNING_LOOP_ENABLED is True, "inv_11 left the flag OFF"
+        gate_tests._reload(mp, "false")
+    assert config.LEARNING_LOOP_ENABLED is True, "a 'false' case left the flag OFF"
+
+
+@pytest.mark.parametrize("raw,expected", [(" False ", False), ("no", False), (None, True)])
+def test_inv_11_restores_the_flag_afterwards(monkeypatch, raw, expected):
+    """Whatever case inv_11 last ran, every later test sees the flag it found."""
+    import config
+
+    monkeypatch.delenv("LEARNING_LOOP_ENABLED", raising=False)
+    monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", not expected)
+    with pytest.MonkeyPatch.context() as mp:
+        inv.test_inv_11_gate_false_when_env_unset(mp, raw, expected)
+    assert config.LEARNING_LOOP_ENABLED is (not expected), "inv_11 leaked its case's flag"
 
 
 def _learning_pkg(tmp_path, **files):

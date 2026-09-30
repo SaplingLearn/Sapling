@@ -2824,7 +2824,9 @@ def test_the_real_gate_reads_nothing_on_the_legacy_path_with_the_flag_unset(monk
 
     turn = {"reply": "legacy", "graph_update": {}, "mastery_changes": []}
     with (
-        patch("learning.gate.table", side_effect=factory),
+        # PKG-14b: the post-launch gate imports no table at all; spy on the
+        # one DB entry point instead (the assertion below is unchanged).
+        patch("db.connection.table", side_effect=factory),
         patch(
             "routes.learn.table", side_effect=lambda n: MagicMock(select=MagicMock(return_value=[]))
         ),

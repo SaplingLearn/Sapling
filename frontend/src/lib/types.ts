@@ -66,10 +66,7 @@ export interface ChatResponse {
 
 export interface SessionSummary {
   concepts_covered: string[];
-  mastery_changes: MasteryChange[];
-  new_connections: { source: string; target: string }[];
   time_spent_minutes: number;
-  recommended_next: string[];
 }
 
 export interface QuizQuestion {

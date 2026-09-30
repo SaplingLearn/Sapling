@@ -153,7 +153,6 @@ def seed_user() -> None:
             "year": "Sophomore",
             "majors": ["Computer Science"],
             "minors": ["Mathematics"],
-            "learning_style": "visual",
         },
         on_conflict="user_id",
     )

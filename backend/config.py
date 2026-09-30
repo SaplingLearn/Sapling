@@ -40,9 +40,11 @@ ALLOWED_EMAIL_DOMAINS = [
     if d.strip()
 ]
 
-# Learning loop series (docs/superpowers/specs/2026-09-26-learning-loop-design.md §7).
-# Only "true" (any case) enables; everything else, including unset, is off.
-LEARNING_LOOP_ENABLED = os.getenv("LEARNING_LOOP_ENABLED", "false").strip().lower() == "true"
+# Learning loop series (docs/superpowers/specs/2026-09-26-learning-loop-design.md §7,
+# post-launch parse — PKG-14b). The loop is the default for every student.
+_raw = os.getenv("LEARNING_LOOP_ENABLED", "").strip().lower()
+# Kill switch (spec §13 A14): any falsy spelling turns the loop off; unset or empty means ON.
+LEARNING_LOOP_ENABLED = _raw not in {"false", "0", "off", "no"}
 # Spec §13 A5: every GATE_* seconds constant is scaled by this factor (production never
 # sets it; the E2E lane sets 0.01 so hint gates open in seconds). learning.params stays
 # config-free (invariant 2), so routes/learn_loop.py reads it here and passes

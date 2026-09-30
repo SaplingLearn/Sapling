@@ -329,11 +329,24 @@ export function removeInterruptedTurn(
 
 export function Learn() {
   const { userId, userReady } = useUser();
-  // Learning loop (PKG-13): one GET decides the tree — the loop status probe is
-  // the only input (never learning_loop_beta; the server gate decides, spec §7).
-  // null → the same fallback the legacy Suspense shows; false / 404 / error → legacy.
-  const loop = useLoopStatus(userId, userReady);
+  // Learning loop (PKG-13; post-launch PKG-14b, spec §11.2): one GET decides the
+  // tree — the loop status probe is the only input (never learning_loop_beta; the
+  // server gate decides, spec §7). null → the loading fallback; true → the loop;
+  // false (the kill switch: {active: false} / the gate's 404) → legacy; any other
+  // failure → a retry state, NEVER the legacy tree (the backend delegates the
+  // legacy calls to the loop, so failing open would give a hybrid).
+  const { status: loop, retry } = useLoopStatus(userId, userReady);
   if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
+  if (loop === "error") {
+    return (
+      <div data-testid="loop-status-error" role="alert" style={{ padding: 40, color: "var(--text-dim)" }}>
+        <p style={{ marginBottom: 12 }}>Couldn&apos;t reach the tutor. Try again.</p>
+        <button type="button" className="btn btn--primary" data-testid="loop-status-retry" onClick={retry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
   if (loop) {
     return (
       <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
@@ -968,15 +981,6 @@ function LearnInner() {
     setTopic("");
     setTopicDraft("");
     router.replace(`/learn?mode=${mode}`, { scroll: false });
-  };
-
-  const startNextFromSummary = (concept: string) => {
-    setSummary(null);
-    setSessionId(null);
-    setMessages([]);
-    setTopicDraft(concept);
-    setTopic(concept);
-    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
   };
 
   const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
@@ -1759,7 +1763,6 @@ function LearnInner() {
         <SessionSummary
           summary={summary}
           onClose={closeSummary}
-          onStartNext={startNextFromSummary}
         />
       )}
     </FullHeightScreen>

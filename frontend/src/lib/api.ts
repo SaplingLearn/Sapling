@@ -465,12 +465,10 @@ export const startSessionStream = (
   );
 };
 
+/** PKG-14b (spec §11.2): the three always-empty lists are gone from the wire. */
 export interface SessionSummaryData {
   concepts_covered: string[];
-  mastery_changes: { concept: string; before: number; after: number }[];
-  new_connections: { source: string; target: string }[];
   time_spent_minutes: number;
-  recommended_next: string[];
 }
 
 export const endSession = (sessionId: string, userId: string) =>
@@ -1376,7 +1374,6 @@ export interface OnboardingProfilePayload {
   majors: string[];
   minors: string[];
   course_ids: string[];
-  learning_style: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
 }
 
 export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>

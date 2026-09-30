@@ -142,6 +142,8 @@ def test_explicit_registration_wins_over_env_module(monkeypatch):
     assert result.output == "explicit wins"
 
 
+# Spec §11.5 (PKG-14b): the legacy JSON /start-session route is the kill-switch path.
+@pytest.mark.kill_switch
 def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypatch):
     """#151a: the JSON /start-session route now runs chat_tutor_agent (task
     "chat_tutor") — so in function mode the SAME env-registered chat_tutor
