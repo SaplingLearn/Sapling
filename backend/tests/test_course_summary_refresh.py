@@ -434,10 +434,10 @@ def test_only_the_legacy_regime_runs_the_course_summary_agent():
 @pytest.mark.parametrize(
     "payload",
     [
-        {"updated_nodes": [{"concept_name": "Recursion", "mastery_delta": 0.1}]},
+        # PKG-14b: the `updated_nodes` ("legacy") payload is gone (spec §11.2).
         {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]},
     ],
-    ids=["legacy", "evidence"],
+    ids=["evidence"],
 )
 def test_a_failed_course_context_refresh_is_logged_not_raised(payload, caplog):
     from services.graph_service import apply_graph_update
@@ -553,8 +553,10 @@ def test_legacy_graph_update_calls_the_refresh_with_the_offering_only(loop_off):
         _world(db, _agent()),
         patch("services.course_context_service.update_course_context") as refresh,
     ):
+        # PKG-14b: graded evidence is the one mastery-moving payload left;
+        # "legacy" names the class-summary regime (loop off), not the payload.
         apply_graph_update(
-            USER, {"updated_nodes": [{"concept_name": "Recursion", "mastery_delta": 0.1}]}, COURSE
+            USER, {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}, COURSE
         )
     assert [c.args for c in refresh.call_args_list] == [(off,) for off in OFFERINGS]
     assert all(c.kwargs == {} for c in refresh.call_args_list)

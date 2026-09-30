@@ -1030,6 +1030,11 @@ def apply_graph_update(
     Concept dedup is case- and whitespace-insensitive: "Linear Regression",
     "linear regression", and " Linear  Regression " all resolve to the same node.
     """
+    if "updated_nodes" in graph_update:
+        # PKG-14b (spec §11.2): the flat-delta path is gone — the legacy tutor's
+        # mastery tool and the quiz deltas were its only producers. Loud, and
+        # before any read or write, so a stale caller can never half-apply.
+        raise ValueError("updated_nodes is no longer accepted (PKG-14b): pass evidence")
     mastery_changes: list = []
     touched_courses: set = set()
     # PKG-03: validate every evidence BEFORE any read or write; an invalid
@@ -1052,7 +1057,7 @@ def apply_graph_update(
 
     # Normalized name → row, scoped to (user_id [, course_id]). The UNIQUE
     # (user_id, course_id, concept_name) constraint from 0023 prevents duplicates;
-    # this map resolves updated_nodes / new_edges against pre-existing rows.
+    # this map resolves evidence / new_edges against pre-existing rows.
     by_name: dict[str, dict] = {}
     for row in existing_rows:
         norm = _normalize_concept(row.get("concept_name") or "")
@@ -1091,7 +1096,7 @@ def apply_graph_update(
         canonical_id = new_id
         if returned and isinstance(returned, list) and isinstance(returned[0], dict):
             canonical_id = returned[0].get("id", new_id)
-        # Track in-batch inserts so subsequent updated_nodes / new_edges in the
+        # Track in-batch inserts so subsequent new_edges in the
         # same call resolve against just-created nodes.
         inserted_in_batch[norm] = {
             "id": canonical_id,
@@ -1107,100 +1112,11 @@ def apply_graph_update(
         norm = _normalize_concept(name)
         return by_name.get(norm) or inserted_in_batch.get(norm)
 
-    for upd in graph_update.get("updated_nodes", []):
-        name = (upd.get("concept_name") or "").strip()
-        if not name:
-            continue
-        try:
-            delta = float(upd.get("mastery_delta", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            delta = 0.0
-        row = _lookup(name)
-        if not row:
-            continue
-
-        before = row["mastery_score"]
-        after = max(0.0, min(1.0, before + delta))
-
-        now = datetime.now(timezone.utc).isoformat()
-        # Update only the scalar columns — the mastery_events JSONB blob is gone (0023).
-        table("graph_nodes").update(
-            {
-                "mastery_score": after,
-                "mastery_tier": get_mastery_tier(after),
-                "times_studied": (row.get("times_studied") or 0) + 1,
-                "last_studied_at": now,
-            },
-            filters={"id": f"eq.{row['id']}"},
-        )
-        # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
-        event_row = {
-            "id": str(uuid.uuid4()),
-            "node_id": row["id"],
-            "delta": delta,
-            "reason": upd.get("reason", ""),
-            "created_at": now,
-        }
-        # E7: the caller's categorical read of WHY mastery moved. It was
-        # computed and then dropped here for months, so the event log
-        # recorded how much mastery moved but never what kind of evidence
-        # moved it.
-        #
-        # TWO producers supply one, and both namespace their values by
-        # producer because the column has no CHECK and their vocabularies
-        # are otherwise disjoint-but-confusable:
-        #   * routes/quiz.py::submit_quiz — quiz_correct / quiz_partial /
-        #     quiz_confusion, from the score ratio;
-        #   * agents/tools/graph.py::update_mastery_tool (the chat tutor) —
-        #     tutor_interaction / tutor_correction / tutor_quiz, and only
-        #     when the model actually classified the turn (the tool's field
-        #     is nullable and the key is omitted when it is None).
-        # Callers that classify nothing at all (the document pipeline, notes
-        # extraction, manual adds via add_node) supply no key, and NULL is
-        # the honest value for "this writer doesn't classify".
-        #
-        # Omitted rather than written as an explicit null when absent because
-        # naming a column PostgREST's schema cache doesn't have is a hard
-        # 400 — so omitting keeps the non-classifying paths working on an
-        # environment that took this code before the migration.
-        #
-        # It does NOT make the two classifying paths safe there, and the
-        # blast radius is not cosmetic:
-        #   * the TUTOR is the highest-volume writer here (a mastery update
-        #     can land on every conversational turn), and it takes the
-        #     `_insert_mastery_event` retry — one wasted 400 plus a warning
-        #     per classified turn until the migration lands;
-        #   * submit_quiz always supplies one, and a code-before-migration
-        #     deploy 400s that insert. The retry is what keeps it from
-        #     propagating out of apply_graph_update (submit does not wrap the
-        #     call), which would land a 500 AFTER the atomic completed_at
-        #     claim but BEFORE score/answers are written — losing the graded
-        #     attempt, not just its mastery event.
-        # The migration
-        # (20260814051517_node_mastery_events_event_type.sql) must be
-        # applied strictly before this code ships to any environment.
-        event_type = upd.get("event_type")
-        if isinstance(event_type, str) and event_type.strip():
-            event_row["event_type"] = event_type.strip()
-        _insert_mastery_event(event_row)
-        mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
-
-        cid = row.get("course_id")
-        if cid:
-            touched_courses.add(cid)
-
     if evidences:
         # PKG-03: graded evidence is the only thing that moves p_known on the
         # loop path (spec §1). Legacy keys above are untouched; this block is
         # skipped entirely when the payload carries no evidence.
         by_id = {r["id"]: r for r in existing_rows if r.get("id")}
-        # The updated_nodes loop wrote times_studied + 1 for each node it
-        # moved (once per node: it never refreshes its row, and its bytes are
-        # pinned), so bring those rows up to date before the evidence mirror
-        # adds to the count — otherwise two studies land as one.
-        for rid in {(_lookup(c["concept"]) or {}).get("id") for c in mastery_changes}:
-            if rid in by_id:
-                by_id[rid]["times_studied"] = (by_id[rid].get("times_studied") or 0) + 1
         mastery_changes.extend(
             _apply_evidence(
                 user_id,

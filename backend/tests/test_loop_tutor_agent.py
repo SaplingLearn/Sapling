@@ -62,7 +62,8 @@ def _tool_names(tools) -> set:
     return {getattr(t, "name", None) or getattr(t, "__name__", None) for t in tools}
 
 
-def test_build_tools_default_is_the_legacy_seven():
+def test_build_tools_default_is_the_legacy_six():
+    """PKG-14b (spec §7, §11.2): the legacy seven minus update_mastery_tool."""
     from agents.chat_tutor import _build_tools
 
     assert _tool_names(_build_tools()) == {
@@ -70,7 +71,6 @@ def test_build_tools_default_is_the_legacy_seven():
         "read_session_history_tool",
         "read_user_progress_tool",
         "apply_graph_update_tool",
-        "update_mastery_tool",
         "read_graph_neighborhood",
         "read_concepts_for_user",
     }

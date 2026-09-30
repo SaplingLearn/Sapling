@@ -1,11 +1,11 @@
 """
 Tests for the three regressions fixed in the Pydantic AI graph-tool layer.
 
-Bug #5  (HIGH)   — update_mastery_tool now emits updated_nodes with mastery_delta
-                   so conversational tutoring actually moves mastery scores.
-Bug #13 (MEDIUM) — apply_graph_update_tool and update_mastery_tool append to
-                   deps.graph_updates, enabling end_session to derive
-                   concepts_covered for agent-path chats.
+Bug #5  (HIGH)   — retired by PKG-14b: update_mastery_tool is gone (only graded
+                   evidence moves mastery after the cutover, spec §11.2).
+Bug #13 (MEDIUM) — apply_graph_update_tool appends to deps.graph_updates,
+                   enabling end_session to derive concepts_covered for
+                   agent-path chats.
 Bug #14 (MEDIUM) — ORCHESTRATOR_LIMITS is passed as usage_limits to every
                    tool-using agent .run() call in learn.py and quiz.py.
 """
@@ -15,16 +15,12 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from agents.deps import SaplingDeps
 from tests.agent_run_fakes import run_result
 from agents.tools.graph import (
-    ConceptMasteryUpdate,
     GraphUpdateInput,
-    MasteryUpdateInput,
     apply_graph_update_tool,
-    update_mastery_tool,
 )
 
 
@@ -43,110 +39,6 @@ def _make_ctx(user_id="u1", course_id="c1", graph_updates=None):
         graph_updates=graph_updates if graph_updates is not None else [],
     )
     return SimpleNamespace(deps=deps)
-
-
-# ── Bug #5: update_mastery_tool emits updated_nodes ──────────────────────────
-
-
-class TestUpdateMasteryTool:
-    def test_calls_apply_graph_update_with_updated_nodes(self):
-        """The tool must forward updated_nodes — NOT new_nodes — so the
-        mastery-delta branch in graph_service.apply_graph_update fires."""
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[
-                ConceptMasteryUpdate(
-                    concept_name="Recursion",
-                    mastery_delta=0.15,
-                    reason="answered correctly",
-                    event_type="interaction",
-                )
-            ]
-        )
-
-        mock_changes = [{"concept": "Recursion", "before": 0.4, "after": 0.55}]
-
-        with patch(
-            "agents.tools.graph.apply_graph_update", return_value=mock_changes
-        ), patch("agents.tools.graph.asyncio.to_thread", new=AsyncMock(return_value=mock_changes)):
-            result = _run(update_mastery_tool(ctx, update))
-
-        assert "0.40→0.55" in result or "Recursion" in result
-
-    def test_forwards_mastery_delta_not_initial_mastery(self):
-        """Critically: the payload sent to graph_service must use
-        'mastery_delta', not 'initial_mastery' — that's the regression."""
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[
-                ConceptMasteryUpdate(concept_name="Heaps", mastery_delta=0.2)
-            ]
-        )
-        captured = {}
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            captured["args"] = args
-            return []
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
-            _run(update_mastery_tool(ctx, update))
-
-        graph_update_dict = captured["args"][1]
-        assert "updated_nodes" in graph_update_dict
-        assert "new_nodes" not in graph_update_dict
-        node = graph_update_dict["updated_nodes"][0]
-        assert node["concept_name"] == "Heaps"
-        assert node["mastery_delta"] == pytest.approx(0.2)
-
-    def test_skips_empty_concept_names(self):
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[
-                ConceptMasteryUpdate(concept_name="  ", mastery_delta=0.1),
-                ConceptMasteryUpdate(concept_name="", mastery_delta=0.1),
-            ]
-        )
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return []
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread) as mock_tt:
-            result = _run(update_mastery_tool(ctx, update))
-
-        mock_tt.assert_not_called()
-        assert "skipped" in result.lower()
-
-    def test_returns_human_readable_summary_when_changes_present(self):
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[ConceptMasteryUpdate(concept_name="BFS", mastery_delta=0.1)]
-        )
-        mock_changes = [{"concept": "BFS", "before": 0.3, "after": 0.4}]
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return mock_changes
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
-            result = _run(update_mastery_tool(ctx, update))
-
-        assert "BFS" in result
-        assert "0.30" in result or "0.3" in result
-
-    def test_returns_fallback_message_when_no_score_change(self):
-        """Concept not found in graph → changes=[] → informative message."""
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[ConceptMasteryUpdate(concept_name="UnknownTopic", mastery_delta=0.2)]
-        )
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return []
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
-            result = _run(update_mastery_tool(ctx, update))
-
-        assert "no score change" in result.lower()
-        assert "mastery updated:" not in result.lower()
 
 
 # ── Bug #13: tools append to deps.graph_updates ──────────────────────────────
@@ -183,137 +75,34 @@ class TestGraphUpdatesAccumulation:
         mock_tt.assert_not_called()
         assert ctx.deps.graph_updates == []
 
-    def test_update_mastery_tool_appends_updated_nodes(self):
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[
-                ConceptMasteryUpdate(concept_name="DFS", mastery_delta=0.1, reason="correct"),
-                ConceptMasteryUpdate(concept_name="BFS", mastery_delta=-0.05, reason="gap"),
-            ]
-        )
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return [
-                {"concept": "DFS", "before": 0.3, "after": 0.4},
-                {"concept": "BFS", "before": 0.5, "after": 0.45},
-            ]
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
-            _run(update_mastery_tool(ctx, update))
-
-        assert len(ctx.deps.graph_updates) == 1
-        payload = ctx.deps.graph_updates[0]
-        assert "updated_nodes" in payload
-        names = [n["concept_name"] for n in payload["updated_nodes"]]
-        assert "DFS" in names
-        assert "BFS" in names
-
-    def test_update_mastery_tool_skips_append_when_no_change(self):
-        """A concept the model named but that doesn't exist in the graph
-        yields no `changes` and must NOT be appended to graph_updates —
-        otherwise end_session would over-report it as concepts_covered."""
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[ConceptMasteryUpdate(concept_name="GhostTopic", mastery_delta=0.2)]
-        )
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return []  # concept not in graph → nothing persisted
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
-            _run(update_mastery_tool(ctx, update))
-
-        assert ctx.deps.graph_updates == []
-        assert ctx.deps.mastery_changes == []
-
-    def test_update_mastery_tool_only_appends_changed_concepts(self):
-        """When only some named concepts actually change, graph_updates must
-        contain only the persisted ones (built from the returned changes)."""
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[
-                ConceptMasteryUpdate(concept_name="Real", mastery_delta=0.1),
-                ConceptMasteryUpdate(concept_name="Ghost", mastery_delta=0.1),
-            ]
-        )
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return [{"concept": "Real", "before": 0.2, "after": 0.3}]
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
-            _run(update_mastery_tool(ctx, update))
-
-        assert len(ctx.deps.graph_updates) == 1
-        names = [n["concept_name"] for n in ctx.deps.graph_updates[0]["updated_nodes"]]
-        assert names == ["Real"]
-        assert ctx.deps.mastery_changes == [
-            {"concept": "Real", "before": 0.2, "after": 0.3}
-        ]
-
-    def test_update_mastery_tool_persists_despite_casing_drift(self):
-        """apply_graph_update matches concepts case/whitespace-insensitively and
-        returns the *stored* name. When the model's spelling drifts from the
-        stored node ("linear regression" vs "Linear Regression"), the persisted
-        gate must still recognize the concept as changed (normalized match) and
-        not drop it from graph_updates — otherwise concepts_covered under-reports."""
-        ctx = _make_ctx()
-        update = MasteryUpdateInput(
-            updates=[ConceptMasteryUpdate(concept_name="linear  regression", mastery_delta=0.1)]
-        )
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            # apply_graph_update echoes the canonical stored name.
-            return [{"concept": "Linear Regression", "before": 0.2, "after": 0.3}]
-
-        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
-            _run(update_mastery_tool(ctx, update))
-
-        assert len(ctx.deps.graph_updates) == 1
-        names = [n["concept_name"] for n in ctx.deps.graph_updates[0]["updated_nodes"]]
-        assert names == ["linear  regression"]
-
     def test_multiple_tool_calls_accumulate_independently(self):
         """Two consecutive tool calls (simulating a multi-turn agent run)
-        must each append their own payload — not overwrite."""
+        must each append their own payload — not overwrite. (PKG-14b: the
+        second writer, update_mastery_tool, is gone; two concept writes.)"""
         ctx = _make_ctx()
 
         async def fake_to_thread(fn, *args, **kwargs):
-            # Echo a change for any updated_nodes concept so the persisted-
-            # only gate in update_mastery_tool sees a real change.
-            payload = args[1]
-            return [
-                {"concept": n["concept_name"], "before": 0.3, "after": 0.5}
-                for n in payload.get("updated_nodes", [])
-            ]
+            return []
 
         with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
             _run(apply_graph_update_tool(ctx, GraphUpdateInput(concepts=["Heaps"])))
-            _run(update_mastery_tool(ctx, MasteryUpdateInput(
-                updates=[ConceptMasteryUpdate(concept_name="Heaps", mastery_delta=0.2)]
-            )))
+            _run(apply_graph_update_tool(ctx, GraphUpdateInput(concepts=["Tries"])))
 
         assert len(ctx.deps.graph_updates) == 2
         keys = [list(gu.keys())[0] for gu in ctx.deps.graph_updates]
-        assert keys == ["new_nodes", "updated_nodes"]
+        assert keys == ["new_nodes", "new_nodes"]
 
     def test_graph_updates_merge_logic(self):
         """Simulate what learn.py does after agent.run(): merge all accumulated
-        payloads into a single dict and verify both keys survive."""
+        payloads into a single dict and verify every concept survives."""
         ctx = _make_ctx()
 
         async def fake_to_thread(fn, *args, **kwargs):
-            payload = args[1]
-            return [
-                {"concept": n["concept_name"], "before": 0.3, "after": 0.4}
-                for n in payload.get("updated_nodes", [])
-            ]
+            return []
 
         with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
             _run(apply_graph_update_tool(ctx, GraphUpdateInput(concepts=["A", "B"])))
             _run(apply_graph_update_tool(ctx, GraphUpdateInput(concepts=["C"])))
-            _run(update_mastery_tool(ctx, MasteryUpdateInput(
-                updates=[ConceptMasteryUpdate(concept_name="A", mastery_delta=0.1)]
-            )))
 
         # Merge as learn.py does
         merged: dict = {}
@@ -323,8 +112,7 @@ class TestGraphUpdatesAccumulation:
 
         new_names = [n["concept_name"] for n in merged["new_nodes"]]
         assert set(new_names) == {"A", "B", "C"}
-        upd_names = [n["concept_name"] for n in merged["updated_nodes"]]
-        assert upd_names == ["A"]
+        assert "updated_nodes" not in merged
 
 
 # ── Bug #14: ORCHESTRATOR_LIMITS wired into .run() calls ─────────────────────

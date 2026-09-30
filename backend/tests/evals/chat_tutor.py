@@ -149,30 +149,6 @@ class NoToolMisuseEvaluator(Evaluator[ChatInput, ChatReply]):
 # The two read-only graph tools' wire names (chat_tutor._build_tools).
 GRAPH_READ_TOOLS = ("read_graph_neighborhood", "read_concepts_for_user")
 
-# Mastery-delta band from the tool schema's own guidance
-# (agents/tools/graph.py::ConceptMasteryUpdate): +0.1..+0.3 for correct
-# answers, −0.05..−0.1 for gaps — so any emitted delta outside
-# [-0.1, +0.3] is off-script.
-MASTERY_DELTA_MIN = -0.1
-MASTERY_DELTA_MAX = 0.3
-
-
-def _mastery_updates(output: ChatReply | None) -> list[dict]:
-    """Flatten every update_mastery_tool call's `updates` entries.
-    Tolerates both the typed arg shape {"update": {"updates": [...]}} and
-    a flat {"updates": [...]}."""
-    entries: list[dict] = []
-    for call in (output.tool_calls if output else []) or []:
-        if call.tool_name != "update_mastery_tool":
-            continue
-        args = call.args or {}
-        payload = args.get("update") if isinstance(args.get("update"), dict) else args
-        for u in (payload or {}).get("updates", []) or []:
-            if isinstance(u, dict):
-                entries.append(u)
-    return entries
-
-
 @dataclass
 class GraphToolUsedEvaluator(Evaluator[ChatInput, ChatReply]):
     """Cases tagged `expects_graph_read` must have called at least one
@@ -185,27 +161,6 @@ class GraphToolUsedEvaluator(Evaluator[ChatInput, ChatReply]):
             return 1.0
         used = {t.tool_name for t in (ctx.output.tool_calls if ctx.output else [])}
         return 1.0 if used & set(GRAPH_READ_TOOLS) else 0.0
-
-
-@dataclass
-class MasteryUpdateEmittedEvaluator(Evaluator[ChatInput, ChatReply]):
-    """Cases tagged `expects_mastery_update` must emit at least one
-    update_mastery_tool call; and EVERY emitted delta (tagged or not)
-    must sit inside the band the tool schema instructs
-    ([-0.1, +0.3])."""
-
-    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float:
-        updates = _mastery_updates(ctx.output)
-        if (ctx.metadata or {}).get("expects_mastery_update") and not updates:
-            return 0.0
-        for u in updates:
-            try:
-                delta = float(u.get("mastery_delta"))
-            except (TypeError, ValueError):
-                return 0.0
-            if not (MASTERY_DELTA_MIN <= delta <= MASTERY_DELTA_MAX):
-                return 0.0
-        return 1.0
 
 
 @dataclass
@@ -302,7 +257,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain Big-O notation.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_photosynthesis",
@@ -310,7 +265,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain photosynthesis at the cellular level.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_dependency_injection",
@@ -318,7 +273,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "What is dependency injection?",
         ),
-        metadata={"mode": "expository", "expects_mastery_update": True},
+        metadata={"mode": "expository"},
     ),
     Case(
         name="expository_explain_supply_demand",
@@ -326,7 +281,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "Explain how supply and demand determine price.",
         ),
-        metadata={"mode": "expository", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "expository", "grounded": True},
     ),
     Case(
         name="expository_explain_kantian_ethics",
@@ -334,7 +289,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "expository",
             "What is Kantian ethics?",
         ),
-        metadata={"mode": "expository", "expects_mastery_update": True},
+        metadata={"mode": "expository"},
     ),
 
     # ── TEACHBACK ──────────────────────────────────────────────────────────
@@ -346,7 +301,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "splits into two identical daughter cells. Each one has the "
             "same chromosomes as the original.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_partial_correct",
@@ -355,7 +310,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "OK so a closure is a function that has variables. Like, "
             "you can use them inside it.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_misconception",
@@ -364,7 +319,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "Newton's first law says objects in motion stay in motion "
             "unless you push them. Force makes things keep moving.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
     Case(
         name="teachback_advanced",
@@ -374,7 +329,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "showing that strings of length p can be split such that "
             "the middle can be repeated and stay in the language.",
         ),
-        metadata={"mode": "teachback", "expects_mastery_update": True},
+        metadata={"mode": "teachback"},
     ),
     Case(
         name="teachback_minimal",
@@ -382,7 +337,7 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "teachback",
             "Recursion is when a function calls itself.",
         ),
-        metadata={"mode": "teachback", "grounded": True, "expects_mastery_update": True},
+        metadata={"mode": "teachback", "grounded": True},
     ),
 ]
 
@@ -421,33 +376,18 @@ def _make_deps() -> SaplingDeps:
 def _install_offline_graph_writes() -> None:
     """Record/live only: replace the graph WRITE seam with an in-memory stub.
 
-    The retrieval seam covers the tutor's READS; the write tools
-    (apply_graph_update_tool / update_mastery_tool) call
+    The retrieval seam covers the tutor's READS; the one write tool
+    (apply_graph_update_tool — PKG-14b removed update_mastery_tool) calls
     `services.graph_service.apply_graph_update`, which hits Supabase — and
-    an eval box has none, so a turn where the model dutifully updates
-    mastery would die with ConnectError. The stub echoes plausible
-    before/after deltas (seeded from fixture mastery) so the model's
-    second turn sees a sensible tool result; the cassette still captures
-    the model's tool_calls, which is what the evaluators score."""
+    an eval box has none, so a turn where the model registers a concept
+    would die with ConnectError. The stub records nothing and reports no
+    mastery change (new concepts start at 0.0 and move only by graded
+    evidence); the cassette still captures the model's tool_calls, which
+    is what the evaluators score."""
     import agents.tools.graph as _graph_tools
 
-    fixture_mastery = {
-        (c.get("concept_name") or "").lower(): float(c.get("mastery") or 0.0)
-        for c in load_fixture().get("concepts", [])
-    }
-
     def _offline_apply_graph_update(user_id, graph_update, course_id=None):
-        changes = []
-        for upd in graph_update.get("updated_nodes", []) or []:
-            name = upd.get("concept_name") or ""
-            try:
-                delta = float(upd.get("mastery_delta", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                delta = 0.0
-            before = fixture_mastery.get(name.lower(), 0.3)
-            after = max(0.0, min(1.0, before + delta))
-            changes.append({"concept": name, "before": before, "after": after})
-        return changes
+        return []
 
     _graph_tools.apply_graph_update = _offline_apply_graph_update
 
@@ -578,7 +518,6 @@ def make_dataset() -> Dataset[ChatInput, ChatReply]:
             TeachBackProbesEvaluator(),
             NoToolMisuseEvaluator(),
             GraphToolUsedEvaluator(),
-            MasteryUpdateEmittedEvaluator(),
             GroundedConceptEvaluator(),
         ],
     )
