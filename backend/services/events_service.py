@@ -43,7 +43,7 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
                                         actually called the tool that records them,
                                         digest_present, digest_chars, recent_attempts,
                                         misconceptions (see docs/quiz-prompt-budget.md)
-quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
+quiz.completed                usage     quiz_id, concept_node_id, score, total, p_delta
 quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
 quiz.answer_key_served        usage     quiz_id

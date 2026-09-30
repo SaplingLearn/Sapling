@@ -955,7 +955,11 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     )
     with (
         patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz.apply_graph_update"),
+        # PKG-14b: the graph reports the span of the evidence it applied.
+        patch(
+            "routes.quiz.apply_graph_update",
+            return_value=[{"before": 0.5, "after": 0.53}, {"before": 0.53, "after": 0.56}],
+        ),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=noop_ctx),
         patch("routes.quiz.save_quiz_context"),
@@ -981,8 +985,9 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     assert payload["concept_node_id"] == "node1"
     assert payload["score"] == 2
     assert payload["total"] == 2
-    # mastery 0.5 -> 0.5 + 2*0.03 = 0.56
-    assert payload["mastery_delta"] == pytest.approx(0.06)
+    # PKG-14b: p_delta = the evidence span's p_after − p_before (0.5 -> 0.56).
+    assert payload["p_delta"] == pytest.approx(0.06)
+    assert "mastery_delta" not in payload
 
 
 # ── Chat: chat.message_sent ──────────────────────────────────────────────────

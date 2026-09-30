@@ -49,14 +49,26 @@ export const CORRECT_LABELS = ["B", "C", "A"] as const;
  *  for — the handler ignores the count so the mastery math stays byte-stable. */
 export const QUIZ_LENGTH = CORRECT_LABELS.length;
 
-/** routes/quiz.py + services/quiz_config.py: +0.03 per correct, −0.02 per wrong. */
-export const MASTERY_PER_CORRECT = 0.03;
-export const MASTERY_PER_WRONG = 0.02;
+/** learning/params.py mirror (pinned by backend/tests/test_quiz_evidence_only.py).
+ *  PKG-14b (spec §11.2): a quiz moves mastery ONLY through graded evidence —
+ *  one unassisted `mc` Evidence per question through the BKT update — for every
+ *  student, in both E2E lanes (the quiz has no legacy path after the cutover). */
+export const BKT_L0 = 0.35;
+export const BKT_T = 0.15;
+export const MC_G = 0.25;
+export const MC_S = 0.1;
 
-/** The mastery a `score`-of-`total` submission leaves behind (unclamped here —
- *  the seeded 0.25 baseline never reaches either bound). */
-export function masteryAfter(before: number, score: number, total: number): number {
-  return before + score * MASTERY_PER_CORRECT - (total - score) * MASTERY_PER_WRONG;
+/** §3.1 correct update + learn step, `n` unassisted `mc` corrects from `before`.
+ *  A node with no `learner_state` row starts from BKT_L0, NOT from its legacy
+ *  `graph_nodes.mastery_score` (HANDOFF-03: the legacy score is not a prior), so
+ *  the seeded 0.25 concept's first quiz reads `before = BKT_L0`. */
+export function bktAfterCorrect(before: number, n: number): number {
+  let p = before;
+  for (let i = 0; i < n; i++) {
+    const post = (p * (1 - MC_S)) / (p * (1 - MC_S) + (1 - p) * MC_G);
+    p = post + (1 - post) * BKT_T;
+  }
+  return p;
 }
 
 /** A wrong label for question `n` — any option that isn't the marked one. */

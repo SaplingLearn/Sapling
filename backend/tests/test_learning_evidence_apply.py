@@ -1374,7 +1374,10 @@ def _graph_update_payloads(source: str) -> list[tuple[int, str | None]]:
 # PKG-11 (a PKG-03 reopen): the one evidence caller sanctioned before PKG-05.
 # submit_quiz sends {"evidence": ...} only in the body of its `if loop_on:`
 # branch (spec §7); every other apply_graph_update call stays legacy-keyed.
-SANCTIONED_EVIDENCE_CALLERS = frozenset({("routes/quiz.py", "submit_quiz")})
+# PKG-14b (spec §11.2): the quiz is evidence-only for every student, so its
+# call is no longer behind `if loop_on:` — it moved to
+# SANCTIONED_EVIDENCE_PERSISTERS below. No gated caller is sanctioned now.
+SANCTIONED_EVIDENCE_CALLERS: frozenset = frozenset()
 LOOP_GATE_LOCAL = "loop_on"
 
 
@@ -1474,7 +1477,13 @@ def test_gated_evidence_call_detector(source, expected):
 # Evidence dict grade_answer returned with ONE apply_graph_update call, because
 # flush_pending cannot carry the review's retention target (spec §3.2).
 SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
-    {("learning/evidence.py", "flush_pending"), ("learning/review.py", "grade_review")}
+    {
+        ("learning/evidence.py", "flush_pending"),
+        ("learning/review.py", "grade_review"),
+        # PKG-14b: ungated after the cutover (spec §11.2), one mc evidence per
+        # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry.
+        ("routes/quiz.py", "submit_quiz"),
+    }
 )
 
 

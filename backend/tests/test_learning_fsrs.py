@@ -707,8 +707,20 @@ def test_routes_import_fsrs_only_behind_the_gate():
         str(path.relative_to(routes))
         for path in paths
         if _route_violates_gate_rule(path.read_text())
+        and str(path.relative_to(routes)) not in UNGATED_FSRS_ROUTES
     ]
     assert offenders == [], f"routes import learning.fsrs without calling the gate: {offenders}"
+    # The exemption is exact, not a blanket: each listed module really is an
+    # fsrs importer that reads no gate (else the entry is stale).
+    for rel in UNGATED_FSRS_ROUTES:
+        src = (routes / rel).read_text()
+        assert _imports_fsrs(src) and not _calls_gate(src), rel
+
+
+#: PKG-14b (spec §11.2): flashcards are FSRS-scheduled for every student after
+#: the cutover — the route's gate was removed by design, and the kill switch
+#: does not bring the legacy list order back (spec §11.6).
+UNGATED_FSRS_ROUTES = frozenset({"flashcards.py"})
 
 
 # --- successive relearning --------------------------------------------------

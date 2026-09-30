@@ -44,10 +44,13 @@ import {
   primeQuizBrowser,
   scriptedStem,
 } from "./support/quizStack";
+import { BKT_L0, bktAfterCorrect } from "./support/quiz";
 import { USER_ACTIVE } from "./support/stack";
 
-/** routes/quiz.py: 3 correct of 3 → delta = 3 × 0.03 = +0.09. */
-const ALL_CORRECT_DELTA = 3 * 0.03;
+/** PKG-14b (spec §11.2): 3 unassisted `mc` corrects from the BKT prior (the
+ *  seeded node has no learner_state row, HANDOFF-03) → 0.978259, in both lanes
+ *  — the quiz has no legacy path after the cutover. */
+const ALL_CORRECT_AFTER = bktAfterCorrect(BKT_L0, 3);
 
 /** The one attempt row this journey created — the seeded baseline attempts are
  *  namespaced `rich-*` and the route mints uuid4 ids. */
@@ -124,10 +127,10 @@ test("a quiz launched from the tree moves mastery and returns to the node panel"
   await expect(page.getByTestId("quiz-results-score")).toHaveText("3 of 3 correct");
   await expect(page.getByTestId("quiz-results-perfect")).toBeVisible();
 
-  // ── DB: the score really moved, by exactly the all-correct delta ─────────
+  // ── DB: the score really moved, to exactly the all-correct posterior ─────
   const masteryAfter = await masteryOf(NODE_RECURSION);
   expect(masteryAfter).toBeGreaterThan(masteryBefore);
-  expect(masteryAfter).toBeCloseTo(SEEDED_RECURSION_MASTERY + ALL_CORRECT_DELTA, 10);
+  expect(masteryAfter).toBeCloseTo(ALL_CORRECT_AFTER, 5);
 
   const attempts = await appAttemptsFor(NODE_RECURSION);
   expect(attempts).toHaveLength(1);
@@ -146,9 +149,12 @@ test("a quiz launched from the tree moves mastery and returns to the node panel"
   const newRow = page.getByTestId(`tree-node-recent-quiz-${attemptId}`);
   await expect(newRow).toBeVisible({ timeout: 30_000 });
   await expect(newRow).toContainText("3/3");
-  // `formatMasteryDelta` renders +9% for 0.25 → 0.34. The sign is the point:
-  // an all-correct quiz can never render a negative move.
-  await expect(newRow).toContainText("+9% mastery");
+  // `formatMasteryDelta` renders the attempt's p_delta (p_after − p_before of
+  // the evidence: BKT_L0 0.35 → 0.978259 = +63%). The sign is the point: an
+  // all-correct quiz can never render a negative move.
+  await expect(newRow).toContainText(
+    `+${Math.round((ALL_CORRECT_AFTER - BKT_L0) * 100)}% mastery`,
+  );
   await expect(page.getByTestId(`tree-node-recent-quiz-${SEEDED_RECURSION_ATTEMPT}`)).toBeVisible();
 });
 

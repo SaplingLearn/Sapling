@@ -14,7 +14,6 @@ scoring and generation correctness.
 - E4: concurrency — double-submit, double-answer on one index,
   generate-while-generating for the same concept.
 """
-import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -69,41 +68,11 @@ def _generate(num_questions=3):
     })
 
 
-# ── E1: mastery model is a configurable seam (behaviour unchanged) ──────────
+# ── E1: mastery model — PKG-14b deleted the flat-delta seam (spec §11.2); the
+#    options write-up #543 asked for stays as the record of what was weighed ──
 
 
 class TestMasteryModelSeam:
-    def test_constants_are_named_and_unchanged(self):
-        from services.quiz_config import (
-            MASTERY_DELTA_PER_CORRECT,
-            MASTERY_DELTA_PER_WRONG,
-        )
-
-        # Pinned: #543 lands the seam only. Changing these changes the
-        # #393 journey's asserted +0.09 and must be a deliberate, separate
-        # decision (see docs/quiz-mastery-model.md).
-        assert MASTERY_DELTA_PER_CORRECT == 0.03
-        assert MASTERY_DELTA_PER_WRONG == 0.02
-
-    def test_mastery_delta_matches_the_pinned_journey_value(self):
-        from services.quiz_config import mastery_after
-
-        # frontend/e2e/quiz.spec.ts: 3 correct of 3 → +0.09 exactly.
-        assert mastery_after(0.25, score=3, total=3) == pytest.approx(0.34)
-        assert mastery_after(0.25, score=3, total=3) - 0.25 == pytest.approx(0.09)
-
-    def test_clamped_to_unit_interval(self):
-        from services.quiz_config import mastery_after
-
-        assert mastery_after(0.99, score=5, total=5) == 1.0
-        assert mastery_after(0.01, score=0, total=5) == 0.0
-
-    def test_wrong_answers_subtract(self):
-        from services.quiz_config import mastery_after
-
-        # 2 correct (+0.06), 3 wrong (-0.06) → net zero.
-        assert mastery_after(0.5, score=2, total=5) == pytest.approx(0.5)
-
     def test_options_writeup_exists(self):
         """E1 asks for the trade-offs to be written down for the revamp,
         not decided here."""
@@ -601,21 +570,12 @@ def _noop_ctx_agent():
     )
 
 
-def _submit_one_right_one_wrong(
-    *, gate: bool | None, apply_mock: MagicMock, mastery_after_mock: MagicMock,
-    tables: list | None = None,
-):
-    """`gate=None` runs the REAL learning.gate (the caller sets the flag)."""
+def _submit_one_right_one_wrong(*, apply_mock: MagicMock, tables: list | None = None):
+    """PKG-14b: there is no gate and no legacy delta path to pick."""
     ctx_run = _noop_ctx_agent()
-    gate_cm = (
-        contextlib.nullcontext() if gate is None
-        else patch("routes.quiz.learning_loop_active", return_value=gate)
-    )
     with (
         patch("routes.quiz.table", side_effect=_loop_table(tables=tables)),
-        gate_cm,
         patch("routes.quiz.apply_graph_update", new=apply_mock),
-        patch("routes.quiz.mastery_after", new=mastery_after_mock),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
         patch("routes.quiz.save_quiz_context"),
@@ -631,6 +591,17 @@ def _submit_one_right_one_wrong(
 
 
 class TestLearningLoopEvidencePath:
+    def test_submit_opens_exactly_the_legacy_tables(self):
+        """PKG-14b: evidence is the only path; it opens no table beyond the
+        ones the pre-series route opened (LEGACY_SUBMIT_TABLES) — the graph
+        writes are apply_graph_update's."""
+        tables: list = []
+        r, _ = _submit_one_right_one_wrong(
+            apply_mock=MagicMock(return_value=[{"before": 0.5, "after": 0.6}]), tables=tables,
+        )
+        assert r.status_code == 200, r.text
+        assert tables == LEGACY_SUBMIT_TABLES
+
     def test_gate_on_submits_one_evidence_per_question(self):
         from services.quiz_identity import question_hash
 
@@ -638,9 +609,8 @@ class TestLearningLoopEvidencePath:
             {"before": 0.5, "after": 0.58},
             {"before": 0.58, "after": 0.51},
         ])
-        mastery_after_mock = MagicMock(side_effect=AssertionError("legacy delta on the loop path"))
         r, _ = _submit_one_right_one_wrong(
-            gate=True, apply_mock=apply_mock, mastery_after_mock=mastery_after_mock,
+            apply_mock=apply_mock,
         )
         assert r.status_code == 200, r.text
         apply_mock.assert_called_once()
@@ -664,7 +634,6 @@ class TestLearningLoopEvidencePath:
         assert ev[1]["question_hash"] == question_hash(                # recomputed
             "What is a function?", ["a loop", "a reusable block"],
         )
-        mastery_after_mock.assert_not_called()
 
     def test_gate_on_snapshot_spans_first_before_to_last_after(self):
         apply_mock = MagicMock(return_value=[
@@ -672,7 +641,7 @@ class TestLearningLoopEvidencePath:
             {"before": 0.58, "after": 0.51},
         ])
         r, _ = _submit_one_right_one_wrong(
-            gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock(),
+            apply_mock=apply_mock,
         )
         data = r.json()
         assert data["mastery_before"] == pytest.approx(0.5)
@@ -681,7 +650,7 @@ class TestLearningLoopEvidencePath:
     def test_gate_on_unrecognisable_return_reports_no_change(self):
         apply_mock = MagicMock(return_value=[])
         r, _ = _submit_one_right_one_wrong(
-            gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock(),
+            apply_mock=apply_mock,
         )
         data = r.json()
         assert data["mastery_before"] == pytest.approx(0.5)
@@ -690,7 +659,7 @@ class TestLearningLoopEvidencePath:
     def test_gate_on_keeps_the_quiz_context_background_update(self):
         apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
         r, ctx_run = _submit_one_right_one_wrong(
-            gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock(),
+            apply_mock=apply_mock,
         )
         assert r.status_code == 200
         assert ctx_run.call_count == 1, "quiz_context update must still run on the loop path"
@@ -706,7 +675,6 @@ class TestLearningLoopEvidencePath:
         ctx_run = _noop_ctx_agent()
         with (
             patch("routes.quiz.table", side_effect=_loop_table(legacy_shape)),
-            patch("routes.quiz.learning_loop_active", return_value=True),
             patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
@@ -723,65 +691,6 @@ class TestLearningLoopEvidencePath:
             "question_hash": None, "check_item_id": None, "session_id": None,
         }]
 
-    def test_gate_off_is_the_legacy_delta_path(self):
-        from services.quiz_config import mastery_after as real_mastery_after
-
-        apply_mock = MagicMock(return_value=[])
-        mastery_after_mock = MagicMock(side_effect=real_mastery_after)
-        tables: list = []
-        r, _ = _submit_one_right_one_wrong(
-            gate=False, apply_mock=apply_mock, mastery_after_mock=mastery_after_mock,
-            tables=tables,
-        )
-        assert r.status_code == 200
-        assert tables == LEGACY_SUBMIT_TABLES, "the flag-off path opens no new table"
-        mastery_after_mock.assert_called_once_with(0.5, score=1, total=2)
-        payload = apply_mock.call_args[0][1]
-        assert set(payload) == {"updated_nodes"}, "the legacy payload must not change"
-        node = payload["updated_nodes"][0]
-        assert set(node) == {"concept_name", "mastery_delta", "reason", "event_type"}
-        assert node["reason"] == "Quiz: 1/2 correct"
-        assert node["event_type"] == "quiz_partial"
-        # 1 right, 1 wrong → +PER_CORRECT − PER_WRONG, exactly the seam's arithmetic.
-        assert node["mastery_delta"] == pytest.approx(real_mastery_after(0.5, score=1, total=2) - 0.5)
-
-    def test_real_gate_flag_off_reads_nothing_and_takes_the_legacy_path(self, monkeypatch):
-        """The real gate, not a patched one: with LEARNING_LOOP_ENABLED off it
-        opens no table, and the route opens exactly the legacy tables."""
-        import config
-        from services.quiz_config import mastery_after as real_mastery_after
-
-        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
-        gate_table = MagicMock(side_effect=AssertionError("flag off, yet the gate opened a table"))
-        monkeypatch.setattr("learning.gate.table", gate_table)
-        apply_mock = MagicMock(return_value=[])
-        tables: list = []
-        r, _ = _submit_one_right_one_wrong(
-            gate=None, apply_mock=apply_mock,
-            mastery_after_mock=MagicMock(side_effect=real_mastery_after), tables=tables,
-        )
-        assert r.status_code == 200, r.text
-        gate_table.assert_not_called()
-        assert tables == LEGACY_SUBMIT_TABLES
-        assert set(apply_mock.call_args[0][1]) == {"updated_nodes"}
-
-    def test_gate_is_evaluated_once_per_submit(self):
-        gate = MagicMock(return_value=True)
-        apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
-        with (
-            patch("routes.quiz.table", side_effect=_loop_table()),
-            patch("routes.quiz.learning_loop_active", new=gate),
-            patch("routes.quiz.apply_graph_update", new=apply_mock),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
-            patch("routes.quiz.save_quiz_context"),
-        ):
-            client.post("/api/quiz/submit", json={
-                "quiz_id": "quiz1",
-                "answers": [{"question_id": 1, "selected_label": "A"}],
-            })
-        gate.assert_called_once_with("user_andres")
-
     def test_gate_on_evidence_validates_as_pkg03_evidence(self):
         """The route sends plain dicts; apply_graph_update validates them with
         learning.evidence.Evidence before any write (HANDOFF-03). A quiz answer
@@ -789,7 +698,7 @@ class TestLearningLoopEvidencePath:
         from learning.evidence import Evidence
 
         apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.6}])
-        _submit_one_right_one_wrong(gate=True, apply_mock=apply_mock, mastery_after_mock=MagicMock())
+        _submit_one_right_one_wrong(apply_mock=apply_mock)
         evs = [Evidence.model_validate(e) for e in apply_mock.call_args[0][1]["evidence"]]
         assert [(e.channel, e.correct) for e in evs] == [("mc", True), ("mc", False)]
         for e in evs:

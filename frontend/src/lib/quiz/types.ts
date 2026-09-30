@@ -136,6 +136,8 @@ export interface SubmitResult {
   total: number;
   mastery_before: number;
   mastery_after: number;
+  /** PKG-14b: `mastery_after − mastery_before` of the evidence the submit applied. */
+  p_delta?: number;
   results: {
     question_id: string;
     selected: string;
@@ -167,7 +169,8 @@ export interface AttemptSummary {
   difficulty: string;
   mastery_before: number | null;
   mastery_after: number | null;
-  mastery_delta: number | null;
+  /** `mastery_after − mastery_before` (PKG-14b renamed it from the legacy delta key). */
+  p_delta: number | null;
   created_at: string;
   completed_at: string | null;
 }
