@@ -102,6 +102,7 @@ def test_rating_emits_event_and_resets_counter(gate_on, session_row, seams):
 
 
 def test_rating_user_comes_from_the_session_when_absent(gate_on, session_row, seams):
+    _doc(session_row)["checks_since_rating"] = N
     r = client.post(RATING, json={"session_id": "s1", "rating": "appropriate"})
     assert r.status_code == 200
     gate_on.assert_called_once_with("user_andres")  # tests/conftest.py's session stub
@@ -124,12 +125,35 @@ def test_rating_rejects_unknown_value(gate_on, session_row, seams):
     seams.zpd.emit_zpd_rating.assert_not_called()
 
 
-def test_rating_runs_no_model_and_is_not_rate_limited():
+def test_rating_is_rate_limited():
+    """Review fix round: /rating writes loop_state and an event, so it carries
+    the A20 limit (it still runs no model)."""
     from routes import learn_loop
     from services import ai_budget
 
     (route,) = [r for r in learn_loop.router.routes if r.path == "/rating"]
-    assert ai_budget.enforce_rate_limit not in {d.call for d in route.dependant.dependencies}
+    assert ai_budget.enforce_rate_limit in {d.call for d in route.dependant.dependencies}
+
+
+@pytest.mark.parametrize("count", [None, 0, N - 1])
+def test_a_rating_nobody_asked_for_is_409_and_records_nothing(gate_on, session_row, seams, count):
+    if count is None:
+        _doc(session_row).pop("checks_since_rating", None)
+    else:
+        _doc(session_row)["checks_since_rating"] = count
+    r = client.post(RATING, json={"session_id": "s1", "user_id": "u1", "rating": "too_easy"})
+    assert r.status_code == 409 and r.json()["detail"] == "no rating was asked for"
+    seams.zpd.emit_zpd_rating.assert_not_called()
+    assert _doc(session_row).get("checks_since_rating") == count
+
+
+def test_a_rating_on_a_closed_session_is_409(gate_on, session_row, seams):
+    _doc(session_row)["checks_since_rating"] = N
+    _doc(session_row)["close_claim"] = "someone"
+    _doc(session_row)["close_claim_at"] = _routes.NOW
+    r = client.post(RATING, json={"session_id": "s1", "user_id": "u1", "rating": "too_easy"})
+    assert r.status_code == 409
+    seams.zpd.emit_zpd_rating.assert_not_called()
 
 
 def test_rating_event_payload_is_the_spec_shape():

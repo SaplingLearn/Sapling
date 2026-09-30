@@ -2932,14 +2932,18 @@ async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     return _sse(_submission_turn(sub, body, request, loop_on=loop_on))
 
 
-@router.post("/rating")
+_NO_RATING_ASKED = "no rating was asked for"
+
+
+@router.post("/rating", dependencies=_RATE_LIMITED)
 def rating(body: LoopRatingBody, request: Request) -> dict:
     """POST /api/learn/loop/rating (PKG-14; spec §3.4, §6): the student's
     perceived difficulty, asked every ZPD_RATING_EVERY_N_CHECKS checks. Emits
     zpd.rating {rating, checks_since_last} and resets the session's counter in
-    ONE compare-and-set write; the rating is stored nowhere else. No model runs
-    (no rate limit); require_self, the gate's 404 and the session owner check
-    run first."""
+    ONE compare-and-set write; the rating is stored nowhere else. Accepted only
+    on an open session whose counter reached ZPD_RATING_EVERY_N_CHECKS (else a
+    409, nothing written). Runs no model but is rate-limited (A20); require_self,
+    the gate's 404 and the session owner check run first."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
@@ -2947,7 +2951,13 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
     seen: dict = {}
 
     def reset(state: dict) -> None:
-        seen["count"] = int(state.get("checks_since_rating") or 0)
+        # review fix round: only an open session, and only when a rating was
+        # actually asked for (the counter reached the cadence) — else 409
+        _require_open(state)
+        count = int(state.get("checks_since_rating") or 0)
+        if count < ZPD_RATING_EVERY_N_CHECKS:
+            raise HTTPException(status_code=409, detail=_NO_RATING_ASKED)
+        seen["count"] = count
         state["checks_since_rating"] = 0
 
     _update_loop_state(body.session_id, reset)

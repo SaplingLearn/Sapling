@@ -151,14 +151,14 @@ NO_MODEL_ROUTES = [
     "/close",
     # PKG-13: the open loop sessions (read-only; never rate-limited, spec §13 A20).
     "/sessions",
-    # PKG-14: the zpd.rating answer (no model run; tests/test_learn_loop_rating.py).
-    "/rating",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = [
     "/step/attempt",
     # PKG-14 (A87): the post-test start records the pose it opens
     "/posttest/start",
+    # PKG-14 review fix round: the zpd.rating answer writes state and an event
+    "/rating",
 ]
 #: PKG-12: no review route carries the dependency — /review/answer checks the rate
 #: limit inline for a check answer only (tests/test_learning_review.py).
