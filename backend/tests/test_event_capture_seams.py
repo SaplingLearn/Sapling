@@ -987,7 +987,9 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     assert payload["total"] == 2
     # PKG-14b: p_delta = the evidence span's p_after − p_before (0.5 -> 0.56).
     assert payload["p_delta"] == pytest.approx(0.06)
-    assert "mastery_delta" not in payload
+    from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+    assert LEGACY_MASTERY_SYMBOLS[0] not in payload  # the retired key (inv_21)
 
 
 # ── Chat: chat.message_sent ──────────────────────────────────────────────────

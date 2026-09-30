@@ -107,17 +107,18 @@ export function radiusFor(mastery: number, isRoot = false): number {
 }
 
 /**
- * score → tier. Mirrors `backend/config.py::get_mastery_tier`
- * (MASTERY_MASTERED_MIN 0.75 / MASTERY_LEARNING_MIN 0.45 /
- * MASTERY_STRUGGLING_MIN 0.1), pinned by the table test next to this file.
+ * score → tier. Mirrors `backend/learning/bkt.py::tier_for` (learning/params.py
+ * BKT_PROFICIENT 0.95 / BAND_NOVICE_MAX 0.30 / TIER_UNEXPLORED_MAX 0.10,
+ * PKG-14b), pinned by the table test next to this file and by
+ * backend/tests/test_mastery_tier_unification.py.
  *
  * Read the server's `mastery_tier` string wherever there is one — every graph
  * node carries it. This exists for the one case that has a score and no tier:
  * the quiz submit response's `mastery_after` (#537 R-12).
  */
 export function tierFor(score: number): MasteryTier {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }

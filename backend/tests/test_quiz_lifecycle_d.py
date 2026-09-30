@@ -473,7 +473,9 @@ class TestAttemptHistory:
         assert first["difficulty"] == "medium"
         # PKG-14b: renamed p_delta (= mastery_after − mastery_before).
         assert first["p_delta"] == 0.05
-        assert "mastery_delta" not in first
+        from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+        assert LEGACY_MASTERY_SYMBOLS[0] not in first  # the retired key (inv_21)
         assert first["created_at"] == attempts[0]["created_at"]
         second = data["attempts"][1]
         assert second["status"] == "abandoned"

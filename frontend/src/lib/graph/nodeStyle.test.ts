@@ -92,14 +92,15 @@ describe("radiusFor", () => {
 });
 
 describe("tierFor", () => {
-  // Mirrors backend/config.py::get_mastery_tier — 0.75 / 0.45 / 0.1, boundaries
-  // inclusive on the lower end. Pinned so the fifth client-side mirror can't drift.
+  // Mirrors backend/learning/bkt.py::tier_for — 0.95 / 0.30 / 0.10 (PKG-14b),
+  // boundaries inclusive on the lower end. Pinned so the client-side mirror
+  // can't drift.
   it.each([
     [1, "mastered"],
-    [0.75, "mastered"],
-    [0.7499, "learning"],
-    [0.45, "learning"],
-    [0.4499, "struggling"],
+    [0.95, "mastered"],
+    [0.94, "learning"],
+    [0.3, "learning"],
+    [0.29, "struggling"],
     [0.1, "struggling"],
     [0.0999, "unexplored"],
     [0, "unexplored"],

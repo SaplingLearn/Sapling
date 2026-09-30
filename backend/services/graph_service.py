@@ -6,7 +6,6 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from config import get_mastery_tier
 from db.connection import table
 from learning import bkt, fsrs
 from learning.evidence import (
@@ -1088,7 +1087,7 @@ def apply_graph_update(
                 "user_id": user_id,
                 "concept_name": name,
                 "mastery_score": init_m,
-                "mastery_tier": get_mastery_tier(init_m),
+                "mastery_tier": bkt.tier_for(init_m),
                 "course_id": node_course_id,
             },
             on_conflict="user_id,course_id,concept_name",

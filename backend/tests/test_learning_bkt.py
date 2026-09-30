@@ -674,15 +674,6 @@ def test_tier_boundaries_and_check_values():
     assert {bkt.tier_for(p / 100) for p in range(0, 101)} <= allowed
 
 
-def test_tier_for_is_not_the_legacy_tier():
-    """Loop-path cuts differ from config.get_mastery_tier (legacy stays until PKG-14)."""
-    import config
-
-    assert bkt.tier_for(0.80) == "learning"
-    assert config.get_mastery_tier(0.80) == "mastered"
-    assert config.MASTERY_MASTERED_MIN == 0.75  # pinned by test_mastery_tier_unification; untouched
-
-
 def test_proficient_and_mastered():
     assert bkt.is_proficient(params.BKT_PROFICIENT) is True
     assert bkt.is_proficient(_just_below(params.BKT_PROFICIENT)) is False

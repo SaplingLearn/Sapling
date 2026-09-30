@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import get_mastery_tier            # noqa: E402
+from learning.bkt import tier_for            # noqa: E402  (PKG-14b)
 from db import seed_helpers as h               # noqa: E402
 from db.connection import table                # noqa: E402
 from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
@@ -383,7 +383,7 @@ def seed_graph() -> None:
                     "concept_name": concept,
                     "subject": subject,
                     "mastery_score": score,
-                    "mastery_tier": get_mastery_tier(score),
+                    "mastery_tier": tier_for(score),
                 },
                 on_conflict="user_id,course_id,concept_name",
             )
@@ -963,7 +963,7 @@ def seed_learning_loop() -> None:
                     "concept_name": concept,
                     "subject": concept.split()[0],
                     "mastery_score": 0.0,
-                    "mastery_tier": get_mastery_tier(0.0),
+                    "mastery_tier": tier_for(0.0),
                 },
                 on_conflict="user_id,course_id,concept_name",
             )

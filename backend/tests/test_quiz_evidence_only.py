@@ -10,6 +10,11 @@ import pytest
 from learning import params
 from learning.bkt import update
 from tests.test_quiz_scoring_e import _loop_table, _noop_ctx_agent, client
+from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+# The retired symbols are named once, in inv_21's list (spec §8 invariant 21
+# greps the literals), and every absence check here reads them from it.
+LEGACY_DELTA_KEY, LEGACY_DELTA_CONSTANTS, _ = LEGACY_MASTERY_SYMBOLS
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -17,8 +22,8 @@ REPO = Path(__file__).resolve().parents[2]
 def test_quiz_config_has_no_delta_model():
     import services.quiz_config as qc
 
-    for name in ("MASTERY_DELTA_PER_CORRECT", "MASTERY_DELTA_PER_WRONG", "mastery_after"):
-        assert not hasattr(qc, name), name
+    assert [n for n in dir(qc) if n.startswith(LEGACY_DELTA_CONSTANTS)] == []
+    assert not hasattr(qc, "mastery_after")
 
 
 def test_three_mc_corrects_from_prior():
@@ -90,17 +95,17 @@ def test_submit_is_evidence_only_under_either_flag(monkeypatch, flag):
     assert set(apply_mock.call_args[0][1]) == {"evidence"}
 
 
-def test_submit_reports_p_delta_not_mastery_delta():
+def test_submit_reports_p_delta_not_the_legacy_key():
     apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.58}, {"before": 0.58, "after": 0.51}])
     r, log_event = _submit(
         apply_mock,
         answers=[{"question_id": 1, "selected_label": "A"}, {"question_id": 2, "selected_label": "C"}],
     )
     body = r.json()
-    assert "p_delta" in body and "mastery_delta" not in body
+    assert "p_delta" in body and LEGACY_DELTA_KEY not in body
     assert body["mastery_after"] == pytest.approx(body["mastery_before"] + body["p_delta"])
     assert body["p_delta"] == pytest.approx(0.01)
     (completed,) = [c for c in log_event.call_args_list if c.args and c.args[0] == "quiz.completed"]
     payload = completed.kwargs["payload"]
-    assert "mastery_delta" not in payload
+    assert LEGACY_DELTA_KEY not in payload
     assert payload["p_delta"] == pytest.approx(0.01)

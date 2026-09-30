@@ -229,10 +229,10 @@ def test_enum_values_within_check_sets(store):
 
 
 def test_mastery_tier_matches_score(store):
-    from config import get_mastery_tier
+    from learning.bkt import tier_for  # PKG-14b: the one tier function
     _run(store)
     for node in store.tables["graph_nodes"].values():
-        assert node["mastery_tier"] == get_mastery_tier(node["mastery_score"])
+        assert node["mastery_tier"] == tier_for(node["mastery_score"])
 
 
 # ─── Multi-term ──────────────────────────────────────────────────────────────

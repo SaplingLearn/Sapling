@@ -162,8 +162,10 @@ def band(p: float) -> Band:
 
 
 def tier_for(p: float) -> Tier:
-    """Loop-path mirror into graph_nodes.mastery_tier (spec §3.1). Not the legacy
-    config.get_mastery_tier, which keeps its own cuts until PKG-14."""
+    """THE score → tier map (spec §3.1): graph_nodes.mastery_tier and every
+    surface that classifies a mastery score. PKG-14b deleted the legacy config
+    copy (0.75/0.45/0.1); the frontend mirrors are pinned by
+    tests/test_mastery_tier_unification.py."""
     _check_p(p)
     if p < TIER_UNEXPLORED_MAX:
         return "unexplored"
@@ -172,6 +174,20 @@ def tier_for(p: float) -> Tier:
     if p < BKT_PROFICIENT:
         return "learning"
     return "mastered"
+
+
+def in_mastered_tier(p: float) -> bool:
+    """The top TIER — the one the Tree labels "mastered" (PKG-14b, replacing the
+    legacy config.is_mastered). Belief only; `is_mastered` below is the stricter
+    evidence rule (belief AND strong unassisted observations)."""
+    return tier_for(p) == "mastered"
+
+
+def is_weak(p: float) -> bool:
+    """Below the learning floor: "struggling" OR "unexplored" (PKG-14b,
+    replacing the legacy config.is_weak) — the "which concepts need work"
+    question weak counts, flashcard drills and quiz focus ask."""
+    return tier_for(p) in {"struggling", "unexplored"}
 
 
 def is_proficient(p: float) -> bool:

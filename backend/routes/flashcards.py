@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config import is_weak
+from learning.bkt import is_weak
 from db.connection import table
 from learning.flashcard_fsrs import flashcard_fsrs_update
 from learning.fsrs import order_due
@@ -181,10 +181,19 @@ def _get_course_documents(
         return []
 
 
+def _unit(score) -> float:
+    """A stored mastery score clamped to [0, 1] (tier_for rejects anything
+    outside it; old rows occasionally drift)."""
+    try:
+        return max(0.0, min(1.0, float(score or 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
     """
     Return concept names the student is weak on — below the "learning" floor
-    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored".
+    of `learning.bkt.tier_for` (PKG-14b), i.e. "struggling" or "unexplored".
 
     Was a local `< 0.4` (#557), which is not any tier boundary: concepts in
     [0.4, 0.45) read as "struggling" on the Tree but were never offered for
@@ -203,7 +212,7 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
                 filters={"user_id": f"eq.{user_id}"},
             )
         weak = sorted(
-            (r for r in (rows or []) if is_weak(r.get("mastery_score") or 0)),
+            (r for r in (rows or []) if is_weak(_unit(r.get("mastery_score")))),
             key=lambda r: r.get("mastery_score") or 0,
         )
         # Weakest first, THEN cap. The cap used to truncate in PostgREST row
