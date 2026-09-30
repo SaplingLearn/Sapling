@@ -21,7 +21,8 @@
  *
  * The scripted quiz is a fixed three questions whose correct labels are B, C, A
  * (`agents/function_handlers_e2e.py::E2E_QUIZ_CORRECT_LABELS`) and the tutor
- * always answers `E2E_TUTOR_REPLY`. Both constants are mirrored in
+ * answers `E2E_TUTOR_REPLY` (kill-switch lane) or the loop's `E2E_LOOP_TUTOR_REPLY`
+ * (default lane — PKG-14b, spec §11.4). The constants are mirrored in
  * `support/quizStack.ts` — KEEP IN SYNC. Every journey asserts the scripted stem
  * before it answers, which doubles as the loud guard that the stack really is in
  * function mode rather than talking to live Gemini.
@@ -38,9 +39,10 @@ import {
   NOTE_CS_WEEK1_TITLE,
   SEEDED_RECURSION_ATTEMPT,
   SEEDED_RECURSION_MASTERY,
-  TUTOR_REPLY,
+  ASK_PANEL_REPLY_TAIL,
   answerAtEnd,
   chooseOption,
+  expectAskReply,
   primeQuizBrowser,
   scriptedStem,
 } from "./support/quizStack";
@@ -288,14 +290,17 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
     "Scripted E2E fixture: option B is the marked answer for question 1.",
   );
 
-  // The streamed reply, byte-for-byte the function-mode constant.
-  await expect(sheet.getByText(TUTOR_REPLY)).toHaveCount(1, { timeout: 60_000 });
+  // The streamed reply, byte-for-byte the function-mode constant of THIS lane
+  // (spec §11.4): the loop opener's turn by default, the legacy tutor's under
+  // the kill switch.
+  await expectAskReply(sheet, 60_000);
+  await expect(sheet.getByText(ASK_PANEL_REPLY_TAIL)).toHaveCount(1, { timeout: 60_000 });
 
   // A follow-up streams again into the same session.
   await page.getByTestId("quiz-ask-input").fill("Can you give me one more example?");
   await page.getByTestId("quiz-ask-send").click();
   await expect(sheet).toContainText("Can you give me one more example?");
-  await expect(sheet.getByText(TUTOR_REPLY)).toHaveCount(2, { timeout: 60_000 });
+  await expect(sheet.getByText(ASK_PANEL_REPLY_TAIL)).toHaveCount(2, { timeout: 60_000 });
 
   // ── Closing puts the student back on the exact same item ─────────────────
   await page.getByTestId("quiz-ask-panel-close").click();

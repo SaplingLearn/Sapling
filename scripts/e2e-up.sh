@@ -173,6 +173,13 @@ command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
   || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
+# PKG-14b (spec §11.4): the E2E lane is chosen in the SHELL. load_dotenv() would
+# fill an unset LEARNING_LOOP_ENABLED from backend/.env for the backend while
+# Playwright (this shell) sees it unset, so the two halves would disagree.
+if grep -qE '^[[:space:]]*(export[[:space:]]+)?LEARNING_LOOP_ENABLED=' backend/.env; then
+  echo "e2e-up: remove LEARNING_LOOP_ENABLED from backend/.env — the lane is chosen in the shell (spec §11.4)" >&2
+  exit 2
+fi
 # $VENV_PY is resolved in local-common.sh and accepts both the POSIX
 # (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
 [ -n "${VENV_PY:-}" ] \
@@ -248,23 +255,18 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
-# Learning loop series (PKG-13), build phase: the lane boots with the loop flag ON.
-# Two things follow, and only the first is per student:
-#  - the per-student GATE (learning.gate) is on only for the seeded loop users
-#    (rich-user-loop, rich-user-capped: user_settings.learning_loop_beta), so a
-#    legacy user's tutor, quiz and Learn/Study screens keep the pre-series path;
-#  - the PROCESS-WIDE flag branches are on for EVERYONE: every upload indexes and
-#    drafts check items inline (routes/documents.py `_index_then_check_items`, run
-#    inline in function mode), and course context writes the numbers-only
-#    offering_summary (services/course_context_service.py, spec §13 A35).
-# So the legacy upload / course-context specs exercise the loop's branches here,
-# not the flag-off path production still runs. That flag-off leg is NOT covered by
-# this lane until PKG-14b adds the kill-switch lane (spec §11.4; recorded in
-# HANDOFF-13 Known gaps). PKG-14b also removes this export (the default lane then
-# runs the code default). frontend/e2e/learn-loop.spec.ts holds the loop's
-# journeys. Exported, so it beats backend/.env.
-export LEARNING_LOOP_ENABLED="${LEARNING_LOOP_ENABLED:-true}"
-echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED for this stack (PKG-13 build phase: the gate only for the seeded loop users; upload check items + A35 course context for everyone)"
+# Learning loop (PKG-14b, spec §7 / §11.4): the loop is the default — the lane
+# runs the CODE default, so nothing is exported here. Run
+# `LEARNING_LOOP_ENABLED=false make e2e-up` for the kill-switch lane (the legacy
+# Learn screen, tutor and Study UI; /api/learn/loop/* 404s). The seeded loop
+# users are ordinary students now. frontend/e2e/support/fixtures.ts::killSwitchLane
+# is the one lane parse Playwright uses; global-setup.ts asserts the stack agrees.
+# (backend/.env must not name the variable — the preflight fails fast on it.)
+if [ -n "${LEARNING_LOOP_ENABLED+x}" ]; then
+  echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED from the shell (spec §7 parse: false/0/off/no = the kill-switch lane)"
+else
+  echo "  ℹ LEARNING_LOOP_ENABLED unset: the default lane (the loop is on for every student)"
+fi
 # Spec §13 A5: the E2E env scales every GATE_* seconds constant (the ZPD hint
 # gates' independent-work and dwell times) by 0.01, so a journey waits a
 # fraction of a second where a student waits a minute. Production never sets it

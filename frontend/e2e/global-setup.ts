@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { killSwitchLane } from "./support/lane";
 import { FRONTEND_URL, USER_ACTIVE, requireStackUp } from "./support/stack";
 
 export const STORAGE_STATE = path.join(__dirname, ".auth", "storageState.json");
@@ -95,4 +96,43 @@ export default async function globalSetup(): Promise<void> {
 
   fs.mkdirSync(path.dirname(STORAGE_STATE), { recursive: true });
   fs.writeFileSync(STORAGE_STATE, JSON.stringify(storageState, null, 2));
+
+  await assertLaneMatchesStack(body.token);
+}
+
+/**
+ * PKG-14b (spec §11.4): the stack and Playwright must be in the SAME lane.
+ * `killSwitchLane` is Playwright's parse of LEARNING_LOOP_ENABLED; the running
+ * backend answers GET /api/learn/loop/status for the default fixture user with
+ * 404 under the kill switch and {active: true} by default. Anything else means
+ * the two halves disagree (e.g. backend/.env refilled the variable) — fail the
+ * whole run before a single journey reads the wrong lane.
+ */
+async function assertLaneMatchesStack(token: string): Promise<void> {
+  const url =
+    `${FRONTEND_URL}/api/learn/loop/status?user_id=${encodeURIComponent(USER_ACTIVE)}` +
+    "&session_id=e2e-global-setup-lane-probe";
+  const res = await fetch(url, {
+    headers: { Cookie: `sapling_session=${token}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  const text = await res.text();
+  let active: unknown;
+  try {
+    active = (JSON.parse(text) as { active?: unknown }).active;
+  } catch {
+    active = undefined;
+  }
+  const stackIsKillSwitch = res.status === 404;
+  const stackIsDefault = res.status === 200 && active === true;
+  const agrees = killSwitchLane ? stackIsKillSwitch : stackIsDefault;
+  if (!agrees) {
+    throw new Error(
+      `E2E lane mismatch (spec §11.4): Playwright's killSwitchLane=${killSwitchLane} ` +
+        `(LEARNING_LOOP_ENABLED=${JSON.stringify(process.env.LEARNING_LOOP_ENABLED ?? null)}), ` +
+        `but GET /api/learn/loop/status answered HTTP ${res.status} ${text.slice(0, 200)}. ` +
+        "Export the same value for the stack and Playwright in ONE shell, and keep " +
+        "LEARNING_LOOP_ENABLED out of backend/.env.",
+    );
+  }
 }

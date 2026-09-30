@@ -72,13 +72,6 @@ def test_loop_users_carry_the_staff_toggle_and_are_enrolled(recorder):
         assert [r["offering_id"] for r in enrolled] == [seed.OFF_CS_S26]
 
 
-def test_legacy_users_are_not_opted_in(recorder):
-    # Name kept for PKG-14b, which retires it (spec §11.2). Build phase: only the
-    # loop users carry the staff/QA toggle.
-    for row in recorder.rows.get("user_settings", []):
-        assert row["user_id"] in {seed.USER_LOOP, seed.USER_CAPPED}
-
-
 def test_prerequisite_chain(recorder):
     for uid in seed.LOOP_USERS:
         nodes = [r for r in recorder.rows["graph_nodes"] if r["user_id"] == uid]

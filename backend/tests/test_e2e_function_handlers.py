@@ -1066,3 +1066,57 @@ def test_loop_turn_body_and_question_survive_the_served_path_at_the_journeys_run
         for rung in (Rung.H0, Rung.H1):
             served = served_render(turn, phase=phase, rung=rung, verdict=verdict)
             assert body in served and question in served
+
+
+# ── PKG-14b (spec §11.4): the lane-aware support constants ──────────────────
+#
+# The quiz "Ask about this" sheet asserts E2E_TUTOR_REPLY in the kill-switch lane
+# and E2E_LOOP_TUTOR_REPLY in the default lane, through frontend/e2e/support/
+# quiz.ts (re-exported by support/quizStack.ts). inv_13a's sync scan reads only
+# *.spec.ts, so the support copies are pinned here.
+
+_SUPPORT_CONST_RX = r'export const (TUTOR_REPLY|LOOP_TUTOR_REPLY) =\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+);'
+
+
+def _ts_consts(rel: str) -> dict:
+    import json
+    import pathlib
+    import re
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / rel).read_text()
+    return {
+        name: "".join(json.loads(piece) for piece in re.findall(r'"(?:[^"\\]|\\.)*"', expr))
+        for name, expr in re.findall(_SUPPORT_CONST_RX, src)
+    }
+
+
+def test_support_ask_panel_constants_match_the_handlers():
+    import sys
+
+    import agents._providers as providers
+
+    providers.clear_function_handlers()
+    sys.modules.pop("agents.function_handlers_e2e", None)
+    try:
+        import agents.function_handlers_e2e as handlers
+
+        quiz = _ts_consts("frontend/e2e/support/quiz.ts")
+        assert quiz == {
+            "TUTOR_REPLY": handlers.E2E_TUTOR_REPLY,
+            "LOOP_TUTOR_REPLY": handlers.E2E_LOOP_TUTOR_REPLY,
+        }
+        stack = _ts_consts("frontend/e2e/support/quizStack.ts")
+        assert stack == {"TUTOR_REPLY": handlers.E2E_TUTOR_REPLY}
+    finally:
+        providers.clear_function_handlers()
+        sys.modules.pop("agents.function_handlers_e2e", None)
+
+
+def test_support_lane_parse_is_the_spec_7_post_launch_parse():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/lane.ts").read_text()
+    assert 'export const killSwitchLane = ["false", "0", "off", "no"].includes(' in src
+    assert '(process.env.LEARNING_LOOP_ENABLED ?? "").trim().toLowerCase()' in src
+    fixtures = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/fixtures.ts").read_text()
+    assert 'export { killSwitchLane } from "./lane";' in fixtures

@@ -1690,29 +1690,16 @@ def test_inv_13a_spec_constants_match_function_handlers():
 
 
 def test_inv_13b_seed_opts_in_exactly_the_loop_users():
-    """Build phase (spec §13 A14): user_settings.learning_loop_beta is a staff/QA
-    toggle, and the seed sets it only for the loop users {rich-user-loop,
-    rich-user-capped}. PKG-14b rewrites this test in place (name kept) to "no
-    journey depends on learning_loop_beta" (spec §8, §11.2)."""
-    text = SEED.read_text()
-    assert 'USER_LOOP = "rich-user-loop"' in text, "seed has no loop user"
-    assert 'USER_CAPPED = "rich-user-capped"' in text, "seed has no capped user"
-    assert re.search(r"^LOOP_USERS = \(USER_LOOP, USER_CAPPED\)$", text, re.M), (
-        "the toggle's allowed set changed"
-    )
-    # Lines that WRITE the column carry the quoted dict key; comments do not.
-    toggle_lines = [ln for ln in text.splitlines() if '"learning_loop_beta"' in ln]
-    assert toggle_lines, "seed never sets learning_loop_beta"
-    assert all("True" in ln for ln in toggle_lines), toggle_lines
-    for legacy in (
-        "USER_ACTIVE",
-        "USER_SECOND",
-        "USER_NEW",
-        "rich-user-active",
-        "rich-user-second",
-        "rich-user-new",
-    ):
-        assert not any(legacy in ln for ln in toggle_lines), f"{legacy} must stay legacy"
+    """The name is historical (PKG-13: only the loop seed users carried the staff/QA toggle).
+    After launch (PKG-14b, spec §8, §11.4) no journey may depend on learning_loop_beta:
+    the gate never reads it, so every seeded student is on the loop in the default lane."""
+    hits = [
+        f"{p.relative_to(FRONTEND_E2E)}:{i}"
+        for p in sorted(FRONTEND_E2E.rglob("*.ts"))
+        for i, line in enumerate(p.read_text().splitlines(), 1)
+        if "learning_loop_beta" in line
+    ]
+    assert hits == [], f"E2E journeys still depend on the retired toggle: {hits}"
 
 
 # ── PKG-14b: the evidence-only rule (spec §11) ──────────────────────────────

@@ -24,9 +24,10 @@
  * rail's state is read off `.progress-dots__dot--{kind}`, which contract §3
  * declares to be that primitive's public CSS API.
  */
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 import { queryRaw } from "./db";
+import { killSwitchLane } from "./lane";
 
 // ── The seeded concept every journey quizzes ──────────────────────────────
 //
@@ -91,6 +92,30 @@ export const explanationOf = (n: number, label: string) =>
 export const TUTOR_REPLY =
   "[e2e-function-model] Deterministic tutor reply: every recursive function " +
   "needs a base case so it can stop calling itself.";
+
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_TUTOR_REPLY — the
+ *  loop tutor's rendered turn (learn-loop.spec.ts asserts the same constant). */
+export const LOOP_TUTOR_REPLY =
+  "Key idea: [e2e-function-model] A recursive function needs a base case it is guaranteed to reach.\n\n" +
+  "Try writing the base case for factorial before anything else.\n\n" +
+  "Which input should stop the recursion?";
+
+/** The quiz "Ask about this" sheet's streamed reply in THIS lane (spec §11.4):
+ *  /api/learn/start-session/stream delegates to the loop opener in the default
+ *  lane, and runs the legacy chat_tutor in the kill-switch lane. */
+export const ASK_PANEL_REPLY = killSwitchLane ? TUTOR_REPLY : LOOP_TUTOR_REPLY;
+
+/** Its last paragraph. The loop turn renders as separate paragraphs (split on
+ *  a blank line), so a whole-reply getByText cannot match one element; the last
+ *  paragraph is one rendered block in both lanes and can be counted per reply. */
+export const ASK_PANEL_REPLY_TAIL = ASK_PANEL_REPLY.split("\n\n").at(-1) as string;
+
+/** Every paragraph of this lane's Ask reply is on the sheet. */
+export async function expectAskReply(sheet: Locator, timeout: number): Promise<void> {
+  for (const paragraph of ASK_PANEL_REPLY.split("\n\n")) {
+    await expect(sheet).toContainText(paragraph, { timeout });
+  }
+}
 
 // ── Timeouts ──────────────────────────────────────────────────────────────
 //

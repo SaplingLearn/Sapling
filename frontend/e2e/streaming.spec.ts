@@ -26,9 +26,13 @@
  *   SAPLING_MODEL_MODE=function \
  *   SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up
  */
-import { expect, test } from "./support/fixtures";
+import { expect, killSwitchLane, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
 import { decryptTexts } from "./support/decrypt";
+
+// PKG-14b (spec §11.4): the legacy Learn screen exists only under the kill
+// switch — this whole file runs in the kill-switch lane only.
+test.skip(!killSwitchLane, "legacy path: kill-switch lane only");
 
 /** Seeded by db/seed_local_rich.py for rich-user-active. */
 const SESSION_ID = "rich-sess-cs-recursion";

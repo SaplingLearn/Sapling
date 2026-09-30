@@ -6,14 +6,19 @@
  *  2. a reload mid-session resumes the same session and calls no probe route;
  *  3. a capped user (today's spend past the novice allowance) sees tutor chat
  *     paused on /learn while review still serves and grades on /study;
- *  4. build phase: a user without the staff/QA toggle keeps the legacy Learn
- *     screen (PKG-14b rewrites this test for the launch, spec §11.2/§11.4).
+ *  4. every student gets the loop by default (default lane), and the kill switch
+ *     restores the legacy Learn screen (kill-switch lane) — PKG-14b, spec §11.4.
+ *
+ * Lanes (support/fixtures.ts::killSwitchLane, spec §11.4): journeys 1–3 and
+ * "every student gets the loop by default" run in the default lane only (no
+ * LEARNING_LOOP_ENABLED at all — the code default); "kill switch restores the
+ * legacy Learn screen" runs under LEARNING_LOOP_ENABLED=false only.
  *
  * Determinism: function mode (SAPLING_MODEL_MODE=function,
  * SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e) plus
- * LEARNING_LOOP_ENABLED=true and LEARNING_GATE_TIME_SCALE=0.01 (scripts/e2e-up.sh,
- * build phase; spec §13 A5). The seeded loop users are the only ones carrying the
- * staff/QA toggle (db/seed_local_rich.py::seed_learning_loop). The grader is
+ * LEARNING_GATE_TIME_SCALE=0.01 (scripts/e2e-up.sh; spec §13 A5). The seeded
+ * loop users are ordinary students after PKG-14b (their build-phase toggle rows
+ * are inert — nothing reads them). The grader is
  * scripted: an answer carrying GRADER_CORRECT_TOKEN grades correct, any other
  * text not yet. Learning constants are read from backend/learning/params.py via
  * support/params.ts — never as literals here.
@@ -27,13 +32,13 @@
  */
 import type { Browser, Page } from "@playwright/test";
 
-import { expect, test } from "./support/fixtures";
+import { expect, killSwitchLane, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
 import { decryptText } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
 import { mintStorageState } from "./support/session";
-import { USER_CAPPED, USER_LOOP } from "./support/stack";
+import { USER_ACTIVE, USER_CAPPED, USER_LOOP } from "./support/stack";
 
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_PROBE_PROMPT */
 const LOOP_PROBE_PROMPT =
@@ -131,6 +136,7 @@ async function firstTeachTurn(page: Page) {
 }
 
 test("loop user completes probe → plan → check (explicit submission) with a gated hint → close, and the loop writes land", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams([
     "BKT_L0",
@@ -295,6 +301,7 @@ test("loop user completes probe → plan → check (explicit submission) with a 
 });
 
 test("a reload mid-session resumes the same loop session and calls no probe route", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams(["PROBE_SESSION_CAP"]);
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
@@ -345,6 +352,7 @@ test("a reload mid-session resumes the same loop session and calls no probe rout
 });
 
 test("budget cap: tutor chat pauses on /learn; review still serves and grades on /study", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
 
@@ -392,13 +400,35 @@ test("budget cap: tutor chat pauses on /learn; review still serves and grades on
   await context.close();
 });
 
-// Build phase only (spec §13 A14): PKG-14b rewrites this test as "every student
-// gets the loop by default" plus "kill switch restores the legacy Learn screen"
-// (skipped unless support/fixtures.ts::killSwitchLane; spec §11.2, §11.4).
-test("build phase: a user without the staff/QA toggle still gets the legacy Learn screen with the flag on", async ({ page }) => {
+// PKG-14b (spec §11.2, §11.4): the loop is every student's default — the
+// build-phase "legacy user" split is gone (no journey depends on the retired
+// staff/QA toggle; test_inv_13b).
+test("every student gets the loop by default", async ({ page }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
   await page.addInitScript(() => {
     localStorage.setItem("sapling_disclaimer_ack", "true");
   });
+  const probe = page.waitForResponse((r) => r.url().includes("/api/learn/loop/review/active"));
+  await page.goto("/learn");
+  // The default fixture user is an ordinary seeded student (rich-user-active).
+  const answered = await probe;
+  expect(answered.status()).toBe(200);
+  expect(await answered.json()).toEqual({ active: true });
+  await expect(page.getByTestId("loop-phase")).toBeVisible();
+  await expect(page.getByTestId("tutor-topic-picker")).toHaveCount(0);
+  await expect(page.getByTestId("loop-status-error")).toHaveCount(0);
+});
+
+test("kill switch restores the legacy Learn screen", async ({ page }) => {
+  test.skip(!killSwitchLane, "kill-switch lane only");
+  await page.addInitScript(() => {
+    localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+  // The loop routes 404 (spec §7) — /status needs a session id; a fresh one is fine.
+  const status = await page.request.get(
+    `/api/learn/loop/status?user_id=${USER_ACTIVE}&session_id=e2e-kill-switch-probe`,
+  );
+  expect(status.status()).toBe(404);
   const probe = page.waitForResponse((r) => r.url().includes("/api/learn/loop/review/active"));
   await page.goto("/learn");
   // The probe ANSWERS the gate (200 {active: false}), so a legacy visit logs no error.4xx.
@@ -407,6 +437,7 @@ test("build phase: a user without the staff/QA toggle still gets the legacy Lear
   expect(await answered.json()).toEqual({ active: false });
   await expect(page.getByTestId("tutor-topic-picker")).toBeVisible();
   await expect(page.getByTestId("loop-phase")).toHaveCount(0);
+  await expect(page.getByTestId("loop-status-error")).toHaveCount(0);
   const errors = (await queryRaw(
     `SELECT count(*)::int AS n FROM events
       WHERE event_type = 'error.4xx' AND payload->>'path' = '/api/learn/loop/review/active'`,

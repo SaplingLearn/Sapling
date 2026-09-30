@@ -64,10 +64,10 @@ import {
   QUIZ_LENGTH,
   STREAM_TIMEOUT,
   SUBMIT_TIMEOUT,
-  TUTOR_REPLY,
   answerAsYouGo,
   answerAtEnd,
   appAttempts,
+  expectAskReply,
   chooseAndSubmit,
   expectLocation,
   expectOnQuestion,
@@ -459,8 +459,10 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   await expect(seed).toContainText(optionTextOf(1, correct));
   await expect(seed).toContainText(explanationOf(1, correct));
 
-  // The streamed reply, byte-for-byte the function-mode constant.
-  await expect(sheet).toContainText(TUTOR_REPLY, { timeout: STREAM_TIMEOUT });
+  // The streamed reply, byte-for-byte the function-mode constant of THIS lane
+  // (spec §11.4): the loop opener's turn by default, the legacy tutor's under
+  // the kill switch.
+  await expectAskReply(sheet, STREAM_TIMEOUT);
 
   await page.getByTestId("quiz-ask-panel-close").click();
   await expect(sheet).toHaveCount(0);
