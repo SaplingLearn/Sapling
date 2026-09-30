@@ -133,6 +133,7 @@ def test_event_taxonomy_is_pinned():
         "zpd.band_adjust",
         "zpd.wheelspin",
         "zpd.leak",
+        "zpd.teach_reveal",
         "zpd.rating",
         # PKG-05b: the typed decision seam (spec §6). Emit coverage: test_learning_decisions.py.
         "decision.made",

@@ -244,6 +244,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "zpd.band_adjust",
     "zpd.wheelspin",
     "zpd.leak",
+    "zpd.teach_reveal",  # PKG-14 (spec §13 A86): a teach turn stated item answers
     "zpd.rating",
     # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
     # (services/decisions.py). `made` = one answered decision, with the backend
