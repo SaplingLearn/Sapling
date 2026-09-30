@@ -1008,6 +1008,82 @@ def served_model_text(
     return (released_lead(reference) + text if answer_released else text), verdict
 
 
+# ── Teach turns: the concept's items are never stated (PKG-14, spec §13 A84) ──
+# A teach turn has no active item, so the item-turn leak check above never ran
+# on it — yet its model reads course passages the concept's check items were
+# drafted from. Every item of the current concept (the post-test reserve too)
+# is checked with the same strict served-mode rules; a leak is never masked in
+# place, the turn is the rung's ladder line (N1). Fail closed: items that cannot
+# be read (None) or checked withhold the turn the same way.
+
+
+def _teach_item_kwargs(item) -> dict:
+    return _item_check_kwargs(
+        reference=item.reference_answer,
+        final_answer=item.final_answer,
+        canonical_answer=item.canonical_answer,
+        correct_option=item.correct_option,
+        option_text=option_text(item),
+    )
+
+
+def teach_leak_check(items, *, rung: Rung, given: str) -> Callable[[str], bool]:
+    """True when `text` states any item's answer (or the items are unknown)."""
+
+    def check(text: str) -> bool:
+        if items is None:
+            return True
+        try:
+            return any(
+                detect_leak(emitted=text, rung=rung, given=given, **_teach_item_kwargs(i)).leaked
+                for i in items
+            )
+        except (ValueError, TypeError):
+            return True
+
+    return check
+
+
+def served_teach_text(reply: str, *, leak_rung: Rung, items, given: str) -> tuple[str, bool]:
+    """(served text, leaked) of a model-written teach turn: the reply unchanged
+    when no item of the concept is stated; else the rung's ladder line. Items
+    that cannot be read (None) or checked give the ladder line too, as not a
+    leak (nothing was seen)."""
+    fallback = LADDER_FALLBACK_LINES[int(Rung(leak_rung))]
+    if items is None:
+        return fallback, False
+    try:
+        leaked = any(
+            detect_leak(emitted=reply, rung=leak_rung, given=given, **_teach_item_kwargs(i)).leaked
+            for i in items
+        )
+    except (ValueError, TypeError):
+        return fallback, False
+    return (fallback, True) if leaked else (reply, False)
+
+
+def _teach_detector(text: str, items, rung: Rung, given: str) -> str:
+    """The detector of the first item whose answer `text` states (zpd.leak)."""
+    for i in items or []:
+        verdict = detect_leak(emitted=text, rung=rung, given=given, **_teach_item_kwargs(i))
+        if verdict.leaked:
+            return verdict.detector
+    return "final_answer"
+
+
+def _teach_spans(text: str, items, given: str) -> list | None:
+    """The sorted spans of `text` that state any item's answer; None = unknown."""
+    if items is None:
+        return None
+    spans: list = []
+    try:
+        for i in items:
+            spans += leak_spans(emitted=text, given=given, **_teach_item_kwargs(i))
+    except (ValueError, TypeError):
+        return None
+    return sorted(spans)
+
+
 # ── The served session close (PKG-09; spec §13 A25, A51) ─────────────────
 
 
@@ -1287,6 +1363,7 @@ class _LoopTurn:
         self.run_requests = 0
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
+        self.teach_items: list | None = []  # PKG-14 (A84): the concept's items on a teach turn
 
     @property
     def slot(self) -> str:
@@ -1397,6 +1474,8 @@ class _LoopTurn:
             instruction=self.instruction,
             nonce=nonce,
         )
+        if self.phase == "teach" and self.item is None:
+            self.teach_items = self._concept_items()  # A84: never state their answers
         # N1: the provenance the served leak check reads, and the validator's guard
         self.given = _visible_text(
             history,
@@ -1529,8 +1608,32 @@ class _LoopTurn:
         answer is released (its lead, m1) and the text the model was given."""
         return {**self._item_answer(), "answer_released": self.answer_released, "given": self.given}
 
+    def _concept_items(self) -> list | None:
+        """Every check item of the turn's concept (A84: the post-test reserve
+        included); [] with no concept; None when they cannot be read."""
+        if not self.concept_node or not self.course_id:
+            return []
+        try:
+            key = _concept_key_for_node(self.user_id, self.concept_node)
+            return list(list_items(self.course_id, key)) if key else []
+        except Exception:
+            logger.warning("teach turn: the concept's check items could not be read", exc_info=True)
+            return None
+
+    def _teach_guarded(self) -> bool:
+        """A model-written teach turn with no active item (A84)."""
+        return self.phase == "teach" and self.item is None and self.tier != "none"
+
     def _leak_guard(self) -> _LeakGuard | None:
-        """deps.loop_leak for an unreleased active item (fix round 2, N1)."""
+        """deps.loop_leak for an unreleased active item (fix round 2, N1), or
+        for a teach turn the concept's items (A84)."""
+        if self.phase == "teach" and self.item is None:
+            if not self.teach_items:
+                return None  # nothing to check, or unreadable (served withheld)
+            return _LeakGuard(
+                teach_leak_check(self.teach_items, rung=self._leak_rung(), given=self.given),
+                render=self.render,
+            )
         if self.item is None or self.answer_released:
             return None
         rung, answer = self._leak_rung(), _item_check_kwargs(**self._item_answer())
@@ -1548,6 +1651,11 @@ class _LoopTurn:
         shown, and never masked in place (N1) — the stream stops before the
         sentence that holds it (the output validator's retry, or the final
         ladder line, replaces it). The released answer's lead goes in front."""
+        if self.tier != "none" and self.phase == "teach" and self.item is None:
+            spans = _teach_spans(text, self.teach_items, self.given)  # A84
+            if spans is None:
+                return ""  # unreadable: nothing streams; the final turn is withheld
+            return _cut_before_leak(text, spans) if spans else text
         if self.tier == "none" or self.item is None:
             return text
         if self.answer_released:
@@ -1570,6 +1678,10 @@ class _LoopTurn:
     def serve(self, text: str) -> str:
         """stream_structured_turn's `transform_final`: the served text of the
         final render (`served_model_text`)."""
+        if self._teach_guarded():
+            return served_teach_text(
+                text, leak_rung=self._leak_rung(), items=self.teach_items, given=self.given
+            )[0]
         if self.tier == "none" or self.item is None:
             return text
         served, _ = served_model_text(text, leak_rung=self._leak_rung(), **self._item_leak_kwargs())
@@ -1578,7 +1690,22 @@ class _LoopTurn:
     def _leak_checked(self, reply: str) -> tuple[str, bool]:
         """Model-written text is leak-checked against the ACTIVE item at the rung
         it is served at (`_leak_rung`; A34: the item's structured final answer),
-        through `served_model_text` (strict; the released lead in front)."""
+        through `served_model_text` (strict; the released lead in front). A
+        teach turn is checked against its concept's items (A84)."""
+        if self._teach_guarded():
+            served, leaked = served_teach_text(
+                reply, leak_rung=self._leak_rung(), items=self.teach_items, given=self.given
+            )
+            if not leaked:
+                return served, served != reply  # withheld unreadable: redacted, no leak event
+            zpd_events.emit_zpd_leak(
+                user_id=self.user_id,
+                request_id=self.request_id,
+                rung_emitted=self._leak_rung(),
+                ceiling=self.ceiling,
+                detector=_teach_detector(reply, self.teach_items, self._leak_rung(), self.given),
+            )
+            return served, True
         if self.tier == "none" or self.item is None:
             return reply, False
         served, verdict = served_model_text(

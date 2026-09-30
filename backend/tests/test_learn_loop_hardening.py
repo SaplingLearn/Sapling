@@ -1209,3 +1209,146 @@ def test_the_tool_less_continuation_keeps_the_loop_rules():
         except Exception:
             pass  # the output validator may reject the stub turn; the request was made
     assert got and _LOOP_SYSTEM_PROMPT in got[0]
+
+
+# ── PKG-14 reopen (owner decision 2026-09-29, spec §13 A84): a served teach turn
+# never states the current concept's check-item answers ──
+
+_TEACH_ITEM = CheckItem(
+    id="item-t",
+    course_id="c1",
+    concept_key="recursion",
+    format="free",
+    difficulty=2,
+    prompt="What does factorial(0) return?",
+    reference_answer="The base case returns 1, so factorial(0) is one.",
+    final_answer="returns 1",
+    canonical_answer=None,
+    rubric=[RubricItem(id="r1", text="base case"), RubricItem(id="r2", text="value")],
+    common_wrong=[WrongReason(key="zero", text="returns 0")],
+    source_chunk_ids=["ch-1"],
+    stepwise=False,
+    question_hash="qh-t",
+)
+
+
+def test_served_teach_text_withholds_a_turn_that_states_an_items_answer():
+    from routes.learn_loop import LADDER_FALLBACK_LINES, served_teach_text
+
+    leaky = "Key idea: The base case returns 1.\n\nIt stops there.\n\nWhy does it stop?"
+    clean = "Key idea: A base case stops recursion.\n\nIt needs no further call.\n\nWhich input stops it?"
+    text, leaked = served_teach_text(leaky, leak_rung=Rung.H3, items=[_TEACH_ITEM], given="")
+    assert leaked and text == LADDER_FALLBACK_LINES[3] and "returns 1" not in text
+    assert served_teach_text(clean, leak_rung=Rung.H3, items=[_TEACH_ITEM], given="") == (
+        clean,
+        False,
+    )
+    assert served_teach_text(leaky, leak_rung=Rung.H3, items=[], given="") == (leaky, False)
+
+
+def test_served_teach_text_fails_closed_when_the_items_cannot_be_read_or_checked():
+    from routes.learn_loop import LADDER_FALLBACK_LINES, served_teach_text
+
+    clean = "Key idea: A base case stops recursion.\n\nIt needs no further call.\n\nWhich input stops it?"
+    assert served_teach_text(clean, leak_rung=Rung.H1, items=None, given="") == (
+        LADDER_FALLBACK_LINES[1],
+        False,
+    )
+    broken = _TEACH_ITEM.model_copy(update={"final_answer": None})
+    text, _ = served_teach_text(clean, leak_rung=Rung.H1, items=[broken], given="")
+    assert text == LADDER_FALLBACK_LINES[1]
+
+
+def test_teach_leak_check_reads_every_item_of_the_concept():
+    from routes.learn_loop import teach_leak_check
+
+    other = _TEACH_ITEM.model_copy(
+        update={
+            "final_answer": "the call stack",
+            "question_hash": "qh-u",
+            "reference_answer": "Each call waits on the call stack.",
+        }
+    )
+    check = teach_leak_check([_TEACH_ITEM, other], rung=Rung.H3, given="")
+    assert check("It lives on the call stack.") is True
+    assert check("A base case stops it.") is False
+    assert teach_leak_check(None, rung=Rung.H3, given="")("anything") is True  # fail closed
+
+
+def _teach_turn(seams, reply_body, *, items=None, list_error=None):
+    seams.store["doc"] = _routes._plan_state()
+    if list_error is not None:
+        seams.list_items.side_effect = list_error
+    else:
+        seams.list_items.return_value = [_TEACH_ITEM] if items is None else items
+    agent, seen = _routes._json_agent(reply_body)
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        body = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "explain"}
+        ).json()
+    return body, seen
+
+
+def test_a_teach_turn_that_states_the_concepts_answer_is_withheld(gate_on, seams):
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
+    body, seen = _teach_turn(seams, "The base case returns 1 and stops it.")
+    assert "returns 1" not in body["reply"]
+    assert body["reply"] == LADDER_FALLBACK_LINES[body["ceiling"]]
+    assert body["leak_redacted"] is True
+    seams.zpd.emit_zpd_leak.assert_called_once()
+    seams.list_items.assert_called_with("c1", "recursion")  # every item, the reserve included
+    assert seen["kw"]["deps"].loop_leak is not None  # the model gets its one retry first
+
+
+def test_a_clean_teach_turn_is_served_as_written(gate_on, seams):
+    body, _ = _teach_turn(seams, "A base case stops the recursion.")
+    assert "A base case stops the recursion." in body["reply"] and body["leak_redacted"] is False
+
+
+def test_a_teach_turn_whose_items_cannot_be_read_is_withheld(gate_on, seams):
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
+    body, _ = _teach_turn(
+        seams, "A base case stops the recursion.", list_error=RuntimeError("down")
+    )
+    assert body["reply"] == LADDER_FALLBACK_LINES[body["ceiling"]]
+
+
+def test_a_streamed_teach_turn_never_shows_the_answer(gate_on, seams):
+    seams.store["doc"] = _routes._plan_state()
+    seams.list_items.return_value = [_TEACH_ITEM]
+    reply = "Key idea: Recursion needs a stop.\n\nThe base case returns 1 there.\n\nWhy?"
+    with patch("routes.learn_loop.stream_structured_turn", _routes._fake_stream(reply)):
+        r = client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "go"},
+        )
+    evs = _sse_events(r.text)
+    tokens = "".join(e["data"]["delta"] for e in evs if e["type"] == "token")
+    done = [e for e in evs if e["type"] == "done"][0]["data"]
+    assert "returns 1" not in tokens and "returns 1" not in done["reply"]
+
+
+def test_redact_on_a_teach_turn_cuts_before_the_answer_and_streams_nothing_unreadable(seams):
+    from types import SimpleNamespace
+
+    from routes.learn_loop import _LoopTurn
+
+    turn = SimpleNamespace(
+        phase="teach",
+        tier="standard",
+        item=None,
+        given="",
+        answer_released=False,
+        teach_items=[_TEACH_ITEM],
+        rung=Rung.H0,
+        ceiling=Rung.H3,
+    )
+    text = "Recursion needs a stop. The base case returns 1 there."
+    assert _LoopTurn.redact(turn, text) == "Recursion needs a stop."
+    turn.teach_items = None
+    assert _LoopTurn.redact(turn, text) == ""
