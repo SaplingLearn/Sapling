@@ -151,7 +151,7 @@ def record_agent_usage(
     ``deps.user_id`` / request body) for per-user rollups; omit it and the
     request_id from the contextvar still attributes the row.
 
-    ``session_id`` (PKG-14b, spec §13 A89): pass the loop/tutor session the run
+    ``session_id`` (PKG-14b, spec §13 A92): pass the loop/tutor session the run
     belongs to wherever the run site knows it (``deps.session_id``); it lands in
     ``llm_usage.session_id`` so the cost report groups per session directly.
 

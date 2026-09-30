@@ -419,7 +419,7 @@ def test_match_wrong_reason_without_prior_runs_decision_and_never_invents(seam, 
         invented = asyncio.run(seam.match_wrong_reason(st, deps=_deps()))
     assert (v.value, v.probs, invented.value) == ("w_speed", {"w_speed": 0.8}, seam.NO_MATCH)
     assert re.findall(r"^OPTION (\S+):", calls["prompts"][0], re.M) == ["w_loop", "w_speed"]
-    # PKG-14b (A89): the decision run records its session (deps.session_id).
+    # PKG-14b (A92): the decision run records its session (deps.session_id).
     assert recorded[0] == {
         "feature": "tutor",
         "task": "decision",

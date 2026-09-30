@@ -415,12 +415,25 @@ def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str,
     return grouped
 
 
-def items_for_course(course_id: str) -> list[CheckItem]:
-    """Every item of the course, every concept (PKG-14, spec §13 A86: a served
-    teach turn is scanned against all of them), decrypted, paged in id order."""
-    return _to_items(
-        list(page_all(table(_TABLE), _COLUMNS, filters={"course_id": f"eq.{course_id}"}, order="id"))
-    )
+#: question hashes per `in.(...)` read in items_by_hash (a URL-length bound)
+_HASH_BATCH = 100
+
+
+def items_by_hash(hashes) -> list[CheckItem]:
+    """The items with these question hashes, every course (PKG-14, spec §13
+    A88: the open post-test poses a served turn is scanned against), decrypted,
+    in batches of _HASH_BATCH. The caller matches each to its pose's course."""
+    keys = sorted({h for h in hashes or [] if h})
+    out: list[CheckItem] = []
+    for i in range(0, len(keys), _HASH_BATCH):
+        batch = keys[i : i + _HASH_BATCH]
+        rows = table(_TABLE).select(
+            _COLUMNS,
+            filters={"question_hash": f"in.({','.join(pg_quote_value(h) for h in batch)})"},
+            order="id",
+        )
+        out.extend(_to_items(rows))
+    return out
 
 
 def course_has_items(course_id: str) -> bool:

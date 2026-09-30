@@ -245,7 +245,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "zpd.band_adjust",
     "zpd.wheelspin",
     "zpd.leak",
-    "zpd.teach_reveal",  # PKG-14 (spec §13 A86): a teach turn stated item answers
+    "zpd.reveal",  # PKG-14 (spec §13 A88): a served turn stated open posed items' answers
     "zpd.rating",
     # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
     # (services/decisions.py). `made` = one answered decision, with the backend
@@ -358,7 +358,7 @@ def log_llm_usage(
 
     ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
     ``None`` when unmeasured, and cached input is billed at the cached rate.
-    ``session_id`` (PKG-14b, spec §13 A89) is the loop session the run belonged
+    ``session_id`` (PKG-14b, spec §13 A92) is the loop session the run belonged
     to, ``None`` (never blank) when the run site knew none.
     """
     if not _logging_enabled():

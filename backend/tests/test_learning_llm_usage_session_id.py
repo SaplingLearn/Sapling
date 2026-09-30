@@ -1,4 +1,4 @@
-"""PKG-14b (owner decision 2026-09-29, spec §13 A89): `llm_usage.session_id`.
+"""PKG-14b (owner decision 2026-09-29, spec §13 A92): `llm_usage.session_id`.
 
 Every llm_usage row carries the loop session its run belonged to when the run
 site knows it; scripts/derive_zpd_metrics.py prefers the row's own session over

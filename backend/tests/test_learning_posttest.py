@@ -98,7 +98,14 @@ def gate_off():
 def tables():
     """learner_state / graph_nodes rows (user "u") and CheckItem models, served
     to every read the route makes."""
-    t = {"learner_state": [], "graph_nodes": [], "check_items": [], "poses": {}, "claims": []}
+    t = {
+        "learner_state": [],
+        "graph_nodes": [],
+        "check_items": [],
+        "poses": {},
+        "claims": [],
+        "evidence_since": [],  # A89: the node's evidence journaled after the pose
+    }
 
     def _states(user_id, cutoff):  # the route re-applies the cutoff itself
         return [
@@ -143,16 +150,24 @@ def tables():
         p = t["poses"].get((user_id, node_id))
         t["claims"].append((user_id, node_id, qh))
         if not p or p["question_hash"] != qh or p.get("answered_at") or p.get("claim"):
-            return False
+            return None
+        posed = datetime.fromisoformat(p["posed_at"])
+        if posed < now - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS):
+            return None  # A89: an expired pose is void
         p["claim"] = claim
+        return dict(p)
+
+    def _answer_pose(user_id, node_id, claim, now):
+        p = t["poses"].get((user_id, node_id))
+        if not p or p.get("claim") != claim or p.get("answered_at"):
+            return False
+        p["claim"], p["answered_at"] = None, now.isoformat()
         return True
 
-    def _settle(user_id, node_id, claim, *, answered):
+    def _release(user_id, node_id, claim):
         p = t["poses"].get((user_id, node_id))
-        if p and p.get("claim") == claim:
+        if p and p.get("claim") == claim and not p.get("answered_at"):
             p["claim"] = None
-            if answered is not None:
-                p["answered_at"] = answered.isoformat()
 
     with (
         patch("routes.learn_loop.states_last_evidence_before", side_effect=_states),
@@ -163,17 +178,24 @@ def tables():
         patch("routes.learn_loop._read_poses", side_effect=_read),
         patch("routes.learn_loop._record_poses", side_effect=_record),
         patch("routes.learn_loop._claim_pose", side_effect=_claim),
-        patch("routes.learn_loop._settle_pose", side_effect=_settle),
+        patch("routes.learn_loop._answer_pose", side_effect=_answer_pose),
+        patch("routes.learn_loop._release_pose", side_effect=_release),
+        patch(
+            "routes.learn_loop.recent_evidence",
+            side_effect=lambda u, n, *, since: list(t["evidence_since"]),
+        ),
+        patch("routes.learn_loop.unscanned_since", return_value=False),
     ):
         yield t
 
 
-def _pose(t, node="n1", qh="q1", course="c", answered=None):
+def _pose(t, node="n1", qh="q1", course="c", answered=None, posed=None):
     t["poses"][("u", node)] = {
         "user_id": "u",
         "node_id": node,
         "course_id": course,
         "question_hash": qh,
+        "posed_at": (posed or NOW - timedelta(hours=1)).isoformat(),
         "answered_at": answered,
         "claim": None,
     }
@@ -629,13 +651,18 @@ def test_an_answer_to_another_item_of_the_concept_is_409(gate_on, one_item, grad
     assert applied == []
 
 
-@pytest.mark.parametrize("seen,revealed", [({"q1"}, set()), (set(), {"q1"})])
-def test_an_open_pose_revealed_or_seen_since_grades_with_no_unassisted_credit(
-    gate_on, one_item, seen_revealed, grader_says, applied, captured_events, seen, revealed
+@pytest.mark.parametrize(
+    "since,revealed", [([{"question_hash": "other"}], set()), ([], {"q1"})]
+)
+def test_an_open_pose_revealed_or_worked_since_grades_with_no_unassisted_credit(
+    gate_on, one_item, seen_revealed, grader_says, applied, captured_events, since, revealed
 ):
-    """A86/A87: the committed item is still graded, like a released item."""
+    """A88/A89 (owner 2): an open pose whose item a served turn revealed, or
+    whose node has ANY evidence journaled after posed_at, is still graded — with
+    no unassisted credit, like a released item."""
     grader_says(correct=True, confidence=0.9)
-    seen_revealed(seen=seen, revealed=revealed)
+    one_item["evidence_since"] = since
+    seen_revealed(revealed=revealed)
     with patch("routes.learn_loop.revealed_hashes", side_effect=lambda u: set(revealed)):
         r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
     assert r.status_code == 200
@@ -657,32 +684,104 @@ def test_a_refusal_or_an_outage_releases_the_claim(gate_on, one_item, grader_una
 def test_p_known_after_is_read_when_the_flush_does_not_say(
     gate_on, one_item, grader_says, captured_events
 ):
+    from types import SimpleNamespace
+
     grader_says(correct=True, confidence=0.9)
     with (
         patch("services.graph_service.apply_graph_update", return_value=[]),
-        patch("routes.learn_loop._band_for", return_value=("profic", 0.93)),
+        patch("routes.learn_loop._learner_state", return_value=SimpleNamespace(p_known=0.93)),
     ):
         assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
     (step,) = [e for e in captured_events if e["event_type"] == "zpd.step"]
     assert step["payload"]["p_known_after"] == pytest.approx(0.93)
 
 
-def test_no_step_when_p_known_after_cannot_be_read(gate_on, one_item, grader_says, captured_events):
+@pytest.mark.parametrize("state", [None, RuntimeError("down")], ids=["no-row", "read-fails"])
+def test_no_step_when_p_known_after_is_not_known(
+    gate_on, one_item, grader_says, captured_events, state
+):
+    """m8: never a fabricated p_known_after — no stored row (the BKT prior is
+    not a measurement) or a failed read emits no step, never a None."""
     grader_says(correct=True, confidence=0.9)
-    calls = {"n": 0}
-
-    def _band(user, node):
-        calls["n"] += 1
-        if calls["n"] > 1:
-            raise RuntimeError("down")
-        return ("profic", 0.9)
-
+    kw = {"side_effect": state} if isinstance(state, Exception) else {"return_value": state}
     with (
         patch("services.graph_service.apply_graph_update", return_value=[]),
-        patch("routes.learn_loop._band_for", side_effect=_band),
+        patch("routes.learn_loop._learner_state", **kw),
+        patch("routes.learn_loop._band_for", return_value=("develop", 0.35)),
     ):
         assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
-    assert not [e for e in captured_events if e["event_type"] == "zpd.step"]  # never a None
+    assert not [e for e in captured_events if e["event_type"] == "zpd.step"]
+
+
+def test_an_expired_pose_is_void_a_late_answer_is_409(gate_on, one_item, grader_says, applied):
+    """A89 (owner 2): after POSTTEST_POSE_TTL_HOURS the pose is void."""
+    grader_says(correct=True, confidence=0.9)
+    _pose(one_item, posed=NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS, seconds=1))
+    r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 409 and applied == []
+
+
+def test_an_expired_pose_may_be_re_posed(gate_on, one_item):
+    _pose(
+        one_item, qh="q-old", posed=NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS + 1)
+    )
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q1"]
+    pose = one_item["poses"][("u", "n1")]
+    assert pose["question_hash"] == "q1" and pose["posed_at"] == NOW.isoformat()
+
+
+def test_an_open_pose_within_the_ttl_is_returned_again(gate_on, one_item):
+    _pose(one_item, posed=NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS - 1))
+    posed_at = one_item["poses"][("u", "n1")]["posed_at"]
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q1"]
+    assert one_item["poses"][("u", "n1")]["posed_at"] == posed_at  # never re-posed
+
+
+def test_a_taken_over_claim_writes_nothing(gate_on, one_item, grader_says, applied):
+    """m1/m2: the claim is re-validated (and the pose closed) BEFORE the flush;
+    a claim taken over mid-grade (stale takeover) writes no evidence."""
+    grader_says(correct=True, confidence=0.9)
+    with patch("routes.learn_loop._answer_pose", return_value=False):
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 409 and applied == []
+
+
+def test_a_failed_flush_never_reopens_the_answered_pose(gate_on, one_item, grader_says):
+    """m2: the pose is closed before the flush; a flush that raises leaves it
+    answered (fail closed: never graded twice), not released."""
+    grader_says(correct=True, confidence=0.9)
+    with (
+        patch("routes.learn_loop.flush_pending", side_effect=RuntimeError("down")),
+        pytest.raises(RuntimeError),
+    ):
+        client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert one_item["poses"][("u", "n1")]["answered_at"] is not None
+
+
+def test_an_unreadable_evidence_journal_grades_assisted(
+    gate_on, one_item, grader_says, applied
+):
+    grader_says(correct=True, confidence=0.9)
+    with patch("routes.learn_loop.recent_evidence", return_value=None):
+        assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
+    (ev,) = applied[0]["graph_update"]["evidence"]
+    assert ev["max_rung"] >= params.RUNG_ASSISTED_MIN and ev["assisted"] is True
+
+
+def test_the_floor_reads_the_journal_from_posed_at(gate_on, one_item, grader_says, applied):
+    grader_says(correct=True, confidence=0.9)
+    with patch("routes.learn_loop.recent_evidence", return_value=[]) as journal:
+        assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
+    posed = datetime.fromisoformat(one_item["poses"][("u", "n1")]["posed_at"])
+    assert journal.call_args.kwargs["since"] == learn_loop_iso_z(posed)
+
+
+def learn_loop_iso_z(ts):
+    from routes.learn_loop import _iso_z
+
+    return _iso_z(ts)
 
 
 def test_answer_to_another_students_node_is_404(gate_on, one_item, applied):
@@ -711,36 +810,49 @@ def test_claim_pose_is_one_conditional_update():
     from routes import learn_loop
 
     handle = MagicMock()
-    handle.update.return_value = [{"node_id": "n1"}]
+    handle.update.return_value = [{"node_id": "n1", "posed_at": NOW.isoformat()}]
     with patch("routes.learn_loop.table", return_value=handle) as tbl:
-        assert learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW) is True
+        assert learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW) == handle.update.return_value[0]
     tbl.assert_called_with("posttest_poses")
     (data,) = handle.update.call_args.args[:1]
     filters = handle.update.call_args.kwargs["filters"]
     assert data["claim"] == "c-1"
     assert filters["answered_at"] == "is.null" and filters["question_hash"] == "eq.q1"
-    assert filters["or"].startswith("(claim.is.null,claimed_at.lt.") and "+" not in filters["or"]
+    # m10: a claim with no claimed_at is claimable; the stale time is ISO-Z (no '+')
+    assert filters["or"].startswith("(claim.is.null,claimed_at.is.null,claimed_at.lt.")
+    assert "+" not in filters["or"]
+    ttl = NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
+    assert filters["posed_at"] == f"gte.{learn_loop._iso_z(ttl)}"  # A89
     handle.update.return_value = []
     with patch("routes.learn_loop.table", return_value=handle):
-        assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is False
+        assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is None
 
 
-def test_settle_and_record_poses():
+def test_answer_release_and_record_poses():
     from unittest.mock import MagicMock
 
     from routes import learn_loop
 
     handle = MagicMock()
+    handle.update.return_value = [{"node_id": "n1"}]
     with patch("routes.learn_loop.table", return_value=handle):
-        learn_loop._settle_pose("u", "n1", "c-1", answered=NOW)
+        assert learn_loop._answer_pose("u", "n1", "c-1", NOW) is True
+        answered = handle.update.call_args
+        learn_loop._release_pose("u", "n1", "c-1")
+        released = handle.update.call_args
         learn_loop._record_poses([{"user_id": "u", "node_id": "n1"}])
         learn_loop._record_poses([])
-    data = handle.update.call_args.args[0]
-    assert data["answered_at"] == NOW.isoformat() and data["claim"] is None
-    assert handle.update.call_args.kwargs["filters"]["claim"] == "eq.c-1"
+    assert answered.args[0] == {"answered_at": NOW.isoformat(), "claim": None, "claimed_at": None}
+    assert answered.kwargs["filters"]["claim"] == "eq.c-1"
+    assert answered.kwargs["filters"]["answered_at"] == "is.null"  # m1: re-validated
+    assert released.args[0] == {"claim": None, "claimed_at": None}
+    assert released.kwargs["filters"]["answered_at"] == "is.null"  # never reopens an answer
     handle.upsert.assert_called_once_with(
         [{"user_id": "u", "node_id": "n1"}], on_conflict="user_id,node_id"
     )
+    handle.update.return_value = []
+    with patch("routes.learn_loop.table", return_value=handle):
+        assert learn_loop._answer_pose("u", "n1", "c-1", NOW) is False
 
 
 def test_course_nodes_are_paged():

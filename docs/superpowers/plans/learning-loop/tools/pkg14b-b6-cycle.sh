@@ -62,6 +62,9 @@ if make e2e-up; then
   # Real-SQL integration tests (they truncate + reseed: run AFTER Playwright).
   (cd backend && env -u SAPLING_MODEL_MODE -u SAPLING_FUNCTION_HANDLERS RUN_INTEGRATION=1 \
     venv/bin/python -m pytest -m integration -q -p no:cacheprovider \
+      tests/integration/test_posttest_poses_db.py \
+      tests/integration/test_teach_reveal_db.py \
+      tests/integration/test_zpd_metrics_db.py \
       tests/integration/test_posttest_claim_db.py \
       tests/integration/test_learning_migrations_replay_db.py \
       tests/integration/test_migrations_ledger.py); i1=$?

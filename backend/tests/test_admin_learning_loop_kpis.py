@@ -164,10 +164,11 @@ def test_kpis_shape_and_values(seeded):
     b = r.json()
     assert b["steps_total"] == params.BAND_WINDOW + 4
     assert b["banded_steps"] == 2 and b["in_band_share"] == pytest.approx(0.0)
-    assert b["leak_count"] == 1
+    assert b["caught_leaks"] == 1  # caught and redacted: never served (m5)
+    assert b["served_reveals"] == 0 and b["unscanned_turns"] == 0
     assert b["ceiling_compliance"]["steps"] == params.BAND_WINDOW + 4
     assert b["ceiling_compliance"]["compliant"] == params.BAND_WINDOW + 3
-    assert b["gates"] == {"zero_leaks": False, "ceiling_compliance_ok": False}
+    assert b["gates"] == {"zero_leaks": True, "ceiling_compliance_ok": False}
     assert b["unassisted_next_session"] == {"sessions": 2, "successes": 1, "rate": 0.5}
     trend = {t["concept_id"]: t for t in b["htc_k_trend"]}
     assert trend["c1"]["direction"] == "insufficient"  # one week with data
@@ -293,7 +294,7 @@ def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
     monkeypatch.setattr(analytics, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     by_table = {n: f for n, _, f in calls}
-    assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak,zpd.teach_reveal)"
+    assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak,zpd.reveal)"
     assert by_table["node_mastery_events"]["event_type"] == "eq.evidence"
 
 
@@ -315,25 +316,48 @@ def test_requires_admin(monkeypatch):
     assert client.get(URL, params=RANGE).status_code in (401, 403)
 
 
-def test_teach_reveals_never_count_as_leaks(monkeypatch):
-    """Spec §13 A86: a teach turn that states an item's answer is a
-    zpd.teach_reveal (the item is marked revealed), not a served leak — the
-    zero-leak gate counts zpd.leak on item turns only, so a student cannot turn
-    it red on purpose. The reveals are reported beside it."""
+def _reveal_event(hashes, *, unscanned=False):
+    return {
+        "event_type": "zpd.reveal",
+        "category": "usage",
+        "user_id": "u1",
+        "request_id": "t",
+        "payload": {
+            "question_hashes": hashes,
+            "count": len(hashes),
+            "unscanned": unscanned,
+            "phase": "teach",
+            "session_id": "s1",
+        },
+        "created_at": "2026-07-12T00:00:00+00:00",
+    }
+
+
+def test_zero_leaks_gate_counts_served_solution_reveals(monkeypatch):
+    """Spec §13 A90 (m5): zpd.leak is a leak CAUGHT on the active item and
+    redacted before serving, so it never turns the gate red; the gate counts
+    the open posed items whose answer a served turn stated (zpd.reveal hashes)."""
     store = {
-        "events": [
-            {
-                "event_type": "zpd.teach_reveal",
-                "category": "usage",
-                "user_id": "u1",
-                "request_id": "t",
-                "payload": {"question_hashes": ["q"], "count": 1, "unscanned": False},
-                "created_at": "2026-07-12T00:00:00+00:00",
-            }
-        ],
+        "events": [_reveal_event(["q1", "q2"]), _reveal_event([], unscanned=True)],
         "node_mastery_events": [],
     }
     _serve(monkeypatch, store)
     b = client.get(URL, params=RANGE).json()
-    assert b["leak_count"] == 0 and b["gates"]["zero_leaks"] is True
-    assert b["teach_reveals"] == 1
+    assert b["caught_leaks"] == 0
+    assert b["served_reveals"] == 2 and b["unscanned_turns"] == 1
+    assert b["gates"]["zero_leaks"] is (2 <= params.GATE_LEAKS_MAX)
+
+
+def test_caught_leaks_alone_keep_the_gate_green(monkeypatch):
+    leak = {
+        "event_type": "zpd.leak",
+        "category": "error",
+        "user_id": "u1",
+        "request_id": "t",
+        "payload": {"rung_emitted": 3, "ceiling": 3, "detector": "exact", "request_id": "t"},
+        "created_at": "2026-07-12T00:00:00+00:00",
+    }
+    _serve(monkeypatch, {"events": [leak, leak], "node_mastery_events": []})
+    b = client.get(URL, params=RANGE).json()
+    assert b["caught_leaks"] == 2 and b["served_reveals"] == 0
+    assert b["gates"]["zero_leaks"] is True

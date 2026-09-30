@@ -1,9 +1,9 @@
-"""PKG-14 half A + B migrations against real Postgres (spec §13 A87, A89).
+"""PKG-14 half A + B migrations against real Postgres (spec §13 A87, A92).
 
 1. Replay from EMPTY. The B6 cycle boots the stack on dropped volumes
    (`supabase stop --no-backup` before `make e2e-up`), so e2e-up's
    `db.migrate` replays every migration from an empty database. On that stack:
-   the ledger holds the three PKG-14 migrations in filename order, and the
+   the ledger holds the four PKG-14 migrations in filename order, and the
    tables/columns have the declared shape. (A scratch `CREATE DATABASE` is not
    an honest "empty": 0011 writes `storage.buckets`, which only a Supabase
    database has.)
@@ -28,7 +28,14 @@ from tests.integration.conftest import _require_local_db_url
 pytestmark = pytest.mark.integration
 
 MIG_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
-PKG14_MIGRATIONS = ("learning_loop_arm", "learning_posttest_poses", "learning_llm_usage_session_id")
+#: Every learning migration since aaa9085e (the PKG-14 base): half A's arm, poses
+#: and reveals (A88), half B's llm_usage.session_id (A92).
+PKG14_MIGRATIONS = (
+    "learning_loop_arm",
+    "learning_posttest_poses",
+    "learning_reveals",
+    "learning_llm_usage_session_id",
+)
 
 
 def _file(suffix: str) -> Path:
@@ -55,6 +62,10 @@ def test_the_pkg14_migrations_are_applied_in_filename_order(db_conn):
 
 
 def test_the_pkg14_schema_has_the_declared_shape(db_conn):
+    reveals = db_conn.execute(
+        "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.learning_reveals'::regclass"
+    ).fetchone()
+    assert reveals["relrowsecurity"] is True
     assert _column(db_conn, "user_settings", "loop_arm")["data_type"] == "text"
     rls = db_conn.execute(
         "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.posttest_poses'::regclass"

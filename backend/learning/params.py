@@ -481,6 +481,9 @@ GATE_CEILING_COMPLIANCE_MIN = 0.95
 # † research §"Measure learning…" (rung 3 is tool-removed and ≥ 2 days delayed)
 POSTTEST_MIN_AGE_DAYS = 2
 POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)
+# † PKG-14 (spec §13 A89, owner): an unanswered post-test pose is void after this
+# long — it may be re-posed, and a late answer to it is refused (409)
+POSTTEST_POSE_TTL_HOURS = 24
 # † the first A/B candidate (A6): variant B's independent-time gate for the
 # develop/profic bands (novice keeps GATE_INDEPENDENT_MIN_S_NOVICE for both)
 GATE_INDEPENDENT_MIN_S_VARIANT_B = 90
@@ -488,7 +491,7 @@ GATE_INDEPENDENT_MIN_S_VARIANT_B = 90
 # teach phase that passes the genuine-attempt rule raises THAT turn's ceiling by
 # this many rungs (the ladder's one rung after an attempt), capped per band
 TEACH_ATTEMPT_CEILING_RAISE = 1
-# † PKG-14 (spec §13 A86): the loop opener has no session row yet, so the items
-# its served text reveals wait in memory until the session materialises; at most
-# this many openers' reveals are held (oldest evicted first)
-LOOP_PENDING_REVEALS_MAX = 10_000
+# † PKG-14 (spec §13 A85): a failed or paused turn's teach independent-time
+# anchor is held in memory (a failed turn writes nothing, ADR 0024); at most this
+# many sessions' anchors are held (oldest evicted first)
+LOOP_FAILED_ANCHORS_MAX = 10_000
