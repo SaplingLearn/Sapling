@@ -7,7 +7,6 @@ REAL flush_pending persists it through the patched apply_graph_update."""
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -99,7 +98,7 @@ def gate_off():
 def tables():
     """learner_state / graph_nodes rows (user "u") and CheckItem models, served
     to every read the route makes."""
-    t = {"learner_state": [], "graph_nodes": [], "check_items": []}
+    t = {"learner_state": [], "graph_nodes": [], "check_items": [], "poses": {}, "claims": []}
 
     def _states(user_id, cutoff):  # the route re-applies the cutoff itself
         return [
@@ -119,13 +118,65 @@ def tables():
         rows = [{"user_id": "u", **r} for r in t["graph_nodes"]] if name == "graph_nodes" else []
         return _Fake(rows)
 
+    def _nodes(user_id, course_id):
+        from services.graph_service import _normalize_concept
+
+        return {
+            r["id"]: _normalize_concept(r["concept_name"])
+            for r in t["graph_nodes"]
+            if r.get("course_id") == course_id and user_id == "u"
+        }
+
+    # spec §13 A87: posttest_poses, in memory, with the route helpers' semantics
+    def _read(user_id, course_id):
+        return {
+            n: dict(p)
+            for (u, n), p in t["poses"].items()
+            if u == user_id and p["course_id"] == course_id
+        }
+
+    def _record(rows):
+        for r in rows:
+            t["poses"][(r["user_id"], r["node_id"])] = dict(r)
+
+    def _claim(user_id, node_id, qh, claim, now):
+        p = t["poses"].get((user_id, node_id))
+        t["claims"].append((user_id, node_id, qh))
+        if not p or p["question_hash"] != qh or p.get("answered_at") or p.get("claim"):
+            return False
+        p["claim"] = claim
+        return True
+
+    def _settle(user_id, node_id, claim, *, answered):
+        p = t["poses"].get((user_id, node_id))
+        if p and p.get("claim") == claim:
+            p["claim"] = None
+            if answered is not None:
+                p["answered_at"] = answered.isoformat()
+
     with (
         patch("routes.learn_loop.states_last_evidence_before", side_effect=_states),
         patch("routes.learn_loop.items_for_concepts", side_effect=_items),
         patch("routes.learn_loop.table", side_effect=_table),
         patch("routes.learn_loop.read_states", return_value={}),
+        patch("routes.learn_loop._course_nodes", side_effect=_nodes),
+        patch("routes.learn_loop._read_poses", side_effect=_read),
+        patch("routes.learn_loop._record_poses", side_effect=_record),
+        patch("routes.learn_loop._claim_pose", side_effect=_claim),
+        patch("routes.learn_loop._settle_pose", side_effect=_settle),
     ):
         yield t
+
+
+def _pose(t, node="n1", qh="q1", course="c", answered=None):
+    t["poses"][("u", node)] = {
+        "user_id": "u",
+        "node_id": node,
+        "course_id": course,
+        "question_hash": qh,
+        "answered_at": answered,
+        "claim": None,
+    }
 
 
 @pytest.fixture
@@ -238,12 +289,13 @@ def test_posttest_404_when_gate_false(gate_off):
     assert r.status_code == 404 and r.json()["detail"] == "learning loop not enabled"
 
 
-def test_answer_is_rate_limited_start_is_not():
+def test_both_posttest_routes_are_rate_limited():
+    """A87: /posttest/start writes a pose now, so it carries the A20 limit too."""
     from routes import learn_loop
 
     deps = {r.path: {d.call for d in r.dependant.dependencies} for r in learn_loop.router.routes}
     assert ai_budget.enforce_rate_limit in deps["/posttest/answer"]
-    assert ai_budget.enforce_rate_limit not in deps["/posttest/start"]
+    assert ai_budget.enforce_rate_limit in deps["/posttest/start"]
 
 
 # ── /posttest/start ──────────────────────────────────────────────────────────
@@ -369,7 +421,7 @@ def test_start_caps_items_oldest_first(gate_on, tables, freeze_now, seen_reveale
     assert items[0]["node_id"] == f"n{n - 1}"  # oldest evidence first
 
 
-def test_start_writes_nothing_and_runs_no_model(
+def test_start_runs_no_model_writes_no_evidence_and_records_the_pose(
     gate_on, tables, freeze_now, seen_revealed, applied, captured_events
 ):
     freeze_now(NOW)
@@ -386,6 +438,52 @@ def test_start_writes_nothing_and_runs_no_model(
     rag.assert_not_called()
     brief.assert_not_called()
     assert applied == [] and captured_events == []
+    pose = tables["poses"][("u", "n1")]
+    assert pose["question_hash"] == "q1" and pose["answered_at"] is None  # A87: committed
+
+
+def test_a_repeat_start_returns_the_same_item_never_a_fresh_one(
+    gate_on, tables, freeze_now, seen_revealed
+):
+    """A87: no shopping — the open pose is returned even after the item was
+    revealed or seen since (its grade then carries no unassisted credit)."""
+    freeze_now(NOW)
+    tables["learner_state"] = _due("n1")
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "a-res"), item("k1", "b-other")]
+    first = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in first] == ["a-res"]
+    seen_revealed(revealed={"a-res"})
+    again = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in again] == ["a-res"]
+
+
+def test_an_open_pose_stays_posed_when_the_node_is_no_longer_due(
+    gate_on, tables, freeze_now, seen_revealed
+):
+    freeze_now(NOW)
+    tables["learner_state"] = _due("n1", at=FRESH)
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1")]
+    _pose(tables)
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q1"]
+
+
+def test_an_answered_node_is_posed_again_only_when_due_again(
+    gate_on, tables, freeze_now, seen_revealed
+):
+    freeze_now(NOW)
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1"), item("k1", "q2")]
+    _pose(tables, answered=FRESH)
+    tables["learner_state"] = _due("n1", at=FRESH)  # the post-test answer was its last evidence
+    assert client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"] == []
+    tables["learner_state"] = _due("n1")  # old enough again
+    seen_revealed(seen={"q1"})
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q2"]
+    assert tables["poses"][("u", "n1")]["answered_at"] is None
 
 
 # ── /posttest/answer ─────────────────────────────────────────────────────────
@@ -397,6 +495,7 @@ def one_item(tables, freeze_now, seen_revealed):
     tables["learner_state"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1")]
+    _pose(tables)  # A87: the answer grades the open pose
     return tables
 
 
@@ -439,6 +538,7 @@ def test_answer_mc_reason_uses_the_option_and_the_reason(
     tables["learner_state"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1", fmt="mc_reason")]
+    _pose(tables)
     grader_says(correct=True, confidence=0.8)
     r = client.post(ANSWER, json=_answer(selected_option="A", reason="it keeps its scope"))
     assert r.status_code == 200 and r.json()["correct"] is True
@@ -504,35 +604,85 @@ def test_answer_over_the_length_bound_is_422(gate_on, one_item, applied):
     assert r.status_code == 422 and applied == []
 
 
-def test_answer_to_a_seen_item_is_409_and_never_graded(
-    gate_on, one_item, seen_revealed, grader_says, grader_calls, applied
+def test_an_answer_without_an_open_pose_is_409_and_never_graded(
+    gate_on, one_item, grader_says, grader_calls, applied
 ):
-    """An answered post-test item is seen: a second submit never grades or flushes."""
     grader_says(correct=True, confidence=0.9)
-    seen_revealed(seen={"q1"})
+    one_item["poses"].clear()
     r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
     assert r.status_code == 409 and r.json()["detail"] == "not a post-test item"
     assert grader_calls == [] and applied == []
 
 
-def test_answer_to_a_concept_taught_too_recently_is_409(gate_on, one_item, grader_says, applied):
+def test_an_answered_pose_is_never_graded_twice(gate_on, one_item, grader_says, applied):
     grader_says(correct=True, confidence=0.9)
-    one_item["learner_state"] = _due("n1", at=FRESH)
-    assert client.post(ANSWER, json=_answer(answer="x y z")).status_code == 409
+    assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
+    assert one_item["poses"][("u", "n1")]["answered_at"] is not None
+    assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 409
+    assert len(applied) == 1
+
+
+def test_an_answer_to_another_item_of_the_concept_is_409(gate_on, one_item, grader_says, applied):
+    grader_says(correct=True, confidence=0.9)
+    one_item["check_items"].append(item("k1", "q2"))
+    assert client.post(ANSWER, json=_answer(question_hash="q2", answer="x y z")).status_code == 409
     assert applied == []
 
 
-def test_answer_to_an_item_that_is_not_the_concepts_posttest_item_is_409(
-    gate_on, one_item, grader_says, applied
+@pytest.mark.parametrize("seen,revealed", [({"q1"}, set()), (set(), {"q1"})])
+def test_an_open_pose_revealed_or_seen_since_grades_with_no_unassisted_credit(
+    gate_on, one_item, seen_revealed, grader_says, applied, captured_events, seen, revealed
 ):
-    """The reserve is unseen, so another item of the concept is not the post-test item."""
+    """A86/A87: the committed item is still graded, like a released item."""
     grader_says(correct=True, confidence=0.9)
-    one_item["check_items"] = [
-        item("k1", "a-res"),
-        item("k1", "q1", difficulty=params.CHECK_ITEM_DIFFICULTIES[0]),
-    ]
-    assert client.post(ANSWER, json=_answer(answer="x y z")).status_code == 409
-    assert applied == []
+    seen_revealed(seen=seen, revealed=revealed)
+    with patch("routes.learn_loop.revealed_hashes", side_effect=lambda u: set(revealed)):
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 200
+    (ev,) = applied[0]["graph_update"]["evidence"]
+    assert ev["max_rung"] == params.RUNG_NO_CREDIT_MIN and ev["assisted"] is True
+    (step,) = [e for e in captured_events if e["event_type"] == "zpd.step"]
+    assert step["payload"]["assisted"] is True
+    assert (
+        step["payload"]["max_rung_used"] == step["payload"]["ceiling"] == params.RUNG_NO_CREDIT_MIN
+    )
+
+
+def test_a_refusal_or_an_outage_releases_the_claim(gate_on, one_item, grader_unavailable, applied):
+    assert client.post(ANSWER, json=_answer(answer="a loop")).status_code == 503
+    pose = one_item["poses"][("u", "n1")]
+    assert pose["claim"] is None and pose["answered_at"] is None  # the student may answer again
+
+
+def test_p_known_after_is_read_when_the_flush_does_not_say(
+    gate_on, one_item, grader_says, captured_events
+):
+    grader_says(correct=True, confidence=0.9)
+    with (
+        patch("services.graph_service.apply_graph_update", return_value=[]),
+        patch("routes.learn_loop._band_for", return_value=("profic", 0.93)),
+    ):
+        assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
+    (step,) = [e for e in captured_events if e["event_type"] == "zpd.step"]
+    assert step["payload"]["p_known_after"] == pytest.approx(0.93)
+
+
+def test_no_step_when_p_known_after_cannot_be_read(gate_on, one_item, grader_says, captured_events):
+    grader_says(correct=True, confidence=0.9)
+    calls = {"n": 0}
+
+    def _band(user, node):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("down")
+        return ("profic", 0.9)
+
+    with (
+        patch("services.graph_service.apply_graph_update", return_value=[]),
+        patch("routes.learn_loop._band_for", side_effect=_band),
+    ):
+        assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
+    assert not [e for e in captured_events if e["event_type"] == "zpd.step"]  # never a None
 
 
 def test_answer_to_another_students_node_is_404(gate_on, one_item, applied):
@@ -544,64 +694,77 @@ def test_answer_unknown_item_is_404(gate_on, one_item, applied):
     assert client.post(ANSWER, json=_answer(question_hash="nope", answer="x")).status_code == 404
 
 
-def test_concurrent_submits_of_one_item_flush_once(gate_on, one_item, seen_revealed, applied):
-    """Two submits race: the per-(student, item) lock holds the eligibility check,
-    the grade and the flush together; the second sees the item seen and is a 409."""
-    import routes.learn_loop as ll
-    from types import SimpleNamespace
+def test_a_second_submit_while_the_first_holds_the_claim_is_409(gate_on, one_item, applied):
+    """A87: the claim is one conditional UPDATE in the database, so two
+    submissions — in one process or many — never both grade."""
+    one_item["poses"][("u", "n1")]["claim"] = "someone-else"
+    assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 409
+    assert applied == []
 
-    seen = set()
-    seen_revealed(seen=set())
 
-    async def _slow_grade(item, answer, *, deps, node_id, max_rung, **kw):
-        await asyncio.sleep(0.05)
-        deps.pending_evidence.append({"node_id": node_id, "question_hash": item.question_hash})
-        return SimpleNamespace(
-            unavailable=False,
-            refused=None,
-            correct=True,
-            confidence=0.9,
-            evidence={"channel": "free_response"},
-            grader_backend="gemini",
+# ── the pose helpers against the table seam ──────────────────────────────────
+
+
+def test_claim_pose_is_one_conditional_update():
+    from unittest.mock import MagicMock
+
+    from routes import learn_loop
+
+    handle = MagicMock()
+    handle.update.return_value = [{"node_id": "n1"}]
+    with patch("routes.learn_loop.table", return_value=handle) as tbl:
+        assert learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW) is True
+    tbl.assert_called_with("posttest_poses")
+    (data,) = handle.update.call_args.args[:1]
+    filters = handle.update.call_args.kwargs["filters"]
+    assert data["claim"] == "c-1"
+    assert filters["answered_at"] == "is.null" and filters["question_hash"] == "eq.q1"
+    assert filters["or"].startswith("(claim.is.null,claimed_at.lt.") and "+" not in filters["or"]
+    handle.update.return_value = []
+    with patch("routes.learn_loop.table", return_value=handle):
+        assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is False
+
+
+def test_settle_and_record_poses():
+    from unittest.mock import MagicMock
+
+    from routes import learn_loop
+
+    handle = MagicMock()
+    with patch("routes.learn_loop.table", return_value=handle):
+        learn_loop._settle_pose("u", "n1", "c-1", answered=NOW)
+        learn_loop._record_poses([{"user_id": "u", "node_id": "n1"}])
+        learn_loop._record_poses([])
+    data = handle.update.call_args.args[0]
+    assert data["answered_at"] == NOW.isoformat() and data["claim"] is None
+    assert handle.update.call_args.kwargs["filters"]["claim"] == "eq.c-1"
+    handle.upsert.assert_called_once_with(
+        [{"user_id": "u", "node_id": "n1"}], on_conflict="user_id,node_id"
+    )
+
+
+def test_course_nodes_are_paged():
+    from unittest.mock import MagicMock
+
+    from routes import learn_loop
+
+    handle = MagicMock()
+    handle.select_with_count.return_value = ([{"id": "n1", "concept_name": "Recursion"}], 1)
+    with patch("routes.learn_loop.table", return_value=handle):
+        assert learn_loop._course_nodes("u", "c") == {"n1": "recursion"}
+    assert handle.select_with_count.call_args.kwargs["order"] == "id"
+
+
+def test_the_pose_migration_is_backend_only():
+    import pathlib
+
+    (mig,) = sorted(
+        (pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations").glob(
+            "*_learning_posttest_poses.sql"
         )
-
-    def _flush(deps, course_id):
-        seen.add("q1")
-        seen_revealed(seen=seen)
-        deps.pending_evidence.clear()
-        applied.append({"flush": course_id})
-        return []
-
-    async def _run():
-        body = ll.PosttestAnswerBody(**_answer(answer="its lexical scope"))
-
-        class _Req:
-            class state:
-                pass
-
-            headers: dict = {}
-
-        async def one():
-            try:
-                return await ll.posttest_answer(body, _Req())
-            except Exception as exc:  # noqa: BLE001 — the loser's 409
-                return exc
-
-        return await asyncio.gather(one(), one())
-
-    with (
-        patch("routes.learn_loop.grade_answer", side_effect=_slow_grade),
-        patch("routes.learn_loop.flush_pending", side_effect=_flush),
-        patch("routes.learn_loop.require_self", return_value=None),
-        patch("routes.learn_loop._request_id", return_value="rid"),
-        patch("routes.learn_loop.zpd_events"),
-        patch("routes.learn_loop._arm_for", return_value=None),
-    ):
-        results = asyncio.run(_run())
-    assert len(applied) == 1
-    assert sum(1 for r in results if isinstance(r, dict)) == 1
-    (loser,) = [r for r in results if not isinstance(r, dict)]
-    assert getattr(loser, "status_code", None) == 409
+    )
+    sql = mig.read_text()
+    assert "PRIMARY KEY (user_id, node_id)" in sql and "ENABLE ROW LEVEL SECURITY" in sql
 
 
 # ── the phase value ──────────────────────────────────────────────────────────

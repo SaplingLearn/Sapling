@@ -87,7 +87,7 @@ from agents.loop_tutor import (
 )
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage
-from db.connection import table
+from db.connection import page_all, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, zpd_events
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
@@ -2967,12 +2967,7 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
 #: step phase only.
 STEP_PHASES: tuple[str, ...] = get_args(zpd_events.Phase)
 _NOT_A_POSTTEST_ITEM = "not a post-test item"
-#: One post-test answer per (student, item) at a time, held across the eligibility
-#: check, the grade and the ONE flush: the flushed evidence makes the item seen, so
-#: a double submit finds it no longer a post-test item (409) and never flushes
-#: twice. The backend serves from ONE process (backend/Dockerfile's CMD), so an
-#: in-process lock serialises every submission of the deployment.
-_POSTTEST_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+_POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is opened
 
 
 def _posttest_now() -> datetime:
@@ -2981,6 +2976,11 @@ def _posttest_now() -> datetime:
 
 def _posttest_cutoff(now: datetime) -> datetime:
     return now - timedelta(days=POSTTEST_MIN_AGE_DAYS)
+
+
+def _iso_z(ts: datetime) -> str:
+    """A UTC ISO timestamp with no '+' (safe inside a PostgREST or=(…) filter)."""
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _due_for_posttest(last_evidence_at, cutoff: datetime) -> bool:
@@ -3018,47 +3018,134 @@ def _posttest_excluded(user_id: str) -> set[str]:
     return set(seen_hashes(user_id)) | set(revealed_hashes(user_id))
 
 
-@router.post("/posttest/start")
+class _CourseNodesRead:
+    """A read-only page_all handle over graph_nodes (invariant 1's ast half
+    allows the table only as a direct read — check_item_service's pattern)."""
+
+    def select_with_count(self, *args, **kwargs):
+        return table("graph_nodes").select_with_count(*args, **kwargs)
+
+
+def _course_nodes(user_id: str, course_id: str) -> dict[str, str]:
+    """node id → concept key of the student's nodes in the course (paged)."""
+    return {
+        row["id"]: _normalize_concept(row.get("concept_name") or "")
+        for row in page_all(
+            _CourseNodesRead(),
+            "id,concept_name",
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+            order="id",
+        )
+        if row.get("id")
+    }
+
+
+def _read_poses(user_id: str, course_id: str) -> dict[str, dict]:
+    """node id → the student's post-test pose row in the course (A87)."""
+    rows = table(_POSES).select(
+        "node_id,question_hash,answered_at,claim,claimed_at",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+    )
+    return {r["node_id"]: r for r in rows or [] if r.get("node_id")}
+
+
+def _record_poses(rows: list[dict]) -> None:
+    """Open (or replace, once the node is due again) the poses — one upsert."""
+    if rows:
+        table(_POSES).upsert(rows, on_conflict="user_id,node_id")
+
+
+def _claim_pose(user_id: str, node_id: str, question_hash: str, claim: str, now: datetime) -> bool:
+    """The DB claim (A87): one conditional UPDATE — the open pose of this item,
+    unclaimed or under a claim older than LOOP_GRADING_CLAIM_STALE_S — so only
+    one submission grades it, whatever the number of backend processes."""
+    stale = _iso_z(now - timedelta(seconds=LOOP_GRADING_CLAIM_STALE_S))
+    rows = table(_POSES).update(
+        {"claim": claim, "claimed_at": now.isoformat()},
+        filters={
+            "user_id": f"eq.{user_id}",
+            "node_id": f"eq.{node_id}",
+            "question_hash": f"eq.{question_hash}",
+            "answered_at": "is.null",
+            "or": f"(claim.is.null,claimed_at.lt.{stale})",
+        },
+    )
+    return bool(rows)
+
+
+def _settle_pose(user_id: str, node_id: str, claim: str, *, answered: datetime | None) -> None:
+    """Answered (the one flush happened) or released (nothing was graded)."""
+    data: dict = {"claim": None, "claimed_at": None}
+    if answered is not None:
+        data["answered_at"] = answered.isoformat()
+    table(_POSES).update(
+        data, filters={"user_id": f"eq.{user_id}", "node_id": f"eq.{node_id}", "claim": f"eq.{claim}"}
+    )
+
+
+@router.post("/posttest/start", dependencies=_RATE_LIMITED)
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     """Rung 3 (spec §10): this student's post-test items for one course — one
     per concept whose last evidence is at least POSTTEST_MIN_AGE_DAYS old, its
     reserve item unless seen or revealed (A23), oldest evidence first, at most
-    POSTTEST_MAX_ITEMS. The pose only: the prompt verbatim and an mc_reason
+    POSTTEST_MAX_ITEMS. It COMMITS when opened (A87): the posed item is recorded,
+    and a repeat start returns the same item for a node with an open pose —
+    never a fresh one. The pose only: the prompt verbatim and an mc_reason
     item's options, never a key or a reference. No brief, no RAG, no tutor, no
-    session row, no model call, no write."""
+    session row, no model call. Rate-limited (A20)."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
-    cutoff = _posttest_cutoff(_posttest_now())
+    now = _posttest_now()
+    cutoff = _posttest_cutoff(now)
     due = [
         r
         for r in states_last_evidence_before(body.user_id, cutoff)
         if r.get("node_id") and _due_for_posttest(r.get("last_evidence_at"), cutoff)
     ]
-    if not due:
+    poses = _read_poses(body.user_id, body.course_id)
+    open_nodes = {n for n, p in poses.items() if not p.get("answered_at")}
+    nodes = _course_nodes(body.user_id, body.course_id)
+    due_ids = {r["node_id"] for r in due}
+    # an open pose stays posed until answered, even if its node is no longer due
+    rows = [r for r in due if nodes.get(r["node_id"])] + [
+        {"node_id": n, "last_evidence_at": ""} for n in sorted(open_nodes - due_ids) if nodes.get(n)
+    ]
+    if not rows:
         return {"items": []}
-    nodes = {
-        row["id"]: _normalize_concept(row.get("concept_name") or "")
-        for row in table("graph_nodes").select(
-            "id,concept_name",
-            filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{body.course_id}"},
-        )
-        or []
-        if row.get("id")
-    }
-    due = [r for r in due if nodes.get(r["node_id"])]
-    if not due:
-        return {"items": []}
-    by_key = items_for_concepts(body.course_id, [nodes[r["node_id"]] for r in due])
+    by_key = items_for_concepts(body.course_id, sorted({nodes[r["node_id"]] for r in rows}))
     excluded = _posttest_excluded(body.user_id)
     out: list[dict] = []
-    for r in sorted(due, key=lambda r: (str(r.get("last_evidence_at")), r["node_id"])):
-        item = posttest_item(by_key.get(nodes[r["node_id"]]) or [], excluded)
-        if item is None:
-            continue  # nothing unseen left for this concept: skipped
-        out.append({"node_id": r["node_id"], **_pose_payload(item)})
+    new: list[dict] = []
+    for r in sorted(rows, key=lambda r: (str(r.get("last_evidence_at")), r["node_id"])):
+        node = r["node_id"]
+        items = by_key.get(nodes[node]) or []
+        pose = poses.get(node)
+        item = None
+        if pose is not None and not pose.get("answered_at"):
+            item = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
+        if item is None:  # no open pose (or its item was withdrawn): pose one now
+            if node not in due_ids:
+                continue
+            item = posttest_item(items, excluded)
+            if item is None:
+                continue  # nothing unseen left for this concept: skipped
+            new.append(
+                {
+                    "user_id": body.user_id,
+                    "node_id": node,
+                    "course_id": body.course_id,
+                    "question_hash": item.question_hash,
+                    "posed_at": now.isoformat(),
+                    "answered_at": None,
+                    "claim": None,
+                    "claimed_at": None,
+                }
+            )
+        out.append({"node_id": node, **_pose_payload(item)})
         if len(out) >= POSTTEST_MAX_ITEMS:
             break
+    _record_poses(new)
     return {"items": out}
 
 
@@ -3076,21 +3163,30 @@ def _posttest_node(user_id: str, node_id: str) -> dict:
     return rows[0]
 
 
-def _posttest_eligible(user_id: str, node_id: str, cutoff: datetime) -> bool:
-    return any(
-        r.get("node_id") == node_id and _due_for_posttest(r.get("last_evidence_at"), cutoff)
-        for r in states_last_evidence_before(user_id, cutoff)
-    )
+def _posttest_floor(user_id: str, item) -> int:
+    """A86/A87: an open post-test item that a served teach turn revealed — or
+    that was answered elsewhere since it was posed — grades with no unassisted
+    credit (RUNG_NO_CREDIT_MIN); an unresolved unscanned marker makes it
+    assisted (_reveal_floor)."""
+    floor = _reveal_floor(user_id, item)
+    try:
+        if item.question_hash in seen_hashes(user_id):
+            floor = max(floor, RUNG_NO_CREDIT_MIN)
+    except Exception:
+        logger.warning("seen read failed; the post-test grade is assisted", exc_info=True)
+        floor = max(floor, RUNG_ASSISTED_MIN)
+    return floor
 
 
 @router.post("/posttest/answer", dependencies=_RATE_LIMITED)
 async def posttest_answer(body: PosttestAnswerBody, request: Request):
-    """Grade one post-test answer through grade_answer (A16), unassisted: the
-    ceiling is H0, max_rung 0, no session. The item must be the node's CURRENT
-    post-test item (a concept taught long enough ago, never a seen or revealed
-    item) — else 409, so an answered item is never graded twice. A refusal (A33)
-    records nothing and asks again (never an idk here); an outage or the grade
-    cap is a 503 with nothing recorded for either outcome (invariant 28)."""
+    """Grade the node's OPEN post-test pose (A87) through grade_answer (A16):
+    ceiling H0, max_rung 0, no session — unless the item was revealed or seen
+    since it was posed, when the grade carries no unassisted credit (A86).
+    The pose is claimed by one conditional UPDATE, so it is graded once; a
+    refusal (A33) releases the claim and asks again (never an idk here); an
+    outage or the grade cap releases it too and is a 503 with nothing recorded
+    for either outcome (invariant 28)."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     loop_on = _gate(body.user_id, request)
@@ -3105,16 +3201,13 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
         if item.format != "mc_reason" and not body.answer:
             raise HTTPException(status_code=422, detail="a free answer needs answer")
-    lock = _POSTTEST_LOCKS.setdefault((body.user_id, item.question_hash), asyncio.Lock())
-    async with lock:
-        cutoff = _posttest_cutoff(_posttest_now())
-        current = posttest_item(items, _posttest_excluded(body.user_id))
-        if (
-            current is None
-            or current.question_hash != item.question_hash
-            or not _posttest_eligible(body.user_id, body.node_id, cutoff)
-        ):
-            raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
+    now = _posttest_now()
+    claim = str(uuid.uuid4())
+    if not _claim_pose(body.user_id, body.node_id, item.question_hash, claim, now):
+        raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
+    flushed = False
+    try:
+        floor = Rung(_posttest_floor(body.user_id, item))
         band, p_before = _band_for(body.user_id, body.node_id)
         deps = SaplingDeps(
             user_id=body.user_id,
@@ -3134,15 +3227,13 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         )
         # A76: every grading caller decides the re-check through the one helper
         # (no session log here: the node's journal decides)
-        recheck = recheck_after_release(
-            body.user_id, body.node_id, None, now=_posttest_now(), item=item
-        )
+        recheck = recheck_after_release(body.user_id, body.node_id, None, now=now, item=item)
         outcome = await grade_answer(
             _item_like(item),
             answer,
             deps=deps,
             node_id=body.node_id,
-            max_rung=int(Rung.H0),
+            max_rung=int(floor),
             same_session_recheck=recheck,
         )
         if outcome.refused:  # A33: checked first — a refused outcome is also unavailable
@@ -3150,9 +3241,33 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         if outcome.unavailable:
             raise HTTPException(status_code=503, detail="grader unavailable")
         changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
+        flushed = True
+    finally:
+        try:
+            _settle_pose(body.user_id, body.node_id, claim, answered=now if flushed else None)
+        except Exception:
+            logger.warning("post-test pose for %s not settled", body.node_id, exc_info=True)
+    _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor)
+    return {"correct": bool(outcome.correct), "confidence": outcome.confidence}
+
+
+def _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor: Rung) -> None:
+    """zpd.step for one graded post-test answer. p_known_after is read honestly
+    (the flush's result, else the node's state now); when it cannot be read the
+    step is not emitted (fail closed, as _emit_step does)."""
     correct = bool(outcome.correct)
+    after = next(
+        (c.get("after") for c in changes or [] if isinstance(c, dict) and c.get("after") is not None),
+        None,
+    )
+    try:
+        if after is None:
+            after = _band_for(body.user_id, body.node_id)[1]
+        after = float(after)
+    except Exception:
+        logger.warning("zpd.step not emitted for post-test %s: no p_known_after", item.question_hash)
+        return
     evidence = outcome.evidence or {}
-    after = next((c.get("after") for c in changes or [] if isinstance(c, dict)), None)
     zpd_events.emit_zpd_step(
         user_id=body.user_id,
         request_id=_request_id(request),
@@ -3161,18 +3276,19 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         phase="posttest",
         channel=evidence.get("channel") or CHANNEL_FOR_FORMAT[item.format],
         band=band,
-        ceiling=Rung.H0,
+        # H0 — or, for an item a teach turn revealed, the rung it was graded at (A86)
+        ceiling=floor,
         ceiling_reason=policy.CeilingReason.POSTTEST,
         first_attempt_correct=correct,
         n_attempts=1,
-        max_rung_used=Rung.H0,
+        max_rung_used=floor,
         rungs=[],
         time_to_first_attempt_ms=None,
         time_to_correct_ms=None,
         independent_time_ms=None,
-        assisted=False,
+        assisted=int(floor) >= RUNG_ASSISTED_MIN,
         confidence=outcome.confidence,
-        fsrs_rating=policy.evidence_for_rung(correct, Rung.H0).fsrs_rating,
+        fsrs_rating=policy.evidence_for_rung(correct, floor).fsrs_rating,
         p_known_before=p_before,
         p_known_after=after,
         r_before=None,
@@ -3180,7 +3296,6 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         grader_backend=outcome.grader_backend,
         variant=arms.variant_for(body.user_id, body.node_id, _arm_for(body.user_id, request)),
     )  # no tier: no tutor turn ran (omitted, never zeroed)
-    return {"correct": correct, "confidence": outcome.confidence}
 
 
 # ── Attempt / hint / action / openers / end-session ───────────────────────
