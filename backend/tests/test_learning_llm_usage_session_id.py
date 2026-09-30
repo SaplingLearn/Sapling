@@ -103,7 +103,9 @@ def _usage_rows(sink):
 
 
 def test_record_agent_usage_writes_the_session_it_is_given(sink):
-    record_agent_usage(_FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1")
+    record_agent_usage(
+        _FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1"
+    )
     events_service.flush_now()
     (row,) = _usage_rows(sink)
     assert row["session_id"] == "s1"
@@ -111,7 +113,9 @@ def test_record_agent_usage_writes_the_session_it_is_given(sink):
 
 def test_every_row_carries_the_key_even_without_a_session(sink):
     """PostgREST rejects a bulk insert whose objects' keys differ (PGRST102)."""
-    record_agent_usage(_FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1")
+    record_agent_usage(
+        _FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1"
+    )
     record_agent_usage(_FakeResult(), feature="check_items", task="check_items")
     events_service.flush_now()
     rows = _usage_rows(sink)
@@ -120,7 +124,9 @@ def test_every_row_carries_the_key_even_without_a_session(sink):
 
 
 def test_a_blank_session_is_stored_as_null(sink):
-    record_agent_usage(_FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="  ")
+    record_agent_usage(
+        _FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="  "
+    )
     events_service.flush_now()
     (row,) = _usage_rows(sink)
     assert row["session_id"] is None
@@ -153,7 +159,9 @@ def test_a_database_before_the_migration_loses_no_usage_row(monkeypatch, message
             return r
 
     monkeypatch.setattr(events_service, "table", lambda name: _T())
-    record_agent_usage(_FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1")
+    record_agent_usage(
+        _FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1"
+    )
     record_agent_usage(_FakeResult(), feature="grader", task="grader", user_id="u")
     events_service.flush_now()
     assert len(written) == 2
@@ -173,7 +181,9 @@ def test_an_unrelated_insert_error_keeps_the_column(monkeypatch):
             raise RuntimeError("503 upstream timeout")
 
     monkeypatch.setattr(events_service, "table", lambda name: _T())
-    record_agent_usage(_FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1")
+    record_agent_usage(
+        _FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1"
+    )
     events_service.flush_now()
     assert seen and all("session_id" in r for batch in seen for r in batch)
 
@@ -191,10 +201,13 @@ SESSION_SITES = {
     ("services/decisions.py", "_run_decision"): {"deps.session_id"},
     ("routes/learn_loop.py", "record_usage"): {"self.session_id"},
     ("routes/learn_loop.py", "_loop_continuation_text"): {"turn.session_id"},
-    ("routes/learn.py", "_continuation_text"): {'getattr(carried.get(\'deps\'), \'session_id\', None)'},
+    ("routes/learn.py", "_continuation_text"): {"getattr(carried.get('deps'), 'session_id', None)"},
     ("routes/learn.py", "_start_session_agent"): {"session_id"},
     ("routes/learn.py", "_chat_via_agent"): {"session_id"},
-    ("routes/learn.py", "_usage"): {"body.session_id", "session_id"},  # /chat/stream, the opener stream
+    ("routes/learn.py", "_usage"): {
+        "body.session_id",
+        "session_id",
+    },  # /chat/stream, the opener stream
     ("routes/learn.py", "_action_turn"): {"body.session_id"},
 }
 
@@ -250,7 +263,9 @@ def test_the_usage_read_selects_the_session_column():
 def test_report_prefers_the_rows_own_session_over_the_event_join():
     usage = [
         _usage("r1", "loop_tutor", "0.010", session="s-own"),  # own key wins over the join
-        _usage("r2", "grader", "0.002", session="s-own"),  # the opener/probe class: no event maps it
+        _usage(
+            "r2", "grader", "0.002", session="s-own"
+        ),  # the opener/probe class: no event maps it
         _usage("r3", "loop_tutor", "0.020"),  # older row: the A82 join still maps it
         _usage("r4", "loop_tutor", "0.040", day="21"),  # neither: per user-day
     ]

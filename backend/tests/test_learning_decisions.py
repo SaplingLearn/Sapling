@@ -420,7 +420,12 @@ def test_match_wrong_reason_without_prior_runs_decision_and_never_invents(seam, 
     assert (v.value, v.probs, invented.value) == ("w_speed", {"w_speed": 0.8}, seam.NO_MATCH)
     assert re.findall(r"^OPTION (\S+):", calls["prompts"][0], re.M) == ["w_loop", "w_speed"]
     # PKG-14b (A89): the decision run records its session (deps.session_id).
-    assert recorded[0] == {"feature": "tutor", "task": "decision", "user_id": "u1", "session_id": "s1"}
+    assert recorded[0] == {
+        "feature": "tutor",
+        "task": "decision",
+        "user_id": "u1",
+        "session_id": "s1",
+    }
 
 
 @pytest.mark.parametrize(

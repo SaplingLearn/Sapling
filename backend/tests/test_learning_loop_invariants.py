@@ -696,7 +696,9 @@ def test_inv_11_gate_false_when_env_unset(monkeypatch, raw, expected):
     # recomputed flag never leaks into later modules. None = unset.
     gate = reload_gate(monkeypatch, raw)
     assert config.LEARNING_LOOP_ENABLED is expected
-    assert not hasattr(gate, "table"), "post-launch learning/gate.py imports no table(): nothing to read"
+    assert not hasattr(gate, "table"), (
+        "post-launch learning/gate.py imports no table(): nothing to read"
+    )
     before = db_client_calls()
     for uid in ("user_andres", "e2e-student", "nobody"):
         assert gate.learning_loop_active(uid) is expected

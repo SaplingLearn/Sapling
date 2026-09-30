@@ -7,7 +7,7 @@ It appends its payload to ctx.deps.graph_updates so the route can persist
 graph_update_json on the assistant message, enabling end_session to derive
 concepts_covered correctly for agent-path chats.
 
-PKG-14b (spec §11.2): the legacy tutor's `update_mastery_tool` is gone. After
+PKG-14b (spec §11.2): the legacy tutor's mastery-write tool is gone. After
 the cutover only graded evidence through `apply_graph_update` moves a mastery
 score (spec §1, §5); the legacy tutor — the kill-switch path — records none.
 """
