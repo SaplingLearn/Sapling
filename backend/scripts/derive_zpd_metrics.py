@@ -78,7 +78,8 @@ _EVIDENCE_COLS = "id,created_at,correct,assisted,max_rung,question_hash,channel"
 # spec §13 A36: rows one apply_graph_update call writes share created_at and
 # carry their apply order in evidence_seq (NULL on rows written before it)
 _EVIDENCE_ORDER = "created_at.desc,evidence_seq.desc.nullslast,id.desc"
-_USAGE_COLS = "id,user_id,request_id,task,cost_usd,created_at"
+# PKG-14b (spec §13 A89): a row's own session_id (NULL on older rows)
+_USAGE_COLS = "id,user_id,request_id,task,cost_usd,created_at,session_id"
 _EVENT_COLS = "id,event_type,user_id,request_id,payload,created_at"
 # zpd.step / learn.session_closed / chat.message_sent carry the loop session id
 # (A82), which maps a request's llm_usage rows to their session
@@ -227,12 +228,13 @@ def report(
             f"{p.get('scope')}/{p.get('level')}" for p in ((c.get("payload") or {}) for c in caps)
         ),
     }
-    # A82: per session wherever the row's request maps to one; a row with no
-    # session key (older rows) falls back to its user-day — never a guessed session
+    # A89 (PKG-14b): the row's own session_id first; else A82's (user_id,
+    # request_id) event join; a row with neither (older rows) falls back to its
+    # user-day — never a guessed session
     per_session: dict[str, float] = defaultdict(float)
     per_user_day: dict[str, float] = defaultdict(float)
     for r in loop_rows:
-        session = (
+        session = (r.get("session_id") or "").strip() or (
             sessions_by_request.get((r["user_id"], r["request_id"]))
             if r.get("user_id") and r.get("request_id")
             else None

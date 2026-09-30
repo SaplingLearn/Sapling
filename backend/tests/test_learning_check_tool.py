@@ -283,11 +283,12 @@ def test_grade_returns_all_yes_and_records_usage(monkeypatch):
     assert res.item_results == {"r1": True, "r2": True}
     assert res.low_confidence is False and res.backend == "gemini"
     assert calls["n"] == 1 and calls["spans"] == 1  # the credit's span check (round a33)
+    # PKG-14b (A89): every grader run records its session (deps.session_id).
     assert recorded == [
-        {"feature": "tutor", "task": "grader", "user_id": "u1"},
-        {"feature": "tutor", "task": GRADER_SECOND_OPINION_SLOT, "user_id": "u1"},
+        {"feature": "tutor", "task": "grader", "user_id": "u1", "session_id": "s1"},
+        {"feature": "tutor", "task": GRADER_SECOND_OPINION_SLOT, "user_id": "u1", "session_id": "s1"},
         # A33 finish: the context check, also on the grader_second slot
-        {"feature": "tutor", "task": GRADER_SECOND_OPINION_SLOT, "user_id": "u1"},
+        {"feature": "tutor", "task": GRADER_SECOND_OPINION_SLOT, "user_id": "u1", "session_id": "s1"},
     ]
 
 

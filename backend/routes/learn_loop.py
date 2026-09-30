@@ -893,6 +893,7 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
             feature=plan.feature,
             task=turn.slot,
             user_id=turn.user_id,
+            session_id=turn.session_id,
         )
     return turn.render(result.output)
 
@@ -1693,7 +1694,13 @@ class _LoopTurn:
         # PKG-10 (fix round F4): the model requests this turn cost (a run, its
         # output/leak retries, a continuation) — a confronting turn counts them all
         self.run_requests += _requests_of(run_result)
-        record_agent_usage(run_result, feature="loop_tutor", task=self.slot, user_id=self.user_id)
+        record_agent_usage(
+            run_result,
+            feature="loop_tutor",
+            task=self.slot,
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
 
     def _leak_rung(self) -> Rung:
         """`loop_leak_rung` for this turn."""

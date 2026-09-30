@@ -1391,6 +1391,7 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
     agent.override, agent.run = _override, _run
     turn = SimpleNamespace(
         user_id="u1",
+        session_id="s1",  # PKG-14b (A89): the continuation's usage row names its session
         band="develop",
         slot="loop_tutor",
         agent=agent,

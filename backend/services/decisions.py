@@ -632,12 +632,15 @@ async def _run_decision(decision: str, state, deps):
                 feature=deps.feature,
                 task="decision",
                 user_id=deps.user_id,
+                session_id=deps.session_id,
             )
         if not isinstance(exc, _DECISION_FAILURES):
             raise
         logger.warning("decision unavailable (%s): %s", decision, exc)
         return None
-    record_agent_usage(result, feature=deps.feature, task="decision", user_id=deps.user_id)
+    record_agent_usage(
+        result, feature=deps.feature, task="decision", user_id=deps.user_id, session_id=deps.session_id
+    )
     return result.output
 
 

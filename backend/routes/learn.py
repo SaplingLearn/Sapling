@@ -229,6 +229,7 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
             feature="chat_tutor_continuation",
             task="chat_tutor",
             user_id=getattr(carried.get("deps"), "user_id", None),
+            session_id=getattr(carried.get("deps"), "session_id", None),
         )
     return _new_run_text(result).strip() or None
 
@@ -587,6 +588,7 @@ async def _start_session_agent(
         result = record_agent_usage(
             await agent.run(assembled, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=session_id,
         )
         # str — chat_tutor agents return plain Markdown. Safe to read
         # `.output` directly here (no `_new_run_text` narrowing): this call
@@ -813,6 +815,7 @@ async def _chat_via_agent(
         result = record_agent_usage(
             await agent.run(user_message, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
+            session_id=session_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
         # puts `message_history` into `run_kwargs`, so a textless model
@@ -1051,6 +1054,7 @@ async def chat_stream(body: ChatBody, request: Request):
         # surfaced by stream_agent_turn's on_usage hook after the run completes.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=body.session_id,
         )
 
     async def event_stream():
@@ -1169,6 +1173,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # chat_tutor agent, so it rolls up under the same feature/task.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=session_id,
         )
 
     async def event_stream():
@@ -1504,6 +1509,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     result = record_agent_usage(
         await agent.run(assembled, **run_kwargs),
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+        session_id=body.session_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
     # would hand back the previous turn's assistant message when this turn's

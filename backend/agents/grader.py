@@ -754,10 +754,16 @@ async def _run_once(
     except Exception:
         if usage.requests or usage.total_tokens:  # no response → nothing was billed
             record_agent_usage(
-                _UnfinishedRun(usage), feature=deps.feature, task=task, user_id=deps.user_id
+                _UnfinishedRun(usage),
+                feature=deps.feature,
+                task=task,
+                user_id=deps.user_id,
+                session_id=deps.session_id,
             )
         raise
-    record_agent_usage(result, feature=deps.feature, task=task, user_id=deps.user_id)
+    record_agent_usage(
+        result, feature=deps.feature, task=task, user_id=deps.user_id, session_id=deps.session_id
+    )
     return result.output
 
 
