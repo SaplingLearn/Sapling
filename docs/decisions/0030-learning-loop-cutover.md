@@ -161,6 +161,11 @@ The target is about **$0.36 per student-month**.
    - **What it records.** The evidence is unassisted, with `max_rung` 0.
      `zpd.step` carries `phase: "posttest"` and
      `ceiling_reason: "posttest"`, and no `tier`.
+   - **It commits when opened** (spec §13 A87). The pose is recorded in
+     `posttest_poses`, and a repeat start returns the same item. The answer
+     grades only the open pose, under a database claim (one conditional
+     UPDATE). An item revealed or seen since it was posed grades with no
+     unassisted credit.
 4. **Delayed proctored retention.** Out of the series' scope. The logged
    fields make it possible later.
 
@@ -221,10 +226,20 @@ follow-up that deletes `LEARNING_LOOP_ENABLED`.
   flag; that is a follow-up.
 - **Cost per session covers the requests an event names.** `zpd.step`,
   `learn.session_closed` and `chat.message_sent` carry the session id
-  (A82); a loop request none of them names (the opener, probe and review
-  grades, a hint action) is still costed per user-day. A `session_id` column
-  on `llm_usage` would close that; it is not built.
-- **Teach turns at H0/H1 serve the ladder's question** (spec §13 A81, a
-  PKG-07 reopen), the model writing only the key idea and body. The per-tier
-  evals did not pass with it (A81), so launch-gate item 4 is open.
+  (A82), joined on (user_id, request_id). A loop request none of them names
+  (the opener, the probe and review grades, a hint action) is still costed
+  per user-day. **`llm_usage.session_id` is built in half B (owner
+  decision):** a migration, the writes in `agents/usage.py::record_agent_usage`,
+  and the report preferring the column.
+- **Served teach turns are never withheld** (spec §13 A86, superseding A84).
+  The text is served unchanged, and every item of the student's course that it
+  states is marked revealed (A23), so it is never a check or a post-test item.
+  A posed item that got revealed grades with no unassisted credit.
+  `zpd.teach_reveal` is not a leak, so the zero-leak gate counts only served
+  leaks on item turns. If the items cannot be read, a marker fails closed on
+  the evidence side until it is resolved.
+- **A reasoned claim is a genuine attempt for that teach turn's ceiling**
+  (spec §13 A85): the existing genuine-attempt rule, one rung, capped per band,
+  and no evidence change. Owner-accepted limitation: any non-empty message
+  with no non-attempt phrase qualifies once the time gate passes.
 
