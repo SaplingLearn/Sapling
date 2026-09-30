@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Imagine a set of Russian nesting dolls. To open them all, you open the largest doll and find a slightly smaller, identical doll inside. You repeat this process until you find the smallest doll...",
+    "evidence": "Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current one, find another doll inside, and then repeat the same process with the new, smaller doll.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "251b88e875581fe04157e4d2039093137e0d6a505ebb0a87ccbfea16c5183799"
+  "served_sha256": "1eae32daec63e7c33450c5dad89f3b82924e9fd994e97d68dcd8ba7f5499678f"
 }

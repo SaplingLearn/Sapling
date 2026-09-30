@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
   "output": {
-    "evidence": "The derivative of x^n is nx^(n-1)",
+    "evidence": "How would you apply the power rule to find the derivative of x^2?",
     "reveals_final_answer": false,
-    "rung": 2
+    "rung": 3
   },
-  "served_sha256": "17694b3cb7fe804dff652e50edcf1f65ce5189fe24ac5087713ccde974e0618c"
+  "served_sha256": "9ed57555a79c04c86914c38082fcdb10f2783e6d20f7085d80b8d954f440cb24"
 }

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "This stopping condition is known as the \"base case.\" It's the part of the function that provides a direct answer without making another recursive call.",
+    "evidence": "Key idea: A recursive function must have a base case to stop the recursion.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "36546dc4376982cae34b02a3150896b24c053325b6ca44eb9fbb99c7a41063e0"
+  "served_sha256": "acdb54849b0647080253340fa6d67265aabcd0da783dc16f554601534ffdd0dd"
 }

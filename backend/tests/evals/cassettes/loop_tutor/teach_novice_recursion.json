@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself to solve a problem by breaking it into smaller, identical subproblems.\", \"body\": \"To understand recursion, consider how a large task can be completed by repeatedly performing a simpler version of the same task. Each time the function calls itself, it works on a smaller piece of the original problem. This continues until a 'base case' is reached, which is a simple problem that can be solved directly without further recursion.\", \"question\": \"What do you think is the purpose of the 'base case' in a recursive function?\"}"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.\", \"body\": \"A recursive function generally has two main parts: a base case, which defines when the recursion stops, and a recursive step, which calls the function itself with modified inputs. This process continues until the base case is reached, preventing infinite loops.\", \"question\": \"What role do you think the base case plays in stopping a recursive function?\"}"
   ],
   "input_sha256": "914c5e3cfc226d4c6064e4672d8ea57400c69d249f863fa0f548c0c000fa4886",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "To understand recursion, consider how a large task can be completed by repeatedly performing a simpler version of the same task. Each time the function calls itself, it works on a smaller piece of the original problem. This continues until a 'base case' is reached, which is a simple problem that can be solved directly without further recursion.",
-    "key_idea": "Recursion involves a function calling itself to solve a problem by breaking it into smaller, identical subproblems.",
-    "question": "What do you think is the purpose of the 'base case' in a recursive function?"
+    "body": "A recursive function generally has two main parts: a base case, which defines when the recursion stops, and a recursive step, which calls the function itself with modified inputs. This process continues until the base case is reached, preventing infinite loops.",
+    "key_idea": "Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.",
+    "question": "What role do you think the base case plays in stopping a recursive function?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

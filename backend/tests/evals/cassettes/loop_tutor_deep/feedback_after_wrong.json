@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"The base case in a recursive function is a condition that stops the recursion.\",\n\"body\": \"Your answer describes the recursive step, but the call to `factorial(0)` matches the base case instead. This causes the function to return a value directly rather than calling itself again.\",\n\"question\": \"Looking at the code for the factorial function, what happens when the input `n` is 0?\"\n}\n```"
+    "```json\n{\n\"key_idea\": \"A recursive function needs a base case to stop the chain of calls.\",\n\"body\": \"Your answer describes the recursive step, but `factorial(0)` doesn't call `factorial(-1)`. Instead, a special condition in the function's definition handles this input and stops the recursion.\",\n\"question\": \"Looking at a standard definition of a factorial function, what value does it return when the input is 0?\"\n}\n```"
   ],
   "input_sha256": "95a19fc05757ad6e016227d97dd39e22562fe5aabf5aaab7c707cbfbee95456c",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Your answer describes the recursive step, but the call to `factorial(0)` matches the base case instead. This causes the function to return a value directly rather than calling itself again.",
-    "key_idea": "The base case in a recursive function is a condition that stops the recursion.",
-    "question": "Looking at the code for the factorial function, what happens when the input `n` is 0?"
+    "body": "Your answer describes the recursive step, but `factorial(0)` doesn't call `factorial(-1)`. Instead, a special condition in the function's definition handles this input and stops the recursion.",
+    "key_idea": "A recursive function needs a base case to stop the chain of calls.",
+    "question": "Looking at a standard definition of a factorial function, what value does it return when the input is 0?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

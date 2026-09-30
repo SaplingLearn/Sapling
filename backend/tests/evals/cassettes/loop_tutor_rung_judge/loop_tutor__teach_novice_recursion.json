@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "What do you think is the purpose of the 'base case' in a recursive function?",
+    "evidence": "A recursive function generally has two main parts: a base case, which defines when the recursion stops, and a recursive step, which calls the function itself with modified inputs.",
     "reveals_final_answer": false,
-    "rung": 3
+    "rung": 2
   },
-  "served_sha256": "206da872c43ef5a23b817a9758095980fe4592a628d45697665abe4bc720f204"
+  "served_sha256": "865122de6e4f3ca86f4664bd4750e2563d8934116b281ec3c84766a05f483f38"
 }

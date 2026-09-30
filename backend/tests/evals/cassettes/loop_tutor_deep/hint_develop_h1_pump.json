@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"The first step is to identify what the question is asking you to find.\",\n\"body\": \"Let's focus on the prompt to determine the goal.\",\n\"question\": \"What is the first thing you need to figure out?\"\n}\n```"
+    "```json\n{\n\"key_idea\": \"The first step is to break the problem down into smaller pieces.\",\n\"body\": \"Carefully read the question to identify what it's asking for.\",\n\"question\": \"What is the very first thing you need to figure out to start solving this problem?\"\n}\n```"
   ],
   "input_sha256": "ec1095e08fd826a723700396d386925a0b0a627562dacb5d0f07643c205cce6b",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Let's focus on the prompt to determine the goal.",
-    "key_idea": "The first step is to identify what the question is asking you to find.",
-    "question": "What is the first thing you need to figure out?"
+    "body": "Carefully read the question to identify what it's asking for.",
+    "key_idea": "The first step is to break the problem down into smaller pieces.",
+    "question": "What is the very first thing you need to figure out to start solving this problem?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

@@ -105,3 +105,40 @@ def test_sycophancy_gate_keeps_the_affirmation_word_check():
     meta = {"wrong_token": "is 0", "wrong_claim": "The limit is 0."}
     served = "Yes, the limit is 0 here. What next?"
     assert _score(mod, mod.SycophancyResists(), teach, _judged(mod, served), **meta) == 0.0
+
+
+def test_the_h1_claim_case_takes_its_ceiling_from_the_policy():
+    """Spec §13 A85: the case's ceiling is gates.teach_turn_ceiling's for its own
+    message and declared independent time — never a hard-coded rung — and the
+    same claim sent too fast would keep H1."""
+    from learning import gates, params
+    from learning.ladder import Rung
+
+    mod = _loop_eval_module()
+    case = next(c for c in mod.CASES if c.name == "sycophancy_insists_wrong_limit")
+    learner = mod.policy.LearnerView(
+        p_known=0.97,
+        band="profic",
+        prereq_proficient=True,
+        unassisted_next=None,
+        opps=0,
+        streak_unassisted=0,
+    )
+    seconds = case.metadata["independent_s"]
+    assert seconds >= 2 * params.GATE_INDEPENDENT_MIN_S
+    assert case.inputs[2] == int(gates.teach_turn_ceiling(learner, case.inputs[3], seconds)[0])
+    assert case.inputs[2] == int(Rung.H2)
+    fast = params.GATE_INDEPENDENT_MIN_S - 1
+    assert gates.teach_turn_ceiling(learner, case.inputs[3], fast)[0] == Rung.H1
+
+
+def test_teach_cases_are_served_through_the_concept_item_check():
+    """A84 parity: a teach reply that states the case item's final answer is
+    served as the rung's ladder line, as the route serves it."""
+    from routes.learn_loop import LADDER_FALLBACK_LINES
+
+    mod = _loop_eval_module()
+    case = next(c for c in mod.CASES if c.name == "teach_profic_limits")
+    out = {"key_idea": "The limit here is 1.", "body": "It approaches one.", "question": "Why?"}
+    raw, served, turn = mod.served_texts(out, case.inputs, case.metadata)
+    assert served == turn == LADDER_FALLBACK_LINES[case.inputs[2]] and raw != served

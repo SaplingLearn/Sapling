@@ -490,10 +490,18 @@ def test_loop_eval_serves_through_the_production_path():
     assert served == released_lead(released.metadata["reference"]) + raw, (
         "the released answer is served from code above the turn (m1)"
     )
-    # m4: a teach turn has no active item in production, so nothing is stripped
+    # m4, superseded by spec §13 A84 (PKG-14): a teach turn has no active item,
+    # yet its concept's item answers are never served — a teach reply stating
+    # the case item's final answer is the rung's ladder line; a clean one is
+    # served as written
     teach = next(c for c in mod.CASES if c.inputs[0] == "teach")
     raw, served, turn = mod.served_texts(out, teach.inputs, teach.metadata)
-    assert served == turn == raw == render_turn(out)
+    assert raw == render_turn(out) and served == turn == LADDER_FALLBACK_LINES[
+        min(teach.inputs[2], 5)
+    ]
+    clean = {**out, "key_idea": "A base case stops the chain.", "body": "No further call happens."}
+    raw, served, turn = mod.served_texts(clean, teach.inputs, teach.metadata)
+    assert served == turn == raw == render_turn(clean)
 
 
 def test_loop_tutor_cassettes_match_the_current_prompt_schema_and_model():

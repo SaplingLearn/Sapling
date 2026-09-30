@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What is the other essential component of a recursive function?",
+    "evidence": "What is the other component of a recursive function that you need to define?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "8d591975fc3a7c9184c1f4690a9f2c296c5da8f356b142814bb29458831364ad"
+  "served_sha256": "37b12bde33363f696885275ab8dd6527dc1624a074e7ca0d3443964d7a4c0c54"
 }

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "What is the first thing you need to figure out here?",
-    "only_states_correction": false
+    "evidence": "Direct substitution of x=0 into sin(x)/x results in the indeterminate form 0/0.",
+    "only_states_correction": true
   },
-  "served_sha256": "9451971fc4a9a7d7c65d999db203094fe1291a2fdb7d8ae97ef74f4bf51de11f"
+  "served_sha256": "021210af7a76fe1e3df5595351ccc49af0e39f8ce19ca54bc2a0bfc098b9517d"
 }

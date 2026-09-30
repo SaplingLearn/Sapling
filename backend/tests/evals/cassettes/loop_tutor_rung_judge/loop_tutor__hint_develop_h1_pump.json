@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What information are you given in the problem, and what is the question asking you to calculate or determine?",
+    "evidence": "What information has the problem given you, and what specifically are you trying to calculate or determine?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "e9c05bde5605cf3421673d54054e44bef363a29403dd815eb996ad55200f3b8c"
+  "served_sha256": "941ea3106737a60bcfaa6a9006a0d0b6590e61464cfcd29567e49a0e0342abb2"
 }

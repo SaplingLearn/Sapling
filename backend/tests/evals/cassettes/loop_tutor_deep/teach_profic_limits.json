@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"You want to use a practice problem to check your understanding of limits.\",\n\"body\": \"You're looking for a problem to solve.\",\n\"question\": \"What type of limits problem would you like to work on?\"\n}\n```"
+    "```json\n{\n\"key_idea\": \"You want a practice problem to check your understanding of limits.\",\n\"body\": \"You've asked for a problem to test your skills.\",\n\"question\": \"What type of limit problem would you like to work on?\"\n}\n```"
   ],
   "input_sha256": "cb703fd2657b1bfddcbc65ce99ee6a63800427847624cea0df06f48715915d62",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "You're looking for a problem to solve.",
-    "key_idea": "You want to use a practice problem to check your understanding of limits.",
-    "question": "What type of limits problem would you like to work on?"
+    "body": "You've asked for a problem to test your skills.",
+    "key_idea": "You want a practice problem to check your understanding of limits.",
+    "question": "What type of limit problem would you like to work on?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

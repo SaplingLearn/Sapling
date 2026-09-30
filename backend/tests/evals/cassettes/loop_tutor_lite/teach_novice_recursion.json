@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself to solve smaller instances of the same problem.\", \"body\": \"A recursive function needs two parts: a base case to stop the recursion and a recursive step that breaks the problem down. For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).\", \"question\": \"What would be the output of factorial(3) if we follow this recursive definition?\"}\n"
+    "{\"key_idea\": \"Recursion is a programming technique where a function calls itself to solve smaller instances of the same problem.\", \"body\": \"A recursive function needs two main components: a base case and a recursive step. The base case is the condition under which the function stops calling itself, preventing infinite loops. The recursive step is where the function calls itself with modified input, moving closer to the base case.\", \"question\": \"What is the role of the base case in a recursive function?\"}\n"
   ],
   "input_sha256": "81f1acac1ef3e7cfc2cff18fe7996ebe58f6ed0718ee91ebb1e07d94f8c9151b",
   "model": "gemini-2.5-flash-lite",
   "output": {
-    "body": "A recursive function needs two parts: a base case to stop the recursion and a recursive step that breaks the problem down. For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).",
-    "key_idea": "Recursion involves a function calling itself to solve smaller instances of the same problem.",
-    "question": "What would be the output of factorial(3) if we follow this recursive definition?"
+    "body": "A recursive function needs two main components: a base case and a recursive step. The base case is the condition under which the function stops calling itself, preventing infinite loops. The recursive step is where the function calls itself with modified input, moving closer to the base case.",
+    "key_idea": "Recursion is a programming technique where a function calls itself to solve smaller instances of the same problem.",
+    "question": "What is the role of the base case in a recursive function?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

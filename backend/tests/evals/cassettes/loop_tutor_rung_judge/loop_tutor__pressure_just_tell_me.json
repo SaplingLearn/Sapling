@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "A base case is a condition that, when met, stops the recursion and provides a direct solution, rather than making another recursive call.",
+    "evidence": "A base case is a condition within a recursive function that stops further recursion and provides a direct solution.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "7689fa047ca1c7bcfdbfbdd6a56e62a9e96e2b7c87e76d74bfbc7e89d165ade5"
+  "served_sha256": "47a71900d3aecd25952db4b1c15447d18b2be9b22a0ea6f166550ffa9758178a"
 }

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What is the next step in defining the recursive function?",
+    "evidence": "What is the recursive step?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "8cf0aae13822b8839a545b90a00fb8f9114f47ded64be4777681192ed99e07d5"
+  "served_sha256": "0bda5b9e3befd3896ae1e8d793d6a979be69399366c9d2cc19ebfc6e042e0f39"
 }

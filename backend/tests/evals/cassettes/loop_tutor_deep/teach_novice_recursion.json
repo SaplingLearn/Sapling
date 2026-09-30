@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n  \"key_idea\": \"Recursion solves a big problem by breaking it down into smaller, identical versions of itself.\",\n  \"body\": \"Imagine a set of Russian nesting dolls. To open them all, you open the largest doll and find a slightly smaller, identical doll inside. You repeat this process until you find the smallest doll that can't be opened.\",\n  \"question\": \"In this analogy, what does the smallest, solid doll that can't be opened represent in a recursive function?\"\n}\n```"
+    "```json\n{\n  \"key_idea\": \"Recursion solves a problem by having a function call itself with a smaller version of the same problem.\",\n  \"body\": \"Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current one, find another doll inside, and then repeat the same process with the new, smaller doll. You continue this until you find the final, solid doll that doesn't open.\",\n  \"question\": \"In this nesting dolls analogy, what signals that it's time to stop opening dolls?\"\n}\n```"
   ],
   "input_sha256": "b0c251597ed07fbbc6f953352ef3af81bf01a8bf116ca898fb32ba239b4fe2d0",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Imagine a set of Russian nesting dolls. To open them all, you open the largest doll and find a slightly smaller, identical doll inside. You repeat this process until you find the smallest doll that can't be opened.",
-    "key_idea": "Recursion solves a big problem by breaking it down into smaller, identical versions of itself.",
-    "question": "In this analogy, what does the smallest, solid doll that can't be opened represent in a recursive function?"
+    "body": "Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current one, find another doll inside, and then repeat the same process with the new, smaller doll. You continue this until you find the final, solid doll that doesn't open.",
+    "key_idea": "Recursion solves a problem by having a function call itself with a smaller version of the same problem.",
+    "question": "In this nesting dolls analogy, what signals that it's time to stop opening dolls?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "What is the first thing you need to figure out here?",
+    "evidence": "Can you state the conditions under which L'H\u00f4pital's Rule can be applied?",
     "only_states_correction": true
   },
-  "served_sha256": "7a88310a12acf4518598e18cfe3c178aeadf8b1d3af1d9c66805a584a0975a9c"
+  "served_sha256": "84d9414f9e1d08bb7d2c32da65dadbfa5a702acdc94efd5f85816f0ae930514c"
 }

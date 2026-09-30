@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).",
+    "evidence": "A recursive function needs two main components: a base case and a recursive step. The base case is the condition under which the function stops calling itself, preventing infinite loops.",
     "reveals_final_answer": false,
-    "rung": 4
+    "rung": 2
   },
-  "served_sha256": "9d3afc9caf76c91213dcbc946a9570f7baf587a32ebb9a4be1340ecf06a0d4c8"
+  "served_sha256": "35b28b6b422b15c47564ce37112b7aee94b4460a1100e85ebd0f54377bf50dfb"
 }
