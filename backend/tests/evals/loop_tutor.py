@@ -207,17 +207,10 @@ def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, 
 
     raw = render_turn(output)
     if case_input[0] == "teach":
-        # A84 (route parity): no active item, but the concept's items' answers
-        # are never served — the case's item is the concept's item
-        from routes.learn_loop import served_teach_text
-
-        served, _ = served_teach_text(
-            raw,
-            leak_rung=_leak_rung(case_input, meta),
-            items=[_case_item(meta)],
-            given=_visible(case_input, meta),
-        )
-        return raw, served, served
+        # spec §13 A86 (route parity): a teach turn has no active item and is
+        # served UNCHANGED (the items it states are marked revealed, never
+        # withheld) — the served text is the render
+        return raw, raw, raw
     rendered = served_render(
         output, phase=case_input[0], rung=_leak_rung(case_input, meta), verdict=meta.get("verdict")
     )
@@ -635,32 +628,12 @@ def check_fresh(rec: LoopRecording, slot: str, case_input: LoopInput) -> None:
         )
 
 
-def _case_item(meta: dict):
-    """The case's item as the route's check-item fields (A84's teach check)."""
-    from types import SimpleNamespace
-
-    return SimpleNamespace(
-        reference_answer=meta["reference"],
-        final_answer=meta["final_answer"],
-        canonical_answer=meta.get("canonical_answer"),
-        correct_option=meta.get("correct_option"),
-        options=None,
-    )
-
-
 def _leak_guard(case_input: LoopInput, meta: dict):
-    """The route's deps.loop_leak: for a hint/feedback case with the answer
-    unreleased (fix round 2, N1: one named retry before the ladder line), and
-    for a teach case its concept's item (A84)."""
-    if case_input[0] == "teach":
-        from routes.learn_loop import _LeakGuard, served_render, teach_leak_check
-
-        rung = _leak_rung(case_input, meta)
-        return _LeakGuard(
-            teach_leak_check([_case_item(meta)], rung=rung, given=_visible(case_input, meta)),
-            render=lambda out: served_render(out, phase="teach", rung=rung),
-        )
-    if _released(meta):
+    """The route's deps.loop_leak for a hint/feedback case with the answer
+    unreleased (fix round 2, N1: one named retry before the ladder line). A
+    teach case has none (A86: a teach turn is never retried on account of
+    item answers)."""
+    if case_input[0] == "teach" or _released(meta):
         return None
     from routes.learn_loop import _item_check_kwargs, _LeakGuard
 

@@ -132,13 +132,12 @@ def test_the_h1_claim_case_takes_its_ceiling_from_the_policy():
     assert gates.teach_turn_ceiling(learner, case.inputs[3], fast)[0] == Rung.H1
 
 
-def test_teach_cases_are_served_through_the_concept_item_check():
-    """A84 parity: a teach reply that states the case item's final answer is
-    served as the rung's ladder line, as the route serves it."""
-    from routes.learn_loop import LADDER_FALLBACK_LINES
-
+def test_teach_cases_are_served_unchanged():
+    """A86 parity: a teach reply is served as written, even one that states the
+    case item's final answer (the route marks the item revealed instead)."""
     mod = _loop_eval_module()
     case = next(c for c in mod.CASES if c.name == "teach_profic_limits")
     out = {"key_idea": "The limit here is 1.", "body": "It approaches one.", "question": "Why?"}
     raw, served, turn = mod.served_texts(out, case.inputs, case.metadata)
-    assert served == turn == LADDER_FALLBACK_LINES[case.inputs[2]] and raw != served
+    assert raw == served == turn
+    assert mod._leak_guard(case.inputs, case.metadata) is None
