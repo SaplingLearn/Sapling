@@ -48,6 +48,8 @@ class CeilingReason(str, Enum):
     NOVICE_WORKED_FIRST = "novice_worked_first"
     NOVICE_PREREQ_GAP = "novice_prereq_gap"
     SHOWED_WORK_FLOOR = "showed_work_floor"
+    # PKG-14 (A85): a teach-phase genuine attempt (a reasoned claim) raised it
+    TEACH_ATTEMPT = "teach_attempt"
     # PKG-14 (spec §10 rung 3): the tool-removed post-test forces H0
     POSTTEST = "posttest"
 
@@ -94,8 +96,24 @@ class ContextPolicy(NamedTuple):
 # ── ceiling (spec §3.3 CEILING; §13 A4) ──────────────────────────────────────
 
 
-def ceiling_with_reason(learner: LearnerView, step: StepState) -> tuple[Rung, CeilingReason]:
+#: PKG-14 (A85): the highest ceiling a teach attempt may raise a band to — what
+#: the band allows after attempts (profic escalated H3, develop H6, novice H5).
+TEACH_ATTEMPT_CEILING_CAP: dict[str, Rung] = {
+    "profic": Rung.H3,
+    "develop": Rung.H6,
+    "novice": Rung.H5,
+}
+
+
+def ceiling_with_reason(
+    learner: LearnerView, step: StepState, *, teach_attempt: bool = False
+) -> tuple[Rung, CeilingReason]:
     """Highest rung this turn may reach, first-match over the §3.3 table.
+
+    `teach_attempt` (PKG-14, A85): the caller judged THIS teach-phase message a
+    genuine attempt (gates.teach_turn_ceiling — a reasoned claim); the ceiling
+    rises TEACH_ATTEMPT_CEILING_RAISE rung, capped at TEACH_ATTEMPT_CEILING_CAP
+    for the band, never in exam mode. It moves no evidence and no state.
 
     While a step is open every recorded genuine attempt is a failed one (a
     correct attempt closes the step), so `genuine_attempts` is the table's
@@ -127,6 +145,11 @@ def ceiling_with_reason(learner: LearnerView, step: StepState) -> tuple[Rung, Ce
         rung, reason = Rung.H5, CeilingReason.NOVICE_PREREQ_GAP
     if step.showed_work and rung < Rung.H3:
         return Rung.H3, CeilingReason.SHOWED_WORK_FLOOR
+    if teach_attempt:
+        cap = TEACH_ATTEMPT_CEILING_CAP[learner.band]
+        raised = Rung(min(int(rung) + params.TEACH_ATTEMPT_CEILING_RAISE, int(cap)))
+        if raised > rung:
+            return raised, CeilingReason.TEACH_ATTEMPT
     return rung, reason
 
 

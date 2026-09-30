@@ -484,3 +484,7 @@ POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)
 # † the first A/B candidate (A6): variant B's independent-time gate for the
 # develop/profic bands (novice keeps GATE_INDEPENDENT_MIN_S_NOVICE for both)
 GATE_INDEPENDENT_MIN_S_VARIANT_B = 90
+# † owner decision 2026-09-29 (PKG-14, spec §13 A85): a reasoned claim in the
+# teach phase that passes the genuine-attempt rule raises THAT turn's ceiling by
+# this many rungs (the ladder's one rung after an attempt), capped per band
+TEACH_ATTEMPT_CEILING_RAISE = 1

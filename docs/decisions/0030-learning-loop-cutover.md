@@ -127,8 +127,10 @@ The target is about **$0.36 per student-month**.
      `tests/evals/floors.py` from `SAPLING_EVAL_RUNS_LOG`.
 2. **Online metrics.**
    - `scripts/derive_zpd_metrics.py` runs nightly. It derives the four ZPD
-     columns and prints a cost report: per band, per session or per user-day,
-     tier mix, `grader_backend` mix, cap hits and check-item coverage.
+     columns and prints a cost report: per band, per session (`zpd.step`
+     carries the session id, spec §13 A82; per user-day only for rows with no
+     session key), tier mix, `grader_backend` mix, cap hits and check-item
+     coverage.
    - `GET /api/admin/analytics/learning-loop` (admin only) serves the three
      KPIs and two measurable gates. The KPIs are: the in-band share, the
      `htc_k` trend per concept, and unassisted success on the next session's
@@ -137,7 +139,11 @@ The target is about **$0.36 per student-month**.
      `learning/arms.variant_for`, which hashes (arm, user, node). They are
      plumbing only. With `loop_arm` NULL (everyone, until the owner sets one
      by SQL), every concept is variant A and nothing changes.
-     - The first candidate experiment is `GATE_INDEPENDENT_MIN_S_VARIANT_B`.
+     - The first experiment (owner decision, 2026-09-29) is the variant-B
+       independent-time gate: `GATE_INDEPENDENT_MIN_S_VARIANT_B` (90 s)
+       against `GATE_INDEPENDENT_MIN_S` (45 s) for develop/profic concepts;
+       novice concepts keep `GATE_INDEPENDENT_MIN_S_NOVICE` in both arms. The
+       owner starts it by setting `loop_arm` by SQL.
      - `zpd.step` carries `variant`.
      - Analysis is intention-to-treat by the assigned variant, plus the tier
        actually served (`zpd.step.tier`), with a cap-hit covariate
@@ -213,8 +219,12 @@ follow-up that deletes `LEARNING_LOOP_ENABLED`.
 - **The earnest-revise gate** (spec §10, ≤ 5 %) is not measured: no event
   carries that signal. Making it measurable needs a `zpd.step` key or a grader
   flag; that is a follow-up.
-- **Cost is reported per user-day, not per session.** No `zpd.step` or
-  `llm_usage` row carries a session id. The nightly report attributes cost
-  per session only when every loop request maps to one; otherwise it reports
-  per user-day.
+- **Cost per session covers the requests an event names.** `zpd.step`,
+  `learn.session_closed` and `chat.message_sent` carry the session id
+  (A82); a loop request none of them names (the opener, probe and review
+  grades, a hint action) is still costed per user-day. A `session_id` column
+  on `llm_usage` would close that; it is not built.
+- **Teach turns at H0/H1 serve the ladder's question** (spec §13 A81, a
+  PKG-07 reopen), the model writing only the key idea and body. The per-tier
+  evals did not pass with it (A81), so launch-gate item 4 is open.
 
