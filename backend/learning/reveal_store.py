@@ -19,7 +19,6 @@ _REVEALS = "learning_reveals"  # loop_state_store.revealed_hashes reads it too
 # turn is served, with or without a session row (the loop opener has none).
 
 
-
 def record_reveals(user_id: str, hashes, *, session_id: str | None, source: str) -> None:
     """Append one 'reveal' row per question hash (raises on a failed write)."""
     rows = [

@@ -568,7 +568,9 @@ def test_revealed_hashes_includes_learning_reveals_rows():
     from learning import loop_state_store
 
     with (
-        patch("learning.loop_state_store.table", _store_tables([{"id": "r", "question_hash": "q"}])),
+        patch(
+            "learning.loop_state_store.table", _store_tables([{"id": "r", "question_hash": "q"}])
+        ),
         patch("learning.loop_state_store._MasteryEventsRead", _store_tables([])),
     ):
         assert loop_state_store.revealed_hashes("u1") == {"q"}
