@@ -695,12 +695,14 @@ def _ceiling_for(
     message: str,
     independent_s: float,
     variant: str = "A",
+    teach_attempt: bool = False,
 ) -> tuple[Rung, policy.CeilingReason]:
     """policy.ceiling_with_reason on typed state only (invariant 4). The shown-work
     floor applies when the step already records shown work or this message is a
     genuine attempt; exam mode is the step's own flag (False until PKG-08)."""
     showed = step.showed_work or _genuine(message, independent_s, learner.band, variant)
-    return policy.ceiling_with_reason(learner, dataclasses.replace(step, showed_work=showed))
+    raise_ = {"teach_attempt": True} if teach_attempt else {}  # A85; typed state only
+    return policy.ceiling_with_reason(learner, dataclasses.replace(step, showed_work=showed), **raise_)
 
 
 def _failed_on_concept(state: dict, node_id: str | None) -> int:
@@ -1356,6 +1358,7 @@ class _LoopTurn:
             message=self.message,
             independent_s=_seconds_since(self.step.first_shown_at, _now_s()),
             variant=self.variant,
+            teach_attempt=self._teach_attempt(),
         )
         self.planned = None
         self.given = ""
@@ -1364,6 +1367,25 @@ class _LoopTurn:
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
         self.teach_items: list | None = []  # PKG-14 (A84): the concept's items on a teach turn
+
+    def _teach_attempt(self) -> bool:
+        """PKG-14 (A85): the student's teach-phase message is a genuine attempt
+        for THIS turn's ceiling when the existing rule says so, timed from the
+        loop's previous served turn (`loop_state.served_at`). Only a student chat
+        message on a teach turn with no active item; no anchor → no raise. It
+        moves no evidence and no state (spec §1)."""
+        if self.phase != "teach" or self.item is not None or self.kind != "chat" or self.trusted:
+            return False
+        anchor = self.state.get("served_at")
+        if isinstance(anchor, bool) or not isinstance(anchor, (int, float)):
+            return False
+        return gates.teach_attempt(
+            self.message,
+            max(0.0, _now_s() - float(anchor)),
+            self.band,
+            time_scale=config.LEARNING_GATE_TIME_SCALE,
+            variant=self.variant,
+        )
 
     @property
     def slot(self) -> str:
@@ -1841,6 +1863,7 @@ class _LoopTurn:
             if state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
                 _advance_cursor(state)
         state["phase_served"] = self.phase
+        state["served_at"] = self._now  # A85: the next teach message's independent-time anchor
         if self.confront_used is not None and confront_of(state) == self.confront_used:
             set_confront(state, None)  # PKG-10: used once (a newer marker is kept)
         if self.tier != "none":
