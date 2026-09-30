@@ -116,6 +116,7 @@ from learning.loop_state_store import (
     load_loop_state,
     revealed_hashes,
     seen_hashes,
+    unscanned_reveals,
     update_loop_state,
 )
 from learning.params import (
@@ -140,6 +141,7 @@ from learning.params import (
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     LOOP_SOURCE_CHUNKS_MAX,
     LOOP_TEACH_TURNS_BEFORE_CHECK,
+    LOOP_PENDING_REVEALS_MAX,
     PLAN_ORDER,
     POSTTEST_MAX_ITEMS,
     POSTTEST_MIN_AGE_DAYS,
@@ -147,6 +149,8 @@ from learning.params import (
     PROBE_PLAN_READS_PER_MIN,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_SECONDS_PER_CHECK,
+    RUNG_ASSISTED_MIN,
+    RUNG_NO_CREDIT_MIN,
     ZPD_RATING_EVERY_N_CHECKS,
 )
 from learning.policy import LearnerView, LoopState, StepState
@@ -210,6 +214,7 @@ from services.check_item_service import (
     course_has_items,
     get_check_item,
     items_for_concepts,
+    items_for_course,
     list_items,
 )
 from services.graph_context import build_graph_context_block
@@ -1010,6 +1015,161 @@ def served_model_text(
     return (released_lead(reference) + text if answer_released else text), verdict
 
 
+# ── Teach turns: served unchanged, revealed items MARKED (PKG-14, spec §13 A86) ──
+# A teach turn has no active item, so nothing on it is stripped — and nothing is
+# withheld either (withheld text is an answer oracle). The served text is scanned
+# against every check item of the student's course (every concept, the post-test
+# reserve too) with the strict served-mode rules; each item whose answer it
+# states joins loop_state["revealed"] (A23), so it is never selected as a check or
+# a post-test item, and a posed one grades with no unassisted credit
+# (`_reveal_floor`). Items that cannot be read leave a marker
+# (loop_state["reveal_unscanned"]) that fails closed on the evidence side until
+# `_resolve_reveal_markers` turns it into revealed hashes.
+
+ANY_COURSE = "*"  # a failed marker read: every course is unresolved
+PENDING_REVEALS_MAX = LOOP_PENDING_REVEALS_MAX
+#: session id → {"user_id", "hashes", "mark"} for an opener (no session row yet)
+_PENDING_REVEALS: dict[str, dict] = {}
+
+
+def teach_reveals(text: str, items, *, rung: Rung, given: str) -> list[str]:
+    """The sorted question hashes of the servable `items` whose answer `text`
+    states (strict served mode). An item the check raises on counts as stated
+    (fail closed on the evidence side); a non-servable one is skipped."""
+    out: set[str] = set()
+    for item in items or []:
+        if not is_servable(item):
+            continue
+        try:
+            leaked = detect_leak(
+                emitted=text,
+                rung=rung,
+                given=given,
+                **_item_check_kwargs(
+                    reference=item.reference_answer,
+                    final_answer=item.final_answer,
+                    canonical_answer=item.canonical_answer,
+                    correct_option=item.correct_option,
+                    option_text=option_text(item),
+                ),
+            ).leaked
+        except (ValueError, TypeError):
+            leaked = True
+        if leaked:
+            out.add(item.question_hash)
+    return sorted(out)
+
+
+def _scan_teach(course_id: str | None, text: str, rung: Rung, given: str) -> list[str] | None:
+    """teach_reveals over the course's items; None when they cannot be read."""
+    if not course_id:
+        return []
+    try:
+        items = items_for_course(course_id)
+    except Exception as exc:
+        logger.warning(
+            "teach turn: the course's check items could not be read (%s); "
+            "reveals unscanned, marked fail-closed",
+            type(exc).__name__,
+        )
+        return None
+    return teach_reveals(text, items, rung=rung, given=given)
+
+
+def _mark_revealed(state: dict, hashes, mark: dict | None) -> None:
+    """The compare-and-set half: hashes join loop_state["revealed"] (A23);
+    an unscanned `mark` joins loop_state["reveal_unscanned"] (once)."""
+    if hashes:
+        revealed = list(state.get("revealed") or [])
+        state["revealed"] = revealed + [h for h in hashes if h not in revealed]
+    if mark is not None:
+        marks = list(state.get("reveal_unscanned") or [])
+        if not any(isinstance(m, dict) and m.get("id") == mark["id"] for m in marks):
+            state["reveal_unscanned"] = [*marks, mark]
+
+
+def _stash_pending_reveal(session_id: str, entry: dict) -> None:
+    _PENDING_REVEALS.pop(session_id, None)
+    _PENDING_REVEALS[session_id] = entry
+    while len(_PENDING_REVEALS) > PENDING_REVEALS_MAX:
+        _PENDING_REVEALS.pop(next(iter(_PENDING_REVEALS)))
+
+
+def _consume_loop_pending(session_id: str, user_id: str) -> None:
+    """routes.learn._consume_pending, then the opener's reveals (A86) written to
+    the session's loop_state once its row exists."""
+    _consume_pending(session_id, user_id)
+    pending = _PENDING_REVEALS.get(session_id)
+    if not pending or pending.get("user_id") != user_id:
+        return
+    _PENDING_REVEALS.pop(session_id, None)
+    _update_loop_state(
+        session_id, lambda st: _mark_revealed(st, pending.get("hashes"), pending.get("mark"))
+    )
+
+
+def _resolve_reveal_markers(user_id: str) -> set[str]:
+    """Turn every unscanned marker of the user into revealed hashes: the marker's
+    session's tutor messages from its time on, scanned against the course's
+    items (given nothing: conservative). Returns the course ids still
+    unresolved — ANY_COURSE when the markers themselves cannot be read."""
+    try:
+        marks = unscanned_reveals(user_id)
+    except Exception:
+        logger.warning("reveal markers could not be read; every course unresolved", exc_info=True)
+        return {ANY_COURSE}
+    unresolved: set[str] = set()
+    for session_id, mark in marks:
+        course = mark.get("course_id") or ANY_COURSE
+        try:
+            at = float(mark["at"])
+            items = items_for_course(course)
+            rows = table("messages").select(
+                "content",
+                filters={
+                    "session_id": f"eq.{session_id}",
+                    "role": "eq.assistant",
+                    "created_at": f"gte.{datetime.fromtimestamp(at, timezone.utc).isoformat()}",
+                },
+            ) or []
+            rung = Rung(int(mark.get("rung") or 0))
+            hashes: set[str] = set()
+            for row in rows:
+                text = decrypt_if_present(row.get("content")) or ""
+                hashes.update(teach_reveals(text, items, rung=rung, given=""))
+
+            def resolve(st: dict, mark_id=mark.get("id"), found=sorted(hashes)) -> None:
+                _mark_revealed(st, found, None)
+                st["reveal_unscanned"] = [
+                    m
+                    for m in st.get("reveal_unscanned") or []
+                    if not (isinstance(m, dict) and m.get("id") == mark_id)
+                ]
+
+            _update_loop_state(session_id, resolve)
+        except Exception:
+            logger.warning("reveal marker %s not resolved", mark.get("id"), exc_info=True)
+            unresolved.add(course)
+    return unresolved
+
+
+def _reveal_floor(user_id: str, item) -> int:
+    """The lowest rung a grade of `item` may claim (A86): RUNG_NO_CREDIT_MIN when
+    a served teach turn stated its answer (revealed, A23 — like a released
+    item), RUNG_ASSISTED_MIN while an unscanned marker of its course is
+    unresolved or the revealed read fails (fail closed), else 0."""
+    unresolved = _resolve_reveal_markers(user_id)
+    try:
+        if item.question_hash in revealed_hashes(user_id):
+            return RUNG_NO_CREDIT_MIN
+    except Exception:
+        logger.warning("revealed read failed; the grade is assisted", exc_info=True)
+        return RUNG_ASSISTED_MIN
+    if ANY_COURSE in unresolved or item.course_id in unresolved:
+        return RUNG_ASSISTED_MIN
+    return 0
+
+
 # ── The served session close (PKG-09; spec §13 A25, A51) ─────────────────
 
 
@@ -1290,6 +1450,8 @@ class _LoopTurn:
         self.run_requests = 0
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
+        self.teach_reveal: list[str] | None = []  # A86: the items this teach turn stated
+        self.reveal_mark: dict | None = None
 
     def _teach_attempt(self) -> bool:
         """PKG-14 (A85): the student's teach-phase message is a genuine attempt
@@ -1675,7 +1837,9 @@ class _LoopTurn:
         reply, redacted = self._leak_checked(reply)
         out: dict = {}
         self._now = _now_s()
+        self._scan_served_teach(reply)
         _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out))
+        self._emit_teach_reveal()
         if out.get("step") is not None:
             self._emit_step(out["step"])
         check = None
@@ -1714,6 +1878,34 @@ class _LoopTurn:
             "check": check,
         }
 
+    def _teach_scanned(self) -> bool:
+        """A model-written teach turn with no active item (A86)."""
+        return self.phase == "teach" and self.item is None and self.tier != "none"
+
+    def _scan_served_teach(self, reply: str) -> None:
+        """A86: the items this served teach text states (None = unreadable, a
+        fail-closed marker)."""
+        if not self._teach_scanned():
+            return
+        rung = self._leak_rung()
+        self.teach_reveal = _scan_teach(self.course_id, reply, rung, self.given)
+        if self.teach_reveal is None and self.course_id:
+            self.reveal_mark = {
+                "id": str(uuid.uuid4()),
+                "course_id": self.course_id,
+                "at": self._now,
+                "rung": int(rung),
+            }
+
+    def _emit_teach_reveal(self) -> None:
+        if self.teach_reveal or self.reveal_mark is not None:
+            zpd_events.emit_zpd_teach_reveal(
+                user_id=self.user_id,
+                request_id=self.request_id,
+                question_hashes=list(self.teach_reveal or []),
+                unscanned=self.reveal_mark is not None,
+            )
+
     def _apply_turn(self, state: dict, out: dict) -> None:
         """This turn's change to the loop document — the compare-and-set mutate,
         so it may run more than once (each time on a fresher document): it
@@ -1736,6 +1928,7 @@ class _LoopTurn:
             if state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
                 _advance_cursor(state)
         state["phase_served"] = self.phase
+        _mark_revealed(state, self.teach_reveal, self.reveal_mark)  # A86
         state["served_at"] = self._now  # A85: the next teach message's independent-time anchor
         if self.confront_used is not None and confront_of(state) == self.confront_used:
             set_confront(state, None)  # PKG-10: used once (a newer marker is kept)
@@ -1820,6 +2013,14 @@ class _LoopOpener(_LoopTurn):
         return _LOOP_OPENER_TEMPLATE if hard else None
 
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
+        self._now = _now_s()
+        self._scan_served_teach(reply)  # A86: no row yet — the reveals wait with the session
+        if self.teach_reveal or self.reveal_mark is not None:
+            _stash_pending_reveal(
+                self.session_id,
+                {"user_id": self.user_id, "hashes": self.teach_reveal, "mark": self.reveal_mark},
+            )
+            self._emit_teach_reveal()
         PENDING_SESSIONS[self.session_id] = {
             "user_id": self.user_id,
             "mode": self.mode,
@@ -2355,7 +2556,7 @@ def list_open_sessions(
 @router.post("/chat", dependencies=_RATE_LIMITED)
 async def chat(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return await _json_turn(
         lambda: _LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on),
@@ -2366,7 +2567,7 @@ async def chat(body: ChatBody, request: Request):
 @router.post("/chat/stream", dependencies=_RATE_LIMITED)
 async def chat_stream(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
 
@@ -2529,7 +2730,8 @@ async def _grade_submission(
         # outcome.diagnosis into the grade's compare-and-set save below
         loop_state=copy.deepcopy(state),
     )
-    rung = int(entry.get("rung") or 0)
+    # A86: a posed item a served teach turn revealed grades with no unassisted credit
+    rung = max(int(entry.get("rung") or 0), _reveal_floor(body.user_id, item))
     # PKG-10 (spec §13 A76): the next graded item on a concept after a release
     # is a re-check, never a full-weight unassisted first attempt
     recheck = recheck_after_release(
@@ -2711,7 +2913,7 @@ def _submission_turn(
 @router.post("/check/answer", dependencies=_RATE_LIMITED)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
@@ -2723,7 +2925,7 @@ async def check_answer(body: LoopCheckAnswerBody, request: Request):
 @router.post("/check/answer/stream", dependencies=_RATE_LIMITED)
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
@@ -3117,7 +3319,7 @@ async def action(body: ActionBody, request: Request):
     rung, otherwise the current phase. Assistant-only persistence; never graded
     (invariant 26)."""
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
     chat_body = ChatBody(
@@ -3172,7 +3374,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     first (the budget read is not a mutate's business), then applied to the
     fresh document by one compare-and-set write."""
     _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_teaching(state)
@@ -3826,7 +4028,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     the per-skill cap, by the recorded observations."""
     _gate(body.user_id, request)
     _probe_plan_read_limit(body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_phase(state, "probe")
@@ -4152,7 +4354,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     404, never a 429."""
     loop_on = _gate(body.user_id, request)
     ai_budget.enforce_rate_limit_for(body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _probe_submission(body, request, loop_on=loop_on), what="probe grader"
     )
@@ -4452,6 +4654,8 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             reason=body.reason,
             deps=deps,
             claim=claim,
+            # A86: an open review item a served teach turn revealed has no unassisted credit
+            max_rung=_reveal_floor(body.user_id, check) if check is not None else 0,
         )
     except review.ReviewClaimRefused as exc:
         raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None
