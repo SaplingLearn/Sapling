@@ -340,6 +340,12 @@ def seams():
         ns.grade = p("grade_answer", new_callable=AsyncMock, return_value=CORRECT)
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
+        # PKG-14 (spec §13 A88): the open posed items a served turn is scanned
+        # against, and the learning_reveals store (none by default)
+        ns.open_posed = p("open_posed_items", return_value=[])
+        ns.record_reveals = p("record_reveals")
+        ns.record_unscanned = p("record_unscanned")
+        ns.unscanned_since = p("unscanned_since", return_value=False)
         # PKG-10 (A76): the evidence-journal half of the re-check rule
         ns.journal = stack.enter_context(
             patch("learning.misconceptions.recent_evidence", return_value=[])

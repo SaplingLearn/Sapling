@@ -228,15 +228,22 @@ def emit_zpd_rating(
     )
 
 
-def emit_zpd_teach_reveal(
-    *, user_id: str, request_id: str | None, question_hashes: list[str], unscanned: bool
+def emit_zpd_reveal(
+    *,
+    user_id: str,
+    request_id: str | None,
+    session_id: str | None,
+    question_hashes: list[str],
+    unscanned: bool,
+    phase: str,
 ) -> None:
-    """PKG-14 (spec §13 A86): a served teach turn stated these items' answers
-    (they are now marked revealed), or — `unscanned` — its course's items could
-    not be read. Distinct from zpd.leak: the zero-leak gate counts only a leak
-    served on an item turn."""
+    """PKG-14 (spec §13 A88): a SERVED tutor turn stated the answers of these
+    open, posed items (they are now revealed: never selected again, no
+    unassisted credit), or — `unscanned` — its open items could not be read.
+    This is the served-solution count the zero-leak gate reads (m5); zpd.leak is
+    a leak CAUGHT on the active item and redacted before it was served."""
     _emit(
-        "zpd.teach_reveal",
+        "zpd.reveal",
         "usage",
         user_id,
         request_id,
@@ -244,5 +251,7 @@ def emit_zpd_teach_reveal(
             "question_hashes": list(question_hashes),
             "count": len(question_hashes),
             "unscanned": unscanned,
+            "phase": phase,
+            "session_id": session_id,
         },
     )
