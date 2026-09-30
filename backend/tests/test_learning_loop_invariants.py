@@ -668,29 +668,40 @@ def test_inv_10_lru_cache_has_clear_hook():
     pytest.skip("asserted by the first package that adds an lru_cache under backend/learning/")
 
 
-def test_inv_11_gate_false_when_env_unset(monkeypatch):
-    gate = reload_gate(monkeypatch, None)
-    calls = []
-    monkeypatch.setattr(gate, "table", lambda name: calls.append(name) or _Boom(calls))
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, True),
+        ("", True),
+        ("true", True),
+        ("1", True),
+        ("yes", True),
+        ("false", False),
+        ("FALSE", False),
+        (" False ", False),
+        ("0", False),
+        ("off", False),
+        ("no", False),
+    ],
+)
+def test_inv_11_gate_false_when_env_unset(monkeypatch, raw, expected):
+    """The name is historical: in the build phase an unset LEARNING_LOOP_ENABLED meant False.
+    Post-launch (PKG-14b, spec §7, §13 A14) the env var is a kill switch that defaults ON:
+    unset or "" → True for every user; any of false/0/off/no (any case, whitespace ignored) → False.
+    There is no student opt-in, so the gate reads no table in either case."""
+    import config
+
+    # PKG-00's helper (this module): hermetic against backend/.env (load_dotenv is a
+    # no-op for the reload) and registers every rebound attribute for undo, so the
+    # recomputed flag never leaks into later modules. None = unset.
+    gate = reload_gate(monkeypatch, raw)
+    assert config.LEARNING_LOOP_ENABLED is expected
+    assert not hasattr(gate, "table"), "post-launch learning/gate.py imports no table(): nothing to read"
     before = db_client_calls()
     for uid in ("user_andres", "e2e-student", "nobody"):
-        assert gate.learning_loop_active(uid) is False
-    assert calls == [], "gate touched the database with the env var unset"
-    assert db_client_calls()[len(before) :] == [], (
-        "gate reached the DB client with the env var unset"
-    )
-
-
-class _Boom:
-    """Stand-in table that records a read instead of raising: the gate
-    swallows every exception, so a raise here would never reach the test."""
-
-    def __init__(self, calls: list | None = None):
-        self.calls = calls if calls is not None else []
-
-    def select(self, *a, **k):
-        self.calls.append(("select", a, k))
-        return []
+        assert gate.learning_loop_active(uid) is expected
+        assert gate.learning_loop_for_request(uid) is expected
+    assert db_client_calls()[len(before) :] == [], "the post-launch gate reached the DB client"
 
 
 def test_inv_12_one_prompt_stack_per_series_agent():
@@ -1702,3 +1713,22 @@ def test_inv_13b_seed_opts_in_exactly_the_loop_users():
         "rich-user-new",
     ):
         assert not any(legacy in ln for ln in toggle_lines), f"{legacy} must stay legacy"
+
+
+# ── PKG-14b: the evidence-only rule (spec §11) ──────────────────────────────
+
+LEGACY_MASTERY_SYMBOLS = ("mastery_delta", "MASTERY_DELTA_PER", "get_mastery_tier")
+
+
+def test_inv_21_no_legacy_mastery_writers():
+    """Spec §11: after cutover, only graded evidence can move a belief."""
+    hits = []
+    for path in BACKEND.rglob("*.py"):
+        rel = path.relative_to(BACKEND)
+        if rel.parts[0] in ("venv", "learning") or rel.name == "test_learning_loop_invariants.py":
+            continue
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            for sym in LEGACY_MASTERY_SYMBOLS:
+                if sym in line:
+                    hits.append(f"{rel}:{i}: {sym}")
+    assert hits == [], "legacy mastery writers survive cutover:\n" + "\n".join(hits)
