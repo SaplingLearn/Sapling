@@ -488,3 +488,7 @@ GATE_INDEPENDENT_MIN_S_VARIANT_B = 90
 # teach phase that passes the genuine-attempt rule raises THAT turn's ceiling by
 # this many rungs (the ladder's one rung after an attempt), capped per band
 TEACH_ATTEMPT_CEILING_RAISE = 1
+# † PKG-14 (spec §13 A86): the loop opener has no session row yet, so the items
+# its served text reveals wait in memory until the session materialises; at most
+# this many openers' reveals are held (oldest evicted first)
+LOOP_PENDING_REVEALS_MAX = 10_000

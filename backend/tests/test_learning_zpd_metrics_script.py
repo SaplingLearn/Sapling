@@ -196,10 +196,16 @@ def test_evidence_read_is_the_nodes_journal_newest_first(world):
     ((_, cols, filters, order, limit),) = [
         c for c in world["handles"]["node_mastery_events"].calls if c[0] == "select"
     ]
-    assert filters == {"node_id": "eq.n", "event_type": "eq.evidence"}
+    # review fix round: opportunities only BEFORE the limit (a propagation-free
+    # journal can still hold rows without a question_hash)
+    assert filters == {
+        "node_id": "eq.n",
+        "event_type": "eq.evidence",
+        "question_hash": "not.is.null",
+    }
     # spec §13 A36: the apply order within one call is evidence_seq
     assert order == "created_at.desc,evidence_seq.desc.nullslast,id.desc"
-    assert limit == params.BAND_WINDOW * 2
+    assert limit == max(params.BAND_WINDOW, params.HTC_K_WINDOW)
     assert "question_hash" in cols
 
 
@@ -291,10 +297,12 @@ USAGE = [
 ]
 STEPS = [
     {
+        "user_id": "u",
         "request_id": "r1",
         "payload": {"band": "develop", "tier": "standard", "grader_backend": "gemini"},
     },
     {
+        "user_id": "u",
         "request_id": "r9",
         "payload": {"band": "novice"},
     },  # no tier / grader_backend keys: not counted
@@ -323,7 +331,7 @@ def test_report_null_cost_counts_as_zero():
 
 
 def test_report_never_guesses_a_band_for_a_request_with_two():
-    steps = STEPS + [{"request_id": "r1", "payload": {"band": "novice"}}]
+    steps = STEPS + [{"user_id": "u", "request_id": "r1", "payload": {"band": "novice"}}]
     out = _script().report([_usage("r1", "grader", "0.002")], steps, [], sessions_by_request={})
     assert out["cost_per_band"] == {"unknown": pytest.approx(0.002)}
 
@@ -332,13 +340,17 @@ def test_report_groups_per_session_and_falls_back_per_row():
     """Spec §13 A82: a loop row whose request maps to a session is costed per
     session; only a row with no session key (older rows, before zpd.step
     carried one) falls back to its user-day."""
-    out = _script().report(USAGE, STEPS, CAPS, sessions_by_request={"r1": "s1"})  # r2 unmapped
+    out = _script().report(
+        USAGE, STEPS, CAPS, sessions_by_request={("u", "r1"): "s1"}
+    )  # r2 unmapped
     assert out["cost_per_session"] == {"s1": pytest.approx(0.011)}
     assert out["cost_per_user_day"] == {"u/2026-09-21": pytest.approx(0.030)}
 
 
 def test_report_uses_sessions_when_every_row_maps():
-    out = _script().report(USAGE, STEPS, CAPS, sessions_by_request={"r1": "s1", "r2": "s2"})
+    out = _script().report(
+        USAGE, STEPS, CAPS, sessions_by_request={("u", "r1"): "s1", ("u", "r2"): "s2"}
+    )
     assert out["cost_per_session"] == {"s1": pytest.approx(0.011), "s2": pytest.approx(0.030)}
     assert out["cost_per_user_day"] == {}
 
@@ -355,15 +367,29 @@ def test_report_without_any_session_key_is_all_user_day():
 def test_sessions_by_request_reads_every_event_carrying_a_session():
     s = _script()
     events = [
-        {"request_id": "r1", "payload": {"session_id": "s1"}},  # zpd.step (A82)
+        {"user_id": "u", "request_id": "r1", "payload": {"session_id": "s1"}},  # zpd.step (A82)
         {
+            "user_id": "u",
             "request_id": "r2",
             "payload": {"mode": "socratic", "session_id": "s2"},
         },  # chat.message_sent
-        {"request_id": "r3", "payload": {"band": "develop"}},  # no session
-        {"request_id": None, "payload": {"session_id": "s9"}},  # no request
+        {"user_id": "u", "request_id": "r3", "payload": {"band": "develop"}},  # no session
+        {"user_id": "u", "request_id": None, "payload": {"session_id": "s9"}},  # no request
+        {"user_id": None, "request_id": "r4", "payload": {"session_id": "s4"}},  # no user
     ]
-    assert s.sessions_by_request(events) == {"r1": "s1", "r2": "s2"}
+    assert s.sessions_by_request(events) == {("u", "r1"): "s1", ("u", "r2"): "s2"}
+
+
+def test_a_request_id_is_joined_only_with_its_own_user():
+    """Review fix round: X-Request-ID is client-set, so a request id alone never
+    joins — another user's events can neither band nor session this row."""
+    s = _script()
+    usage = [_usage("r1", "loop_tutor", "0.010", user="mallory")]
+    steps = [{"user_id": "u", "request_id": "r1", "payload": {"band": "develop"}}]
+    out = s.report(usage, steps, [], sessions_by_request={("u", "r1"): "s1"})
+    assert out["cost_per_band"] == {"unknown": pytest.approx(0.010)}
+    assert out["cost_per_session"] == {}
+    assert out["cost_per_user_day"] == {"mallory/2026-09-20": pytest.approx(0.010)}
 
 
 def test_series_slots_are_invariant_6():
@@ -397,6 +423,7 @@ def test_main_prints_the_report_with_coverage(world, capsys):
         {
             "id": "x1",
             "event_type": "zpd.step",
+            "user_id": "u",
             "request_id": "r1",
             "payload": {**STEPS[0]["payload"], "session_id": "s1"},
             "created_at": "2026-09-20T10:00:00+00:00",

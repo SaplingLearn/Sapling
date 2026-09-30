@@ -151,9 +151,14 @@ def _evidence(node_id: str) -> list[dict]:
     return (
         table("node_mastery_events").select(
             _EVIDENCE_COLS,
-            filters={"node_id": f"eq.{node_id}", "event_type": "eq.evidence"},
+            # opportunities only, BEFORE the limit (review fix round)
+            filters={
+                "node_id": f"eq.{node_id}",
+                "event_type": "eq.evidence",
+                "question_hash": "not.is.null",
+            },
             order=_EVIDENCE_ORDER,
-            limit=BAND_WINDOW * 2,
+            limit=max(BAND_WINDOW, HTC_K_WINDOW),
         )
         or []
     )
@@ -184,23 +189,25 @@ def report(
     steps: list[dict],
     caps: list[dict],
     *,
-    sessions_by_request: dict[str, str],
+    sessions_by_request: dict[tuple[str, str], str],
 ) -> dict:
     """Spec §10's cost and mix report over one window. Never invents a band, a
     session or a zero count: an unattributable row goes under "unknown", and a
-    payload key that is absent is not counted."""
-    bands: dict[str, set[str]] = defaultdict(set)
+    payload key that is absent is not counted. A usage row joins an event only
+    on (user_id, request_id) — X-Request-ID is client-set, so a request id alone
+    could attribute one student's cost to another's session or band."""
+    bands: dict[tuple, set[str]] = defaultdict(set)
     for step in steps:
         band = (step.get("payload") or {}).get("band")
-        if step.get("request_id") and band:
-            bands[step["request_id"]].add(band)
+        if step.get("user_id") and step.get("request_id") and band:
+            bands[(step["user_id"], step["request_id"])].add(band)
 
     loop_rows = [
         r for r in usage if r.get("task") in SERIES_SLOTS and r.get("task") != _COURSE_ASSET_SLOT
     ]
     per_band: dict[str, float] = defaultdict(float)
     for r in loop_rows:
-        seen = bands.get(r.get("request_id") or "", set())
+        seen = bands.get((r.get("user_id"), r.get("request_id")), set())
         per_band[next(iter(seen)) if len(seen) == 1 else _UNKNOWN] += _usd(r.get("cost_usd"))
 
     out: dict = {
@@ -225,7 +232,11 @@ def report(
     per_session: dict[str, float] = defaultdict(float)
     per_user_day: dict[str, float] = defaultdict(float)
     for r in loop_rows:
-        session = sessions_by_request.get(r.get("request_id") or "")
+        session = (
+            sessions_by_request.get((r["user_id"], r["request_id"]))
+            if r.get("user_id") and r.get("request_id")
+            else None
+        )
         if session:
             per_session[session] += _usd(r.get("cost_usd"))
         else:
@@ -236,12 +247,13 @@ def report(
     return out
 
 
-def sessions_by_request(events: list[dict]) -> dict[str, str]:
-    """request_id → the session id any event of that request carries in its payload."""
+def sessions_by_request(events: list[dict]) -> dict[tuple[str, str], str]:
+    """(user_id, request_id) → the session id any event of that request carries
+    in its payload; an event with no user or no request id never maps."""
     return {
-        e["request_id"]: (e.get("payload") or {})["session_id"]
+        (e["user_id"], e["request_id"]): (e.get("payload") or {})["session_id"]
         for e in events
-        if e.get("request_id") and (e.get("payload") or {}).get("session_id")
+        if e.get("user_id") and e.get("request_id") and (e.get("payload") or {}).get("session_id")
     }
 
 

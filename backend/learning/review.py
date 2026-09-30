@@ -1046,6 +1046,7 @@ async def grade_review(
     reason: str | None = None,
     deps=None,
     claim: str | None = None,
+    max_rung: int = 0,
 ) -> ReviewOutcome:
     """Rule 6. A check item is graded by grade_answer ONCE (unassisted:
     max_rung 0; a re-check only when it is the next graded item on its concept
@@ -1080,6 +1081,8 @@ async def grade_review(
                 ),
                 deps=deps,
                 node_id=item.node_id,
+                # PKG-14 (A86): a floor when a served teach turn revealed the item
+                **({"max_rung": max_rung} if max_rung else {}),
                 # spec §13 A76 (fix round 3): a due item right after a release on
                 # its concept (a wrong loop answer this morning) is the re-check
                 same_session_recheck=recheck_after_release(

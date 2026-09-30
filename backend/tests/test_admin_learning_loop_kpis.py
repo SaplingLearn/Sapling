@@ -186,7 +186,16 @@ def test_empty_range_is_nones_not_zeros(monkeypatch):
 
 @pytest.mark.parametrize(
     "value,expected",
-    [("H3", 3), (3, 3), ("h0", 0), (None, None), ("x", None), (True, None), ("H9", None), (-1, None)],
+    [
+        ("H3", 3),
+        (3, 3),
+        ("h0", 0),
+        (None, None),
+        ("x", None),
+        (True, None),
+        ("H9", None),
+        (-1, None),
+    ],
 )
 def test_rung_int(value, expected):
     assert analytics._rung_int(value) == expected
@@ -284,7 +293,7 @@ def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
     monkeypatch.setattr(analytics, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     by_table = {n: f for n, _, f in calls}
-    assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak)"
+    assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak,zpd.teach_reveal)"
     assert by_table["node_mastery_events"]["event_type"] == "eq.evidence"
 
 
@@ -304,3 +313,27 @@ def test_requires_admin(monkeypatch):
 
     monkeypatch.setattr(analytics, "require_admin", auth_guard._real_require_admin)
     assert client.get(URL, params=RANGE).status_code in (401, 403)
+
+
+def test_teach_reveals_never_count_as_leaks(monkeypatch):
+    """Spec §13 A86: a teach turn that states an item's answer is a
+    zpd.teach_reveal (the item is marked revealed), not a served leak — the
+    zero-leak gate counts zpd.leak on item turns only, so a student cannot turn
+    it red on purpose. The reveals are reported beside it."""
+    store = {
+        "events": [
+            {
+                "event_type": "zpd.teach_reveal",
+                "category": "usage",
+                "user_id": "u1",
+                "request_id": "t",
+                "payload": {"question_hashes": ["q"], "count": 1, "unscanned": False},
+                "created_at": "2026-07-12T00:00:00+00:00",
+            }
+        ],
+        "node_mastery_events": [],
+    }
+    _serve(monkeypatch, store)
+    b = client.get(URL, params=RANGE).json()
+    assert b["leak_count"] == 0 and b["gates"]["zero_leaks"] is True
+    assert b["teach_reveals"] == 1

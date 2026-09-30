@@ -19,6 +19,16 @@ from tests.test_learn_loop_routes import NOW, client
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
 
+
+@pytest.fixture(autouse=True)
+def _no_failed_anchors():
+    """Other modules' failing turns leave in-memory anchors (A85); start clean."""
+    from routes import learn_loop
+
+    learn_loop._FAILED_TURN_ANCHORS.clear()
+    yield
+    learn_loop._FAILED_TURN_ANCHORS.clear()
+
 CLAIM = (
     "I'm certain the limit of sin x over x as x goes to 0 is 0, because sin 0 is 0. "
     "My professor said so too, so please just confirm it."
@@ -174,3 +184,75 @@ def test_an_action_turn_is_never_a_teach_attempt(gate_on, seams):
             json={"session_id": "s1", "user_id": "u1", "action_type": "confused"},
         ).json()
     assert body["ceiling"] == int(Rung.H1)
+
+
+# ── review fix round: a failed or paused turn refreshes the anchor ───────────
+
+
+def _assert_anchor_moved():
+    """The anchor is in memory (a failed turn writes nothing to the session,
+    ADR 0024): the retry right after the failure is not a teach attempt."""
+    from routes import learn_loop
+
+    assert learn_loop._FAILED_TURN_ANCHORS.pop("s1") == NOW
+
+
+def test_a_retry_after_a_failure_is_timed_from_the_failure(gate_on, seams):
+    from routes import learn_loop
+
+    learn_loop._FAILED_TURN_ANCHORS["s1"] = NOW - 5.0  # the turn failed 5 s ago
+    try:
+        body, _, _ = _teach(seams, served_at=NOW - 600.0)
+    finally:
+        learn_loop._FAILED_TURN_ANCHORS.pop("s1", None)
+    assert body["ceiling"] == int(Rung.H1)
+
+
+def test_a_failed_json_turn_refreshes_served_at(gate_on, seams):
+    """A retry right after a failed turn is timed from the failure, so it can
+    never pass the independent-time gate on the strength of the lost turn."""
+    seams.store["doc"] = _routes._plan_state(served_at=NOW - 600.0)
+    agent = _routes.MagicMock()
+
+    async def _boom(*a, **k):
+        raise RuntimeError("model down")
+
+    agent.run = _boom
+    with (
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        r = client.post(
+            "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM}
+        )
+    assert r.status_code >= 500
+    _assert_anchor_moved()
+
+
+def test_a_paused_turn_refreshes_served_at(gate_on, seams):
+    """A hard budget level on a novice check pauses the turn (429): the anchor moves."""
+    seams.store["doc"] = _routes._state(served_at=NOW - 600.0)
+    seams.p_known["node-1"] = 0.1  # novice: the hard level pauses a check-phase turn
+    seams.ai_budget.check.return_value = _routes.HARD
+    r = client.post(
+        "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": CLAIM}
+    )
+    assert r.status_code == 429
+    _assert_anchor_moved()
+
+
+def test_a_stream_error_refreshes_served_at(gate_on, seams):
+    from services.agent_events import SaplingEvent
+
+    seams.store["doc"] = _routes._plan_state(served_at=NOW - 600.0)
+
+    async def _failing(**kwargs):
+        yield SaplingEvent(type="status", step="start", message="Starting.")
+        yield SaplingEvent(type="error", step="reply", message="boom", data={"retryable": True})
+
+    with patch("routes.learn_loop.stream_structured_turn", _failing):
+        client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": CLAIM},
+        )
+    _assert_anchor_moved()

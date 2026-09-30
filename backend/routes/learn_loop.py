@@ -87,7 +87,7 @@ from agents.loop_tutor import (
 )
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage
-from db.connection import table
+from db.connection import page_all, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, zpd_events
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
@@ -116,6 +116,7 @@ from learning.loop_state_store import (
     load_loop_state,
     revealed_hashes,
     seen_hashes,
+    unscanned_reveals,
     update_loop_state,
 )
 from learning.params import (
@@ -140,6 +141,7 @@ from learning.params import (
     LOOP_SESSION_MAX_DEEP_REQUESTS_NOVICE,
     LOOP_SOURCE_CHUNKS_MAX,
     LOOP_TEACH_TURNS_BEFORE_CHECK,
+    LOOP_PENDING_REVEALS_MAX,
     PLAN_ORDER,
     POSTTEST_MAX_ITEMS,
     POSTTEST_MIN_AGE_DAYS,
@@ -147,6 +149,8 @@ from learning.params import (
     PROBE_PLAN_READS_PER_MIN,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_SECONDS_PER_CHECK,
+    RUNG_ASSISTED_MIN,
+    RUNG_NO_CREDIT_MIN,
     ZPD_RATING_EVERY_N_CHECKS,
 )
 from learning.policy import LearnerView, LoopState, StepState
@@ -210,6 +214,7 @@ from services.check_item_service import (
     course_has_items,
     get_check_item,
     items_for_concepts,
+    items_for_course,
     list_items,
 )
 from services.graph_context import build_graph_context_block
@@ -1010,80 +1015,161 @@ def served_model_text(
     return (released_lead(reference) + text if answer_released else text), verdict
 
 
-# ── Teach turns: the concept's items are never stated (PKG-14, spec §13 A84) ──
-# A teach turn has no active item, so the item-turn leak check above never ran
-# on it — yet its model reads course passages the concept's check items were
-# drafted from. Every item of the current concept (the post-test reserve too)
-# is checked with the same strict served-mode rules; a leak is never masked in
-# place, the turn is the rung's ladder line (N1). Fail closed: items that cannot
-# be read (None) or checked withhold the turn the same way.
+# ── Teach turns: served unchanged, revealed items MARKED (PKG-14, spec §13 A86) ──
+# A teach turn has no active item, so nothing on it is stripped — and nothing is
+# withheld either (withheld text is an answer oracle). The served text is scanned
+# against every check item of the student's course (every concept, the post-test
+# reserve too) with the strict served-mode rules; each item whose answer it
+# states joins loop_state["revealed"] (A23), so it is never selected as a check or
+# a post-test item, and a posed one grades with no unassisted credit
+# (`_reveal_floor`). Items that cannot be read leave a marker
+# (loop_state["reveal_unscanned"]) that fails closed on the evidence side until
+# `_resolve_reveal_markers` turns it into revealed hashes.
+
+ANY_COURSE = "*"  # a failed marker read: every course is unresolved
+PENDING_REVEALS_MAX = LOOP_PENDING_REVEALS_MAX
+#: session id → {"user_id", "hashes", "mark"} for an opener (no session row yet)
+_PENDING_REVEALS: dict[str, dict] = {}
+#: A85 (review fix round): session id → when its last turn failed or paused
+_FAILED_TURN_ANCHORS: dict[str, float] = {}
 
 
-def _teach_item_kwargs(item) -> dict:
-    return _item_check_kwargs(
-        reference=item.reference_answer,
-        final_answer=item.final_answer,
-        canonical_answer=item.canonical_answer,
-        correct_option=item.correct_option,
-        option_text=option_text(item),
+def teach_reveals(text: str, items, *, rung: Rung, given: str) -> list[str]:
+    """The sorted question hashes of the servable `items` whose answer `text`
+    states (strict served mode). An item the check raises on counts as stated
+    (fail closed on the evidence side); a non-servable one is skipped."""
+    out: set[str] = set()
+    for item in items or []:
+        if not is_servable(item):
+            continue
+        try:
+            leaked = detect_leak(
+                emitted=text,
+                rung=rung,
+                given=given,
+                **_item_check_kwargs(
+                    reference=item.reference_answer,
+                    final_answer=item.final_answer,
+                    canonical_answer=item.canonical_answer,
+                    correct_option=item.correct_option,
+                    option_text=option_text(item),
+                ),
+            ).leaked
+        except (ValueError, TypeError):
+            leaked = True
+        if leaked:
+            out.add(item.question_hash)
+    return sorted(out)
+
+
+def _scan_teach(course_id: str | None, text: str, rung: Rung, given: str) -> list[str] | None:
+    """teach_reveals over the course's items; None when they cannot be read."""
+    if not course_id:
+        return []
+    try:
+        items = items_for_course(course_id)
+    except Exception as exc:
+        logger.warning(
+            "teach turn: the course's check items could not be read (%s); "
+            "reveals unscanned, marked fail-closed",
+            type(exc).__name__,
+        )
+        return None
+    return teach_reveals(text, items, rung=rung, given=given)
+
+
+def _mark_revealed(state: dict, hashes, mark: dict | None) -> None:
+    """The compare-and-set half: hashes join loop_state["revealed"] (A23);
+    an unscanned `mark` joins loop_state["reveal_unscanned"] (once)."""
+    if hashes:
+        revealed = list(state.get("revealed") or [])
+        state["revealed"] = revealed + [h for h in hashes if h not in revealed]
+    if mark is not None:
+        marks = list(state.get("reveal_unscanned") or [])
+        if not any(isinstance(m, dict) and m.get("id") == mark["id"] for m in marks):
+            state["reveal_unscanned"] = [*marks, mark]
+
+
+def _stash_pending_reveal(session_id: str, entry: dict) -> None:
+    _PENDING_REVEALS.pop(session_id, None)
+    _PENDING_REVEALS[session_id] = entry
+    while len(_PENDING_REVEALS) > PENDING_REVEALS_MAX:
+        _PENDING_REVEALS.pop(next(iter(_PENDING_REVEALS)))
+
+
+def _consume_loop_pending(session_id: str, user_id: str) -> None:
+    """routes.learn._consume_pending, then the opener's reveals (A86) written to
+    the session's loop_state once its row exists."""
+    _consume_pending(session_id, user_id)
+    pending = _PENDING_REVEALS.get(session_id)
+    if not pending or pending.get("user_id") != user_id:
+        return
+    _PENDING_REVEALS.pop(session_id, None)
+    _update_loop_state(
+        session_id, lambda st: _mark_revealed(st, pending.get("hashes"), pending.get("mark"))
     )
 
 
-def teach_leak_check(items, *, rung: Rung, given: str) -> Callable[[str], bool]:
-    """True when `text` states any item's answer (or the items are unknown)."""
-
-    def check(text: str) -> bool:
-        if items is None:
-            return True
+def _resolve_reveal_markers(user_id: str) -> set[str]:
+    """Turn every unscanned marker of the user into revealed hashes: the marker's
+    session's tutor messages from its time on, scanned against the course's
+    items (given nothing: conservative). Returns the course ids still
+    unresolved — ANY_COURSE when the markers themselves cannot be read."""
+    try:
+        marks = unscanned_reveals(user_id)
+    except Exception:
+        logger.warning("reveal markers could not be read; every course unresolved", exc_info=True)
+        return {ANY_COURSE}
+    unresolved: set[str] = set()
+    for session_id, mark in marks:
+        course = mark.get("course_id") or ANY_COURSE
         try:
-            return any(
-                detect_leak(emitted=text, rung=rung, given=given, **_teach_item_kwargs(i)).leaked
-                for i in items
-            )
-        except (ValueError, TypeError):
-            return True
+            at = float(mark["at"])
+            items = items_for_course(course)
+            rows = table("messages").select(
+                "content",
+                filters={
+                    "session_id": f"eq.{session_id}",
+                    "role": "eq.assistant",
+                    "created_at": f"gte.{datetime.fromtimestamp(at, timezone.utc).isoformat()}",
+                },
+            ) or []
+            rung = Rung(int(mark.get("rung") or 0))
+            hashes: set[str] = set()
+            for row in rows:
+                text = decrypt_if_present(row.get("content")) or ""
+                hashes.update(teach_reveals(text, items, rung=rung, given=""))
 
-    return check
+            def resolve(st: dict, mark_id=mark.get("id"), found=sorted(hashes)) -> None:
+                _mark_revealed(st, found, None)
+                st["reveal_unscanned"] = [
+                    m
+                    for m in st.get("reveal_unscanned") or []
+                    if not (isinstance(m, dict) and m.get("id") == mark_id)
+                ]
+
+            _update_loop_state(session_id, resolve)
+        except Exception:
+            logger.warning("reveal marker %s not resolved", mark.get("id"), exc_info=True)
+            unresolved.add(course)
+    return unresolved
 
 
-def served_teach_text(reply: str, *, leak_rung: Rung, items, given: str) -> tuple[str, bool]:
-    """(served text, leaked) of a model-written teach turn: the reply unchanged
-    when no item of the concept is stated; else the rung's ladder line. Items
-    that cannot be read (None) or checked give the ladder line too, as not a
-    leak (nothing was seen)."""
-    fallback = LADDER_FALLBACK_LINES[int(Rung(leak_rung))]
-    if items is None:
-        return fallback, False
+def _reveal_floor(user_id: str, item) -> int:
+    """The lowest rung a grade of `item` may claim (A86): RUNG_NO_CREDIT_MIN when
+    a served teach turn stated its answer (revealed, A23 — like a released
+    item), RUNG_ASSISTED_MIN while an unscanned marker of its course is
+    unresolved or the revealed read fails (fail closed), else 0."""
+    unresolved = _resolve_reveal_markers(user_id)
     try:
-        leaked = any(
-            detect_leak(emitted=reply, rung=leak_rung, given=given, **_teach_item_kwargs(i)).leaked
-            for i in items
-        )
-    except (ValueError, TypeError):
-        return fallback, False
-    return (fallback, True) if leaked else (reply, False)
-
-
-def _teach_detector(text: str, items, rung: Rung, given: str) -> str:
-    """The detector of the first item whose answer `text` states (zpd.leak)."""
-    for i in items or []:
-        verdict = detect_leak(emitted=text, rung=rung, given=given, **_teach_item_kwargs(i))
-        if verdict.leaked:
-            return verdict.detector
-    return "final_answer"
-
-
-def _teach_spans(text: str, items, given: str) -> list | None:
-    """The sorted spans of `text` that state any item's answer; None = unknown."""
-    if items is None:
-        return None
-    spans: list = []
-    try:
-        for i in items:
-            spans += leak_spans(emitted=text, given=given, **_teach_item_kwargs(i))
-    except (ValueError, TypeError):
-        return None
-    return sorted(spans)
+        if item.question_hash in revealed_hashes(user_id):
+            return RUNG_NO_CREDIT_MIN
+    except Exception:
+        logger.warning("revealed read failed; the grade is assisted", exc_info=True)
+        return RUNG_ASSISTED_MIN
+    if ANY_COURSE in unresolved or item.course_id in unresolved:
+        return RUNG_ASSISTED_MIN
+    return 0
 
 
 # ── The served session close (PKG-09; spec §13 A25, A51) ─────────────────
@@ -1366,7 +1452,8 @@ class _LoopTurn:
         self.run_requests = 0
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
-        self.teach_items: list | None = []  # PKG-14 (A84): the concept's items on a teach turn
+        self.teach_reveal: list[str] | None = []  # A86: the items this teach turn stated
+        self.reveal_mark: dict | None = None
 
     def _teach_attempt(self) -> bool:
         """PKG-14 (A85): the student's teach-phase message is a genuine attempt
@@ -1378,6 +1465,11 @@ class _LoopTurn:
             return False
         anchor = self.state.get("served_at")
         if isinstance(anchor, bool) or not isinstance(anchor, (int, float)):
+            anchor = None
+        failed = _FAILED_TURN_ANCHORS.get(self.session_id)
+        if failed is not None:
+            anchor = failed if anchor is None else max(float(anchor), failed)
+        if anchor is None:
             return False
         return gates.teach_attempt(
             self.message,
@@ -1496,8 +1588,6 @@ class _LoopTurn:
             instruction=self.instruction,
             nonce=nonce,
         )
-        if self.phase == "teach" and self.item is None:
-            self.teach_items = self._concept_items()  # A84: never state their answers
         # N1: the provenance the served leak check reads, and the validator's guard
         self.given = _visible_text(
             history,
@@ -1630,32 +1720,8 @@ class _LoopTurn:
         answer is released (its lead, m1) and the text the model was given."""
         return {**self._item_answer(), "answer_released": self.answer_released, "given": self.given}
 
-    def _concept_items(self) -> list | None:
-        """Every check item of the turn's concept (A84: the post-test reserve
-        included); [] with no concept; None when they cannot be read."""
-        if not self.concept_node or not self.course_id:
-            return []
-        try:
-            key = _concept_key_for_node(self.user_id, self.concept_node)
-            return list(list_items(self.course_id, key)) if key else []
-        except Exception:
-            logger.warning("teach turn: the concept's check items could not be read", exc_info=True)
-            return None
-
-    def _teach_guarded(self) -> bool:
-        """A model-written teach turn with no active item (A84)."""
-        return self.phase == "teach" and self.item is None and self.tier != "none"
-
     def _leak_guard(self) -> _LeakGuard | None:
-        """deps.loop_leak for an unreleased active item (fix round 2, N1), or
-        for a teach turn the concept's items (A84)."""
-        if self.phase == "teach" and self.item is None:
-            if not self.teach_items:
-                return None  # nothing to check, or unreadable (served withheld)
-            return _LeakGuard(
-                teach_leak_check(self.teach_items, rung=self._leak_rung(), given=self.given),
-                render=self.render,
-            )
+        """deps.loop_leak for an unreleased active item (fix round 2, N1)."""
         if self.item is None or self.answer_released:
             return None
         rung, answer = self._leak_rung(), _item_check_kwargs(**self._item_answer())
@@ -1673,11 +1739,6 @@ class _LoopTurn:
         shown, and never masked in place (N1) — the stream stops before the
         sentence that holds it (the output validator's retry, or the final
         ladder line, replaces it). The released answer's lead goes in front."""
-        if self.tier != "none" and self.phase == "teach" and self.item is None:
-            spans = _teach_spans(text, self.teach_items, self.given)  # A84
-            if spans is None:
-                return ""  # unreadable: nothing streams; the final turn is withheld
-            return _cut_before_leak(text, spans) if spans else text
         if self.tier == "none" or self.item is None:
             return text
         if self.answer_released:
@@ -1700,10 +1761,6 @@ class _LoopTurn:
     def serve(self, text: str) -> str:
         """stream_structured_turn's `transform_final`: the served text of the
         final render (`served_model_text`)."""
-        if self._teach_guarded():
-            return served_teach_text(
-                text, leak_rung=self._leak_rung(), items=self.teach_items, given=self.given
-            )[0]
         if self.tier == "none" or self.item is None:
             return text
         served, _ = served_model_text(text, leak_rung=self._leak_rung(), **self._item_leak_kwargs())
@@ -1712,22 +1769,7 @@ class _LoopTurn:
     def _leak_checked(self, reply: str) -> tuple[str, bool]:
         """Model-written text is leak-checked against the ACTIVE item at the rung
         it is served at (`_leak_rung`; A34: the item's structured final answer),
-        through `served_model_text` (strict; the released lead in front). A
-        teach turn is checked against its concept's items (A84)."""
-        if self._teach_guarded():
-            served, leaked = served_teach_text(
-                reply, leak_rung=self._leak_rung(), items=self.teach_items, given=self.given
-            )
-            if not leaked:
-                return served, served != reply  # withheld unreadable: redacted, no leak event
-            zpd_events.emit_zpd_leak(
-                user_id=self.user_id,
-                request_id=self.request_id,
-                rung_emitted=self._leak_rung(),
-                ceiling=self.ceiling,
-                detector=_teach_detector(reply, self.teach_items, self._leak_rung(), self.given),
-            )
-            return served, True
+        through `served_model_text` (strict; the released lead in front)."""
         if self.tier == "none" or self.item is None:
             return reply, False
         served, verdict = served_model_text(
@@ -1802,7 +1844,9 @@ class _LoopTurn:
         reply, redacted = self._leak_checked(reply)
         out: dict = {}
         self._now = _now_s()
+        self._scan_served_teach(reply)
         _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out))
+        self._emit_teach_reveal()
         if out.get("step") is not None:
             self._emit_step(out["step"])
         check = None
@@ -1841,6 +1885,46 @@ class _LoopTurn:
             "check": check,
         }
 
+    def touch_served_at(self) -> None:
+        """A85 (review fix round): a failed or paused turn moves the teach
+        independent-time anchor too, so an immediate retry is timed from the
+        failure and never passes the gate on the strength of the lost turn. In
+        memory (bounded, `_FAILED_TURN_ANCHORS`): a failed turn writes nothing
+        to the session (ADR 0024) — the backend is one process (B9 lists the
+        multi-process precondition)."""
+        _FAILED_TURN_ANCHORS.pop(self.session_id, None)
+        _FAILED_TURN_ANCHORS[self.session_id] = _now_s()
+        while len(_FAILED_TURN_ANCHORS) > PENDING_REVEALS_MAX:
+            _FAILED_TURN_ANCHORS.pop(next(iter(_FAILED_TURN_ANCHORS)))
+
+    def _teach_scanned(self) -> bool:
+        """A model-written teach turn with no active item (A86)."""
+        return self.phase == "teach" and self.item is None and self.tier != "none"
+
+    def _scan_served_teach(self, reply: str) -> None:
+        """A86: the items this served teach text states (None = unreadable, a
+        fail-closed marker)."""
+        if not self._teach_scanned():
+            return
+        rung = self._leak_rung()
+        self.teach_reveal = _scan_teach(self.course_id, reply, rung, self.given)
+        if self.teach_reveal is None and self.course_id:
+            self.reveal_mark = {
+                "id": str(uuid.uuid4()),
+                "course_id": self.course_id,
+                "at": self._now,
+                "rung": int(rung),
+            }
+
+    def _emit_teach_reveal(self) -> None:
+        if self.teach_reveal or self.reveal_mark is not None:
+            zpd_events.emit_zpd_teach_reveal(
+                user_id=self.user_id,
+                request_id=self.request_id,
+                question_hashes=list(self.teach_reveal or []),
+                unscanned=self.reveal_mark is not None,
+            )
+
     def _apply_turn(self, state: dict, out: dict) -> None:
         """This turn's change to the loop document — the compare-and-set mutate,
         so it may run more than once (each time on a fresher document): it
@@ -1863,6 +1947,7 @@ class _LoopTurn:
             if state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
                 _advance_cursor(state)
         state["phase_served"] = self.phase
+        _mark_revealed(state, self.teach_reveal, self.reveal_mark)  # A86
         state["served_at"] = self._now  # A85: the next teach message's independent-time anchor
         if self.confront_used is not None and confront_of(state) == self.confront_used:
             set_confront(state, None)  # PKG-10: used once (a newer marker is kept)
@@ -1947,6 +2032,14 @@ class _LoopOpener(_LoopTurn):
         return _LOOP_OPENER_TEMPLATE if hard else None
 
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
+        self._now = _now_s()
+        self._scan_served_teach(reply)  # A86: no row yet — the reveals wait with the session
+        if self.teach_reveal or self.reveal_mark is not None:
+            _stash_pending_reveal(
+                self.session_id,
+                {"user_id": self.user_id, "hashes": self.teach_reveal, "mark": self.reveal_mark},
+            )
+            self._emit_teach_reveal()
         PENDING_SESSIONS[self.session_id] = {
             "user_id": self.user_id,
             "mode": self.mode,
@@ -2157,26 +2250,35 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
     — the run is still billed) is finished by the tool-less continuation.
     Persist ordering mirrors routes.learn._chat_turn_json."""
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
-    turn.plan(decision)
+    try:
+        turn.plan(decision)
+    except BaseException:
+        turn.touch_served_at()  # A85: a failed plan moves the anchor
+        raise
     if turn.paused:
+        turn.touch_served_at()  # A85: a paused turn moves the anchor
         raise _BudgetPaused(decision)
     if turn.tier == "none":
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(turn.text, {}, [])}
-    reply = None
-    usage = RunUsage()
-    ai_budget.count_tutor_call(turn.user_id)
-    with capture_run_messages() as messages:
-        try:
-            result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
-        except UnexpectedModelBehavior:
-            logger.warning("Loop tool run ended without a structured turn", exc_info=True)
-            turn.record_usage(UnfinishedRun(usage))
-        else:
-            turn.record_usage(result)
-            reply = turn.render(result.output)
-    if reply is None:
-        reply = await _continue_turn(turn, list(messages))
-    return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
+    try:
+        reply = None
+        usage = RunUsage()
+        ai_budget.count_tutor_call(turn.user_id)
+        with capture_run_messages() as messages:
+            try:
+                result = await turn.agent.run(turn.assembled, usage=usage, **turn.run_kwargs)
+            except UnexpectedModelBehavior:
+                logger.warning("Loop tool run ended without a structured turn", exc_info=True)
+                turn.record_usage(UnfinishedRun(usage))
+            else:
+                turn.record_usage(result)
+                reply = turn.render(result.output)
+        if reply is None:
+            reply = await _continue_turn(turn, list(messages))
+        return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
+    except BaseException:
+        turn.touch_served_at()  # A85: so does a failed one
+        raise
 
 
 async def _continue_turn(turn: _LoopTurn, messages: list) -> str:
@@ -2228,11 +2330,13 @@ async def _stream_turn(turn: _LoopTurn):
     except Exception:
         # ADR 0024 honest degrade: nothing was shown or written — one terminal error
         logger.exception("Loop turn could not be planned")
+        turn.touch_served_at()  # A85
         yield sapling_event_to_sse(_stream_error(turn, _STREAM_UNAVAILABLE))
         return
     for ev in turn.pre_events():
         yield sapling_event_to_sse(ev)
     if turn.paused:
+        turn.touch_served_at()  # A85
         yield sapling_event_to_sse(_budget_event(decision))
         return
     if decision.level == "hard":
@@ -2281,6 +2385,8 @@ async def _stream_turn(turn: _LoopTurn):
         if ev.type == "done":
             for extra_ev in _pre_done_events(ev.data or {}):
                 yield sapling_event_to_sse(extra_ev)
+        elif ev.type == "error":
+            turn.touch_served_at()  # A85: a stream error moves the anchor
         yield sapling_event_to_sse(ev)
 
 
@@ -2482,7 +2588,7 @@ def list_open_sessions(
 @router.post("/chat", dependencies=_RATE_LIMITED)
 async def chat(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return await _json_turn(
         lambda: _LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on),
@@ -2493,7 +2599,7 @@ async def chat(body: ChatBody, request: Request):
 @router.post("/chat/stream", dependencies=_RATE_LIMITED)
 async def chat_stream(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
 
@@ -2656,7 +2762,8 @@ async def _grade_submission(
         # outcome.diagnosis into the grade's compare-and-set save below
         loop_state=copy.deepcopy(state),
     )
-    rung = int(entry.get("rung") or 0)
+    # A86: a posed item a served teach turn revealed grades with no unassisted credit
+    rung = max(int(entry.get("rung") or 0), _reveal_floor(body.user_id, item))
     # PKG-10 (spec §13 A76): the next graded item on a concept after a release
     # is a re-check, never a full-weight unassisted first attempt
     recheck = recheck_after_release(
@@ -2838,7 +2945,7 @@ def _submission_turn(
 @router.post("/check/answer", dependencies=_RATE_LIMITED)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
@@ -2850,21 +2957,25 @@ async def check_answer(body: LoopCheckAnswerBody, request: Request):
 @router.post("/check/answer/stream", dependencies=_RATE_LIMITED)
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
     return _sse(_submission_turn(sub, body, request, loop_on=loop_on))
 
 
-@router.post("/rating")
+_NO_RATING_ASKED = "no rating was asked for"
+
+
+@router.post("/rating", dependencies=_RATE_LIMITED)
 def rating(body: LoopRatingBody, request: Request) -> dict:
     """POST /api/learn/loop/rating (PKG-14; spec §3.4, §6): the student's
     perceived difficulty, asked every ZPD_RATING_EVERY_N_CHECKS checks. Emits
     zpd.rating {rating, checks_since_last} and resets the session's counter in
-    ONE compare-and-set write; the rating is stored nowhere else. No model runs
-    (no rate limit); require_self, the gate's 404 and the session owner check
-    run first."""
+    ONE compare-and-set write; the rating is stored nowhere else. Accepted only
+    on an open session whose counter reached ZPD_RATING_EVERY_N_CHECKS (else a
+    409, nothing written). Runs no model but is rate-limited (A20); require_self,
+    the gate's 404 and the session owner check run first."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
@@ -2872,7 +2983,13 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
     seen: dict = {}
 
     def reset(state: dict) -> None:
-        seen["count"] = int(state.get("checks_since_rating") or 0)
+        # review fix round: only an open session, and only when a rating was
+        # actually asked for (the counter reached the cadence) — else 409
+        _require_open(state)
+        count = int(state.get("checks_since_rating") or 0)
+        if count < ZPD_RATING_EVERY_N_CHECKS:
+            raise HTTPException(status_code=409, detail=_NO_RATING_ASKED)
+        seen["count"] = count
         state["checks_since_rating"] = 0
 
     _update_loop_state(body.session_id, reset)
@@ -2892,12 +3009,7 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
 #: step phase only.
 STEP_PHASES: tuple[str, ...] = get_args(zpd_events.Phase)
 _NOT_A_POSTTEST_ITEM = "not a post-test item"
-#: One post-test answer per (student, item) at a time, held across the eligibility
-#: check, the grade and the ONE flush: the flushed evidence makes the item seen, so
-#: a double submit finds it no longer a post-test item (409) and never flushes
-#: twice. The backend serves from ONE process (backend/Dockerfile's CMD), so an
-#: in-process lock serialises every submission of the deployment.
-_POSTTEST_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+_POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is opened
 
 
 def _posttest_now() -> datetime:
@@ -2906,6 +3018,11 @@ def _posttest_now() -> datetime:
 
 def _posttest_cutoff(now: datetime) -> datetime:
     return now - timedelta(days=POSTTEST_MIN_AGE_DAYS)
+
+
+def _iso_z(ts: datetime) -> str:
+    """A UTC ISO timestamp with no '+' (safe inside a PostgREST or=(…) filter)."""
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _due_for_posttest(last_evidence_at, cutoff: datetime) -> bool:
@@ -2943,47 +3060,134 @@ def _posttest_excluded(user_id: str) -> set[str]:
     return set(seen_hashes(user_id)) | set(revealed_hashes(user_id))
 
 
-@router.post("/posttest/start")
+class _CourseNodesRead:
+    """A read-only page_all handle over graph_nodes (invariant 1's ast half
+    allows the table only as a direct read — check_item_service's pattern)."""
+
+    def select_with_count(self, *args, **kwargs):
+        return table("graph_nodes").select_with_count(*args, **kwargs)
+
+
+def _course_nodes(user_id: str, course_id: str) -> dict[str, str]:
+    """node id → concept key of the student's nodes in the course (paged)."""
+    return {
+        row["id"]: _normalize_concept(row.get("concept_name") or "")
+        for row in page_all(
+            _CourseNodesRead(),
+            "id,concept_name",
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+            order="id",
+        )
+        if row.get("id")
+    }
+
+
+def _read_poses(user_id: str, course_id: str) -> dict[str, dict]:
+    """node id → the student's post-test pose row in the course (A87)."""
+    rows = table(_POSES).select(
+        "node_id,question_hash,answered_at,claim,claimed_at",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+    )
+    return {r["node_id"]: r for r in rows or [] if r.get("node_id")}
+
+
+def _record_poses(rows: list[dict]) -> None:
+    """Open (or replace, once the node is due again) the poses — one upsert."""
+    if rows:
+        table(_POSES).upsert(rows, on_conflict="user_id,node_id")
+
+
+def _claim_pose(user_id: str, node_id: str, question_hash: str, claim: str, now: datetime) -> bool:
+    """The DB claim (A87): one conditional UPDATE — the open pose of this item,
+    unclaimed or under a claim older than LOOP_GRADING_CLAIM_STALE_S — so only
+    one submission grades it, whatever the number of backend processes."""
+    stale = _iso_z(now - timedelta(seconds=LOOP_GRADING_CLAIM_STALE_S))
+    rows = table(_POSES).update(
+        {"claim": claim, "claimed_at": now.isoformat()},
+        filters={
+            "user_id": f"eq.{user_id}",
+            "node_id": f"eq.{node_id}",
+            "question_hash": f"eq.{question_hash}",
+            "answered_at": "is.null",
+            "or": f"(claim.is.null,claimed_at.lt.{stale})",
+        },
+    )
+    return bool(rows)
+
+
+def _settle_pose(user_id: str, node_id: str, claim: str, *, answered: datetime | None) -> None:
+    """Answered (the one flush happened) or released (nothing was graded)."""
+    data: dict = {"claim": None, "claimed_at": None}
+    if answered is not None:
+        data["answered_at"] = answered.isoformat()
+    table(_POSES).update(
+        data, filters={"user_id": f"eq.{user_id}", "node_id": f"eq.{node_id}", "claim": f"eq.{claim}"}
+    )
+
+
+@router.post("/posttest/start", dependencies=_RATE_LIMITED)
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     """Rung 3 (spec §10): this student's post-test items for one course — one
     per concept whose last evidence is at least POSTTEST_MIN_AGE_DAYS old, its
     reserve item unless seen or revealed (A23), oldest evidence first, at most
-    POSTTEST_MAX_ITEMS. The pose only: the prompt verbatim and an mc_reason
+    POSTTEST_MAX_ITEMS. It COMMITS when opened (A87): the posed item is recorded,
+    and a repeat start returns the same item for a node with an open pose —
+    never a fresh one. The pose only: the prompt verbatim and an mc_reason
     item's options, never a key or a reference. No brief, no RAG, no tutor, no
-    session row, no model call, no write."""
+    session row, no model call. Rate-limited (A20)."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
-    cutoff = _posttest_cutoff(_posttest_now())
+    now = _posttest_now()
+    cutoff = _posttest_cutoff(now)
     due = [
         r
         for r in states_last_evidence_before(body.user_id, cutoff)
         if r.get("node_id") and _due_for_posttest(r.get("last_evidence_at"), cutoff)
     ]
-    if not due:
+    poses = _read_poses(body.user_id, body.course_id)
+    open_nodes = {n for n, p in poses.items() if not p.get("answered_at")}
+    nodes = _course_nodes(body.user_id, body.course_id)
+    due_ids = {r["node_id"] for r in due}
+    # an open pose stays posed until answered, even if its node is no longer due
+    rows = [r for r in due if nodes.get(r["node_id"])] + [
+        {"node_id": n, "last_evidence_at": ""} for n in sorted(open_nodes - due_ids) if nodes.get(n)
+    ]
+    if not rows:
         return {"items": []}
-    nodes = {
-        row["id"]: _normalize_concept(row.get("concept_name") or "")
-        for row in table("graph_nodes").select(
-            "id,concept_name",
-            filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{body.course_id}"},
-        )
-        or []
-        if row.get("id")
-    }
-    due = [r for r in due if nodes.get(r["node_id"])]
-    if not due:
-        return {"items": []}
-    by_key = items_for_concepts(body.course_id, [nodes[r["node_id"]] for r in due])
+    by_key = items_for_concepts(body.course_id, sorted({nodes[r["node_id"]] for r in rows}))
     excluded = _posttest_excluded(body.user_id)
     out: list[dict] = []
-    for r in sorted(due, key=lambda r: (str(r.get("last_evidence_at")), r["node_id"])):
-        item = posttest_item(by_key.get(nodes[r["node_id"]]) or [], excluded)
-        if item is None:
-            continue  # nothing unseen left for this concept: skipped
-        out.append({"node_id": r["node_id"], **_pose_payload(item)})
+    new: list[dict] = []
+    for r in sorted(rows, key=lambda r: (str(r.get("last_evidence_at")), r["node_id"])):
+        node = r["node_id"]
+        items = by_key.get(nodes[node]) or []
+        pose = poses.get(node)
+        item = None
+        if pose is not None and not pose.get("answered_at"):
+            item = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
+        if item is None:  # no open pose (or its item was withdrawn): pose one now
+            if node not in due_ids:
+                continue
+            item = posttest_item(items, excluded)
+            if item is None:
+                continue  # nothing unseen left for this concept: skipped
+            new.append(
+                {
+                    "user_id": body.user_id,
+                    "node_id": node,
+                    "course_id": body.course_id,
+                    "question_hash": item.question_hash,
+                    "posed_at": now.isoformat(),
+                    "answered_at": None,
+                    "claim": None,
+                    "claimed_at": None,
+                }
+            )
+        out.append({"node_id": node, **_pose_payload(item)})
         if len(out) >= POSTTEST_MAX_ITEMS:
             break
+    _record_poses(new)
     return {"items": out}
 
 
@@ -3001,21 +3205,30 @@ def _posttest_node(user_id: str, node_id: str) -> dict:
     return rows[0]
 
 
-def _posttest_eligible(user_id: str, node_id: str, cutoff: datetime) -> bool:
-    return any(
-        r.get("node_id") == node_id and _due_for_posttest(r.get("last_evidence_at"), cutoff)
-        for r in states_last_evidence_before(user_id, cutoff)
-    )
+def _posttest_floor(user_id: str, item) -> int:
+    """A86/A87: an open post-test item that a served teach turn revealed — or
+    that was answered elsewhere since it was posed — grades with no unassisted
+    credit (RUNG_NO_CREDIT_MIN); an unresolved unscanned marker makes it
+    assisted (_reveal_floor)."""
+    floor = _reveal_floor(user_id, item)
+    try:
+        if item.question_hash in seen_hashes(user_id):
+            floor = max(floor, RUNG_NO_CREDIT_MIN)
+    except Exception:
+        logger.warning("seen read failed; the post-test grade is assisted", exc_info=True)
+        floor = max(floor, RUNG_ASSISTED_MIN)
+    return floor
 
 
 @router.post("/posttest/answer", dependencies=_RATE_LIMITED)
 async def posttest_answer(body: PosttestAnswerBody, request: Request):
-    """Grade one post-test answer through grade_answer (A16), unassisted: the
-    ceiling is H0, max_rung 0, no session. The item must be the node's CURRENT
-    post-test item (a concept taught long enough ago, never a seen or revealed
-    item) — else 409, so an answered item is never graded twice. A refusal (A33)
-    records nothing and asks again (never an idk here); an outage or the grade
-    cap is a 503 with nothing recorded for either outcome (invariant 28)."""
+    """Grade the node's OPEN post-test pose (A87) through grade_answer (A16):
+    ceiling H0, max_rung 0, no session — unless the item was revealed or seen
+    since it was posed, when the grade carries no unassisted credit (A86).
+    The pose is claimed by one conditional UPDATE, so it is graded once; a
+    refusal (A33) releases the claim and asks again (never an idk here); an
+    outage or the grade cap releases it too and is a 503 with nothing recorded
+    for either outcome (invariant 28)."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     loop_on = _gate(body.user_id, request)
@@ -3030,16 +3243,13 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
         if item.format != "mc_reason" and not body.answer:
             raise HTTPException(status_code=422, detail="a free answer needs answer")
-    lock = _POSTTEST_LOCKS.setdefault((body.user_id, item.question_hash), asyncio.Lock())
-    async with lock:
-        cutoff = _posttest_cutoff(_posttest_now())
-        current = posttest_item(items, _posttest_excluded(body.user_id))
-        if (
-            current is None
-            or current.question_hash != item.question_hash
-            or not _posttest_eligible(body.user_id, body.node_id, cutoff)
-        ):
-            raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
+    now = _posttest_now()
+    claim = str(uuid.uuid4())
+    if not _claim_pose(body.user_id, body.node_id, item.question_hash, claim, now):
+        raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
+    flushed = False
+    try:
+        floor = Rung(_posttest_floor(body.user_id, item))
         band, p_before = _band_for(body.user_id, body.node_id)
         deps = SaplingDeps(
             user_id=body.user_id,
@@ -3059,15 +3269,13 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         )
         # A76: every grading caller decides the re-check through the one helper
         # (no session log here: the node's journal decides)
-        recheck = recheck_after_release(
-            body.user_id, body.node_id, None, now=_posttest_now(), item=item
-        )
+        recheck = recheck_after_release(body.user_id, body.node_id, None, now=now, item=item)
         outcome = await grade_answer(
             _item_like(item),
             answer,
             deps=deps,
             node_id=body.node_id,
-            max_rung=int(Rung.H0),
+            max_rung=int(floor),
             same_session_recheck=recheck,
         )
         if outcome.refused:  # A33: checked first — a refused outcome is also unavailable
@@ -3075,9 +3283,33 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         if outcome.unavailable:
             raise HTTPException(status_code=503, detail="grader unavailable")
         changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
+        flushed = True
+    finally:
+        try:
+            _settle_pose(body.user_id, body.node_id, claim, answered=now if flushed else None)
+        except Exception:
+            logger.warning("post-test pose for %s not settled", body.node_id, exc_info=True)
+    _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor)
+    return {"correct": bool(outcome.correct), "confidence": outcome.confidence}
+
+
+def _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor: Rung) -> None:
+    """zpd.step for one graded post-test answer. p_known_after is read honestly
+    (the flush's result, else the node's state now); when it cannot be read the
+    step is not emitted (fail closed, as _emit_step does)."""
     correct = bool(outcome.correct)
+    after = next(
+        (c.get("after") for c in changes or [] if isinstance(c, dict) and c.get("after") is not None),
+        None,
+    )
+    try:
+        if after is None:
+            after = _band_for(body.user_id, body.node_id)[1]
+        after = float(after)
+    except Exception:
+        logger.warning("zpd.step not emitted for post-test %s: no p_known_after", item.question_hash)
+        return
     evidence = outcome.evidence or {}
-    after = next((c.get("after") for c in changes or [] if isinstance(c, dict)), None)
     zpd_events.emit_zpd_step(
         user_id=body.user_id,
         request_id=_request_id(request),
@@ -3086,18 +3318,19 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         phase="posttest",
         channel=evidence.get("channel") or CHANNEL_FOR_FORMAT[item.format],
         band=band,
-        ceiling=Rung.H0,
+        # H0 — or, for an item a teach turn revealed, the rung it was graded at (A86)
+        ceiling=floor,
         ceiling_reason=policy.CeilingReason.POSTTEST,
         first_attempt_correct=correct,
         n_attempts=1,
-        max_rung_used=Rung.H0,
+        max_rung_used=floor,
         rungs=[],
         time_to_first_attempt_ms=None,
         time_to_correct_ms=None,
         independent_time_ms=None,
-        assisted=False,
+        assisted=int(floor) >= RUNG_ASSISTED_MIN,
         confidence=outcome.confidence,
-        fsrs_rating=policy.evidence_for_rung(correct, Rung.H0).fsrs_rating,
+        fsrs_rating=policy.evidence_for_rung(correct, floor).fsrs_rating,
         p_known_before=p_before,
         p_known_after=after,
         r_before=None,
@@ -3105,7 +3338,6 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         grader_backend=outcome.grader_backend,
         variant=arms.variant_for(body.user_id, body.node_id, _arm_for(body.user_id, request)),
     )  # no tier: no tutor turn ran (omitted, never zeroed)
-    return {"correct": correct, "confidence": outcome.confidence}
 
 
 # ── Attempt / hint / action / openers / end-session ───────────────────────
@@ -3244,7 +3476,7 @@ async def action(body: ActionBody, request: Request):
     rung, otherwise the current phase. Assistant-only persistence; never graded
     (invariant 26)."""
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
     chat_body = ChatBody(
@@ -3299,7 +3531,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     first (the budget read is not a mutate's business), then applied to the
     fresh document by one compare-and-set write."""
     _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_teaching(state)
@@ -3953,7 +4185,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     the per-skill cap, by the recorded observations."""
     _gate(body.user_id, request)
     _probe_plan_read_limit(body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_phase(state, "probe")
@@ -4279,7 +4511,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     404, never a 429."""
     loop_on = _gate(body.user_id, request)
     ai_budget.enforce_rate_limit_for(body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    _consume_loop_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _probe_submission(body, request, loop_on=loop_on), what="probe grader"
     )
@@ -4579,6 +4811,8 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             reason=body.reason,
             deps=deps,
             claim=claim,
+            # A86: an open review item a served teach turn revealed has no unassisted credit
+            max_rung=_reveal_floor(body.user_id, check) if check is not None else 0,
         )
     except review.ReviewClaimRefused as exc:
         raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None

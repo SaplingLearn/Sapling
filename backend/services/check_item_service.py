@@ -415,6 +415,14 @@ def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str,
     return grouped
 
 
+def items_for_course(course_id: str) -> list[CheckItem]:
+    """Every item of the course, every concept (PKG-14, spec §13 A86: a served
+    teach turn is scanned against all of them), decrypted, paged in id order."""
+    return _to_items(
+        list(page_all(table(_TABLE), _COLUMNS, filters={"course_id": f"eq.{course_id}"}, order="id"))
+    )
+
+
 def course_has_items(course_id: str) -> bool:
     """Whether the course has any item (feeds /probe/next's no_check_items and
     the A26 "No check items for this course yet" state)."""

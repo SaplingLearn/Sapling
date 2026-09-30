@@ -505,6 +505,7 @@ def errors(
 
 _STEP_EVENT = "zpd.step"
 _LEAK_EVENT = "zpd.leak"
+_TEACH_REVEAL_EVENT = "zpd.teach_reveal"  # spec §13 A86: marked revealed, not a leak
 _EVIDENCE_COLS = "id,node_id,session_id,correct,assisted,max_rung,question_hash,created_at"
 TrendDirection = Literal["falling", "flat", "rising", "insufficient"]
 
@@ -547,6 +548,7 @@ class LearningLoopKpis(BaseModel):
     htc_k_trend: list[ConceptTrend]
     unassisted_next_session: NextSessionSuccess
     leak_count: int
+    teach_reveals: int = 0  # A86: teach turns that stated item answers (informational)
     ceiling_compliance: CeilingCompliance
     gates: Gates
     truncated: bool = False
@@ -723,7 +725,7 @@ def learning_loop_kpis(
         "event_type,user_id,payload,created_at",
         from_iso,
         to_iso,
-        extra_filters={"event_type": f"in.({_STEP_EVENT},{_LEAK_EVENT})"},
+        extra_filters={"event_type": f"in.({_STEP_EVENT},{_LEAK_EVENT},{_TEACH_REVEAL_EVENT})"},
     )
     evidence, evidence_truncated = _scan_range(
         "node_mastery_events",
@@ -734,6 +736,7 @@ def learning_loop_kpis(
     )
     steps = [e for e in events if e.get("event_type") == _STEP_EVENT]
     leak_count = sum(1 for e in events if e.get("event_type") == _LEAK_EVENT)
+    teach_reveals = sum(1 for e in events if e.get("event_type") == _TEACH_REVEAL_EVENT)
     in_band, banded = _in_band_share(steps)
     compliance = _ceiling_compliance(steps)
     return LearningLoopKpis(
@@ -745,6 +748,7 @@ def learning_loop_kpis(
         htc_k_trend=_htc_k_trend(steps, to_iso),
         unassisted_next_session=NextSessionSuccess(**_next_session_rate(evidence)),
         leak_count=leak_count,
+        teach_reveals=teach_reveals,
         ceiling_compliance=compliance,
         gates=Gates(
             zero_leaks=leak_count <= GATE_LEAKS_MAX,

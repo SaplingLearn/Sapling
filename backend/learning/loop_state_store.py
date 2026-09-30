@@ -231,3 +231,21 @@ def revealed_hashes(user_id: str) -> set[str]:
     ):
         revealed.update(row.get("revealed") or [])
     return revealed
+
+
+def unscanned_reveals(user_id: str) -> list[tuple[str, dict]]:
+    """PKG-14 (spec §13 A86): every (session_id, marker) a teach turn left when
+    its course's check items could not be read — loop_state["reveal_unscanned"]
+    across the user's sessions, read as revealed_hashes reads its list. Raises on
+    a failed read (the caller fails closed)."""
+    out: list[tuple[str, dict]] = []
+    for row in page_all(
+        table("sessions"),
+        "id,marks:loop_state->reveal_unscanned",
+        filters={"user_id": f"eq.{user_id}", "loop_state->reveal_unscanned": "not.is.null"},
+        order="id",
+    ):
+        for mark in row.get("marks") or []:
+            if isinstance(mark, dict):
+                out.append((row["id"], mark))
+    return out
