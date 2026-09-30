@@ -161,11 +161,16 @@ The target is about **$0.36 per student-month**.
    - **What it records.** The evidence is unassisted, with `max_rung` 0.
      `zpd.step` carries `phase: "posttest"` and
      `ceiling_reason: "posttest"`, and no `tier`.
-   - **It commits when opened** (spec §13 A87). The pose is recorded in
+   - **It commits when opened** (spec §13 A87, A89). The pose is recorded in
      `posttest_poses`, and a repeat start returns the same item. The answer
      grades only the open pose, under a database claim (one conditional
-     UPDATE). An item revealed or seen since it was posed grades with no
-     unassisted credit.
+     UPDATE). The claim is re-validated, and the pose closed, before the one
+     flush, so a taken-over claim writes nothing and a failed flush never
+     reopens it.
+   - **A pose expires** after `POSTTEST_POSE_TTL_HOURS` (24 †, owner): it is
+     void, may be posed again, and a late answer is a 409. An item revealed
+     since it was posed, or a node with any evidence journaled after
+     `posed_at`, grades with no unassisted credit.
 4. **Delayed proctored retention.** Out of the series' scope. The logged
    fields make it possible later.
 
@@ -231,13 +236,24 @@ follow-up that deletes `LEARNING_LOOP_ENABLED`.
   per user-day. **`llm_usage.session_id` is built in half B (owner
   decision):** a migration, the writes in `agents/usage.py::record_agent_usage`,
   and the report preferring the column.
-- **Served teach turns are never withheld** (spec §13 A86, superseding A84).
-  The text is served unchanged, and every item of the student's course that it
-  states is marked revealed (A23), so it is never a check or a post-test item.
-  A posed item that got revealed grades with no unassisted credit.
-  `zpd.teach_reveal` is not a leak, so the zero-leak gate counts only served
-  leaks on item turns. If the items cannot be read, a marker fails closed on
-  the evidence side until it is resolved.
+- **Served tutor turns are never withheld; what they reveal is recorded**
+  (spec §13 A86 for "never withheld", A88 for the scope and the store).
+  - **Scope: open, posed items only.** The model never sees an item the
+    student has not been posed (the verified precondition), so only the
+    active check item, an open review item and an open post-test pose can be
+    stated. Every served model turn is scanned against those; an item turn
+    skips its own active item, whose leak check already redacted it.
+  - **Durable at serve time.** A stated item is written to
+    `learning_reveals` before the turn's state write — the opener too — and
+    `revealed_hashes` reads it, so no path has to consume anything first. A
+    stream that ends early (error, disconnect, cancellation) still records
+    what it relayed.
+  - **Fail closed.** A revealed item grades with no unassisted credit. If the
+    open items cannot be read, an `unscanned` marker makes every item posed at
+    or before it grade as assisted.
+  - **The gate is honest** (A90). `zpd.leak` is a caught, redacted leak and is
+    reported as `caught_leaks`; the zero-leak gate counts `served_reveals`,
+    the answers a served turn actually stated (`zpd.reveal`).
 - **A reasoned claim is a genuine attempt for that teach turn's ceiling**
   (spec §13 A85): the existing genuine-attempt rule, one rung, capped per band,
   and no evidence change. Owner-accepted limitation: any non-empty message
