@@ -31,6 +31,7 @@ from services.tutor_sessions import (
     PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
     require_session_owner,
+    session_owned_by,
 )
 from services.xp_service import award_xp_safe
 
@@ -1331,7 +1332,11 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
         require_self(user_id, request)
     else:
         user_id = get_session_user_id(request)
-    _require_session_owner(session_id, user_id)
+    # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
+    # no-op 200 — nothing is deleted, and the answer never says whether the id
+    # exists. A second delete (another tab, a double click) still succeeds.
+    if not session_owned_by(session_id, user_id):
+        return {"deleted": True}
     if session_id in PENDING_SESSIONS:
         PENDING_SESSIONS.pop(session_id, None)
         return {"deleted": True}

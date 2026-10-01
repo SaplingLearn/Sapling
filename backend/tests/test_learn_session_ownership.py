@@ -130,7 +130,6 @@ ROUTES = [
     ("mode_switch", _mode_switch),
     ("end_session", _end_session),
     ("rename", _rename),
-    ("delete", _delete),
     ("resume", _resume),
 ]
 
@@ -185,6 +184,24 @@ def test_other_students_session_is_404_and_inert(harness, label, call):
     r = call(INTRUDER)
     assert r.status_code == 404, f"{label}: {r.status_code} {r.text}"
     _assert_nothing_happened(harness)
+
+
+def test_delete_of_another_students_session_is_a_noop_200(harness):
+    """Delete stays idempotent (#709 review): a foreign id is a no-op 200 that
+    deletes nothing and does not reveal whether the session exists."""
+    r = _delete(INTRUDER)
+    assert r.status_code == 200 and r.json() == {"deleted": True}, r.text
+    _assert_nothing_happened(harness)
+
+
+def test_delete_of_a_missing_session_is_a_noop_200():
+    """A second delete of the same session (another tab, a double click) succeeds."""
+    tables = _Tables(session_owner=None)
+    with patch("routes.learn.table", side_effect=tables):
+        r = _delete(OWNER, "no-such-session")
+    assert r.status_code == 200 and r.json() == {"deleted": True}, r.text
+    assert not tables.touched("messages", "delete")
+    assert not tables.touched("sessions", "delete")
 
 
 @pytest.mark.parametrize("label,call", ROUTES, ids=[r[0] for r in ROUTES])
