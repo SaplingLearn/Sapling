@@ -694,8 +694,11 @@ async def start_session(body: StartSessionBody, request: Request):
         return await _loop_delegate("start_session")(body, request)
     _kill_switch_budget(body.user_id)
     session_id = str(uuid.uuid4())
-    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text
-    open_quiz_ask(body, session_id=session_id)
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
+    # A106 (review m2): it runs on the quiz node's course, never the client's
+    target = open_quiz_ask(body, session_id=session_id)
+    if target is not None:
+        body = body.model_copy(update={"course_id": target.course_id})
     result = await _agent_turn_or_http_error(
         _start_session_agent(body, session_id), what="start-session agent"
     )
@@ -1143,8 +1146,11 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         or str(uuid.uuid4())
     )
     session_id = str(uuid.uuid4())
-    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text
-    open_quiz_ask(body, session_id=session_id)
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
+    # A106 (review m2): it runs on the quiz node's course, never the client's
+    target = open_quiz_ask(body, session_id=session_id)
+    if target is not None:
+        body = body.model_copy(update={"course_id": target.course_id})
 
     course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
     offering_id = resolve_offering(course_id, create=True) if course_id else ""

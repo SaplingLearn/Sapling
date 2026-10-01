@@ -2292,10 +2292,12 @@ class _LoopOpener(_LoopTurn):
         # A99: a quiz-ask session names its quiz question; the help row is written
         # here, before any tutor text exists (a failed write is a 503)
         self.quiz_ask = open_quiz_ask(body, session_id=self.session_id)
+        # A106 (review m2): a quiz-ask session runs on the quiz node's course only
+        # (resolve_quiz_ask 422s when it has none) — never the client's course_id
         self.course_id = (
-            (self.quiz_ask.course_id if self.quiz_ask is not None else None)
-            or body.course_id
-            or _get_course_id_for_topic(body.topic, body.user_id)
+            self.quiz_ask.course_id
+            if self.quiz_ask is not None
+            else body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
         )
         self.offering_id = resolve_offering(self.course_id, create=True) if self.course_id else ""
         # routes/learn.py::_start_session_agent (:540–543)'s cue, as server text;

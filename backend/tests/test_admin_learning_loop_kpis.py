@@ -169,7 +169,12 @@ def test_kpis_shape_and_values(seeded):
     assert b["ceiling_compliance"]["steps"] == params.BAND_WINDOW + 4
     assert b["ceiling_compliance"]["compliant"] == params.BAND_WINDOW + 3
     assert b["gates"] == {"zero_leaks": True, "ceiling_compliance_ok": False}
-    assert b["unassisted_next_session"] == {"sessions": 2, "successes": 1, "rate": 0.5}
+    assert b["unassisted_next_session"] == {
+        "sessions": 2,
+        "successes": 1,
+        "rate": 0.5,
+        "quiz_ask_excluded": 0,
+    }
     trend = {t["concept_id"]: t for t in b["htc_k_trend"]}
     assert trend["c1"]["direction"] == "insufficient"  # one week with data
     assert b["truncated"] is False
@@ -276,7 +281,12 @@ def test_next_session_rate_skips_rows_without_a_session():
         _evidence(2, session="s2", correct=False),
         _evidence(3, node="n2", session="s9"),  # a node's only session is its first
     ]
-    assert analytics._next_session_rate(rows) == {"sessions": 1, "successes": 0, "rate": 0.0}
+    assert analytics._next_session_rate(rows) == {
+        "sessions": 1,
+        "successes": 0,
+        "rate": 0.0,
+        "quiz_ask_excluded": 0,
+    }
 
 
 def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
@@ -361,3 +371,38 @@ def test_caught_leaks_alone_keep_the_gate_green(monkeypatch):
     b = client.get(URL, params=RANGE).json()
     assert b["caught_leaks"] == 2 and b["served_reveals"] == 0
     assert b["gates"]["zero_leaks"] is True
+
+
+# ── PKG-14/15 review m2 (spec §13 A106): quiz-ask sessions are not sessions here ──
+
+
+def test_quiz_ask_sessions_are_excluded_from_the_next_session_rate(seeded):
+    seeded["sessions"] = [
+        {"id": "s2", "loop_state->>origin": "quiz_ask", "created_at": "2026-07-10T00:00:00+00:00"}
+    ]
+    b = client.get(URL, params=RANGE).json()
+    # s1 → s3 (s2, a probe-less quiz-ask session, is not a session of the KPI)
+    assert b["unassisted_next_session"] == {
+        "sessions": 1,
+        "successes": 0,
+        "rate": 0.0,
+        "quiz_ask_excluded": 1,
+    }
+
+
+def test_the_quiz_ask_read_names_the_origin_marker(monkeypatch):
+    calls = []
+
+    class _Rec(_FakeTable):
+        def __init__(self, name):
+            super().__init__([])
+            self.name = name
+
+        def select_with_count(self, columns="*", filters=None, **kw):
+            calls.append((self.name, filters))
+            return [], 0
+
+    monkeypatch.setattr(analytics, "table", _Rec)
+    assert client.get(URL, params=RANGE).status_code == 200
+    (filters,) = [f for n, f in calls if n == "sessions"]
+    assert filters["loop_state->>origin"] == "eq.quiz_ask"

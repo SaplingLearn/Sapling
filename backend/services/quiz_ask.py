@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException
 
-from db.connection import table
+from db.connection import page_all, table
 from learning.help_ledger import record_help
 from learning.params import RUNG_NO_CREDIT_MIN
 from services.encryption import decrypt_json_column
@@ -46,6 +46,7 @@ QUIZ_ASK_HELP_RUNG = RUNG_NO_CREDIT_MIN
 QUIZ_ASK_SOURCE = "quiz"
 
 _NOT_FOUND = "quiz question not found"
+_NO_COURSE = "the quiz question's concept has no course"
 _UNRECORDED = "Could not record the quiz help; please try again."
 
 
@@ -55,13 +56,14 @@ class QuizAskTarget:
 
     question_hash: str
     node_id: str
-    course_id: str | None
+    course_id: str  # the quiz node's own course (A106: never the client's)
 
 
 def resolve_quiz_ask(user_id: str, attempt_id: str, question_index: int) -> QuizAskTarget:
     """The question's identity and concept from the attempt row the student owns.
     404 for an attempt that is missing, another student's, or has no such
-    question (or a question with no identity); a failed read raises (the route's
+    question (or a question with no identity); 422 for a concept node with no
+    course (A106); a failed read raises (the route's
     error mapping makes it a 5xx — never an unrecorded session)."""
     rows = table("quiz_attempts").select(
         "user_id,concept_node_id,questions_json", filters={"id": f"eq.{attempt_id}"}, limit=1
@@ -80,7 +82,12 @@ def resolve_quiz_ask(user_id: str, attempt_id: str, question_index: int) -> Quiz
     )
     if not nodes:
         raise HTTPException(status_code=404, detail=_NOT_FOUND)
-    return QuizAskTarget(question_hash=qh, node_id=node_id, course_id=nodes[0].get("course_id"))
+    course_id = nodes[0].get("course_id")
+    if not course_id:
+        # spec §13 A106 (review m2): the session runs on the quiz node's course or
+        # not at all — a client-supplied course_id is never the fallback
+        raise HTTPException(status_code=422, detail=_NO_COURSE)
+    return QuizAskTarget(question_hash=qh, node_id=node_id, course_id=course_id)
 
 
 def open_quiz_ask(body, *, session_id: str | None) -> QuizAskTarget | None:
@@ -102,3 +109,22 @@ def open_quiz_ask(body, *, session_id: str | None) -> QuizAskTarget | None:
         logger.error("quiz-ask help row not recorded; refusing the session", exc_info=True)
         raise HTTPException(status_code=503, detail=_UNRECORDED) from None
     return target
+
+
+def quiz_ask_session_ids(handle, *, to_iso: str) -> set[str]:
+    """Spec §13 A106 (review m2): the ids of the quiz-ask sessions created up to
+    `to_iso` — `sessions.loop_state.origin` = "quiz_ask" (quiz_ask_state's
+    marker). They skip the probe and the plan, so the session metrics (the admin
+    learning-loop KPI, scripts/derive_zpd_metrics.py) leave them out or report
+    them on their own line. `handle` is the caller's `table("sessions")`, so
+    each reader keeps its own patch point. A failed read raises."""
+    return {
+        r["id"]
+        for r in page_all(
+            handle,
+            "id",
+            filters={"loop_state->>origin": f"eq.{QUIZ_ASK_ORIGIN}", "created_at": f"lte.{to_iso}"},
+            order="created_at,id",
+        )
+        if r.get("id")
+    }

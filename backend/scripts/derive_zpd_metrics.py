@@ -23,7 +23,8 @@ function of the journal, so a re-run writes the same values.
 Every run, --dry-run included, also prints one read-only `REPORT <json>` line
 (spec §10; A15/A20/A21/A22): cost per band; cost per session for every loop
 request an event maps to its session (zpd.step carries the session id, A82;
-learn.session_closed and chat.message_sent too), and per user-day for the rows
+learn.session_closed and chat.message_sent too) — a quiz-ask session's on its
+own line (A106) — and per user-day for the rows
 that carry none (older rows); the check_items total, the tier and
 grader_backend mix, cap hits, and each course's check-item coverage.
 
@@ -73,6 +74,7 @@ from learning.params import (  # noqa: E402
     ZPD_IN_ZONE_MIN_GAP,
 )
 from services.check_item_service import coverage  # noqa: E402
+from services.quiz_ask import quiz_ask_session_ids  # noqa: E402
 
 _EVIDENCE_COLS = "id,created_at,correct,assisted,max_rung,question_hash,channel"
 # spec §13 A36: rows one apply_graph_update call writes share created_at and
@@ -191,12 +193,15 @@ def report(
     caps: list[dict],
     *,
     sessions_by_request: dict[tuple[str, str], str],
+    quiz_ask_sessions: set[str] | frozenset = frozenset(),
 ) -> dict:
     """Spec §10's cost and mix report over one window. Never invents a band, a
     session or a zero count: an unattributable row goes under "unknown", and a
     payload key that is absent is not counted. A usage row joins an event only
     on (user_id, request_id) — X-Request-ID is client-set, so a request id alone
-    could attribute one student's cost to another's session or band."""
+    could attribute one student's cost to another's session or band. A quiz-ask
+    session's cost (spec §13 A106: probe-less, opened from the quiz) is on its
+    own line, `cost_per_quiz_ask_session`, never in `cost_per_session`."""
     bands: dict[tuple, set[str]] = defaultdict(set)
     for step in steps:
         band = (step.get("payload") or {}).get("band")
@@ -232,6 +237,7 @@ def report(
     # request_id) event join; a row with neither (older rows) falls back to its
     # user-day — never a guessed session
     per_session: dict[str, float] = defaultdict(float)
+    per_quiz_ask: dict[str, float] = defaultdict(float)
     per_user_day: dict[str, float] = defaultdict(float)
     for r in loop_rows:
         session = (r.get("session_id") or "").strip() or (
@@ -239,12 +245,15 @@ def report(
             if r.get("user_id") and r.get("request_id")
             else None
         )
-        if session:
+        if session and session in quiz_ask_sessions:
+            per_quiz_ask[session] += _usd(r.get("cost_usd"))
+        elif session:
             per_session[session] += _usd(r.get("cost_usd"))
         else:
             key = f"{r.get('user_id') or _UNKNOWN}/{_day(r.get('created_at'))}"
             per_user_day[key] += _usd(r.get("cost_usd"))
     out["cost_per_session"] = dict(sorted(per_session.items()))
+    out["cost_per_quiz_ask_session"] = dict(sorted(per_quiz_ask.items()))
     out["cost_per_user_day"] = dict(sorted(per_user_day.items()))
     return out
 
@@ -303,11 +312,18 @@ def _report_line(frm: str, to: str) -> tuple[dict, bool]:
     except Exception as exc:
         print(f"REPORT_FAIL events {type(exc).__name__}")
         failed = True
+    quiz_ask: set[str] = set()
+    try:
+        quiz_ask = quiz_ask_session_ids(table("sessions"), to_iso=to)  # A106
+    except Exception as exc:
+        print(f"REPORT_FAIL sessions {type(exc).__name__}")
+        failed = True
     out = report(
         usage,
         [e for e in events if e.get("event_type") == "zpd.step"],
         [e for e in events if e.get("event_type") == "ai.budget_capped"],
         sessions_by_request=sessions_by_request(events),
+        quiz_ask_sessions=quiz_ask,
     )
     out["window"] = {"from": frm, "to": to}
     try:

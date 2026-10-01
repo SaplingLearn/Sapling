@@ -353,3 +353,85 @@ def test_the_e2e_mirror_of_the_help_rung_is_pinned():
     src = (Path(__file__).resolve().parents[2] / "frontend/e2e/support/quiz.ts").read_text()
     (found,) = re.findall(r"export const QUIZ_ASK_HELP_RUNG = (\d+);", src)
     assert int(found) == QUIZ_ASK_HELP_RUNG
+
+
+# ── PKG-14/15 review m2 (spec §13 A106): the course is the quiz node's, or none ──
+
+
+def test_a_quiz_node_with_no_course_is_a_422_and_records_no_help():
+    from models import StartSessionBody
+    from services.quiz_ask import open_quiz_ask, resolve_quiz_ask
+
+    with patch("services.quiz_ask.table", side_effect=_tables(node_course=None)):
+        with pytest.raises(HTTPException) as exc:
+            resolve_quiz_ask("u1", "att-1", 0)
+    assert exc.value.status_code == 422
+    with (
+        patch("services.quiz_ask.table", side_effect=_tables(node_course=None)),
+        patch("services.quiz_ask.record_help") as record,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            open_quiz_ask(StartSessionBody(user_id="u1", course_id="c-client", **ASK), session_id="s")
+    assert exc.value.status_code == 422
+    record.assert_not_called()
+
+
+def test_the_loop_opener_never_falls_back_to_the_clients_course(gate_on, seams):
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=AssertionError("the model ran"))
+    topic_p, offering_p, graph_p = _routes._opener_patches()
+    with (
+        topic_p,
+        offering_p,
+        graph_p,
+        patch("routes.learn_loop.loop_tutor_agent", agent),
+        patch("services.quiz_ask.table", side_effect=_tables(node_course=None)),
+        patch("services.quiz_ask.record_help") as record,
+    ):
+        r = client.post(
+            "/api/learn/loop/start-session",
+            json={"user_id": "u1", "topic": "Recursion", "course_id": "c-client", **ASK},
+        )
+    assert r.status_code == 422
+    record.assert_not_called()
+
+
+@pytest.mark.kill_switch
+@pytest.mark.parametrize("path", ["/api/learn/start-session", "/api/learn/start-session/stream"])
+def test_the_kill_switch_quiz_ask_runs_on_the_quiz_nodes_course(path):
+    from routes.learn import PENDING_SESSIONS
+
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=run_result("Here is why."))
+
+    def factory(name):
+        return MagicMock(select=MagicMock(return_value=[]))
+
+    with (
+        patch("routes.learn.table", side_effect=factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn._get_course_id_for_topic", return_value="c-topic"),
+        patch("routes.learn.resolve_offering", return_value="off-1") as offering,
+        patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+        patch("services.quiz_ask.table", side_effect=_tables(owner="user_andres")),
+        patch("services.quiz_ask.record_help"),
+        patch("routes.learn._kill_switch_budget"),
+    ):
+        r = client.post(
+            path,
+            json={"user_id": "user_andres", "topic": "Recursion", "course_id": "c-client", **ASK},
+        )
+    assert r.status_code == 200, r.text
+    assert {c.args[0] for c in offering.call_args_list} == {"c-node"}
+    PENDING_SESSIONS.clear()
+
+
+def test_quiz_ask_session_ids_reads_the_origin_marker():
+    from services.quiz_ask import quiz_ask_session_ids
+
+    handle = MagicMock()
+    handle.select_with_count.return_value = ([{"id": "sq1"}, {"id": "sq2"}, {"id": None}], 3)
+    assert quiz_ask_session_ids(handle, to_iso="2026-10-01T00:00:00+00:00") == {"sq1", "sq2"}
+    filters = handle.select_with_count.call_args.kwargs["filters"]
+    assert filters["loop_state->>origin"] == "eq.quiz_ask"
+    assert filters["created_at"] == "lte.2026-10-01T00:00:00+00:00"

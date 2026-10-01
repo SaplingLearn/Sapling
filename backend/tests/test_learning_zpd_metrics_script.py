@@ -538,3 +538,43 @@ def test_opportunity_states_pages_rows_with_opportunities(monkeypatch):
     assert calls[0][2] == {"opps": "gt.0"}
     assert calls[-1][2] == {"opps": "gt.0", "user_id": "eq.u9"}
     assert calls[0][3] == "user_id,node_id"  # a total order (the primary key)
+
+
+# ── PKG-14/15 review m2 (spec §13 A106): quiz-ask sessions, a separate cost line ──
+
+
+def test_report_tags_quiz_ask_session_cost_separately():
+    usage = [
+        {**_usage("r1", "grader", "0.010"), "session_id": "s-loop"},
+        {**_usage("r2", "loop_tutor", "0.020"), "session_id": "s-quiz"},
+    ]
+    out = _script().report(usage, [], [], sessions_by_request={}, quiz_ask_sessions={"s-quiz"})
+    assert out["cost_per_session"] == {"s-loop": pytest.approx(0.010)}
+    assert out["cost_per_quiz_ask_session"] == {"s-quiz": pytest.approx(0.020)}
+
+
+def test_main_reads_quiz_ask_sessions_and_fails_loudly(world, capsys):
+    s = world["s"]
+    world["tables"]["llm_usage"] = USAGE
+    world["tables"]["events"] = [
+        {
+            "id": "x1",
+            "event_type": "zpd.step",
+            "user_id": "u",
+            "request_id": "r1",
+            "payload": {**STEPS[0]["payload"], "session_id": "s1"},
+            "created_at": "2026-09-20T10:00:00+00:00",
+        }
+    ]
+    world["tables"]["sessions"] = [{"id": "s1"}]
+    args = ["--from", "2026-09-01T00:00:00+00:00", "--to", "2026-10-01T00:00:00+00:00"]
+    assert s.main(args) == 0
+    rep = _report_line(capsys.readouterr().out)
+    assert rep["cost_per_session"] == {}
+    assert rep["cost_per_quiz_ask_session"] == {"s1": pytest.approx(0.011)}
+    (call,) = [c for c in world["handles"]["sessions"].calls if c[0] == "select_with_count"]
+    assert call[2]["loop_state->>origin"] == "eq.quiz_ask"
+    world["handles"].clear()
+    world["tables"]["sessions"] = _T([], fail=RuntimeError("down"))
+    assert s.main(args) == 1
+    assert "REPORT_FAIL sessions" in capsys.readouterr().out

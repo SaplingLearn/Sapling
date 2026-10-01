@@ -38,6 +38,7 @@ from learning.params import (
     PROBE_TARGET_LO,
 )
 from services.auth_guard import require_admin
+from services.quiz_ask import quiz_ask_session_ids
 
 logger = logging.getLogger("sapling.admin_analytics")
 
@@ -532,6 +533,8 @@ class NextSessionSuccess(BaseModel):
     sessions: int
     successes: int
     rate: float | None
+    # spec §13 A106 (review m2): quiz-ask sessions (probe-less) left out of the rate
+    quiz_ask_excluded: int = 0
 
 
 class Gates(BaseModel):
@@ -672,18 +675,24 @@ def _htc_k_trend(steps: list[dict], to_iso: str) -> list[ConceptTrend]:
     return out
 
 
-def _next_session_rate(evidence_rows: list[dict]) -> dict:
+def _next_session_rate(evidence_rows: list[dict], quiz_ask: set[str] | frozenset = frozenset()) -> dict:
     """Unassisted next-opportunity success on the FOLLOWING session's first item:
     per node, its sessions in order of their first evidence row; for every
     session after the first, its first row is a success when it is correct,
     unassisted and at rung 0. Rows with no session_id (post-test, quiz) are
-    not a session."""
+    not a session, and neither is a quiz-ask session (spec §13 A106: it skips
+    the probe and opens on the concept just asked about) — those are counted
+    in `quiz_ask_excluded`."""
     by_node: dict[str, dict[str, dict]] = defaultdict(dict)
+    excluded: set[str] = set()
     for row in sorted(
         evidence_rows, key=lambda r: (str(r.get("created_at") or ""), str(r.get("id") or ""))
     ):
         session = row.get("session_id")
         if not session or not row.get("node_id"):
+            continue
+        if session in quiz_ask:
+            excluded.add(session)
             continue
         by_node[row["node_id"]].setdefault(session, row)  # the session's first row
     sessions = successes = 0
@@ -695,7 +704,12 @@ def _next_session_rate(evidence_rows: list[dict]) -> dict:
                 and not row.get("assisted")
                 and _rung_int(row.get("max_rung")) == 0
             )
-    return {"sessions": sessions, "successes": successes, "rate": successes / sessions if sessions else None}
+    return {
+        "sessions": sessions,
+        "successes": successes,
+        "rate": successes / sessions if sessions else None,
+        "quiz_ask_excluded": len(excluded),
+    }
 
 
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
@@ -737,6 +751,7 @@ def learning_loop_kpis(
         to_iso,
         extra_filters={"event_type": "eq.evidence"},
     )
+    quiz_ask = quiz_ask_session_ids(table("sessions"), to_iso=to_iso)  # A106
     steps = [e for e in events if e.get("event_type") == _STEP_EVENT]
     caught = sum(1 for e in events if e.get("event_type") == _LEAK_EVENT)
     reveals = [_payload(e) for e in events if e.get("event_type") == _REVEAL_EVENT]
@@ -751,7 +766,7 @@ def learning_loop_kpis(
         in_band=in_band,
         in_band_share=in_band / banded if banded else None,
         htc_k_trend=_htc_k_trend(steps, to_iso),
-        unassisted_next_session=NextSessionSuccess(**_next_session_rate(evidence)),
+        unassisted_next_session=NextSessionSuccess(**_next_session_rate(evidence, quiz_ask)),
         caught_leaks=caught,
         served_reveals=served,
         unscanned_turns=unscanned,
