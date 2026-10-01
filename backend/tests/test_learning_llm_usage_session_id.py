@@ -285,3 +285,32 @@ def test_report_ignores_a_blank_own_session():
     )
     assert out["cost_per_session"] == {}
     assert out["cost_per_user_day"] == {"u/2026-09-20": pytest.approx(0.010)}
+
+
+def test_the_fallback_fires_on_a_real_httpx_status_error(monkeypatch):
+    """Review fix round (REGRESSION M1): db.connection raises httpx.HTTPStatusError,
+    whose str() omits the PostgREST body — the match must read the response text."""
+    import httpx
+
+    written: list = []
+
+    class _T:
+        def insert(self, r):
+            if any("session_id" in x for x in r):
+                req = httpx.Request("POST", "http://pgrst/llm_usage")
+                resp = httpx.Response(
+                    400,
+                    json={
+                        "code": "PGRST204",
+                        "message": "Could not find the 'session_id' column of 'llm_usage' in the schema cache",
+                    },
+                    request=req,
+                )
+                raise httpx.HTTPStatusError("Client error '400 Bad Request'", request=req, response=resp)
+            written.extend(r)
+            return r
+
+    monkeypatch.setattr(events_service, "table", lambda name: _T())
+    record_agent_usage(_FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="s1")
+    events_service.flush_now()
+    assert len(written) == 1 and "session_id" not in written[0]

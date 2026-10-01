@@ -428,8 +428,20 @@ def dropped_count() -> int:
 _OPTIONAL_COLUMNS: dict[str, tuple[str, ...]] = {"llm_usage": ("session_id",)}
 
 
-def _unknown_optional_columns(table_name: str, exc: BaseException) -> list[str]:
+def _error_text(exc: BaseException) -> str:
+    """The exception's message plus, for db.connection's httpx.HTTPStatusError
+    (whose message omits the body), the PostgREST error body that names the
+    column — graph_service._error_text's rule, kept local (no import cycle)."""
     text = str(exc)
+    try:
+        body = exc.response.text  # type: ignore[attr-defined]
+    except Exception:
+        return text
+    return f"{text} {body}" if isinstance(body, str) else text
+
+
+def _unknown_optional_columns(table_name: str, exc: BaseException) -> list[str]:
+    text = _error_text(exc)
     return [
         column
         for column in _OPTIONAL_COLUMNS.get(table_name, ())
