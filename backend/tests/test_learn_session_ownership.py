@@ -396,3 +396,26 @@ class TestRequireSessionOwner:
         call = tables.mocks["sessions"].select.call_args
         assert call.args[0] == "user_id"
         assert call.kwargs["filters"] == {"id": f"eq.{SESSION}"}
+
+
+def test_a_lost_pop_race_does_not_materialise_the_session_twice():
+    """CodeRabbit on #709: two concurrent owner requests both read the pending
+    payload; only the one whose pop returns it inserts the session row."""
+
+    class _LostRace(dict):
+        def pop(self, key, default=None):  # the other request popped it first
+            super().pop(key, default)
+            return default
+
+    pending = _LostRace(
+        {"s-race": {"user_id": OWNER, "mode": "socratic", "topic": "t",
+                    "assistant_reply": "hi", "graph_update": {}}}
+    )
+    tables = _Tables()
+    from routes import learn
+
+    with patch("routes.learn.table", side_effect=tables), \
+         patch("routes.learn.PENDING_SESSIONS", pending):
+        learn._consume_pending("s-race", OWNER)
+    assert not tables.touched("sessions", "insert")
+    assert not tables.touched("messages", "insert")

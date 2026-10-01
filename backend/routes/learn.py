@@ -439,8 +439,12 @@ def _consume_pending(session_id: str, user_id: str) -> None:
         return
     if pending["user_id"] != user_id:
         raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
-    PENDING_SESSIONS.pop(session_id, None)
-    
+    # Sync routes run in a threadpool: two of the owner's requests can both read
+    # the payload above. Only the one whose pop returns it materialises the row;
+    # the other finds it already done (no duplicate-key insert).
+    if PENDING_SESSIONS.pop(session_id, None) is None:
+        return
+
     # Sessions key on the offering (0025). The pending payload carries the
     # offering id (resolved at start-session) alongside the abstract course id.
     session_data = {
