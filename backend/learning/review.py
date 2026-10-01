@@ -1047,6 +1047,7 @@ async def grade_review(
     deps=None,
     claim: str | None = None,
     max_rung: int = 0,
+    refloor=None,
 ) -> ReviewOutcome:
     """Rule 6. A check item is graded by grade_answer ONCE (unassisted:
     max_rung 0; a re-check only when it is the next graded item on its concept
@@ -1095,6 +1096,10 @@ async def grade_review(
                 if claim is not None:
                     _release_claim(session_id, sr_key(item), claim)
                 return ReviewOutcome(unavailable=True, refused=outcome.refused is not None)
+            # PKG-14 (A93): the route's help floor, re-read inside the claim right
+            # before the write (it raises the Evidence's rung in place)
+            if refloor is not None:
+                refloor(outcome.evidence)
             # The one write. deps.pending_evidence is discarded, never flushed:
             # the retention target rides on this call only.
             apply_graph_update(

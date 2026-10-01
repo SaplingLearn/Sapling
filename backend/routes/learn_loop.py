@@ -120,7 +120,17 @@ from learning.loop_state_store import (
     update_loop_state,
 )
 from learning.reveal_store import record_reveals, record_unscanned, unscanned_since
+from learning.help_ledger import (
+    earliest_open_pose,
+    mark_graded,
+    max_help,
+    record_help,
+    record_posed,
+    ungraded_posed,
+)
 from learning.params import (
+    LOOP_SCAN_EVERY_CHARS,
+    LOOP_SCAN_POSED_MAX,
     BAND_DEVELOP_MAX,
     BKT_L0,
     BKT_PROFICIENT,
@@ -1079,28 +1089,38 @@ def _ts(value) -> datetime | None:
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
-def open_posed_items(user_id: str, *, now: datetime) -> list[tuple] | None:
-    """(item, posed_at) for every OPEN item the student has seen the prompt of:
-    the ungraded active item of each open loop session, each ungraded open
-    review item, each unanswered post-test pose younger than
-    POSTTEST_POSE_TTL_HOURS. None when any of it cannot be read."""
+def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime | None] | None:
+    """A93 (owner decision 1, M2): (item, first posed at) for every item POSED to
+    the student and not yet graded — not only the currently open ones: every
+    session's ungraded steps (ended or closed sessions too) and its probe item,
+    each ungraded review item, every unanswered post-test pose (expired too),
+    and the help ledger's 'posed' rows — minus the items the student has
+    evidence on. Bounded: the newest LOOP_SCAN_POSED_MAX; the second element is
+    the posed time of the newest item left OUT of that window (None: nothing
+    left out), at which the caller records an 'unscanned' marker so every older
+    ungraded item grades as assisted. None when any of it cannot be read."""
     try:
-        ids: dict[str, datetime | None] = {}
+        by_id: dict[str, datetime | None] = {}
+        by_hash: dict[str, datetime | None] = {}
+
+        def keep(store: dict, key, at) -> None:
+            if not key:
+                return
+            if key not in store or (at is not None and (store[key] is None or at < store[key])):
+                store[key] = at
+
         for row in page_all(
             table("sessions"),
-            "id,current:loop_state->>current,steps:loop_state->steps",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "loop_state->>current": "not.is.null",
-                "close_json": "is.null",
-                "ended_at": "is.null",
-                **NOT_REVIEW,
-            },
+            "id,steps:loop_state->steps,probe:loop_state->probe",
+            filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},
             order="id",
         ):
-            entry = (row.get("steps") or {}).get(row.get("current")) or {}
-            if isinstance(entry, dict) and entry.get("graded_at") is None and entry.get("check_item_id"):
-                ids[entry["check_item_id"]] = _ts(entry.get("first_shown_at"))
+            for entry in (row.get("steps") or {}).values():
+                if isinstance(entry, dict) and entry.get("graded_at") is None:
+                    keep(by_id, entry.get("check_item_id"), _ts(entry.get("first_shown_at")))
+            cur = (row.get("probe") or {}).get("current") if isinstance(row.get("probe"), dict) else None
+            if isinstance(cur, dict):
+                keep(by_hash, cur.get("question_hash"), None)
         for row in page_all(
             table("sessions"),
             "id,open:loop_state->open",
@@ -1112,31 +1132,43 @@ def open_posed_items(user_id: str, *, now: datetime) -> list[tuple] | None:
                     isinstance(entry, dict)
                     and not str(key).startswith("fc:")
                     and entry.get("graded_at") is None
-                    and entry.get("item_id")
                 ):
-                    ids[entry["item_id"]] = _ts(entry.get("served_at"))
-        out: list[tuple] = []
-        for item_id, posed in ids.items():
-            item = get_check_item(item_id)
-            if item is not None:
-                out.append((item, posed))
-        cutoff = now - timedelta(hours=POSTTEST_POSE_TTL_HOURS)
-        poses = table(_POSES).select(
+                    keep(by_id, entry.get("item_id"), _ts(entry.get("served_at")))
+        pose_course: dict[str, str] = {}  # a pose names its course: matched on load
+        for pose in table(_POSES).select(
             "course_id,question_hash,posed_at",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "answered_at": "is.null",
-                "posed_at": f"gte.{cutoff.isoformat()}",
-            },
-        ) or []
-        by_hash = {p["question_hash"]: p for p in poses if p.get("question_hash")}
-        for item in items_by_hash(sorted(by_hash)) if by_hash else []:
-            pose = by_hash.get(item.question_hash)
-            if pose and pose.get("course_id") == item.course_id:
-                out.append((item, _ts(pose.get("posed_at"))))
-        return out
+            filters={"user_id": f"eq.{user_id}", "answered_at": "is.null"},
+        ) or []:
+            keep(by_hash, pose.get("question_hash"), _ts(pose.get("posed_at")))
+            if pose.get("question_hash"):
+                pose_course[pose["question_hash"]] = pose.get("course_id")
+        ledger_hashes = set()
+        for qh, at in ungraded_posed(user_id, LOOP_SCAN_POSED_MAX + 1):
+            keep(by_hash, qh, at)
+            ledger_hashes.add(qh)
+        seen = seen_hashes(user_id)
+        found: dict[str, tuple] = {}
+        for item_id, at in by_id.items():
+            item = get_check_item(item_id)
+            if item is not None and item.question_hash not in seen:
+                found.setdefault(item.question_hash, (item, at))
+        wanted = sorted(h for h in by_hash if h not in seen and h not in found)
+        for item in items_by_hash(wanted) if wanted else []:
+            qh = item.question_hash
+            if qh in seen:
+                continue
+            if qh in pose_course and qh not in ledger_hashes and pose_course[qh] != item.course_id:
+                continue  # a pose's hash names an item of ITS course only
+            found.setdefault(qh, (item, by_hash.get(qh)))
+        oldest = datetime.min.replace(tzinfo=timezone.utc)
+        ranked = sorted(found.values(), key=lambda pair: pair[1] or oldest, reverse=True)
+        kept = ranked[:LOOP_SCAN_POSED_MAX]
+        overflow = None
+        if len(ranked) > LOOP_SCAN_POSED_MAX:
+            overflow = ranked[LOOP_SCAN_POSED_MAX][1] or now
+        return kept, overflow
     except Exception as exc:
-        logger.warning("open posed items could not be read (%s)", type(exc).__name__)
+        logger.warning("posed items could not be read (%s)", type(exc).__name__)
         return None
 
 
@@ -1173,19 +1205,52 @@ def _persist_reveals(
 
 
 def _reveal_floor(user_id: str, item, posed_at: datetime | None = None) -> int:
-    """The lowest rung a grade of `item` may claim (A88): RUNG_NO_CREDIT_MIN when
-    a served turn stated its answer (revealed — like a released item);
-    RUNG_ASSISTED_MIN while an 'unscanned' marker lands at or after the item's
-    `posed_at` (None: any marker), or when the reads fail (fail closed); else 0."""
+    """The lowest rung a grade of `item` may claim — A93's help floor (owner
+    decision 1): the MAX help ever recorded for (student, item) in the help
+    ledger, across every session and surface (a served reveal counts as
+    RUNG_NO_CREDIT_MIN); RUNG_NO_CREDIT_MIN when the item is revealed by the
+    evidence journal or a session's revealed list (A23); RUNG_ASSISTED_MIN while
+    an 'unscanned' marker lands at or after the item's FIRST ungraded pose (or
+    `posed_at`; None: any marker). A failed read is RUNG_NO_CREDIT_MIN (fail
+    closed, minor 8)."""
     try:
+        floor = max_help(user_id, item.question_hash)
         if item.question_hash in revealed_hashes(user_id):
-            return RUNG_NO_CREDIT_MIN
-        if unscanned_since(user_id, posed_at):
-            return RUNG_ASSISTED_MIN
+            floor = max(floor, RUNG_NO_CREDIT_MIN)
+        first = earliest_open_pose(user_id, item.question_hash)
+        anchor = min((t for t in (first, posed_at) if t is not None), default=None)
+        if floor < RUNG_ASSISTED_MIN and unscanned_since(user_id, anchor):
+            floor = RUNG_ASSISTED_MIN
     except Exception:
-        logger.warning("reveal reads failed; the grade is assisted", exc_info=True)
-        return RUNG_ASSISTED_MIN
-    return 0
+        logger.warning("help ledger reads failed; the grade carries no credit", exc_info=True)
+        return RUNG_NO_CREDIT_MIN
+    return floor
+
+
+def _refloor(evidence: list, user_id: str, item, posed_at: datetime | None, used: int) -> int:
+    """A93: the help floor re-read INSIDE the grading claim, right before the one
+    evidence write — so help served while the grade ran (a hint in another
+    session, a reveal streaming meanwhile) is seen. Raises the pending Evidence
+    rows of `item` to the new floor (apply_graph_update re-derives the weight);
+    returns the rung the grade carries."""
+    floor = _reveal_floor(user_id, item, posed_at)
+    if floor > int(used):
+        for row in evidence:
+            if row.get("question_hash") == item.question_hash and int(row.get("max_rung") or 0) < floor:
+                row["max_rung"] = floor
+                if floor >= RUNG_ASSISTED_MIN:
+                    row["assisted"] = True
+    return max(floor, int(used))
+
+
+def _ledger(write, *args, **kwargs) -> None:
+    """A help-ledger write under the accepted DB-down rule: the session-local
+    record (the step's rung, loop_state["revealed"]) stands and an ERROR is
+    logged; never raises."""
+    try:
+        write(*args, **kwargs)
+    except Exception:
+        logger.error("help ledger write %s failed", getattr(write, "__name__", "?"), exc_info=True)
 
 
 # ── The served session close (PKG-09; spec §13 A25, A51) ─────────────────
@@ -1470,6 +1535,7 @@ class _LoopTurn:
         self.revealed_hash, self.served_as_h6 = None, False
         self.reveal_hashes: list[str] = []  # A88: the open posed items this turn stated
         self.reveal_unscanned = False  # A88: its open items could not be read
+        self.reveal_overflow = None  # A93: posed items beyond the scan window
         self.reveal_fallback: tuple | None = None  # a failed learning_reveals write
 
     def _teach_attempt(self) -> bool:
@@ -1517,7 +1583,35 @@ class _LoopTurn:
 
     def plan(self, decision) -> None:
         """Tier + run assembly for `decision`, the ai_budget verdict the calling
-        run site just read (invariant 23). Idempotent for the same decision."""
+        run site just read (invariant 23). Idempotent for the same decision.
+        A93: the help this turn will serve is recorded in the help ledger HERE —
+        before a token or the deterministic payload goes out."""
+        if self.planned is decision:
+            return
+        self._plan(decision)
+        self._record_planned_help()
+
+    def _record_planned_help(self) -> None:
+        """A93 (owner decision 1): a hint turn's rung on its item (H6 when a
+        leaking deterministic payload is served as H6), and an H4 sibling payload
+        on the SIBLING (its worked answer is shown: RUNG_NO_CREDIT_MIN)."""
+        if self.paused or self.phase != "hint" or self.item is None:
+            return
+        if self.text is None and self.tier == "none":
+            return  # nothing is served
+        rung = int(Rung.H6) if self.served_as_h6 else int(self.rung)
+        _ledger(record_help, self.user_id, self.item.question_hash, rung, source="loop", session_id=self.session_id)
+        if self.revealed_hash:
+            _ledger(
+                record_help,
+                self.user_id,
+                self.revealed_hash,
+                RUNG_NO_CREDIT_MIN,
+                source="loop",
+                session_id=self.session_id,
+            )
+
+    def _plan(self, decision) -> None:
         if self.planned is decision:
             return
         self.planned = decision
@@ -1877,6 +1971,8 @@ class _LoopTurn:
         if out.get("activated"):
             item = get_check_item(out["activated"])
             check = _pose_payload(item) if item is not None else None
+            if item is not None:  # A93: posed — in the scan set until graded
+                _ledger(record_posed, self.user_id, item.question_hash, source="loop", session_id=self.session_id)
         if self.persist_user_row:
             save_message(self.session_id, "user", self.message)
         save_message(self.session_id, "assistant", reply, merged or None)
@@ -1921,75 +2017,102 @@ class _LoopTurn:
         while len(_FAILED_TURN_ANCHORS) > ANCHORS_MAX:
             _FAILED_TURN_ANCHORS.pop(next(iter(_FAILED_TURN_ANCHORS)))
 
+    def _scan_set(self):
+        """A93: the posed-and-ungraded items (`posed_items`), read ONCE per turn
+        (a stream is scanned many times as it is relayed). The turn's own active
+        item is excluded: its leak check is `_leak_checked`'s."""
+        if not hasattr(self, "_scan_cache"):
+            got = posed_items(self.user_id, now=datetime.now(timezone.utc))
+            if got is None:
+                self._scan_cache = None
+            else:
+                active = self.item.question_hash if self.item is not None else None
+                items, overflow = got
+                self._scan_cache = ([item for item, _at in items if item.question_hash != active], overflow)
+        return self._scan_cache
+
     def _scan_served(self, reply: str) -> None:
-        """A88: the OPEN, POSED items (`open_posed_items`) this served,
-        model-written text states — this turn's own active item excluded (its
-        leak check is `_leak_checked`'s). Scanned strictly (H0): the student has
-        had no hint on those items in this turn. Unreadable → `reveal_unscanned`."""
-        self.reveal_hashes, self.reveal_unscanned = [], False
+        """A88/A93: the posed-and-ungraded items this served, model-written text
+        states. Scanned strictly (H0). Unreadable → `reveal_unscanned`; items
+        beyond the scan window → an 'unscanned' marker at the window's edge."""
+        self.reveal_hashes, self.reveal_unscanned, self.reveal_overflow = [], False, None
         if self.tier == "none" or not reply:
             return
-        opened = open_posed_items(self.user_id, now=datetime.now(timezone.utc))
-        if opened is None:
+        got = self._scan_set()
+        if got is None:
             self.reveal_unscanned = True
             return
-        active = self.item.question_hash if self.item is not None else None
-        others = [item for item, _posed in opened if item.question_hash != active]
-        self.reveal_hashes = stated_items(reply, others, rung=Rung.H0, given=self.given)
+        items, self.reveal_overflow = got
+        self.reveal_hashes = stated_items(reply, items, rung=Rung.H0, given=self.given)
 
     def _record_served(self) -> None:
-        """A88 (M2): durable at serve time — learning_reveals, keyed by the
-        student. A failed write leaves `reveal_fallback` for `_apply_turn` (the
-        same compare-and-set write as the turn); a turn with no session row (the
-        opener) raises instead, so its text is not served unrecorded."""
+        """A88 (M2) / A93: durable at serve time — learning_reveals, keyed by the
+        student; a hash this turn already recorded (it was scanned while
+        streaming) is not written twice. A failed write leaves `reveal_fallback`
+        for `_apply_turn` (the same compare-and-set write as the turn)."""
         self.reveal_fallback = None
-        if not (self.reveal_hashes or self.reveal_unscanned):
+        recorded = self.__dict__.setdefault("_recorded", set())
+        fresh = [h for h in self.reveal_hashes if h not in recorded]
+        marker_at = None
+        if self.reveal_unscanned:
+            marker_at = datetime.fromtimestamp(self._now, timezone.utc)
+        elif self.reveal_overflow is not None and not self.__dict__.get("_overflow_marked"):
+            marker_at = self.reveal_overflow
+        if not (fresh or marker_at is not None):
             return
         try:
-            if self.reveal_unscanned:
-                record_unscanned(
-                    self.user_id,
-                    session_id=self.session_id,
-                    source=self.phase,
-                    at=datetime.fromtimestamp(self._now, timezone.utc),
-                )
-            else:
-                record_reveals(
-                    self.user_id, self.reveal_hashes, session_id=self.session_id, source=self.phase
-                )
+            if fresh:
+                record_reveals(self.user_id, fresh, session_id=self.session_id, source=self.phase)
+                recorded.update(fresh)
+            if marker_at is not None:
+                record_unscanned(self.user_id, session_id=self.session_id, source=self.phase, at=marker_at)
+                self._overflow_marked = True
         except Exception:
             logger.warning("learning_reveals write failed; falling back to loop_state", exc_info=True)
-            mark = {"at": self._now, "source": self.phase} if self.reveal_unscanned else None
-            self.reveal_fallback = (list(self.reveal_hashes), mark)
+            mark = (
+                {"at": marker_at.timestamp(), "source": self.phase} if marker_at is not None else None
+            )
+            self.reveal_fallback = ([h for h in fresh if h not in recorded], mark)
 
     def _emit_reveal(self) -> None:
-        if self.reveal_hashes or self.reveal_unscanned:
+        """zpd.reveal for what this turn stated that no earlier scan of the same
+        turn already reported (A93: a stream is scanned many times)."""
+        emitted = self.__dict__.setdefault("_emitted", set())
+        fresh = [h for h in self.reveal_hashes if h not in emitted]
+        if fresh or self.reveal_unscanned:
+            emitted.update(fresh)
             zpd_events.emit_zpd_reveal(
                 user_id=self.user_id,
                 request_id=self.request_id,
                 session_id=self.session_id,
-                question_hashes=list(self.reveal_hashes),
+                question_hashes=fresh,
                 unscanned=self.reveal_unscanned,
                 phase=self.phase,
             )
 
     def record_relayed(self, text: str) -> None:
-        """A88 (M1): a stream that ended without `done` (an error, a client
-        disconnect, a cancellation) has still SHOWN `text`: scan it and persist
-        its reveals (learning_reveals, then loop_state), synchronously so no
-        cancellation interrupts the write. Never raises."""
+        """A88 (M1) / A93 (M3, M4): text the student has been SHOWN — while it
+        streams (every LOOP_SCAN_EVERY_CHARS and at each sentence end), a
+        retracted attempt, or what a stream that ended without `done` relayed —
+        is scanned and its reveals persisted (learning_reveals, then loop_state),
+        synchronously. Never raises."""
         try:
             self._now = _now_s()
             self._scan_served(text)
+            self._record_served()
+            if self.reveal_fallback is not None:
+                hashes, mark = self.reveal_fallback
+                self.reveal_fallback = None
+                if hashes or mark is not None:
+                    _persist_reveals(
+                        self.user_id,
+                        None if self.session_id in PENDING_SESSIONS else self.session_id,
+                        hashes,
+                        unscanned=mark is not None,
+                        source=f"{self.phase}:relayed",
+                        at=datetime.fromtimestamp(self._now, timezone.utc),
+                    )
             if self.reveal_hashes or self.reveal_unscanned:
-                _persist_reveals(
-                    self.user_id,
-                    None if self.session_id in PENDING_SESSIONS else self.session_id,
-                    self.reveal_hashes,
-                    unscanned=self.reveal_unscanned,
-                    source=f"{self.phase}:relayed",
-                    at=datetime.fromtimestamp(self._now, timezone.utc),
-                )
                 self._emit_reveal()
         except Exception:
             logger.error("relayed text of %s could not be scanned", self.session_id, exc_info=True)
@@ -2437,6 +2560,8 @@ async def _stream_turn(turn: _LoopTurn):
 
     ai_budget.count_tutor_call(turn.user_id)
     relayed: list[str] = []  # A88 (M1): the text the student has been shown
+    attempts: list[str] = []  # A93 (M4): retracted attempts — shown, so scanned too
+    scanned_at = 0  # A93 (M3): the relayed length last scanned
     finished = False
     try:
         async for ev in stream_structured_turn(
@@ -2455,14 +2580,27 @@ async def _stream_turn(turn: _LoopTurn):
         ):
             if ev.type == "token":
                 relayed.append(str((ev.data or {}).get("delta") or ""))
+                shown = "".join(relayed)
+                if len(shown) - scanned_at >= LOOP_SCAN_EVERY_CHARS or (
+                    len(shown) > scanned_at and shown.rstrip().endswith((".", "?", "!"))
+                ):
+                    # A93 (M3): recorded as it is relayed, before the next token goes out
+                    turn.record_relayed(shown)
+                    scanned_at = len(shown)
             elif ev.type == "retract":
+                attempts.append("".join(relayed))
                 relayed.clear()
+                scanned_at = 0
             elif ev.type == "done":
                 finished = True
                 for extra_ev in _pre_done_events(ev.data or {}):
                     yield sapling_event_to_sse(extra_ev)
             yield sapling_event_to_sse(ev)
     finally:
+        # A93 (M4): every retracted attempt was shown — scanned, union with the rest
+        for text in attempts:
+            if text:
+                turn.record_relayed(text)
         if not finished:
             # A85: an errored, disconnected or cancelled stream moves the anchor;
             # A88 (M1): what it relayed is scanned and recorded — synchronously,
@@ -2913,8 +3051,13 @@ async def _grade_submission(
                 body.session_id, _under_claim(qh, claim, note_attempt, release=True)
             )
             return _Submission("unavailable", state, rendered, scope, refused=refused)
+        # A93: the help floor re-read inside the claim, right before the write
+        rung = _refloor(
+            deps.pending_evidence, body.user_id, item, _ts(entry.get("first_shown_at")), rung
+        )
         flushed = True
         flush_pending(deps, course_id or None)  # ONE call: the loop's only evidence write
+        _ledger(mark_graded, body.user_id, qh)
     except BaseException:
         if not flushed:  # nothing was written: the student may submit again
             try:
@@ -3282,10 +3425,15 @@ def posttest_start(body: PosttestStartBody, request: Request) -> dict:
         item = None
         if _pose_open(pose, now):
             item = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
+        bound = None
+        if item is None and pose is not None and not pose.get("answered_at"):
+            # A93 (minor 6): an EXPIRED, unanswered pose keeps its item bound to the
+            # node — a re-pose renews the same item, never a fresh one to dodge it
+            bound = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
         if item is None:  # no open pose (or its item was withdrawn): pose one now
             if node not in due_ids:
                 continue
-            item = posttest_item(items, excluded)
+            item = bound or posttest_item(items, excluded)
             if item is None:
                 continue  # nothing unseen left for this concept: skipped
             new.append(
@@ -3304,6 +3452,8 @@ def posttest_start(body: PosttestStartBody, request: Request) -> dict:
         if len(out) >= POSTTEST_MAX_ITEMS:
             break
     _record_poses(new)
+    for row in new:  # A93: posed — in the scan set until graded
+        _ledger(record_posed, body.user_id, row["question_hash"], source="posttest")
     return {"items": out}
 
 
@@ -3404,10 +3554,15 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             raise HTTPException(status_code=503, detail="grader unavailable")
         # m1/m2: the claim is re-validated and the pose CLOSED before the flush —
         # a taken-over claim writes nothing; a failed flush never reopens the pose
+        # A93: the help floor re-read inside the claim, right before the write
+        floor = Rung(
+            _refloor(deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor))
+        )
         answered = _answer_pose(body.user_id, body.node_id, claim, _posttest_now())
         if not answered:
             raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
         changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
+        _ledger(mark_graded, body.user_id, item.question_hash)
     finally:
         if not answered:
             try:
@@ -3592,6 +3747,8 @@ def hint(body: LoopHintBody, request: Request) -> dict:
             accepted["offer"] = True
 
     _update_loop_state(body.session_id, _on_step(qh, unlock))
+    # A93: the rung is granted now — recorded in the help ledger before its text is served
+    _ledger(record_help, body.user_id, qh, next_rung, source="loop", session_id=body.session_id)
     if accepted.get("offer"):
         zpd_events.emit_zpd_offer(
             user_id=body.user_id, request_id=_request_id(request), accepted=True, band=band
@@ -3708,6 +3865,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
         return {"phase": "teach", "plan_done": bool(plan.get("done")), "check": None}
     item = get_check_item(saved["steps"][qh]["check_item_id"])
     pose = _pose_payload(item)
+    _ledger(record_posed, body.user_id, qh, source="loop", session_id=body.session_id)  # A93
     save_message(body.session_id, "assistant", pose["prompt"])
     return {"phase": "check", "check": pose}
 
@@ -4401,12 +4559,15 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
             "channel": CHANNEL_FOR_FORMAT[item.format],
         }
         out["item"] = item
+        out["new"] = True
 
     saved = _update_if_changed(body.session_id, state, select)
     if out.get("done"):
         _emit_probe_done(saved, body.user_id, request_id)
         return {"done": True, "phase": "plan"}
     item = out["item"]
+    if out.get("new"):  # A93: posed — in the scan set until graded
+        _ledger(record_posed, body.user_id, item.question_hash, source="probe", session_id=body.session_id)
     pose = _pose_payload(item)  # prompt + letter/text options only (A22), never the key
     return {
         "done": False,
@@ -4534,6 +4695,9 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         item=item.item,
     )
     written = False
+    # A93: a probe item graded with help anywhere (another session's hints, a
+    # reveal) carries no unassisted credit — the same help floor as every grade
+    floor = _reveal_floor(body.user_id, item.item, None)
     try:
         outcome = await grade_answer(
             item.item,
@@ -4546,6 +4710,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
             ),
             deps=deps,
             node_id=node_id,
+            max_rung=floor,
             same_session_recheck=recheck,
         )
         if outcome.refused:  # A33, read BEFORE `unavailable`: never a skip
@@ -4566,6 +4731,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                 CheckAnswer(question_hash=qh, idk=True),
                 deps=deps,
                 node_id=node_id,
+                max_rung=floor,
                 same_session_recheck=recheck,
             )
         if outcome.unavailable:  # invariant 28: nothing for either outcome
@@ -4581,8 +4747,10 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         renewed = _update_loop_state(body.session_id, _under_probe_claim(qh, claim, renew))
         if (_probe_doc(renewed).get("current") or {}).get("grading_claim") != claim:
             return {"graded": False, "recorded": False}
+        floor = _refloor(deps.pending_evidence, body.user_id, item.item, None, floor)  # A93
         written = True
         flush_pending(deps, course_id or None)  # ONE call: the probe's only evidence write
+        _ledger(mark_graded, body.user_id, qh)
     except BaseException:
         if not written:  # nothing was written: the student may answer again
             try:
@@ -4866,6 +5034,8 @@ def review_next(
                     review.log_served(
                         user_id, queue, retention=retention, request_id=_request_id(request)
                     )
+                    if item.kind == "check" and item.question_hash:  # A93: posed
+                        _ledger(record_posed, user_id, item.question_hash, source="review", session_id=sid)
                 break
     except LoopStateConflict:
         raise _StateConflict() from None
@@ -4946,13 +5116,21 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             reason=body.reason,
             deps=deps,
             claim=claim,
-            # A88: an open review item a served turn revealed has no unassisted credit
-            max_rung=(
+            # A88/A93: an item with recorded help anywhere has no unassisted credit
+            max_rung=(review_floor := (
                 _reveal_floor(body.user_id, check, _review_posed_at(loop_state, item))
                 if check is not None
                 else 0
+            )),
+            # A93: re-read inside the claim, right before the one write
+            refloor=(
+                (lambda ev: _refloor([ev], body.user_id, check, _review_posed_at(loop_state, item), review_floor))
+                if check is not None
+                else None
             ),
         )
+        if check is not None and not outcome.unavailable:
+            _ledger(mark_graded, body.user_id, check.question_hash)
     except review.ReviewClaimRefused as exc:
         raise HTTPException(status_code=409, detail=_REVIEW_CLAIM_DETAIL[exc.reason]) from None
     except LoopStateConflict:

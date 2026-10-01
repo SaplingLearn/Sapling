@@ -3,7 +3,7 @@
 1. Replay from EMPTY. The B6 cycle boots the stack on dropped volumes
    (`supabase stop --no-backup` before `make e2e-up`), so e2e-up's
    `db.migrate` replays every migration from an empty database. On that stack:
-   the ledger holds the four PKG-14 migrations in filename order, and the
+   the ledger holds the PKG-14 migrations in filename order, and the
    tables/columns have the declared shape. (A scratch `CREATE DATABASE` is not
    an honest "empty": 0011 writes `storage.buckets`, which only a Supabase
    database has.)
@@ -29,12 +29,13 @@ pytestmark = pytest.mark.integration
 
 MIG_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
 #: Every learning migration since aaa9085e (the PKG-14 base): half A's arm, poses
-#: and reveals (A88), half B's llm_usage.session_id (A92).
+#: and reveals (A88), half B's llm_usage.session_id (A92) and help ledger (A93).
 PKG14_MIGRATIONS = (
     "learning_loop_arm",
     "learning_posttest_poses",
     "learning_reveals",
     "learning_llm_usage_session_id",
+    "learning_help_ledger",
 )
 
 

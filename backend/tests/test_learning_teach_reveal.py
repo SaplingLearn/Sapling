@@ -78,7 +78,10 @@ def test_an_item_the_check_raises_on_counts_as_stated_fail_closed():
         assert stated_items("anything", [BASE], rung=Rung.H0, given="") == ["qh-base"]
 
 
-# ── open_posed_items: the three open sources, and nothing else ───────────────
+# ── posed_items (A93, owner decision 1): every POSED, ungraded item ─────────
+# Supersedes A88's "open items only": an ended or closed session's ungraded steps,
+# a probe's current item, an EXPIRED pose and the help ledger's 'posed' rows are
+# scanned too; graded steps and items with evidence are not.
 
 
 def _pages(sessions_loop, sessions_review):
@@ -88,21 +91,22 @@ def _pages(sessions_loop, sessions_review):
     return _page_all
 
 
-def test_open_posed_items_reads_the_three_open_sources_only():
+def test_posed_items_reads_every_posed_ungraded_source():
     from routes import learn_loop
 
-    now = POSED + timedelta(hours=1)
+    now = POSED + timedelta(hours=100)
     loop_rows = [
         {
             "id": "s1",
-            "current": "qh-a",
-            "steps": {"qh-a": {"check_item_id": "id-a", "first_shown_at": 10.0}},
+            "steps": {
+                "qh-a": {"check_item_id": "id-a", "first_shown_at": 10.0},
+                "qh-g": {"check_item_id": "id-g", "graded_at": 5.0},  # graded: out
+            },
         },
-        # a graded active item is no longer open
-        {
+        {  # an ENDED session: its ungraded, no-longer-current step is still posed
             "id": "s2",
-            "current": "qh-g",
-            "steps": {"qh-g": {"check_item_id": "id-g", "graded_at": 5.0}},
+            "steps": {"qh-e": {"check_item_id": "id-e", "first_shown_at": 12.0}},
+            "probe": {"current": {"question_hash": "qh-probe"}},
         },
     ]
     review_rows = [
@@ -115,38 +119,63 @@ def test_open_posed_items_reads_the_three_open_sources_only():
             },
         }
     ]
-    items = {"id-a": _item("qh-a", "x"), "id-r": _item("qh-r", "y")}
+    items = {"id-a": _item("qh-a", "x"), "id-r": _item("qh-r", "y"), "id-e": _item("qh-e", "e")}
     poses_tbl = MagicMock()
     poses_tbl.select.return_value = [
-        {"course_id": "c1", "question_hash": "qh-p", "posed_at": POSED.isoformat()},
+        {"course_id": "c1", "question_hash": "qh-p", "posed_at": POSED.isoformat()},  # expired: in
         {"course_id": "c9", "question_hash": "qh-q", "posed_at": POSED.isoformat()},
     ]
-    # qh-q's only item is another course's: never matched to the c9 pose
-    by_hash = [_item("qh-p", "z"), _item("qh-q", "w", course="c1")]
+    by_hash = [
+        _item("qh-p", "z"),
+        _item("qh-q", "w", course="c1"),  # another course's item: never the c9 pose's
+        _item("qh-probe", "pr"),
+        _item("qh-ledger", "l"),
+        _item("qh-seen", "s"),
+    ]
+    ledger = [("qh-ledger", POSED + timedelta(hours=1)), ("qh-seen", POSED)]
     with (
         patch("routes.learn_loop.page_all", side_effect=_pages(loop_rows, review_rows)),
         patch("routes.learn_loop.get_check_item", side_effect=lambda i: items.get(i)),
         patch("routes.learn_loop.table", return_value=poses_tbl),
         patch("routes.learn_loop.items_by_hash", return_value=by_hash) as ibh,
+        patch("routes.learn_loop.ungraded_posed", return_value=ledger) as ug,
+        patch("routes.learn_loop.seen_hashes", return_value={"qh-seen"}),
     ):
-        got = learn_loop.open_posed_items("u1", now=now)
-    assert [(i.question_hash, p) for i, p in got] == [
-        ("qh-a", datetime.fromtimestamp(10.0, timezone.utc)),
-        ("qh-r", datetime.fromtimestamp(20.0, timezone.utc)),
-        ("qh-p", POSED),
-    ]
-    ibh.assert_called_once_with(["qh-p", "qh-q"])
+        got, overflow = learn_loop.posed_items("u1", now=now)
+    assert {i.question_hash for i, _ in got} == {"qh-a", "qh-e", "qh-r", "qh-p", "qh-probe", "qh-ledger"}
+    assert overflow is None
+    assert ibh.call_args.args[0] == ["qh-ledger", "qh-p", "qh-probe", "qh-q"]
+    assert ug.call_args.args[1] == params.LOOP_SCAN_POSED_MAX + 1
     filters = poses_tbl.select.call_args.kwargs["filters"]
-    assert filters["answered_at"] == "is.null"
-    cutoff = now - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
-    assert filters["posed_at"] == f"gte.{cutoff.isoformat()}"  # A89: an expired pose is void
+    assert filters == {"user_id": "eq.u1", "answered_at": "is.null"}  # no TTL cut (A93)
 
 
-def test_open_posed_items_is_none_when_anything_cannot_be_read(caplog):
+def test_posed_items_beyond_the_window_report_the_overflow_edge(monkeypatch):
+    from routes import learn_loop
+
+    monkeypatch.setattr(params, "LOOP_SCAN_POSED_MAX", 2)
+    monkeypatch.setattr(learn_loop, "LOOP_SCAN_POSED_MAX", 2)
+    t = [POSED + timedelta(minutes=m) for m in range(3)]
+    ledger = [("qh-2", t[2]), ("qh-1", t[1]), ("qh-0", t[0])]
+    poses_tbl = MagicMock()
+    poses_tbl.select.return_value = []
+    with (
+        patch("routes.learn_loop.page_all", side_effect=_pages([], [])),
+        patch("routes.learn_loop.table", return_value=poses_tbl),
+        patch("routes.learn_loop.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
+        patch("routes.learn_loop.ungraded_posed", return_value=ledger),
+        patch("routes.learn_loop.seen_hashes", return_value=set()),
+    ):
+        got, overflow = learn_loop.posed_items("u1", now=POSED)
+    assert [i.question_hash for i, _ in got] == ["qh-2", "qh-1"]  # newest first, bounded
+    assert overflow == t[0]  # the newest item left out: the marker's edge
+
+
+def test_posed_items_is_none_when_anything_cannot_be_read(caplog):
     from routes import learn_loop
 
     with patch("routes.learn_loop.page_all", side_effect=RuntimeError("down")):
-        assert learn_loop.open_posed_items("u1", now=POSED) is None
+        assert learn_loop.posed_items("u1", now=POSED) is None
     assert "could not be read" in caplog.text
 
 
@@ -167,7 +196,7 @@ def _chat(seams, body, *, state=None):
 
 
 def test_a_teach_turn_is_served_unchanged_and_the_stated_open_items_are_recorded(gate_on, seams):
-    seams.open_posed.return_value = [(BASE, POSED), (STACK, POSED)]
+    seams.open_posed.return_value = ([(BASE, POSED), (STACK, POSED)], None)
     out, seen = _chat(seams, "At n == 0 the base case returns 1.")
     assert "returns 1" in out["reply"] and out["leak_redacted"] is False
     seams.record_reveals.assert_called_once_with("u1", ["qh-base"], session_id="s1", source="teach")
@@ -182,14 +211,14 @@ def test_a_teach_turn_is_served_unchanged_and_the_stated_open_items_are_recorded
 def test_an_item_nobody_posed_is_never_scanned(gate_on, seams):
     """A88's scope: open posed items only — the course's other items are not
     read at all (the model never saw them: the precondition, HANDOFF-14)."""
-    seams.open_posed.return_value = []
+    seams.open_posed.return_value = ([], None)
     _chat(seams, "At n == 0 the base case returns 1.")
     seams.record_reveals.assert_not_called()
     seams.zpd.emit_zpd_reveal.assert_not_called()
 
 
 def test_a_clean_teach_turn_records_nothing(gate_on, seams):
-    seams.open_posed.return_value = [(BASE, POSED)]
+    seams.open_posed.return_value = ([(BASE, POSED)], None)
     _chat(seams, "A base case stops the recursion.")
     seams.record_reveals.assert_not_called()
     seams.record_unscanned.assert_not_called()
@@ -208,7 +237,7 @@ def test_unreadable_open_items_serve_the_turn_and_record_an_unscanned_marker(gat
 def test_an_item_turn_is_scanned_against_the_other_open_items_not_its_own(gate_on, seams):
     """The active item's leak is the item turn's own check (redacted before it
     is served); every OTHER open item is scanned in the served text."""
-    seams.open_posed.return_value = [(_routes.ITEM, POSED), (STACK, POSED)]
+    seams.open_posed.return_value = ([(_routes.ITEM, POSED), (STACK, POSED)], None)
     agent_p, usage_p, _ = _routes._feedback_agent("Right. And each frame sits on the call stack.")
     with agent_p, usage_p:
         r = client.post("/api/learn/loop/check/answer", json=_routes._answer(answer="returns 1"))
@@ -219,7 +248,7 @@ def test_an_item_turn_is_scanned_against_the_other_open_items_not_its_own(gate_o
 
 
 def test_a_failed_reveal_write_falls_back_to_loop_state_in_the_same_save(gate_on, seams):
-    seams.open_posed.return_value = [(BASE, POSED)]
+    seams.open_posed.return_value = ([(BASE, POSED)], None)
     seams.record_reveals.side_effect = RuntimeError("down")
     _chat(seams, "At n == 0 the base case returns 1.")
     assert seams.store["doc"]["revealed"] == ["qh-base"]
@@ -252,7 +281,7 @@ def _open():
 def test_the_openers_reveals_are_durable_before_the_session_row_exists(gate_on, seams):
     from routes import learn_loop
 
-    seams.open_posed.return_value = [(BASE, POSED)]
+    seams.open_posed.return_value = ([(BASE, POSED)], None)
     r = _open()
     assert r.status_code == 200
     sid = r.json()["session_id"]
@@ -267,7 +296,7 @@ def test_an_opener_whose_reveals_cannot_be_recorded_is_not_served(gate_on, seams
     pending session) rather than serve a reveal it cannot record."""
     from routes import learn_loop
 
-    seams.open_posed.return_value = [(BASE, POSED)]
+    seams.open_posed.return_value = ([(BASE, POSED)], None)
     seams.record_reveals.side_effect = RuntimeError("down")
     before = set(learn_loop.PENDING_SESSIONS)
     r = _open()
@@ -346,15 +375,19 @@ def test_reveal_floor(revealed, unscanned, expected):
 
 
 def test_reveal_floor_fails_closed_when_a_read_fails():
+    """A93 (minor 8): a failed read is NO credit (RUNG_NO_CREDIT_MIN), not
+    merely assisted — the floor it could not read may have been H4–H6."""
     from routes import learn_loop
 
     with patch("routes.learn_loop.revealed_hashes", side_effect=RuntimeError("down")):
-        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_ASSISTED_MIN
+        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
     with (
         patch("routes.learn_loop.revealed_hashes", return_value=set()),
         patch("routes.learn_loop.unscanned_since", side_effect=RuntimeError("down")),
     ):
-        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_ASSISTED_MIN
+        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
+    with patch("routes.learn_loop.max_help", side_effect=RuntimeError("down")):
+        assert learn_loop._reveal_floor("u1", BASE, POSED) == params.RUNG_NO_CREDIT_MIN
 
 
 def test_a_check_is_floored_from_when_it_was_first_shown(gate_on, seams):
@@ -425,11 +458,15 @@ def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_afte
     ):
         asyncio.run(_drain(learn_loop._stream_turn(turn), stop_after=stop_after))
     turn.touch_served_at.assert_called_once()  # A85: the anchor moves on a disconnect too
-    (call,) = turn.record_relayed.call_args_list
-    relayed = call.args[0]
+    # A93 (M3): scanned as it is relayed (the sentence end) AND at the end
+    relayed = turn.record_relayed.call_args.args[0]
     assert relayed.startswith("At n == 0 ")
     if stop_after is None:
         assert relayed == "At n == 0 it returns 1."
+        assert [c.args[0] for c in turn.record_relayed.call_args_list] == [
+            "At n == 0 it returns 1.",  # mid-stream, before `done`
+            "At n == 0 it returns 1.",  # the unfinished stream's final scan
+        ]
 
 
 def test_a_retract_discards_what_was_relayed_before_it():
@@ -498,12 +535,40 @@ def _relay_turn(learn_loop):
     return turn
 
 
+def _real_relay_turn(learn_loop):
+    turn = _relay_turn(learn_loop)
+    turn._record_served = lambda: learn_loop._LoopTurn._record_served(turn)
+    turn._scan_set = lambda: learn_loop._LoopTurn._scan_set(turn)
+    turn.reveal_overflow, turn.reveal_fallback = None, None
+    return turn
+
+
 def test_record_relayed_scans_the_open_items_and_persists(gate_on, seams):
     from routes import learn_loop
 
-    turn = _relay_turn(learn_loop)
-    seams.open_posed.return_value = [(BASE, POSED)]
-    with patch("routes.learn_loop._persist_reveals") as persist:
+    turn = _real_relay_turn(learn_loop)
+    seams.open_posed.return_value = ([(BASE, POSED)], None)
+    with (
+        patch("routes.learn_loop.record_reveals") as rec,
+        patch("routes.learn_loop._persist_reveals") as persist,
+    ):
+        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
+        learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1. More.")
+    (call,) = rec.call_args_list  # A93: recorded once per turn, however often scanned
+    assert call.args[:2] == ("u1", ["qh-base"]) and call.kwargs["session_id"] == "s1"
+    persist.assert_not_called()  # the primary store worked: no fallback
+    assert seams.open_posed.call_count == 1  # the scan set is read once per turn
+
+
+def test_record_relayed_falls_back_to_loop_state_when_the_store_fails(gate_on, seams):
+    from routes import learn_loop
+
+    turn = _real_relay_turn(learn_loop)
+    seams.open_posed.return_value = ([(BASE, POSED)], None)
+    with (
+        patch("routes.learn_loop.record_reveals", side_effect=RuntimeError("down")),
+        patch("routes.learn_loop._persist_reveals") as persist,
+    ):
         learn_loop._LoopTurn.record_relayed(turn, "At n == 0 it returns 1.")
     (call,) = persist.call_args_list
     assert call.args[:3] == ("u1", "s1", ["qh-base"]) and call.kwargs["source"] == "teach:relayed"

@@ -495,3 +495,11 @@ TEACH_ATTEMPT_CEILING_RAISE = 1
 # anchor is held in memory (a failed turn writes nothing, ADR 0024); at most this
 # many sessions' anchors are held (oldest evicted first)
 LOOP_FAILED_ANCHORS_MAX = 10_000
+# † PKG-14 review fix round (owner decision 1, spec §13 A93): the served-text scan
+# set is every item POSED to the student and not yet graded, newest first, at most
+# this many; an older ungraded item (beyond the window) is covered by an
+# 'unscanned' marker at the window's edge, so it grades as assisted (fail closed)
+LOOP_SCAN_POSED_MAX = 200
+# † A93 (M3): a streamed turn is scanned as it is relayed — at least every this
+# many characters, and at every sentence end — so help is recorded as it is served
+LOOP_SCAN_EVERY_CHARS = 80
