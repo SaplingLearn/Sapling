@@ -600,7 +600,11 @@ class TestLearningLoopEvidencePath:
             apply_mock=MagicMock(return_value=[{"before": 0.5, "after": 0.6}]), tables=tables,
         )
         assert r.status_code == 200, r.text
-        assert tables == LEGACY_SUBMIT_TABLES
+        # owner decision 2 (A94): plus ONE read of today's evidence (the farm guard),
+        # right after the concept node read
+        expected = list(LEGACY_SUBMIT_TABLES)
+        expected.insert(expected.index("graph_nodes") + 1, "node_mastery_events")
+        assert tables == expected
 
     def test_gate_on_submits_one_evidence_per_question(self):
         from services.quiz_identity import question_hash

@@ -109,3 +109,117 @@ def test_submit_reports_p_delta_not_the_legacy_key():
     payload = completed.kwargs["payload"]
     assert LEGACY_DELTA_KEY not in payload
     assert payload["p_delta"] == pytest.approx(0.01)
+
+
+# ── owner decision 2 (spec §13 A94): quiz farming ─────────────────────────────
+
+
+def _farm_tables(counted_today: list[str], *, fail=False, calls=None):
+    """_loop_table's world plus a node_mastery_events read (today's evidence)."""
+    base = _loop_table()
+
+    def factory(name):
+        if name == "node_mastery_events":
+            h = MagicMock()
+
+            def select(columns="*", filters=None, **kw):
+                if calls is not None:
+                    calls.append((columns, dict(filters or {})))
+                if fail:
+                    raise RuntimeError("down")
+                return [{"question_hash": q, "graph_nodes": {"user_id": "user_andres"}} for q in counted_today]
+
+            h.select.side_effect = select
+            return h
+        return base(name)
+
+    return factory
+
+
+def _submit_with(factory, apply_mock):
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz.apply_graph_update", new=apply_mock),
+        patch("routes.quiz.get_quiz_context", return_value={}),
+        patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+        patch("routes.quiz.save_quiz_context"),
+        patch("routes.quiz.events_service.log_event"),
+    ):
+        return client.post(
+            "/api/quiz/submit",
+            json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "A"}, {"question_id": 2, "selected_label": "C"}],
+            },
+        )
+
+
+def test_a_question_already_counted_today_writes_no_second_evidence():
+    from tests.test_quiz_scoring_e import LOOP_QUESTIONS
+
+    counted = LOOP_QUESTIONS[0]["question_hash"]
+    calls: list = []
+    apply_mock = MagicMock(return_value=[{"before": 0.5, "after": 0.45}])
+    r = _submit_with(_farm_tables([counted], calls=calls), apply_mock)
+    assert r.status_code == 200, r.text
+    (ev,) = apply_mock.call_args[0][1]["evidence"]
+    assert ev["question_hash"] != counted  # only the not-yet-counted question
+    (columns, filters), = calls
+    assert "graph_nodes!inner(user_id)" in columns
+    assert filters["graph_nodes.user_id"] == "eq.user_andres"
+    assert filters["event_type"] == "eq.evidence" and filters["created_at"].startswith("gte.")
+
+
+def test_every_question_counted_today_moves_nothing():
+    from tests.test_quiz_scoring_e import LOOP_QUESTIONS
+    from services.quiz_identity import question_hash
+
+    hashes = [
+        LOOP_QUESTIONS[0]["question_hash"],
+        question_hash("What is a function?", ["a loop", "a reusable block"]),
+    ]
+    apply_mock = MagicMock(return_value=[])
+    r = _submit_with(_farm_tables(hashes), apply_mock)
+    assert r.status_code == 200, r.text
+    apply_mock.assert_not_called()
+    body = r.json()
+    assert body["mastery_after"] == body["mastery_before"] and body["p_delta"] == 0
+
+
+def test_an_unreadable_daily_count_fails_closed():
+    apply_mock = MagicMock(return_value=[])
+    r = _submit_with(_farm_tables([], fail=True), apply_mock)
+    assert r.status_code == 200, r.text
+    apply_mock.assert_not_called()
+
+
+def test_hashless_questions_count_once_per_attempt():
+    from routes.quiz import _farm_guard
+
+    evs = [
+        {"question_hash": None, "node_id": "n", "correct": True},
+        {"question_hash": None, "node_id": "n", "correct": True},
+        {"question_hash": "h1", "node_id": "n", "correct": True},
+        {"question_hash": "h1", "node_id": "n", "correct": False},  # the same item twice
+    ]
+    with patch("routes.quiz.table", side_effect=_farm_tables([])):
+        kept = _farm_guard("user_andres", evs)
+    assert [e["question_hash"] for e in kept] == [None, "h1"]
+
+
+def test_students_cannot_ask_for_the_answer_key(monkeypatch):
+    """Owner decision 2: include_answer_key=true is admin-only (403 before any
+    generation); the shipped client always sends false."""
+    import services.auth_guard as ag
+    import routes.quiz as quiz
+
+    monkeypatch.setattr(quiz, "require_admin", ag._real_require_admin)
+    monkeypatch.setattr(ag, "table", lambda name: MagicMock(select=MagicMock(return_value=[])))
+    run = MagicMock(side_effect=AssertionError("generation ran"))
+    with patch("routes.quiz.quiz_agent.run", new=run):
+        r = client.post(
+            "/api/quiz/generate",
+            json={"user_id": "user_andres", "concept_node_id": "node1", "include_answer_key": True},
+        )
+    assert r.status_code == 403
+    run.assert_not_called()

@@ -651,8 +651,10 @@ class TestSubmitQuizMasteryWrite:
         # PKG-14b: graded evidence only — one mc evidence per question.
         payload = args[1]
         assert set(payload) == {"evidence"}
+        # owner decision 2 (A94): SAMPLE_QUESTIONS carry no stem key, so their
+        # hash is None — hashless questions count ONCE per attempt
         assert [(e["node_id"], e["channel"], e["correct"]) for e in payload["evidence"]] == [
-            ("node1", "mc", True), ("node1", "mc", True),
+            ("node1", "mc", True),
         ]
         # The response reports the span the graph wrote.
         data = r.json()

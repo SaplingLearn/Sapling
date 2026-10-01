@@ -22,7 +22,7 @@ from db.connection import pg_quote_value, table
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
-from services.auth_guard import require_self
+from services.auth_guard import require_admin, require_self
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
@@ -1747,6 +1747,11 @@ async def _generate_or_502(
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     require_self(body.user_id, request)
+    if body.include_answer_key:
+        # PKG-14b owner decision 2 (spec §13 A94): the client-side answer key is a
+        # quiz-farming tool — admin only (403 before any generation runs). The
+        # shipped client always sends false (lib/quiz/api.ts).
+        require_admin(request)
     # The concrete trio is CHECK-constrained on quiz_attempts (0025 +
     # the #540 'adaptive' extension); reject drift before we run the
     # agent or write an attempt row.
@@ -2411,6 +2416,47 @@ def _quiz_evidence(concept_node_id: str, questions: list, results: list[dict]) -
     ]
 
 
+def _farm_guard(user_id: str, evidence: list[dict]) -> list[dict]:
+    """Owner decision 2 (spec §13 A94): quiz farming. A question counts at most
+    ONCE per (student, question_hash) per UTC day — today's evidence rows of the
+    student (node_mastery_events joined to the owning graph_nodes) decide; within
+    one attempt a repeated hash counts once, and questions with no hash count
+    ONCE per (student, node, attempt). An unreadable count writes nothing (fail
+    closed: the score stands, mastery does not move)."""
+    hashes = sorted({e["question_hash"] for e in evidence if e.get("question_hash")})
+    counted: set[str] = set()
+    if hashes:
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        try:
+            rows = table("node_mastery_events").select(
+                "question_hash,graph_nodes!inner(user_id)",
+                filters={
+                    "graph_nodes.user_id": f"eq.{user_id}",
+                    "question_hash": f"in.({','.join(hashes)})",
+                    "event_type": "eq.evidence",
+                    "created_at": f"gte.{today.isoformat()}",
+                },
+            ) or []
+        except Exception:
+            logger.warning("quiz: today's evidence count unreadable; the attempt moves nothing", exc_info=True)
+            return []
+        counted = {r["question_hash"] for r in rows if r.get("question_hash")}
+    out: list[dict] = []
+    hashless_seen = False
+    for ev in evidence:
+        qh = ev.get("question_hash")
+        if qh:
+            if qh in counted:
+                continue
+            counted.add(qh)
+        else:
+            if hashless_seen:
+                continue
+            hashless_seen = True
+        out.append(ev)
+    return out
+
+
 def _mastery_span(applied, default_before: float) -> tuple[float, float]:
     """PKG-11: (first before, last after) over the changes the graph reported.
 
@@ -2574,10 +2620,13 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # gate, no flat per-item delta, for every student and under the kill
     # switch alike. The graph runs BKT per question and writes
     # event_type='evidence' rows; this route only reports what it wrote.
-    applied = apply_graph_update(
-        user_id,
-        {"evidence": _quiz_evidence(concept_node_id, questions, results)},
-        course_id=node.get("course_id"),
+    # owner decision 2 (spec §13 A94): at most ONE evidence per (student,
+    # question_hash) per UTC day; hashless questions count once per attempt
+    evidence = _farm_guard(user_id, _quiz_evidence(concept_node_id, questions, results))
+    applied = (
+        apply_graph_update(user_id, {"evidence": evidence}, course_id=node.get("course_id"))
+        if evidence
+        else []
     )
     mastery_before, mastery_score_after = _mastery_span(applied, mastery_before)
     p_delta = mastery_score_after - mastery_before
