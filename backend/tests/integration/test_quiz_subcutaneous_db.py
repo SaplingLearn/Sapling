@@ -304,11 +304,19 @@ def test_a_replayed_submit_is_a_409_and_re_applies_no_mastery(
     # "nothing was ever applied" — so a no-op `apply_graph_update`, or a
     # #553-shaped keyspace miss on the node lookup, would leave mastery at the
     # seeded value through both calls and pass while claiming to guard #129.
-    # 1 correct (+0.03), 2 wrong (-0.02 each) => -0.01.
+    # PKG-14b (spec §11.2): the quiz writes BKT evidence, not a flat delta —
+    # 1 correct then 2 wrong (question order) on channel mc, from the BKT prior
+    # (no learner_state row yet), computed with the library the route uses.
+    from learning import bkt, params
+
+    expected = params.BKT_L0
+    for correct in (True, False, False):
+        expected = bkt.update(expected, "mc", correct)
     after_first = _mastery(db_conn)
-    assert after_first == pytest.approx(SEEDED_MASTERY - 0.01, abs=1e-6), (
-        "the first submit did not apply the mastery delta at all"
+    assert after_first == pytest.approx(expected, abs=1e-6), (
+        "the first submit did not apply the mastery evidence at all"
     )
+    assert after_first != pytest.approx(SEEDED_MASTERY, abs=1e-6)
     events_after_first = _mastery_event_count(db_conn)
     assert events_after_first > 0, "no mastery event was journalled"
 

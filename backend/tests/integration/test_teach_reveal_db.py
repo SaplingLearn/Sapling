@@ -131,12 +131,23 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     )
 
     class _It:
-        def __init__(self, qh, course="c-it"):
+        def __init__(self, qh, course="c-it", item_id=None):
             self.question_hash, self.course_id = qh, course
+            self.id = item_id or f"it-item-{qh}"
 
-    loaded = {"it-item-a": _It("qh-a"), "it-item-r": _It("qh-r"), "it-item-x": _It("qh-x")}
+    loaded = {
+        "it-item-a": _It("qh-a", item_id="it-item-a"),
+        "it-item-r": _It("qh-r", item_id="it-item-r"),
+        "it-item-x": _It("qh-x", item_id="it-item-x"),
+    }
     with (
         patch("routes.learn_loop.get_check_item", side_effect=lambda i: loaded.get(i)),
+        # A101: the scan set batches its item reads (items_by_ids), not one
+        # get_check_item per id; the fixture ids are not real check_items rows
+        patch(
+            "routes.learn_loop.items_by_ids",
+            side_effect=lambda ids: [loaded[i] for i in ids if i in loaded],
+        ),
         patch(
             "routes.learn_loop.items_by_hash", side_effect=lambda hs: [_It(h) for h in hs]
         ) as by_hash,
