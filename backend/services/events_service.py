@@ -66,7 +66,7 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
 learn.answer_refused          audit     reason (grader_directive / role_marker /
-                                        addresses_grader / too_long), format,
+                                        addresses_grader / too_long / disowned_answer), format,
                                         check_item_id, request_id, rubric_items, directives,
                                         role_markers, verdict_tokens, exempted, answer_chars
                                         — a check answer that addressed the grader, or was

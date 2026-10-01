@@ -156,6 +156,10 @@ Refusal = Literal[
     "role_marker",
     "addresses_grader",
     "too_long",
+    # owner decision 2026-09-30 (HANDOFF-a33 (f)): every credited span sits under
+    # the student's own disowning frame ("The following is a common misconception,
+    # and it is false." / "Wrong ideas to avoid:") — `disowned` below
+    "disowned_answer",
 ]
 REFUSALS: tuple[str, ...] = get_args(Refusal)
 
@@ -1582,3 +1586,166 @@ def support_span(
         answer, origin[words[start].start()], origin[words[start + n - 1].end() - 1] + 1
     )
     return answer[lo:hi]
+
+
+# ── disowned answers (owner decision 2026-09-30, HANDOFF-a33 (f)) ──────────────
+# A correct answer the student has disowned — written under "The following is a
+# common misconception, and it is false." or a "Wrong ideas to avoid:" heading,
+# or followed by "That is a common misconception." — is not the student's claim.
+# Every grader layer credited it (5 of 6 live), so the decision is structural:
+# a credited span governed by such a frame makes the answer unclear (refused,
+# nothing recorded, the student asked to state their own answer). Only a frame
+# that POINTS at the text (forward: following/below/these/here or a heading
+# ending in ":"; backward: "that/this/the above is …") governs, and any
+# correcting word between the frame and the span ends it, so an honest
+# refutation ("A common misconception is X. Actually, Y.") is still graded.
+# Linear by construction (no nested quantifiers): the answer is cut once into
+# sentence/line units with their offsets, each unit is classified from its
+# lowercased word list, and the walk from the span's unit stops at a frame, a
+# correcting word, or a paragraph break.
+_DISOWN_WORDS = frozenset(
+    "misconception misconceptions myth myths mistake mistakes error errors "
+    "misunderstanding misunderstandings falsehood falsehoods lie lies false wrong "
+    "incorrect untrue nonsense".split()
+)
+_NOT_TRUE = frozenset({"true", "correct", "right"})
+_POINTERS = frozenset({"following", "below", "next", "these", "follows"})
+_GLOBAL_WORDS = frozenset({"everything", "all", "rest"})
+_GLOBAL_TARGETS = frozenset({"below", "following", "follows"})
+_BACK_SUBJECTS = frozenset({"that", "this", "it", "above"})
+_BACK_VERBS = frozenset({"is", "was", "are", "were", "s"})
+_RESET_WORDS = frozenset({"but", "however", "actually", "instead", "rather", "really", "reality"})
+_RESET_LABELS = ("correct:", "correction:", "answer:", "true:", "the truth is", "correct answer is",
+                 "right answer is", "real answer is", "in fact", "what's true", "whats true")
+_UNIT_WORD = re.compile(r"[a-z']+")
+_UNIT_BREAK = re.compile(r"[.!?]+|\n")
+
+
+def _units(answer: str) -> list[tuple[int, int, bool]]:
+    """(start, end, starts_paragraph) for each sentence/line unit, in order. A
+    paragraph starts after a BLANK line (two line breaks with only whitespace
+    between), never after a single line break."""
+    units, pos, newlines = [], 0, 0
+    for m in _UNIT_BREAK.finditer(answer + "\n"):
+        brk = m.group() == "\n"
+        seg_end = m.start() if brk else m.end()
+        if answer[pos:seg_end].strip():
+            units.append((pos, seg_end, newlines >= 2))
+            newlines = 1 if brk else 0
+        elif brk:
+            newlines += 1
+        pos = m.end()
+    return units
+
+
+def _words(text: str) -> list[str]:
+    return [w.strip("'") for w in _UNIT_WORD.findall(text.lower())]
+
+
+def _disowns(words: list[str]) -> bool:
+    if _DISOWN_WORDS.intersection(words):
+        return True
+    return any(a == "not" and b in _NOT_TRUE for a, b in zip(words, words[1:]))
+
+
+def _resets(text: str, words: list[str]) -> bool:
+    low = text.lower()
+    return bool(_RESET_WORDS.intersection(words)) or any(lbl in low for lbl in _RESET_LABELS)
+
+
+def _global(words: list[str]) -> bool:
+    return any(a in _GLOBAL_WORDS and b in _GLOBAL_TARGETS for a, b in zip(words, words[1:])) or (
+        "rest" in words and "below" in words
+    )
+
+
+def _forward_frame(text: str, words: list[str]) -> bool:
+    """Points ahead AND disowns: "The following is a common misconception, and it is
+    false." / "Everything below is false." / a heading such as "Wrong ideas to avoid:"."""
+    heading = text.rstrip().endswith(":")
+    pointing = bool(_POINTERS.intersection(words)) or "here" in words or _global(words)
+    avoid = any(a == "to" and b == "avoid" for a, b in zip(words, words[1:]))
+    used_to = any(a == "used" and b == "to" for a, b in zip(words, words[1:]))
+    if heading and (_disowns(words) or avoid or used_to):
+        return True
+    return pointing and _disowns(words)
+
+
+_BACK_FILLER = frozenset(
+    "a an the all just actually simply really only common popular widespread "
+    "frequent typical classic total complete big".split()
+)
+
+
+def _backward_frame(words: list[str]) -> bool:
+    """A short sentence that refers back AND disowns: "That is a common
+    misconception.", "The above is false.", "This was all just a myth." — subject,
+    verb and disowning word adjacent (fillers only between), ending within three
+    words. "This is why … is a mistake" and "It is wrong to say …" are not."""
+    w = [x for x in words if x]
+    if w[:2] == ["the", "above"] or w[:2] == ["everything", "above"]:
+        w = ["that", *w[2:]]
+    elif w[:3] == ["all", "of", "that"] or w[:3] == ["all", "of", "this"]:
+        w = ["that", *w[3:]]
+    if len(w) < 3 or w[0] not in {"that", "this"} or w[1] not in _BACK_VERBS:
+        return False
+    k = 2
+    while k < len(w) and w[k] in _BACK_FILLER:
+        k += 1
+    if k >= len(w):
+        return False
+    hit = w[k] in _DISOWN_WORDS or (w[k] == "not" and k + 1 < len(w) and w[k + 1] in _NOT_TRUE)
+    rest = len(w) - (k + (2 if w[k] == "not" else 1))
+    return hit and rest <= 3
+
+
+def disowned(answer: str, span: str) -> bool:
+    """True when `span` (the answer's own words behind a credited rubric item, cut
+    from `answer` as written) sits under the student's own disowning frame — see
+    the block comment above. A span that cannot be located is not judged (it was
+    cut from the answer, so this does not happen). Linear; never raises."""
+    span = (span or "").strip()
+    if not span or not answer:
+        return False
+    start = answer.find(span)
+    if start < 0:
+        start = answer.casefold().find(span.casefold())
+    if start < 0:
+        return False
+    end = start + len(span)
+    lead = answer[start : start + 40]
+    if _resets(lead, _words(lead)[:3]):
+        return False
+    units = _units(answer)
+    first = next((k for k, (a, b, _) in enumerate(units) if a <= start < max(b, a + 1)), None)
+    last = next((k for k, (a, b, _) in enumerate(units) if a < end <= b), None)
+    if first is None:
+        return False
+    if last is None:
+        last = first
+    # the span's own unit, before the span: "Wrong ideas to avoid: <span>"
+    a0 = units[first][0]
+    before = answer[a0:start]
+    if before.strip():
+        bw = _words(before)
+        if _resets(before, bw):
+            return False
+        if _forward_frame(before, bw):
+            return True
+    # walk back to the nearest governing frame (each unit read once: linear)
+    texts = [answer[a:b] for a, b, _ in units]
+    words = [_words(t) for t in texts]
+    crossed_paragraph = units[first][2]
+    for k in range(first - 1, -1, -1):
+        w = words[k]
+        if _forward_frame(texts[k], w):
+            return not crossed_paragraph or _global(w)
+        if _resets(texts[k], w):
+            break
+        crossed_paragraph = crossed_paragraph or units[k][2]
+    # the unit right after the span: "That is a common misconception."
+    if last + 1 < len(units):
+        text, w = texts[last + 1], words[last + 1]
+        if not units[last + 1][2] and _backward_frame(w) and not _resets(text, w):
+            return True
+    return False

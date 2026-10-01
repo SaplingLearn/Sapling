@@ -1516,7 +1516,8 @@ IDENTITY_LITERALS = frozenset({0, 1})
 # the words a clause in another language needs (_FOREIGN_CLAUSE_WORDS, A33).
 NON_POLICY_INTS = {
     "agents/grader.py": frozenset({2, 12}),
-    "learning/answer_guard.py": frozenset({200, 4, 6}),
+    # 2/3/5/9/40: answer_guard.disowned()'s structural word/character windows
+    "learning/answer_guard.py": frozenset({200, 4, 6, 2, 3, 5, 9, 40}),
 }
 
 

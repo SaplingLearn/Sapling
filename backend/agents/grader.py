@@ -1022,6 +1022,30 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             len(credited),
         )
     results = {rid: ok and rid in quotes for rid, ok in results.items()}
+    # Owner decision 2026-09-30 (HANDOFF-a33 (f)): a credited span the student's own
+    # frame disowns ("The following is a common misconception, and it is false." /
+    # "Wrong ideas to avoid:") is not their claim. Every model layer credited it,
+    # so code decides, before the span and context checks run: when EVERY credited
+    # span is disowned the answer is refused — nothing recorded, the student asked
+    # to state their own answer; otherwise only the disowned items lose credit.
+    disowned = {rid for rid in quotes if answer_guard.disowned(student_answer, quotes[rid])}
+    if disowned and disowned == set(quotes):
+        return _refuse(
+            item,
+            reason="disowned_answer",
+            format=format,
+            student_answer=student_answer,
+            screen=screen,
+            deps=deps,
+        )
+    if disowned:
+        logger.warning(
+            "grader credit for item %s withheld on %d rubric item(s): the answer disowns it",
+            item.id,
+            len(disowned),
+        )
+        quotes = {rid: q for rid, q in quotes.items() if rid not in disowned}
+        results = {rid: ok and rid in quotes for rid, ok in results.items()}
     if quotes:
         span_labels = {rid: labels[rid] for rid in quotes}
         try:
