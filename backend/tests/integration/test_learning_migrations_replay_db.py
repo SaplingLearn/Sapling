@@ -36,6 +36,7 @@ PKG14_MIGRATIONS = (
     "learning_reveals",
     "learning_llm_usage_session_id",
     "learning_help_ledger",
+    "learning_rederive_mastery_tier",
 )
 
 
@@ -114,3 +115,32 @@ def test_llm_usage_session_id_round_trips_through_the_app_writer(db_conn):
         ("check_items", None),
         ("loop_tutor", "it-session-1"),
     ]
+
+
+def test_the_tier_rederive_migration_moves_old_cut_tiers_to_tier_for(db_conn):
+    """A95 (regression M2): a node stored under the retired cuts (0.8 → 'mastered')
+    reads tier_for's tier after the migration; a second run changes nothing. In a
+    rolled-back transaction, on rows of the seeded student."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from learning.bkt import tier_for
+
+    url = (os.getenv("SUPABASE_DB_URL") or "").strip()
+    _require_local_db_url(url)
+    sql = _file("learning_rederive_mastery_tier").read_text(encoding="utf-8")
+    with psycopg.connect(url, row_factory=dict_row) as conn:
+        try:
+            nid = f"it-tier-{uuid.uuid4().hex[:10]}"
+            conn.execute(
+                "INSERT INTO graph_nodes (id, user_id, concept_name, mastery_score, mastery_tier) "
+                "VALUES (%s, 'rich-user-active', %s, 0.8, 'mastered')",
+                (nid, nid),
+            )
+            conn.execute(sql)
+            row = conn.execute("SELECT mastery_tier FROM graph_nodes WHERE id = %s", (nid,)).fetchone()
+            assert row["mastery_tier"] == tier_for(0.8) == "learning"
+            cur = conn.execute(sql)
+            assert cur.rowcount == 0  # idempotent
+        finally:
+            conn.rollback()
