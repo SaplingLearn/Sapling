@@ -443,6 +443,7 @@ class TestOrchestratorLimitsWired:
             patch("routes.learn._build_pro_model_settings", return_value={}),
             patch("routes.learn.save_message", side_effect=mock_save_message),
             patch("routes.learn._consume_pending"),
+            patch("routes.learn._require_session_owner"),
             patch("routes.learn._load_message_history", return_value=[]),
             patch("routes.learn.table") as mock_table,
             patch("routes.learn.require_self"),

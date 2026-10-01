@@ -27,15 +27,21 @@ from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
+from services.tutor_sessions import (
+    PENDING_SESSIONS,
+    SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
+    require_session_owner,
+    session_owned_by,
+)
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Lazy sessions: start-session does not write to DB until the user sends their first chat message.
-# Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
-PENDING_SESSIONS: dict[str, dict] = {}
+# Lazy sessions: start-session does not write to DB until the user sends their
+# first chat message. PENDING_SESSIONS (session_id -> pending payload) lives in
+# services/tutor_sessions.py so other routes can share the ownership rule.
 
 MODE_DISPLAY_NAMES = {
     "socratic": "Socratic (question-based)",
@@ -412,14 +418,33 @@ def _elapsed_minutes(started_at_iso: str) -> int:
         return 0
 
 
+def _require_session_owner(session_id: str, user_id: str | None) -> None:
+    """404 unless ``session_id`` is ``user_id``'s tutor session (pending or
+    materialised). Every route that takes a session id calls this before any
+    history load, message write, model call or event: ``require_self`` only
+    proves the caller IS ``user_id``, not that the session is theirs. The rule
+    lives in services/tutor_sessions.py so non-tutor routes share it."""
+    require_session_owner(session_id, user_id)
+
+
 def _consume_pending(session_id: str, user_id: str) -> None:
-    """If session was started lazily, persist session row + first assistant message before user/chat."""
-    if session_id not in PENDING_SESSIONS:
+    """If session was started lazily, persist session row + first assistant message before user/chat.
+
+    Callers run _require_session_owner first; the user check here is a
+    second line of defence and runs BEFORE the pop, so a mismatched caller
+    can never destroy the owner's pending session.
+    """
+    pending = PENDING_SESSIONS.get(session_id)
+    if pending is None:
         return
-    pending = PENDING_SESSIONS.pop(session_id)
     if pending["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
-    
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
+    # Sync routes run in a threadpool: two of the owner's requests can both read
+    # the payload above. Only the one whose pop returns it materialises the row;
+    # the other finds it already done (no duplicate-key insert).
+    if PENDING_SESSIONS.pop(session_id, None) is None:
+        return
+
     # Sessions key on the offering (0025). The pending payload carries the
     # offering id (resolved at start-session) alongside the abstract course id.
     session_data = {
@@ -917,6 +942,7 @@ async def _chat_turn_json(
 @router.post("/chat")
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
+    _require_session_owner(body.session_id, body.user_id)
     _consume_pending(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _chat_turn_json(body, request), what="chat agent"
@@ -934,6 +960,7 @@ async def chat_stream(body: ChatBody, request: Request):
     (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
     """
     require_self(body.user_id, request)
+    _require_session_owner(body.session_id, body.user_id)
     _consume_pending(body.session_id, body.user_id)
 
     request_id = (
@@ -1137,10 +1164,8 @@ def end_session(body: EndSessionBody, request: Request):
         require_self(body.user_id, request)
     else:
         body.user_id = get_session_user_id(request)
+    _require_session_owner(body.session_id, body.user_id)
     if body.session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[body.session_id]
-        if body.user_id and pending["user_id"] != body.user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
         PENDING_SESSIONS.pop(body.session_id, None)
         empty = {
             "concepts_covered": [],
@@ -1156,7 +1181,7 @@ def end_session(body: EndSessionBody, request: Request):
         filters={"id": f"eq.{body.session_id}"},
     )
     if not session_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
     session = session_rows[0]
 
     table("sessions").update(
@@ -1293,20 +1318,10 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
     if not topic or len(topic) > 120:
         raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
 
+    _require_session_owner(session_id, body.user_id)
     if session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[session_id]
-        if pending["user_id"] != body.user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
-        pending["topic"] = topic
+        PENDING_SESSIONS[session_id]["topic"] = topic
         return {"updated": True, "session": {"id": session_id, "topic": topic}}
-
-    owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
-    if not owner_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if owner_rows[0].get("user_id") != body.user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
 
     table("sessions").update(
         {"topic": topic},
@@ -1321,18 +1336,14 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
         require_self(user_id, request)
     else:
         user_id = get_session_user_id(request)
+    # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
+    # no-op 200 — nothing is deleted, and the answer never says whether the id
+    # exists. A second delete (another tab, a double click) still succeeds.
+    if not session_owned_by(session_id, user_id):
+        return {"deleted": True}
     if session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[session_id]
-        if pending["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
         PENDING_SESSIONS.pop(session_id, None)
         return {"deleted": True}
-    # Verify the session belongs to the authenticated user before deleting
-    owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
-    if owner_rows and owner_rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
@@ -1341,10 +1352,9 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
 @router.get("/sessions/{session_id}/resume")
 def resume_session(session_id: str, request: Request):
     user_id = get_session_user_id(request)
+    _require_session_owner(session_id, user_id)
     if session_id in PENDING_SESSIONS:
         p = PENDING_SESSIONS[session_id]
-        if p["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
         now = datetime.now(timezone.utc).isoformat()
         return {
             "session": {
@@ -1371,9 +1381,7 @@ def resume_session(session_id: str, request: Request):
         filters={"id": f"eq.{session_id}"},
     )
     if not session_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session_rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
     # Expose the abstract course id (derived from the offering) for the
     # frontend, alongside the stored offering id.
@@ -1474,6 +1482,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 @router.post("/action")
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
+    _require_session_owner(body.session_id, body.user_id)
     _ensure_session_ready(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"
@@ -1483,6 +1492,7 @@ async def action(body: ActionBody, request: Request):
 @router.post("/mode-switch")
 def mode_switch(body: ModeSwitchBody, request: Request):
     require_self(body.user_id, request)
+    _require_session_owner(body.session_id, body.user_id)
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     session_rows = table("sessions").select(

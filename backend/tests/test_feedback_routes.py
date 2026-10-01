@@ -78,7 +78,12 @@ class TestSubmitFeedback:
     def test_insert_payload_round_trips_body_fields(self):
         from services.encryption import decrypt
         recorded: list = []
-        with patch("routes.feedback.table", side_effect=_factory(recorded)):
+        # The caller owns sess_42, so the link is kept (an unowned id is
+        # dropped — see test_session_id_ownership_other_routes.py).
+        owned = MagicMock()
+        owned.select.return_value = [{"user_id": "user_andres"}]
+        with patch("routes.feedback.table", side_effect=_factory(recorded)), \
+             patch("services.tutor_sessions.table", return_value=owned):
             client.post(
                 "/api/feedback",
                 json={
