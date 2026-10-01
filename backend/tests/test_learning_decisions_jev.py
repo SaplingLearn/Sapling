@@ -472,3 +472,105 @@ def test_every_shadowable_decision_has_a_jev_request(seam):
         assert questions and all(isinstance(q, _jev.Question) for q in questions.values())
         assert all(isinstance(v, str) for v in payload.values())
     assert seam.select_backend("numeric_gate").shadow is False
+
+
+# ── §3.6 live gates from a shadow log (tests/evals/decisions.py) ─────────────
+
+
+@pytest.fixture(scope="module")
+def ev():
+    import importlib.util
+    import pathlib
+    import sys
+
+    saved = list(sys.path)
+    try:
+        path = pathlib.Path(__file__).resolve().parent / "evals" / "decisions.py"
+        spec = importlib.util.spec_from_file_location("decisions_eval_jev", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path[:] = saved
+    return mod
+
+
+def _shadow_row(i, *, decision="judge_leak", agree=True, ms=120, code=None, tokens=300, day=0):
+    from datetime import datetime, timedelta, timezone
+
+    at = datetime(2026, 10, 1, tzinfo=timezone.utc) + timedelta(days=day, minutes=i)
+    return {
+        "event_type": "decision.shadow",
+        "created_at": at.isoformat(),
+        "payload": {
+            "decision": decision,
+            "request_id": f"rq{i}",
+            "primary_value": "no",
+            "shadow_value": None if code else ("no" if agree else "yes"),
+            "primary_confidence": 0.8,
+            "shadow_confidence": 0.0 if code else 0.9,
+            "agreement": bool(agree and not code),
+            "shadow_latency_ms": ms,
+            "shadow_input_tokens": 0 if code else tokens,
+            "error_code": code,
+        },
+    }
+
+
+def test_shadow_stats_compute_every_live_gate(ev):
+    rows = [_shadow_row(i, day=i % 8, agree=i % 20 != 0, ms=100 + i % 50) for i in range(1000)]
+    rows += [_shadow_row(1000 + i, code="timeout", ms=800) for i in range(3)]
+    rows += [_shadow_row(2000, code="oversize", ms=0), _shadow_row(2001, code="circuit_open", ms=0)]
+    rows.append({"event_type": "decision.made", "payload": {"decision": "judge_leak"}})  # ignored
+    usage = [
+        {"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.00004}
+        for i in range(1000)
+    ] + [{"request_id": "rq1", "task": "decision_shadow", "provider": "typesafe", "cost_usd": 1.0}]
+    [(name, s)] = ev.shadow_stats(rows, usage_rows=usage).items()
+    assert name == "judge_leak" and s.n == 1005 and s.days == 7
+    assert s.agreement == pytest.approx(950 / 1000)  # over the answered rows only
+    assert s.error_rate == pytest.approx(4 / 1005)  # 3 timeouts + the open circuit; oversize is routing
+    assert s.p95_ms == pytest.approx(147.0)  # no-call rows (oversize, circuit_open) excluded
+    assert s.cost_per_decision_usd == pytest.approx(1000 * 300 / 1005 * 0.000042 / 1000)
+    assert s.gemini_cost_per_decision_usd == pytest.approx(1000 * 0.00004 / 1005)
+    assert ev.live_gates(s) == {
+        "DECISION_SHADOW_MIN_DAYS": True,
+        "DECISION_SHADOW_MIN_N": True,
+        "DECISION_SHADOW_MIN_AGREEMENT": True,
+        "DECISION_P95_MS": True,
+        "DECISION_MAX_ERROR_RATE": True,
+        "cost_not_worse": True,
+    }
+
+
+def test_shadow_gates_fail_closed(ev):
+    short = [_shadow_row(i, ms=900, agree=i % 2 == 0) for i in range(10)]
+    [s] = ev.shadow_stats(short).values()  # no usage rows: the cost gate cannot pass
+    gates = ev.live_gates(s)
+    assert gates["DECISION_SHADOW_MIN_DAYS"] is False and gates["DECISION_SHADOW_MIN_N"] is False
+    assert gates["DECISION_SHADOW_MIN_AGREEMENT"] is False and gates["DECISION_P95_MS"] is False
+    assert gates["cost_not_worse"] is False
+
+
+def test_shadow_report_cli_reads_jsonl_and_exits_on_the_gates(ev, tmp_path, capsys):
+    log = tmp_path / "shadow.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in [_shadow_row(i) for i in range(5)]))
+    assert ev._shadow_cli(["--shadow-log", str(log)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["judge_leak"]["stats"]["n"] == 5
+    assert set(report["judge_leak"]["gates"]) == set(ev.LIVE_GATES)
+
+
+def test_the_shadow_log_carries_no_text_so_the_report_needs_none(ev):
+    row = _shadow_row(0)["payload"]
+    assert set(row) == {
+        "decision",
+        "request_id",
+        "primary_value",
+        "shadow_value",
+        "primary_confidence",
+        "shadow_confidence",
+        "agreement",
+        "shadow_latency_ms",
+        "shadow_input_tokens",
+        "error_code",
+    }
