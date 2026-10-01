@@ -48,6 +48,12 @@ EventLevel = Literal["soft", "hard", "grader_cap"]
 BUDGET_CAPPED_EVENT = "ai.budget_capped"  # spec §6
 BUDGET_REACHED_DETAIL = "ai budget reached"  # spec §3.5 / A20 429 body
 GRADE_TASKS = frozenset({"grader", "grader_second", "decision"})  # spec §3.5 STUDENT_DAILY_GRADES
+# PKG-15 (spec §13 A98 (i), review M2): Jev rows that do not stand in for a Gemini run — a
+# shadow, a billed served-Jev attempt that fell back, a served Jev run where the grader's
+# prior would have answered for free — count in $ ONLY: never toward the per-minute rate
+# limit, the daily token cap or STUDENT_DAILY_GRADES, so shadow_jev cannot 429 the served
+# path and a Jev decision never costs the student more than its Gemini twin.
+UNCOUNTED_TASKS = frozenset({"decision_shadow", "decision_jev_extra"})
 RATE_LIMIT_WINDOW_S = 60  # spec §3.5: LEARN_RATE_LIMIT_PER_MIN counts rows in the last 60 s
 _REQUEST_CACHE_MAX = 512  # entries; a memory bound, not a policy threshold
 # † How long one cached summary may serve its request key. The key is server-minted per request
@@ -292,11 +298,13 @@ def _summarise(rows: list[dict], now: datetime) -> _Usage:
             continue
         cost = _exact(row.get("cost_usd"))
         month_usd += cost
+        counted = row.get("task") not in UNCOUNTED_TASKS  # $ always; the rest only if counted
         if ts >= day0:
             day_usd += cost
-            day_tokens += int(row.get("total_tokens") or 0)
-            day_grades += row.get("task") in GRADE_TASKS
-        if ts >= minute0:
+            if counted:
+                day_tokens += int(row.get("total_tokens") or 0)
+                day_grades += row.get("task") in GRADE_TASKS
+        if ts >= minute0 and counted:
             minute.append(ts)
     return _Usage(month_usd, day_usd, day_tokens, day_grades, len(minute), tuple(sorted(minute)))
 

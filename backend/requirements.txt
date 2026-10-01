@@ -63,6 +63,11 @@ ruff==0.15.18
 # lanes stayed green. Bump this ceiling only together with a chat_stream.py
 # migration and a fresh requirements.lock.
 pydantic-ai-slim[google]>=0.0.20,<2
+
+# Jev decision backend (learning loop PKG-15; spec §3.6, §13 A24, ADR 0027).
+# EXACT pin (invariant 24): Jev's confidence thresholds are tuned against one SDK
+# + one model (jev-1.13.0). Imported ONLY by agents/_jev.py.
+typesafe-sdk==0.7.2
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 

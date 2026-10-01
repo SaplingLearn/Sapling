@@ -8,6 +8,9 @@
   routing), ADR 0019 (the `SAPLING_MODEL_MODE` function-model seam)
 - Supersedes: none. Amends ADR 0024's "there is no other sanctioned LLM seam" for
   exactly one future backend (`agents/_jev.py`, PKG-15).
+- Amended by: ADR 0031 (PKG-15, 2026-10-01). The Jev backend is built: `jev` serves
+  three decisions and never grading (`jev_unsupported`), and `shadow_jev` runs in the
+  background. The "Until PKG-15" clauses below are history.
 
 ## Context
 

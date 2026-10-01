@@ -949,7 +949,10 @@ def test_inv_28_symmetric_missingness(monkeypatch):
 
 
 # ── PKG-05b: decision seam (spec §8.24–25, §13 A24) ─────────────────────────
-TYPESAFE_IMPORT = re.compile(r"^\s*(?:import|from)\s+typesafe\b", re.M)
+# PKG-15: the SDK's import name is `typesafe_sdk`; PKG-05b's `typesafe\b` never matched
+# it (no \b between "e" and "_"), so the scan is `typesafe\w*` (+ an AST scan, below)
+TYPESAFE_IMPORT = re.compile(r"^\s*(?:import|from)\s+typesafe\w*", re.M)
+JEV_CLIENT_CLASSES = {"AsyncTypeSafeClient", "TypeSafeClient"}
 SYSTEM_ONE_IMPORT = re.compile(r"^\s*(?:import|from)\s+system_one", re.M)
 IDENTIFIER_FIELDS = {"user_id", "email", "name", "first_name", "last_name"}
 A24_STATES = {
@@ -973,22 +976,278 @@ def _app_python_files():
             yield from sorted(top.rglob("*.py"))
 
 
+def _typesafe_imports(source: str) -> list[int]:
+    """Lines importing typesafe in any spelling: `import`/`from` statements (any
+    `typesafe*` module, incl. typesafe_sdk) and importlib.import_module / __import__
+    with a constant `typesafe*` name."""
+    import ast
+
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            lines += [node.lineno for a in node.names if a.name.startswith("typesafe")]
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("typesafe"):
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Call):
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            arg = node.args[0] if node.args else None
+            if (
+                name in {"import_module", "__import__"}
+                and isinstance(arg, ast.Constant)
+                and str(arg.value).startswith("typesafe")
+            ):
+                lines.append(node.lineno)
+    return sorted(set(lines))
+
+
+_CLIENT_NAME = re.compile(r"(Async)?TypeSafeClient")
+_DYNAMIC_LOOKUPS = {"getattr", "globals", "vars", "__import__", "import_module"}
+
+
+def _annotation_ids(tree) -> set[int]:
+    """Nodes inside a type annotation: naming the class there can never build one."""
+    import ast
+
+    ids: set[int] = set()
+    for n in ast.walk(tree):
+        ann = []
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            ann = [n.returns] + [a.annotation for a in ast.walk(n.args) if isinstance(a, ast.arg)]
+        elif isinstance(n, ast.AnnAssign):
+            ann = [n.annotation]
+        ids |= {id(x) for a in ann if a is not None for x in ast.walk(a)}
+    return ids
+
+
+def _client_class_refs(tree) -> list:
+    """Every node naming a Jev client class: a Name, an Attribute, an import alias, or
+    a string constant spelling it (a getattr / string-built lookup)."""
+    import ast
+
+    skip = _annotation_ids(tree)
+    refs = []
+    for n in ast.walk(tree):
+        if id(n) in skip:
+            continue
+        if (
+            (isinstance(n, ast.Name) and n.id in JEV_CLIENT_CLASSES)
+            or (isinstance(n, ast.Attribute) and n.attr in JEV_CLIENT_CLASSES)
+            or (isinstance(n, ast.alias) and (n.name in JEV_CLIENT_CLASSES or n.asname in JEV_CLIENT_CLASSES))
+            or (
+                isinstance(n, ast.Constant)
+                and isinstance(n.value, str)
+                and _CLIENT_NAME.fullmatch(n.value)
+            )
+        ):
+            refs.append(n)
+    return refs
+
+
+def _client_refs_outside_jev(source: str) -> list[int]:
+    """Lines of an app file (not agents/_jev.py) that name a Jev client class at all —
+    `from agents._jev import AsyncTypeSafeClient`, `_jev.AsyncTypeSafeClient(...)`,
+    `getattr(m, "TypeSafeClient")` alike."""
+    import ast
+
+    return sorted({getattr(n, "lineno", 0) for n in _client_class_refs(ast.parse(source))})
+
+
+def _enabled_is_the_guard(ret) -> bool:
+    """Structurally `model_mode() == "real" and [bool(]<...>.JEV_ENABLED[)]` — exactly two
+    conjuncts, so `(... or True)`, `not ...JEV_ENABLED` or an extra disjunct all fail."""
+    import ast
+
+    if not (isinstance(ret, ast.BoolOp) and isinstance(ret.op, ast.And) and len(ret.values) == 2):
+        return False
+    mode, flag = ret.values
+    mode_ok = (
+        isinstance(mode, ast.Compare)
+        and isinstance(mode.left, ast.Call)
+        and getattr(mode.left.func, "id", None) == "model_mode"
+        and not mode.left.args
+        and len(mode.ops) == 1
+        and isinstance(mode.ops[0], ast.Eq)
+        and isinstance(mode.comparators[0], ast.Constant)
+        and mode.comparators[0].value == "real"
+    )
+    if isinstance(flag, ast.Call) and getattr(flag.func, "id", None) == "bool" and len(flag.args) == 1:
+        flag = flag.args[0]
+    flag_ok = isinstance(flag, ast.Attribute) and flag.attr == "JEV_ENABLED"
+    return mode_ok and flag_ok
+
+
+def _jev_build_guard_violations(source: str) -> list[str]:
+    """The PKG-15 half of invariant 24, on agents/_jev.py's source:
+    - every reference to a Jev client class (Name, Attribute, alias, string) is inside
+      `_client`, and `_client` has one;
+    - `_client`'s first statement (after its docstring) is `if not enabled(): raise ...`;
+    - `enabled()` has one return, structurally `model_mode() == "real" and JEV_ENABLED`;
+    - no dynamic lookup at all (getattr / globals / vars / __import__ / import_module),
+      so a client class cannot be fetched by a computed name."""
+    import ast
+
+    tree = ast.parse(source)
+    out: list[str] = []
+    funcs = {
+        n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    client = funcs.get("_client")
+    inside = {id(n) for n in ast.walk(client)} if client else set()
+    refs = _client_class_refs(tree)
+    for n in refs:
+        if id(n) not in inside:
+            out.append(f"client class referenced outside _client() at line {getattr(n, 'lineno', '?')}")
+    if not any(id(n) in inside for n in refs):
+        out.append("_client() builds no client")
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            fn = n.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            if name in _DYNAMIC_LOOKUPS:
+                out.append(f"dynamic lookup {name}() at line {n.lineno}")
+        if isinstance(n, ast.Attribute) and n.attr == "__dict__":
+            out.append(f"__dict__ access at line {n.lineno}")
+    body = list(client.body) if client else []
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]  # the docstring
+    first = body[0] if body else None
+    guarded = (
+        isinstance(first, ast.If)
+        and isinstance(first.test, ast.UnaryOp)
+        and isinstance(first.test.op, ast.Not)
+        and isinstance(first.test.operand, ast.Call)
+        and getattr(first.test.operand.func, "id", None) == "enabled"
+        and not first.orelse
+        and isinstance(first.body[0], ast.Raise)
+    )
+    if not guarded:
+        out.append("_client() does not start with `if not enabled(): raise`")
+    en = funcs.get("enabled")
+    rets = [n.value for n in ast.walk(en) if isinstance(n, ast.Return)] if en else []
+    if len(rets) != 1 or not _enabled_is_the_guard(rets[0]):
+        src = "; ".join(ast.unparse(r) for r in rets if r is not None)
+        out.append(f"enabled() is not `model_mode() == 'real' and JEV_ENABLED`: {src!r}")
+    return out
+
+
 def test_inv_24_typesafe_only_in_jev():
-    """typesafe only in agents/_jev.py (PKG-15), pinned exactly; no system-one adapter in app code (§12)."""
-    jev, typesafe, system_one = BACKEND / "agents" / "_jev.py", [], []
+    """typesafe only in agents/_jev.py (PKG-15), pinned exactly; no system-one adapter in
+    app code (§12); no other app file names a Jev client class; the Jev client built
+    only under model_mode() == "real" and JEV_ENABLED."""
+    jev, typesafe, system_one, client_refs = BACKEND / "agents" / "_jev.py", [], [], []
     for path in _app_python_files():
         text = path.read_text(encoding="utf-8", errors="replace")
         rel = path.relative_to(BACKEND).as_posix()
-        if path != jev and TYPESAFE_IMPORT.search(text):
+        if path != jev and (TYPESAFE_IMPORT.search(text) or _typesafe_imports(text)):
             typesafe.append(rel)
+        if path != jev and _client_refs_outside_jev(text):
+            client_refs.append(rel)
         if not rel.startswith("scripts/") and SYSTEM_ONE_IMPORT.search(text):
             system_one.append(rel)
     assert not typesafe, f"typesafe imported outside agents/_jev.py: {typesafe}"
+    assert not client_refs, f"a Jev client class named outside agents/_jev.py: {client_refs}"
     assert not system_one, f"system-one adapter in application code: {system_one}"
+    pins = []
     for line in (BACKEND / "requirements.txt").read_text().splitlines():
         spec = line.split("#")[0].strip()
         if spec.lower().startswith("typesafe"):
             assert re.fullmatch(r"typesafe-sdk==\d+\.\d+\.\d+", spec), f"not an exact pin: {line}"
+            pins.append(spec)
+    if jev.exists():  # PKG-15: no longer vacuous
+        from services import decisions
+
+        assert pins == [decisions.JEV_SDK_VERSION], pins
+        lock = (BACKEND / "requirements.lock").read_text()
+        assert re.search(rf"^{re.escape(decisions.JEV_SDK_VERSION)} \\$", lock, re.M), "not locked"
+        source = jev.read_text(encoding="utf-8")
+        assert _typesafe_imports(source), "agents/_jev.py imports no typesafe"
+        assert _jev_build_guard_violations(source) == []
+
+
+def test_inv_24_scan_self_test():
+    assert _typesafe_imports("import typesafe_sdk\n") == [1]
+    assert _typesafe_imports("from typesafe_sdk._core import x\n") == [1]
+    assert _typesafe_imports("import os, typesafe\n") == [1]
+    assert _typesafe_imports("import importlib\nm = importlib.import_module('typesafe_sdk')\n") == [2]
+    assert _typesafe_imports("m = __import__('typesafe_sdk')\n") == [1]
+    assert _typesafe_imports("# import typesafe_sdk\nx = 'typesafe-sdk==0.7.2'\n") == []
+    assert TYPESAFE_IMPORT.search("from typesafe_sdk import Choice")
+    # review R1 (probe_inv24.py): another module re-exporting / reaching the class
+    assert _client_refs_outside_jev(
+        "from agents._jev import AsyncTypeSafeClient\nc = AsyncTypeSafeClient(api_key='k')\n"
+    ) == [1, 2]
+    assert _client_refs_outside_jev("from agents import _jev\nc = _jev.AsyncTypeSafeClient(api_key='k')\n") == [2]
+    assert _client_refs_outside_jev("c = getattr(m, 'TypeSafeClient')()\n") == [1]
+    assert _client_refs_outside_jev("x = 'a TypeSafeClient mention in prose'\n") == []
+    good = (
+        "def enabled():\n    return model_mode() == 'real' and bool(_settings().JEV_ENABLED)\n"
+        "def _client():\n    'doc'\n    if not enabled():\n        raise JevUnavailable('x')\n"
+        "    return sdk.AsyncTypeSafeClient(api_key=k)\n"
+    )
+    assert _jev_build_guard_violations(good) == []
+    annotated = good + "_cache: dict[int, AsyncTypeSafeClient] = {}\ndef g() -> AsyncTypeSafeClient: ...\n"
+    assert _jev_build_guard_violations(annotated) == []
+    unguarded = good.replace("    if not enabled():\n        raise JevUnavailable('x')\n", "")
+    assert any("does not start" in v for v in _jev_build_guard_violations(unguarded))
+    outside = good + "def other():\n    return AsyncTypeSafeClient()\n"
+    assert any("outside _client" in v for v in _jev_build_guard_violations(outside))
+    aliased = good + "Factory = AsyncTypeSafeClient\n"
+    assert any("outside _client" in v for v in _jev_build_guard_violations(aliased))
+    via_module = good + "def other():\n    return typesafe_sdk.TypeSafeClient()\n"
+    assert any("outside _client" in v for v in _jev_build_guard_violations(via_module))
+    computed = good + (
+        "def other():\n    import typesafe_sdk\n"
+        "    return getattr(typesafe_sdk, 'Async' + 'TypeSafeClient')(api_key='k')\n"
+    )
+    found = _jev_build_guard_violations(computed)
+    assert any("getattr" in v for v in found) and any("outside _client" in v for v in found)
+    assert any("globals" in v for v in _jev_build_guard_violations(good + "g = globals()\n"))
+    for weak in (
+        good.replace("model_mode() == 'real' and ", ""),
+        good.replace(" and bool(_settings().JEV_ENABLED)", " or True"),
+        good.replace("bool(_settings().JEV_ENABLED)", "(bool(_settings().JEV_ENABLED) or True)"),
+        good.replace("bool(_settings().JEV_ENABLED)", "not _settings().JEV_ENABLED"),
+        good.replace("== 'real'", "!= 'real'"),
+        good.replace("and bool(_settings().JEV_ENABLED)", "and bool(_settings().JEV_ENABLED) and True"),
+    ):
+        assert any("enabled()" in v for v in _jev_build_guard_violations(weak)), weak
+    # the reviewer's cases run against the real agents/_jev.py
+    real = (BACKEND / "agents" / "_jev.py").read_text(encoding="utf-8")
+    line = 'return model_mode() == "real" and bool(_settings().JEV_ENABLED)'
+    assert line in real
+    for weak_line in (
+        'return model_mode() == "real" and (bool(_settings().JEV_ENABLED) or True)',
+        'return model_mode() == "real" and not _settings().JEV_ENABLED',
+    ):
+        assert any("enabled()" in v for v in _jev_build_guard_violations(real.replace(line, weak_line)))
+    evasion = real + (
+        "\ndef other():\n    import typesafe_sdk\n"
+        "    return getattr(typesafe_sdk, 'Async' + 'TypeSafeClient')(api_key='k')\n"
+    )
+    assert _jev_build_guard_violations(evasion)
+
+
+def test_inv_24_behaviour_no_client_without_the_guard(monkeypatch):
+    """The guard, run: JEV_ENABLED off, or any mode but real → no client, no call."""
+    import asyncio
+
+    from agents import _jev
+    from services import decisions
+
+    built = []
+    monkeypatch.setattr(_jev, "_client_class_override", lambda **kw: built.append(kw))
+    monkeypatch.setenv(_jev.API_KEY_ENV, "ts-test-key")
+
+    async def build():
+        return _jev._client()
+
+    for mode, enabled in (("real", False), ("function", True), ("test", True)):
+        monkeypatch.setenv("SAPLING_MODEL_MODE", mode)
+        monkeypatch.setattr(decisions, "JEV_ENABLED", enabled)
+        with pytest.raises(_jev.JevUnavailable):
+            asyncio.run(build())
+    assert built == []
 
 
 def test_inv_25_decision_states_carry_no_identifiers():
