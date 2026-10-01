@@ -140,7 +140,11 @@ _REASON_BUDGET = "budget"
 _REASON_JEV_UNSUPPORTED = "jev_unsupported"  # a grading decision asked to serve from Jev (A98)
 _REASON_LOW_CONFIDENCE = "low_confidence"
 _SERVED_TASK = "decision"  # a served Jev run is a decision (counts as a grade, §3.5)
-_SHADOW_TASK = "decision_shadow"  # never in ai_budget.GRADE_TASKS
+_SHADOW_TASK = "decision_shadow"  # ai_budget.UNCOUNTED_TASKS: $ only
+# A billed Jev run that does NOT stand in for a Gemini decision run (it fell back, or the
+# grader's prior would have answered for free): $ only, never a grade (review minor 5)
+_EXTRA_TASK = "decision_jev_extra"
+_SHADOW_OTHER = "other"  # a shadow value outside the event enum (never expected; never dropped)
 
 
 class _BudgetCapped:
@@ -548,7 +552,7 @@ async def match_wrong_reason(
         return None  # the grade already reported the outage (or the A33 refusal)
     sel, t0 = _select("match_wrong_reason", deps), time.monotonic()
     if sel.served == "jev":
-        out, reason = await _serve_jev("match_wrong_reason", state, deps)
+        out, reason = await _serve_jev("match_wrong_reason", state, deps, has_prior=prior is not None)
         if out is not None:
             verdict = Pick(
                 backend="jev",
@@ -746,6 +750,12 @@ class _JevOut:
     latency_ms: int = 0
     input_tokens: int = 0
     error_code: str | None = None
+    output_tokens: int = 0
+    model: str | None = None  # set when a response was billed
+
+    @property
+    def billed(self) -> bool:
+        return bool(self.input_tokens or self.output_tokens)
 
 
 def jev_request(decision: str, state) -> tuple[dict, dict[str, _jev.Question], object]:
@@ -829,50 +839,66 @@ def _record_jev_usage(deps, *, task: str, model: str | None, input_tokens: int, 
     )
 
 
-async def _call_jev(decision: str, state, deps, *, task: str) -> _JevOut:
-    """Never raises: every failure is a `_JevOut` with an error code."""
+async def _call_jev(decision: str, state) -> _JevOut:
+    """Never raises: every failure is a `_JevOut` with an error code. Records nothing: the
+    caller knows which llm_usage task the run is (`_record_billed`)."""
     try:
         payload, questions, decode = jev_request(decision, state)
         result = await _jev.ask(payload, questions)
     except _jev.JevUnavailable as exc:
-        if exc.input_tokens or exc.output_tokens:  # an unusable 200 was still billed
-            _record_jev_usage(
-                deps,
-                task=task,
-                model=exc.model,
-                input_tokens=exc.input_tokens,
-                output_tokens=exc.output_tokens,
-            )
-        return _JevOut(None, latency_ms=exc.latency_ms, input_tokens=exc.input_tokens, error_code=exc.code)
+        return _JevOut(
+            None,
+            latency_ms=exc.latency_ms,
+            input_tokens=exc.input_tokens,
+            output_tokens=exc.output_tokens,
+            model=exc.model,
+            error_code=exc.code,
+        )
     except Exception as exc:  # a bug below the seam is still only "Jev answered nothing"
         logger.warning("jev call failed unexpectedly (%s): %s", decision, type(exc).__name__)
         return _JevOut(None, error_code="bad_answer")
-    _record_jev_usage(
-        deps,
-        task=task,
-        model=result.model,
+    billing = dict(
+        latency_ms=result.latency_ms,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
+        model=result.model,
     )
     try:
         value, conf, probs, p_yes = decode(result.answers)
     except Exception:  # pragma: no cover - ask() already validated every answer
-        return _JevOut(None, latency_ms=result.latency_ms, error_code="bad_answer")
-    return _JevOut(value, conf, probs, p_yes, result.latency_ms, result.input_tokens)
+        return _JevOut(None, error_code="bad_answer", **billing)
+    return _JevOut(value, conf, probs, p_yes, **billing)
 
 
-async def _serve_jev(decision: str, state, deps) -> tuple[_JevOut | None, str | None]:
+def _record_billed(out: _JevOut, deps, *, task: str) -> None:
+    """One llm_usage row for a billed Jev response (an unusable 200 is billed too)."""
+    if out.billed:
+        _record_jev_usage(
+            deps,
+            task=task,
+            model=out.model,
+            input_tokens=out.input_tokens,
+            output_tokens=out.output_tokens,
+        )
+
+
+async def _serve_jev(
+    decision: str, state, deps, *, has_prior: bool = False
+) -> tuple[_JevOut | None, str | None]:
     """(answer, None) when Jev serves; (None, reason) when the caller must fall back.
-    A served Jev run is a decision (spec §3.5: decisions count as grades), so the AI
-    budget is checked first, as before every decision run."""
+    The AI budget is checked first, as before every decision run. Grades (review minor
+    5): a served Jev answer that stands in for a Gemini decision run is the grade
+    (task `decision`); a billed attempt that falls back, or one where the grader's prior
+    would have answered for free, is `decision_jev_extra` ($ only) — so a decision never
+    counts more grades under jev than under gemini."""
     if ai_budget.check(deps.user_id, "decision").level == "hard":
         return None, _REASON_BUDGET
-    out = await _call_jev(decision, state, deps, task=_SERVED_TASK)
-    if out.error_code is not None:
-        return None, out.error_code
-    if out.confidence < JEV_MIN_CONFIDENCE:
-        return None, _REASON_LOW_CONFIDENCE
-    return out, None
+    out = await _call_jev(decision, state)
+    reason = out.error_code
+    if reason is None and out.confidence < JEV_MIN_CONFIDENCE:
+        reason = _REASON_LOW_CONFIDENCE
+    _record_billed(out, deps, task=_SERVED_TASK if reason is None and not has_prior else _EXTRA_TASK)
+    return (out, None) if reason is None else (None, reason)
 
 
 def _jev_fell_back(decision: str, reason: str, deps) -> Selection:
@@ -891,12 +917,18 @@ class _ShadowDeps:
 
 
 _SHADOW_TASKS: set[asyncio.Task] = set()
+_SHADOW_GATE_WARNED: list[bool] = []  # warn once per process
 
 
 def _shadow(decision: str, state, deps, primary_value, primary_confidence: float) -> None:
     """Schedule the Jev shadow of an answered decision. Fire-and-forget: the served path
     never awaits it and nothing it does can raise here."""
     try:
+        if not _jev.privacy_gate_open():  # A24: no shadow traffic, and nothing to measure
+            if not _SHADOW_GATE_WARNED:
+                _SHADOW_GATE_WARNED.append(True)
+                logger.warning("decision shadows skipped: the Jev privacy gate is not recorded")
+            return
         if len(_SHADOW_TASKS) >= JEV_SHADOW_MAX_INFLIGHT:
             logger.warning("decision shadow skipped for %s: %d in flight", decision, len(_SHADOW_TASKS))
             return
@@ -915,17 +947,33 @@ def _shadow(decision: str, state, deps, primary_value, primary_confidence: float
         logger.warning("decision shadow not scheduled for %s", decision, exc_info=True)
 
 
+def _shadow_enum(decision: str, state, value: str | None) -> str | None:
+    """A shadow value as an event enum (review minor 9): a match_wrong_reason key is
+    reported as the option alias the model is shown (agents.decision.option_keys; NO_MATCH
+    stays "none"), so an item key outside `_ENUM_VALUE` never drops the event; anything
+    else outside the enum is bucketed as "other"."""
+    if value is None:
+        return None
+    if decision == "match_wrong_reason":
+        alias = {key: shown for shown, key in option_keys(state.wrong).items()}
+        value = NO_MATCH if value == NO_MATCH else alias.get(value, _SHADOW_OTHER)
+    return value if _ENUM_VALUE.fullmatch(value) else _SHADOW_OTHER
+
+
 async def _run_shadow(decision, state, sdeps, primary_value: str, primary_confidence: float):
     try:
-        out = await _call_jev(decision, state, sdeps, task=_SHADOW_TASK)
+        out = await _call_jev(decision, state)
+        _record_billed(out, sdeps, task=_SHADOW_TASK)
+        primary_value = _shadow_enum(decision, state, primary_value)
+        shadow_value = _shadow_enum(decision, state, out.value)
         emit_shadow(
             decision,
             deps=sdeps,
             primary_value=primary_value,
-            shadow_value=out.value,
+            shadow_value=shadow_value,
             primary_confidence=primary_confidence,
             shadow_confidence=out.confidence,
-            agreement=out.value is not None and out.value == primary_value,
+            agreement=shadow_value is not None and shadow_value == primary_value,
             shadow_latency_ms=out.latency_ms,
             shadow_input_tokens=out.input_tokens,
             error_code=out.error_code,

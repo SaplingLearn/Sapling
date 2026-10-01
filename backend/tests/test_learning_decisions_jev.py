@@ -574,3 +574,123 @@ def test_the_shadow_log_carries_no_text_so_the_report_needs_none(ev):
         "shadow_input_tokens",
         "error_code",
     }
+
+
+# ── review fix round (PKG-15 R1): budget accounting ─────────────────────────
+
+
+def _now_rows(task, n, *, tokens=500, cost=0.00002):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    return now, [
+        {"created_at": (now - timedelta(seconds=5)).isoformat(), "task": task, "cost_usd": cost, "total_tokens": tokens}
+        for _ in range(n)
+    ]
+
+
+@pytest.mark.parametrize("task", ["decision_shadow", "decision_jev_extra"])
+def test_uncounted_jev_rows_never_rate_limit_or_spend_the_token_cap(task):
+    """M2 (the reviewer's probe_rate.py): shadow rows (and a served Jev run that does not
+    stand in for a Gemini decision) count in $ only — never toward the per-minute rate
+    limit, the daily token cap or STUDENT_DAILY_GRADES (spec §13 A98 (d))."""
+    from decimal import Decimal
+
+    from services import ai_budget
+
+    now, rows = _now_rows(task, 20)
+    u = ai_budget._summarise(rows, now)
+    assert (u.minute_rows, u.day_tokens, u.day_grades) == (0, 0, 0)
+    assert u.day_usd == u.month_usd == Decimal("0.00002") * 20
+    assert task in ai_budget.UNCOUNTED_TASKS and task not in ai_budget.GRADE_TASKS
+
+
+def test_counted_rows_still_count():
+    from services import ai_budget
+
+    now, rows = _now_rows("decision", 3)
+    u = ai_budget._summarise(rows, now)
+    assert (u.minute_rows, u.day_tokens, u.day_grades) == (3, 1500, 3)
+
+
+def test_a_billed_jev_fallback_counts_one_grade_not_two(seam, monkeypatch, usage):
+    """Minor 5: a billed served-Jev fallback (low_confidence) writes its typesafe row as
+    decision_jev_extra; only the Gemini run that serves counts as the grade."""
+    from services import ai_budget
+
+    monkeypatch.setenv("DECISION_BACKEND_JUDGE_LEAK", "jev")
+    _scripted_jev(monkeypatch, seam, {"q": ("yes", 0.2, {})})
+    gemini_rows = []
+    monkeypatch.setattr(seam, "record_agent_usage", lambda r, **kw: gemini_rows.append(kw) or r)
+    cm, runs = _gemini("no", 0.8)
+    with cm:
+        v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
+    assert (v.backend, v.fallback) == ("gemini", True)
+    tasks = [r["task"] for r in usage if r.get("provider") == "typesafe"] + [r["task"] for r in gemini_rows]
+    assert tasks == ["decision_jev_extra", "decision"]
+    assert sum(t in ai_budget.GRADE_TASKS for t in tasks) == 1
+
+
+def test_a_served_jev_match_with_a_prior_costs_no_extra_grade(seam, monkeypatch, usage):
+    """Minor 5: under gemini the grader's prior answers match_wrong_reason with no run and
+    no grade; under jev the Jev call is recorded as decision_jev_extra (not a grade)."""
+    from agents.grader import GradeResult
+    from services import ai_budget
+
+    monkeypatch.setenv("DECISION_BACKEND_MATCH_WRONG_REASON", "jev")
+    _scripted_jev(monkeypatch, seam, {"q": ("w_speed", 0.9, {})})
+    prior = GradeResult(confidence=0.9, matched_wrong_key="w_speed", backend="gemini")
+    v = _run(lambda: seam.match_wrong_reason(_wrong(seam), deps=_deps(), prior=prior))
+    assert v.backend == "jev"
+    [row] = [r for r in usage if r.get("provider") == "typesafe"]
+    assert row["task"] == "decision_jev_extra" and row["task"] not in ai_budget.GRADE_TASKS
+
+
+def test_a_served_jev_decision_without_a_prior_is_one_grade(seam, monkeypatch, usage):
+    monkeypatch.setenv("DECISION_BACKEND_JUDGE_LEAK", "jev")
+    _scripted_jev(monkeypatch, seam, {"q": ("no", 0.9, {})})
+    _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
+    assert [r["task"] for r in usage if r.get("provider") == "typesafe"] == ["decision"]
+
+
+# ── review fix round: no shadow event is dropped for a non-enum key ──────────
+
+
+def test_a_raw_wrong_key_is_normalised_to_its_shown_alias(seam, monkeypatch, events):
+    """Minor 9: an item key outside the event enum ("Speed Key") is reported as the
+    option alias the model was shown (k2), on both sides, so the event is never dropped."""
+    from agents.grader import GradeResult
+
+    monkeypatch.setenv("DECISION_BACKEND_MATCH_WRONG_REASON", "shadow_jev")
+    wrong = {"w_loop": WRONG["w_loop"], "Speed Key": WRONG["w_speed"]}
+    _scripted_jev(monkeypatch, seam, {"q": ("k2", 0.9, {})})
+    prior = GradeResult(confidence=0.9, matched_wrong_key="Speed Key", backend="gemini")
+    state = seam.WrongReasonState(question=QUESTION, answer=ANSWER, wrong=wrong)
+    v = _run(lambda: seam.match_wrong_reason(state, deps=_deps(), prior=prior))
+    assert v.value == "Speed Key"  # the served value is the real key
+    [shadow] = _payloads(events, "decision.shadow")
+    assert (shadow["primary_value"], shadow["shadow_value"], shadow["agreement"]) == ("k2", "k2", True)
+
+
+def test_a_closed_privacy_gate_skips_shadows_and_falls_back_served(seam, monkeypatch, events):
+    """Minor 3: in production/staging without JEV_PRIVACY_GATE_RECORDED=true, a shadow is
+    not scheduled at all and a served jev decision falls back with reason privacy_gate."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("JEV_PRIVACY_GATE_RECORDED", raising=False)
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx2.Response(500)
+
+    monkeypatch.setattr(_jev, "_transport_override", httpx2.MockTransport(handler))
+    _jev.reset_for_tests()
+    cm, _ = _gemini("no", 0.8)
+    with cm:
+        monkeypatch.setenv("DECISION_BACKEND_JUDGE_LEAK", "shadow_jev")
+        _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
+        assert _payloads(events, "decision.shadow") == []
+        monkeypatch.setenv("DECISION_BACKEND_JUDGE_LEAK", "jev")
+        v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
+    assert (v.backend, v.fallback) == ("gemini", True) and seen == []
+    assert [p["reason"] for p in _payloads(events, "decision.fallback")] == ["privacy_gate"]
