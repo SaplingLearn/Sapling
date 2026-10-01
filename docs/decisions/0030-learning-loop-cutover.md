@@ -1,12 +1,16 @@
 # 0030: The learning loop replaces LLM-moved mastery, and becomes every student's default
 
-- Status: accepted
+- Status: accepted; cutover pending owner launch
   - learning_loop_beta retired: 2026-09-30 (PKG-14b) — the gate no longer
     reads it; the column stays dead.
-  - Cutover executed: 2026-09-30, PR #673 — the half B code
-    (`feat/learning-loop-14b-cutover`) merges into `feat/learning-loop` with
-    half A after the B6 two-lane E2E gate; nothing is merged to `main` yet.
-    The owner's runbook (HANDOFF-14 §Launch runbook) appends `Launched: <date>`.
+  - Cutover built, not executed: the half B code (`feat/learning-loop-14b-cutover`)
+    merges into `feat/learning-loop` with half A after the B6 two-lane E2E gate;
+    nothing is merged to `main` yet, and PR #673 is a draft until the owner
+    launches. The owner's runbook (HANDOFF-14 §Launch runbook) appends
+    `Cutover executed: <date>, <merge commit>` and `Launched: <date>`.
+  - Review round 2026-09-30/10-01: spec §13 A93–A97 (the per-student help
+    ledger, quiz-evidence farming, the stored-tier re-derive, the smaller fixes,
+    disowned answers earn no credit).
 - Date: 2026-09-29
 - Relates to: `docs/superpowers/specs/2026-09-26-learning-loop-design.md` (the
   spec; §1, §5, §7, §10, §11, §13 A14–A23, A33, A40, A45, A79), ADR 0024 (honest

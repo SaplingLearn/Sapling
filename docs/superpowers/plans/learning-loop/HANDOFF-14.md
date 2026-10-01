@@ -293,6 +293,34 @@ Written by the session that built half B of `PKG-14-eval-ladder-cutover.md` (Tas
 - **B8 skipped** (session override: no PR). **B9 written only** (`## Launch runbook` below), never run.
 - **Base deviation** (CONTINUE §4.0 override 9 / session override): the prompt says "branch from main after half A merged"; half B is cut from half A's tip and merges with it into `feat/learning-loop` after B6. Nothing merges to `main`; staging and production were never touched.
 
+### Review round (2026-09-30 / 10-01) — three reviews of half B + the adversarial re-review of half A's fix round 3
+
+Findings: 1 critical, 7 major, ~15 minor. Every one fixed or decided; spec §13 A93–A97.
+
+| finding | resolution | commit |
+|---|---|---|
+| CRITICAL — cross-session hint laundering (H6 in session A, unassisted grade in B; review too) | per-student HELP LEDGER, floor = max help ever, re-read inside every grading claim (A93) | 9a7877f5, 3366a514 |
+| adversarial M2 — posed-but-closed/expired items unscanned and re-posed; probe had no floor | scan set = every posed, ungraded item (bounded 200 †); probe/post-test/review re-floor (A93) | 9a7877f5 |
+| adversarial M3 — submit while the answer streams | scanned as relayed, before the next chunk; floor re-read inside the claim (A93) | 9a7877f5 |
+| adversarial M4 — retract dropped shown text | every retracted attempt scanned (A93) | 9a7877f5 |
+| adversarial M5 — quiz farming (answer key on request; 3 correct = mastered) | answer key admin-only; one quiz evidence per (student, hash) per UTC day (A94) | c0aefde5 |
+| regression M1 — PGRST204 fallback never fired (`str(HTTPStatusError)` has no body) | match text includes the response body (A96a) | a3c9f0ac |
+| regression M2 — stored tiers on the old cuts demote after a good quiz | data migration re-derives every tier with the launch cuts (A95) | 87d25a13 |
+| conformance M1 — PR #673 said "ships dark" | PR #673 converted to DRAFT with the "MERGING THIS LAUNCHES STAGING" warning (owner-approved GitHub edit) | — |
+| conformance M2 — `chat_tutor` cassettes stale | still quota-blocked (Known gaps); runs with the A7 re-record in one window (owner) | — |
+| legacy rate limit ran before `require_self` and twice on the loop path | one read after `require_self` (A96b) | 05152b5f |
+| kill switch answered 401/429 before 404 on rate-limited loop routes | `_kill_switch_first` dependency (A96c) | 974bb70e |
+| an unknown kill-switch spelling left the loop ON silently | startup WARNING; §7 line pinned verbatim (A96d) | 296e8da2, 78357594 |
+| legacy `llm_usage.session_id` from an unowned body id | `_usage_session_id`: own session or NULL (A96e); route ownership = PR #709 | 5d36c4bf |
+| onboarding deploy skew (old backend requires `learning_style`) | frontend sends `""` until both run PKG-14b (A96f) | 78357594 |
+| CI ran no oracles | `e2e_oracles` step in both lanes (A96g) | 3317966d |
+| dead `GraphUpdate` fields; /wiki copy described the retired model | removed; copy follows BKT (UI/UX polish pending) (A96h) | f159e474 |
+| legacy stream→`/chat` fallback "double-counts" a tutor call | NOT changed: the fallback is a second model run, and the A39 cap counts runs (A96i) | — |
+| A88(b) "the opener is never served unrecorded" | corrected: exact on JSON; on SSE each chunk is recorded before the next (A96j) | spec only |
+| owner grading call (HANDOFF-a33 (f)): a correct answer under a "misconception" heading was credited | `answer_guard.disowned` + refusal `disowned_answer`; partial → only those items lose credit (A97) | 049881d6 |
+
+Hermetic suite after the round (from `backend/`, no seam env): 8494 passed, 180 skipped; the only failures seen were wall-clock "linear time" tests (`test_the_screen_stays_linear_at_the_longest_answer`, `test_the_text_rules_run_in_linear_time_on_long_whitespace`, `test_leak_check_runs_in_linear_time`) tripping their 50–100 ms bounds under load (load average ≈ 6 with the demo stack up); each passes 3/3 in isolation. `run_all` replay 16/16 PASS.
+
 ### Launch gate (spec §11.1) — status at the end of this session
 
 Git cannot show most of these; nothing here is inferred, and the owner's go-ahead was neither written nor simulated.
@@ -357,6 +385,7 @@ Also for the owner at the gate (A45): `STUDENT_DAILY_GRADES` counts `llm_usage` 
 
 ### Known gaps
 
+- **Flaky wall-clock tests under load**: the three "linear time" tests named in the review-round section trip their bounds when the machine is loaded; they pass in isolation. Not a regression; worth a CPU-time (not wall-clock) bound later.
 - **BLOCKED — the `chat_tutor` re-record (B2).** The committed cassettes were recorded against the pre-B2 preamble (they contain `update_mastery_tool` calls, which the evaluators ignore); `baselines.json` dropped only the retired evaluator's key (every other value unchanged). **Resume** after the `gemini-2.5-pro` daily quota resets (midnight Pacific, ≈ 07:00 UTC), with the real key, spending about 16 runs:
   1. `cd backend && git rm -q tests/evals/cassettes/chat_tutor/*.json`
   2. `SAPLING_EVAL_MODE=record venv/bin/python tests/evals/chat_tutor.py`
@@ -369,8 +398,8 @@ Also for the owner at the gate (A45): `STUDENT_DAILY_GRADES` counts `llm_usage` 
 - **Dead columns**: `user_profiles.learning_style`, `user_settings.learning_loop_beta`.
 - **The kill switch restores** no quiz/flashcard deltas, no old tier cuts and no tutor mastery recording (spec §11.6).
 - **`SaplingDeps.mastery_changes`** is kept (always empty): `services/chat_stream.py` and the chat wire shape read it.
-- **Stored tiers**: `graph_nodes.mastery_tier` rows written before half B keep the old cuts until the node's next write (owner question 2).
-- **Landing copy**: `frontend/src/lib/landing/companionContent.ts` (`WIKI_MASTERY_FORMULA`, `WIKI_MASTERY_MOVES`) still describes the retired flat model and the tutor's mastery range (owner question 3; copy is UI/UX's).
+- **Stored tiers**: RESOLVED by A95 — a data migration re-derives every row with the launch cuts at the runbook's migration step. Expect every node stored at 0.75–0.95 to read "learning" from launch on.
+- **Landing copy**: the numbers now follow the BKT model (A96h, f159e474); the wording still wants a UI/UX polish pass.
 - **In-memory state** (half A, after the merge of fix round 3): only `_FAILED_TURN_ANCHORS` (bounded by `LOOP_FAILED_ANCHORS_MAX`); the openers' reveals are in `learning_reveals` (A88). B9 keeps the multi-process precondition.
 - **Integration tests**: `test_posttest_claim_db.py` was re-pointed in the merge to half A's `_claim_pose` / `_answer_pose` / `_release_pose` (A89) and cut to what half A's `test_posttest_poses_db.py` does not cover (5 tests: item match, release on error, release never reopens, foreign claim, the 8-submitter claim→close cycle).
 
@@ -445,10 +474,10 @@ flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock bash -c '
 ### Open questions for the series owner
 
 1. **The launch gate** (above): items 1, 2, 3, 3b, 4, 6 and 7 are open; only you can close 3–7, and item 7 is your written go-ahead.
-2. **Stored tiers**: re-derive `graph_nodes.mastery_tier` once for rows written under the old cuts (an idempotent data migration from `mastery_score`), or let each node update on its next write? Until then the Tree can label a 0.8 node "mastered" (old cut) while a fresh 0.8 node reads "learning".
-3. **Landing copy** (`companionContent.ts` `WIKI_MASTERY_*`) still explains the flat quiz deltas and the tutor's mastery range — a UI/UX copy change.
+2. ~~Stored tiers~~ — answered: re-derived once by migration (A95).
+3. ~~Landing copy~~ — numbers updated (A96h); a UI/UX polish pass remains.
 4. **A45**: will the launch config ever set `EVENTS_LOGGING_ENABLED=false`? The grader cap is blind then.
-5. The `chat_tutor` re-record and the half A A7 re-record both wait on the `gemini-2.5-pro` quota — run them in the same window?
+5. ~~Re-record window~~ — answered: yes, the `chat_tutor` and A7 `loop_tutor` re-records run in one quota window.
 6. Carried from the prompt: the first `loop_arm` experiment (the variant-B gate, owner-chosen); whether `LEARNING_LOOP_ENABLED` is removed next sprint; whether earnest-revise gets a signal; whether stored `messages.graph_update_json` `updated_nodes` keys need a read-side migration (they do not today — `end_session` and `quiz_signals` only read names).
 
 ### Post-hoc changes
@@ -504,5 +533,13 @@ Owner amendments in force for these steps (spec §13 A39 (e), A92; PKG-14 "A38 a
 
 - [ ] **Step 1, platform budget:** production `PLATFORM_DAILY_BUDGET_USD=5` (owner decision; replaces the "suggested ≈ 3×" wording). BEFORE setting it, prove the alert on staging: set a deliberately low staging value (e.g. `0.01`), drive one tutor turn, confirm the `ai.budget_capped{scope: platform}` alert reaches you, then restore the staging value.
 - [ ] **Rollback:** "Half B adds no migration" no longer holds — `20260930042516_learning_llm_usage_session_id.sql` is half B's. A revert of the half B merge leaves the column (additive and nullable; the build-phase code never names it); nothing to revert.
+
+Review-round amendments (2026-09-30 / 10-01; spec §13 A93–A97):
+
+- [ ] **Before step 2: PR #709 is merged to `main`, then `main` is merged into `feat/learning-loop`.** #709 closes a live cross-student session IDOR on the legacy tutor routes (which stay live under the kill switch); the loop branch's own `_usage_session_id` (A96e) only protects the cost report.
+- [ ] **Migrations (each environment, before the code):** PKG-14 now adds six — `20260929175715_learning_loop_arm`, `20260930024005_learning_posttest_poses`, `20260930031644_learning_reveals`, `20260930042516_learning_llm_usage_session_id`, `20261001010805_learning_help_ledger`, `20261001013855_learning_rederive_mastery_tier` — all additive or idempotent; the last is a DATA migration (A95).
+- [ ] **Expect the tier shift at the migration step (A95):** every node stored at 0.75–0.95 reads "learning" instead of "mastered" from then on (the launch cuts, applied once, consistently). Decide whether students get a heads-up.
+- [ ] **Rollback, amended:** the five schema migrations stay (additive; the build-phase code never names them). The A95 re-derive is not reverted by `git revert`: after a rollback, re-derive tiers with the legacy cuts (0.10 / 0.45 / 0.75 — `config.get_mastery_tier` on the reverted code) or let each node update on its next write.
+- [ ] **After step 8 (both deploys on PKG-14b):** remove the onboarding `learning_style: ""` shim (A96f) in `frontend/src/lib/api.ts::submitOnboardingProfile`.
 
 Owner checklist: - [ ] 1 · - [ ] 2 · - [ ] 3 · - [ ] 4 (go/no-go) · - [ ] 5 · - [ ] 6 · - [ ] 7 · - [ ] 8 · - [ ] 9 · - [ ] 10 · - [ ] 11 · - [ ] 12
