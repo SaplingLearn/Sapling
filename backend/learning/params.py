@@ -491,6 +491,11 @@ GATE_INDEPENDENT_MIN_S_VARIANT_B = 90
 # teach phase that passes the genuine-attempt rule raises THAT turn's ceiling by
 # this many rungs (the ladder's one rung after an attempt), capped per band
 TEACH_ATTEMPT_CEILING_RAISE = 1
+# † owner decision 2026-10-01 (PKG-14 A7): a proficient student's reasoned claim
+# raises TWO rungs (H1 → H3, the same H3 the shown-work floor gives) — both tier
+# slots answer a confident wrong claim with a next-step hint, and two prompt
+# rounds at H2 did not change that; develop/novice keep the one-rung raise
+TEACH_ATTEMPT_CEILING_RAISE_PROFIC = 2
 # † PKG-14 (spec §13 A85): a failed or paused turn's teach independent-time
 # anchor is held in memory (a failed turn writes nothing, ADR 0024); at most this
 # many sessions' anchors are held (oldest evicted first)

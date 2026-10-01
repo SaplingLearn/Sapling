@@ -182,7 +182,7 @@ Not †: `GATE_LEAKS_MAX = 0` and `GATE_CEILING_COMPLIANCE_MIN = 0.95` (spec §1
 
 ## Known gaps
 
-- **BLOCKED — the A7 re-record** (`gemini-2.5-pro` daily quota).
+- **RESOLVED 2026-10-01 (spec §13 A108) — the A7 re-record.** Was: blocked on the `gemini-2.5-pro` daily quota.
   - **Resume:**
     1. After the quota resets, check out onto this branch the wip branch's `backend/tests/evals/loop_tutor.py` and `backend/tests/test_learning_eval_ladder.py`.
     2. `git rm` the `teach_develop_derivatives` cassettes (3 slots plus 3 rung-judge files).
@@ -406,7 +406,7 @@ Also for the owner at the gate (A45): `STUDENT_DAILY_GRADES` counts `llm_usage` 
 - **Review fix round (A106), accepted limit — the quiz-ask floor is opt-in:** only a session opened from the quiz's "Ask about this" (origin `quiz_ask`) writes a help row for the quiz question. A student who pastes the quiz question into an ordinary tutor session leaves no row: quiz items are not check items, so they are never posed in the loop and the A93 served scan cannot cover them. Not fixable structurally without making quiz items check items; recorded, not pinned as a defect.
 - **Final fix round (A99–A103), accepted:** a quiz evidence claim whose evidence write then fails stays taken (that question earns nothing for 24 h — fail closed, A100); a quiz-ask session floors the question even when the student asked only AFTER answering it (the floor reads all help on the hash, A99); the scan window can only add hits at its edge versus a whole-text scan (A101); `disowned()`'s three named false negatives are accepted limits (A103).
 - **Flaky wall-clock tests under load**: the three "linear time" tests named in the review-round section trip their bounds when the machine is loaded; they pass in isolation. Not a regression; worth a CPU-time (not wall-clock) bound later.
-- **BLOCKED — the `chat_tutor` re-record (B2).** The committed cassettes were recorded against the pre-B2 preamble (they contain `update_mastery_tool` calls, which the evaluators ignore); `baselines.json` dropped only the retired evaluator's key (every other value unchanged). **Resume** after the `gemini-2.5-pro` daily quota resets (midnight Pacific, ≈ 07:00 UTC), with the real key, spending about 16 runs:
+- **RESOLVED 2026-10-01 (spec §13 A108; min-of-3 floors) — the `chat_tutor` re-record (B2).** Was: The committed cassettes were recorded against the pre-B2 preamble (they contain `update_mastery_tool` calls, which the evaluators ignore); `baselines.json` dropped only the retired evaluator's key (every other value unchanged). **Resume** after the `gemini-2.5-pro` daily quota resets (midnight Pacific, ≈ 07:00 UTC), with the real key, spending about 16 runs:
   1. `cd backend && git rm -q tests/evals/cassettes/chat_tutor/*.json`
   2. `SAPLING_EVAL_MODE=record venv/bin/python tests/evals/chat_tutor.py`
   3. `SAPLING_EVAL_MODE=replay SAPLING_EVAL_UPDATE_BASELINES=1 venv/bin/python tests/evals/chat_tutor.py` (chat_tutor only)

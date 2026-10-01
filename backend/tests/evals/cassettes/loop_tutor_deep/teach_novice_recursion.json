@@ -1,19 +1,26 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"A recursive function solves a problem by calling itself with a smaller version of the same problem.\",\n\"body\": \"Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current doll to reveal a smaller one inside. You repeat this process until you find the one doll that cannot be opened.\",\n\"question\": \"In this nesting doll analogy, what would happen if there was no smallest doll that couldn't be opened?\"\n}\n```"
+    "{\n  \"key_idea\": \"Recursion solves a problem by calling itself on smaller and smaller versions of the same problem.\",\n  \"body\": \"Think of a set of Russian nesting dolls. To find the smallest doll, you open the largest one, which reveals a slightly smaller doll inside. You repeat that exact same action\u2014opening the doll\u2014until you get to the one that doesn't open.\",\n  \"question\": \"In that nesting doll analogy, what would happen if there was no smallest doll?\"\n}"
   ],
   "input_sha256": "b0c251597ed07fbbc6f953352ef3af81bf01a8bf116ca898fb32ba239b4fe2d0",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current doll to reveal a smaller one inside. You repeat this process until you find the one doll that cannot be opened.",
-    "key_idea": "A recursive function solves a problem by calling itself with a smaller version of the same problem.",
-    "question": "In this nesting doll analogy, what would happen if there was no smallest doll that couldn't be opened?"
+    "body": "Think of a set of Russian nesting dolls. To find the smallest doll, you open the largest one, which reveals a slightly smaller doll inside. You repeat that exact same action\u2014opening the doll\u2014until you get to the one that doesn't open.",
+    "key_idea": "Recursion solves a problem by calling itself on smaller and smaller versions of the same problem.",
+    "question": "In that nesting doll analogy, what would happen if there was no smallest doll?"
   },
-  "prompt_hash": "23e9d0b6402d",
-  "requests": 1,
+  "prompt_hash": "10676b7d004e",
+  "requests": 2,
   "rescued": false,
   "retries": 0,
   "schema_hash": "ab89f4f429db",
   "slot": "loop_tutor_deep",
-  "tool_calls": []
+  "tool_calls": [
+    {
+      "args": {
+        "query": "recursion definition"
+      },
+      "tool_name": "search_course_materials"
+    }
+  ]
 }

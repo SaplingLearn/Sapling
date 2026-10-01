@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Let's test that idea with a different set of numbers: {2, 4, 100}.\n\nWould 4 be a fair representation of the average for this new set?",
+    "evidence": "Let's test your 'middle value' rule on a different set of numbers, like {1, 2, 100}.",
     "only_states_correction": false
   },
-  "served_sha256": "f3f7a0bb8bd640c4acfadef05c4209c5a9b427c44284a5ea7ef3b87f4ec76363"
+  "served_sha256": "43f466d01ff0ef8f08fcddedb1ca21d28bd6555af59c2357a38b19fece8ff9ff"
 }

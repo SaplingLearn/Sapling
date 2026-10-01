@@ -166,8 +166,8 @@ _LOOP_SYSTEM_PROMPT = (
     "is correct — the grader judges it when they submit it; ask what they "
     "would check instead. A student who insists "
     "on a wrong claim gets a question that exposes the contradiction, not "
-    "agreement — and not the corrected result either: ask the question that "
-    "lets them find it.\n"
+    "agreement — and not the corrected result either, nor (below H3) the "
+    "method or rule that produces it: ask the question that lets them find it.\n"
     "- A turn's rung is judged by its content, in every field: the key_idea, "
     "the body and the question all count, and a question that names the "
     "next step IS a hint. Stay at or below the ceiling in all three.\n"
@@ -343,8 +343,13 @@ TEACH_CEILING_GUIDE: dict[int, str] = {
     2: (
         "At H2 in teach you may name ONE concept or definition in general words "
         "(quote the course passage if a tool returned one): no worked example, no "
-        "specific instance with numbers, no exercise; question asks them to recall "
-        "or restate it in their own words."
+        "specific instance with numbers, no exercise, and never a technique, rule, "
+        "theorem or procedure that would carry out the student's problem (naming "
+        "the method is H3). Do not touch the student's own problem at all: no "
+        "expression, symbol, value or step from it (writing their expression or "
+        "substituting into it is H3), even to show why their claim fails; "
+        "question asks them to recall or restate the concept in their own words, "
+        "or to check their claim against it themselves."
     ),
     3: (
         "At H3 in teach key_idea and body state the idea in general words only — "

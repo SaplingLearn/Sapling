@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"The power rule is a common differentiation technique that involves both multiplying by the exponent and reducing the exponent by one.\", \"body\": \"To find the derivative of a term like x^n, you typically multiply the coefficient by the exponent 'n' and then subtract one from the exponent. For example, if you were to differentiate x^3, you would get 3x^2.\", \"question\": \"What happens when you apply this rule to x^4?\"}"
+    "{\"key_idea\": \"The power rule for derivatives involves adjusting both the coefficient and the exponent.\", \"body\": \"Consider the derivative of x^3. If we only multiply by the exponent, the result would be 3x^3. However, if we also lower the exponent by one, the result would be 3x^2.\", \"question\": \"What is the general power rule for derivatives?\"}"
   ],
   "input_sha256": "bbe71f8f1f145683af6e71384a2c9cdc764bd8b21800cdaa1d4ef471118f1757",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "To find the derivative of a term like x^n, you typically multiply the coefficient by the exponent 'n' and then subtract one from the exponent. For example, if you were to differentiate x^3, you would get 3x^2.",
-    "key_idea": "The power rule is a common differentiation technique that involves both multiplying by the exponent and reducing the exponent by one.",
-    "question": "What happens when you apply this rule to x^4?"
+    "body": "Consider the derivative of x^3. If we only multiply by the exponent, the result would be 3x^3. However, if we also lower the exponent by one, the result would be 3x^2.",
+    "key_idea": "The power rule for derivatives involves adjusting both the coefficient and the exponent.",
+    "question": "What is the general power rule for derivatives?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

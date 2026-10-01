@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What number would `factorial(-1)` then try to call?",
+    "evidence": "Following that same rule, what would the call to `factorial(-1)` try to do next?",
     "only_states_correction": false
   },
-  "served_sha256": "269289e4050a7cb1f76aa8581ebe10178193e28eae2d59e9d9017703eb2d6f7f"
+  "served_sha256": "e3882bae70eda196f4c93d64eaa18c87ab1b9affd070495447a232e6260deaec"
 }

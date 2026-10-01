@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "Can you recall how the power rule applies to x^2?",
+    "only_states_correction": true
+  },
+  "served_sha256": "a86b4d2672309eb1b5ec82bd5e3aeabc6f143a9851ff0f7d8c5e57e5b435510e"
+}

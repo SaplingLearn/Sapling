@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What result do you get when you expand the numerator, simplify the expression, and evaluate the limit?",
+    "evidence": "What result do you get for the derivative of x^3 when you apply the limit definition, lim(h->0) [f(x+h) - f(x)]/h?",
     "only_states_correction": false
   },
-  "served_sha256": "32fac8fc003f54989d39b49b0a7007fc2b1a1eab3d3d21dace2ec0736fe63f6c"
+  "served_sha256": "69946a0aff0113aed7764eac2220f953ae1e09db7e734119603b01f0e3da479f"
 }
