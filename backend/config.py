@@ -28,7 +28,8 @@ SECURE_COOKIES: bool = _sc_env.lower() == "true" if _sc_env is not None else FRO
 # a deployment that sets nothing gets the strict checks. Set APP_ENV=local (or
 # development/dev/test) to relax SESSION_SECRET for local dev.
 APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
-IS_LOCAL = APP_ENV in {"local", "development", "dev", "test"}
+LOCAL_APP_ENVS = frozenset({"local", "development", "dev", "test"})  # every other value = production
+IS_LOCAL = APP_ENV in LOCAL_APP_ENVS
 
 # Sign-in email-domain allowlist. Comma-separated; empty value = allow any domain.
 # Default preserves prod's @bu.edu-only behavior. Staging can widen this (e.g.

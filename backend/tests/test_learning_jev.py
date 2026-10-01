@@ -433,13 +433,29 @@ def test_the_deadline_is_jev_timeout_ms_in_total(jev, monkeypatch):
         ("staging", " TRUE ", True),
         ("local", None, True),
         ("test", None, True),
+        ("development", None, True),
+        ("dev", None, True),
+        (" Local ", None, True),
+        # M1 (A104): an ALLOWLIST — anything config.py does not call local is gated.
+        ("prod", None, False),
+        ("preview", None, False),
+        ("beta", None, False),
+        ("qa-7f3e", None, False),
+        ("", None, False),
+        (None, None, False),
+        ("prod", "true", True),
+        ("preview", "yes", False),
     ],
 )
 def test_the_privacy_gate_interlock(jev, monkeypatch, app_env, recorded, allowed):
-    """Minor 3 (spec §13 A24): in production or staging no Jev call goes out — serve or
-    shadow — until the owner records the gate with JEV_PRIVACY_GATE_RECORDED=true."""
+    """Minor 3 (spec §13 A24) + M1 (A104): outside the local/development/dev/test
+    allowlist (config.IS_LOCAL) — production, staging, prod, preview, any unknown value,
+    unset — no Jev call goes out, serve or shadow, until JEV_PRIVACY_GATE_RECORDED=true."""
     wire = _install(monkeypatch, _Wire((200, _answer())))
-    monkeypatch.setenv("APP_ENV", app_env)
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
     if recorded is None:
         monkeypatch.delenv("JEV_PRIVACY_GATE_RECORDED", raising=False)
     else:

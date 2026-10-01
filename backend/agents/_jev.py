@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agents._providers import model_mode
+from config import LOCAL_APP_ENVS
 
 if TYPE_CHECKING:  # pragma: no cover
     import httpx2
@@ -64,9 +65,11 @@ logger = logging.getLogger("sapling.jev")
 PROVIDER = "typesafe"  # llm_usage.provider for every Jev row
 API_KEY_ENV = "TYPESAFE_API_KEY"  # the SDK's own name (typesafe_sdk.constants.API_KEY_ENV)
 SDK_LOGGER = "typesafe_sdk"
-# Spec §13 A24's privacy gate, in code (A98 (k)): in these APP_ENVs (config.py: unset =
-# production) no Jev call goes out, serve or shadow, until the owner records the gate.
-PRIVACY_GATED_ENVS = frozenset({"production", "staging"})
+# Spec §13 A24's privacy gate, in code (A98 (k), A104): an ALLOWLIST. Only the APP_ENVs
+# config.py treats as local (config.LOCAL_APP_ENVS, i.e. config.IS_LOCAL) are ungated;
+# every other value (production, staging, prod, preview, unknown, unset) sends no Jev
+# call, serve or shadow, until the owner records the gate.
+PRIVACY_UNGATED_ENVS = LOCAL_APP_ENVS
 PRIVACY_GATE_ENV = "JEV_PRIVACY_GATE_RECORDED"
 CHARS_PER_TOKEN = 3  # † pessimistic (English runs ~4): Jev's tokenizer is unpublished (#672)
 RETRY_STATUSES = frozenset({500, 502, 503, 504})  # never 429 / 529 (they repeat)
@@ -100,10 +103,11 @@ def _load_sdk():
 
 
 def privacy_gate_open() -> bool:
-    """A24 in code: outside production/staging, or once the owner sets
-    JEV_PRIVACY_GATE_RECORDED=true (only `true`, any case; fail closed)."""
+    """A24 in code (A104): open only in a local APP_ENV (config.IS_LOCAL's set, read per
+    call), or once the owner sets JEV_PRIVACY_GATE_RECORDED=true (only `true`, any case).
+    Every other APP_ENV, unknown or unset, is gated: fail closed."""
     app_env = (os.getenv("APP_ENV") or "production").strip().lower()
-    if app_env not in PRIVACY_GATED_ENVS:
+    if app_env in PRIVACY_UNGATED_ENVS:
         return True
     return (os.getenv(PRIVACY_GATE_ENV) or "").strip().lower() == "true"
 
