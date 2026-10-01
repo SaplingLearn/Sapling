@@ -187,3 +187,4 @@ cd backend && SAPLING_EVAL_MODE=replay venv/bin/python tests/evals/grader.py    
 - PKG-10 2026-09-29 (fix round 2, R2-1): `Attempt.released` follows the revealed rule (not correct, idk, or max_rung ≥ RUNG_NO_CREDIT_MIN) — commit f0249d18
 - PKG-14 2026-10-01: grade() refuses an answer whose every credited span the student disowns (`answer_guard.disowned`, refusal `disowned_answer`); a partly disowned answer loses only those items (spec §13 A97, owner decision) — commit 049881d6
 - PKG-14 2026-10-01: every grading caller re-reads the help-ledger floor inside its claim before the evidence write (`_refloor`, A93) — commit 9a7877f5
+- PKG-14 2026-10-01 (final fix round, spec §13 A103): `answer_guard.disowned` adds one form — the whole sentence "It's / It is a (common) myth that <span>."; "People wrongly believe X", "Myth - X" and a span first owned then repeated under a frame are accepted limits (pinned as graded) — commit ecb1eca5

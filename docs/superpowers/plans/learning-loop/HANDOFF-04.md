@@ -239,3 +239,4 @@ cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -
 - PKG-10 2026-09-29 (fix round 5, R5-1): `_wrong_text_answer_reasons` no longer passes the draft's prompt (A77 has no provenance) — commit 55052633
 - PKG-14 2026-09-29 (review fix round, spec §13 A86): `check_item_service.items_for_course(course_id)` — every item of a course, decrypted, paged (the teach-turn reveal scan) — commit b40db6b5
 - PKG-14 2026-09-30 (re-review fix round, spec §13 A88): `items_for_course` REMOVED (the course-wide scan is gone); `check_item_service.items_by_hash(hashes)` — the items of the open post-test poses, every course, decrypted, batched `in.(...)` (the caller matches each to its pose's course) — commit dde19f92
+- PKG-14 2026-10-01 (final fix round, spec §13 A101): `check_item_service.items_by_ids(ids)` — the scan set's posed steps and review items in batched `in.(...)` reads (raises on a failed read) — commit a652f88b
