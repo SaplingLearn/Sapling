@@ -438,3 +438,235 @@ def test_a_long_streamed_turn_over_200_items_stays_within_a_cpu_budget():
         spent = time.process_time() - t0
     assert spent < SCAN_CPU_BUDGET_S, f"{spent:.2f}s CPU"
     assert turn.reveal_hashes == ScanSet.build(items, given="").stated(text)
+
+
+# ── PKG-14/15 review fix round (spec §13 A105): the window in word tokens ────
+
+_PAD = " " + "-" * 60 + " "
+_STACK = _item("qh-stack-pad", "the call stack", reference="Frames sit on the call stack.")
+_FILL = "Let us think about this carefully together. " * 12
+
+
+def _streamed(text, items, step):
+    """What a stream finds, relaying `text` in `step`-char deltas (window_start)."""
+    scan = ScanSet.build(items, given="")
+    found, last, shown = set(), None, ""
+    for k in range(0, len(text), step):
+        shown += text[k : k + step]
+        start = scan.window_start(shown, len(last)) if last and shown.startswith(last) else 0
+        last = shown
+        found |= set(scan.stated(shown, start=start, skip=found))
+    return found
+
+
+@pytest.mark.parametrize("step", [1, 7, 20, 64])
+def test_an_ngram_padded_with_punctuation_between_its_words_is_caught_while_streaming(step):
+    """Review m1: the n-gram rule reads word tokens and skips punctuation, so 60
+    dashes between the words stretched the answer past a window counted in
+    non-space characters — detect_leak caught it, the streamed scan did not."""
+    text = _FILL + _PAD.join("Frames sit on the call stack".split()) + "."
+    assert _detect_all(text, [_STACK]) == ["qh-stack-pad"]
+    assert _streamed(text, [_STACK], step) == {"qh-stack-pad"}
+
+
+def test_window_start_reaches_back_over_enough_word_tokens():
+    scan = ScanSet.build([_STACK], given="")
+    assert scan.overlap_tokens >= params.LEAK_NGRAM
+    text = _FILL + _PAD.join(f"w{i}" for i in range(200))
+    start = scan.window_start(text, len(text))
+    words = [w for w in text[start:].split() if any(c.isascii() and c.isalnum() for c in w)]
+    assert len(words) >= scan.overlap_tokens
+
+
+def test_the_reviewers_probe_cases_stream_exactly_as_a_whole_text_scan():
+    num = _item("qh-num", "1234567", canonical="1234567")
+    frac = _item("qh-frac", "12.5", canonical="12.5")
+    mc = _item(
+        "qh-mc",
+        "a sorted array",
+        fmt="mc_reason",
+        options=[
+            Option(letter="A", text="a linked list"),
+            Option(letter="B", text="a sorted array"),
+            Option(letter="C", text="a hash map"),
+        ],
+        correct="B",
+    )
+    cases = [
+        (_STACK, _FILL + "It is the" + _PAD + "call" + _PAD + "stack."),
+        (_STACK, _FILL + _PAD.join("Frames sit on the call stack".split()) + "."),
+        (_STACK, _FILL + "the " + "é" * 80 + " call " + "é" * 80 + " stack"),
+        (num, _FILL + "The answer is one million two hundred thirty-four thousand five hundred sixty-seven."),
+        (frac, _FILL + r"So $x = \dfrac{25}{2}$, which we write as $$\frac{ 25 }{ 2 }$$."),
+        (mc, _FILL + "So the correct option, after weighing every single consideration we discussed, is B."),
+        (mc, _FILL + "You want a sorted " + "=" * 120 + " array."),
+    ]
+    for item, text in cases:
+        whole = set(_detect_all(text, [item]))
+        for step in (1, 7, 20, 64):
+            assert _streamed(text, [item], step) == whole, (item.question_hash, step)
+
+
+def test_completes_final_scan_is_a_whole_text_scan():
+    """Review m1 safety net: the turn's final text is scanned whole once at
+    completion, so no windowing gap survives the turn — here a window that
+    skips everything already scanned (start = upto) still ends in the hit."""
+    from routes import learn_loop
+
+    turn, posed = _scan_turn([_STACK])
+    text = _FILL + "Frames sit on the call stack."
+    with (
+        posed,
+        patch("routes.learn_loop.record_reveals"),
+        patch("routes.learn_loop.record_unscanned"),
+        patch("routes.learn_loop.zpd_events"),
+        patch.object(ScanSet, "window_start", lambda self, t, upto: upto),
+    ):
+        shown = ""
+        for k in range(0, len(text), 3):
+            shown += text[k : k + 3]
+            learn_loop._LoopTurn.record_relayed(turn, shown)
+        assert turn.reveal_hashes == []  # the broken window missed it
+        learn_loop._LoopTurn._scan_served(turn, text, whole=True)
+    assert turn.reveal_hashes == ["qh-stack-pad"]
+
+
+def _complete_turn(cls):
+    turn = MagicMock()
+    turn.__dict__["_scan_lock"] = threading.Lock()
+    turn._leak_checked.return_value = ("the reply", False)
+    turn._submission_extra.return_value = {}
+    turn.reveal_fallback = None
+    turn.planned.level = "soft"
+    turn.ceiling = 2
+    return turn
+
+
+def test_both_completions_scan_the_final_text_whole():
+    from routes import learn_loop
+
+    turn = _complete_turn(learn_loop._LoopTurn)
+    with (
+        patch("routes.learn_loop._update_loop_state"),
+        patch("routes.learn_loop.save_message"),
+        patch("routes.learn_loop.events_service"),
+        patch("routes.learn_loop.get_check_item"),
+    ):
+        learn_loop._LoopTurn.complete(turn, "the reply", {}, [])
+    turn._scan_served.assert_called_once_with("the reply", whole=True)
+    opener = _complete_turn(learn_loop._LoopOpener)
+    try:
+        learn_loop._LoopOpener.complete(opener, "hello", {}, [])
+    except Exception:
+        pass  # the opener's later bookkeeping needs a real request; the scan came first
+    opener._scan_served.assert_called_once_with("hello", whole=True)
+
+
+# ── review m4: a scan exception never skips its window silently ──────────────
+
+
+def test_a_scan_exception_writes_the_unscanned_marker_and_keeps_the_window():
+    from routes import learn_loop
+
+    turn, posed = _scan_turn([_STACK])
+    real = ScanSet.stated
+    calls = []
+
+    def flaky(self, text, *, start=0, skip=()):
+        calls.append(start)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return real(self, text, start=start, skip=skip)
+
+    first = _FILL + "Frames sit on the call stack."
+    with (
+        posed,
+        patch("routes.learn_loop.record_reveals") as rec,
+        patch("routes.learn_loop.record_unscanned") as marker,
+        patch("routes.learn_loop.zpd_events") as zpd,
+        patch.object(ScanSet, "stated", flaky),
+    ):
+        learn_loop._LoopTurn.record_relayed(turn, first)
+        marker.assert_called_once()  # fail closed: posed items floor to assisted (A88/A93)
+        assert zpd.emit_zpd_reveal.call_args.kwargs["unscanned"] is True
+        assert "_scanned_text" not in turn.__dict__  # the failed window is NOT marked scanned
+        learn_loop._LoopTurn.record_relayed(turn, first + " Next.")
+    assert calls[1] == 0  # the next scan re-reads the window the failed one lost
+    assert rec.call_args.args[1] == ["qh-stack-pad"]
+
+
+# ── review m3: the stream's finally never blocks the event loop ──────────────
+
+
+def _stream_mock(record):
+    turn = MagicMock()
+    turn.tier, turn.paused = "standard", False
+    turn.pre_events.return_value = []
+    turn.record_relayed.side_effect = record
+    return turn
+
+
+def test_a_cancelled_streams_final_scan_runs_off_the_event_loop_and_still_records():
+    from routes import learn_loop
+
+    main = threading.get_ident()
+    started, release = threading.Event(), threading.Event()
+    calls: list = []
+    order: list = []
+
+    def record(text):
+        calls.append((text, threading.get_ident() != main))
+        if len(calls) == 1:
+            started.set()
+        release.wait(5)  # the in-flight scan (and the lock a final scan waits on)
+
+    turn = _stream_mock(record)
+
+    async def fake(**kw):
+        yield _tok("Frames sit")
+        yield SaplingEvent(type="done", step="reply", message="Complete.", data={})
+
+    async def main_():
+        async def consume():
+            async for _ in learn_loop._stream_turn(turn):
+                pass
+
+        task = asyncio.create_task(consume())
+        await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        for _ in range(5):  # the loop stays free while the final scan waits
+            await asyncio.sleep(0.01)
+            order.append("tick")
+        order.append("release")
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    with patch("routes.learn_loop.ai_budget"), patch("routes.learn_loop.stream_structured_turn", fake):
+        asyncio.run(main_())
+    assert order[:5] == ["tick"] * 5
+    assert [c[0] for c in calls] == ["Frames sit", "Frames sit"]  # still recorded
+    assert all(c[1] for c in calls)  # both off the event loop's thread
+    turn.touch_served_at.assert_called_once()
+
+
+def test_a_retracted_attempt_that_was_scanned_is_not_rescanned():
+    from routes import learn_loop
+
+    calls: list = []
+    turn = _stream_mock(lambda text: calls.append(text))
+
+    async def fake(**kw):
+        yield _tok("A")
+        yield _tok("B")
+        yield SaplingEvent(type="retract", step="reply", message="", data={"reason": "retry"})
+        yield _tok("C")
+        yield SaplingEvent(type="done", step="reply", message="Complete.", data={})
+
+    async def drain():
+        async for _ in learn_loop._stream_turn(turn):
+            pass
+
+    with patch("routes.learn_loop.ai_budget"), patch("routes.learn_loop.stream_structured_turn", fake):
+        asyncio.run(drain())
+    assert calls == ["A", "AB", "C"]  # every delta once; "AB" was scanned, so no rescan

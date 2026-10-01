@@ -592,7 +592,9 @@ def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_afte
     ):
         asyncio.run(_drain(learn_loop._stream_turn(turn), stop_after=stop_after))
     turn.touch_served_at.assert_called_once()  # A85: the anchor moves on a disconnect too
-    # A93 (M3): scanned as it is relayed (the sentence end) AND at the end
+    # A93 (M3): scanned as it is relayed; A105 (review m3): text whose scan already
+    # returned is not scanned again at the end (a cancellation mid-scan still is —
+    # tests/test_learning_served_scan.py pins that)
     relayed = turn.record_relayed.call_args.args[0]
     assert relayed.startswith("At n == 0 ")
     if stop_after is None:
@@ -600,7 +602,6 @@ def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_afte
         assert [c.args[0] for c in turn.record_relayed.call_args_list] == [
             "At n == 0 ",  # A101: EVERY relayed delta, before it goes out
             "At n == 0 it returns 1.",
-            "At n == 0 it returns 1.",  # the unfinished stream's final scan
         ]
 
 

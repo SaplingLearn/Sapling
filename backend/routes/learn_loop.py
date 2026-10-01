@@ -1978,7 +1978,7 @@ class _LoopTurn:
         out: dict = {}
         self._now = _now_s()
         with self.__dict__.setdefault("_scan_lock", threading.Lock()):
-            self._scan_served(reply)
+            self._scan_served(reply, whole=True)  # A105: the final text, whole
             self._record_served()
         _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out))
         self._emit_reveal()
@@ -2053,7 +2053,7 @@ class _LoopTurn:
                 self._scan_cache = (scan, overflow)
         return self._scan_cache
 
-    def _scan_served(self, reply: str) -> None:
+    def _scan_served(self, reply: str, *, whole: bool = False) -> None:
         """A88/A93: the posed-and-ungraded items this served, model-written text
         states. Scanned strictly (H0). Unreadable → `reveal_unscanned`; items
         beyond the scan window → an 'unscanned' marker at the window's edge.
@@ -2063,7 +2063,14 @@ class _LoopTurn:
         its next delta, the final text of a streamed turn) is scanned from
         `ScanSet.window_start` — the new suffix plus the overlap — never from the
         start again; any other text (a retracted attempt, a fresh JSON reply) is
-        scanned whole. An item already stated this turn is not scanned again."""
+        scanned whole. An item already stated this turn is not scanned again.
+
+        Spec §13 A105 (PKG-14/15 review m1, m4): `whole=True` — complete()'s
+        scan of the turn's final text — is a whole-text scan, so no windowing
+        gap survives the turn. A scan that raises leaves `reveal_unscanned`
+        (the 'unscanned' marker: every posed item's grade floors to assisted,
+        A88/A93 — fail closed) and does NOT mark its text scanned, so the next
+        scan reads that window again."""
         self.reveal_unscanned, self.reveal_overflow = False, None
         if self.tier == "none" or not reply:
             return
@@ -2073,10 +2080,19 @@ class _LoopTurn:
             return
         scan, self.reveal_overflow = got
         last = self.__dict__.get("_scanned_text")
-        start = scan.window_start(reply, len(last)) if last and reply.startswith(last) else 0
-        self._scanned_text = reply
-        already = set(self.reveal_hashes)
-        found = scan.stated(reply, start=start, skip=already)
+        try:
+            start = (
+                scan.window_start(reply, len(last))
+                if not whole and last and reply.startswith(last)
+                else 0
+            )
+            already = set(self.reveal_hashes)
+            found = scan.stated(reply, start=start, skip=already)
+        except Exception:
+            logger.error("served text of %s could not be scanned", self.session_id, exc_info=True)
+            self.reveal_unscanned = True
+            return
+        self._scanned_text = reply  # only after the scan succeeded (A105)
         if found:
             self.reveal_hashes = sorted(already | set(found))
 
@@ -2305,7 +2321,8 @@ class _LoopOpener(_LoopTurn):
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
         self._now = _now_s()
         with self.__dict__.setdefault("_scan_lock", threading.Lock()):
-            self._scan_served(reply)  # A88 (M2): no session row — durable in learning_reveals now
+            # A88 (M2): no session row — durable in learning_reveals now; A105: whole
+            self._scan_served(reply, whole=True)
             self._record_served()
         if self.reveal_fallback is not None:
             raise RuntimeError("the opener's reveals could not be recorded")  # never served unrecorded
@@ -2641,7 +2658,8 @@ async def _stream_turn(turn: _LoopTurn):
 
     ai_budget.count_tutor_call(turn.user_id)
     shown = ""  # A88 (M1): the text the student has been shown
-    attempts: list[str] = []  # A93 (M4): retracted attempts — shown, so scanned too
+    scanned = ""  # the last `shown` whose scan returned (A105, review m3)
+    attempts: list[str] = []  # A93 (M4): retracted attempts relayed but never scanned
     finished = False
     try:
         async for ev in stream_structured_turn(
@@ -2666,26 +2684,37 @@ async def _stream_turn(turn: _LoopTurn):
                     # overlap) and recorded before this chunk goes out — off the
                     # event loop, awaited, so the ordering holds
                     await asyncio.to_thread(turn.record_relayed, shown)
+                    scanned = shown
             elif ev.type == "retract":
-                attempts.append(shown)
-                shown = ""
+                # A105 (review m3): every delta of the attempt was already scanned
+                # before it went out; only text relayed and never scanned is kept
+                if shown and shown != scanned:
+                    attempts.append(shown)
+                shown = scanned = ""
             elif ev.type == "done":
                 finished = True
                 for extra_ev in _pre_done_events(ev.data or {}):
                     yield sapling_event_to_sse(extra_ev)
             yield sapling_event_to_sse(ev)
     finally:
-        # A93 (M4): every retracted attempt was shown — scanned, union with the rest
-        for text in attempts:
-            if text:
-                turn.record_relayed(text)
+        # A85: an errored, disconnected or cancelled stream moves the anchor
         if not finished:
-            # A85: an errored, disconnected or cancelled stream moves the anchor;
-            # A88 (M1): what it relayed is scanned and recorded — synchronously,
-            # so a cancellation cannot interrupt the write (fail open → closed)
             turn.touch_served_at()
-            if shown:
-                turn.record_relayed(shown)
+        # A93 (M4) / A88 (M1): a retracted attempt, or what an unfinished stream
+        # relayed, that no scan has covered is scanned and recorded. A105 (review
+        # m3): in a worker thread — the turn's lock may be held by a scan still in
+        # flight, and waiting for it must not block the event loop — and SHIELDED,
+        # so a second cancellation cannot stop the write: the thread finishes it.
+        pending = [text for text in attempts if text]
+        if not finished and shown and shown != scanned:
+            pending.append(shown)
+        if pending:
+
+            def _scan_pending() -> None:
+                for text in pending:
+                    turn.record_relayed(text)
+
+            await asyncio.shield(asyncio.to_thread(_scan_pending))
 
 
 _STREAM_UNAVAILABLE = "The tutor is unavailable. Please retry."
