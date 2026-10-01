@@ -309,23 +309,28 @@ def seed_enrollments() -> None:
 
 
 # Graph nodes keyed on the ABSTRACT course_id (mastery is cumulative across
-# terms). (node_id, concept_name, mastery_score) — tier derived from score.
+# terms). (node_id, concept_name, mastery_score) — tier derived from score with
+# the launch cuts (learning.bkt.tier_for: mastered ≥ 0.95, learning ≥ 0.30,
+# struggling ≥ 0.10; spec §13 A95). Every tier has a node (graph.spec.ts's
+# journey guard; tests/test_seed_local_rich.py pins it): "Variables and Types"
+# is the one mastered node (0.96 since the PKG-14 final fix round; it was 0.92,
+# mastered only on the retired 0.75 cut).
 _GRAPH_NODES = {
     COURSE_CS: [
-        ("rich-node-cs-variables", "Variables and Types", 0.92),      # mastered
+        ("rich-node-cs-variables", "Variables and Types", 0.96),      # mastered
         ("rich-node-cs-controlflow", "Control Flow", 0.6),            # learning
         ("rich-node-cs-recursion", "Recursion", 0.25),                # struggling
         ("rich-node-cs-pointers", "Pointers and Memory", 0.05),       # unexplored
-        ("rich-node-cs-algorithms", "Algorithms", 0.8),               # mastered
+        ("rich-node-cs-algorithms", "Algorithms", 0.8),               # learning
     ],
     COURSE_MATH: [
-        ("rich-node-math-vectors", "Vectors", 0.85),                  # mastered
+        ("rich-node-math-vectors", "Vectors", 0.85),                  # learning
         ("rich-node-math-matrices", "Matrices", 0.5),                 # learning
         ("rich-node-math-eigenvalues", "Eigenvalues", 0.2),           # struggling
         ("rich-node-math-determinants", "Determinants", 0.0),         # unexplored
     ],
     COURSE_BIO: [
-        ("rich-node-bio-membrane", "Cell Membrane", 0.78),            # mastered
+        ("rich-node-bio-membrane", "Cell Membrane", 0.78),            # learning
         ("rich-node-bio-mitochondria", "Mitochondria", 0.55),         # learning
         ("rich-node-bio-dna", "DNA Replication", 0.15),               # struggling
         ("rich-node-bio-photosynthesis", "Photosynthesis", 0.05),     # unexplored
