@@ -26,6 +26,7 @@ from services.auth_guard import require_self, get_session_user_id
 from services.chat_stream import merge_graph_updates, stream_agent_turn
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present
 from services.profiles import get_display_name
+from services.quiz_ask import open_quiz_ask
 from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
@@ -483,6 +484,9 @@ def _consume_pending(session_id: str, user_id: str) -> None:
     }
     if pending.get("offering_id"):
         session_data["offering_id"] = pending["offering_id"]
+    if pending.get("loop_state"):
+        # PKG-14 (spec §13 A99): a quiz-ask loop session materialises in `teach`
+        session_data["loop_state"] = pending["loop_state"]
 
     table("sessions").insert(session_data)
     # #117: session.started once the lazy session row actually materializes.
@@ -689,8 +693,11 @@ async def start_session(body: StartSessionBody, request: Request):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("start_session")(body, request)
     _kill_switch_budget(body.user_id)
+    session_id = str(uuid.uuid4())
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text
+    open_quiz_ask(body, session_id=session_id)
     result = await _agent_turn_or_http_error(
-        _start_session_agent(body), what="start-session agent"
+        _start_session_agent(body, session_id), what="start-session agent"
     )
     return {
         "session_id": result["session_id"],
@@ -1136,6 +1143,8 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         or str(uuid.uuid4())
     )
     session_id = str(uuid.uuid4())
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text
+    open_quiz_ask(body, session_id=session_id)
 
     course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
     offering_id = resolve_offering(course_id, create=True) if course_id else ""

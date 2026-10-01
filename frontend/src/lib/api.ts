@@ -247,6 +247,27 @@ export const deleteGraphNode = (userId: string, nodeId: string) =>
 // Learn
 export type ModelPref = 'smart' | 'fast';
 
+/**
+ * PKG-14 (spec §13 A99): a session opened ABOUT one quiz question (the quiz's
+ * "Ask about this" panel). The question is named by its attempt and index; the
+ * server resolves its identity from the attempt row and records the help, so
+ * quiz evidence on that question earns no unassisted credit. On the loop path
+ * the session starts teaching the quiz's concept (no probe).
+ */
+export interface QuizAskOrigin {
+  attemptId: string;
+  questionIndex: number;
+}
+
+const quizAskFields = (quizAsk?: QuizAskOrigin) =>
+  quizAsk
+    ? {
+        origin: 'quiz_ask' as const,
+        quiz_attempt_id: quizAsk.attemptId,
+        quiz_question_index: quizAsk.questionIndex,
+      }
+    : {};
+
 export const startSession = (
   userId: string,
   topic: string,
@@ -254,6 +275,7 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  quizAsk?: QuizAskOrigin,
 ) =>
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
     method: 'POST',
@@ -264,6 +286,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     }),
   });
 
@@ -450,6 +473,7 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  quizAsk?: QuizAskOrigin,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -460,6 +484,7 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     },
     handlers,
   );

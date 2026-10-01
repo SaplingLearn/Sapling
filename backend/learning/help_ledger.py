@@ -23,13 +23,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from db.connection import table
+from db.connection import pg_quote_value, table
 from learning.params import LADDER_MAX_RUNG, RUNG_NO_CREDIT_MIN
 
 _LEDGER = "learning_reveals"
 
 #: where a unit of help or a pose came from (`source`)
-SOURCES = ("loop", "review", "posttest", "probe", "scan")
+SOURCES = ("loop", "review", "posttest", "probe", "scan", "quiz")  # "quiz": A99 quiz-ask
 
 
 def _now_iso() -> str:
@@ -106,6 +106,32 @@ def max_help(user_id: str, question_hash: str) -> int:
         elif row.get("rung") is not None:
             floor = max(floor, int(row["rung"]))
     return min(floor, LADDER_MAX_RUNG)
+
+
+def max_help_many(user_id: str, question_hashes) -> dict[str, int]:
+    """`max_help` for several items in ONE `in.(...)` read (spec §13 A99: the quiz
+    submit's help floor); every asked hash is a key (0 with no row). Raises."""
+    hashes = sorted({h for h in question_hashes or [] if h})
+    out = dict.fromkeys(hashes, 0)
+    if not hashes:
+        return out
+    rows = table(_LEDGER).select(
+        "kind,rung,question_hash",
+        filters={
+            "user_id": f"eq.{user_id}",
+            "question_hash": f"in.({','.join(pg_quote_value(h) for h in hashes)})",
+            "kind": "in.(help,reveal)",
+        },
+    ) or []
+    for row in rows:
+        qh = row.get("question_hash")
+        if qh not in out:
+            continue
+        if row.get("kind") == "reveal":
+            out[qh] = max(out[qh], RUNG_NO_CREDIT_MIN)
+        elif row.get("rung") is not None:
+            out[qh] = max(out[qh], min(int(row["rung"]), LADDER_MAX_RUNG))
+    return out
 
 
 def earliest_open_pose(user_id: str, question_hash: str) -> datetime | None:

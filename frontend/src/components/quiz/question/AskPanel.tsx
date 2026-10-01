@@ -21,6 +21,15 @@
  * tutor's greeting from that first call is deliberately never rendered — the
  * student asked about a question, not for a hello.
  *
+ * QUIZ-ASK ORIGIN (spec §13 A99). The first call also names the question
+ * (`quizAsk`: the attempt id and the question's index). With the learning loop
+ * on, a plain start-session opens in the probe, and the follow-up chat would
+ * be refused ("finish the probe first"); a `quiz_ask` session starts teaching
+ * the quiz's concept instead. And the server records the help on that
+ * question, so answering it after the tutor explained it earns no unassisted
+ * quiz credit. Under the kill switch the legacy tutor serves both calls; the
+ * help is recorded the same way.
+ *
  * The session is LEFT OPEN on close (no `end-session`): it stays in the
  * tutor's session list, which is where a student who wants to keep going will
  * look for it. The accumulating-sessions cost is recorded as a seam in §8.
@@ -40,6 +49,7 @@ import {
   startSession,
   startSessionStream,
   streamChat,
+  type QuizAskOrigin,
 } from "@/lib/api";
 
 // The same renderer the tutor uses, loaded the same way `ChatPanel` loads it:
@@ -71,6 +81,15 @@ export interface AskPanelProps {
   courseId: string | null;
   courseLabel?: string;
   seed: AskSeed;
+  /**
+   * The quiz question this panel asks about — the attempt and the question's
+   * index in it (spec §13 A99). Sent on the session start as a `quiz_ask`
+   * origin: the server records the help on that question (quiz evidence on it
+   * then earns no unassisted credit) and, on the loop path, opens the session
+   * teaching the quiz's concept instead of probing. Omitted (no attempt yet),
+   * the session opens as an ordinary tutor session.
+   */
+  quizAsk?: QuizAskOrigin;
   /** Focused after the panel closes. `Sheet` restores focus on its own; this
    *  is the explicit target for a caller whose trigger re-renders (B3's
    *  missed-list rows), and it runs after Sheet's restore, so it wins. */
@@ -112,6 +131,7 @@ export function AskPanel({
   courseId,
   courseLabel,
   seed,
+  quizAsk,
   returnFocusTo,
   testid = "quiz-ask-panel",
 }: AskPanelProps) {
@@ -142,6 +162,10 @@ export function AskPanel({
   const lastSeededRef = useRef<string | null>(null);
 
   const seedMessage = useMemo(() => composeAskMessage(seed), [seed]);
+  // The question identity as primitives: a caller passing a fresh object each
+  // render must not re-create `runTurn`.
+  const askAttemptId = quizAsk?.attemptId;
+  const askQuestionIndex = quizAsk?.questionIndex;
 
   const nextId = () => ++idRef.current;
 
@@ -167,6 +191,10 @@ export function AskPanel({
       try {
         let sid = sessionIdRef.current;
         if (!sid) {
+          const origin: QuizAskOrigin | undefined =
+            askAttemptId != null && askQuestionIndex != null
+              ? { attemptId: askAttemptId, questionIndex: askQuestionIndex }
+              : undefined;
           try {
             const started = await startSessionStream(
               userId,
@@ -176,6 +204,7 @@ export function AskPanel({
               courseId ?? undefined,
               undefined,
               { signal: controller.signal },
+              origin,
             );
             sid = started.session_id ?? null;
           } catch (err) {
@@ -189,6 +218,8 @@ export function AskPanel({
               TUTOR_MODE,
               courseId ?? undefined,
               true,
+              undefined,
+              origin,
             );
             sid = started.session_id;
           }
@@ -247,7 +278,7 @@ export function AskPanel({
         }
       }
     },
-    [userId, conceptName, courseId],
+    [userId, conceptName, courseId, askAttemptId, askQuestionIndex],
   );
 
   // Seed on open, and re-seed when the question changes (B3 opens the same

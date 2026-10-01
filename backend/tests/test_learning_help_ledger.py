@@ -50,7 +50,8 @@ def test_record_help_and_posed_insert_hash_and_rung_rows_only():
         "user_id": "u1", "kind": "help", "question_hash": "qh", "rung": 6, "session_id": "s1", "source": "loop",
     }
     assert posed_row["kind"] == "posed" and "rung" not in posed_row and posed_row["source"] == "probe"
-    assert set(help_ledger.SOURCES) == {"loop", "review", "posttest", "probe", "scan"}
+    # "quiz": the quiz-ask session's help row (spec §13 A99, services/quiz_ask.py)
+    assert set(help_ledger.SOURCES) == {"loop", "review", "posttest", "probe", "scan", "quiz"}
 
 
 def test_max_help_is_the_highest_rung_and_a_reveal_counts_as_no_credit():

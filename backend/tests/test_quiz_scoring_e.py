@@ -557,6 +557,11 @@ def _loop_table(questions=LOOP_QUESTIONS, tables: list | None = None):
                 "concept_name": "Loops",
                 "course_id": "course1",
             }]
+        elif name == "quiz_evidence_claims":
+            # spec §13 A100: every hash is fresh — the insert claims it
+            mock.insert_ignore_duplicates.side_effect = lambda rows, on_conflict=None: list(rows)
+            mock.update.return_value = []
+            return mock
         else:
             mock.select.return_value = []
         mock.update.return_value = [{"id": "updated"}]
@@ -600,10 +605,10 @@ class TestLearningLoopEvidencePath:
             apply_mock=MagicMock(return_value=[{"before": 0.5, "after": 0.6}]), tables=tables,
         )
         assert r.status_code == 200, r.text
-        # owner decision 2 (A94): plus ONE read of today's evidence (the farm guard),
-        # right after the concept node read
+        # owner decision 2 (A94, A100): plus ONE claim of the attempt's hashes (the
+        # farm guard), right after the concept node read
         expected = list(LEGACY_SUBMIT_TABLES)
-        expected.insert(expected.index("graph_nodes") + 1, "node_mastery_events")
+        expected.insert(expected.index("graph_nodes") + 1, "quiz_evidence_claims")
         assert tables == expected
 
     def test_gate_on_submits_one_evidence_per_question(self):

@@ -117,6 +117,63 @@ export async function expectAskReply(sheet: Locator, timeout: number): Promise<v
   }
 }
 
+/** Must match backend/services/quiz_ask.py::QUIZ_ASK_HELP_RUNG (=
+ *  learning/params.py RUNG_NO_CREDIT_MIN; pinned by tests/test_quiz_ask_session.py):
+ *  the help a quiz-ask session records on the question it is about (spec §13 A99). */
+export const QUIZ_ASK_HELP_RUNG = 4;
+
+/**
+ * Spec §13 A99, asserted on the database after the "Ask about this" sheet has
+ * streamed its reply, in BOTH lanes: the sheet's session is a `quiz_ask` one —
+ * exactly one help row (source `quiz`, the reveal rung) for this student on the
+ * asked question — and, in the default lane, the session row materialised in
+ * `teach` (no probe: the follow-up chat would otherwise 409). Under the kill
+ * switch the legacy tutor serves it; its row carries no loop document.
+ * Returns the asked question's hash.
+ */
+export async function expectQuizAskSession(userId: string, timeout = 10_000): Promise<string> {
+  let rows: Record<string, unknown>[] = [];
+  await expect
+    .poll(async () => {
+      rows = await queryRaw(
+        `SELECT question_hash, rung, session_id
+           FROM learning_reveals
+          WHERE user_id = $1 AND kind = 'help' AND source = 'quiz'`,
+        [userId],
+      );
+      return rows.length;
+    }, { timeout })
+    .toBe(1);
+  expect(Number(rows[0].rung)).toBe(QUIZ_ASK_HELP_RUNG);
+  const session = await queryRaw(
+    `SELECT loop_state->>'phase' AS phase, loop_state->>'origin' AS origin
+       FROM sessions WHERE id = $1 AND user_id = $2`,
+    [rows[0].session_id, userId],
+  );
+  expect(session).toHaveLength(1);
+  if (killSwitchLane) {
+    expect(session[0].phase).toBeNull();
+  } else {
+    expect(session[0]).toEqual({ phase: "teach", origin: "quiz_ask" });
+  }
+  return String(rows[0].question_hash);
+}
+
+/**
+ * Spec §13 A99: the quiz evidence on the asked question carries the help
+ * floor — its row (one per question, the A100 claim) is graded at the reveal
+ * rung, in both lanes.
+ */
+export async function expectAskedQuestionFloored(nodeId: string, questionHash: string): Promise<void> {
+  const rows = await queryRaw(
+    `SELECT max_rung FROM node_mastery_events
+      WHERE node_id = $1 AND event_type = 'evidence' AND question_hash = $2`,
+    [nodeId, questionHash],
+  );
+  expect(rows).toHaveLength(1);
+  expect(Number(rows[0].max_rung)).toBe(QUIZ_ASK_HELP_RUNG);
+}
+
 // ── Timeouts ──────────────────────────────────────────────────────────────
 //
 // Generation runs the real agent plus a best-effort RAG grounding read below

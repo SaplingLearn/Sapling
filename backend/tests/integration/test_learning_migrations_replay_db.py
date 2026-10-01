@@ -29,7 +29,8 @@ pytestmark = pytest.mark.integration
 
 MIG_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
 #: Every learning migration since aaa9085e (the PKG-14 base): half A's arm, poses
-#: and reveals (A88), half B's llm_usage.session_id (A92) and help ledger (A93).
+#: and reveals (A88), half B's llm_usage.session_id (A92) and help ledger (A93),
+#: the tier re-derive (A95) and the quiz evidence claims (A100).
 PKG14_MIGRATIONS = (
     "learning_loop_arm",
     "learning_posttest_poses",
@@ -37,6 +38,7 @@ PKG14_MIGRATIONS = (
     "learning_llm_usage_session_id",
     "learning_help_ledger",
     "learning_rederive_mastery_tier",
+    "learning_quiz_evidence_claims",
 )
 
 
@@ -73,6 +75,11 @@ def test_the_pkg14_schema_has_the_declared_shape(db_conn):
         "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.posttest_poses'::regclass"
     ).fetchone()
     assert rls["relrowsecurity"] is True
+    claims = db_conn.execute(
+        "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.quiz_evidence_claims'::regclass"
+    ).fetchone()
+    assert claims["relrowsecurity"] is True  # A100
+    assert _column(db_conn, "quiz_evidence_claims", "claimed_at")["is_nullable"] == "NO"
     col = _column(db_conn, "llm_usage", "session_id")
     assert col is not None, "llm_usage.session_id missing — migration not applied"
     assert (col["data_type"], col["is_nullable"], col["column_default"]) == ("text", "YES", None)

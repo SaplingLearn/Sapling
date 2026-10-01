@@ -43,6 +43,8 @@ import {
   answerAtEnd,
   chooseOption,
   expectAskReply,
+  expectAskedQuestionFloored,
+  expectQuizAskSession,
   primeQuizBrowser,
   scriptedStem,
 } from "./support/quizStack";
@@ -295,6 +297,10 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
   // the kill switch.
   await expectAskReply(sheet, 60_000);
   await expect(sheet.getByText(ASK_PANEL_REPLY_TAIL)).toHaveCount(1, { timeout: 60_000 });
+  // Spec §13 A99: a quiz-ask session — the help on question 1 is recorded, and
+  // (default lane) the session teaches from the first turn instead of probing,
+  // which is why the follow-up below is served rather than 409'd.
+  const askedHash = await expectQuizAskSession(USER_ACTIVE);
 
   // A follow-up streams again into the same session.
   await page.getByTestId("quiz-ask-input").fill("Can you give me one more example?");
@@ -334,6 +340,8 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
   expect(finished.id).toBe(midAttempt.id);
   expect(finished.completed_at).not.toBeNull();
   expect(Number(finished.score)).toBe(2);
+  // …and its evidence on the asked question carries the help floor (A99).
+  await expectAskedQuestionFloored(NODE_RECURSION, askedHash);
 
   // ── The handoff was real: the tutor now lists the session it opened ──────
   const sessionsAfter = await page.request.get(`/api/learn/sessions/${USER_ACTIVE}?limit=50`);

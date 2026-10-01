@@ -232,6 +232,7 @@ from services.check_item_service import (
 from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
 from services.prompt_safety import neutralise_control_tags, wrap_untrusted
+from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
 from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
@@ -2196,6 +2197,20 @@ class _LoopTurn:
         return extra
 
 
+def quiz_ask_state(node_id: str) -> dict:
+    """PKG-14 final fix round (spec §13 A99): the loop document a quiz-ask session
+    starts with — `teach` on the quiz's concept node, as /plan/approve leaves a
+    one-concept plan (cursor 0, counters 0), marked with its origin."""
+    return {
+        "phase": "teach",
+        "origin": QUIZ_ASK_ORIGIN,
+        "plan": {"approved": [node_id], "cursor": 0},
+        "concept": node_id,
+        "teach_turns": 0,
+        "concept_checks": 0,
+    }
+
+
 class _LoopOpener(_LoopTurn):
     """The session opener (spec Behaviour 15): a fresh session, `teach` with no
     item and the BKT_L0 band, the catalog context (the opener only), and the
@@ -2217,7 +2232,14 @@ class _LoopOpener(_LoopTurn):
         self.loop_on, self.refused = loop_on, False
         self.request_id = _request_id(request)
         self.arm = _arm_for(body.user_id, request)  # PKG-14 (A20), as _LoopTurn
-        self.course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
+        # A99: a quiz-ask session names its quiz question; the help row is written
+        # here, before any tutor text exists (a failed write is a 503)
+        self.quiz_ask = open_quiz_ask(body, session_id=self.session_id)
+        self.course_id = (
+            (self.quiz_ask.course_id if self.quiz_ask is not None else None)
+            or body.course_id
+            or _get_course_id_for_topic(body.topic, body.user_id)
+        )
         self.offering_id = resolve_offering(self.course_id, create=True) if self.course_id else ""
         # routes/learn.py::_start_session_agent (:540–543)'s cue, as server text;
         # the topic is the student's and rides the envelope (review round 3, C1(a))
@@ -2227,7 +2249,9 @@ class _LoopOpener(_LoopTurn):
             "The student opened a session; the topic they typed is below. Begin the "
             "session with a warm greeting and your first question or explanation."
         )
-        self.state = {}
+        # A99: a quiz-ask session skips the probe and the plan — it teaches the
+        # quiz's concept from the first turn (the materialised row keeps this doc)
+        self.state = quiz_ask_state(self.quiz_ask.node_id) if self.quiz_ask is not None else {}
         self._derive(None)
 
     def history(self) -> list:
@@ -2255,6 +2279,8 @@ class _LoopOpener(_LoopTurn):
             "graph_update": merged or {},
             "loop": True,
         }
+        if self.quiz_ask is not None:  # A99: the row materialises in `teach`
+            PENDING_SESSIONS[self.session_id]["loop_state"] = dict(self.state)
         return {
             "reply": reply,
             "session_id": self.session_id,

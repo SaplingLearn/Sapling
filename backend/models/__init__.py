@@ -14,6 +14,19 @@ class StartSessionBody(BaseModel):
     use_shared_context: bool = True
     course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    # PKG-14 final fix round (spec §13 A99): the quiz "Ask about this" panel opens a
+    # session ABOUT one quiz question. The client names the question by its attempt
+    # and index; the server resolves the question's identity (`question_hash`) from
+    # the attempt row the student owns — never from a client-supplied hash.
+    origin: Optional[Literal["quiz_ask"]] = None
+    quiz_attempt_id: Optional[str] = None
+    quiz_question_index: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _quiz_ask_names_its_question(self) -> "StartSessionBody":
+        if self.origin == "quiz_ask" and (not self.quiz_attempt_id or self.quiz_question_index is None):
+            raise ValueError("a quiz_ask session names its quiz_attempt_id and quiz_question_index")
+        return self
 
 
 class ChatBody(BaseModel):

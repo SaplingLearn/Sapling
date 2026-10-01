@@ -32,6 +32,10 @@ export interface MissedItem {
   correctLabel: string;
   correctText: string;
   explanation: string;
+  /** The question's index in the attempt (`QuizItem.index`) — with the attempt
+   *  id, the AskPanel's `quizAsk` identity (spec §13 A99). null when the
+   *  question is no longer in the session's items. */
+  questionIndex: number | null;
 }
 
 /**
@@ -52,9 +56,10 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
   return result.results
     .filter(r => !r.correct)
     .map(r => {
-      const question = session.items.find(
+      const found = session.items.find(
         item => String(item.question.id) === String(r.question_id),
-      )?.question;
+      );
+      const question = found?.question;
       const textFor = (label: string) =>
         question?.options.find(o => o.label === label)?.text ?? "";
 
@@ -66,6 +71,7 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
         correctLabel: r.correct_answer,
         correctText: textFor(r.correct_answer),
         explanation: r.explanation,
+        questionIndex: found ? found.index : null,
       };
     });
 }

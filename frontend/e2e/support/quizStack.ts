@@ -54,7 +54,13 @@ export const TUTOR_REPLY =
 
 /** The "Ask about this" sheet's reply in this lane — one definition, in
  *  support/quiz.ts (PKG-14b, spec §11.4). */
-export { ASK_PANEL_REPLY, ASK_PANEL_REPLY_TAIL, expectAskReply } from "./quiz";
+export {
+  ASK_PANEL_REPLY,
+  ASK_PANEL_REPLY_TAIL,
+  expectAskReply,
+  expectAskedQuestionFloored,
+  expectQuizAskSession,
+} from "./quiz";
 
 // ── Browser priming ────────────────────────────────────────────────────────
 

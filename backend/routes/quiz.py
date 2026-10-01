@@ -40,6 +40,8 @@ from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
+from learning.help_ledger import max_help_many
+from learning.params import RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.academics import course_offering_ids
 from services.exam_proximity import days_until_next_exam, exam_prompt_line
@@ -2416,45 +2418,103 @@ def _quiz_evidence(concept_node_id: str, questions: list, results: list[dict]) -
     ]
 
 
-def _farm_guard(user_id: str, evidence: list[dict]) -> list[dict]:
-    """Owner decision 2 (spec §13 A94): quiz farming. A question counts at most
-    ONCE per (student, question_hash) per UTC day — today's evidence rows of the
-    student (node_mastery_events joined to the owning graph_nodes) decide; within
-    one attempt a repeated hash counts once, and questions with no hash count
-    ONCE per (student, node, attempt). An unreadable count writes nothing (fail
-    closed: the score stands, mastery does not move)."""
-    hashes = sorted({e["question_hash"] for e in evidence if e.get("question_hash")})
-    counted: set[str] = set()
-    if hashes:
-        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        try:
-            rows = table("node_mastery_events").select(
-                "question_hash,graph_nodes!inner(user_id)",
-                filters={
-                    "graph_nodes.user_id": f"eq.{user_id}",
-                    "question_hash": f"in.({','.join(hashes)})",
-                    "event_type": "eq.evidence",
-                    "created_at": f"gte.{today.isoformat()}",
-                },
-            ) or []
-        except Exception:
-            logger.warning("quiz: today's evidence count unreadable; the attempt moves nothing", exc_info=True)
-            return []
-        counted = {r["question_hash"] for r in rows if r.get("question_hash")}
+#: † spec §13 A100 (tightens A94): a quiz question earns at most one evidence per
+#: student per this ROLLING window (never a UTC calendar day: two submits either
+#: side of midnight were two evidences ten minutes apart)
+QUIZ_EVIDENCE_WINDOW_HOURS = 24
+_CLAIMS = "quiz_evidence_claims"  # migration 20261001060408
+
+
+def _claim_quiz_evidence(user_id: str, attempt_id: str, hashes: list[str], now: datetime) -> set[str]:
+    """Spec §13 A100: the hashes THIS submit may write evidence for — the ones it
+    claims in quiz_evidence_claims, by two database-arbitrated statements: an
+    insert that ignores an existing (student, hash) row (a fresh hash), then a
+    conditional update of a claim older than the window (a stale one). Two
+    concurrent submits sharing a hash: exactly one claims it. Raises on a failed
+    store call (the caller writes nothing)."""
+    wanted = sorted(set(hashes))
+    if not wanted:
+        return set()
+    stamp = now.isoformat()
+    claims = table(_CLAIMS)
+    inserted = claims.insert_ignore_duplicates(
+        [
+            {"user_id": user_id, "question_hash": qh, "attempt_id": attempt_id, "claimed_at": stamp}
+            for qh in wanted
+        ],
+        on_conflict="user_id,question_hash",
+    ) or []
+    claimed = {r["question_hash"] for r in inserted if r.get("question_hash") in wanted}
+    stale = [qh for qh in wanted if qh not in claimed]
+    if stale:
+        cutoff = now - timedelta(hours=QUIZ_EVIDENCE_WINDOW_HOURS)
+        renewed = claims.update(
+            {"attempt_id": attempt_id, "claimed_at": stamp},
+            filters={
+                "user_id": f"eq.{user_id}",
+                "question_hash": f"in.({','.join(pg_quote_value(qh) for qh in stale)})",
+                "claimed_at": f"lt.{cutoff.isoformat()}",
+            },
+        ) or []
+        claimed |= {r["question_hash"] for r in renewed if r.get("question_hash") in stale}
+    return claimed
+
+
+def _farm_guard(user_id: str, attempt_id: str, evidence: list[dict]) -> list[dict]:
+    """Owner decision 2 (spec §13 A94, tightened by A100): quiz farming. A question
+    counts at most ONCE per (student, question_hash) per rolling
+    QUIZ_EVIDENCE_WINDOW_HOURS — decided by the guard's OWN claim journal
+    (`_claim_quiz_evidence`), never by counting the evidence rows, so a
+    concurrent submit and a dropped evidence insert both stay closed. Within
+    one attempt a repeated hash counts once; questions with no hash count ONCE
+    per (student, node, attempt). A failed claim writes nothing (fail closed:
+    the score stands, mastery does not move)."""
+    hashes = [e["question_hash"] for e in evidence if e.get("question_hash")]
+    try:
+        claimed = _claim_quiz_evidence(user_id, attempt_id, hashes, datetime.now(timezone.utc))
+    except Exception:
+        logger.warning("quiz: evidence claim failed; the attempt moves nothing", exc_info=True)
+        return []
     out: list[dict] = []
+    used: set[str] = set()
     hashless_seen = False
     for ev in evidence:
         qh = ev.get("question_hash")
         if qh:
-            if qh in counted:
+            if qh not in claimed or qh in used:
                 continue
-            counted.add(qh)
+            used.add(qh)
         else:
             if hashless_seen:
                 continue
             hashless_seen = True
         out.append(ev)
     return out
+
+
+def _help_floor(user_id: str, evidence: list[dict]) -> list[dict]:
+    """Spec §13 A99: quiz evidence carries the help ledger's floor (A93). A
+    question the student had help on — a quiz-ask session about it
+    (services/quiz_ask.py, RUNG_NO_CREDIT_MIN), or any loop help on the same
+    hash — is graded at that rung: assisted at RUNG_ASSISTED_MIN.., no upward
+    credit at RUNG_NO_CREDIT_MIN.. (`learning.evidence.evidence_weight`). One
+    batched read (`help_ledger.max_help_many`); a failed read floors EVERY
+    hashed question at RUNG_NO_CREDIT_MIN (fail closed). Hashless questions have
+    no ledger identity, so nothing can be recorded against them either."""
+    hashes = [e["question_hash"] for e in evidence if e.get("question_hash")]
+    if not hashes:
+        return evidence
+    try:
+        floors = max_help_many(user_id, hashes)
+    except Exception:
+        logger.warning("quiz: help ledger unreadable; hashed questions carry no credit", exc_info=True)
+        floors = dict.fromkeys(hashes, RUNG_NO_CREDIT_MIN)
+    for ev in evidence:
+        floor = int(floors.get(ev.get("question_hash"), 0) or 0)
+        if floor >= RUNG_ASSISTED_MIN:
+            ev["max_rung"] = floor
+            ev["assisted"] = True
+    return evidence
 
 
 def _mastery_span(applied, default_before: float) -> tuple[float, float]:
@@ -2620,9 +2680,13 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # gate, no flat per-item delta, for every student and under the kill
     # switch alike. The graph runs BKT per question and writes
     # event_type='evidence' rows; this route only reports what it wrote.
-    # owner decision 2 (spec §13 A94): at most ONE evidence per (student,
-    # question_hash) per UTC day; hashless questions count once per attempt
-    evidence = _farm_guard(user_id, _quiz_evidence(concept_node_id, questions, results))
+    # owner decision 2 (spec §13 A94, A100): at most ONE evidence per (student,
+    # question_hash) per rolling 24 h, by claim; hashless questions count once per attempt
+    # spec §13 A99: then the help ledger's floor (a question asked about in a
+    # quiz-ask session earns no unassisted credit)
+    evidence = _help_floor(
+        user_id, _farm_guard(user_id, body.quiz_id, _quiz_evidence(concept_node_id, questions, results))
+    )
     applied = (
         apply_graph_update(user_id, {"evidence": evidence}, course_id=node.get("course_id"))
         if evidence

@@ -266,6 +266,11 @@ export function QuizResults({
           courseId={session.courseId}
           courseLabel={concept.courseCode || undefined}
           returnFocusTo={askTrigger}
+          quizAsk={
+            session.attemptId && asking.questionIndex !== null
+              ? { attemptId: session.attemptId, questionIndex: asking.questionIndex }
+              : undefined
+          }
           seed={{
             stem: asking.stem,
             chosenLabel: asking.chosenLabel,

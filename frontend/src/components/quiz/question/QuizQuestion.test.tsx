@@ -600,6 +600,11 @@ describe("QuizQuestion — Ask about this never orphans the attempt", () => {
       true,
       "course-cs101",
     ]);
+    // spec §13 A99: the session is ABOUT this question — the attempt and its index
+    expect(api.startSessionStream.mock.calls[0][7]).toEqual({
+      attemptId: "attempt-1",
+      questionIndex: 0,
+    });
 
     await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(1));
     const seedMessage = api.streamChat.mock.calls[0][2] as string;

@@ -134,6 +134,10 @@ class TestMasterySnapshotPersisted:
                     "concept_name": "Loops",
                     "course_id": "course1",
                 }]
+            elif name == "quiz_evidence_claims":
+                # spec §13 A100: every hash is fresh — the claim's insert takes it
+                mock.insert_ignore_duplicates.side_effect = lambda rows, on_conflict=None: list(rows)
+                mock.update.return_value = []
             else:
                 mock.select.return_value = []
                 mock.update.return_value = []
