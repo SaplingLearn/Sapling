@@ -1379,7 +1379,11 @@ export interface OnboardingProfilePayload {
 export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>
   fetchJSON<{ user_id: string; courses_linked: string[] }>('/api/onboarding/profile', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    // Deploy-skew shim (PKG-14b): the pre-launch backend still REQUIRES
+    // `learning_style` (a bare str), the post-launch one ignores it. Sending ""
+    // keeps onboarding working whichever deploys first (the frontend worker or
+    // Railway). Remove once both run PKG-14b.
+    body: JSON.stringify({ ...payload, learning_style: '' }),
   });
 
 // Profile

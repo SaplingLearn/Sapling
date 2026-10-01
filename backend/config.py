@@ -44,9 +44,8 @@ ALLOWED_EMAIL_DOMAINS = [
 # post-launch parse — PKG-14b). The loop is the default for every student.
 _raw = os.getenv("LEARNING_LOOP_ENABLED", "").strip().lower()
 # Kill switch (spec §13 A14): any falsy spelling turns the loop off; unset or empty means ON.
-_LOOP_OFF = {"false", "0", "off", "no"}
-LEARNING_LOOP_ENABLED = _raw not in _LOOP_OFF
-if _raw not in _LOOP_OFF | {"", "true", "1", "on", "yes"}:
+LEARNING_LOOP_ENABLED = _raw not in {"false", "0", "off", "no"}
+if _raw not in {"false", "0", "off", "no", "", "true", "1", "on", "yes"}:
     # Still ON (the §7 table is unchanged), but say so: a typo such as "disabled"
     # or "n" would otherwise leave the loop on with no trace (PKG-14 review).
     import logging
