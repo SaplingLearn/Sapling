@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"A recursive function solves a problem by calling itself with a smaller version of the same problem.\",\n\"body\": \"Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current doll to reveal a smaller one inside. You repeat this process until you find the one doll that cannot be opened.\",\n\"question\": \"In this nesting doll analogy, what would happen if there was no smallest doll that couldn't be opened?\"\n}\n```"
+    "```json\n{\n  \"key_idea\": \"Recursion is like a set of Russian nesting dolls, where each doll contains a smaller version of itself.\",\n  \"body\": \"Imagine opening a doll to find another doll inside. You'd repeat this process, opening doll after doll, until you reach the smallest one that doesn't open. This final, smallest doll is the \\\"base case\\\" that stops the process.\",\n  \"question\": \"What would happen if there were no smallest doll?\"\n}\n```"
   ],
   "input_sha256": "b0c251597ed07fbbc6f953352ef3af81bf01a8bf116ca898fb32ba239b4fe2d0",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current doll to reveal a smaller one inside. You repeat this process until you find the one doll that cannot be opened.",
-    "key_idea": "A recursive function solves a problem by calling itself with a smaller version of the same problem.",
-    "question": "In this nesting doll analogy, what would happen if there was no smallest doll that couldn't be opened?"
+    "body": "Imagine opening a doll to find another doll inside. You'd repeat this process, opening doll after doll, until you reach the smallest one that doesn't open. This final, smallest doll is the \"base case\" that stops the process.",
+    "key_idea": "Recursion is like a set of Russian nesting dolls, where each doll contains a smaller version of itself.",
+    "question": "What would happen if there were no smallest doll?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

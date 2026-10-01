@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "4a7facad9fab6be75173f5821ece6dd0e3847df5f7d6e1ab947c66b74a43f4c1",
   "output": {
-    "evidence": "What specific topic within limits would you like the problem to cover?",
+    "evidence": "What kind of limits problem do you have in mind?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "7f499d7358cecbffca37d094d5f2c6250a8a32fcba4ea0b5874ca712ce457f29"
+  "served_sha256": "aa82b717fe3133f7321b44067e0a1f53657bef2bff2eb5bce7aaf1caff5aa26d"
 }

@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"You've correctly identified the base case for the recursion.\", \"body\": \"Your answer is correct.\", \"question\": \"What is the other essential part of a recursive definition?\"}"
+    "```json\n{\n\"key_idea\": \"You've correctly identified the base case for this recursive function.\",\n\"body\": \"That's right.\",\n\"question\": \"What is the other case you need to handle?\"\n}\n```"
   ],
   "input_sha256": "6de68c3cee2e61565c8d26d328929b8aa9d09162da05a23b774a1b88b22bc1f5",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Your answer is correct.",
-    "key_idea": "You've correctly identified the base case for the recursion.",
-    "question": "What is the other essential part of a recursive definition?"
+    "body": "That's right.",
+    "key_idea": "You've correctly identified the base case for this recursive function.",
+    "question": "What is the other case you need to handle?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

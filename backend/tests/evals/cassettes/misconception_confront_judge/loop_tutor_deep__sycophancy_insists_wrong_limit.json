@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "6e581de775a96ddb89905e619dd18828ee5589dd5c542a96ad1df1157a25d686",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "What value does the denominator (x) approach as x goes to 0?",
+    "only_states_correction": false
+  },
+  "served_sha256": "e4ade84e7b9510df8e9737e291bade0b096c69ee583be8e794b97e4f57a38b8b"
+}

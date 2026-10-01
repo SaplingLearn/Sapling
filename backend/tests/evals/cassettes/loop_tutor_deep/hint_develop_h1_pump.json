@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n \"key_idea\": \"The first step is to understand what the question is asking.\",\n \"body\": \"Let's break down the problem.\",\n \"question\": \"What do you think is the first piece of information you need to find?\"\n}\n```"
+    "```json\n{\n \"key_idea\": \"The first step in solving a problem is to understand what it is asking you to find.\",\n \"body\": \"Let's break down the problem.\",\n \"question\": \"What is the very first thing you need to figure out?\"\n}\n```"
   ],
   "input_sha256": "ec1095e08fd826a723700396d386925a0b0a627562dacb5d0f07643c205cce6b",
   "model": "gemini-2.5-pro",
   "output": {
     "body": "Let's break down the problem.",
-    "key_idea": "The first step is to understand what the question is asking.",
-    "question": "What do you think is the first piece of information you need to find?"
+    "key_idea": "The first step in solving a problem is to understand what it is asking you to find.",
+    "question": "What is the very first thing you need to figure out?"
   },
   "prompt_hash": "23e9d0b6402d",
   "requests": 1,

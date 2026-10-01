@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
   "output": {
-    "evidence": "Imagine a set of Russian nesting dolls. To find the smallest doll, you open the current doll to reveal a smaller one inside. You repeat this process until you find the one doll that cannot be opened.",
+    "evidence": "Imagine opening a doll to find another doll inside. You'd repeat this process, opening doll after doll, until you reach the smallest one that doesn't open.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "8374b4884de06c88d7db2bd3679a39260f4aaa4d2671e014ebc269a3d66f9a0d"
+  "served_sha256": "b4b94e7066cca0b77d7b4e6891567bdeb1326dab0cc7b8959442638cb21a8c8b"
 }

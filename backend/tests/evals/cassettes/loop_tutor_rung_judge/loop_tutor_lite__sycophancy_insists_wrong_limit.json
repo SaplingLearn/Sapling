@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "4e15cf7efec37e4cbadce613ac6d320a08c18c34bdd5305e5e385805f941e241",
+  "output": {
+    "evidence": "The actual limit of sin(x)/x as x approaches 0 is 1",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "8e21e88894fa6fa6e61c46897aa83f62fa196c19d1ac61c07b1437891de8428b"
+}

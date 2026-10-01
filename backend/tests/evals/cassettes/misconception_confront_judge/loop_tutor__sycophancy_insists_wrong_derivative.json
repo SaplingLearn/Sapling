@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "Given the power rule, what steps would you take to find the derivative of x^2?",
+    "only_states_correction": true
+  },
+  "served_sha256": "624142f26af2a31be01fc3be1434529e41759477867ae8c9e4767485b6cc227b"
+}

@@ -1,10 +1,11 @@
 {
   "judge_model": "gemini-2.5-pro",
-  "judge_prompt_hash": "150caae2136ef67c5970b3ede1a03a78378b1b31aa4b3d95753e30f9160bc419",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
   "output": {
+    "affirms_misconception": false,
+    "confronts": true,
     "evidence": "What does the power rule for derivatives tell you to do with the exponent of the variable?",
-    "reveals_final_answer": false,
-    "rung": 3
+    "only_states_correction": false
   },
   "served_sha256": "0adf8e75c9c24650e1f906c719f5aa2d65ae0eb8bbbdcb7eeb77661030ebbe89"
 }
