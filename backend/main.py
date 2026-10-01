@@ -124,6 +124,14 @@ async def _lifespan(_app: FastAPI):
     # starts after it, and before any other step whose failure could skip it.
     shutdown_draft_pool()
     await stop_sweeper()
+    # PKG-15 (review minor 7): let in-flight Jev decision shadows finish (bounded) so
+    # their decision.shadow + llm_usage rows reach the event drain below, then close the
+    # Jev clients. Both are no-ops when Jev never ran (JEV_ENABLED=false).
+    from agents import _jev
+    from services import decisions
+
+    await decisions.shutdown_shadows()
+    await _jev.aclose_clients()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()

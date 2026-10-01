@@ -982,6 +982,36 @@ async def _run_shadow(decision, state, sdeps, primary_value: str, primary_confid
         logger.warning("decision shadow failed for %s", decision, exc_info=False)
 
 
+JEV_SHADOW_DRAIN_S = 2.0  # † app shutdown waits this long for in-flight shadows
+
+
+async def shutdown_shadows(timeout_s: float = JEV_SHADOW_DRAIN_S) -> int:
+    """App shutdown (main.py lifespan, review minor 7): wait up to `timeout_s` for this
+    loop's in-flight shadows — a finished one writes its decision.shadow and llm_usage
+    row before the event drain flushes — then cancel the rest and say how many were
+    dropped (Typesafe may have billed them; that usage is unrecorded). Never raises."""
+    try:
+        loop = asyncio.get_running_loop()
+        pending = [t for t in _SHADOW_TASKS if t.get_loop() is loop and not t.done()]
+        if not pending:
+            return 0
+        _done, still = await asyncio.wait(pending, timeout=timeout_s)
+        for task in still:
+            task.cancel()
+        if still:
+            await asyncio.gather(*still, return_exceptions=True)
+            logger.warning(
+                "%d decision shadow(s) dropped at shutdown after %.1fs; any Jev billing for "
+                "them is unrecorded in llm_usage",
+                len(still),
+                timeout_s,
+            )
+        return len(still)
+    except Exception:  # pragma: no cover - shutdown is best effort
+        logger.warning("decision shadow drain failed at shutdown", exc_info=True)
+        return 0
+
+
 async def drain_shadows() -> None:
     """Await every shadow in flight on this loop (tests, scripts, shutdown)."""
     loop = asyncio.get_running_loop()

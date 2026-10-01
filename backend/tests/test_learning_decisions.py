@@ -1006,7 +1006,10 @@ def test_seam_callers_are_only_grade_answer():
     )
     # PKG-15: agents/_jev.py reads the §3.6 settings (JEV_ENABLED, JEV_MODEL, ...) off the
     # seam at call time; it is the backend UNDER the seam, never a caller of a decision
-    assert importers == ["agents/_jev.py", "agents/tools/check.py"]
+    # PKG-15 R1 (minor 7): main.py's lifespan drains the shadows at shutdown, nothing else
+    assert importers == ["agents/_jev.py", "agents/tools/check.py", "main.py"]
+    main_src = (BACKEND / "main.py").read_text()
+    assert re.findall(r"decisions\.(\w+)\(", main_src) == ["shutdown_shadows"]
     jev = (BACKEND / "agents" / "_jev.py").read_text()
     assert not any(f"decisions.{n}(" in jev for n in DECISION_NAMES_FOR_PIN)
 

@@ -694,3 +694,72 @@ def test_a_closed_privacy_gate_skips_shadows_and_falls_back_served(seam, monkeyp
         v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
     assert (v.backend, v.fallback) == ("gemini", True) and seen == []
     assert [p["reason"] for p in _payloads(events, "decision.fallback")] == ["privacy_gate"]
+
+
+# ── review fix round: shutdown (minor 7) ────────────────────────────────────
+
+
+def test_shutdown_drains_bounded_records_finished_rows_and_logs_the_dropped(seam, monkeypatch, usage, caplog):
+    monkeypatch.setenv("DECISION_BACKEND_JUDGE_LEAK", "shadow_jev")
+    gate = {"n": 0}
+
+    async def ask(payload, questions):
+        gate["n"] += 1
+        if gate["n"] == 2:
+            await asyncio.sleep(30)  # still in flight at shutdown
+        return _jev.Result(
+            answers={"q": _jev.Answer("no", 0.9, {})}, model="jev-1.13.0", input_tokens=99, output_tokens=1, latency_ms=5
+        )
+
+    monkeypatch.setattr(_jev, "ask", ask)
+    cm, _ = _gemini("no", 0.8)
+
+    async def main():
+        await seam.judge_leak(_leak(seam), deps=_deps())
+        await seam.judge_leak(_leak(seam), deps=_deps())
+        return await seam.shutdown_shadows(timeout_s=0.1)
+
+    with cm, caplog.at_level("WARNING"):
+        dropped = asyncio.run(main())
+    assert dropped == 1
+    assert [r["task"] for r in usage if r.get("provider") == "typesafe"] == ["decision_shadow"]
+    assert any("1 decision shadow(s) dropped at shutdown" in r.getMessage() for r in caplog.records)
+
+
+def test_the_lifespan_drains_shadows_and_closes_jev_before_the_event_flush():
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "main.py").read_text()
+    fn = next(
+        n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_lifespan"
+    )
+    body = ast.unparse(fn)
+    after = body[body.index("yield") :]
+    assert "shutdown_shadows(" in after and "aclose_clients(" in after
+    assert after.index("shutdown_shadows(") < after.index("aclose_clients(") < after.index("events_service.shutdown()")
+
+
+def test_aclose_clients_closes_this_loops_client(monkeypatch):
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    from services import decisions
+
+    monkeypatch.setattr(decisions, "JEV_ENABLED", True)
+    monkeypatch.setenv(_jev.API_KEY_ENV, "ts-test-key")
+    closed = []
+
+    class _C:
+        def __init__(self, **kw):
+            pass
+
+        async def aclose(self):
+            closed.append(1)
+
+    monkeypatch.setattr(_jev, "_client_class_override", _C)
+
+    async def main():
+        _jev._client()
+        await _jev.aclose_clients()
+
+    asyncio.run(main())
+    assert closed == [1] and _jev._clients == {}
