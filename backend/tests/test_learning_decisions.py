@@ -973,13 +973,27 @@ def test_seam_ref_detector(source, rel, hits):
     assert len(_seam_refs(source, rel)) == hits, _seam_refs(source, rel)
 
 
+DECISION_NAMES_FOR_PIN = (
+    "grade_rubric_items",
+    "reason_is_correct",
+    "match_wrong_reason",
+    "item_answerable",
+    "judge_leak",
+    "deterministic_yes_no",
+)
+
+
 def test_seam_callers_are_only_grade_answer():
     importers = sorted(
         p.relative_to(BACKEND).as_posix()
         for p in _app_files()
         if _seam_refs(p.read_text(), p.relative_to(BACKEND).as_posix())
     )
-    assert importers == ["agents/tools/check.py"]
+    # PKG-15: agents/_jev.py reads the §3.6 settings (JEV_ENABLED, JEV_MODEL, ...) off the
+    # seam at call time; it is the backend UNDER the seam, never a caller of a decision
+    assert importers == ["agents/_jev.py", "agents/tools/check.py"]
+    jev = (BACKEND / "agents" / "_jev.py").read_text()
+    assert not any(f"decisions.{n}(" in jev for n in DECISION_NAMES_FOR_PIN)
 
 
 # ── Task 6: eval harness (gold loaders + §3.6 gates) ──────────────────────

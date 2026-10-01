@@ -389,6 +389,34 @@ def _hermetic_llm_transport(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_jev_transport(request, monkeypatch):
+    """The `_hermetic_llm_transport` guarantee for Jev (PKG-15): no test reaches
+    api.typesafe.ai. Every agents/_jev.py client is built on its
+    `_transport_override`, so a refusing transport installed here makes an
+    unstubbed Jev call fail (as a `transport` JevUnavailable — the seam then
+    falls back, so the test sees Gemini's answer, never a live Jev one). Tests
+    that script Jev install their own httpx2.MockTransport over this one."""
+    if (
+        request.node.get_closest_marker("e2e_staging")
+        or request.node.get_closest_marker("integration")
+        or request.node.get_closest_marker("live_llm")
+    ):
+        yield
+        return
+    import httpx2
+
+    from agents import _jev
+
+    def _refuse(_request):
+        raise httpx2.ConnectError("unstubbed Jev egress (tests/conftest.py guard)")
+
+    monkeypatch.setattr(_jev, "_transport_override", httpx2.MockTransport(_refuse))
+    _jev.reset_for_tests()
+    yield
+    _jev.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _bypass_session_auth(request, monkeypatch):
     """Stub the auth guard so tests don't need to mint session tokens.
 
