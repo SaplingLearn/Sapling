@@ -1,6 +1,6 @@
 """PKG-14 re-review round, real-DB half of the served reveals (spec §13 A88):
 learning_reveals is written at serve time and read by every selection and
-grading path; open_posed_items reads the open items off sessions' loop_state
+grading path; posed_items (A93) reads the posed, ungraded items off sessions' loop_state
 JSON and posttest_poses. The JSON-path filters (loop_state->>current,
 loop_state->open), the TTL filter and the timestamp comparisons only mean
 something against real PostgREST + Postgres (#397: writes through the app,
@@ -62,7 +62,9 @@ def test_the_hash_check_constraint(db_conn):
         )
 
 
-def test_open_posed_items_reads_the_open_sessions_and_poses(db_conn):
+def test_posed_items_reads_every_posed_ungraded_item(db_conn):
+    """A93 (owner decision 1) supersedes A88's open-only scan: an ENDED session's
+    ungraded step and an EXPIRED pose are posed and ungraded, so they are scanned."""
     from db.connection import table
     from routes import learn_loop
 
@@ -77,7 +79,7 @@ def test_open_posed_items_reads_the_open_sessions_and_poses(db_conn):
             "topic": "t",
             "loop_state": {"current": "qh-a", "steps": {"qh-a": active}},
         },
-        {  # ended: its active item is no longer open
+        {  # ended: its ungraded step is still posed (A93)
             "id": closed_sid,
             "user_id": USER,
             "mode": "socratic",
@@ -115,7 +117,7 @@ def test_open_posed_items_reads_the_open_sessions_and_poses(db_conn):
                 "claim": None,
                 "claimed_at": None,
             },
-            {  # expired (A89): never open
+            {  # expired (A89): still posed and ungraded (A93)
                 "user_id": USER,
                 "node_id": f"it-node-{uuid.uuid4().hex[:8]}",
                 "course_id": "c-it",
@@ -139,10 +141,12 @@ def test_open_posed_items_reads_the_open_sessions_and_poses(db_conn):
             "routes.learn_loop.items_by_hash", side_effect=lambda hs: [_It(h) for h in hs]
         ) as by_hash,
     ):
-        got = learn_loop.open_posed_items(USER, now=now)
+        got = learn_loop.posed_items(USER, now=now)
     assert got is not None
-    assert sorted(i.question_hash for i, _ in got) == ["qh-a", "qh-p", "qh-r"]
-    assert by_hash.call_args.args[0] == ["qh-p"]  # the expired pose is not read
+    items, overflow = got
+    assert sorted(i.question_hash for i, _ in items) == ["qh-a", "qh-old", "qh-p", "qh-r", "qh-x"]
+    assert overflow is None
+    assert by_hash.call_args.args[0] == ["qh-old", "qh-p"]  # both unanswered poses are read
 
 
 @pytest.mark.parametrize("role", ["anon", "authenticated"])
