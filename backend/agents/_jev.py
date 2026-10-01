@@ -64,7 +64,7 @@ logger = logging.getLogger("sapling.jev")
 PROVIDER = "typesafe"  # llm_usage.provider for every Jev row
 API_KEY_ENV = "TYPESAFE_API_KEY"  # the SDK's own name (typesafe_sdk.constants.API_KEY_ENV)
 SDK_LOGGER = "typesafe_sdk"
-# Spec §13 A24's privacy gate, in code (A99 (c)): in these APP_ENVs (config.py: unset =
+# Spec §13 A24's privacy gate, in code (A98 (k)): in these APP_ENVs (config.py: unset =
 # production) no Jev call goes out, serve or shadow, until the owner records the gate.
 PRIVACY_GATED_ENVS = frozenset({"production", "staging"})
 PRIVACY_GATE_ENV = "JEV_PRIVACY_GATE_RECORDED"
@@ -76,7 +76,7 @@ _MS_PER_S = 1000
 #: hermetic suite; the conftest guard installs one that refuses). Never set in production.
 _transport_override: httpx2.AsyncBaseTransport | None = None
 
-# The SDK is imported LAZILY, at the first Jev call past the build guard (A99 (b)): app
+# The SDK is imported LAZILY, at the first Jev call past the build guard (A98 (j)): app
 # start with JEV_ENABLED=false never depends on typesafe_sdk importing. Its names are
 # always read as attributes of the loaded module (no rebinding, no getattr: invariant 24).
 _SDK: Any = None
@@ -126,7 +126,7 @@ def _below_warning_dropped(record: logging.LogRecord) -> bool:
 
 def _floor_sdk_logging() -> None:
     """typesafe_sdk logs request/response BODIES (student text) at DEBUG and URLs at INFO.
-    Unconditionally (A99 (d)): its logger is set to WARNING whatever root or
+    Unconditionally (A98 (l)): its logger is set to WARNING whatever root or
     TYPESAFE_LOG_LEVEL say, and a filter on it drops every record below WARNING even if
     someone lowers the level later. Records are created on that logger itself, so the
     filter runs before any propagation to a handler."""

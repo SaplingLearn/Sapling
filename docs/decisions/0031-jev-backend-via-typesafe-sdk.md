@@ -38,9 +38,10 @@ privacy review. PKG-15 builds the backend. Three choices were open.
   `importlib` spellings). Its `RetryPolicy` allows `JEV_MAX_RETRIES` = 1 retry,
   only on a connection error or a 500/502/503/504. It never retries a timeout, a
   429 or a 529, and it uses no backoff and no Retry-After. That answers #672's
-  objection without a second HTTP client. Each attempt has a timeout of
-  `JEV_TIMEOUT_MS`, and a wall-clock deadline of `JEV_TIMEOUT_MS × (1 + retries)`
-  covers the whole call. The SDK covered everything #672's client did: the
+  objection without a second HTTP client. `JEV_TIMEOUT_MS` (800 ms) bounds the
+  whole call, the retry included. It is enforced as a wall-clock deadline, and the
+  retry budget matches it. After that, Gemini serves. (Review round: it had been
+  1.6 s, 800 ms per attempt plus a retry.) The SDK covered everything #672's client did: the
   endpoint, the pinned model, per-call timeouts, typed errors with status codes,
   token usage, the `TYPESAFE_API_KEY` and `TYPESAFE_BASE_URL` env names, and a
   transport hook for hermetic tests. `_jev.py` keeps #672's one-client-per-event-loop
@@ -56,7 +57,12 @@ privacy review. PKG-15 builds the backend. Three choices were open.
   never treated as a default answer.
 - **The circuit breaker and the budget.** `JEV_CIRCUIT_FAILS` consecutive failed
   calls open the circuit for `JEV_CIRCUIT_COOLDOWN_S`. After the cooldown, one
-  probe goes out: success closes the circuit and failure reopens it. A state whose
+  probe goes out: success closes the circuit and failure reopens it. Once the
+  breaker lets a call out, every exit except a parsed success counts as a failure
+  and releases the probe. That covers a Jev error, any other exception, and a
+  cancellation (a client disconnect cancels the route); the cancellation still
+  propagates. (Review round: a cancelled probe used to leave the circuit open for
+  the life of the process.) A state whose
   estimate exceeds `JEV_STATE_MAX_TOKENS` goes to Gemini (`oversize`). The estimate
   uses 3 chars per token over the state plus its longest question, which is
   pessimistic, because Jev's tokenizer is unpublished. Such a state is never
@@ -68,8 +74,11 @@ privacy review. PKG-15 builds the backend. Three choices were open.
   `oversize`, `bad_answer`, and a confidence below `JEV_MIN_CONFIDENCE` = 0.5 †
   (`low_confidence`). When a served `match_wrong_reason` fails, it falls back to
   the grader's prior key, as before, and no model runs. A served Jev run is a
-  decision, so the AI budget is checked first, and its `llm_usage` row has task
-  `decision`.
+  decision, so the AI budget is checked first. A served Jev answer that stands in
+  for a Gemini decision run is the grade (task `decision`). A billed attempt that
+  falls back, or a served `match_wrong_reason` that the grader's prior would have
+  answered for free, has task `decision_jev_extra` instead. So a decision never
+  costs more grades under `jev` than under `gemini`.
 - **Grading is never served from Jev.** For a grading decision, `jev` is served by
   Gemini with `decision.fallback{reason: jev_unsupported}`. To serve grading from
   Jev would mean crediting answers without the A33 layers. The grading decisions
@@ -82,14 +91,22 @@ privacy review. PKG-15 builds the backend. Three choices were open.
   `JEV_SHADOW_MAX_INFLIGHT` = 32 † tasks run per process; past that a shadow is
   skipped, never queued. The task then emits `decision.shadow` (§6: enums and
   numbers only) and writes an `llm_usage` row with provider `typesafe` and task
-  `decision_shadow`. That task is outside `ai_budget.GRADE_TASKS`, so a shadow never
-  counts against `STUDENT_DAILY_GRADES`. A refused or unavailable grade is never
-  shadowed.
+  `decision_shadow`. `decision_shadow` and `decision_jev_extra` are
+  `ai_budget.UNCOUNTED_TASKS`: they count in $ only, never toward the per-minute
+  rate limit, the daily token cap or `STUDENT_DAILY_GRADES`, so a shadow can never
+  429 the served path. A refused or unavailable grade is never shadowed. A
+  `match_wrong_reason` shadow reports keys as the option alias the model is shown,
+  so an item key outside the event enum never drops the event. At shutdown the app
+  lifespan waits up to `JEV_SHADOW_DRAIN_S` (2 s †) for in-flight shadows, then
+  closes the clients. A shadow still running then is logged as dropped, and its
+  billing goes unrecorded.
 - **No PII on the wire.** The request body is exactly `{state, model, questions}`.
   The state holds the decision State's text fields under fixed labels, and rubric
   items are named by position. No user, request, session or course id is sent in
   a body or a header (tested on the mock transport). The SDK logs request and
-  response bodies at DEBUG, so `_jev.py` floors its logger at WARNING. SDK errors,
+  response bodies at DEBUG, so `_jev.py` always sets its logger to WARNING, with a
+  filter that drops anything below WARNING. The SDK is imported lazily, past the
+  build guard, so the app never depends on it importing while Jev is off. SDK errors,
   which can quote a body, are dropped (`raise ... from None`) and reduced to an
   enum code.
 - **Cost.** `jev-1.13.0` is priced at $0.042 per 1M input tokens, with output free
@@ -108,9 +125,11 @@ privacy review. PKG-15 builds the backend. Three choices were open.
   of the hermetic suite and the live smoke.
 - (+) Shadow data can be collected for the three servable decisions and for both
   grading decisions, with no effect on what students are served.
-- (−) The privacy gate (A24) is still open. Code cannot check a contract, so
-  `JEV_ENABLED` must stay false wherever student text flows. A shadow sends the
-  student's answer to Typesafe.
+- (−) The privacy gate (A24) is still open. Code cannot check a contract, but it
+  can refuse: with `APP_ENV` production or staging (unset counts as production),
+  no Jev call goes out, serve or shadow, until `JEV_PRIVACY_GATE_RECORDED=true`.
+  That flag is the owner's switch, to be set only once the gate is recorded. A
+  shadow sends the student's answer to Typesafe.
 - (−) The circuit and the shadow cap are per process. With N workers, up to
   N × `JEV_CIRCUIT_FAILS` calls can fail before every circuit is open.
 - (−) The live smoke (18 calls, synthetic) measured a shadow p95 of 334 ms from a

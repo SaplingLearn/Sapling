@@ -4,7 +4,19 @@ Written by the session that built PKG-15. No `PKG-15-jev-backend.md` prompt exis
 
 ## What changed
 
-`typesafe-sdk==0.7.2` is pinned exactly and locked. The lock gained only that package; its dependencies were already locked and did not move. `backend/agents/_jev.py` is the Jev backend and the only `typesafe_sdk` importer. It builds a client only when `model_mode() == "real"` and `JEV_ENABLED`, one client per event loop, pinned to `jev-1.13.0`, with an 800 ms per-attempt timeout, one retry only on a connection error or a 5xx other than 529, a wall-clock deadline, a circuit breaker, and a token budget that refuses an oversize state before any call and never truncates it.
+**Review round R1 (2026-10-01; spec §13 A98 (h)–(o)) changed several of the statements below; where they disagree, this paragraph wins.**
+- The breaker releases a half-open probe on every exit that is not a success, cancellation included.
+- `decision_shadow` and `decision_jev_extra` rows count in $ only. They never count toward the rate limit, the daily token cap or the grades.
+- `typesafe_sdk` is imported lazily.
+- With `APP_ENV` production or staging, no Jev call goes out until `JEV_PRIVACY_GATE_RECORDED=true`.
+- The SDK log floor is unconditional.
+- `JEV_TIMEOUT_MS` is the TOTAL bound on a call.
+- The lifespan drains the shadows and closes the clients at shutdown.
+- Shadow keys are normalised to the shown alias.
+- The shadow-log gates fail closed and attribute Gemini cost per decision.
+- Invariant 24 closes the reviewer's three holes.
+
+`typesafe-sdk==0.7.2` is pinned exactly and locked. The lock gained only that package; its dependencies were already locked and did not move. `backend/agents/_jev.py` is the Jev backend and the only `typesafe_sdk` importer. It builds a client only when `model_mode() == "real"` and `JEV_ENABLED`, one client per event loop, pinned to `jev-1.13.0`, with one retry, only on a connection error or a 5xx other than 529, inside an 800 ms TOTAL wall-clock deadline (R1), a circuit breaker, and a token budget that refuses an oversize state before any call and never truncates it.
 
 `services/decisions.py` now serves `jev` for `match_wrong_reason`, `item_answerable` and `judge_leak`. Any Jev failure falls back to the Gemini answer, with a `decision.fallback` event. A grading decision is never served from Jev (`jev_unsupported`). Under `shadow_jev`, Gemini serves, and Jev runs in a background task that emits `decision.shadow` and an `llm_usage` row (`provider='typesafe'`). `JEV_ENABLED=false` (the default) still forces Gemini for everything. Function mode never reaches Jev.
 
@@ -36,7 +48,14 @@ Invariant 24 is no longer vacuous. PKG-05b's regex never matched `typesafe_sdk`;
   - `tests/test_learning_jev.py` (27)
   - `tests/test_learning_decisions_jev.py` (34)
   - `tests/test_learning_loop_invariants.py`: `::test_inv_24_typesafe_only_in_jev` (extended), `::test_inv_24_scan_self_test`, `::test_inv_24_behaviour_no_client_without_the_guard`, `::_typesafe_imports`, `::_jev_build_guard_violations`, `::JEV_CLIENT_CLASSES`.
-- `backend/.env.example`: `JEV_ENABLED`, `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `DECISION_BACKEND_<NAME>` (all commented out).
+- `backend/.env.example`: `JEV_ENABLED`, `JEV_PRIVACY_GATE_RECORDED`, `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `DECISION_BACKEND_<NAME>` (all commented out).
+- R1 symbols:
+  - `agents/_jev.py`: `PRIVACY_GATED_ENVS`, `PRIVACY_GATE_ENV`, `privacy_gate_open()`, `_load_sdk()` (lazy SDK import; missing → `jev_absent`), `_client_class_override` (test seam), `aclose_clients()`. A new `JevUnavailable` code: `privacy_gate`.
+  - `services/ai_budget.py::UNCOUNTED_TASKS = {decision_shadow, decision_jev_extra}`.
+  - `services/decisions.py`: `JEV_SHADOW_DRAIN_S`, `shutdown_shadows(timeout_s) -> int` (the number dropped), `_EXTRA_TASK = "decision_jev_extra"`, `_shadow_enum`, `_record_billed`.
+  - `tests/evals/decisions.py::ShadowStats.gemini_cost_conclusive`.
+  - `tests/test_learning_loop_invariants.py`: `_client_class_refs`, `_client_refs_outside_jev`, `_enabled_is_the_guard`.
+  - `main.py` lifespan: `await decisions.shutdown_shadows()`, then `await _jev.aclose_clients()`, before `events_service.shutdown()`.
 - `docs/decisions/0031-jev-backend-via-typesafe-sdk.md`. ADR 0027 gains an "Amended by: 0031" line.
 
 ## Constants chosen
@@ -46,7 +65,8 @@ Invariant 24 is no longer vacuous. PKG-05b's regex never matched `typesafe_sdk`;
 - `JEV_SHADOW_MAX_INFLIGHT = 32` † (A98).
 - `_jev.CHARS_PER_TOKEN = 3` † (pessimistic; Jev's tokenizer is unpublished; #672's estimate).
 - `_jev.RETRY_STATUSES = {500, 502, 503, 504}`: never a 429 or 529, never a timeout.
-- Wall-clock deadline = `JEV_TIMEOUT_MS × (1 + JEV_MAX_RETRIES)` = 1.6 s. A timeout is not retried, so in practice a timeout costs ≤ 800 ms.
+- **Latency bound (R1, corrected):** one Jev call takes at most `JEV_TIMEOUT_MS` = 800 ms of wall clock, retry included (the deadline and the RetryPolicy budget are both 800 ms), and then Gemini serves. The first version's bound was 1.6 s: per-phase timeouts of 800 ms plus one retry. The earlier claim that "a timeout costs ≤ 800 ms" held only for a timeout, not for a slow 5xx followed by a retry.
+- `JEV_SHADOW_DRAIN_S = 2.0` † (A98 (n)).
 - `jev-1.13.0` price: $0.042 / 1M input tokens, output $0 (#672's figure).
 
 ## Deviations from spec
@@ -61,12 +81,13 @@ Invariant 24 is no longer vacuous. PKG-05b's regex never matched `typesafe_sdk`;
 
 ## Known gaps
 
-- **The privacy gate (A24) is open.** `JEV_ENABLED` must stay false wherever student text flows. A shadow sends the student's answer (and, for grading, the rubric and reference) to Typesafe. Code cannot check a contract.
+- **The privacy gate (A24) is open.** Code now refuses where it can (R1): see the runbook below. In local or test environments the interlock does not apply, so keep student-derived text out of those.
 - **No gold for Jev.** `promotion_checks`' gold gates need ≥ 200 gold labels per decision (`DECISION_PROMOTE_MIN_GOLD`), and the eval has 8 synthetic cases in all. No Jev cassette was recorded. The eval's `decisions` dataset still measures only the Gemini baseline.
 - **Cost precision.** `llm_usage.cost_usd` is NUMERIC(12,6), so a Jev call under about 12 input tokens is stored as $0. Real decision states are 430–570 tokens, about $0.00002. #672 / #677's NUMERIC(18,10) migration is not on this branch.
 - **Per-process state.** The circuit breaker and the shadow cap are per process. Shadows on a throwaway loop (`run_agent_sync`) are cancelled when that loop closes.
-- **No shutdown hook.** Clients are not closed on app shutdown. A closed loop's client is pruned; the process exit drops the rest.
-- **The shadow is per call.** A request that hits the shadow cap loses that shadow silently (WARNING only).
+- **Shutdown (R1).** The lifespan drains in-flight shadows for up to 2 s and closes this loop's client. Shadows still running are cancelled and logged as dropped; Typesafe may have billed them, and that usage is unrecorded.
+- **The shadow cap.** A request that hits the shadow cap loses that shadow (WARNING only).
+- **The A98 sub-items.** The review round is recorded as A98 (h)–(o), not as a new row: the parallel PKG-14 round is taking A99 and up, and a sub-item cannot collide.
 - **Pre-existing lint error.** `ruff check .` reports one error that predates this branch (`tests/test_learning_tier_rederive_migration.py:23` E741, from the base). Every file PKG-15 touched is clean.
 - **Live smoke (2026-10-01, 18 Jev calls, synthetic inputs only, Gemini stubbed in-process, nothing written to any DB).** 16 were shadow calls across all five shadowable decisions, and 2 were served `jev` `judge_leak` calls.
   - Results: 0 errors, 0 fallbacks.
@@ -77,12 +98,19 @@ Invariant 24 is no longer vacuous. PKG-05b's regex never matched `typesafe_sdk`;
   - This sample decides nothing, and p95 > `DECISION_P95_MS` (300) here. The gate is to be measured from Sapling's host.
   - The script is not committed. It ran `services/decisions.py` under `shadow_jev`, with the decision agent on a FunctionModel and `grader.grade` stubbed.
 
+## Runbook: the privacy gate (A24's switch)
+
+1. Until the owner records the A24 gate (DPA, ZDR, FERPA/under-18 terms, privacy notice; spec §13 A24), leave `JEV_PRIVACY_GATE_RECORDED` unset in production and staging. With it unset, every Jev call there is refused: a served `jev` decision falls back to Gemini with `decision.fallback{reason: privacy_gate}`, and a shadow is not scheduled at all (one WARNING per process). This holds even if `JEV_ENABLED=true` is set by mistake.
+2. When the gate is recorded (an ADR or a spec amendment naming the date and the documents), set `JEV_PRIVACY_GATE_RECORDED=true` together with `JEV_ENABLED=true`, then choose `DECISION_BACKEND_<NAME>=shadow_jev` per decision.
+3. Revoking: unset `JEV_PRIVACY_GATE_RECORDED`, which is read per call and takes effect at once, or set `JEV_ENABLED=false`, which is read at import and takes effect on restart.
+
 ## Verify commands
 
 ```
-cd backend && venv/bin/python -m pytest tests/test_learning_jev.py -q                         → 27 passed
-cd backend && venv/bin/python -m pytest tests/test_learning_decisions_jev.py -q               → 34 passed
+cd backend && venv/bin/python -m pytest tests/test_learning_jev.py -q                         → 42 passed
+cd backend && venv/bin/python -m pytest tests/test_learning_decisions_jev.py -q               → 49 passed
 cd backend && venv/bin/python -m pytest tests/test_learning_loop_invariants.py -q -k inv_24   → 3 passed
+cd backend && venv/bin/python -c "import sys, main; print('typesafe_sdk' in sys.modules)"     → False
 cd backend && venv/bin/python -m pytest tests/test_requirements_lock.py -q                    → 3 passed
 grep -rlE "^[[:space:]]*(import|from)[[:space:]]+typesafe" backend --include=*.py --exclude-dir=venv --exclude-dir=tests → backend/agents/_jev.py (only)
 grep -n "^typesafe-sdk==0.7.2" backend/requirements.txt backend/requirements.lock            → 2 hits
@@ -96,9 +124,9 @@ The full hermetic suite, from `backend/` with no `SAPLING_MODEL_MODE` / `SAPLING
 
 - (a) **#672 is superseded.** Its direct-HTTP client, flash-lite decision backend and observe-only tutor router are not ported. PKG-15 uses the SDK (configured to fail fast, which answers #672's backoff objection) and the PKG-05b seam. Close #672, or fold its tutor router (#640) and the NUMERIC(18,10) `cost_usd` widening into their own PRs. Meanwhile #672 is untouched.
 - (b) **Grading under Jev.** Should a Jev grade ever be served? Doing so needs a way for the A33 layers to stand on it. For example, Jev could answer only the per-item yes/no, and code would still require grade()'s verified quotes and span check, which today are Gemini runs. Meanwhile: never served (`jev_unsupported`); grading is shadowable.
-- (c) **Shadow cost and the budget.** Shadow rows are excluded from `STUDENT_DAILY_GRADES`, but their $ still counts toward the daily/monthly spend caps (negligible: about $0.00002 each). Meanwhile: counted.
-- (d) **A served Jev decision counts as a grade.** It is checked against `ai_budget` and its row has `task="decision"`. With the grader's prior, `match_wrong_reason` under `jev` therefore costs the student one more grade per check answer than under `gemini`, which reuses the prior for free. Meanwhile: counted (the spec's "decisions count as grades").
-- (e) **The privacy gate's owner and record.** Where should "the gate passed" be recorded (an ADR, or a spec amendment) before anyone sets `JEV_ENABLED=true` with student traffic? Meanwhile: the flag stays false. `.env.example`, the ADR and `_jev.py`'s docstring say so.
+- (c) **Shadow cost and the budget.** Settled by R1: shadow rows count in $ only (about $0.00002 each) and never toward the rate limit, the token cap or the grades. Question for the owner: should they leave the $ caps too?
+- (d) **A served Jev decision as a grade.** Settled by R1: never more grades than the Gemini path. A served `match_wrong_reason` with a prior is `decision_jev_extra`.
+- (e) **The privacy gate's owner and record.** Where should "the gate passed" be recorded? The code switch is `JEV_PRIVACY_GATE_RECORDED` (see the runbook); the record itself is the owner's choice of an ADR or a spec amendment.
 - (f) **CLAUDE.md** still says "there is no other sanctioned LLM seam (ADR 0024)" and has no repo-map line for `agents/_jev.py`. This session did not edit CLAUDE.md. The owner may want one line there (ADR 0027 already amends ADR 0024).
 
 ## Post-hoc changes
