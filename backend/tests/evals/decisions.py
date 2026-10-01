@@ -507,7 +507,7 @@ def shadow_stats(rows, *, usage_rows=()) -> dict[str, ShadowStats]:
     - error_rate: rows with an error_code (except `oversize`) / n — an open circuit
       counts, since those decisions got no Jev answer;
     - cost_per_decision_usd: mean `shadow_input_tokens` over the rows where a call went
-      out, at llm_pricing's JEV_MODEL rate;
+      out, at llm_pricing's JEV_MODEL rate (+inf when none did: the cost gate fails, A107);
     - gemini_cost_per_decision_usd: the Gemini llm_usage cost (provider gemini, the
       decision's tasks) of the shadowed requests / their count. A request that also
       shadowed ANOTHER decision on the same Gemini tasks is left out (llm_usage carries no
@@ -557,9 +557,13 @@ def shadow_stats(rows, *, usage_rows=()) -> dict[str, ShadowStats]:
             agreement=_mean([float(bool(r.get("agreement"))) for r in answered]),
             p95_ms=_p95([float(r.get("shadow_latency_ms") or 0) for r in called]),
             error_rate=len(errors) / len(group),
-            cost_per_decision_usd=_mean([float(r.get("shadow_input_tokens") or 0) for r in called])
-            * in_rate
-            / 1000,
+            # A107 (review m5): no call went out → no Jev cost measured → +inf, so
+            # cost_not_worse FAILS instead of passing vacuously on a 0.0 mean
+            cost_per_decision_usd=(
+                _mean([float(r.get("shadow_input_tokens") or 0) for r in called]) * in_rate / 1000
+                if called
+                else float("inf")
+            ),
             gemini_cost_per_decision_usd=gemini,
             gemini_cost_conclusive=conclusive,
         )

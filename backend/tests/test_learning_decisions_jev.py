@@ -798,3 +798,47 @@ def test_co_shadowed_decisions_never_inflate_each_others_gemini_cost(ev):
 def test_without_usage_rows_the_cost_gate_still_fails_closed(ev):
     [s] = ev.shadow_stats([_shadow_row(i) for i in range(3)]).values()
     assert ev.live_gates(s)["cost_not_worse"] is False
+
+
+# ── PKG-14/15 review m5 (spec §13 A107): promotion-gate nits ─────────────────
+
+
+def test_with_zero_calls_the_cost_gate_never_passes_vacuously(ev):
+    """Every row a no-call code: no Jev cost was measured, so cost_not_worse must fail
+    (or be inconclusive) — never 0 <= the Gemini cost."""
+    rows = [_shadow_row(i, code="circuit_open", ms=0, day=i % 8) for i in range(20)]
+    usage = [{"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.001} for i in range(20)]
+    [s] = ev.shadow_stats(rows, usage_rows=usage).values()
+    assert s.cost_per_decision_usd == float("inf")
+    assert ev.live_gates(s)["cost_not_worse"] in (False, None)
+
+
+def _shadow_out(value):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        value=value, confidence=0.9, latency_ms=10, input_tokens=5, error_code=None
+    )
+
+
+@pytest.mark.parametrize(
+    "primary, shadow, agree",
+    [
+        ("weird-a!", "weird-b!", False),  # two DIFFERENT unknown values: both "other", no agreement
+        ("weird-a!", "weird-a!", True),  # the same raw value still agrees
+        ("no", "no", True),
+        ("no", "yes", False),
+    ],
+)
+def test_two_unknown_values_bucketed_as_other_do_not_agree(seam, monkeypatch, primary, shadow, agree):
+    got = []
+
+    async def call(decision, state):
+        return _shadow_out(shadow)
+
+    monkeypatch.setattr(seam, "_call_jev", call)
+    monkeypatch.setattr(seam, "_record_billed", lambda *a, **k: None)
+    monkeypatch.setattr(seam, "emit_shadow", lambda decision, **kw: got.append(kw))
+    asyncio.run(seam._run_shadow("judge_leak", None, None, primary, 0.8))
+    (kw,) = got
+    assert kw["agreement"] is agree

@@ -964,8 +964,16 @@ async def _run_shadow(decision, state, sdeps, primary_value: str, primary_confid
     try:
         out = await _call_jev(decision, state)
         _record_billed(out, sdeps, task=_SHADOW_TASK)
-        primary_value = _shadow_enum(decision, state, primary_value)
-        shadow_value = _shadow_enum(decision, state, out.value)
+        raw_primary, raw_shadow = primary_value, out.value
+        primary_value = _shadow_enum(decision, state, raw_primary)
+        shadow_value = _shadow_enum(decision, state, raw_shadow)
+        # spec §13 A107 (review m5): "other" buckets every unknown value, so two
+        # DIFFERENT unknown values map alike — agreement compares the raw values too
+        agreement = (
+            shadow_value is not None
+            and shadow_value == primary_value
+            and (shadow_value != _SHADOW_OTHER or raw_shadow == raw_primary)
+        )
         emit_shadow(
             decision,
             deps=sdeps,
@@ -973,7 +981,7 @@ async def _run_shadow(decision, state, sdeps, primary_value: str, primary_confid
             shadow_value=shadow_value,
             primary_confidence=primary_confidence,
             shadow_confidence=out.confidence,
-            agreement=shadow_value is not None and shadow_value == primary_value,
+            agreement=agreement,
             shadow_latency_ms=out.latency_ms,
             shadow_input_tokens=out.input_tokens,
             error_code=out.error_code,
