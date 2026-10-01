@@ -37,6 +37,21 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash-lite": (0.0001, 0.0004),
     "gemini-2.0-flash": (0.0001, 0.0004),
     "gemini-2.0-flash-lite": (0.000075, 0.0003),
+    # TypeSafe Jev (learning loop PKG-15; provider="typesafe" on the llm_usage row;
+    # rate from #672 / docs.typesafe.ai/models): $0.042 per 1M input tokens, output
+    # free. Exact pinned id only (services/decisions.JEV_MODEL). NOTE: cost_usd is
+    # stored at 6dp, so a call under ~12 input tokens rounds to $0 (#672's
+    # NUMERIC(18,10) widening is not on this branch; HANDOFF-15 Known gaps).
+    "jev-1.13.0": (0.000042, 0.0),
+}
+
+# Cached-input rates per 1K tokens (spec §13 A21): 10% of the input rate —
+# Flash-Lite $0.01/M, Flash $0.03/M, Pro $0.125/M. A model missing here bills
+# cached input at its full input rate (the no-cache upper bound), never lower.
+CACHED_INPUT_PRICING: dict[str, float] = {
+    "gemini-2.5-pro": 0.000125,
+    "gemini-2.5-flash": 0.00003,
+    "gemini-2.5-flash-lite": 0.00001,
 }
 
 # Models we've already warned about — so an un-priced model logs once, not
@@ -100,11 +115,19 @@ def _canonical_model(model: str) -> str:
     return model.rsplit(":", 1)[-1].strip() if model else model
 
 
-def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+def cost_usd(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int | None = None,
+) -> float | None:
     """Compute USD cost for a call, or ``None`` if the model isn't priced.
 
     Rounds to 6 decimal places (half-up) to fit ``llm_usage.cost_usd
     numeric(12,6)``. An unknown model returns ``None`` and warns once.
+
+    ``cached_tokens``: cached input, already inside ``prompt_tokens``, billed at
+    ``CACHED_INPUT_PRICING``; spec §13 A21. Clamped to ``[0, prompt_tokens]``.
     """
     rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(_canonical_model(model))
     if rates is None:
@@ -125,8 +148,12 @@ def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | 
         return None
 
     in_rate, out_rate = rates
+    canonical = model if model in MODEL_PRICING else _canonical_model(model)
+    cached = min(max(int(cached_tokens or 0), 0), int(prompt_tokens))
+    cached_rate = CACHED_INPUT_PRICING.get(canonical, in_rate)
     cost = (
-        Decimal(str(in_rate)) * Decimal(int(prompt_tokens))
+        Decimal(str(in_rate)) * Decimal(int(prompt_tokens) - cached)
+        + Decimal(str(cached_rate)) * Decimal(cached)
         + Decimal(str(out_rate)) * Decimal(int(completion_tokens))
     ) / Decimal(1000)
     return float(cost.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))

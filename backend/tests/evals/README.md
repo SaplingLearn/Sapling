@@ -54,11 +54,48 @@ git commit -m "evals: refresh cassettes + baselines for <change>"
 Never hand-edit an existing case to make it pass; add a new case when
 production surfaces a miss (see each dataset's module docstring).
 
+### Floors from three recordings (spec §13 A40 06(s), PKG-14)
+
+A floor set from ONE recording is not accepted. Record the dataset three
+times with a run log, then let `floors.py` write the minimum per evaluator
+(and, for a routed dataset, the per-run routing block the tier pins read):
+
+```bash
+cd backend
+for i in 1 2 3; do
+  SAPLING_EVAL_MODE=record SAPLING_EVAL_RUNS_LOG=/tmp/runs.jsonl python tests/evals/loop_tutor.py
+done
+python tests/evals/floors.py --log /tmp/runs.jsonl --runs 3 \
+    --datasets loop_tutor_lite,loop_tutor,loop_tutor_deep --routing loop_tutor_routing
+```
+
+The committed cassettes are the last run's, so replay scores are always at or
+above the floor. `floors.py --dry-run` prints every run and the floor without
+writing; it refuses fewer than three runs.
+
 ## Coverage
 
 Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
-`concept_extraction`, `syllabus_extraction`, `quiz_generation`, and
-`chat_tutor` — 96 cassettes.
+`concept_extraction`, `syllabus_extraction`, `quiz_generation`, `chat_tutor`,
+and `check_items` — 106 cassettes.
+
+`check_items` (learning loop PKG-04, 6 cassettes) drafts one course concept's
+nine items per case from `fixtures/tutor_course.json` passages and scores them
+with the same code rules the service stores by (`learning/checks.py::
+validate_draft`) plus grounding (cited chunk ids are input ids; no reference
+leaks into the prompt) and `FinalAnswerValid` (spec §13 A34, required 1.0:
+every accepted draft's final answer is a verbatim copy from its reference).
+Its baseline was re-recorded by PKG-06's A34 reopen of PKG-04 (29af030; one
+recording on the final prompt — DraftValid 0.722, WrongReasonCount 0.667,
+both lower than the first recording; HANDOFF-04/HANDOFF-06), then by the A37
+reopen (spec §13 A37: the mc_reason options as objects, 48a65bc), its
+review round (options alike in length), its third review (the reference
+as a strong student's reason, never the model thinking aloud) and its round 4
+(each distractor states its own misconception; the item's wrong reasons are
+read off the distractors, and WrongReasonCount scores those for mc_reason).
+`McOptionsValid` (required 1.0) and `McReasonValid` score the mc_reason
+drafts; `McCorrectNotLongest` is the share of stored mc_reason drafts whose
+correct option is not strictly the longest, gated at its recorded rate.
 
 `chat_tutor` records against the committed fixture course
 (`fixtures/tutor_course.json`) through the TutorRetrieval seam
@@ -66,3 +103,9 @@ Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
 Supabase. Its cassettes also freeze the model's *tool calls*, which the
 graph-grounding evaluators (GraphToolUsed / MasteryUpdateEmitted /
 GroundedConcept) score in replay.
+
+`loop_tutor` (PKG-07) runs the same 8 cases once per tier slot (`loop_tutor_lite`, `loop_tutor`, `loop_tutor_deep`), each with its own cassettes and baselines block, on the SERVED path (Task 9): a cassette is a `LoopRecording` — the raw `LoopTurnOut`, every raw attempt, request/retry counts, tool calls, and the `prompt_hash` / `schema_hash` / `model` / `input_sha256` it was recorded under (replay raises `StaleRecordingError` on any mismatch, and `tests/test_loop_tutor_agent.py` pins every cassette to the current hashes) — and replay recomputes the served text with production code (`turn_shape.render_turn`, then `routes.learn_loop.served_model_text` at `loop_leak_rung`), which the rung judge reads (`ajudge_rung`, `cassettes/loop_tutor_rung_judge/<slot>__<case>.json`). Served gates: ServedAnswerLeak, ServedNoReveal, CeilingCompliance, MaxSentences, OneQuestion, FeedbackNeverEndsInAnswer, SycophancyResists, NoControlTags, PlainMathBelowH6; diagnostics (baselined, never routing): RawAnswerLeak, RetriesUsed (1.0 = first attempt served). `agents/loop_tutor.LOOP_ROUTABLE_TIERS` is exactly the slots at 1.0 on every served gate (pinned by `test_loop_routable_tiers_match_baselines`); in the 2026-09-29 recording that is `loop_tutor` alone (HANDOFF-07).
+
+`loop_rung_judge` (PKG-07 Task 9, 8 cassettes under `cassettes/loop_tutor_rung_judge/`) calibrates the eval-side rung judge `_rung_judge.py`, which replaces `loop_tutor._infer_rung` (a marker classifier that scores any unmarked reply as H3, so no reply to an H1/H2-ceiling case can pass). The judge is an eval-only pydantic-ai agent (`RUNG_JUDGE_MODEL`, default `gemini-2.5-pro`, env-overridable; no production slot, no function-mode handler) prompted with `learning.ladder.RUNG_INTENT` verbatim, and returns `RungJudgement{rung 0..6, reveals_final_answer, evidence}`. `judge_rung(case_id, slot, served_text, item)` (and `await ajudge_rung(...)`) records to `cassettes/loop_tutor_rung_judge/<slot>__<case>.json` = `{served_sha256, judge_model, judge_prompt_hash, output}`; replay RAISES when the served text, the judge prompt (instructions, item block or output schema) or the judge model changed, so a stale judgement never scores. The calibration's eight hand-written replies span H0..H6 (two are plain H1/H2 text `_infer_rung` misreads; one is an unmarked full solution it under-counts); `RungJudgeAgreement` and `RevealAgreement` are gated at 1.0. On a miss fix the judge prompt, never the gold, and re-record.
+
+`misconception_confront` (PKG-10, spec §13 A75) scores the confronting turn — the loop tutor plus the route's confrontation line (`routes.learn_loop.confront_line_for` / `with_confrontation`, used by the eval so it scores what the route sends) — on the SERVED path, one dataset per slot a confronting turn can land on (`misconception_confront__loop_tutor_deep`, `misconception_confront__loop_tutor`; 7 cases each: five feedback turns incl. an instruction smuggled into the item-drafted misconception text, a hint at H4 on an unreleased isomorph, a novice teach turn). Recording format, stale checks and served text are `loop_tutor.py`'s (cassettes `cassettes/misconception_confront/<slot>/`). Served gates: the loop tutor's (ServedAnswerLeak, ServedNoReveal, CeilingCompliance via the rung judge, MaxSentences, OneQuestion, FeedbackNeverEndsInAnswer — the final answer matched as a token — NoControlTags, PlainMathBelowH6) plus Confronts and NoAffirmation (the eval-only confront judge `_confront_judge.py`, gemini-2.5-pro, cassettes `cassettes/misconception_confront_judge/`, reading the model's part of the turn), VerdictHeld and NoInstructionEcho; diagnostics RawAnswerLeak, RetriesUsed. `baselines.json` `misconception_confront_routing` holds three fresh recordings per slot; `routes.learn_loop.CONFRONT_TIERS` is exactly the tiers whose three runs all score 1.0 on every served gate (pinned by `tests/test_learning_misconceptions.py`): deep only in the 2026-09-29 recordings (standard: Confronts 0.43/0.50/0.43).

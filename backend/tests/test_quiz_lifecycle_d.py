@@ -134,6 +134,10 @@ class TestMasterySnapshotPersisted:
                     "concept_name": "Loops",
                     "course_id": "course1",
                 }]
+            elif name == "quiz_evidence_claims":
+                # spec §13 A100: every hash is fresh — the claim's insert takes it
+                mock.insert_ignore_duplicates.side_effect = lambda rows, on_conflict=None: list(rows)
+                mock.update.return_value = []
             else:
                 mock.select.return_value = []
                 mock.update.return_value = []
@@ -471,11 +475,15 @@ class TestAttemptHistory:
         assert first["score"] == 2
         assert first["total"] == 3
         assert first["difficulty"] == "medium"
-        assert first["mastery_delta"] == 0.05
+        # PKG-14b: renamed p_delta (= mastery_after − mastery_before).
+        assert first["p_delta"] == 0.05
+        from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+        assert LEGACY_MASTERY_SYMBOLS[0] not in first  # the retired key (inv_21)
         assert first["created_at"] == attempts[0]["created_at"]
         second = data["attempts"][1]
         assert second["status"] == "abandoned"
-        assert second["mastery_delta"] is None
+        assert second["p_delta"] is None
         # No question payloads (and therefore no keys) on the history list.
         # Asserted against the SELECTED COLUMNS, not the mocked rows: the
         # rows above happen to carry questions_json, so `"questions" not in

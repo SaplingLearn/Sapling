@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import get_mastery_tier            # noqa: E402
+from learning.bkt import tier_for            # noqa: E402  (PKG-14b)
 from db import seed_helpers as h               # noqa: E402
 from db.connection import table                # noqa: E402
 from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
@@ -73,6 +73,51 @@ ENR_ACTIVE_BIO_F25 = "rich-enr-active-bio110-f25"
 ENR_ACTIVE_ENG_SU26 = "rich-enr-active-eng150-su26"
 ENR_SECOND_CS_S26 = "rich-enr-second-cs101-s26"
 ENR_SECOND_HIST_F25 = "rich-enr-second-hist200-f25"
+
+# The abstract course's `course_code` (_COURSES below): the course key
+# course_chunks rows carry (services/document_indexing.py::_course_code).
+COURSE_CS_CODE = "CS101"
+
+# Learning loop (PKG-13): the loop users — a prerequisite chain, shared check
+# items and (for the capped user) today's spend. After PKG-14b (spec §7, §11.2)
+# the loop is EVERY student's default and the gate reads no per-user row: the
+# `learning_loop_beta` writes below are a retired build-phase staff/QA toggle —
+# inert fixture data nothing reads after PKG-14b. The E2E lane is chosen by
+# LEARNING_LOOP_ENABLED in the shell (unset = default lane; false = kill switch).
+USER_LOOP = "rich-user-loop"
+USER_CAPPED = "rich-user-capped"
+LOOP_USERS = (USER_LOOP, USER_CAPPED)
+ENR_LOOP_CS_S26 = "rich-enr-loop-cs101-s26"
+ENR_CAPPED_CS_S26 = "rich-enr-capped-cs101-s26"
+SEED_LOOP_CONCEPTS = 3
+SEED_LOOP_FORMATS = ("free", "teachback")  # † free-text formats: a journey answers every item by typing
+SEED_LOOP_ITEMS_PER_CONCEPT = 6  # † = len(SEED_LOOP_FORMATS) × len(CHECK_ITEM_DIFFICULTIES); the test pins it
+SEED_CAPPED_SPEND_FACTOR = 1.5  # † today's seeded spend = the novice daily allowance × this (spec §13 A26)
+# (slug, concept_name, course-notes sentence) — a prerequisite chain in order.
+# Each loop user gets its own graph_nodes rows (loop_node_id); check items are
+# course assets keyed on (course_id, concept_key) and written once for both
+# (spec §13 A2). Edges are oriented by
+# learning.params.EDGE_PREREQ_SOURCE_IS_PREREQ at write time.
+LOOP_NODES = [
+    ("binary", "Binary Numbers", "A binary number writes a value in base two, one bit per place."),
+    ("bitwise", "Bitwise Operators", "Bitwise operators combine two numbers bit by bit."),
+    ("twos", "Two's Complement", "Two's complement stores a negative number by inverting and adding one."),
+]
+assert len(LOOP_NODES) == SEED_LOOP_CONCEPTS
+# The shared course-material document the loop items are drafted from (spec §13
+# A23: items come only from shared course material). Uploaded by the loop user,
+# who consents (share_class_context), indexed into one course_chunks row per
+# concept.
+LOOP_DOC_ID = "rich-doc-loop-cs-notes"
+LOOP_DOC_CATEGORY = "lecture_notes"
+LOOP_DOC_SHAREABILITY_CONFIDENCE = 0.9  # † above chunk_visibility.MIN_SHARE_CONFIDENCE
+# (card_id, front, back) — the capped user's one due flashcard; the budget-cap
+# journey rates it on /study (review keeps working at the hard level, spec §3.5).
+CAPPED_FLASHCARD = ("rich-fc-capped-1", "What is a bit?", "A binary digit: 0 or 1.")
+
+
+def loop_node_id(user_id: str, slug: str) -> str:
+    return f"rich-node-{'loop' if user_id == USER_LOOP else 'capped'}-{slug}"
 
 
 # ─── Seed steps ──────────────────────────────────────────────────────────────
@@ -164,13 +209,11 @@ _USERS = [
         "name": "Rich Active", "first_name": "Rich", "last_name": "Active",
         "username": "rich-active", "year": "Junior",
         "majors": ["Computer Science"], "minors": ["Mathematics"],
-        "learning_style": "visual",
     }),
     (USER_SECOND, "rich.second@richlocal.test", True, True, 5, {
         "name": "Sam Second", "first_name": "Sam", "last_name": "Second",
         "username": "rich-second", "year": "Senior",
         "majors": ["Biology"], "minors": [],
-        "learning_style": "kinesthetic",
     }),
     (USER_NEW, "rich.new@richlocal.test", False, True, 0, {
         "name": "Newt Newman",
@@ -178,17 +221,26 @@ _USERS = [
     (USER_PENDING, "rich.pending@richlocal.test", False, False, 0, {
         "name": "Penny Pending",
     }),
+    (USER_LOOP, "rich.loop@richlocal.test", True, True, 3, {
+        "name": "Lou Loop", "first_name": "Lou", "last_name": "Loop",
+        "username": "rich-loop", "year": "Sophomore",
+        "majors": ["Computer Science"], "minors": [],
+    }),
+    (USER_CAPPED, "rich.capped@richlocal.test", True, True, 1, {
+        "name": "Casey Cap", "first_name": "Casey", "last_name": "Cap",
+        "username": "rich-capped", "year": "Freshman",
+        "majors": ["Computer Science"], "minors": [],
+    }),
     (USER_ADMIN, "rich.admin@richlocal.test", True, True, 30, {
         "name": "Ada Admin", "first_name": "Ada", "last_name": "Admin",
         "username": "rich-admin", "year": "Staff",
         "majors": [], "minors": [],
-        "learning_style": "reading_writing",
     }),
 ]
 
 # Profile fields that are 🔒 (column-encrypted) vs. plaintext.
 _PROFILE_ENCRYPTED_FIELDS = ("name", "first_name", "last_name")
-_PROFILE_PLAIN_FIELDS = ("username", "year", "majors", "minors", "learning_style")
+_PROFILE_PLAIN_FIELDS = ("username", "year", "majors", "minors")  # PKG-14b: no learning_style
 
 
 def seed_users() -> None:
@@ -235,6 +287,8 @@ _ENROLLMENTS = [
     (ENR_ACTIVE_ENG_SU26, USER_ACTIVE, OFF_ENG_SU26, "#c084fc", "Writing", "curved", 0.85, 0.05),
     (ENR_SECOND_CS_S26, USER_SECOND, OFF_CS_S26, "#4f86f7", "Intro CS (S26)", "raw", None, None),
     (ENR_SECOND_HIST_F25, USER_SECOND, OFF_HIST_F25, "#eab308", "World History", "raw", None, None),
+    (ENR_LOOP_CS_S26, USER_LOOP, OFF_CS_S26, "#4f86f7", "Intro CS (loop)", "raw", None, None),
+    (ENR_CAPPED_CS_S26, USER_CAPPED, OFF_CS_S26, "#4f86f7", "Intro CS (capped)", "raw", None, None),
 ]
 
 
@@ -255,23 +309,28 @@ def seed_enrollments() -> None:
 
 
 # Graph nodes keyed on the ABSTRACT course_id (mastery is cumulative across
-# terms). (node_id, concept_name, mastery_score) — tier derived from score.
+# terms). (node_id, concept_name, mastery_score) — tier derived from score with
+# the launch cuts (learning.bkt.tier_for: mastered ≥ 0.95, learning ≥ 0.30,
+# struggling ≥ 0.10; spec §13 A95). Every tier has a node (graph.spec.ts's
+# journey guard; tests/test_seed_local_rich.py pins it): "Variables and Types"
+# is the one mastered node (0.96 since the PKG-14 final fix round; it was 0.92,
+# mastered only on the retired 0.75 cut).
 _GRAPH_NODES = {
     COURSE_CS: [
-        ("rich-node-cs-variables", "Variables and Types", 0.92),      # mastered
+        ("rich-node-cs-variables", "Variables and Types", 0.96),      # mastered
         ("rich-node-cs-controlflow", "Control Flow", 0.6),            # learning
         ("rich-node-cs-recursion", "Recursion", 0.25),                # struggling
         ("rich-node-cs-pointers", "Pointers and Memory", 0.05),       # unexplored
-        ("rich-node-cs-algorithms", "Algorithms", 0.8),               # mastered
+        ("rich-node-cs-algorithms", "Algorithms", 0.8),               # learning
     ],
     COURSE_MATH: [
-        ("rich-node-math-vectors", "Vectors", 0.85),                  # mastered
+        ("rich-node-math-vectors", "Vectors", 0.85),                  # learning
         ("rich-node-math-matrices", "Matrices", 0.5),                 # learning
         ("rich-node-math-eigenvalues", "Eigenvalues", 0.2),           # struggling
         ("rich-node-math-determinants", "Determinants", 0.0),         # unexplored
     ],
     COURSE_BIO: [
-        ("rich-node-bio-membrane", "Cell Membrane", 0.78),            # mastered
+        ("rich-node-bio-membrane", "Cell Membrane", 0.78),            # learning
         ("rich-node-bio-mitochondria", "Mitochondria", 0.55),         # learning
         ("rich-node-bio-dna", "DNA Replication", 0.15),               # struggling
         ("rich-node-bio-photosynthesis", "Photosynthesis", 0.05),     # unexplored
@@ -321,7 +380,7 @@ def seed_graph() -> None:
                     "concept_name": concept,
                     "subject": subject,
                     "mastery_score": score,
-                    "mastery_tier": get_mastery_tier(score),
+                    "mastery_tier": tier_for(score),
                 },
                 on_conflict="user_id,course_id,concept_name",
             )
@@ -839,14 +898,234 @@ def seed_sessions() -> None:
         )
 
 
+def _seed_embedding(text: str) -> list[float]:
+    """A deterministic unit vector of the store's dimension for `text` — what
+    the RETRIEVAL_DOCUMENT embedding stands in for on a local seed (no model
+    call; a NULL embedding is a `ragstore` finding, #482)."""
+    import hashlib
+    import math
+
+    from services.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM
+
+    raw: list[float] = []
+    counter = 0
+    while len(raw) < _OUTPUT_DIM:
+        digest = hashlib.sha256(f"{counter}::{text}".encode()).digest()
+        raw.extend(b / 255.0 - 0.5 for b in digest)
+        counter += 1
+    raw = raw[:_OUTPUT_DIM]
+    norm = math.sqrt(sum(v * v for v in raw))
+    return [v / norm for v in raw]
+
+
+def seed_learning_loop() -> None:
+    """PKG-13: the loop users — (retired, inert after PKG-14b) staff/QA toggle rows, a prerequisite chain each,
+    an indexed shared course document, shared encrypted check items drafted from
+    it, and the capped user's spend and due card. Imports are function-local:
+    `learning.*`, the `config` budget names, the RAG helpers and the
+    function-handler constants are only needed here. Nothing here imports the
+    SDK (PKG-13 fix round): this runs in a fresh process before EVERY
+    Playwright test, and agents.function_handlers_e2e / services.rag_service
+    pull pydantic-ai and google-genai (~2.4 s a test) — the handler constants
+    are read from the module's source (db.e2e_handler_constants) and the chunk
+    id from services.chunk_ids (rag_service re-exports it)."""
+    from datetime import datetime, timedelta, timezone
+
+    import config
+    from db.e2e_handler_constants import read_constants
+    from learning.checks import question_hash
+    from learning.params import CHECK_ITEM_DIFFICULTIES, EDGE_PREREQ_SOURCE_IS_PREREQ
+    from services.chunk_ids import chunk_id
+    from services.chunk_visibility import SHARED
+    from services.graph_service import _normalize_concept
+
+    E2E_LOOP_FINAL_ANSWER, E2E_LOOP_PROBE_PROMPT, E2E_LOOP_REFERENCE = read_constants(
+        "E2E_LOOP_FINAL_ANSWER", "E2E_LOOP_PROBE_PROMPT", "E2E_LOOP_REFERENCE"
+    )
+
+    for uid in LOOP_USERS:
+        # share_class_context: the uploader's consent the shared chunks rest on (#629).
+        # learning_loop_beta: retired build-phase staff/QA toggle; nothing reads it
+        # after PKG-14b (spec §7) — kept as inert fixture data.
+        h.upsert(
+            "user_settings",
+            {"user_id": uid, "learning_loop_beta": True, "share_class_context": True},
+            on_conflict="user_id",
+        )
+        for slug, concept, _ in LOOP_NODES:
+            h.upsert(
+                "graph_nodes",
+                {
+                    "id": loop_node_id(uid, slug),
+                    "user_id": uid,
+                    "course_id": COURSE_CS,
+                    "concept_name": concept,
+                    "subject": concept.split()[0],
+                    "mastery_score": 0.0,
+                    "mastery_tier": tier_for(0.0),
+                },
+                on_conflict="user_id,course_id,concept_name",
+            )
+        for (pre, _, _), (dep, _, _) in zip(LOOP_NODES, LOOP_NODES[1:]):
+            pre_id, dep_id = loop_node_id(uid, pre), loop_node_id(uid, dep)
+            src, tgt = (pre_id, dep_id) if EDGE_PREREQ_SOURCE_IS_PREREQ else (dep_id, pre_id)
+            h.upsert(
+                "graph_edges",
+                {
+                    "id": f"{pre_id.replace('rich-node-', 'rich-edge-')}-{dep}",
+                    "user_id": uid,
+                    "source_node_id": src,
+                    "target_node_id": tgt,
+                    "relationship_type": "prerequisite",
+                    "strength": 0.9,
+                },
+                on_conflict="user_id,source_node_id,target_node_id,relationship_type",
+            )
+
+    # The shared course document and its index (spec §13 A23): course_material
+    # above MIN_SHARE_CONFIDENCE, uploader consenting → shared chunks, exactly
+    # the rows services/document_indexing.py writes — content-addressed ids over
+    # the PLAINTEXT, 🔒 chunk_text encrypted after hashing (ADR 0025), an
+    # embedding, and the contributor ledger row (#629).
+    notes = " ".join(sentence for _, _, sentence in LOOP_NODES)
+    chunk_ids: dict[str, str] = {}
+    for i, (slug, concept, sentence) in enumerate(LOOP_NODES):
+        text = f"{concept}. {sentence}"
+        cid = chunk_id(COURSE_CS_CODE, text, visibility=SHARED)
+        chunk_ids[slug] = cid
+        h.upsert(
+            "course_chunks",
+            {
+                "id": cid,
+                "course_id": COURSE_CS_CODE,
+                "doc_id": LOOP_DOC_ID,
+                "uploader_id": USER_LOOP,
+                "chunk_index": i,
+                "chunk_text": encrypt_if_present(text),  # 🔒
+                "chunk_hash": cid,
+                "embedding": _seed_embedding(text),
+                "category": LOOP_DOC_CATEGORY,
+                "visibility": SHARED,
+                "semester": "current",
+                "section_id": None,
+                "school": "",
+            },
+            on_conflict="id",
+        )
+        h.upsert(
+            "course_chunk_contributors",
+            {"chunk_id": cid, "user_id": USER_LOOP},
+            on_conflict="chunk_id,user_id",
+        )
+    h.insert_if_absent(
+        "documents",
+        LOOP_DOC_ID,
+        {
+            "user_id": USER_LOOP,
+            "offering_id": OFF_CS_S26,
+            "file_name": "binary-and-bits-notes.pdf",
+            "category": LOOP_DOC_CATEGORY,
+            # 🔒 summary / concept_notes / extracted_text
+            "summary": encrypt_if_present("Notes on binary numbers, bitwise operators and two's complement."),
+            "concept_notes": encrypt_json(
+                [{"name": concept, "description": sentence} for _, concept, sentence in LOOP_NODES]
+            ),
+            "extracted_text": encrypt_if_present(notes),
+            "shareability": "course_material",
+            "shareability_confidence": LOOP_DOC_SHAREABILITY_CONFIDENCE,
+            "index_status": "indexed",
+            "index_chunk_count": len(LOOP_NODES),
+        },
+    )
+
+    # Check items are course assets (spec §13 A2): keyed on (course_id,
+    # concept_key), written ONCE, served to both loop users through their nodes'
+    # concept names. A34: the reference closes with the structured final answer.
+    for slug, concept, _ in LOOP_NODES:
+        concept_key = _normalize_concept(concept)
+        for fmt in SEED_LOOP_FORMATS:
+            for difficulty in CHECK_ITEM_DIFFICULTIES:
+                prompt = f"{E2E_LOOP_PROBE_PROMPT} [{concept}, {fmt}, difficulty {difficulty}]"
+                h.upsert(
+                    "check_items",
+                    {
+                        "id": f"rich-check-{slug}-{fmt}-d{difficulty}",
+                        "course_id": COURSE_CS,
+                        "concept_key": concept_key,
+                        "document_id": LOOP_DOC_ID,
+                        "format": fmt,
+                        "difficulty": difficulty,
+                        "prompt": encrypt_if_present(prompt),  # 🔒
+                        "reference_answer": encrypt_if_present(E2E_LOOP_REFERENCE),  # 🔒
+                        "final_answer": encrypt_if_present(E2E_LOOP_FINAL_ANSWER),  # 🔒 A34
+                        "rubric_json": encrypt_json([  # 🔒
+                            {"id": "r1", "text": "States the seeded final answer."},
+                            {"id": "r2", "text": f"Names {concept}."},
+                        ]),
+                        "common_wrong_json": encrypt_json([  # 🔒
+                            {"key": "wrong_token", "text": "Gives a different answer."},
+                        ]),
+                        "source_chunk_ids": [chunk_ids[slug]],
+                        "source_document_ids": [LOOP_DOC_ID],
+                        "question_hash": question_hash(prompt),
+                        "graded": False,
+                    },
+                    on_conflict="course_id,concept_key,question_hash",
+                )
+
+    # rich-user-capped (spec §13 A26): today's spend past the novice allowance,
+    # so the §3.5 hard level applies in every band. ONE row — far below
+    # LEARN_RATE_LIMIT_PER_MIN, so the journey hits the $ cap and not the rate
+    # limit — on a tutor slot, so the grader cap is untouched. created_at is
+    # stamped NOW on every run and the row is upserted (PKG-13 fix round): with
+    # insert-if-absent a stack seeded once (make e2e-up, make explore, any run
+    # without the per-test truncate) kept yesterday's timestamp after UTC
+    # midnight, and the "capped" user was silently no longer capped.
+    h.upsert(
+        "llm_usage",
+        {
+            "id": "rich-usage-capped-1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "user_id": USER_CAPPED,
+            "feature": "learn_loop",
+            "task": "loop_tutor",
+            "model": "gemini-2.5-flash",
+            "provider": "gemini",
+            "cost_usd": round(
+                config.STUDENT_DAILY_BUDGET_USD
+                * config.BUDGET_NOVICE_MULTIPLIER
+                * SEED_CAPPED_SPEND_FACTOR,
+                6,
+            ),
+        },
+        on_conflict="id",
+    )
+    card_id, front, back = CAPPED_FLASHCARD
+    h.insert_if_absent(
+        "flashcards",
+        card_id,
+        {
+            "user_id": USER_CAPPED,
+            "offering_id": OFF_CS_S26,
+            "topic": LOOP_NODES[0][1],
+            # 🔒 front / back (#518)
+            "front": encrypt_if_present(front),
+            "back": encrypt_if_present(back),
+            "due_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),  # due (PKG-11)
+        },
+    )
+
+
 _SUMMARY_ORDER = [
     "schools", "courses", "course_offerings", "users", "user_profiles", "user_roles",
+    "user_settings",
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
     "room_summaries",
-    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
+    "notes", "documents", "course_chunks", "course_chunk_contributors", "check_items",
+    "flashcards", "study_guides", "quiz_attempts", "quiz_context",
     "sessions", "messages", "feedback", "issue_reports",
-    "offering_concept_stats",
+    "offering_concept_stats", "llm_usage",
 ]
 
 
@@ -869,6 +1148,7 @@ def main() -> None:
     seed_offering_concept_stats()
     seed_feedback()
     seed_sessions()
+    seed_learning_loop()
     h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
 
 

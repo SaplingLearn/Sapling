@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
+  "output": {
+    "evidence": "What specifically about the base case definition helps you confirm your choice?",
+    "reveals_final_answer": false,
+    "rung": 1
+  },
+  "served_sha256": "ac89ebc1ca80364828fcfc42d856baa93dd7742f9b52bdc6c138e9e6ce4b5216"
+}

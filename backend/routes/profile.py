@@ -10,11 +10,13 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
 
 from services.chunk_visibility import resync_user_chunk_visibility
+from services.check_item_service import retire_items_for_uploader
 from services.course_context_service import update_course_context
 from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
 from db.connection import table
+from services.session_modes import NOT_REVIEW
 from services.encryption import encrypt_if_present, decrypt_if_present
 from models import (
     UpdateProfileBody,
@@ -39,7 +41,7 @@ _USERS_COLS = "id,email,streak_count,created_at"
 # Profile columns live on `user_profiles` (1:1 with users). 🔒 = encrypted at rest.
 _PROFILE_COLS = (
     "user_id,username,name,first_name,last_name,avatar_url,"
-    "year,majors,minors,bio,location,website,learning_style"
+    "year,majors,minors,bio,location,website"
 )
 _PROFILE_ENCRYPTED = ("name", "first_name", "last_name", "bio", "location")
 
@@ -178,7 +180,7 @@ def _get_user_stats(user_id: str) -> dict:
     user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
     streak = user[0].get("streak_count", 0) if user else 0
 
-    sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}"})
+    sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}", **NOT_REVIEW})
     session_count = len(sessions) if sessions else 0
 
     docs = table("documents").select("id", filters={"user_id": f"eq.{user_id}"})
@@ -473,6 +475,11 @@ def update_settings(
         # it, so opting out would read as applied while the documents it was
         # meant to withdraw stayed published to the whole class.
         background_tasks.add_task(resync_user_chunk_visibility, user_id)
+        # Learning loop PKG-04 (A23): items drafted from this student's shared
+        # documents leave the class pool too. Deleted, so turning the toggle
+        # back on restores nothing; never gated on LEARNING_LOOP_ENABLED.
+        if updates["share_class_context"] is False:
+            background_tasks.add_task(retire_items_for_uploader, user_id)
 
     return _get_or_create_settings(user_id)
 

@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "Key idea: The power rule states that the derivative of x^n is nx^(n-1).",
+    "only_states_correction": true
+  },
+  "served_sha256": "cf0d34b5e33088462d4c3e0dc22dfe251054c0e423378479df0346910d451335"
+}

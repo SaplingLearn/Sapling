@@ -173,6 +173,13 @@ command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
   || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
+# PKG-14b (spec §11.4): the E2E lane is chosen in the SHELL. load_dotenv() would
+# fill an unset LEARNING_LOOP_ENABLED from backend/.env for the backend while
+# Playwright (this shell) sees it unset, so the two halves would disagree.
+if grep -qE '^[[:space:]]*(export[[:space:]]+)?LEARNING_LOOP_ENABLED=' backend/.env; then
+  echo "e2e-up: remove LEARNING_LOOP_ENABLED from backend/.env — the lane is chosen in the shell (spec §11.4)" >&2
+  exit 2
+fi
 # $VENV_PY is resolved in local-common.sh and accepts both the POSIX
 # (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
 [ -n "${VENV_PY:-}" ] \
@@ -248,6 +255,24 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# Learning loop (PKG-14b, spec §7 / §11.4): the loop is the default — the lane
+# runs the CODE default, so nothing is exported here. Run
+# `LEARNING_LOOP_ENABLED=false make e2e-up` for the kill-switch lane (the legacy
+# Learn screen, tutor and Study UI; /api/learn/loop/* 404s). The seeded loop
+# users are ordinary students now. frontend/e2e/support/fixtures.ts::killSwitchLane
+# is the one lane parse Playwright uses; global-setup.ts asserts the stack agrees.
+# (backend/.env must not name the variable — the preflight fails fast on it.)
+if [ -n "${LEARNING_LOOP_ENABLED+x}" ]; then
+  echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED from the shell (spec §7 parse: false/0/off/no = the kill-switch lane)"
+else
+  echo "  ℹ LEARNING_LOOP_ENABLED unset: the default lane (the loop is on for every student)"
+fi
+# Spec §13 A5: the E2E env scales every GATE_* seconds constant (the ZPD hint
+# gates' independent-work and dwell times) by 0.01, so a journey waits a
+# fraction of a second where a student waits a minute. Production never sets it
+# (config.LEARNING_GATE_TIME_SCALE defaults to 1.0); only the loop reads it.
+export LEARNING_GATE_TIME_SCALE="${LEARNING_GATE_TIME_SCALE:-0.01}"
+echo "  ℹ LEARNING_GATE_TIME_SCALE=$LEARNING_GATE_TIME_SCALE for this stack (spec §13 A5; production is 1.0)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

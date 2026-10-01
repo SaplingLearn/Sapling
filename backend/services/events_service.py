@@ -43,7 +43,7 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
                                         actually called the tool that records them,
                                         digest_present, digest_chars, recent_attempts,
                                         misconceptions (see docs/quiz-prompt-budget.md)
-quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
+quiz.completed                usage     quiz_id, concept_node_id, score, total, p_delta
 quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
 quiz.answer_key_served        usage     quiz_id
@@ -65,6 +65,55 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+learn.answer_refused          audit     reason (grader_directive / role_marker /
+                                        addresses_grader / too_long / disowned_answer), format,
+                                        check_item_id, request_id, rubric_items, directives,
+                                        role_markers, verdict_tokens, exempted, answer_chars
+                                        — a check answer that addressed the grader, or was
+                                        longer than GRADER_ANSWER_MAX_CHARS, was not graded
+                                        (PKG-05 reopen, spec §6, §13 A33; addresses_grader
+                                        only beside an exempted screen flag since the A33
+                                        finish); counts only, never the answer
+zpd.step                      usage     concept_id, question_hash, phase, channel, band, ceiling,
+                                        ceiling_reason, first_attempt_correct, n_attempts,
+                                        max_rung_used, rungs[{rung, dwell_ms}],
+                                        time_to_first_attempt_ms, time_to_correct_ms,
+                                        independent_time_ms, assisted, confidence, fsrs_rating,
+                                        p_known_before, p_known_after, r_before, item_difficulty,
+                                        earnest_blocked (bool, spec §13 A109);
+                                        optional tier, grader_backend (omitted when unknown)
+                                        (learning loop PKG-06, spec §6)
+zpd.offer                     usage     accepted, band
+zpd.band_adjust               usage     direction, trigger, window_stats
+zpd.wheelspin                 error     concept_id, opps, unassisted_next, htc_k, prerequisite_ids
+zpd.leak                      error     rung_emitted, ceiling, detector, request_id
+zpd.rating                    usage     rating (too_easy / appropriate / too_hard),
+                                        checks_since_last
+decision.made                 usage     decision, backend, request_id, latency_ms, confidence,
+                                        fallback, prior — one answered decision of the learning
+                                        loop's typed decision seam (PKG-05b, spec §6, §13 A24);
+                                        prior=true: answered from a result the caller held (no
+                                        model run; PKG-10 match_wrong_reason), backend = its source
+decision.shadow               usage     decision, request_id, primary_value, shadow_value,
+                                        primary_confidence, shadow_confidence, agreement,
+                                        shadow_latency_ms, shadow_input_tokens, error_code —
+                                        PKG-15 plumbing, never fired in the series; enums only
+decision.fallback             error     decision, from_backend, to_backend, reason (jev_absent
+                                        / both_failed / budget = the AI budget cap refused the
+                                        call; PKG-15 adds the Jev error enums), request_id
+ai.budget_capped              usage     user_id, scope, band, level, spent_usd, cap_usd
+learn.probe_done              usage     items, misses (not-correct incl. idk), novice_floor,
+                                        skills (node ids) — the probe phase finished (learning
+                                        loop PKG-08, spec §6)
+learn.plan_approved           usage     concept_ids, n_reviews_first — the student approved a
+                                        plan (PKG-08, spec §6)
+learn.session_closed          usage     session_id, concepts, misconceptions, has_if_then,
+                                        model_written — a loop session's close was stored
+                                        (PKG-09, spec §6, §13 A8); counts and bools only
+review.session_started        usage     session_id, offering_id (a daily review session row; never
+                                        session.started — it is not a tutor session)
+review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
+review.graded                 usage     kind, correct, rating
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -81,6 +130,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import re
 import threading
 from typing import Any, Optional
 
@@ -164,6 +214,68 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # while their uploads stay in classmates' retrieval, with nothing saying
     # so. Rare and per-user, so category="error" is affordable on the feed.
     "rag.visibility_resync_failed",
+    # Learning loop PKG-04 (spec §6, §13 A8): one check_items agent call (a
+    # batch of concepts) or one concept's item write failed — an honest
+    # degrade (ADR 0024), category="error"; payload document_id, course_id,
+    # reason (exception class name or StorageError). Also an opt-out
+    # withdrawal that failed after the response (reason WithdrawalError,
+    # document_id and course_id null). Never any item text.
+    "learn.check_items_failed",
+    # Learning loop PKG-05 reopen (spec §6, §13 A33; CodeRabbit PR #673): the
+    # pre-grader guard refused a check answer that addressed the grader (grading
+    # directives, role/format markers: no grader run), or the grader reported one
+    # (addresses_grader) after its run, or it was over GRADER_ANSWER_MAX_CHARS
+    # (too_long) — no evidence for either outcome. category="audit"; payload
+    # reason enum, format, check_item_id, request_id and counts (verdict_tokens is
+    # a count of a suspicion signal, never a reason). Never the answer text.
+    "learn.answer_refused",
+    # Learning loop spec §13 A37 (series coordinator's ruling, 2026-09-28): one
+    # mc_reason top-up call — a concept a generation pass left below
+    # CHECK_ITEM_MC_MIN_PER_CONCEPT stored mc_reason items. category="usage":
+    # it counts a designed call, not a failure (a failed call also emits
+    # learn.check_items_failed). Payload ids and counts only: document_id,
+    # course_id, requested, returned, stored, mc_reason_items. Never item text.
+    "learn.check_items_topup",
+    # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
+    # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
+    # the loop tutor. Payloads are ids/counts/enums — the question_hash is a
+    # sha256, never the prompt. wheelspin and leak are category="error": a
+    # stuck student and a revealed answer are both things an admin must count.
+    "zpd.step",
+    "zpd.offer",
+    "zpd.band_adjust",
+    "zpd.wheelspin",
+    "zpd.leak",
+    "zpd.reveal",  # PKG-14 (spec §13 A88): a served turn stated open posed items' answers
+    "zpd.rating",
+    # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
+    # (services/decisions.py). `made` = one answered decision, with the backend
+    # that answered; `fallback` = served by another backend (reason jev_absent)
+    # or by none (both_failed: nothing is recorded for either outcome; budget: the AI
+    # budget cap refused the call before any run, spec §13 A39);
+    # `shadow` = PKG-15 plumbing, never fired in the series. Payloads carry
+    # ids, enums and numbers only — never state text.
+    "decision.made",
+    "decision.shadow",
+    "decision.fallback",
+    # PKG-06b (spec §6, §13 A20): a per-student AI cap was hit. category="usage": it fires at
+    # most once per user/scope/level/day, but for many students at once near a price change;
+    # the /errors feed must not drown in it.
+    "ai.budget_capped",
+    # PKG-08: probe finished (items/misses/novice_floor/skills) and the
+    # student approved a plan (concept_ids/n_reviews_first). Emit coverage
+    # lives in test_learning_probe_planner.py.
+    "learn.probe_done",
+    "learn.plan_approved",
+    # PKG-09: a loop session's close was stored. Counts and bools only (never the
+    # summary text); model_written is the ADR 0024 degrade signal (spec §13 A8).
+    "learn.session_closed",
+    # Learning loop PKG-12: the daily review queue. `served` once per kind in
+    # a built queue (n = how many), `graded` per answer. Reviews are evidence,
+    # so `graded` is the countable twin of the node_mastery_events row.
+    "review.session_started",
+    "review.served",
+    "review.graded",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
@@ -235,12 +347,20 @@ def log_llm_usage(
     provider: str = "gemini",
     user_id: str | None = None,
     request_id: str | None = None,
+    cached_tokens: int | None = None,
+    thinking_tokens: int | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
     ``usage`` is any Pydantic AI / Gemini usage object (or dict); it is
     normalized here and the cost computed from ``llm_pricing.MODEL_PRICING``
     (``cost_usd = NULL`` for unpriced models).
+
+    ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
+    ``None`` when unmeasured, and cached input is billed at the cached rate.
+    ``session_id`` (PKG-14b, spec §13 A92) is the loop session the run belonged
+    to, ``None`` (never blank) when the run site knew none.
     """
     if not _logging_enabled():
         return
@@ -256,8 +376,14 @@ def log_llm_usage(
             "prompt_tokens": tokens["prompt_tokens"],
             "completion_tokens": tokens["completion_tokens"],
             "total_tokens": tokens["total_tokens"],
+            # Both keys on EVERY row: PostgREST rejects a bulk insert whose
+            # objects' keys differ (PGRST102), and the worker batches rows.
+            "cached_tokens": cached_tokens,
+            "thinking_tokens": thinking_tokens,
+            "session_id": (session_id or "").strip() or None,
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                cached_tokens=cached_tokens,
             ),
         }
         _enqueue("llm_usage", row)
@@ -293,11 +419,46 @@ def dropped_count() -> int:
 # ── Flush ───────────────────────────────────────────────────────────────────
 
 
+#: Columns a deploy may reach before their migration (PKG-14b; the
+#: graph_service._JOURNAL_OPTIONAL_COLUMNS idiom). An insert error that NAMES one
+#: as unknown — PGRST204 "Could not find the '<col>' column of '<table>'" or
+#: 42703 'column "<col>" of relation … does not exist' — drops exactly that
+#: column from the batch and retries once, so a code-before-migration deploy
+#: loses no llm_usage row (every $/token budget cap reads them). Any other error
+#: keeps every column and takes the per-row salvage below.
+_OPTIONAL_COLUMNS: dict[str, tuple[str, ...]] = {"llm_usage": ("session_id",)}
+
+
+def _error_text(exc: BaseException) -> str:
+    """The exception's message plus, for db.connection's httpx.HTTPStatusError
+    (whose message omits the body), the PostgREST error body that names the
+    column — graph_service._error_text's rule, kept local (no import cycle)."""
+    text = str(exc)
+    try:
+        body = exc.response.text  # type: ignore[attr-defined]
+    except Exception:
+        return text
+    return f"{text} {body}" if isinstance(body, str) else text
+
+
+def _unknown_optional_columns(table_name: str, exc: BaseException) -> list[str]:
+    text = _error_text(exc)
+    return [
+        column
+        for column in _OPTIONAL_COLUMNS.get(table_name, ())
+        if re.search(
+            rf"['\"]{column}['\"]\s+column\b|\bcolumn\s+['\"]?{column}['\"]?(?!\w)", text
+        )
+    ]
+
+
 def _flush_batch(items: list[dict]) -> None:
     """Insert a batch grouped by table. Errors are swallowed + logged.
 
-    A failed bulk insert falls back to inserting that table's rows one at a
-    time, so a single poison row can't take its whole batch down with it.
+    A failed bulk insert first drops an optional column the error names as
+    unknown (``_OPTIONAL_COLUMNS``) and retries; otherwise it falls back to
+    inserting that table's rows one at a time, so a single poison row can't
+    take its whole batch down with it.
     """
     if not items:
         return
@@ -307,7 +468,20 @@ def _flush_batch(items: list[dict]) -> None:
     for table_name, rows in grouped.items():
         try:
             table(table_name).insert(rows)
-        except Exception:
+        except Exception as exc:
+            unknown = _unknown_optional_columns(table_name, exc)
+            if unknown:
+                logger.warning(
+                    "events insert for table %r named unknown column(s) %s (migration "
+                    "not applied yet?); retrying %d row(s) without them",
+                    table_name, unknown, len(rows),
+                )
+                rows = [{k: v for k, v in row.items() if k not in unknown} for row in rows]
+                try:
+                    table(table_name).insert(rows)
+                    continue
+                except Exception:
+                    pass
             logger.info(
                 "events bulk insert failed for table %r (%d row(s)); "
                 "retrying rows individually",

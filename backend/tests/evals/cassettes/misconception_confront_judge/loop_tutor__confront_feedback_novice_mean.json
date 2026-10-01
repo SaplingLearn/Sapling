@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "319990a6d7767961429f61ca42d9b9fb1af2c02e2e64a3e51ac8d3a67b945101",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Consider the numbers 2, 4, 6, and 9. What would you identify as the middle number using your current method...?",
+    "only_states_correction": false
+  },
+  "served_sha256": "9730c40bbb9abb6453132705a23e905902fc8ed84d6c9450be3edd6ecc80c381"
+}

@@ -31,7 +31,7 @@ const ATTEMPT_HISTORY_LIMIT = 100;
 /** Rows in the node panel's "Recent quizzes" block. */
 const RECENT_QUIZ_ROWS = 5;
 
-/** `mastery_delta` is a 0–1 fraction (`routes/quiz.py:1780`,
+/** `p_delta` is a 0–1 fraction (`routes/quiz.py::attempt history`,
  *  `mastery_after - mastery_before`); the panel speaks in whole percent, the
  *  same unit as the Mastery tile above it. `null` is "the attempt recorded no
  *  move", not zero — say so with an em dash rather than inventing a number. */
@@ -402,7 +402,7 @@ export function Tree() {
                   {relativeStudied(a.completed_at || a.created_at)}
                 </span>
                 <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.mastery_delta)} mastery
+                  {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.p_delta)} mastery
                 </span>
               </div>
             ))

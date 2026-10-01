@@ -17,14 +17,29 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from db.connection import table
+from learning.earnest_revise import earnest_revise
+from learning.params import (
+    ACQ_TARGET_HI,
+    ACQ_TARGET_LO,
+    BAND_WINDOW,
+    GATE_CEILING_COMPLIANCE_MIN,
+    GATE_LEAKS_MAX,
+    KPI_TREND_WEEKS,
+    LADDER_MAX_RUNG,
+    PRACTICE_TARGET_HI,
+    PRACTICE_TARGET_LO,
+    PROBE_TARGET_HI,
+    PROBE_TARGET_LO,
+)
 from services.auth_guard import require_admin
+from services.quiz_ask import quiz_ask_session_ids
 
 logger = logging.getLogger("sapling.admin_analytics")
 
@@ -480,4 +495,305 @@ def errors(
         range=Range(from_=from_iso, to=to_iso),
         total=total, limit=limit, offset=offset, errors=items,
         truncated=series_truncated, series=series,
+    )
+
+
+# ── Learning loop KPIs (PKG-14; spec §10) ────────────────────────────────────
+#
+# The three headline KPIs and the two measurable gates of the evaluation
+# ladder, over `zpd.step`/`zpd.leak` events and the evidence journal. Admin-only
+# and read-only like every endpoint here. The earnest-revise gate (spec §10) is
+# measured since spec §13 A109: the feedback zpd.step's `earnest_blocked` bool.
+
+_STEP_EVENT = "zpd.step"
+_LEAK_EVENT = "zpd.leak"
+_REVEAL_EVENT = "zpd.reveal"  # spec §13 A88 (m5): a solution SERVED for an open posed item
+_EVIDENCE_COLS = "id,node_id,session_id,correct,assisted,max_rung,question_hash,created_at"
+TrendDirection = Literal["falling", "flat", "rising", "insufficient"]
+
+
+class WeekPoint(BaseModel):
+    week_start: str  # the Monday of the ISO week, YYYY-MM-DD (UTC)
+    mean_rung: float  # mean max_rung_used over the week's correct steps
+    steps: int
+
+
+class ConceptTrend(BaseModel):
+    concept_id: str
+    weeks: list[WeekPoint]
+    direction: TrendDirection
+
+
+class CeilingCompliance(BaseModel):
+    steps: int
+    compliant: int
+    rate: float | None
+
+
+class NextSessionSuccess(BaseModel):
+    sessions: int
+    successes: int
+    rate: float | None
+    # spec §13 A106 (review m2): quiz-ask sessions (probe-less) left out of the rate
+    quiz_ask_excluded: int = 0
+
+
+class EarnestRevise(BaseModel):
+    """Spec §10's earnest-revise gate (A109): graded check steps whose /hint was
+    denied at the ceiling or the H6 gate after a genuine attempt."""
+
+    graded_steps: int  # check steps carrying the earnest_blocked bool
+    earnest_blocked: int
+    unmeasured_steps: int  # check steps written before A109 (no key): not counted
+    rate: float | None
+    gate: Literal["pass", "fail", "inconclusive"]
+
+
+class Gates(BaseModel):
+    zero_leaks: bool
+    ceiling_compliance_ok: bool
+    # A109: None = inconclusive (no graded step carries the signal), never a pass
+    earnest_revise_ok: bool | None
+
+
+class LearningLoopKpis(BaseModel):
+    range: Range
+    steps_total: int
+    banded_steps: int
+    in_band: int
+    in_band_share: float | None
+    htc_k_trend: list[ConceptTrend]
+    unassisted_next_session: NextSessionSuccess
+    # m5 (spec §13 A90): zpd.leak is a leak CAUGHT on the active item and
+    # redacted before serving; the gate counts solutions actually SERVED
+    caught_leaks: int
+    served_reveals: int  # open posed items whose answer a served turn stated
+    unscanned_turns: int  # served turns whose open items could not be read (fail-closed)
+    ceiling_compliance: CeilingCompliance
+    earnest_revise: EarnestRevise
+    gates: Gates
+    truncated: bool = False
+
+
+def _rung_int(value) -> int | None:
+    """A rung's wire form ("H3", "h0" or 3, HANDOFF-06) as an int, None when it
+    is not a rung (a bool, an unknown string, out of H0..H6)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        n = value
+    elif isinstance(value, str) and value[:1] in ("H", "h") and value[1:].isdigit():
+        n = int(value[1:])
+    else:
+        return None
+    return n if 0 <= n <= LADDER_MAX_RUNG else None
+
+
+def _phase_band(phase, assisted) -> tuple[float, float] | None:
+    """The phase band a step's rolling success rate is judged against (spec §3.3):
+    probe → PROBE_TARGET, assisted check → ACQ_TARGET, unassisted check →
+    PRACTICE_TARGET; every other phase has no band."""
+    if phase == "probe":
+        return (PROBE_TARGET_LO, PROBE_TARGET_HI)
+    if phase == "check":
+        return (ACQ_TARGET_LO, ACQ_TARGET_HI) if assisted else (PRACTICE_TARGET_LO, PRACTICE_TARGET_HI)
+    return None
+
+
+def _payload(row: dict) -> dict:
+    p = row.get("payload")
+    return p if isinstance(p, dict) else {}
+
+
+def _step_kind(p: dict) -> str | None:
+    phase = p.get("phase")
+    if phase == "probe":
+        return "probe"
+    if phase == "check":
+        return "check-assisted" if p.get("assisted") else "check-unassisted"
+    return None
+
+
+def _in_band_share(steps: list[dict]) -> tuple[int, int]:
+    """(in_band, banded_steps): per (user_id, concept_id) in created_at order, a
+    step of a banded kind with at least BAND_WINDOW earlier steps of the SAME
+    kind is judged by the first-attempt success rate over those BAND_WINDOW."""
+    history: dict[tuple, list[bool]] = defaultdict(list)
+    in_band = banded = 0
+    for row in sorted(steps, key=lambda r: str(r.get("created_at") or "")):
+        p = _payload(row)
+        kind = _step_kind(p)
+        if kind is None:
+            continue
+        prior = history[(row.get("user_id"), p.get("concept_id"), kind)]
+        if len(prior) >= BAND_WINDOW:
+            window = prior[-BAND_WINDOW:]
+            rate = sum(window) / len(window)
+            lo, hi = _phase_band(p.get("phase"), p.get("assisted"))
+            banded += 1
+            in_band += int(lo <= rate <= hi)
+        prior.append(p.get("first_attempt_correct") is True)
+    return in_band, banded
+
+
+def _parse_ts(raw) -> datetime | None:
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _week_start(ts: datetime):
+    iso = ts.isocalendar()
+    return date.fromisocalendar(iso.year, iso.week, 1)
+
+
+def _step_correct(p: dict) -> bool:
+    """A step that ended correct: first attempt correct, or a time to correct."""
+    return p.get("first_attempt_correct") is True or p.get("time_to_correct_ms") is not None
+
+
+def _htc_k_trend(steps: list[dict], to_iso: str) -> list[ConceptTrend]:
+    """Per concept, mean max_rung_used over its correct steps per ISO week, for
+    the KPI_TREND_WEEKS weeks ending at `to` (hints-to-criterion must fall)."""
+    to_dt = _parse_ts(to_iso)
+    last = _week_start(to_dt) if to_dt else None
+    first = last - timedelta(weeks=KPI_TREND_WEEKS - 1) if last else None
+    rungs: dict[str, dict] = defaultdict(lambda: defaultdict(list))
+    for row in steps:
+        p = _payload(row)
+        concept = p.get("concept_id")
+        rung = _rung_int(p.get("max_rung_used"))
+        ts = _parse_ts(row.get("created_at"))
+        if not concept or rung is None or ts is None or not _step_correct(p):
+            continue
+        week = _week_start(ts)
+        if first is None or not (first <= week <= last):
+            continue
+        rungs[str(concept)][week].append(rung)
+    out = []
+    for concept in sorted(rungs):
+        weeks = [
+            WeekPoint(week_start=w.isoformat(), mean_rung=sum(v) / len(v), steps=len(v))
+            for w, v in sorted(rungs[concept].items())
+        ]
+        if len(weeks) < 2:
+            direction: TrendDirection = "insufficient"
+        elif weeks[-1].mean_rung < weeks[0].mean_rung:
+            direction = "falling"
+        elif weeks[-1].mean_rung > weeks[0].mean_rung:
+            direction = "rising"
+        else:
+            direction = "flat"
+        out.append(ConceptTrend(concept_id=concept, weeks=weeks, direction=direction))
+    return out
+
+
+def _next_session_rate(evidence_rows: list[dict], quiz_ask: set[str] | frozenset = frozenset()) -> dict:
+    """Unassisted next-opportunity success on the FOLLOWING session's first item:
+    per node, its sessions in order of their first evidence row; for every
+    session after the first, its first row is a success when it is correct,
+    unassisted and at rung 0. Rows with no session_id (post-test, quiz) are
+    not a session, and neither is a quiz-ask session (spec §13 A106: it skips
+    the probe and opens on the concept just asked about) — those are counted
+    in `quiz_ask_excluded`."""
+    by_node: dict[str, dict[str, dict]] = defaultdict(dict)
+    excluded: set[str] = set()
+    for row in sorted(
+        evidence_rows, key=lambda r: (str(r.get("created_at") or ""), str(r.get("id") or ""))
+    ):
+        session = row.get("session_id")
+        if not session or not row.get("node_id"):
+            continue
+        if session in quiz_ask:
+            excluded.add(session)
+            continue
+        by_node[row["node_id"]].setdefault(session, row)  # the session's first row
+    sessions = successes = 0
+    for firsts in by_node.values():
+        for row in list(firsts.values())[1:]:
+            sessions += 1
+            successes += int(
+                row.get("correct") is True
+                and not row.get("assisted")
+                and _rung_int(row.get("max_rung")) == 0
+            )
+    return {
+        "sessions": sessions,
+        "successes": successes,
+        "rate": successes / sessions if sessions else None,
+        "quiz_ask_excluded": len(excluded),
+    }
+
+
+def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
+    n = ok = 0
+    for row in steps:
+        p = _payload(row)
+        used, ceiling = _rung_int(p.get("max_rung_used")), _rung_int(p.get("ceiling"))
+        if used is None or ceiling is None:
+            continue
+        n += 1
+        ok += int(used <= ceiling)
+    return CeilingCompliance(steps=n, compliant=ok, rate=ok / n if n else None)
+
+
+@router.get("/learning-loop", response_model=LearningLoopKpis)
+def learning_loop_kpis(
+    request: Request,
+    response: Response,
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+) -> LearningLoopKpis:
+    """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
+    and the zero-leak, ceiling-compliance and earnest-revise (A109) gates;
+    `truncated: true` means a
+    scan cap cut the aggregation short."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    from_iso, to_iso = _resolve_range(from_, to)
+    events, events_truncated = _scan_range(
+        "events",
+        "event_type,user_id,payload,created_at",
+        from_iso,
+        to_iso,
+        extra_filters={"event_type": f"in.({_STEP_EVENT},{_LEAK_EVENT},{_REVEAL_EVENT})"},
+    )
+    evidence, evidence_truncated = _scan_range(
+        "node_mastery_events",
+        _EVIDENCE_COLS,
+        from_iso,
+        to_iso,
+        extra_filters={"event_type": "eq.evidence"},
+    )
+    quiz_ask = quiz_ask_session_ids(table("sessions"), to_iso=to_iso)  # A106
+    steps = [e for e in events if e.get("event_type") == _STEP_EVENT]
+    caught = sum(1 for e in events if e.get("event_type") == _LEAK_EVENT)
+    reveals = [_payload(e) for e in events if e.get("event_type") == _REVEAL_EVENT]
+    served = sum(len(p.get("question_hashes") or []) for p in reveals)
+    unscanned = sum(1 for p in reveals if p.get("unscanned") is True)
+    in_band, banded = _in_band_share(steps)
+    compliance = _ceiling_compliance(steps)
+    earnest = EarnestRevise(**earnest_revise(steps))
+    return LearningLoopKpis(
+        range=Range(from_=from_iso, to=to_iso),
+        steps_total=len(steps),
+        banded_steps=banded,
+        in_band=in_band,
+        in_band_share=in_band / banded if banded else None,
+        htc_k_trend=_htc_k_trend(steps, to_iso),
+        unassisted_next_session=NextSessionSuccess(**_next_session_rate(evidence, quiz_ask)),
+        caught_leaks=caught,
+        served_reveals=served,
+        unscanned_turns=unscanned,
+        ceiling_compliance=compliance,
+        earnest_revise=earnest,
+        gates=Gates(
+            zero_leaks=served <= GATE_LEAKS_MAX,
+            ceiling_compliance_ok=compliance.rate is not None
+            and compliance.rate >= GATE_CEILING_COMPLIANCE_MIN,
+            earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
+        ),
+        truncated=events_truncated or evidence_truncated,
     )

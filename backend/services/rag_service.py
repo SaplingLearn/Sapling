@@ -5,7 +5,6 @@ Embeds queries and documents with gemini-embedding-001 using the correct
 task types (RETRIEVAL_QUERY for queries, RETRIEVAL_DOCUMENT for indexing),
 then calls the match_course_chunks Supabase RPC for ANN retrieval.
 """
-import hashlib
 import json
 import logging
 import math
@@ -16,8 +15,8 @@ from google import genai
 from google.genai import types as genai_types
 
 from agents._providers import model_mode
-from db.connection import rpc, table
-from services.chunk_visibility import PRIVATE, SHARED, record_contributors
+from db.connection import pg_quote_value, rpc, table
+from services.chunk_visibility import SHARED, record_contributors
 from services.encryption import decrypt_if_present, encrypt_if_present
 from services.events_service import log_event
 
@@ -27,7 +26,11 @@ logger = logging.getLogger(__name__)
 # grounding indefinitely — retrieve_chunks() runs inline on the request path.
 _HTTP_TIMEOUT_MS = 60_000
 _EMBED_MODEL = "gemini-embedding-001"
-_OUTPUT_DIM = 768
+# The id and dimension live in services/chunk_ids (no SDK import) so the rich
+# seed can build chunk rows without importing google-genai; re-exported here —
+# `rag_service.chunk_id` stays the name every caller uses.
+from services.chunk_ids import EMBED_OUTPUT_DIM as _OUTPUT_DIM  # noqa: E402
+from services.chunk_ids import chunk_id  # noqa: E402,F401
 
 # `genai.Client(api_key="")` raises ValueError at construction, so a missing
 # GEMINI_API_KEY would break `import main` (routes/quiz.py and routes/learn.py
@@ -275,47 +278,52 @@ def retrieve_chunks_detailed(
         return Retrieval(chunks=[], failed=True)
 
 
-def chunk_id(
-    course_code: str,
-    chunk_text: str,
-    *,
-    visibility: str = SHARED,
-    uploader_id: str | None = None,
-) -> str:
-    """Content-addressed chunk id, scoped per course and per row kind.
+def chunks_for_ids(chunk_ids: list[str], *, user_id: str) -> list[dict]:
+    """Resolve check-item `source_chunk_ids` for ONE named reader (spec
+    A17/A18, invariant 29) — the by-id twin of `match_course_chunks`' #629
+    visibility rule: a row comes back only when it is shared, or `user_id`
+    uploaded it, or `user_id` is a recorded contributor. A chunk an opt-out
+    has since made private to someone else is simply absent, so a stale id
+    can never leak a classmate's text. `user_id` is required: every caller
+    serves one student (no shared-only default, unlike retrieve_chunks).
 
-    Identical text in the same course maps to one row no matter which
-    document or uploader supplied it, so N students uploading the same
-    slides dedup to one embedding instead of N. doc_id/uploader_id/
-    chunk_index on the row are last-writer-wins metadata; retrieval only
-    reads course_id + chunk_text.
-
-    The literal "document" segment keeps this keyspace DISJOINT from
-    catalog rows: scripts/ingest_catalog.py ids category=catalog rows as
-    sha256(course::text) in the SAME course_chunks table (on_conflict=id),
-    so an un-namespaced hash would let a document chunk whose text
-    byte-matches a catalog chunk silently overwrite the catalog row and
-    flip its category — dropping it from every category=eq.catalog reader.
-
-    A PRIVATE chunk gets a third namespace segment plus its uploader (#629),
-    for the same structural reason: the shared upsert merges on id under
-    `resolution=merge-duplicates`, so an opted-out upload that hashed to the
-    shared id would merge INTO the classmates' row — leaving the opted-out
-    student's text in the shared pool under a row they can no longer withdraw.
-    Per-uploader, not merely per-visibility, so two opted-out students who
-    upload the same handout do not end up sharing one row with each other.
+    Returns [{"id", "course_id", "chunk_text"}] in `chunk_ids` order,
+    de-duplicated, `chunk_text` decrypted here (the decrypt boundary). Ids are
+    quoted with `pg_quote_value` (the `chunk_visibility._in_list` rule).
     """
-    if visibility == PRIVATE:
-        if not uploader_id:
-            raise ValueError(
-                "a private chunk id needs its uploader_id: without one the "
-                "private keyspace collapses back onto one key per course and "
-                "opted-out uploads re-merge with each other (#629)"
+    ids = [c for c in dict.fromkeys(chunk_ids) if c]
+    if not ids:
+        return []
+    in_ids = f"in.({','.join(pg_quote_value(c) for c in ids)})"
+    rows = (
+        table("course_chunks").select(
+            "id,course_id,chunk_text,visibility,uploader_id", filters={"id": in_ids}
+        )
+        or []
+    )
+    closed = [
+        r["id"] for r in rows if r.get("visibility") != SHARED and r.get("uploader_id") != user_id
+    ]
+    contributed: set[str] = set()
+    if closed:
+        in_closed = f"in.({','.join(pg_quote_value(c) for c in closed)})"
+        contributed = {
+            r["chunk_id"]
+            for r in table("course_chunk_contributors").select(
+                "chunk_id", filters={"chunk_id": in_closed, "user_id": f"eq.{user_id}"}
             )
-        return hashlib.sha256(
-            f"{course_code}::document::private::{uploader_id}::{chunk_text}".encode()
-        ).hexdigest()
-    return hashlib.sha256(f"{course_code}::document::{chunk_text}".encode()).hexdigest()
+            or []
+        }
+    visible = {
+        r["id"]: {
+            "id": r["id"],
+            "course_id": r.get("course_id"),
+            "chunk_text": decrypt_if_present(r.get("chunk_text")),
+        }
+        for r in rows
+        if r.get("visibility") == SHARED or r.get("uploader_id") == user_id or r["id"] in contributed
+    }
+    return [visible[c] for c in ids if c in visible]
 
 
 class ChunkIndexResult(NamedTuple):

@@ -247,6 +247,27 @@ export const deleteGraphNode = (userId: string, nodeId: string) =>
 // Learn
 export type ModelPref = 'smart' | 'fast';
 
+/**
+ * PKG-14 (spec §13 A99): a session opened ABOUT one quiz question (the quiz's
+ * "Ask about this" panel). The question is named by its attempt and index; the
+ * server resolves its identity from the attempt row and records the help, so
+ * quiz evidence on that question earns no unassisted credit. On the loop path
+ * the session starts teaching the quiz's concept (no probe).
+ */
+export interface QuizAskOrigin {
+  attemptId: string;
+  questionIndex: number;
+}
+
+const quizAskFields = (quizAsk?: QuizAskOrigin) =>
+  quizAsk
+    ? {
+        origin: 'quiz_ask' as const,
+        quiz_attempt_id: quizAsk.attemptId,
+        quiz_question_index: quizAsk.questionIndex,
+      }
+    : {};
+
 export const startSession = (
   userId: string,
   topic: string,
@@ -254,6 +275,7 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  quizAsk?: QuizAskOrigin,
 ) =>
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
     method: 'POST',
@@ -264,6 +286,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     }),
   });
 
@@ -298,6 +321,9 @@ export interface ChatResult {
   mastery_changes: MasteryChange[];
   session_id?: string;
   graph_state?: any;
+  /** Learning loop (PKG-07): `reply` is the leak-stripped text; true when the
+   *  strip changed it. `reply` is always the text to render (spec §13 A46). */
+  leak_redacted?: boolean;
 }
 
 interface StreamEvent {
@@ -356,6 +382,17 @@ export interface StreamChatHandlers {
   onToken?: (delta: string) => void;
   onGraphUpdate?: (delta: GraphDelta) => void;
   signal?: AbortSignal;
+  // Learning-loop stream events (PKG-07; spec §9). The legacy tutor streams
+  // never send them, so the legacy callers pass none of these.
+  /** A46: discard EVERY token of this reply streamed so far; the full current
+   *  text follows as tokens, and `done.reply` is always the final text. */
+  onRetract?: (reason: string) => void;
+  /** The turn's phase (`teach` | `check` | `hint` | `feedback`). */
+  onPhase?: (phase: string) => void;
+  onCheck?: (item: LoopCheckItem) => void;
+  onHintOffer?: (rung: number) => void;
+  onLearnerState?: (state: LoopLearnerState) => void;
+  onBudget?: (notice: LoopBudgetNotice) => void;
 }
 
 const STREAM_IDLE_MS = 45_000;
@@ -363,7 +400,10 @@ const STREAM_IDLE_MS = 45_000;
 async function consumeChatStream(
   path: string,
   payload: Record<string, unknown>,
-  { onToken, onGraphUpdate, signal }: StreamChatHandlers,
+  {
+    onToken, onGraphUpdate, signal,
+    onRetract, onPhase, onCheck, onHintOffer, onLearnerState, onBudget,
+  }: StreamChatHandlers,
 ): Promise<ChatResult> {
   const { streamSSE } = await import('./sse');
   let result: ChatResult | null = null;
@@ -382,6 +422,12 @@ async function consumeChatStream(
     const ev = e.data;
     if (ev.type === 'token') onToken?.(String(ev.data?.delta ?? ''));
     else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
+    else if (ev.type === 'retract') onRetract?.(String(ev.data?.reason ?? ''));
+    else if (ev.type === 'phase') onPhase?.(String(ev.data?.phase ?? ''));
+    else if (ev.type === 'check') onCheck?.(ev.data as unknown as LoopCheckItem);
+    else if (ev.type === 'hint_offer') onHintOffer?.(Number(ev.data?.rung));
+    else if (ev.type === 'learner_state') onLearnerState?.(ev.data as unknown as LoopLearnerState);
+    else if (ev.type === 'budget') onBudget?.(loopBudgetNoticeOf(ev.data));
     else if (ev.type === 'error') {
       const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
       // Only an explicit false clears the flag — absent/other values keep
@@ -427,6 +473,7 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  quizAsk?: QuizAskOrigin,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -437,17 +484,16 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     },
     handlers,
   );
 };
 
+/** PKG-14b (spec §11.2): the three always-empty lists are gone from the wire. */
 export interface SessionSummaryData {
   concepts_covered: string[];
-  mastery_changes: { concept: string; before: number; after: number }[];
-  new_connections: { source: string; target: string }[];
   time_spent_minutes: number;
-  recommended_next: string[];
 }
 
 export const endSession = (sessionId: string, userId: string) =>
@@ -842,6 +888,363 @@ export const deleteFlashcard = (userId: string, cardId: string) =>
     { method: 'DELETE' },
   );
 
+// Learning loop (PKG-12): the daily review queue (backend/routes/learn_loop.py
+// /review/*). Every route 404s while the loop is off for this student (spec §7),
+// so callers treat a 404 as "inactive", never as an error.
+export interface ReviewSr {
+  stage: 'acquire' | 'relearn' | 'done';
+  correct: number;
+  target: number;
+}
+export interface ReviewItemPayload {
+  kind: 'flashcard' | 'check';
+  id: string;
+  cost_s: number;
+  sr: ReviewSr;
+  // check items
+  node_id?: string | null;
+  concept_name?: string | null;
+  format?: 'free' | 'mc_reason' | null;
+  difficulty?: number | null;
+  prompt?: string | null;
+  // mc_reason only: the stored options in stored order; correctness is never marked (A22)
+  options?: { letter: string; text: string }[] | null;
+  // flashcards
+  topic?: string | null;
+  front?: string | null;
+  back?: string | null;
+}
+export interface ReviewNextResponse {
+  item: ReviewItemPayload | null;
+  remaining_budget_s: number;
+  session_id: string;
+  retention_target: number;
+  // everything due today; in_budget = what today's remaining budget covers. A null
+  // item with due_total > 0 means the budget is spent, not that nothing is due.
+  due_total: number;
+  in_budget: number;
+}
+export interface ReviewAnswerBody {
+  user_id: string;
+  session_id: string;
+  course_id?: string;
+  kind: 'flashcard' | 'check';
+  item_id: string;
+  answer?: string;
+  selected_option?: string;
+  reason?: string;
+  rating?: number;
+}
+export interface ReviewAnswerResponse {
+  correct: boolean | null;
+  hint: string | null;
+  next_due_at: string | null;
+  rating: number | null;
+  remaining_budget_s: number;
+  sr: ReviewSr | Record<string, never>;
+  unavailable: boolean;
+  // A33: the answer read as instructions to the grader — ask for it in the
+  // student's own words (nothing was recorded; the item stays answerable)
+  refused: boolean;
+}
+export interface ReviewSummaryResponse {
+  due: { flashcard: number; check: number };
+  in_budget: number;
+  unservable: number;
+  paused: number;
+  budget_min: number;
+  remaining_budget_s: number;
+  retention_target: number;
+}
+
+const reviewQuery = (userId: string, courseId?: string) => {
+  const params = new URLSearchParams({ user_id: userId });
+  if (courseId) params.set('course_id', courseId);
+  return params.toString();
+};
+
+export const getReviewNext = (userId: string, courseId?: string) =>
+  fetchJSON<ReviewNextResponse>(`/api/learn/loop/review/next?${reviewQuery(userId, courseId)}`);
+
+export const answerReview = (body: ReviewAnswerBody) =>
+  fetchJSON<ReviewAnswerResponse>('/api/learn/loop/review/answer', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+export const getReviewSummary = (userId: string, courseId?: string) =>
+  fetchJSON<ReviewSummaryResponse>(`/api/learn/loop/review/summary?${reviewQuery(userId, courseId)}`);
+
+/** Is the learning loop on for this student? Probes GET /review/active — a
+ *  gate-only route that builds nothing (PKG-07's /status needs a loop session id).
+ *  It answers `{active}` with 200 either way (PKG-13 fix round: a 404 for "off"
+ *  logged an error.4xx on every legacy visit); a 404 from an older backend still
+ *  reads as inactive. Any other failure rejects — the caller decides (useLoopStatus
+ *  times out and retries). */
+export const getLoopStatus = async (userId: string): Promise<{ active: boolean }> => {
+  try {
+    return await fetchJSON<{ active: boolean }>(
+      `/api/learn/loop/review/active?${reviewQuery(userId)}`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return { active: false };
+    throw err;
+  }
+};
+
+// ── Learning loop (PKG-13) ──────────────────────────────────────────────────
+// Clients for the loop tutor routes (backend/routes/learn_loop.py; shapes from
+// the code and HANDOFF-07/08/09, which override the PKG-13 prompt's table).
+// Every route 404s while the loop is off for the student (spec §7); only
+// getLoopStatus (above) swallows that. No loop client takes or sends
+// model_pref: the tier is chosen in code (spec §13 A15/A26). The attempt box
+// submits ONLY through streamLoopCheckAnswer, never as a chat turn (A16).
+export type LoopPhase = 'probe' | 'plan' | 'teach' | 'check' | 'feedback' | 'close';
+export type LoopBand = 'novice' | 'develop' | 'profic';
+export type LoopFormat = 'free' | 'teachback' | 'mc_reason';
+/** A served option (A22): stored letter + text, never marked correct. */
+export interface LoopOption { letter: string; text: string }
+/** The check pose (`_pose_payload`). The `check` stream event carries only
+ *  `question_hash`/`format`/`difficulty`; `done.check` and `/check/next` carry
+ *  the whole pose. The pose never names its concept node. */
+export interface LoopCheckItem {
+  question_hash: string;
+  format: LoopFormat;
+  difficulty: number;
+  prompt?: string;
+  options?: LoopOption[] | null;
+}
+export interface LoopProbeItem extends LoopCheckItem {
+  check_item_id: string;
+  node_id: string;
+  prompt: string;
+}
+export type LoopProbeNext =
+  | ({ done: false } & LoopProbeItem)
+  | { done: true; phase: LoopPhase; no_check_items?: boolean };
+export type LoopProbeAnswerResult =
+  | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string }
+  // unavailable → counted as not asked; refused (A33) → the item stays posed;
+  // recorded: false → graded but lost to a stale claim (the probe moved on)
+  | { graded: false; unavailable?: boolean; refused?: boolean; recorded?: boolean };
+export interface LoopLearnerState { node_id: string; p_known: number; band: LoopBand }
+export interface LoopPlanConcept {
+  node_id: string;
+  concept_name: string;
+  kind: 'review' | 'new' | 'sibling' | string;
+  p_known: number;
+  band?: LoopBand;
+}
+export interface LoopPlan {
+  concepts: LoopPlanConcept[];
+  order: string[];
+  /** Nothing to plan: the server moved the session straight to `teach`. */
+  empty?: boolean;
+  phase?: LoopPhase;
+}
+export interface LoopOpenSession { session_id: string; topic: string; started_at: string; phase: LoopPhase }
+/** `budget` stream event / JSON `budget` key (06b j): level + reset + scope + session_capped. */
+export interface LoopBudgetNotice {
+  level: 'soft' | 'hard' | string;
+  reset_at: string | null;
+  scope: string | null;
+  session_capped: boolean;
+}
+export interface LoopStartResult {
+  session_id: string;
+  initial_message: string;
+  graph_state?: unknown;
+  /** Present at the hard level: the opener is then a template, never a 429 (A27). */
+  budget?: LoopBudgetNotice | null;
+}
+/** A loop turn's `done.data` / JSON body (HANDOFF-07 §Symbols). */
+export interface LoopTurnResult extends ChatResult {
+  phase?: string;
+  check?: LoopCheckItem | null;
+  budget?: LoopBudgetNotice | null;
+  learner_state?: LoopLearnerState[];
+  hint_offer?: { rung: number } | null;
+  // submissions (/check/answer) add these
+  graded?: boolean;
+  verdict?: string | null;
+  unavailable?: boolean;
+  answer_released?: boolean;
+  refused?: boolean;
+  /** PKG-14: present (true) on the graded check that reached ZPD_RATING_EVERY_N_CHECKS. */
+  ask_rating?: boolean;
+}
+/** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
+export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
+export interface LoopCheckNext {
+  phase: LoopPhase;
+  check: LoopCheckItem | null;
+  plan_done?: boolean;
+}
+/** POST /hint moves the rung only: `{denied}` or `{rung, intent}`; the hint TEXT
+ *  is the next `[ACTION: hint]` turn (requestLoopHintTurn). */
+export interface LoopHintResponse { denied?: string; rung?: number; intent?: string }
+export interface LoopAttemptResult { genuine: boolean; counted: boolean; attempts: number; independent_s: number }
+/** A60: `close_json` as stored — no student answer to `self_eval`/`if_then`. */
+export interface LoopCloseRecord {
+  summary: string;
+  self_eval: string;
+  if_then: string;
+  concepts: { node_id: string; p_before: number; p_after: number }[];
+  misconceptions: string[];
+  model_written: boolean;
+}
+export interface LoopCloseResponse { close: LoopCloseRecord; model_written: boolean; close_phase: string | null }
+/** PKG-07's LoopCheckAnswerBody answer fields (the probe takes the same ones). */
+export interface LoopCheckAnswer { answer?: string; option?: string; reason?: string; idk: boolean }
+export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean }
+
+const loopPost = <T>(path: string, body: Record<string, unknown>) =>
+  fetchJSON<T>(`/api/learn/loop${path}`, { method: 'POST', body: JSON.stringify(body) });
+
+const loopAnswerFields = (a: LoopCheckAnswer): Record<string, unknown> => ({
+  ...(a.idk ? {} : a.option !== undefined ? { option: a.option, reason: a.reason ?? '' } : { answer: a.answer ?? '' }),
+  idk: a.idk,
+});
+
+function loopBudgetNoticeOf(data: unknown): LoopBudgetNotice {
+  const d = (data ?? {}) as Record<string, unknown>;
+  return {
+    level: String(d.level ?? ''),
+    reset_at: typeof d.reset_at === 'string' ? d.reset_at : null,
+    scope: typeof d.scope === 'string' ? d.scope : null,
+    session_capped: d.session_capped === true, // A39: a missing field reads as false
+  };
+}
+
+/** A20/A26/A39: the 429 body `{"detail": "ai budget reached", "reset_at", "scope",
+ *  "session_capped"}` from a JSON route (ApiError.body) or a stream route (sse.ts:
+ *  Error.message = raw body, `.status` set). Any other error → null. */
+export const budgetPauseOf = (err: unknown): LoopBudgetPause | null => {
+  const status = (err as { status?: number } | null)?.status;
+  if (status !== 429) return null;
+  let body: unknown = err instanceof ApiError ? err.body : undefined;
+  if (body === undefined && err instanceof Error) {
+    try { body = JSON.parse(err.message); } catch { return null; }
+  }
+  const b = body as { detail?: unknown; reset_at?: unknown; session_capped?: unknown } | null;
+  if (!b || b.detail !== 'ai budget reached') return null;
+  return { resetAt: typeof b.reset_at === 'string' ? b.reset_at : null, sessionCapped: b.session_capped === true };
+};
+
+/** The student's open loop sessions for a course, newest first (PKG-13's
+ *  GET /sessions; read-only, never rate-limited). */
+export const listLoopSessions = async (userId: string, courseId: string): Promise<LoopOpenSession[]> => {
+  const params = new URLSearchParams({ user_id: userId, course_id: courseId });
+  const r = await fetchJSON<{ sessions: LoopOpenSession[] }>(`/api/learn/loop/sessions?${params}`);
+  return r.sessions ?? [];
+};
+
+/** An open loop session `?resume=` named, wherever it lives (another course,
+ *  past the list limit): the listed shape plus its abstract course. */
+export interface LoopResumeSession extends LoopOpenSession { course_id: string }
+export interface LoopSessionList { sessions: LoopOpenSession[]; resume: LoopResumeSession | null }
+
+/** GET /sessions plus, for a `/learn?resume=<id>` deep link, that session when
+ *  it is the student's open loop session in ANY course (null: a legacy or closed
+ *  one — shown read-only). */
+export const listLoopSessionsFor = async (
+  userId: string, courseId: string, resumeId: string | null,
+): Promise<LoopSessionList> => {
+  const params = new URLSearchParams({ user_id: userId, course_id: courseId });
+  if (resumeId) params.set('resume', resumeId);
+  const r = await fetchJSON<{ sessions?: LoopOpenSession[]; resume?: LoopResumeSession | null }>(
+    `/api/learn/loop/sessions?${params}`,
+  );
+  return { sessions: r.sessions ?? [], resume: r.resume ?? null };
+};
+
+/** GET /status for one session (read-only): where it stands and, while an item
+ *  takes answers, its pose. The resume restore and the post-submission reconcile. */
+export interface LoopSessionStatus {
+  active: boolean;
+  session_id: string;
+  /** PKG-08's phase: probe | plan | teach | close. */
+  loop_phase: string;
+  /** PKG-07's teach refinement: teach | check | feedback. */
+  phase: string;
+  active_question_hash?: string | null;
+  check?: LoopCheckItem | null;
+}
+export const getLoopSessionStatus = (sessionId: string, userId: string) =>
+  fetchJSON<LoopSessionStatus>(
+    `/api/learn/loop/status?${new URLSearchParams({ user_id: userId, session_id: sessionId })}`,
+  );
+
+/** The teaching modes StartSessionBody.mode knows (the legacy deep links' ?mode=). */
+export const LOOP_DEEP_LINK_MODES = ['socratic', 'expository', 'teachback'] as const;
+
+export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null) =>
+  loopPost<LoopStartResult>('/start-session', {
+    user_id: userId,
+    topic,
+    course_id: courseId,
+    ...(mode && (LOOP_DEEP_LINK_MODES as readonly string[]).includes(mode) ? { mode } : {}),
+  });
+
+export const nextLoopProbe = (sessionId: string, userId: string) =>
+  loopPost<LoopProbeNext>('/probe/next', { session_id: sessionId, user_id: userId });
+
+export const answerLoopProbe = (sessionId: string, userId: string, questionHash: string, a: LoopCheckAnswer) =>
+  loopPost<LoopProbeAnswerResult>('/probe/answer', {
+    session_id: sessionId, user_id: userId, question_hash: questionHash, ...loopAnswerFields(a),
+  });
+
+export const getLoopPlan = (sessionId: string, userId: string) =>
+  fetchJSON<LoopPlan>(`/api/learn/loop/plan?${new URLSearchParams({ session_id: sessionId, user_id: userId })}`);
+
+export const approveLoopPlan = (sessionId: string, userId: string, conceptIds: string[]) =>
+  loopPost<{ phase: LoopPhase; concept_ids: string[] }>('/plan/approve', {
+    session_id: sessionId, user_id: userId, concept_ids: conceptIds,
+  });
+
+export const streamLoopChat = (sessionId: string, userId: string, message: string, handlers: StreamChatHandlers = {}) =>
+  consumeChatStream(
+    '/api/learn/loop/chat/stream', { session_id: sessionId, user_id: userId, message }, handlers,
+  ) as Promise<LoopTurnResult>;
+
+/** The attempt box's ONLY submit path (spec §13 A16): an explicit answer, never a chat message. */
+export const streamLoopCheckAnswer = (
+  sessionId: string, userId: string, questionHash: string, a: LoopCheckAnswer, handlers: StreamChatHandlers = {},
+) =>
+  consumeChatStream('/api/learn/loop/check/answer/stream', {
+    session_id: sessionId, user_id: userId, question_hash: questionHash, ...loopAnswerFields(a),
+  }, handlers) as Promise<LoopTurnResult>;
+
+/** Records a genuine attempt for hint unlocking only (never stored, never graded). */
+export const postLoopAttempt = (sessionId: string, userId: string, questionHash: string, attemptText: string) =>
+  loopPost<LoopAttemptResult>('/step/attempt', {
+    session_id: sessionId, user_id: userId, question_hash: questionHash, attempt_text: attemptText,
+  });
+
+/** "Check me" (A27): activates the current concept's next item and returns its pose.
+ *  It WRITES (activation) — a resume restores through getLoopSessionStatus instead. */
+export const nextLoopCheck = (sessionId: string, userId: string) =>
+  loopPost<LoopCheckNext>('/check/next', { session_id: sessionId, user_id: userId });
+
+export const requestLoopHint = (sessionId: string, userId: string, questionHash: string) =>
+  loopPost<LoopHintResponse>('/hint', { session_id: sessionId, user_id: userId, question_hash: questionHash });
+
+/** The hint's text: the `[ACTION: hint]` turn at the item's (new) rung (JSON; may 429). */
+export const requestLoopHintTurn = (sessionId: string, userId: string) =>
+  loopPost<LoopTurnResult>('/action', { session_id: sessionId, user_id: userId, action_type: 'hint' });
+
+/** PKG-14: the perceived-difficulty rating the loop asks for every N checks; the
+ *  user is the session cookie's. Emits zpd.rating and resets the counter. */
+export const submitLoopRating = (sessionId: string, rating: LoopRating) =>
+  fetchJSON<{ ok: true }>('/api/learn/loop/rating', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, rating }),
+  });
+
+/** Ends the session with its close (idempotent; A60). 409 while a close or a grade is in flight. */
+export const closeLoopSession = (sessionId: string, userId: string) =>
+  loopPost<LoopCloseResponse>('/close', { session_id: sessionId, user_id: userId });
+
 // Flashcard import
 export interface ImportCard { front: string; back: string }
 export interface ImportParseResponse { cards: ImportCard[]; errors: { row: number; message: string }[] }
@@ -996,13 +1399,16 @@ export interface OnboardingProfilePayload {
   majors: string[];
   minors: string[];
   course_ids: string[];
-  learning_style: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
 }
 
 export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>
   fetchJSON<{ user_id: string; courses_linked: string[] }>('/api/onboarding/profile', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    // Deploy-skew shim (PKG-14b): the pre-launch backend still REQUIRES
+    // `learning_style` (a bare str), the post-launch one ignores it. Sending ""
+    // keeps onboarding working whichever deploys first (the frontend worker or
+    // Railway). Remove once both run PKG-14b.
+    body: JSON.stringify({ ...payload, learning_style: '' }),
   });
 
 // Profile

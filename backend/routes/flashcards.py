@@ -4,19 +4,23 @@ import base64
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config import is_weak
+from learning.bkt import is_weak
 from db.connection import table
+from learning.flashcard_fsrs import flashcard_fsrs_update
+from learning.fsrs import order_due
+from learning.params import FLASHCARD_RATING_TO_FSRS
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
+from services.timestamps import parse_ts
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -51,7 +55,10 @@ class GenerateFlashcardsBody(BaseModel):
 class FlashcardRatingBody(BaseModel):
     user_id: str
     card_id: str
-    rating: int  # 1 = forgot, 2 = hard, 3 = easy
+    # 1 = forgot, 2 = hard, 3 = easy. With the learning loop on (PKG-11) this
+    # maps to FSRS Again/Hard/Good via learning.params.FLASHCARD_RATING_TO_FSRS
+    # and any other value is a 422; the legacy path stores any int as-is.
+    rating: int
 
 
 class CardInput(BaseModel):
@@ -174,10 +181,19 @@ def _get_course_documents(
         return []
 
 
+def _unit(score) -> float:
+    """A stored mastery score clamped to [0, 1] (tier_for rejects anything
+    outside it; old rows occasionally drift)."""
+    try:
+        return max(0.0, min(1.0, float(score or 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
     """
     Return concept names the student is weak on — below the "learning" floor
-    in `config.get_mastery_tier`, i.e. "struggling" or "unexplored".
+    of `learning.bkt.tier_for` (PKG-14b), i.e. "struggling" or "unexplored".
 
     Was a local `< 0.4` (#557), which is not any tier boundary: concepts in
     [0.4, 0.45) read as "struggling" on the Tree but were never offered for
@@ -196,7 +212,7 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
                 filters={"user_id": f"eq.{user_id}"},
             )
         weak = sorted(
-            (r for r in (rows or []) if is_weak(r.get("mastery_score") or 0)),
+            (r for r in (rows or []) if is_weak(_unit(r.get("mastery_score")))),
             key=lambda r: r.get("mastery_score") or 0,
         )
         # Weakest first, THEN cap. The cap used to truncate in PostgREST row
@@ -292,14 +308,54 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     }
 
 
+_LEGACY_LIST_COLS = (
+    "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,"
+    "last_reviewed_at,created_at"
+)
+_FSRS_LIST_COLS = ",fsrs_d,fsrs_s,due_at,reps,lapses"
+
+
+def _order_due_rows(rows: list[dict], now: datetime) -> list[dict]:
+    """PKG-11: due cards in learning.fsrs.order_due's order (|R − threshold|
+    ascending, spec §3.2). ADAPTER (HANDOFF-02: `order_due(items, now, *,
+    stability_key="fsrs_s", last_review_key=...)`): a flashcard's stability
+    is `fsrs_s` and its last review is `last_reviewed_at`. If PKG-02's
+    signature changes, change THIS function only."""
+    if not rows:
+        return []
+    return list(order_due(rows, now, last_review_key="last_reviewed_at"))
+
+
+def _loop_order(rows: list[dict], now: datetime) -> tuple[list[dict], list[dict]]:
+    """PKG-11: (ordered rows, due rows). Due first (`due_at` <= now, in
+    _order_due_rows order), then never rated on the loop path (`fsrs_s` null,
+    query order), then not yet due by `due_at` ascending. A null `due_at` is
+    never due."""
+    due, fresh, later = [], [], []
+    for r in rows:
+        due_at = parse_ts(r.get("due_at"))
+        if due_at is not None and due_at <= now:
+            due.append(r)
+        elif r.get("fsrs_s") is None:
+            fresh.append(r)
+        else:
+            later.append(r)
+    later.sort(key=lambda r: parse_ts(r.get("due_at")) or now)
+    ordered_due = _order_due_rows(due, now)
+    return ordered_due + fresh + later, ordered_due
+
+
 @router.get("/user/{user_id}")
 def get_flashcards(
     user_id: str,
     request: Request,
     topic: str | None = None,
     semester: str | None = None,
+    due_only: bool = False,
 ):
     require_self(user_id, request)
+    # PKG-11 / PKG-14b (spec §11.2): FSRS scheduling for every student, no
+    # gate — the kill switch does not bring the legacy list order back.
 
     if not user_id:
         return {"flashcards": []}
@@ -310,7 +366,7 @@ def get_flashcards(
 
     try:
         rows = table("flashcards").select(
-            "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
+            _LEGACY_LIST_COLS + _FSRS_LIST_COLS,
             filters=filters, order="created_at.desc"
         ) or []
         for r in rows:
@@ -334,7 +390,11 @@ def get_flashcards(
                 r for r in rows
                 if r.get("offering_id") is None or r["offering_id"] in allowed
             ]
-        return {"flashcards": rows}
+        now = datetime.now(timezone.utc)
+        rows, due = _loop_order(rows, now)
+        if due_only:
+            rows = due
+        return {"flashcards": rows, "due_count": len(due)}
     except Exception as e:
         err_str = str(e).lower()
         if "not found" in err_str or "does not exist" in err_str or "42p01" in err_str:
@@ -345,10 +405,15 @@ def get_flashcards(
 @router.post("/rate")
 def rate_card(body: FlashcardRatingBody, request: Request):
     require_self(body.user_id, request)
+    # PKG-11 / PKG-14b (spec §11.2): every rating is an FSRS review, no gate.
+    fsrs_rating = FLASHCARD_RATING_TO_FSRS.get(body.rating)
+    if fsrs_rating is None:
+        raise HTTPException(status_code=422, detail="rating must be one of 1, 2, 3")
 
+    cols = "id,times_reviewed,last_reviewed_at,fsrs_d,fsrs_s,reps,lapses"
     try:
         rows = table("flashcards").select(
-            "id,times_reviewed",
+            cols,
             filters={"id": f"eq.{body.card_id}", "user_id": f"eq.{body.user_id}"},
             limit=1,
         )
@@ -358,15 +423,17 @@ def rate_card(body: FlashcardRatingBody, request: Request):
     if not rows:
         raise HTTPException(status_code=404, detail="Flashcard not found")
 
+    now = datetime.now(timezone.utc)
     current = rows[0]["times_reviewed"] or 0
-    table("flashcards").update(
-        {
-            "times_reviewed": current + 1,
-            "last_rating": body.rating,
-            "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
-        },
-        filters={"id": f"eq.{body.card_id}"},
-    )
+    payload = {
+        "times_reviewed": current + 1,
+        "last_rating": body.rating,
+        "last_reviewed_at": now.isoformat(),
+    }
+    # PKG-12 reopen: the pure helper learning/review.py shares; it returns
+    # the three legacy columns above (same values) plus the FSRS five.
+    payload.update(flashcard_fsrs_update(rows[0], body.rating, now=now))
+    table("flashcards").update(payload, filters={"id": f"eq.{body.card_id}"})
 
     # The review counter is the only thing that advances `flashcards_reviewed`
     # (Quick Draw: review 100 cards), so this is its only possible dispatch
@@ -380,7 +447,7 @@ def rate_card(body: FlashcardRatingBody, request: Request):
             body.user_id, body.card_id,
         )
 
-    return {"ok": True}
+    return {"ok": True, "due_at": payload["due_at"], "fsrs_rating": fsrs_rating}
 
 
 @router.delete("/{card_id}")

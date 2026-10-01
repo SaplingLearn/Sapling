@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "ce4ceceb1026fdb9afeab3aae518f7c82a015961005d9b7f0024501c5ff32f1c",
+  "output": {
+    "evidence": "Here is the function with the last step left for you: def factorial(n): if n == 0: return ____",
+    "reveals_final_answer": false,
+    "rung": 5
+  },
+  "served_sha256": "78aac9951f51825c851bf70035c2f06adb32a5cba09ef3fd42ee377e1e665323"
+}

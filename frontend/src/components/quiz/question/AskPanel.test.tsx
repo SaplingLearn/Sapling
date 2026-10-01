@@ -280,6 +280,51 @@ describe("AskPanel", () => {
     expect(screen.getByText("The base case is the exit.")).toBeInTheDocument();
   });
 
+  it("names the quiz question on the session start (spec §13 A99: quiz_ask origin)", async () => {
+    renderPanel({ quizAsk: { attemptId: "attempt-9", questionIndex: 2 } });
+
+    await waitFor(() => expect(api.startSessionStream).toHaveBeenCalledTimes(1));
+    // (…, courseId, modelPref, handlers, quizAsk)
+    expect(api.startSessionStream.mock.calls[0][5]).toBeUndefined();
+    expect(api.startSessionStream.mock.calls[0][7]).toEqual({ attemptId: "attempt-9", questionIndex: 2 });
+    // the follow-ups ride the session it opened; nothing else carries the origin
+    await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(1));
+    expect(api.streamChat.mock.calls[0][0]).toBe(SESSION);
+  });
+
+  it("names the quiz question on the JSON start route too", async () => {
+    api.startSessionStream.mockRejectedValueOnce(new Error("no stream"));
+    renderPanel({ quizAsk: { attemptId: "attempt-9", questionIndex: 0 } });
+
+    await waitFor(() => expect(api.startSession).toHaveBeenCalledTimes(1));
+    // (userId, topic, mode, courseId, useSharedContext, modelPref, quizAsk)
+    expect(api.startSession.mock.calls[0][6]).toEqual({ attemptId: "attempt-9", questionIndex: 0 });
+  });
+
+  it("opens an ordinary session when there is no quiz question to name", async () => {
+    renderPanel();
+    await waitFor(() => expect(api.startSessionStream).toHaveBeenCalledTimes(1));
+    expect(api.startSessionStream.mock.calls[0][7]).toBeUndefined();
+  });
+
+  it("does not re-seed when the caller re-renders with an equal quizAsk object", async () => {
+    const props = {
+      onClose: vi.fn(),
+      userId: "user-1",
+      conceptName: "Recursion",
+      courseId: "course-cs101",
+      seed: SEED,
+    };
+    const { rerender } = render(
+      <AskPanel open {...props} quizAsk={{ attemptId: "attempt-9", questionIndex: 1 }} />,
+    );
+    await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(1));
+    rerender(<AskPanel open {...props} quizAsk={{ attemptId: "attempt-9", questionIndex: 1 }} />);
+    await screen.findByText("The base case is the exit.");
+    expect(api.startSessionStream).toHaveBeenCalledTimes(1);
+    expect(api.streamChat).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the JSON start route when the streamed one falls over", async () => {
     api.startSessionStream.mockRejectedValueOnce(new Error("no stream"));
     renderPanel();

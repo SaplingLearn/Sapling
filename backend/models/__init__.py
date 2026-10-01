@@ -1,7 +1,8 @@
 from typing import Optional, Union, List, Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+from learning.params import GRADER_ANSWER_MAX_CHARS
 
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
@@ -13,6 +14,19 @@ class StartSessionBody(BaseModel):
     use_shared_context: bool = True
     course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    # PKG-14 final fix round (spec §13 A99): the quiz "Ask about this" panel opens a
+    # session ABOUT one quiz question. The client names the question by its attempt
+    # and index; the server resolves the question's identity (`question_hash`) from
+    # the attempt row the student owns — never from a client-supplied hash.
+    origin: Optional[Literal["quiz_ask"]] = None
+    quiz_attempt_id: Optional[str] = None
+    quiz_question_index: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _quiz_ask_names_its_question(self) -> "StartSessionBody":
+        if self.origin == "quiz_ask" and (not self.quiz_attempt_id or self.quiz_question_index is None):
+            raise ValueError("a quiz_ask session names its quiz_attempt_id and quiz_question_index")
+        return self
 
 
 class ChatBody(BaseModel):
@@ -29,6 +43,38 @@ class EndSessionBody(BaseModel):
     user_id: str = ""  # Required to discard a lazy (not-yet-persisted) session safely
 
 
+class CloseBody(BaseModel):
+    session_id: str
+    user_id: str = ""  # PKG-09: resolved from the session cookie when empty, like EndSessionBody
+
+
+class PosttestStartBody(BaseModel):
+    """PKG-14 /api/learn/loop/posttest/start — rung 3 of the evaluation ladder
+    (spec §10): the tool-removed, delayed post-test items of one course."""
+    course_id: str
+    user_id: str = ""  # resolved from the session cookie when empty, like CloseBody
+
+
+class PosttestAnswerBody(BaseModel):
+    """PKG-14 /api/learn/loop/posttest/answer — one post-test answer, graded
+    through grade_answer with the ceiling forced to H0 (A16, A33 length bound)."""
+    node_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    idk: bool = False
+    user_id: str = ""
+
+
+class LoopRatingBody(BaseModel):
+    """PKG-14 /api/learn/loop/rating — the perceived-difficulty answer the loop
+    asks for every ZPD_RATING_EVERY_N_CHECKS checks (spec §3.4, §6 zpd.rating)."""
+    session_id: str
+    user_id: str = ""  # resolved from the session cookie when empty, like CloseBody
+    rating: Literal["too_easy", "appropriate", "too_hard"]
+
+
 class RenameSessionBody(BaseModel):
     user_id: str
     topic: str
@@ -41,6 +87,112 @@ class ActionBody(BaseModel):
     mode: str = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+
+
+# ── Learning loop (PKG-07; spec §9, A16) ──────────────────────────────────────
+# No loop body carries model_pref: the loop picks its tier in code (spec A15).
+# Free text is bounded by the grader's own answer bound, so an over-long
+# submission is a 422 before anything is scanned or graded (HANDOFF-05/06).
+
+
+class LoopAttemptBody(BaseModel):
+    """PKG-07 /api/learn/loop/step/attempt. `attempt_text` is judged by
+    learning.gates.is_genuine_attempt for hint unlocking only; never stored,
+    never graded."""
+    session_id: str
+    user_id: str
+    question_hash: str
+    attempt_text: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+
+
+class LoopHintBody(BaseModel):
+    """PKG-07 /api/learn/loop/hint — moves rung state only; the hint text
+    comes from the next tutor turn."""
+    session_id: str
+    user_id: str
+    question_hash: str
+
+
+class LoopCheckAnswerBody(BaseModel):
+    """PKG-07 /api/learn/loop/check/answer(/stream) — an explicit answer
+    submission, the ONLY loop-chat evidence path (spec A16)."""
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    idk: bool = False
+
+
+class LoopCheckNextBody(BaseModel):
+    """PKG-07 /api/learn/loop/check/next ("Check me", spec §9, A27): activates
+    the current concept's next check item and returns its pose; no model call."""
+    session_id: str
+    user_id: str
+
+
+# PKG-08 (probe + plan; spec §9). No course_id: the course is the session's
+# (routes/learn_loop.py::_session_scope), never the client's.
+
+
+class ProbeNextBody(BaseModel):
+    """PKG-08 /api/learn/loop/probe/next — the next probe item (no model call)."""
+    session_id: str
+    user_id: str
+
+
+class ProbeAnswerBody(BaseModel):
+    """PKG-08 /api/learn/loop/probe/answer — an explicit answer to the posed probe
+    item, graded through grade_answer (A16). The answer fields are PKG-07's
+    LoopCheckAnswerBody's, so the client sends one shape to every loop check;
+    above GRADER_ANSWER_MAX_CHARS the body is a 422 and the item stays posed
+    (A33: padding is never a skip)."""
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
+    idk: bool = False
+
+
+class PlanApproveBody(BaseModel):
+    """PKG-08 /api/learn/loop/plan/approve — the student's subset of the proposed
+    plan, in the order they want it (a reorder is theirs to make)."""
+    session_id: str
+    user_id: str
+    concept_ids: List[str] = Field(..., min_length=1)
+
+
+class ReviewAnswerBody(BaseModel):
+    """PKG-12 /api/learn/loop/review/answer — one answer to a served review item
+    (spec §3.2, A16, A22, A33). The item, its node and its reference are re-loaded
+    on the server by `item_id`; no field names a node, a reference or model_pref.
+    Free text is bounded by the grader's own answer bound (an over-long answer is
+    a 422 and the item stays due). A check needs `answer` or `selected_option`
+    (which of the two its format needs is checked after the item loads); a
+    flashcard needs a legacy self-rating 1/2/3. Unknown fields are a 422: a
+    client can never pass a node, a reference or a model preference."""
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    session_id: str
+    course_id: Optional[str] = None
+    kind: Literal["flashcard", "check"]
+    item_id: str
+    answer: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
+    rating: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _answer_fits_kind(self):
+        if self.kind == "check" and not (self.answer or self.selected_option):
+            raise ValueError("a check answer needs answer or selected_option")
+        if self.kind == "flashcard" and self.rating not in (1, 2, 3):
+            raise ValueError("a flashcard answer needs rating 1, 2 or 3")
+        return self
 
 
 # ── Quiz ──────────────────────────────────────────────────────────────────────
@@ -309,7 +461,10 @@ class OnboardingBody(BaseModel):
     majors: list[str] = Field(min_length=1)
     minors: list[str] = []
     course_ids: list[str] = Field(min_length=1)  # abstract catalog course ids; enroll resolves each to a current-term offering
-    learning_style: str
+    # PKG-14b (spec §11.2): the learning-style step is gone for everyone; an older
+    # client that still sends the field is accepted and the value ignored
+    # (user_profiles.learning_style stays, dead — ADR 0030).
+    learning_style: Optional[str] = None
 
 
 # ── Profile & Settings ───────────────────────────────────────────────────────

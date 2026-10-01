@@ -27,6 +27,10 @@ from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
 
+# Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
+# upload hook's flag-off branch), so it runs as an explicit kill-switch test.
+pytestmark = pytest.mark.kill_switch
+
 client = TestClient(app)
 
 
@@ -120,6 +124,35 @@ def test_event_taxonomy_is_pinned():
         # #629: the Class Intel toggle moved but course_chunks.visibility did
         # not follow. A privacy control that fails silently is not one.
         "rag.visibility_resync_failed",
+        # Learning loop PKG-04 (spec §6, A8): a check-item batch or write failed.
+        "learn.check_items_failed",
+        # PKG-05 reopen (spec §6, §13 A33): an answer that addressed the grader
+        # was refused before grading. Emit coverage: test_learning_answer_guard.py.
+        "learn.answer_refused",
+        # A37 (coordinator's ruling, 2026-09-28): one mc_reason top-up call, its counts.
+        "learn.check_items_topup",
+        # PKG-06 (spec §6); emit coverage in test_learning_zpd_policy.py
+        "zpd.step",
+        "zpd.offer",
+        "zpd.band_adjust",
+        "zpd.wheelspin",
+        "zpd.leak",
+        "zpd.reveal",
+        "zpd.rating",
+        # PKG-05b: the typed decision seam (spec §6). Emit coverage: test_learning_decisions.py.
+        "decision.made",
+        "decision.shadow",
+        "decision.fallback",
+        "ai.budget_capped",           # PKG-06b: a per-student AI cap was hit
+        # PKG-08: probe finished (items/misses/novice_floor/skills) and the
+        # student approved a plan (concept_ids/n_reviews_first). Emit coverage
+        # lives in test_learning_probe_planner.py.
+        "learn.probe_done",
+        "learn.plan_approved",
+        "learn.session_closed",  # PKG-09: the loop session's close (counts/bools only)
+        "review.session_started",     # PKG-12: a daily review session row (not session.started)
+        "review.served",              # PKG-12: one per kind in a built review queue
+        "review.graded",              # PKG-12: one per graded review answer
     })
 
 
@@ -926,7 +959,11 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     )
     with (
         patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz.apply_graph_update"),
+        # PKG-14b: the graph reports the span of the evidence it applied.
+        patch(
+            "routes.quiz.apply_graph_update",
+            return_value=[{"before": 0.5, "after": 0.53}, {"before": 0.53, "after": 0.56}],
+        ),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=noop_ctx),
         patch("routes.quiz.save_quiz_context"),
@@ -952,8 +989,11 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     assert payload["concept_node_id"] == "node1"
     assert payload["score"] == 2
     assert payload["total"] == 2
-    # mastery 0.5 -> 0.5 + 2*0.03 = 0.56
-    assert payload["mastery_delta"] == pytest.approx(0.06)
+    # PKG-14b: p_delta = the evidence span's p_after − p_before (0.5 -> 0.56).
+    assert payload["p_delta"] == pytest.approx(0.06)
+    from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+    assert LEGACY_MASTERY_SYMBOLS[0] not in payload  # the retired key (inv_21)
 
 
 # ── Chat: chat.message_sent ──────────────────────────────────────────────────

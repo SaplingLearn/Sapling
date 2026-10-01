@@ -397,6 +397,12 @@ do_up() {
   echo "▶ Booting the E2E stack (scripts/e2e-up.sh)…"
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
+  # Learning loop (PKG-14b, spec §7): the loop is the default, so the explorer's
+  # stack runs the code default — no LEARNING_LOOP_ENABLED export here (an
+  # operator who exports LEARNING_LOOP_ENABLED=false explores the kill-switch
+  # lane). Spec §13 A5: the E2E env scales the ZPD gate seconds; e2e-up.sh
+  # defaults it, set here so the explorer's stack is visibly the lane's.
+  export LEARNING_GATE_TIME_SCALE=0.01
   # Unconditional (matches CI's unconditional dummy, #439): the below-seam RAG
   # path can still bill a real key even in function mode, and an ambient real
   # key routinely stays exported in dev shells. This only exports into this

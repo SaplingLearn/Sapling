@@ -29,6 +29,9 @@ handlers here rather than growing parallel modules.
 
 from __future__ import annotations
 
+import json
+import re
+
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
 from agents._providers import (
@@ -36,6 +39,12 @@ from agents._providers import (
     register_function_handler,
     set_function_stream_delay_ms,
 )
+from learning.params import (
+    CHECK_ITEM_DIFFICULTIES,
+    CHECK_ITEM_FORMATS,
+    CHECK_ITEM_MC_MIN_PER_CONCEPT,
+)
+from learning.turn_shape import render_turn
 
 # Streamed-replay pacing (#356): re-chunk streamed text into small deltas with
 # 150ms between them, giving the mid-stream journeys (Stop a turn, switch
@@ -344,3 +353,361 @@ register_function_handler(
     "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
 )
 register_function_handler("note_chat", _note_chat_handler)
+
+
+# ── Check items (learning loop PKG-04) ─────────────────────────────────────
+#
+# Request-path in function mode: routes/documents.py runs the generator
+# synchronously inside the upload when SAPLING_MODEL_MODE=function, since
+# post-response handlers stay unregistered by design. Inert when
+# LEARNING_LOOP_ENABLED is off (the kill-switch lane); the default lane runs it
+# (the flag defaults ON after PKG-14b, spec §7).
+# For each E2E_DOC_CONCEPTS name — the function-mode upload's concepts, so
+# each draft's `concept` matches the call's batch — one free and one teachback
+# item, and CHECK_ITEM_MC_MIN_PER_CONCEPT mc_reason items (difficulties 1, 2):
+# a function-mode pass leaves no concept below the A37 mc_reason floor, so it
+# makes no top-up call. The top-up agent rides this same handler (it runs on
+# the check_items slot) and keeps only its concept's mc_reason drafts.
+# Prompts differ per (concept, format, difficulty) so every question_hash
+# differs; the difficulty-1 prompts are the ones PKG-04 shipped.
+# Backend contract test: tests/test_e2e_function_handlers.py. Keep in sync.
+
+E2E_CHECK_ITEM_PROMPT_TEMPLATE = (
+    "[e2e-function-model][{concept}][{format}] In one sentence, what does the "
+    "learning rate control in gradient descent?"
+)
+E2E_CHECK_ITEM_REFERENCE = (
+    "The learning rate controls the size of each parameter update step "
+    "taken along the negative gradient."
+)
+# A34: every item states its final answer, verbatim from its reference (and,
+# for mc_reason, the correct option's text) — never in the prompt.
+E2E_CHECK_ITEM_FINAL_ANSWER = "The size of each parameter update step"
+E2E_CHECK_ITEM_RUBRIC = [
+    "Names the step size or update magnitude.",
+    "Ties the step to the gradient direction.",
+]
+E2E_CHECK_ITEM_WRONG_KEY = "rate_is_iteration_count"
+E2E_CHECK_ITEM_WRONG_TEXT = "Confuses the learning rate with the number of iterations."
+# mc_reason (A22, A37): four option OBJECTS — the correct one first, flagged
+# is_correct with no misconception, then three distractors, each stating its
+# own misconception (a key and a sentence). The item lists no wrong_keys /
+# wrong_texts of its own: code takes its common wrong reasons from the
+# distractors (checks.common_wrong), so the stored common_wrong_json is
+# E2E_CHECK_ITEM_MC_WRONG_KEYS paired with E2E_CHECK_ITEM_MC_WRONG_TEXTS. No
+# letters: code letters the options and places the correct one at a slot keyed
+# by the server secret over the question_hash (checks.lettered_options), so the
+# stored letter of each concept's item is fixed by its prompt and the stack's
+# ENCRYPTION_KEY.
+E2E_CHECK_ITEM_MC_WRONG_KEYS = [
+    E2E_CHECK_ITEM_WRONG_KEY,
+    "rate_is_loss_value",
+    "rate_sets_step_direction",
+]
+E2E_CHECK_ITEM_MC_WRONG_TEXTS = [
+    E2E_CHECK_ITEM_WRONG_TEXT,
+    "Treats the learning rate as the loss being minimised.",
+    "Thinks the learning rate sets the direction of the step.",
+]
+E2E_CHECK_ITEM_OPTIONS = [
+    {"text": E2E_CHECK_ITEM_FINAL_ANSWER, "is_correct": True,
+     "misconception_key": None, "misconception_text": None},
+    {"text": "The number of iterations to run", "is_correct": False,
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[0],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[0]},
+    {"text": "The value of the loss", "is_correct": False,
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[1],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[1]},
+    {"text": "The sign of the gradient", "is_correct": False,
+     "misconception_key": E2E_CHECK_ITEM_MC_WRONG_KEYS[2],
+     "misconception_text": E2E_CHECK_ITEM_MC_WRONG_TEXTS[2]},
+]
+
+
+def _e2e_check_item(
+    concept: str, fmt: str, difficulty: int = CHECK_ITEM_DIFFICULTIES[0]
+) -> dict:
+    label = fmt if difficulty == CHECK_ITEM_DIFFICULTIES[0] else f"{fmt} {difficulty}"
+    item = {
+        "concept": concept,
+        "format": fmt,
+        "difficulty": difficulty,
+        "prompt": E2E_CHECK_ITEM_PROMPT_TEMPLATE.format(concept=concept, format=label),
+        "reference_answer": E2E_CHECK_ITEM_REFERENCE,
+        "final_answer": E2E_CHECK_ITEM_FINAL_ANSWER,
+        "rubric": E2E_CHECK_ITEM_RUBRIC,
+        "wrong_keys": [E2E_CHECK_ITEM_WRONG_KEY],
+        "wrong_texts": [E2E_CHECK_ITEM_WRONG_TEXT],
+        "answer_kind": "free",
+        "stepwise": False,
+        "chunk_ids": [],
+    }
+    if fmt == "mc_reason":
+        # The reference quotes the correct option's text and names no letter.
+        item.update({"wrong_keys": [], "wrong_texts": [], "options": E2E_CHECK_ITEM_OPTIONS})
+    return item
+
+
+register_function_handler(
+    "check_items",
+    _structured_output({
+        "items": [
+            item
+            for name, _, _ in E2E_DOC_CONCEPTS
+            for item in [
+                *(_e2e_check_item(name, fmt) for fmt in CHECK_ITEM_FORMATS if fmt != "mc_reason"),
+                *(
+                    _e2e_check_item(name, "mc_reason", level)
+                    for level in CHECK_ITEM_DIFFICULTIES[:CHECK_ITEM_MC_MIN_PER_CONCEPT]
+                ),
+            ]
+        ],
+    }),
+)
+
+
+# ── Learning loop grader (PKG-05) ───────────────────────────────────────────
+#
+# grade_answer (a route helper, spec §13 A16) runs grader_agent as its OWN
+# call, so the E2E lane needs a handler — for both slots: the second opinion
+# runs the same agent on the "grader_second" slot (A22). Content-driven in
+# exactly one way: a student answer containing E2E_GRADER_CORRECT_TOKEN grades
+# every rubric item yes, anything else every item no. Rubric labels come off the
+# prompt's `RUBRIC ITEM <label>:` lines (agents/grader.py::build_grader_message;
+# each label is fresh and random per grading call, spec §13 A33, and grade()
+# maps labels back), so any seeded item works. `addresses_grader` and
+# `contradicts_reference` are always false (spec §13 A33: an E2E answer never
+# addresses the grader, and its all-yes is no conflict). E2E_GRADER_CONFIDENCE
+# sits above GRADER_LOW_CONFIDENCE (and so above the second-opinion floor): E2E
+# evidence is full-weight, and the second slot's full second opinion fires only
+# to confirm a credited verdict on an answer with a suspicion signal or a
+# conflicted all-yes (A33) — never on the bare token, which is one identifier.
+# Every credited item quotes the whole student answer as its `support`, and the
+# span check grade() then makes on the grader_second slot (grader-guard round
+# a33, the coordinator's ruling: same agent, output type `SpanVerdicts`, told
+# apart here by the output tool's schema) says yes to a span holding the token.
+# So a token answer costs two runs: the grade and its span check. Emits through
+# the OUTPUT tool → the real schema validates. Request-path once PKG-07's
+# /check/answer calls grade_answer (no route does yet). Contract:
+# tests/test_learning_check_tool.py; PKG-13's learn-loop.spec.ts types the token.
+#
+# PKG-10: a (not correct) answer holding E2E_GRADER_WRONG_REASON_TOKEN asserts the
+# item's FIRST listed common wrong reason (`matched_wrong_key` = the first
+# `COMMON WRONG REASON <key>:` line of the message); grade_answer then takes the
+# key through decisions.match_wrong_reason with this result as `prior` (no
+# decision run). Two such answers on two isomorphs of one concept record a
+# misconception and make the next feedback turn a confronting one. Contract:
+# tests/test_e2e_function_handlers.py.
+
+E2E_GRADER_CORRECT_TOKEN = "E2E_GRADER_CORRECT"
+E2E_GRADER_WRONG_REASON_TOKEN = "E2E_GRADER_WRONG_REASON"
+E2E_GRADER_CONFIDENCE = 0.95
+E2E_GRADER_HINT = "[e2e-function-model] Deterministic grader hint: check the base case first."
+
+_RUBRIC_ID_RE = re.compile(r"^RUBRIC ITEM (\S+):", re.M)
+_WRONG_KEY_RE = re.compile(r"^COMMON WRONG REASON (\S+):", re.M)
+
+
+def _grader_handler(messages, info) -> ModelResponse:
+    text, tool = _last_user_prompt_text(messages), info.output_tools[0]
+    verdict = "yes" if E2E_GRADER_CORRECT_TOKEN in text else "no"
+    labels = _RUBRIC_ID_RE.findall(text)
+    properties = (tool.parameters_json_schema or {}).get("properties", {})
+    if "withdrawn" in properties:
+        # the context check (A33 finish): an E2E answer never takes anything back
+        labels = re.findall(r"^SPAN (\S+):$", text, re.M)
+        args = {"withdrawn": [f"{rid}:no" for rid in labels]}
+        return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
+    if "addresses_grader" not in properties:
+        # the span check (round a33): its spans are the grading run's quotes below
+        # A33 finish: the span check reports the span asserted before its verdicts
+        args = {
+            "asserted": [f"{rid}:{verdict}" for rid in labels],
+            "item_results": [f"{rid}:{verdict}" for rid in labels],
+        }
+        return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
+    answer = " ".join(line[2:] for line in text.splitlines() if line.startswith("> "))
+    listed = _WRONG_KEY_RE.findall(text)  # never a quoted answer line ("> " first)
+    hit = verdict == "no" and E2E_GRADER_WRONG_REASON_TOKEN in answer
+    matched = listed[0] if hit and listed else ""
+    args = {
+        "addresses_grader": False,  # A33: an E2E answer never addresses the grader
+        "contradicts_reference": False,  # A33 (round a33): nor contradicts the reference
+        "item_results": [f"{rid}:{verdict}" for rid in labels],
+        # round a33: each credited item quotes the whole answer, which holds the token
+        "support": [f"{rid}: {answer}" for rid in labels] if verdict == "yes" else [],
+        "confidence": E2E_GRADER_CONFIDENCE,
+        "matched_wrong_key": matched,
+        "feedback_hint": E2E_GRADER_HINT,
+    }
+    return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
+
+
+register_function_handler("grader", _grader_handler)
+register_function_handler("grader_second", _grader_handler)
+
+
+# ── Learning loop decision seam (PKG-05b) ───────────────────────────────────
+#
+# Content-driven in exactly one way (like the grader handler): E2E_DECISION_YES_TOKEN in
+# the prompt → "yes" / the first listed OPTION key; else "no" / "none". The run's output
+# type is read off info.output_tools[0], so the REAL schema validates. Keep in sync with
+# tests/test_learning_decisions.py and tests/test_e2e_function_handlers.py.
+E2E_DECISION_YES_TOKEN = "E2E_DECISION_YES"
+E2E_DECISION_CONFIDENCE = 0.9
+_OPTION_KEY_RE = re.compile(r"^OPTION (\S+):", re.M)
+
+
+def _decision_handler(messages, info) -> ModelResponse:
+    text, tool = _last_user_prompt_text(messages), info.output_tools[0]
+    hit = E2E_DECISION_YES_TOKEN in text
+    if "choice" in (tool.parameters_json_schema or {}).get("properties", {}):
+        keys = _OPTION_KEY_RE.findall(text)
+        args = {
+            "choice": keys[0] if hit and keys else "none",
+            "confidence": E2E_DECISION_CONFIDENCE,
+        }
+    else:
+        args = {"answer": "yes" if hit else "no", "confidence": E2E_DECISION_CONFIDENCE}
+    return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
+
+
+register_function_handler("decision", _decision_handler)
+
+
+# ── Learning loop tutor (PKG-07) ───────────────────────────────────────────
+#
+# Served for ALL THREE tier slots (the loop route picks the slot per run; spec
+# §3.5). The loop agent has no grader tool and this handler scripts no tool call
+# (module rule: no tool calls, zero model-driven writes). Since the PKG-07
+# unblock (S1) the agent's output is the STRUCTURED turn
+# (learning.turn_shape.LoopTurnOut via PromptedOutput), so the handler answers
+# with the turn's JSON as one text part — which the streamed seam replays as
+# text deltas, exactly the shape stream_structured_turn parses. The turn passes
+# the output validator at the TIGHTEST limits (a one-sentence body, H0/H1), so
+# no E2E loop turn burns an output retry. E2E_LOOP_TUTOR_REPLY is the RENDERED
+# turn (render_turn), the text the route persists and
+# frontend/e2e/learn-loop.spec.ts (PKG-13) can assert. Keep in sync with
+# tests/test_loop_tutor_agent.py and tests/test_e2e_function_handlers.py.
+E2E_LOOP_TUTOR_TURN = {
+    "key_idea": (
+        "[e2e-function-model] A recursive function needs a base case it is "
+        "guaranteed to reach."
+    ),
+    "body": "Try writing the base case for factorial before anything else.",
+    "question": "Which input should stop the recursion?",
+}
+E2E_LOOP_TUTOR_REPLY = render_turn(E2E_LOOP_TUTOR_TURN)
+
+
+
+# ── Learning loop tutor by phase (PKG-13) ──────────────────────────────────
+#
+# One handler, three fixed turns keyed on the PHASE of the run: the hint turn,
+# the feedback turn, and everything else (teach, the opener) the PKG-07 turn
+# above. The phase is read off THIS run's user prompt — the prefix
+# routes/learn_loop.py assembles with agents.loop_tutor.phase_prefix — never off
+# the history, where an earlier hint turn's prefix would answer a later teach
+# turn with the hint reply. The pattern values are copied verbatim from
+# agents/loop_tutor.py::_PHASE_RULES; tests/test_e2e_function_handlers.py pins
+# that each is real prompt source, sits in its own phase's prefix only, and is
+# absent from the system prompt. Every turn is valid at the tightest limits
+# (H0, a one-sentence body, nothing given), so no E2E loop turn burns an output
+# retry. The served text can differ from the *_REPLY render: at H0/H1 the route
+# serves the key idea of a hint or a correct-verdict feedback from code, at H2
+# the hint question, and a released feedback leads with "The answer: …"
+# (routes/learn_loop.py::served_render / released_lead). Asserted verbatim by
+# frontend/e2e/learn-loop.spec.ts. Keep in sync.
+E2E_LOOP_PHASE_PATTERNS: dict[str, str] = {
+    "hint": "the student asked for help with the check item below",
+    "feedback": "the student has just submitted an answer to the check",
+}
+# The body and question reach the student verbatim at H0/H1 (the key idea is
+# then code's); the journey asserts these two.
+E2E_LOOP_HINT_BODY = "Reread the item and name the one thing it wants you to state."
+E2E_LOOP_HINT_QUESTION = "What is the first thing you need before you can answer this?"
+E2E_LOOP_HINT_TURN = {
+    "key_idea": (
+        "[e2e-function-model] Deterministic loop hint: start from what the check "
+        "item asks for."
+    ),
+    "body": E2E_LOOP_HINT_BODY,
+    "question": E2E_LOOP_HINT_QUESTION,
+}
+E2E_LOOP_HINT_REPLY = render_turn(E2E_LOOP_HINT_TURN)
+E2E_LOOP_FEEDBACK_BODY = "Look at which part of the item your answer addressed."
+E2E_LOOP_FEEDBACK_QUESTION = "How would you check that part yourself next time?"
+E2E_LOOP_FEEDBACK_TURN = {
+    "key_idea": (
+        "[e2e-function-model] Deterministic loop feedback: compare your answer "
+        "with what the check item asks for."
+    ),
+    "body": E2E_LOOP_FEEDBACK_BODY,
+    "question": E2E_LOOP_FEEDBACK_QUESTION,
+}
+E2E_LOOP_FEEDBACK_REPLY = render_turn(E2E_LOOP_FEEDBACK_TURN)
+
+# The seeded loop check items (db/seed_local_rich.py::seed_learning_loop imports
+# these). Every item's PLAINTEXT prompt starts with E2E_LOOP_PROBE_PROMPT (the
+# journey asserts the probe card and the check pose show it); the reference
+# closes with "Final answer: <E2E_LOOP_FINAL_ANSWER>." (spec §13 A34: the final
+# answer is copied verbatim from the reference and never printed by the
+# prompt). The E2E grader above grades on E2E_GRADER_CORRECT_TOKEN anywhere in
+# its message, which quotes the prompt AND the reference — so neither may hold
+# the token, or every answer (a wrong one, an idk) would be graded correct.
+E2E_LOOP_PROBE_PROMPT = (
+    "[e2e-loop] Check item: type the e2e grader's correct token to be marked correct."
+)
+E2E_LOOP_FINAL_ANSWER = "the kilo sentinel phrase"
+E2E_LOOP_REFERENCE = (
+    "A seeded loop item is closed by its fixed sentinel wording. "
+    f"Final answer: {E2E_LOOP_FINAL_ANSWER}."
+)
+
+
+def _loop_tutor_handler(messages, info) -> ModelResponse:
+    prompt = _last_user_prompt_text(messages)
+    if E2E_LOOP_PHASE_PATTERNS["hint"] in prompt:
+        turn = E2E_LOOP_HINT_TURN
+    elif E2E_LOOP_PHASE_PATTERNS["feedback"] in prompt:
+        turn = E2E_LOOP_FEEDBACK_TURN
+    else:
+        turn = E2E_LOOP_TUTOR_TURN
+    return ModelResponse(parts=[TextPart(content=json.dumps(turn))])
+
+
+# One handler for the three tier slots (spec §13 A15): the tier is chosen in
+# code per run, so the scripted reply never depends on it.
+for _slot in ("loop_tutor_lite", "loop_tutor", "loop_tutor_deep"):
+    register_function_handler(_slot, _loop_tutor_handler)
+
+
+# ── Session close (PKG-09) ─────────────────────────────────────────────────
+# The close agent runs on POST /api/learn/loop/close and the loop end_session
+# when the session has evidence (spec §13 A25). Its structured output passes
+# agents.session_close.served_close unchanged: one question, an "If …, then …"
+# plan, no key it was not given. PKG-13's journey asserts E2E_CLOSE_IF_THEN in
+# the rendered close. Keep in sync with tests/test_e2e_function_handlers.py.
+E2E_CLOSE_SUMMARY = (
+    "[e2e-function-model] Deterministic session close: the student checked "
+    "recursion base cases and moved from unsure to mostly sure; the off-by-one "
+    "boundary is still open."
+)
+E2E_CLOSE_SELF_EVAL = (
+    "[e2e-function-model] Which step of the base-case argument were you least sure of?"
+)
+E2E_CLOSE_IF_THEN = (
+    "If the next session opens with a recursion check, then write the base case "
+    "before the recursive step."
+)
+E2E_CLOSE_MISCONCEPTIONS: list[str] = []
+
+register_function_handler(
+    "session_close",
+    _structured_output({
+        "summary": E2E_CLOSE_SUMMARY,
+        "self_eval_prompt": E2E_CLOSE_SELF_EVAL,
+        "if_then_plan": E2E_CLOSE_IF_THEN,
+        "open_misconception_keys": E2E_CLOSE_MISCONCEPTIONS,
+    }),
+)

@@ -1,0 +1,18 @@
+{
+  "context_checks": [],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": true,
+      "feedback_hint": "The student's answer asserts a common wrong reason. Please review the definition of a derivative and contrast it with the concept of the area under a curve.",
+      "item_results": [
+        "24097:no",
+        "70429:no"
+      ],
+      "matched_wrong_key": "w_area",
+      "support": []
+    }
+  ],
+  "span_checks": []
+}

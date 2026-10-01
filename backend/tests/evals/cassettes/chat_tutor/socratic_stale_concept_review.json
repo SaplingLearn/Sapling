@@ -1,5 +1,5 @@
 {
-  "text": "It looks like you've never reviewed \"Supply and Demand\" or \"Closures\". Your mastery score on both is near zero.\n\nHow about we start with the basics of Supply and Demand?",
+  "text": "Of the concepts you've studied, it's been the longest since you reviewed Mitosis.\n\nYou also have a couple of concepts we haven't explored at all yet: Supply And Demand, and Closures.\n\nWould you prefer to review Mitosis, or tackle one of the new topics?",
   "tool_calls": [
     {
       "args": {},

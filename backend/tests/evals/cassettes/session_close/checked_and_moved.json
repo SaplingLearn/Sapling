@@ -1,0 +1,14 @@
+{
+  "input_sha256": "3cacb85f32786149edc6b7ff6f60c9bb7c387f16f81f502710487cedd683067d",
+  "model": "gemini-2.5-flash-lite",
+  "output": {
+    "if_then_plan": "If you see a recursive problem, then you will identify the base case and the recursive step before solving.",
+    "open_misconception_keys": [
+      "off_by_one"
+    ],
+    "self_eval_prompt": "Which step in calculating the factorial of a number did you feel least sure about?",
+    "summary": "The concepts of Base Case and Recursive Step were checked and both moved up. The concept of 'off by one' is still open."
+  },
+  "prompt_hash": "d27a53690ae4",
+  "schema_hash": "fcf1232c0ffe"
+}

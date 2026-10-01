@@ -30,7 +30,12 @@ agent `output_type` must therefore stay small and flat:
 
 `tests/test_agent_output_schemas.py` walks every registered agent and
 fails CI when an output schema exceeds the budget, so the next rich
-schema dies in review, not against Gemini's 400s.
+schema dies in review, not against Gemini's 400s. Its deliberate,
+evidenced exceptions are pinned there by exact count
+(`PER_OBJECT_EXCEPTIONS`, `DEPTH_EXCEPTIONS`): check_items' draft, and
+its one list of four-scalar option objects one level deeper (learning
+loop spec §13 A37 — parallel option arrays let the model drift a key off
+its option, so each distractor states its own misconception).
 
 Validation-retry policy (#153): idempotent structured-output generation
 agents run with an output-retry budget of 2 (`retries=2` on tool-less
@@ -44,6 +49,8 @@ logged by `agents.usage.record_agent_usage`.
 """
 
 from pydantic_ai.usage import UsageLimits
+
+from learning.params import GRADER_LIMITS as _GRADER_LIMITS_SPEC
 
 WORKER_LIMITS = UsageLimits(
     # 3, not 2: a worker's only extra requests are output-validation
@@ -110,9 +117,49 @@ CONTINUATION_LIMITS = UsageLimits(
     total_tokens_limit=50_000,
 )
 
+# Learning loop PKG-05 (spec §3.4): the rubric grader runs as its OWN agent
+# call from agents/tools/check.py::grade_answer (a route helper, A16), charged
+# via record_agent_usage(task="grader" / "grader_second"), never against
+# TUTOR_LIMITS. The values are learning.params.GRADER_LIMITS (request 2 / tool
+# calls 0 / tokens 20_000; one value, one name — PKG-01 keeps it a plain dict so
+# learning/ never imports pydantic_ai). Request 2 with the agent's retries=2
+# means a second validation retry trips UsageLimitExceeded rather than
+# UnexpectedModelBehavior; both degrade to the same `unavailable`, so the
+# WORKER_LIMITS 1 + 2-retry ladder buys no diagnosability here. The second
+# opinion is a separate run with its own GRADER_LIMITS.
+GRADER_LIMITS = UsageLimits(**_GRADER_LIMITS_SPEC)
+
+# Learning loop (PKG-07, spec §3.4, A18): the loop tutor declares two read
+# tools and writes at most STEP_MAX_SENTENCES sentences, so it gets a tight
+# per-run budget (was 14/14/120_000 before the cost amendment). Per-run
+# max_tokens (agents/loop_tutor.tier_run_kwargs) makes the output bound hard.
+# The grader is a SEPARATE agent run under GRADER_LIMITS, called by the
+# check-answer route, never by this agent. The #646 continuation for a loop
+# turn still runs under CONTINUATION_LIMITS.
+LOOP_LIMITS = UsageLimits(
+    request_limit=4,
+    tool_calls_limit=3,
+    total_tokens_limit=40_000,
+)
+
+# Learning loop PKG-09 (spec §3.4 tool-less shape, mirrors GRADER_LIMITS): the
+# session-close agent is ONE structured run with no tools. tool_calls_limit=0 is
+# belt-and-braces — a regression that registers a tool fails loudly instead of
+# looping; request 2 with the agent's retries=2 means a second validation retry
+# trips UsageLimitExceeded, which run_session_close degrades to the
+# deterministic fallback close exactly like UnexpectedModelBehavior (ADR 0024).
+CLOSE_LIMITS = UsageLimits(
+    request_limit=2,
+    tool_calls_limit=0,
+    total_tokens_limit=20_000,
+)
+
 __all__ = [
     "WORKER_LIMITS",
     "ORCHESTRATOR_LIMITS",
     "TUTOR_LIMITS",
     "CONTINUATION_LIMITS",
+    "GRADER_LIMITS",
+    "LOOP_LIMITS",
+    "CLOSE_LIMITS",
 ]

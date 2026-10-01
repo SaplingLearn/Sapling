@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "36113f9a2cde8d70182cf152ddfabee9732638dbd27741922fd4388460d001f7",
+  "output": {
+    "evidence": "The answer: The base case returns 1 when n equals 0 so the function stops calling itself.",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "917c692ef2f3c6d6ed2bdddb09af7af8d95e1805a0f07c8ced081f0ad81d7d52"
+}

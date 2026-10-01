@@ -30,6 +30,25 @@ from services import events_service
 logger = logging.getLogger("sapling.agents.usage")
 
 
+class UnfinishedRun:
+    """What ``record_agent_usage`` reads off a run that raised after the
+    provider answered: the usage billed so far. Pass ``usage=RunUsage()``
+    into ``agent.run`` so a run that raises (output validation exhausted, a
+    token cap checked after a response) still says what it cost. With no
+    final response to read, the model name falls back to the task slot's
+    configured model. (agents/grader.py keeps its own copy, _UnfinishedRun.)
+    """
+
+    def __init__(self, usage: Any) -> None:
+        self._usage = usage
+
+    def usage(self) -> Any:
+        return self._usage
+
+    def all_messages(self) -> list:
+        return []
+
+
 def served_model_name(result: Any, task: AgentTask | None = None) -> str:
     """Best-effort model id for the run, resilient to Pydantic AI churn.
 
@@ -102,12 +121,29 @@ def _log_recovered_retries(result: Any, task: AgentTask | None, feature: str) ->
         )
 
 
+def _cache_and_thinking(usage: Any) -> tuple[int | None, int | None]:
+    """(cached_tokens, thinking_tokens) for the llm_usage row (spec §13 A21), as pydantic-ai
+    1.107 carries Gemini's counts (models/google.py::_metadata_as_usage). Gemini omits zero
+    counts, so a RunUsage without the key means 0; a shape with no such fields means None."""
+    details = getattr(usage, "details", None)
+    details = details if isinstance(details, dict) else None
+    thinking = int(details.get("thoughts_tokens") or 0) if details is not None else None
+    if details is None and not hasattr(usage, "cache_read_tokens"):
+        return None, thinking
+    cached = max(
+        int(getattr(usage, "cache_read_tokens", 0) or 0),
+        int((details or {}).get("cached_content_tokens") or 0),
+    )
+    return cached, thinking
+
+
 def record_agent_usage(
     result: Any,
     *,
     feature: str,
     task: AgentTask | None = None,
     user_id: str | None = None,
+    session_id: str | None = None,
 ) -> Any:
     """Record token usage for an agent run and return ``result`` unchanged.
 
@@ -115,16 +151,20 @@ def record_agent_usage(
     ``deps.user_id`` / request body) for per-user rollups; omit it and the
     request_id from the contextvar still attributes the row.
 
+    ``session_id`` (PKG-14b, spec §13 A92): pass the loop/tutor session the run
+    belongs to wherever the run site knows it (``deps.session_id``); it lands in
+    ``llm_usage.session_id`` so the cost report groups per session directly.
+
     Also warns when the run only succeeded after validation retries (#153) —
     same guarded, never-raises contract.
     """
     try:
+        usage = result.usage()
+        cached_tokens, thinking_tokens = _cache_and_thinking(usage)
         events_service.log_llm_usage(
-            feature=feature,
-            task=task,
-            model=served_model_name(result, task),
-            usage=result.usage(),
-            user_id=user_id,
+            feature=feature, task=task, model=served_model_name(result, task), usage=usage,
+            user_id=user_id, cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
+            session_id=session_id,
         )
     except Exception:
         logger.debug("record_agent_usage: could not capture usage", exc_info=True)

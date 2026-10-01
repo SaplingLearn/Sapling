@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "04965e06502fce54287461706513430c3dcacd1ff4e9f575514434a4a837b08a",
+  "output": {
+    "evidence": "Think of a set of Russian nesting dolls. To find the smallest doll, you open the largest one, which reveals a slightly smaller doll inside. You repeat that exact same action...",
+    "reveals_final_answer": false,
+    "rung": 4
+  },
+  "served_sha256": "2523767cb28b608a26f0c2cf3d6554945f3ac63ec48e378d604008e71e3266b0"
+}

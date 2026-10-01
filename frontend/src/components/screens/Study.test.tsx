@@ -37,6 +37,8 @@ vi.mock("@/lib/api", () => ({
   rateFlashcard: vi.fn(),
   deleteFlashcard: vi.fn(),
   getDocuments: vi.fn(async () => ({ documents: [] })),
+  // PKG-12: the learning loop is off (the review probe 404s) — the legacy UI.
+  getLoopStatus: vi.fn(async () => ({ active: false })),
 }));
 
 import { Study } from "./Study";

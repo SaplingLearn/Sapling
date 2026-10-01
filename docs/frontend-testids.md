@@ -84,6 +84,8 @@ renders the element.
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
+| Learning loop | `loop` | `frontend/src/components/learn/LoopLearn.tsx` (the loop-path Learn screen `Learn()` renders when the loop status probe reports `{active: true}`; build phase: staff/QA toggle, after launch: every student — PKG-13) + `frontend/src/components/learn/BudgetPausedBanner.tsx` (the shared pause banner; the testid is passed in) |
+| Review queue | `review` | `frontend/src/components/learn/DueQueue.tsx` (the learning loop's "Due today" panel, rendered at the top of Study → Flashcards only while the loop is on — PKG-12; the launch Study surface, spec §11.3) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
@@ -137,7 +139,6 @@ route:
 | `onboarding-course-search` | course search field |
 | `onboarding-course-result-${course.id}` | one course search result |
 | `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
-| `onboarding-learning-style-${style.id}` | one learning-style radio option (5 render at once) |
 
 ### `upload-modal`
 
@@ -450,6 +451,105 @@ Added with the upload → SSE → library journey (#387).
 | `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
 | `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+
+### `review`
+
+Added with the learning loop's daily review queue (PKG-12). Owner:
+`frontend/src/components/learn/DueQueue.tsx` (PKG-12; launch polish PKG-13 — the
+launch Study surface, spec §11.3). Rendered above the
+Flashcards filter bar in `screens/Study.tsx` only when `getLoopStatus` reports the
+loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the gate's 404 → absent).
+
+| testid | element |
+| --- | --- |
+| `review-due-panel` | the "Due today" panel root |
+| `review-budget` | chip: minutes left of today's review budget |
+| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read) |
+| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` ("AI tutor paused until <time>. Flashcards and review keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until your daily AI budget resets. …"); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
+| `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
+| `review-answer-input` | free-response answer textarea (a `free` check) |
+| `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22) |
+| `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
+| `review-submit` | "Check" / "Try again" — sends a check answer |
+| `review-flip` | "Show answer" on a flashcard |
+| `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
+| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
+| `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
+| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving) |
+
+### `loop`
+
+Added with the learning loop's student UI (PKG-13; spec §9, §11.3). Owner:
+`frontend/src/components/learn/LoopLearn.tsx`. `Learn()` (`screens/Learn.tsx`)
+mounts it when `getLoopStatus` reports the loop active; the legacy `tutor`
+screen only when it reports inactive (the kill switch, PKG-14b). The chat log
+inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
+(`tutor-messages`, `tutor-input`, `tutor-send`, `tutor-stop`) stay.
+
+| testid | element |
+| --- | --- |
+| `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
+| `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
+| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists) |
+| `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3) |
+| `loop-session-{sessionId}` | one open session (topic, start date); `aria-current="true"` on the one shown; a click resumes it |
+| `loop-new-session` | start a new session — the only path to a new probe while a session is open; it wraps up (`/close`) the open session being left first, so sessions do not pile up open (a 409 there starts nothing) |
+| `loop-course-select` | the course switcher (`CustomSelect`'s trigger; `testId` prop), shown with more than one enrolled course; options are `loop-course-select-option-{courseId}` |
+| `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
+| `loop-sessions-retry` | retry — never falls through to a new session or probe |
+| `loop-no-course` | the student has no enrolled course |
+| `loop-no-course-link` | the knowledge-map link inside `loop-no-course` |
+| `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
+| `loop-start-retry` | retry the start |
+| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered |
+| `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
+| `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
+| `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
+| `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
+| `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
+| `loop-no-check-items` | "No check items for this course yet" (A23) |
+| `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept) |
+| `loop-rail` | the knowledge-map rail (wide screens only; the tree link stands in on narrow ones) |
+| `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
+| `loop-probe-item` | the current probe card; `data-question-hash` |
+| `loop-probe-input` | free/teachback probe answer textarea |
+| `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22) |
+| `loop-probe-reason` | the one-sentence reason input (`mc_reason`) |
+| `loop-probe-submit` | submit the probe answer (`/probe/answer`) |
+| `loop-probe-idk` | "I don't know" (submits `idk: true`, no answer text) |
+| `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
+| `loop-probe-retry` | the next probe item failed to load — retry (`/probe/next`, same session) |
+| `loop-probe-next` | "Next" under the reference — the next probe item, or the plan after the probe's last answer |
+| `loop-plan-concept-{nodeId}` | one planned concept (name, kind chip: Review / New / Related; a band chip only when the response carries one) |
+| `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
+| `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
+| `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`) |
+| `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
+| `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
+| `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
+| `loop-attempt-input` | free/teachback attempt textarea |
+| `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
+| `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
+| `loop-attempt-submit` | submit the attempt to `/check/answer/stream` (never a chat turn, A16) |
+| `loop-attempt-idk` | "I don't know" in the attempt box (`idk: true`) |
+| `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
+| `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
+| `loop-hint-reply` | the hint turn's text when allowed |
+| `loop-continue` | "Continue" after feedback — sends the next chat turn |
+| `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
+| `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
+| `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
+| `loop-close-summary` | the close summary text |
+| `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |
+| `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
+| `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
+| `loop-close-study-link` | the "Review what's due" link inside `loop-close-done` (`/study?mode=cards`) |
+
+`loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
+on the FEEDBACK turn, after the item closed, so the affordance (inside the check
+card) could never render, and a hint then has no item (`/hint` → `no_active_item`).
+Where a novice offer should live is PKG-07's open question (HANDOFF-13).
 
 ### `landing-graph`
 

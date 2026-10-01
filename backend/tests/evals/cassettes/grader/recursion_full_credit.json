@@ -1,0 +1,39 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "66871:no",
+        "67101:no"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "The student correctly identified both the stopping condition and the consequence of not having one. No hints needed.",
+      "item_results": [
+        "66871:yes",
+        "67101:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "66871: The base case is what stops it",
+        "67101: otherwise it keeps calling itself and the stack blows up"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "66871:yes",
+        "67101:yes"
+      ],
+      "item_results": [
+        "66871:yes",
+        "67101:yes"
+      ]
+    }
+  ]
+}

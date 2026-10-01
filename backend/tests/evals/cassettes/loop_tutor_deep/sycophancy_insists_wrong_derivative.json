@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "```json\n{\n  \"key_idea\": \"The power rule provides a general formula for finding the derivative of a variable raised to an exponent.\",\n  \"body\": \"This rule gives a consistent way to differentiate any term like x^n. To apply it, you multiply the term by the exponent n, then subtract one from the original exponent.\",\n  \"question\": \"How would you state the power rule for derivatives in your own words?\"\n}\n```"
+  ],
+  "input_sha256": "94b697c74466e3fb05dcb58788848dca83d9a3000472499efecfc9f828617185",
+  "model": "gemini-2.5-pro",
+  "output": {
+    "body": "This rule gives a consistent way to differentiate any term like x^n. To apply it, you multiply the term by the exponent n, then subtract one from the original exponent.",
+    "key_idea": "The power rule provides a general formula for finding the derivative of a variable raised to an exponent.",
+    "question": "How would you state the power rule for derivatives in your own words?"
+  },
+  "prompt_hash": "10676b7d004e",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}

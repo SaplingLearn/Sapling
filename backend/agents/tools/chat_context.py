@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
-from config import is_mastered, is_weak
+from learning.bkt import in_mastered_tier, is_weak
 from db.connection import table
 from services.academics import course_offering_ids
 from services.encryption import decrypt_if_present, decrypt_json
@@ -489,7 +489,7 @@ class CourseProgress(BaseModel):
     clamped to [0, 1] and is 0.0 when there are no concepts."""
 
     total_concepts: int = Field(ge=0)
-    # Tiers per config.get_mastery_tier (#557): "mastered", "struggling" +
+    # Tiers per learning.bkt.tier_for (#557, PKG-14b): "mastered", "struggling" +
     # "unexplored" (together: weak), and "learning" (in progress).
     mastered_count: int = Field(ge=0)
     weak_count: int = Field(ge=0)
@@ -559,7 +559,7 @@ async def read_user_progress(
         m = max(0.0, min(1.0, m))
         total += 1
         mastery_sum += m
-        if is_mastered(m):
+        if in_mastered_tier(m):
             mastered += 1
         elif is_weak(m):
             weak += 1

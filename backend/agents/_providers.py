@@ -10,6 +10,10 @@ via env vars without touching code:
     SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
     SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
     SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
+    SAPLING_MODEL_CHECK_ITEMS=gemini-2.5-flash-lite
+    SAPLING_MODEL_GRADER=gemini-2.5-flash-lite
+    SAPLING_MODEL_GRADER_SECOND=gemini-2.5-flash
+    SAPLING_MODEL_DECISION=gemini-2.5-flash-lite
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX, and
@@ -44,6 +48,16 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
     "ocr_vision",
+    # Learning loop series (spec §2 slots): check-item generation (PKG-04).
+    "check_items",
+    # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
+    "grader", "grader_second",
+    # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
+    "decision",
+    # The loop tutor's three tier slots — ONE agent, slot chosen per run (PKG-07; spec §3.5, A15).
+    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
+    # The end-of-session close: summary, self-evaluation, if-then plan (PKG-09; spec §13 A12).
+    "session_close",
 ]
 
 
@@ -64,6 +78,12 @@ _DEFAULTS: dict[AgentTask, str] = {
     # (`feat(learn): use gemini-2.5-pro for tutor chat`) and PR #74
     # (`fix(learn): allow thinking on gemini-2.5-pro multiturn calls`).
     "chat_tutor": "gemini-2.5-pro",
+    # Loop tutor tier slots (PKG-07, spec §3.5, A15): ONE loop_tutor_agent;
+    # routes/learn_loop.py picks the slot per run from learning.policy.model_tier
+    # and never reads model_pref, so these defaults ARE the routing.
+    "loop_tutor_lite": "gemini-2.5-flash-lite",
+    "loop_tutor": "gemini-2.5-flash",
+    "loop_tutor_deep": "gemini-2.5-pro",
     "note_summary": "gemini-2.5-flash-lite",
     "note_concepts": "gemini-2.5-flash-lite",
     "note_chat": "gemini-2.5-flash",
@@ -92,6 +112,19 @@ _DEFAULTS: dict[AgentTask, str] = {
     # vision-capable model, and transcription accuracy on handwritten
     # mathematics is exactly where the lite tier degrades → full Flash.
     "ocr_vision": "gemini-2.5-flash",
+    # Learning loop PKG-04: ingest-time check-item drafting is single-shot
+    # structured generation off the request path, so lite is enough;
+    # SAPLING_MODEL_CHECK_ITEMS overrides.
+    "check_items": "gemini-2.5-flash-lite",
+    # Learning loop grader (PKG-05): short per-item binary judgments → lite tier (spec §2).
+    "grader": "gemini-2.5-flash-lite",
+    # One second opinion on a DIFFERENT model, same agent and prompt (spec §3.5, A22);
+    # thinking is pinned off per run in agents/grader.py.
+    "grader_second": "gemini-2.5-flash",
+    # Decision seam (PKG-05b, spec §3.5/§3.6): one short closed judgment per run → lite tier, thinking off.
+    "decision": "gemini-2.5-flash-lite",
+    # Session close (PKG-09): single-shot, tool-less, structured; Lite is enough.
+    "session_close": "gemini-2.5-flash-lite",
 }
 
 

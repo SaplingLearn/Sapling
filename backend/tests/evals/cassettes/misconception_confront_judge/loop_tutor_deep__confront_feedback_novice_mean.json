@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "319990a6d7767961429f61ca42d9b9fb1af2c02e2e64a3e51ac8d3a67b945101",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Let's test your 'middle value' rule on a different set of numbers, like {1, 2, 100}.",
+    "only_states_correction": false
+  },
+  "served_sha256": "43f466d01ff0ef8f08fcddedb1ca21d28bd6555af59c2357a38b19fece8ff9ff"
+}

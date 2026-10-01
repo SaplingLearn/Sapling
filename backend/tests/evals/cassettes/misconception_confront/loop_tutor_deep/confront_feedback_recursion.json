@@ -1,0 +1,19 @@
+{
+  "attempts": [
+    "```json\n{\n\"key_idea\": \"A recursive function follows its rules for all numbers, including negative ones.\",\n\"body\": \"The recursive part of the factorial definition is the rule `n * factorial(n - 1)`. If the function only had this rule, the call to `factorial(0)` would become a call to `factorial(-1)`.\",\n\"question\": \"Following that same rule, what would the call to `factorial(-1)` try to do next?\"\n}\n```"
+  ],
+  "input_sha256": "0a6a613fef7220a7831925fa9366a3938b3f3d4b65cc818e9af67cf32c1d1294",
+  "model": "gemini-2.5-pro",
+  "output": {
+    "body": "The recursive part of the factorial definition is the rule `n * factorial(n - 1)`. If the function only had this rule, the call to `factorial(0)` would become a call to `factorial(-1)`.",
+    "key_idea": "A recursive function follows its rules for all numbers, including negative ones.",
+    "question": "Following that same rule, what would the call to `factorial(-1)` try to do next?"
+  },
+  "prompt_hash": "10676b7d004e",
+  "requests": 1,
+  "rescued": false,
+  "retries": 0,
+  "schema_hash": "ab89f4f429db",
+  "slot": "loop_tutor_deep",
+  "tool_calls": []
+}
