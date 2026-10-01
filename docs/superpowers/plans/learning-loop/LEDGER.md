@@ -214,6 +214,8 @@ Execution order and dependencies: spec §14. PKG-04 appends no `00 | reopened` r
 | 11 | quiz-flashcards | reopened | feat/learning-loop-14b-cutover | c0aefde5 | +5 (tests/test_quiz_evidence_only.py) | 2026-10-01 (Andres, handoff #6): quiz farming closed (A94) | HANDOFF-11.md (Post-hoc) |
 | 12 | review-surfaces | reopened | feat/learning-loop-14b-cutover | 9a7877f5 | (in test_learning_help_ledger.py) | 2026-10-01 (Andres, handoff #6): review re-floors inside its claim (A93) | HANDOFF-12.md (Post-hoc) |
 | 14 | eval-ladder-cutover | blocked | feat/learning-loop-14b-cutover | 049881d6 | review round: help ledger, quiz, tier re-derive, PGRST fallback, rate-limit order, kill switch first, spelling warning, usage session ownership, onboarding shim, CI oracles, disowned answers (spec §13 A93–A97) | 2026-10-01 (Andres, handoff #6): three reviews of half B + the re-review of half A fix round 3 → 1 critical, 7 major, ~15 minor, all fixed or decided; suite 8494 passed, 180 skipped (only load-sensitive wall-clock tests flaked, each 3/3 in isolation); run_all replay 16/16. STILL BLOCKED on: B6 (the integrator's two-lane E2E + integration + drill) and the quota-bound re-records (A7 loop_tutor, B2 chat_tutor) | HANDOFF-14.md |
+| 05b | decision-seam | reopened | feat/learning-loop-15-jev | 797d8e30 | pins replaced in tests/test_learning_decisions.py (jev_absent/no-op shadow → jev_unsupported + shadow beside gemini; emit_shadow has one caller; _jev.py admitted as a settings reader); inv_24 extended (4f3be5de); tests/evals/decisions.py + shadow-log live gates (75dcaf5b) | 2026-10-01 PKG-15: `jev` / `shadow_jev` wired into services/decisions.py (spec §13 A98) | HANDOFF-05b.md (Post-hoc) |
+| 15 | jev-backend | done | feat/learning-loop-15-jev | 75dcaf5b | tests/test_learning_jev.py 27, tests/test_learning_decisions_jev.py 34, inv_24 +2 (scan self-test, guard behaviour; the main test no longer vacuous); full suite 8558 passed, 180 skipped (base d51e8e5e: 8495 / 180); evals replay 16/16; invariants 47 passed, 1 skipped; live smoke 18 Jev calls, 0 errors, shadow p50 237 / p95 334 ms | — | HANDOFF-15.md |
 
 ## Deviations
 
@@ -595,6 +597,11 @@ Format: `PKG-NN: <spec said> → <did instead> → <why> → <† if an A/B flag
 - PKG-14b: `p_delta` also on the submit response; the quiz E2E "before" is the BKT prior (HANDOFF-03), not the seeded mastery_score.
 - PKG-14b: test_documents_routes.py marked kill_switch (the prompt's first option); the other B.11-grep modules pin the flag or pass under both values.
 - PKG-14b: E2E lane parse in `frontend/e2e/support/lane.ts` (re-exported by fixtures.ts) so global-setup imports no Playwright `test`; global-setup probes `/status` with a fresh session id; AskPanel asserted per paragraph.
+- PKG-15: `jev` serves every decision → grading decisions are served by Gemini with `decision.fallback{jev_unsupported}` (shadowable) → their credit stands on grade()'s A33 layers and Jev returns no quote; spec §13 A98 (c).
+- PKG-15: §6 decision.fallback reasons → + `jev_unsupported`, `oversize`, `transport`, `bad_answer`, `http_<status>` (and `jev_absent` also = no key / not real mode) → the list had no name for these; spec §13 A98 (b).
+- PKG-15: Jev usage `task` → served `decision`, shadow `decision_shadow` → a shadow must never spend STUDENT_DAILY_GRADES; spec §13 A98 (d).
+- PKG-15: PKG-05b inv_24 regex `typesafe\b` → `typesafe\w*` + AST scan → it never matched the SDK import name `typesafe_sdk`.
+- PKG-15 † constants: JEV_MIN_CONFIDENCE = 0.5, JEV_SHADOW_MAX_INFLIGHT = 32, _jev.CHARS_PER_TOKEN = 3 (HANDOFF-15 Constants chosen).
 
 ## Blocked notes
 
