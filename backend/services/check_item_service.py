@@ -436,6 +436,24 @@ def items_by_hash(hashes) -> list[CheckItem]:
     return out
 
 
+def items_by_ids(ids) -> list[CheckItem]:
+    """The items with these plaintext ids, decrypted, in batches of _HASH_BATCH
+    (PKG-14, spec §13 A101: the served-text scan set's posed steps and review
+    items in a few `in.(...)` reads instead of one get_check_item per id).
+    Raises on a failed read (the scan set's caller fails closed)."""
+    keys = sorted({i for i in ids or [] if i})
+    out: list[CheckItem] = []
+    for i in range(0, len(keys), _HASH_BATCH):
+        batch = keys[i : i + _HASH_BATCH]
+        rows = table(_TABLE).select(
+            _COLUMNS,
+            filters={"id": f"in.({','.join(pg_quote_value(k) for k in batch)})"},
+            order="id",
+        )
+        out.extend(_to_items(rows))
+    return out
+
+
 def course_has_items(course_id: str) -> bool:
     """Whether the course has any item (feeds /probe/next's no_check_items and
     the A26 "No check items for this course yet" state)."""

@@ -500,6 +500,12 @@ LOOP_FAILED_ANCHORS_MAX = 10_000
 # this many; an older ungraded item (beyond the window) is covered by an
 # 'unscanned' marker at the window's edge, so it grades as assisted (fail closed)
 LOOP_SCAN_POSED_MAX = 200
-# † A93 (M3): a streamed turn is scanned as it is relayed — at least every this
-# many characters, and at every sentence end — so help is recorded as it is served
-LOOP_SCAN_EVERY_CHARS = 80
+# † A93 (M3) as amended by spec §13 A101 (PKG-14 final fix round): a streamed
+# turn is scanned as it is relayed — EVERY relayed delta, before the next one
+# goes out (the 80-char cadence it replaced left an answer completed inside the
+# window unscanned until the next scan). Each scan reads only the new suffix plus
+# an overlap reaching back over the longest answer form among the scan set's
+# items (twice its non-space length), LEAK_POSITION_WINDOW_CHARS (the
+# answer-position look-back) and this many more non-space characters (option
+# keyword contexts, number-word phrases), snapped back to the sentence start
+LOOP_SCAN_CONTEXT_CHARS = 96

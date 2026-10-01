@@ -12,6 +12,7 @@ what it relayed (M1)."""
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,7 @@ from tests import test_learn_loop_routes as _routes
 from tests.test_learn_loop_routes import client
 
 gate_on, no_rate_limit, seams = _routes.gate_on, _routes.no_rate_limit, _routes.seams
+from routes.learn_loop import posed_items as _REAL_POSED_ITEMS  # noqa: E402
 POSED = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -74,7 +76,11 @@ def test_a_non_servable_item_is_skipped_never_raises():
 def test_an_item_the_check_raises_on_counts_as_stated_fail_closed():
     from routes.learn_loop import stated_items
 
-    with patch("routes.learn_loop.detect_leak", side_effect=ValueError("boom")):
+    # A101: the rules are compiled once per turn — a build that raises, or a
+    # check that raises, counts as stated
+    with patch("learning.served_scan.leak.served_rules", side_effect=ValueError("boom")):
+        assert stated_items("anything", [BASE], rung=Rung.H0, given="") == ["qh-base"]
+    with patch("learning.served_scan.leak.served_leaked", side_effect=TypeError("boom")):
         assert stated_items("anything", [BASE], rung=Rung.H0, given="") == ["qh-base"]
 
 
@@ -89,6 +95,10 @@ def _pages(sessions_loop, sessions_review):
         return iter(sessions_review if filters.get("mode") == "eq.review" else sessions_loop)
 
     return _page_all
+
+
+def _by_ids(items):
+    return lambda ids: [items[i] for i in ids if i in items]
 
 
 def test_posed_items_reads_every_posed_ungraded_source():
@@ -135,19 +145,125 @@ def test_posed_items_reads_every_posed_ungraded_source():
     ledger = [("qh-ledger", POSED + timedelta(hours=1)), ("qh-seen", POSED)]
     with (
         patch("routes.learn_loop.page_all", side_effect=_pages(loop_rows, review_rows)),
-        patch("routes.learn_loop.get_check_item", side_effect=lambda i: items.get(i)),
+        patch("routes.learn_loop.get_check_item", side_effect=AssertionError("one read per id")),
+        patch("routes.learn_loop.items_by_ids", side_effect=_by_ids(items)) as ibi,
         patch("routes.learn_loop.table", return_value=poses_tbl),
-        patch("routes.learn_loop.items_by_hash", return_value=by_hash) as ibh,
-        patch("routes.learn_loop.ungraded_posed", return_value=ledger) as ug,
+        patch(
+            "routes.learn_loop.items_by_hash",
+            side_effect=lambda hs: [i for i in by_hash if i.question_hash in hs],
+        ) as ibh,
+        patch("routes.learn_loop.ungraded_posed_window", return_value=(ledger, None)) as ug,
         patch("routes.learn_loop.seen_hashes", return_value={"qh-seen"}),
     ):
         got, overflow = learn_loop.posed_items("u1", now=now)
     assert {i.question_hash for i, _ in got} == {"qh-a", "qh-e", "qh-r", "qh-p", "qh-probe", "qh-ledger"}
     assert overflow is None
+    ibi.assert_called_once()  # A101 (a): one batched read for every posed id
+    assert ibi.call_args.args[0] == ["id-a", "id-e", "id-r"]
     assert ibh.call_args.args[0] == ["qh-ledger", "qh-p", "qh-probe", "qh-q"]
-    assert ug.call_args.args[1] == params.LOOP_SCAN_POSED_MAX + 1
+    assert ug.call_args.args[1] == params.LOOP_SCAN_POSED_MAX
     filters = poses_tbl.select.call_args.kwargs["filters"]
     assert filters == {"user_id": "eq.u1", "answered_at": "is.null"}  # no TTL cut (A93)
+
+
+@contextmanager
+def _open_world(*, loop_rows=(), review_rows=(), poses=(), ledger=((), None), seen=()):
+    poses_tbl = MagicMock()
+    poses_tbl.select.return_value = list(poses)
+    with (
+        patch("routes.learn_loop.page_all", side_effect=_pages(list(loop_rows), list(review_rows))),
+        patch("routes.learn_loop.table", return_value=poses_tbl),
+        patch("routes.learn_loop.ungraded_posed_window", return_value=(list(ledger[0]), ledger[1])),
+        patch("routes.learn_loop.seen_hashes", return_value=set(seen)),
+    ):
+        yield
+
+
+def test_a_seen_item_that_is_currently_open_stays_in_the_scan_set():
+    """Focused review M1 (spec §13 A101): review serves a previously-SEEN item X
+    (the student has evidence on it); the old seen filter dropped X from the scan
+    set, so a loop tutor stating X's answer went unrecorded and /review/answer
+    graded X at floor 0. Every CURRENTLY OPEN item — an open review entry, an
+    ungraded step, a probe's current item, an unanswered pose — is scanned,
+    seen or not; the seen filter applies to the ledger's historical rows only."""
+    from routes import learn_loop
+
+    x, step, probe, pose, hist = (
+        _item("qh-x", "returns 1"),
+        _item("qh-step", "the call stack"),
+        _item("qh-probe", "pr"),
+        _item("qh-pose", "po"),
+        _item("qh-hist", "hi"),
+    )
+    seen = {"qh-x", "qh-step", "qh-probe", "qh-pose", "qh-hist"}  # evidence on ALL of them
+    world = _open_world(
+        loop_rows=[
+            {
+                "id": "s1",
+                "steps": {"qh-step": {"check_item_id": "id-qh-step", "first_shown_at": 10.0}},
+                "probe": {"current": {"question_hash": "qh-probe"}},
+            }
+        ],
+        review_rows=[{"id": "rv", "open": {"check:qh-x": {"item_id": "id-qh-x", "served_at": 20.0}}}],
+        poses=[{"course_id": "c1", "question_hash": "qh-pose", "posed_at": POSED.isoformat()}],
+        ledger=([("qh-hist", POSED)], None),
+        seen=seen,
+    )
+    with (
+        world,
+        patch("routes.learn_loop.items_by_ids", side_effect=_by_ids({"id-qh-x": x, "id-qh-step": step})),
+        patch("routes.learn_loop.items_by_hash", side_effect=lambda hs: [i for i in (probe, pose, hist) if i.question_hash in hs]),
+    ):
+        got, _ = learn_loop.posed_items("u1", now=POSED)
+    assert {i.question_hash for i, _ in got} == {"qh-x", "qh-step", "qh-probe", "qh-pose"}
+
+
+def test_the_seen_review_item_exploit_is_closed(gate_on, seams):
+    """The exploit end to end: review serves seen item X → a loop chat states X's
+    answer → the scan records X as a 'reveal' (help_ledger.max_help reads a
+    reveal as RUNG_NO_CREDIT_MIN, so /review/answer grades X with no credit)."""
+    x = _item("qh-x", "returns 1", reference="The base case returns 1 when n is 0.")
+    world = _open_world(
+        review_rows=[{"id": "rv", "open": {"check:qh-x": {"item_id": "id-qh-x", "served_at": 20.0}}}],
+        seen={"qh-x"},
+    )
+    with (
+        world,
+        patch("routes.learn_loop.items_by_ids", side_effect=_by_ids({"id-qh-x": x})),
+        patch("routes.learn_loop.items_by_hash", return_value=[]),
+    ):
+        got = _REAL_POSED_ITEMS("u1", now=POSED)  # `seams` patches the module's name
+    assert got is not None and [i.question_hash for i, _ in got[0]] == ["qh-x"]
+    seams.open_posed.return_value = got
+    out, _ = _chat(seams, "Key idea: at n == 0 it returns 1.")  # the tutor states X's answer
+    assert out["reply"]
+    (call,) = seams.record_reveals.call_args_list
+    assert call.args[:2] == ("u1", ["qh-x"])
+
+
+def test_the_fan_out_is_cut_before_any_item_is_loaded(monkeypatch):
+    """M2 (d): the candidates are ranked by posed time and cut to the window
+    first — only the kept ones are read."""
+    from routes import learn_loop
+
+    monkeypatch.setattr(learn_loop, "LOOP_SCAN_POSED_MAX", 3)
+    steps = {
+        f"qh-{n}": {"check_item_id": f"id-qh-{n}", "first_shown_at": float(n)} for n in range(10)
+    }
+    world = _open_world(loop_rows=[{"id": "s1", "steps": steps}])
+    loaded: list = []
+    with (
+        world,
+        patch(
+            "routes.learn_loop.items_by_ids",
+            side_effect=lambda ids: loaded.extend(ids) or [_item(i[3:], "x") for i in ids],
+        ),
+        patch("routes.learn_loop.items_by_hash", return_value=[]),
+    ):
+        got, overflow = learn_loop.posed_items("u1", now=POSED)
+    assert loaded == ["id-qh-7", "id-qh-8", "id-qh-9"]  # the newest three, nothing else read
+    assert [i.question_hash for i, _ in got] == ["qh-9", "qh-8", "qh-7"]
+    assert overflow == datetime.fromtimestamp(6.0, timezone.utc)  # the newest left out
 
 
 def test_posed_items_beyond_the_window_report_the_overflow_edge(monkeypatch):
@@ -156,19 +272,37 @@ def test_posed_items_beyond_the_window_report_the_overflow_edge(monkeypatch):
     monkeypatch.setattr(params, "LOOP_SCAN_POSED_MAX", 2)
     monkeypatch.setattr(learn_loop, "LOOP_SCAN_POSED_MAX", 2)
     t = [POSED + timedelta(minutes=m) for m in range(3)]
-    ledger = [("qh-2", t[2]), ("qh-1", t[1]), ("qh-0", t[0])]
-    poses_tbl = MagicMock()
-    poses_tbl.select.return_value = []
+    world = _open_world(ledger=([("qh-2", t[2]), ("qh-1", t[1])], t[0]))
     with (
-        patch("routes.learn_loop.page_all", side_effect=_pages([], [])),
-        patch("routes.learn_loop.table", return_value=poses_tbl),
+        world,
         patch("routes.learn_loop.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
-        patch("routes.learn_loop.ungraded_posed", return_value=ledger),
-        patch("routes.learn_loop.seen_hashes", return_value=set()),
+        patch("routes.learn_loop.items_by_ids", return_value=[]),
     ):
         got, overflow = learn_loop.posed_items("u1", now=POSED)
     assert [i.question_hash for i, _ in got] == ["qh-2", "qh-1"]  # newest first, bounded
-    assert overflow == t[0]  # the newest item left out: the marker's edge
+    assert overflow == t[0]  # the ledger read's edge: the marker's time
+
+
+def test_the_overflow_edge_is_the_later_of_the_window_and_the_ledger_edge(monkeypatch):
+    from routes import learn_loop
+
+    monkeypatch.setattr(learn_loop, "LOOP_SCAN_POSED_MAX", 1)
+    t = [POSED + timedelta(minutes=m) for m in range(4)]
+    world = _open_world(
+        poses=[
+            {"course_id": "c1", "question_hash": "qh-new", "posed_at": t[3].isoformat()},
+            {"course_id": "c1", "question_hash": "qh-old", "posed_at": t[2].isoformat()},
+        ],
+        ledger=([], t[1]),
+    )
+    with (
+        world,
+        patch("routes.learn_loop.items_by_hash", side_effect=lambda hs: [_item(h, h) for h in hs]),
+        patch("routes.learn_loop.items_by_ids", return_value=[]),
+    ):
+        got, overflow = learn_loop.posed_items("u1", now=POSED)
+    assert [i.question_hash for i, _ in got] == ["qh-new"]
+    assert overflow == t[2]
 
 
 def test_posed_items_is_none_when_anything_cannot_be_read(caplog):
@@ -464,7 +598,8 @@ def test_an_unfinished_stream_scans_and_records_the_relayed_text(then, stop_afte
     if stop_after is None:
         assert relayed == "At n == 0 it returns 1."
         assert [c.args[0] for c in turn.record_relayed.call_args_list] == [
-            "At n == 0 it returns 1.",  # mid-stream, before `done`
+            "At n == 0 ",  # A101: EVERY relayed delta, before it goes out
+            "At n == 0 it returns 1.",
             "At n == 0 it returns 1.",  # the unfinished stream's final scan
         ]
 
@@ -484,17 +619,19 @@ def test_a_retract_discards_what_was_relayed_before_it():
     assert turn.record_relayed.call_args.args[0] == "new"
 
 
-def test_a_finished_stream_is_scanned_once_by_complete_not_again():
+def test_a_finished_stream_scans_each_delta_and_adds_no_end_scan():
+    """A101: every delta is scanned as relayed; a stream that finished is not
+    scanned again at its end (complete() scans its final text)."""
     from routes import learn_loop
 
     turn = _turn()
     done = SaplingEvent(type="done", step="reply", message="Complete.", data={})
     with (
         patch("routes.learn_loop.ai_budget"),
-        patch("routes.learn_loop.stream_structured_turn", _stream_with([_tok("x"), done])),
+        patch("routes.learn_loop.stream_structured_turn", _stream_with([_tok("x"), _tok(""), done])),
     ):
         asyncio.run(_drain(learn_loop._stream_turn(turn)))
-    turn.record_relayed.assert_not_called()
+    assert [c.args[0] for c in turn.record_relayed.call_args_list] == ["x"]  # an empty delta: none
     turn.touch_served_at.assert_not_called()
 
 
@@ -532,6 +669,7 @@ def _relay_turn(learn_loop):
     turn.item, turn.given = None, ""
     turn.reveal_hashes, turn.reveal_unscanned = [], False
     turn._scan_served = lambda text: learn_loop._LoopTurn._scan_served(turn, text)
+    turn._record_relayed = lambda text: learn_loop._LoopTurn._record_relayed(turn, text)
     return turn
 
 

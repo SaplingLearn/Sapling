@@ -150,16 +150,30 @@ def earliest_open_pose(user_id: str, question_hash: str) -> datetime | None:
     return _ts(rows[0].get("at")) if rows else None
 
 
-def ungraded_posed(user_id: str, limit: int) -> list[tuple[str, datetime | None]]:
+#: rows read per distinct item `ungraded_posed_window` may return (a re-posed
+#: item has more than one 'posed' row)
+_ROWS_PER_ITEM = 4
+
+
+def ungraded_posed_window(
+    user_id: str, limit: int
+) -> tuple[list[tuple[str, datetime | None]], datetime | None]:
     """(question_hash, first posed at) for the student's posed-and-ungraded
-    items, newest first, at most `limit` DISTINCT items (raises)."""
+    items, newest first, at most `limit` DISTINCT items — and the EDGE: the
+    posed time of the newest row left out, or None when nothing was. Rows are
+    left out when the distinct limit is reached, AND (review minor 3) whenever
+    the read itself hit its row limit — older rows may exist that were never
+    fetched, so the edge is then the oldest fetched row's time (or now, if it
+    has none): the caller's 'unscanned' marker there covers them. Raises."""
+    fetch = max(1, int(limit)) * _ROWS_PER_ITEM
     rows = table(_LEDGER).select(
         "question_hash,at",
         filters={"user_id": f"eq.{user_id}", "kind": "eq.posed", "graded_at": "is.null"},
         order="at.desc",
-        limit=max(1, int(limit)) * 4,  # a re-posed item has more than one row
+        limit=fetch,
     ) or []
     seen: dict[str, datetime | None] = {}
+    edge: datetime | None = None
     for row in rows:
         qh = row.get("question_hash")
         if not qh:
@@ -167,11 +181,20 @@ def ungraded_posed(user_id: str, limit: int) -> list[tuple[str, datetime | None]
         at = _ts(row.get("at"))
         if qh not in seen:
             if len(seen) >= limit:
+                edge = at or datetime.now(timezone.utc)
                 break
             seen[qh] = at
         elif at is not None and (seen[qh] is None or at < seen[qh]):
             seen[qh] = at
-    return list(seen.items())
+    if len(rows) >= fetch:
+        oldest = _ts(rows[-1].get("at")) or datetime.now(timezone.utc)
+        edge = oldest if edge is None else max(edge, oldest)
+    return list(seen.items()), edge
+
+
+def ungraded_posed(user_id: str, limit: int) -> list[tuple[str, datetime | None]]:
+    """`ungraded_posed_window`'s items only (raises)."""
+    return ungraded_posed_window(user_id, limit)[0]
 
 
 def _ts(value) -> datetime | None:

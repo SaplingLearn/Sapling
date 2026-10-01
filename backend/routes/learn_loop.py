@@ -47,6 +47,7 @@ import dataclasses
 import hashlib
 import logging
 import re
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -97,6 +98,7 @@ from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_active, learning_loop_for_request
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
+from learning.served_scan import ScanSet
 from learning.learner_brief import course_concept_names, store_brief
 from learning.learner_state import LearnerState, read_states, states_last_evidence_before
 from learning.misconceptions import (
@@ -126,10 +128,9 @@ from learning.help_ledger import (
     max_help,
     record_help,
     record_posed,
-    ungraded_posed,
+    ungraded_posed_window,
 )
 from learning.params import (
-    LOOP_SCAN_EVERY_CHARS,
     LOOP_SCAN_POSED_MAX,
     BAND_DEVELOP_MAX,
     BKT_L0,
@@ -226,6 +227,7 @@ from services.check_item_service import (
     course_has_items,
     get_check_item,
     items_by_hash,
+    items_by_ids,
     items_for_concepts,
     list_items,
 )
@@ -1065,29 +1067,11 @@ ANCHORS_MAX = LOOP_FAILED_ANCHORS_MAX
 def stated_items(text: str, items, *, rung: Rung, given: str) -> list[str]:
     """The sorted question hashes of the servable `items` whose answer `text`
     states (strict served mode). An item the check raises on counts as stated
-    (fail closed on the evidence side); a non-servable one is skipped."""
-    out: set[str] = set()
-    for item in items or []:
-        if not is_servable(item):
-            continue
-        try:
-            leaked = detect_leak(
-                emitted=text,
-                rung=rung,
-                given=given,
-                **_item_check_kwargs(
-                    reference=item.reference_answer,
-                    final_answer=item.final_answer,
-                    canonical_answer=item.canonical_answer,
-                    correct_option=item.correct_option,
-                    option_text=option_text(item),
-                ),
-            ).leaked
-        except (ValueError, TypeError):
-            leaked = True
-        if leaked:
-            out.add(item.question_hash)
-    return sorted(out)
+    (fail closed on the evidence side); a non-servable one is skipped. One
+    compiled scan (learning.served_scan, spec §13 A101); nothing is a leak at H6."""
+    if Rung(rung) >= Rung.H6:
+        return []
+    return ScanSet.build(items, given=given).stated(text)
 
 
 def _ts(value) -> datetime | None:
@@ -1105,17 +1089,25 @@ def _ts(value) -> datetime | None:
 
 def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime | None] | None:
     """A93 (owner decision 1, M2): (item, first posed at) for every item POSED to
-    the student and not yet graded — not only the currently open ones: every
-    session's ungraded steps (ended or closed sessions too) and its probe item,
-    each ungraded review item, every unanswered post-test pose (expired too),
-    and the help ledger's 'posed' rows — minus the items the student has
-    evidence on. Bounded: the newest LOOP_SCAN_POSED_MAX; the second element is
-    the posed time of the newest item left OUT of that window (None: nothing
-    left out), at which the caller records an 'unscanned' marker so every older
-    ungraded item grades as assisted. None when any of it cannot be read."""
+    the student and not yet graded — every session's ungraded steps (ended or
+    closed sessions too) and its probe item, each ungraded review item, every
+    unanswered post-test pose (expired too), and the help ledger's 'posed' rows.
+
+    Spec §13 A101 (focused review M1): an item that is CURRENTLY OPEN — an
+    ungraded step, an open review entry, a probe's current item, an unanswered
+    pose — is always in the set, whether or not the student has evidence on it
+    (review serves previously-seen items; dropping them reopened laundering).
+    The seen filter (`seen_hashes`) applies only to the ledger's historical
+    'posed' rows. (M2 (a)/(d)): the candidates are ranked by posed time and cut
+    to the newest LOOP_SCAN_POSED_MAX BEFORE any item is loaded, then loaded in
+    batched reads (`items_by_ids`, `items_by_hash`). The second element is the
+    edge of what was left out — the newest candidate beyond the window, or
+    (minor 3) the oldest ledger row read when that read hit its row limit —
+    at which the caller records an 'unscanned' marker, so every older ungraded
+    item grades as assisted. None when any of it cannot be read."""
     try:
-        by_id: dict[str, datetime | None] = {}
-        by_hash: dict[str, datetime | None] = {}
+        open_ids: dict[str, datetime | None] = {}  # check item id → first posed
+        open_hashes: dict[str, datetime | None] = {}  # question hash → first posed
 
         def keep(store: dict, key, at) -> None:
             if not key:
@@ -1131,10 +1123,10 @@ def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime |
         ):
             for entry in (row.get("steps") or {}).values():
                 if isinstance(entry, dict) and entry.get("graded_at") is None:
-                    keep(by_id, entry.get("check_item_id"), _ts(entry.get("first_shown_at")))
+                    keep(open_ids, entry.get("check_item_id"), _ts(entry.get("first_shown_at")))
             cur = (row.get("probe") or {}).get("current") if isinstance(row.get("probe"), dict) else None
             if isinstance(cur, dict):
-                keep(by_hash, cur.get("question_hash"), None)
+                keep(open_hashes, cur.get("question_hash"), None)
         for row in page_all(
             table("sessions"),
             "id,open:loop_state->open",
@@ -1147,40 +1139,50 @@ def posed_items(user_id: str, *, now: datetime) -> tuple[list[tuple], datetime |
                     and not str(key).startswith("fc:")
                     and entry.get("graded_at") is None
                 ):
-                    keep(by_id, entry.get("item_id"), _ts(entry.get("served_at")))
+                    keep(open_ids, entry.get("item_id"), _ts(entry.get("served_at")))
         pose_course: dict[str, str] = {}  # a pose names its course: matched on load
         for pose in table(_POSES).select(
             "course_id,question_hash,posed_at",
             filters={"user_id": f"eq.{user_id}", "answered_at": "is.null"},
         ) or []:
-            keep(by_hash, pose.get("question_hash"), _ts(pose.get("posed_at")))
+            keep(open_hashes, pose.get("question_hash"), _ts(pose.get("posed_at")))
             if pose.get("question_hash"):
                 pose_course[pose["question_hash"]] = pose.get("course_id")
-        ledger_hashes = set()
-        for qh, at in ungraded_posed(user_id, LOOP_SCAN_POSED_MAX + 1):
-            keep(by_hash, qh, at)
-            ledger_hashes.add(qh)
-        seen = seen_hashes(user_id)
+        ledger, edge = ungraded_posed_window(user_id, LOOP_SCAN_POSED_MAX)
+        ledger_hashes = {qh for qh, _ in ledger}
+        historical: dict[str, datetime | None] = {}
+        for qh, at in ledger:
+            if qh in open_hashes:
+                keep(open_hashes, qh, at)  # open: always scanned; the earliest pose counts
+            else:
+                keep(historical, qh, at)
+        if historical:  # M1: the seen filter reads the historical rows only
+            seen = seen_hashes(user_id)
+            historical = {qh: at for qh, at in historical.items() if qh not in seen}
+        oldest = datetime.min.replace(tzinfo=timezone.utc)
+        candidates = sorted(
+            [("id", k, at) for k, at in open_ids.items()]
+            + [("hash", k, at) for k, at in open_hashes.items()]
+            + [("ledger", k, at) for k, at in historical.items()],
+            key=lambda c: c[2] or oldest,
+            reverse=True,
+        )
+        kept, left = candidates[:LOOP_SCAN_POSED_MAX], candidates[LOOP_SCAN_POSED_MAX:]
+        overflow = (left[0][2] or now) if left else None
+        if edge is not None:
+            overflow = edge if overflow is None else max(overflow, edge)
         found: dict[str, tuple] = {}
-        for item_id, at in by_id.items():
-            item = get_check_item(item_id)
-            if item is not None and item.question_hash not in seen:
-                found.setdefault(item.question_hash, (item, at))
-        wanted = sorted(h for h in by_hash if h not in seen and h not in found)
-        for item in items_by_hash(wanted) if wanted else []:
+        ids = sorted(k for kind, k, _ in kept if kind == "id")
+        for item in items_by_ids(ids) if ids else []:
+            found.setdefault(item.question_hash, (item, open_ids.get(item.id)))
+        hashes = sorted(k for kind, k, _ in kept if kind != "id" and k not in found)
+        for item in items_by_hash(hashes) if hashes else []:
             qh = item.question_hash
-            if qh in seen:
-                continue
             if qh in pose_course and qh not in ledger_hashes and pose_course[qh] != item.course_id:
                 continue  # a pose's hash names an item of ITS course only
-            found.setdefault(qh, (item, by_hash.get(qh)))
-        oldest = datetime.min.replace(tzinfo=timezone.utc)
+            found.setdefault(qh, (item, open_hashes.get(qh, historical.get(qh))))
         ranked = sorted(found.values(), key=lambda pair: pair[1] or oldest, reverse=True)
-        kept = ranked[:LOOP_SCAN_POSED_MAX]
-        overflow = None
-        if len(ranked) > LOOP_SCAN_POSED_MAX:
-            overflow = ranked[LOOP_SCAN_POSED_MAX][1] or now
-        return kept, overflow
+        return ranked, overflow
     except Exception as exc:
         logger.warning("posed items could not be read (%s)", type(exc).__name__)
         return None
@@ -1975,8 +1977,9 @@ class _LoopTurn:
         reply, redacted = self._leak_checked(reply)
         out: dict = {}
         self._now = _now_s()
-        self._scan_served(reply)
-        self._record_served()
+        with self.__dict__.setdefault("_scan_lock", threading.Lock()):
+            self._scan_served(reply)
+            self._record_served()
         _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out))
         self._emit_reveal()
         if out.get("step") is not None:
@@ -2033,8 +2036,10 @@ class _LoopTurn:
 
     def _scan_set(self):
         """A93: the posed-and-ungraded items (`posed_items`), read ONCE per turn
-        (a stream is scanned many times as it is relayed). The turn's own active
-        item is excluded: its leak check is `_leak_checked`'s."""
+        (a stream is scanned on every relayed delta) and compiled once
+        (learning.served_scan.ScanSet, spec §13 A101): (ScanSet, overflow), or
+        None when they cannot be read. The turn's own active item is excluded:
+        its leak check is `_leak_checked`'s."""
         if not hasattr(self, "_scan_cache"):
             got = posed_items(self.user_id, now=datetime.now(timezone.utc))
             if got is None:
@@ -2042,22 +2047,38 @@ class _LoopTurn:
             else:
                 active = self.item.question_hash if self.item is not None else None
                 items, overflow = got
-                self._scan_cache = ([item for item, _at in items if item.question_hash != active], overflow)
+                scan = ScanSet.build(
+                    [item for item, _at in items if item.question_hash != active], given=self.given
+                )
+                self._scan_cache = (scan, overflow)
         return self._scan_cache
 
     def _scan_served(self, reply: str) -> None:
         """A88/A93: the posed-and-ungraded items this served, model-written text
         states. Scanned strictly (H0). Unreadable → `reveal_unscanned`; items
-        beyond the scan window → an 'unscanned' marker at the window's edge."""
-        self.reveal_hashes, self.reveal_unscanned, self.reveal_overflow = [], False, None
+        beyond the scan window → an 'unscanned' marker at the window's edge.
+
+        Spec §13 A101 (review M2): `reveal_hashes` accumulates over the turn's
+        scans, and a text that EXTENDS the one scanned last (the stream relaying
+        its next delta, the final text of a streamed turn) is scanned from
+        `ScanSet.window_start` — the new suffix plus the overlap — never from the
+        start again; any other text (a retracted attempt, a fresh JSON reply) is
+        scanned whole. An item already stated this turn is not scanned again."""
+        self.reveal_unscanned, self.reveal_overflow = False, None
         if self.tier == "none" or not reply:
             return
         got = self._scan_set()
         if got is None:
             self.reveal_unscanned = True
             return
-        items, self.reveal_overflow = got
-        self.reveal_hashes = stated_items(reply, items, rung=Rung.H0, given=self.given)
+        scan, self.reveal_overflow = got
+        last = self.__dict__.get("_scanned_text")
+        start = scan.window_start(reply, len(last)) if last and reply.startswith(last) else 0
+        self._scanned_text = reply
+        already = set(self.reveal_hashes)
+        found = scan.stated(reply, start=start, skip=already)
+        if found:
+            self.reveal_hashes = sorted(already | set(found))
 
     def _record_served(self) -> None:
         """A88 (M2) / A93: durable at serve time — learning_reveals, keyed by the
@@ -2068,9 +2089,16 @@ class _LoopTurn:
         recorded = self.__dict__.setdefault("_recorded", set())
         fresh = [h for h in self.reveal_hashes if h not in recorded]
         marker_at = None
-        if self.reveal_unscanned:
+        # spec §13 A101 (review minor 2): ONE marker per turn, however often the
+        # unreadable scan set is met (a stream meets it on every delta)
+        if self.reveal_unscanned and not self.__dict__.get("_unscanned_marked"):
             marker_at = datetime.fromtimestamp(self._now, timezone.utc)
-        elif self.reveal_overflow is not None and not self.__dict__.get("_overflow_marked"):
+            self._unscanned_marked = True
+        elif (
+            not self.reveal_unscanned
+            and self.reveal_overflow is not None
+            and not self.__dict__.get("_overflow_marked")
+        ):
             marker_at = self.reveal_overflow
         if not (fresh or marker_at is not None):
             return
@@ -2087,29 +2115,42 @@ class _LoopTurn:
                 {"at": marker_at.timestamp(), "source": self.phase} if marker_at is not None else None
             )
             self.reveal_fallback = ([h for h in fresh if h not in recorded], mark)
+            # handed to the fallback store: not written again by a later scan of the turn
+            recorded.update(self.reveal_fallback[0])
 
     def _emit_reveal(self) -> None:
         """zpd.reveal for what this turn stated that no earlier scan of the same
         turn already reported (A93: a stream is scanned many times)."""
         emitted = self.__dict__.setdefault("_emitted", set())
         fresh = [h for h in self.reveal_hashes if h not in emitted]
-        if fresh or self.reveal_unscanned:
+        # spec §13 A101 (review minor 2): the unscanned zpd.reveal once per turn
+        unscanned = self.reveal_unscanned and not self.__dict__.get("_unscanned_emitted")
+        if fresh or unscanned:
             emitted.update(fresh)
+            if unscanned:
+                self._unscanned_emitted = True
             zpd_events.emit_zpd_reveal(
                 user_id=self.user_id,
                 request_id=self.request_id,
                 session_id=self.session_id,
                 question_hashes=fresh,
-                unscanned=self.reveal_unscanned,
+                unscanned=unscanned,
                 phase=self.phase,
             )
 
     def record_relayed(self, text: str) -> None:
         """A88 (M1) / A93 (M3, M4): text the student has been SHOWN — while it
-        streams (every LOOP_SCAN_EVERY_CHARS and at each sentence end), a
-        retracted attempt, or what a stream that ended without `done` relayed —
-        is scanned and its reveals persisted (learning_reveals, then loop_state),
-        synchronously. Never raises."""
+        streams (every relayed delta, spec §13 A101), a retracted attempt, or
+        what a stream that ended without `done` relayed — is scanned and its
+        reveals persisted (learning_reveals, then loop_state). The stream runs
+        it in a worker thread (`asyncio.to_thread`) and awaits it before the
+        chunk goes out; the turn's lock serialises it with the synchronous call
+        a cancelled stream makes in its `finally` (which then waits for an
+        in-flight scan instead of racing it). Never raises."""
+        with self.__dict__.setdefault("_scan_lock", threading.Lock()):
+            self._record_relayed(text)
+
+    def _record_relayed(self, text: str) -> None:
         try:
             self._now = _now_s()
             self._scan_served(text)
@@ -2263,8 +2304,9 @@ class _LoopOpener(_LoopTurn):
 
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
         self._now = _now_s()
-        self._scan_served(reply)  # A88 (M2): no session row — durable in learning_reveals now
-        self._record_served()
+        with self.__dict__.setdefault("_scan_lock", threading.Lock()):
+            self._scan_served(reply)  # A88 (M2): no session row — durable in learning_reveals now
+            self._record_served()
         if self.reveal_fallback is not None:
             raise RuntimeError("the opener's reveals could not be recorded")  # never served unrecorded
         self._emit_reveal()
@@ -2598,9 +2640,8 @@ async def _stream_turn(turn: _LoopTurn):
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
 
     ai_budget.count_tutor_call(turn.user_id)
-    relayed: list[str] = []  # A88 (M1): the text the student has been shown
+    shown = ""  # A88 (M1): the text the student has been shown
     attempts: list[str] = []  # A93 (M4): retracted attempts — shown, so scanned too
-    scanned_at = 0  # A93 (M3): the relayed length last scanned
     finished = False
     try:
         async for ev in stream_structured_turn(
@@ -2618,18 +2659,16 @@ async def _stream_turn(turn: _LoopTurn):
             render_partial=turn.render_partial,
         ):
             if ev.type == "token":
-                relayed.append(str((ev.data or {}).get("delta") or ""))
-                shown = "".join(relayed)
-                if len(shown) - scanned_at >= LOOP_SCAN_EVERY_CHARS or (
-                    len(shown) > scanned_at and shown.rstrip().endswith((".", "?", "!"))
-                ):
-                    # A93 (M3): recorded as it is relayed, before the next token goes out
-                    turn.record_relayed(shown)
-                    scanned_at = len(shown)
+                delta = str((ev.data or {}).get("delta") or "")
+                if delta:
+                    shown += delta
+                    # A93 (M3) / A101: EVERY delta is scanned (the suffix + the
+                    # overlap) and recorded before this chunk goes out — off the
+                    # event loop, awaited, so the ordering holds
+                    await asyncio.to_thread(turn.record_relayed, shown)
             elif ev.type == "retract":
-                attempts.append("".join(relayed))
-                relayed.clear()
-                scanned_at = 0
+                attempts.append(shown)
+                shown = ""
             elif ev.type == "done":
                 finished = True
                 for extra_ev in _pre_done_events(ev.data or {}):
@@ -2645,8 +2684,8 @@ async def _stream_turn(turn: _LoopTurn):
             # A88 (M1): what it relayed is scanned and recorded — synchronously,
             # so a cancellation cannot interrupt the write (fail open → closed)
             turn.touch_served_at()
-            if relayed:
-                turn.record_relayed("".join(relayed))
+            if shown:
+                turn.record_relayed(shown)
 
 
 _STREAM_UNAVAILABLE = "The tutor is unavailable. Please retry."

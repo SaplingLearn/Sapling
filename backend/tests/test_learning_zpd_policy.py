@@ -3572,7 +3572,14 @@ _PKG06_SANCTIONED_IMPORTS = {
 # (update_loop_state, and PKG-07's seen/revealed readers) — and only that module of the
 # layer (test_review_reaches_only_the_loop_state_store). Nothing imports learning/review.py
 # except the gated /api/learn/loop router. Same shape as PKG-07's routes/learn_loop.py entry.
-_PKG06_SANCTIONED_IMPORTERS = frozenset({"routes/learn_loop.py", "learning/review.py"})
+#
+# PKG-14 final fix round (spec §13 A101): learning/served_scan.py is the loop route's
+# served-text scan, compiled once per turn on leak's prepared served-mode API
+# (served_rules / served_text / served_leaked). Nothing imports it but
+# routes/learn_loop.py — the same gated router.
+_PKG06_SANCTIONED_IMPORTERS = frozenset(
+    {"routes/learn_loop.py", "learning/review.py", "learning/served_scan.py"}
+)
 
 # What the real app may load from the PKG-06 layer at boot (PKG-06b): the one sanctioned import
 # above brings learning.policy, and policy imports learning.ladder's Rung. Nothing else.
