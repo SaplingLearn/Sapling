@@ -27,15 +27,20 @@ from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
+from services.tutor_sessions import (
+    PENDING_SESSIONS,
+    SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
+    require_session_owner,
+)
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Lazy sessions: start-session does not write to DB until the user sends their first chat message.
-# Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
-PENDING_SESSIONS: dict[str, dict] = {}
+# Lazy sessions: start-session does not write to DB until the user sends their
+# first chat message. PENDING_SESSIONS (session_id -> pending payload) lives in
+# services/tutor_sessions.py so other routes can share the ownership rule.
 
 MODE_DISPLAY_NAMES = {
     "socratic": "Socratic (question-based)",
@@ -412,33 +417,13 @@ def _elapsed_minutes(started_at_iso: str) -> int:
         return 0
 
 
-_SESSION_NOT_FOUND = "Session not found"
-
-
 def _require_session_owner(session_id: str, user_id: str | None) -> None:
-    """404 unless ``session_id`` is ``user_id``'s tutor session.
-
-    ``require_self`` only proves the caller IS ``user_id``; it says nothing
-    about the session id in the same body. Every route that takes a session
-    id calls this before any history load, message write, model call or
-    event, or a student holding a classmate's session UUID can read and
-    append to that classmate's decrypted chat.
-
-    A still-pending lazy session (no ``sessions`` row yet) passes only when
-    PENDING_SESSIONS recorded the same user. Missing and foreign sessions
-    both answer the same 404, never 403, so session ids can't be probed.
-    """
-    pending = PENDING_SESSIONS.get(session_id)
-    if pending is not None:
-        if user_id and pending.get("user_id") == user_id:
-            return
-        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
-    rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
-    owner = rows[0].get("user_id") if rows else None
-    if not user_id or not owner or owner != user_id:
-        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
+    """404 unless ``session_id`` is ``user_id``'s tutor session (pending or
+    materialised). Every route that takes a session id calls this before any
+    history load, message write, model call or event: ``require_self`` only
+    proves the caller IS ``user_id``, not that the session is theirs. The rule
+    lives in services/tutor_sessions.py so non-tutor routes share it."""
+    require_session_owner(session_id, user_id)
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:
