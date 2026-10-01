@@ -168,7 +168,11 @@ def test_kpis_shape_and_values(seeded):
     assert b["served_reveals"] == 0 and b["unscanned_turns"] == 0
     assert b["ceiling_compliance"]["steps"] == params.BAND_WINDOW + 4
     assert b["ceiling_compliance"]["compliant"] == params.BAND_WINDOW + 3
-    assert b["gates"] == {"zero_leaks": True, "ceiling_compliance_ok": False}
+    assert b["gates"] == {
+        "zero_leaks": True,
+        "ceiling_compliance_ok": False,
+        "earnest_revise_ok": None,  # A109: no step carries the signal → inconclusive
+    }
     assert b["unassisted_next_session"] == {
         "sessions": 2,
         "successes": 1,
@@ -186,7 +190,11 @@ def test_empty_range_is_nones_not_zeros(monkeypatch):
     b = client.get(URL, params=RANGE).json()
     assert b["in_band_share"] is None and b["ceiling_compliance"]["rate"] is None
     assert b["unassisted_next_session"]["rate"] is None
-    assert b["gates"] == {"zero_leaks": True, "ceiling_compliance_ok": False}
+    assert b["gates"] == {
+        "zero_leaks": True,
+        "ceiling_compliance_ok": False,
+        "earnest_revise_ok": None,  # A109: no step carries the signal → inconclusive
+    }
     assert b["htc_k_trend"] == []
 
 
@@ -378,7 +386,7 @@ def test_caught_leaks_alone_keep_the_gate_green(monkeypatch):
 
 def test_quiz_ask_sessions_are_excluded_from_the_next_session_rate(seeded):
     seeded["sessions"] = [
-        {"id": "s2", "loop_state->>origin": "quiz_ask", "created_at": "2026-07-10T00:00:00+00:00"}
+        {"id": "s2", "loop_state->>origin": "quiz_ask", "started_at": "2026-07-10T00:00:00+00:00"}
     ]
     b = client.get(URL, params=RANGE).json()
     # s1 → s3 (s2, a probe-less quiz-ask session, is not a session of the KPI)
@@ -406,3 +414,46 @@ def test_the_quiz_ask_read_names_the_origin_marker(monkeypatch):
     assert client.get(URL, params=RANGE).status_code == 200
     (filters,) = [f for n, f in calls if n == "sessions"]
     assert filters["loop_state->>origin"] == "eq.quiz_ask"
+
+
+# ── earnest-revise (spec §10 gate, §13 A109) ─────────────────────────────────
+
+
+def _earnest_step(i, blocked, *, phase="check"):
+    row = _step(i, phase=phase)
+    row["payload"]["earnest_blocked"] = blocked
+    return row
+
+
+def test_earnest_revise_rate_and_gate(monkeypatch):
+    events = [_earnest_step(0, True)] + [_earnest_step(i, False) for i in range(1, 20)]
+    events.append(_step(40))  # a pre-A109 step: no key → unmeasured, not a zero
+    events.append(_earnest_step(41, False, phase="posttest"))  # never reaches /hint
+    _serve(monkeypatch, {"events": events})
+    b = client.get(URL, params=RANGE).json()
+    assert b["earnest_revise"] == {
+        "graded_steps": 20,
+        "earnest_blocked": 1,
+        "unmeasured_steps": 1,
+        "rate": pytest.approx(0.05),
+        "gate": "pass",
+    }
+    assert b["gates"]["earnest_revise_ok"] is True
+
+
+def test_earnest_revise_gate_fails_above_the_max(monkeypatch):
+    events = [_earnest_step(0, True), _earnest_step(1, True)]
+    events += [_earnest_step(i, False) for i in range(2, 20)]
+    _serve(monkeypatch, {"events": events})
+    b = client.get(URL, params=RANGE).json()
+    assert b["earnest_revise"]["rate"] == pytest.approx(0.1)
+    assert b["earnest_revise"]["gate"] == "fail"
+    assert b["gates"]["earnest_revise_ok"] is (0.1 <= params.GATE_EARNEST_REVISE_MAX)
+
+
+def test_earnest_revise_without_graded_steps_is_inconclusive(monkeypatch):
+    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    b = client.get(URL, params=RANGE).json()
+    assert b["earnest_revise"]["rate"] is None
+    assert b["earnest_revise"]["gate"] == "inconclusive"
+    assert b["gates"]["earnest_revise_ok"] is None, "inconclusive, never a pass"

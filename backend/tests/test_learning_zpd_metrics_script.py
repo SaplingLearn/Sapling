@@ -578,3 +578,47 @@ def test_main_reads_quiz_ask_sessions_and_fails_loudly(world, capsys):
     world["tables"]["sessions"] = _T([], fail=RuntimeError("down"))
     assert s.main(args) == 1
     assert "REPORT_FAIL sessions" in capsys.readouterr().out
+
+
+# ── earnest-revise (spec §10 gate, §13 A109) ─────────────────────────────────
+
+
+def _check_step(req, blocked):
+    return {"user_id": "u", "request_id": req, "payload": {"phase": "check", "earnest_blocked": blocked}}
+
+
+def test_report_carries_the_earnest_revise_rate_and_gate():
+    steps = [_check_step("r0", True)] + [_check_step(f"r{i}", False) for i in range(1, 20)]
+    out = _script().report([], steps, [], sessions_by_request={})
+    assert out["earnest_revise"] == {
+        "graded_steps": 20,
+        "earnest_blocked": 1,
+        "unmeasured_steps": 0,
+        "rate": pytest.approx(0.05),
+        "gate": "pass",
+    }
+
+
+def test_report_earnest_revise_is_inconclusive_without_graded_steps():
+    out = _script().report(USAGE, STEPS, CAPS, sessions_by_request={})
+    assert out["earnest_revise"]["rate"] is None
+    assert out["earnest_revise"]["gate"] == "inconclusive", "never a pass on no data"
+
+
+def test_main_reports_earnest_revise_over_the_window(world, capsys):
+    s = world["s"]
+    world["tables"]["events"] = [
+        {
+            "id": f"x{i}",
+            "event_type": "zpd.step",
+            **_check_step(f"r{i}", i < 3),
+            "created_at": "2026-09-20T10:00:00+00:00",
+        }
+        for i in range(10)
+    ]
+    assert s.main(["--from", "2026-09-01T00:00:00+00:00", "--to", "2026-10-01T00:00:00+00:00"]) == 0
+    rep = _report_line(capsys.readouterr().out)
+    assert rep["earnest_revise"]["graded_steps"] == 10
+    assert rep["earnest_revise"]["earnest_blocked"] == 3
+    assert rep["earnest_revise"]["rate"] == pytest.approx(0.3)
+    assert rep["earnest_revise"]["gate"] == "fail"

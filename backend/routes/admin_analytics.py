@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from db.connection import table
+from learning.earnest_revise import earnest_revise
 from learning.params import (
     ACQ_TARGET_HI,
     ACQ_TARGET_LO,
@@ -501,8 +502,8 @@ def errors(
 #
 # The three headline KPIs and the two measurable gates of the evaluation
 # ladder, over `zpd.step`/`zpd.leak` events and the evidence journal. Admin-only
-# and read-only like every endpoint here. The earnest-revise gate (spec §10)
-# is not computed: no event carries that signal (HANDOFF-14 Known gaps).
+# and read-only like every endpoint here. The earnest-revise gate (spec §10) is
+# measured since spec §13 A109: the feedback zpd.step's `earnest_blocked` bool.
 
 _STEP_EVENT = "zpd.step"
 _LEAK_EVENT = "zpd.leak"
@@ -537,9 +538,22 @@ class NextSessionSuccess(BaseModel):
     quiz_ask_excluded: int = 0
 
 
+class EarnestRevise(BaseModel):
+    """Spec §10's earnest-revise gate (A109): graded check steps whose /hint was
+    denied at the ceiling or the H6 gate after a genuine attempt."""
+
+    graded_steps: int  # check steps carrying the earnest_blocked bool
+    earnest_blocked: int
+    unmeasured_steps: int  # check steps written before A109 (no key): not counted
+    rate: float | None
+    gate: Literal["pass", "fail", "inconclusive"]
+
+
 class Gates(BaseModel):
     zero_leaks: bool
     ceiling_compliance_ok: bool
+    # A109: None = inconclusive (no graded step carries the signal), never a pass
+    earnest_revise_ok: bool | None
 
 
 class LearningLoopKpis(BaseModel):
@@ -556,6 +570,7 @@ class LearningLoopKpis(BaseModel):
     served_reveals: int  # open posed items whose answer a served turn stated
     unscanned_turns: int  # served turns whose open items could not be read (fail-closed)
     ceiling_compliance: CeilingCompliance
+    earnest_revise: EarnestRevise
     gates: Gates
     truncated: bool = False
 
@@ -732,7 +747,8 @@ def learning_loop_kpis(
     to: str | None = Query(None),
 ) -> LearningLoopKpis:
     """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
-    and the zero-leak and ceiling-compliance gates; `truncated: true` means a
+    and the zero-leak, ceiling-compliance and earnest-revise (A109) gates;
+    `truncated: true` means a
     scan cap cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
@@ -759,6 +775,7 @@ def learning_loop_kpis(
     unscanned = sum(1 for p in reveals if p.get("unscanned") is True)
     in_band, banded = _in_band_share(steps)
     compliance = _ceiling_compliance(steps)
+    earnest = EarnestRevise(**earnest_revise(steps))
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -771,10 +788,12 @@ def learning_loop_kpis(
         served_reveals=served,
         unscanned_turns=unscanned,
         ceiling_compliance=compliance,
+        earnest_revise=earnest,
         gates=Gates(
             zero_leaks=served <= GATE_LEAKS_MAX,
             ceiling_compliance_ok=compliance.rate is not None
             and compliance.rate >= GATE_CEILING_COMPLIANCE_MIN,
+            earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
         truncated=events_truncated or evidence_truncated,
     )

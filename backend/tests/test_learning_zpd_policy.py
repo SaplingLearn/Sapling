@@ -3334,7 +3334,9 @@ def test_emit_helpers_send_spec_payloads(monkeypatch):
         "item_difficulty",
         "tier",
         "grader_backend",
+        "earnest_blocked",  # spec §13 A109: always present, a bool
     }
+    assert got["zpd.step"]["payload"]["earnest_blocked"] is False, "defaults False"
     assert got["zpd.step"]["payload"]["ceiling"] == int(Rung.H3)
     assert got["zpd.step"]["payload"]["ceiling_reason"] == "develop"
     assert (got["zpd.step"]["payload"]["tier"], got["zpd.step"]["payload"]["grader_backend"]) == (
@@ -3397,6 +3399,45 @@ def test_zpd_step_omits_tier_and_grader_backend_when_unset(monkeypatch):
     [(event_type, kw)] = calls
     assert event_type == "zpd.step"
     assert "tier" not in kw["payload"] and "grader_backend" not in kw["payload"]
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_zpd_step_carries_earnest_blocked_as_a_bool(monkeypatch, value):
+    """Spec §13 A109: the earnest-revise signal rides the feedback zpd.step as a
+    plain bool (truthy input is coerced, never a non-bool)."""
+    from learning import zpd_events
+    from learning.ladder import Rung
+    from learning.policy import CeilingReason
+
+    calls = _recorder(monkeypatch)
+    zpd_events.emit_zpd_step(
+        user_id="u",
+        request_id=None,
+        concept_id="node-1",
+        question_hash="q" * 64,
+        phase="check",
+        channel="free_response",
+        band="develop",
+        ceiling=Rung.H3,
+        ceiling_reason=CeilingReason.DEVELOP,
+        first_attempt_correct=False,
+        n_attempts=1,
+        max_rung_used=Rung.H3,
+        rungs=[],
+        time_to_first_attempt_ms=None,
+        time_to_correct_ms=None,
+        independent_time_ms=None,
+        assisted=True,
+        confidence=None,
+        fsrs_rating=params.FSRS_RATING_AGAIN,
+        p_known_before=0.4,
+        p_known_after=0.4,
+        r_before=None,
+        item_difficulty=1,
+        earnest_blocked=1 if value else 0,
+    )
+    [(_, kw)] = calls
+    assert kw["payload"]["earnest_blocked"] is value
 
 
 def test_emit_helpers_are_keyword_only():

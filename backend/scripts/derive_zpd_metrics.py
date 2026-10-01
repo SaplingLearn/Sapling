@@ -26,7 +26,8 @@ request an event maps to its session (zpd.step carries the session id, A82;
 learn.session_closed and chat.message_sent too) — a quiz-ask session's on its
 own line (A106) — and per user-day for the rows
 that carry none (older rows); the check_items total, the tier and
-grader_backend mix, cap hits, and each course's check-item coverage.
+grader_backend mix, cap hits, the earnest-revise rate and its ≤ 5% gate (A109;
+"inconclusive" with no graded step), and each course's check-item coverage.
 
 Run from backend/:
     python scripts/derive_zpd_metrics.py                  # every row, then the report
@@ -73,6 +74,7 @@ from learning.params import (  # noqa: E402
     ZPD_IN_ZONE_MIN_ASSISTED,
     ZPD_IN_ZONE_MIN_GAP,
 )
+from learning.earnest_revise import earnest_revise  # noqa: E402
 from services.check_item_service import coverage  # noqa: E402
 from services.quiz_ask import quiz_ask_session_ids  # noqa: E402
 
@@ -232,6 +234,9 @@ def report(
         "cap_hits": _count(
             f"{p.get('scope')}/{p.get('level')}" for p in ((c.get("payload") or {}) for c in caps)
         ),
+        # spec §10's third gate (A109): earnest-blocked / graded check steps,
+        # "inconclusive" (never a pass) when no step in the window carries it
+        "earnest_revise": earnest_revise(steps),
     }
     # A92 (PKG-14b): the row's own session_id first; else A82's (user_id,
     # request_id) event join; a row with neither (older rows) falls back to its

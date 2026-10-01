@@ -248,6 +248,9 @@ follow-up that deletes `LEARNING_LOOP_ENABLED`.
 - **The earnest-revise gate** (spec §10, ≤ 5 %) is not measured: no event
   carries that signal. Making it measurable needs a `zpd.step` key or a grader
   flag; that is a follow-up.
+  Amended: measured since 2026-10-01 (A109) — the feedback `zpd.step`'s
+  `earnest_blocked` bool, reported with its ≤ 5 % gate by the admin
+  learning-loop KPI and `scripts/derive_zpd_metrics.py`.
 - **Cost per session covers the requests an event names.** `zpd.step`,
   `learn.session_closed` and `chat.message_sent` carry the session id
   (A82), joined on (user_id, request_id). A loop request none of them names

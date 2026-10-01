@@ -9,7 +9,9 @@ or tutor text into the plaintext events table), is dropped with a log line.
 The payload's `request_id` (zpd.leak) is exempt from the length cap: it is the
 same value as the events row's request_id column (request_context accepts up
 to 128 chars). Emitted by nobody in PKG-06; PKG-07, PKG-08 and PKG-10 call
-them.
+them. zpd.step's `earnest_blocked` key (spec §13 A109) is read by
+`learning.earnest_revise`, outside this layer (the admin KPI and the nightly
+metrics script must not import a PKG-06 module).
 """
 
 from __future__ import annotations
@@ -102,6 +104,7 @@ def emit_zpd_step(
     grader_backend: GraderBackend | None = None,
     variant: Variant | None = None,
     session_id: str | None = None,
+    earnest_blocked: bool = False,
 ) -> None:
     def build() -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -126,6 +129,9 @@ def emit_zpd_step(
             "p_known_after": p_known_after,
             "r_before": r_before,
             "item_difficulty": item_difficulty,
+            # A109: /hint denied a rung at the ceiling or the H6 gate after a
+            # genuine attempt on this step (the earnest-revise gate's numerator)
+            "earnest_blocked": bool(earnest_blocked),
         }
         # A15/A24: present only when known — omitted, never zeroed or blanked.
         if tier is not None:

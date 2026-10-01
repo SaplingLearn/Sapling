@@ -71,7 +71,8 @@ if make e2e-up; then
       tests/integration/test_help_ledger_db.py \
       tests/integration/test_quiz_evidence_claims_db.py \
       tests/integration/test_misconceptions_record_db.py \
-      tests/integration/test_session_close_db.py); i1=$?
+      tests/integration/test_session_close_db.py \
+      tests/integration/test_earnest_revise_db.py); i1=$?
 fi
 make e2e-down
 
