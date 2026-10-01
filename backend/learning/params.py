@@ -478,6 +478,10 @@ KPI_TREND_WEEKS = 4
 # spec §10 gates (not KPIs): 0 solution reveals, ≥ 95% ceiling compliance
 GATE_LEAKS_MAX = 0
 GATE_CEILING_COMPLIANCE_MIN = 0.95
+# † spec §13 A109: the third §10 gate, ≤ 5% earnest-revise. The 5% is §10's; what
+# counts as earnest-blocked (a /hint denied by the ceiling or the H6 gate on a
+# step with a genuine attempt) is Sapling's operationalisation, not the paper's.
+GATE_EARNEST_REVISE_MAX = 0.05
 # † research §"Measure learning…" (rung 3 is tool-removed and ≥ 2 days delayed)
 POSTTEST_MIN_AGE_DAYS = 2
 POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)

@@ -2207,6 +2207,108 @@ def test_hint_no_active_item(gate_on, seams):
     assert r.json() == {"denied": "no_active_item"}
 
 
+# ── earnest-revise (spec §10 gate, §13 A109) ─────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "fields,reason",
+    [
+        ({"rung": 3, "attempted_at": [T0 + 10]}, "ceiling"),  # develop, no failed attempt → H3
+        ({"rung": 5, "attempts": 2, "attempted_at": [T0 + 10], "taught": False}, "h6_gate"),
+    ],
+)
+def test_a_ceiling_deny_after_a_genuine_attempt_marks_the_step_earnest_blocked(
+    gate_on, seams, fields, reason
+):
+    """A109: the student made a genuine attempt and asked for more, and the
+    ceiling (or the H6 gate) held — the step is earnest-blocked, stored on its
+    loop_state entry by the compare-and-set write. The deny itself is unchanged."""
+    seams.store["doc"] = _state(**fields)
+    r = client.post("/api/learn/loop/hint", json=_hint())
+    assert r.status_code == 200 and r.json() == {"denied": reason}
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["earnest_blocked"] is True
+    assert entry["rung"] == fields["rung"], "a deny never moves the rung"
+
+
+@pytest.mark.parametrize(
+    "fields,reason",
+    [
+        ({"attempted_at": []}, "no_genuine_attempt"),
+        ({"attempted_at": [NOW - 1], "last_rung_at": NOW - 2}, "dwell"),
+    ],
+)
+def test_a_gate_deny_is_never_earnest_blocked(gate_on, seams, fields, reason):
+    """No genuine attempt, or the dwell clock (it lifts with the same attempt):
+    not the ceiling holding, so nothing is written."""
+    seams.store["doc"] = _state(**fields)
+    r = client.post("/api/learn/loop/hint", json=_hint())
+    assert r.json() == {"denied": reason}
+    assert "earnest_blocked" not in seams.store["doc"]["steps"]["qh-1"]
+    seams.save.assert_not_called()
+
+
+def test_a_granted_hint_is_never_earnest_blocked(gate_on, seams):
+    seams.store["doc"] = _state(attempted_at=[T0 + 10])
+    r = client.post("/api/learn/loop/hint", json=_hint())
+    assert r.json() == {"rung": 2, "intent": intent(Rung.H2)}
+    assert "earnest_blocked" not in seams.store["doc"]["steps"]["qh-1"]
+
+
+def test_a_ceiling_deny_without_a_genuine_attempt_is_not_earnest_blocked(gate_on, seams):
+    """The step must hold a genuine attempt (`attempted_at`). rung_unlock already
+    requires one past the anchor, so this pins the guard on its own."""
+    seams.store["doc"] = _state(rung=3, attempted_at=[])
+    with patch("routes.learn_loop.gates.rung_unlock", return_value=True):
+        r = client.post("/api/learn/loop/hint", json=_hint())
+    assert r.json() == {"denied": "ceiling"}
+    assert "earnest_blocked" not in seams.store["doc"]["steps"]["qh-1"]
+    seams.save.assert_not_called()
+
+
+def test_earnest_blocked_is_written_once_per_step(gate_on, seams):
+    seams.store["doc"] = _state(rung=3, attempted_at=[T0 + 10])
+    client.post("/api/learn/loop/hint", json=_hint())
+    assert seams.save.call_count == 1
+    r = client.post("/api/learn/loop/hint", json=_hint())
+    assert r.json() == {"denied": "ceiling"}
+    assert seams.save.call_count == 1, "an already-marked step is not written again"
+
+
+def test_earnest_blocked_survives_a_concurrent_write(gate_on, seams):
+    """The mark is applied to the FRESH document: a racer's change survives."""
+    seams.store["doc"] = _state(rung=3, attempted_at=[T0 + 10])
+    seams.store["conflicts"] = 1
+    seams.store["racer"] = lambda doc: doc["steps"]["qh-1"].update(offered=True)
+    r = client.post("/api/learn/loop/hint", json=_hint())
+    assert r.json() == {"denied": "ceiling"}
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["earnest_blocked"] is True and entry["offered"] is True
+
+
+def test_a_failed_earnest_write_never_changes_the_deny(gate_on, seams, caplog):
+    """A measurement: a write failure is logged, the deny is still served."""
+    seams.store["doc"] = _state(rung=3, attempted_at=[T0 + 10])
+    seams.save.side_effect = RuntimeError("db down")
+    with caplog.at_level("WARNING", logger="routes.learn_loop"):
+        r = client.post("/api/learn/loop/hint", json=_hint())
+    assert r.status_code == 200 and r.json() == {"denied": "ceiling"}
+    assert any("earnest_blocked" in rec.getMessage() for rec in caplog.records)
+
+
+@pytest.mark.parametrize("blocked", [True, False])
+def test_the_feedback_zpd_step_carries_earnest_blocked(gate_on, seams, blocked):
+    over = {"earnest_blocked": True} if blocked else {}
+    seams.store["doc"] = _graded("not_yet", **over)
+    with patch("routes.learn_loop.stream_structured_turn", _fake_stream("Not yet. Next?")):
+        client.post(
+            "/api/learn/loop/chat/stream",
+            json={"session_id": "s1", "user_id": "u1", "message": "ok"},
+        )
+    seams.zpd.emit_zpd_step.assert_called_once()
+    assert seams.zpd.emit_zpd_step.call_args.kwargs["earnest_blocked"] is blocked
+
+
 def test_action_in_check_phase_is_a_hint_turn_with_no_evidence(gate_on, seams):
     agent, seen = _json_agent("A nudge. Which case is smallest?")
     with (

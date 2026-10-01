@@ -79,7 +79,8 @@ zpd.step                      usage     concept_id, question_hash, phase, channe
                                         max_rung_used, rungs[{rung, dwell_ms}],
                                         time_to_first_attempt_ms, time_to_correct_ms,
                                         independent_time_ms, assisted, confidence, fsrs_rating,
-                                        p_known_before, p_known_after, r_before, item_difficulty;
+                                        p_known_before, p_known_after, r_before, item_difficulty,
+                                        earnest_blocked (bool, spec §13 A109);
                                         optional tier, grader_backend (omitted when unknown)
                                         (learning loop PKG-06, spec §6)
 zpd.offer                     usage     accepted, band

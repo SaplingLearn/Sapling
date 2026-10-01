@@ -194,9 +194,12 @@ Not †: `GATE_LEAKS_MAX = 0` and `GATE_CEILING_COMPLIANCE_MIN = 0.95` (spec §1
   - **Until then**, this branch's eval scores the PKG-07 dataset. Served text is unchanged (A86, A88: recording reveals never changes what is served), so eval and production agree on teach text, but A85's raised ceiling on the claim case is not scored yet. The re-review round changed no eval-facing path, so the wip branch needs no change.
   - **Half B's launch gate** (§11.1 item 4) is open until the re-record passes.
 - **A85's limitation (owner-accepted).** Any non-empty student message with no non-attempt phrase qualifies once the independent-time gate passes. So a teach message that is not a reasoned claim can raise that one turn's ceiling by one rung. It is bounded: one rung, one turn, capped per band, never in exam mode, and no evidence or state change.
-- **The earnest-revise gate** (spec §10, ≤ 5 %) is not measured. Proposed for half B, not built: a per-step `earnest_blocked` counter.
-  - It is incremented when `/hint` denies at the ceiling (a reason other than `no_genuine_attempt`) while the step has a genuine attempt.
-  - It would be carried as a bool on the feedback `zpd.step`, and the KPI rate would be gated at ≤ 5 %.
+- **RESOLVED 2026-10-01 (spec §13 A109) — the earnest-revise gate is measured.** Was: not measured (no event carried the signal).
+  - `/hint` marks the step `earnest_blocked` (its loop_state entry, by the compare-and-set write) when it denies with `ceiling` or `h6_gate` on a step with a genuine attempt. `dwell`, `no_genuine_attempt` and `no_active_item` never mark it.
+  - The feedback `zpd.step` carries `earnest_blocked` (bool, default false).
+  - The admin learning-loop KPI and `scripts/derive_zpd_metrics.py`'s `REPORT` line report `earnest_revise` (rate = blocked / graded check steps) and its gate against `GATE_EARNEST_REVISE_MAX = 0.05` †. No graded step → `inconclusive`, never a pass.
+  - Steps written before A109 have no key: they are `unmeasured_steps`, so the rate starts from the deploy that carries A109.
+  - Real-SQL test: `tests/integration/test_earnest_revise_db.py` (in `tools/pkg14b-b6-cycle.sh`).
 - **Per-session cost** covers the requests an event names (`zpd.step`, `learn.session_closed`, `chat.message_sent`). The opener, the probe and review grades, and hint actions stay per user-day until `llm_usage.session_id` lands in half B.
 - **In-memory state** (bounded): only the failed-turn anchors (A85). The reveals are in the database now. The backend runs one process (`backend/Dockerfile`), and B9 lists the multi-process precondition. The post-test claim is in the database now.
 - **The rating prompt** has no E2E coverage (it needs 30 graded checks).
@@ -498,7 +501,7 @@ flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock bash -c '
 3. ~~Landing copy~~ — numbers updated (A96h); a UI/UX polish pass remains.
 4. **A45**: will the launch config ever set `EVENTS_LOGGING_ENABLED=false`? The grader cap is blind then.
 5. ~~Re-record window~~ — answered: yes, the `chat_tutor` and A7 `loop_tutor` re-records run in one quota window.
-6. Carried from the prompt: the first `loop_arm` experiment (the variant-B gate, owner-chosen); whether `LEARNING_LOOP_ENABLED` is removed next sprint; whether earnest-revise gets a signal; whether stored `messages.graph_update_json` `updated_nodes` keys need a read-side migration (they do not today — `end_session` and `quiz_signals` only read names).
+6. Carried from the prompt: the first `loop_arm` experiment (the variant-B gate, owner-chosen); whether `LEARNING_LOOP_ENABLED` is removed next sprint; whether earnest-revise gets a signal (answered: measured, A109); whether stored `messages.graph_update_json` `updated_nodes` keys need a read-side migration (they do not today — `end_session` and `quiz_signals` only read names).
 
 ### Post-hoc changes
 

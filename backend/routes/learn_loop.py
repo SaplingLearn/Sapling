@@ -1965,6 +1965,7 @@ class _LoopTurn:
                     self.user_id, entry.get("node_id") or self.node_id or "", self.arm
                 ),
                 session_id=self.session_id,  # A82: per-session cost attribution
+                earnest_blocked=entry.get("earnest_blocked") is True,  # A109
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("zpd.step not emitted for %s: incomplete step record", self.active)
@@ -3810,6 +3811,28 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     }
 
 
+def _mark_earnest_blocked(session_id: str, qh: str, step: StepState, entry: dict) -> None:
+    """Spec §10's earnest-revise signal (spec §13 A109): /hint denied a rung
+    because the ceiling (or the H6 gate) held, on a step with a genuine attempt
+    (`attempted_at` holds genuine attempts only). Never for `no_genuine_attempt`
+    or `dwell` — the dwell clock lifts with the same attempt, so it is not the
+    ceiling holding. Stored on the step's loop_state entry (a StepState.extra
+    key) by the compare-and-set write, so the feedback turn's zpd.step carries
+    it. Written once per step. A measurement: a failed write is logged and the
+    deny is served unchanged."""
+    if not step.attempted_at or entry.get("earnest_blocked") is True:
+        return
+
+    def mark(e: dict) -> None:
+        if e.get("graded_at") is None and e.get("attempted_at"):
+            e["earnest_blocked"] = True
+
+    try:
+        _update_loop_state(session_id, _on_step(qh, mark))
+    except Exception:
+        logger.warning("earnest_blocked not recorded for %s", qh, exc_info=True)
+
+
 @router.post("/hint")
 def hint(body: LoopHintBody, request: Request) -> dict:
     """Moves the active item's rung up one, behind the dwell / attempt gate, the
@@ -3845,8 +3868,10 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     )
     next_rung = int(step.rung) + 1
     if next_rung > int(ceiling):
+        _mark_earnest_blocked(body.session_id, qh, step, entry)
         return {"denied": "ceiling"}
     if next_rung == int(Rung.H6) and not _h6_ok(state, qh, entry, check):
+        _mark_earnest_blocked(body.session_id, qh, step, entry)
         return {"denied": "h6_gate"}
     accepted: dict = {}
 
