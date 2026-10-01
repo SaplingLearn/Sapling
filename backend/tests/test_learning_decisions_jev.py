@@ -530,7 +530,7 @@ def test_shadow_stats_compute_every_live_gate(ev):
     assert s.agreement == pytest.approx(950 / 1000)  # over the answered rows only
     assert s.error_rate == pytest.approx(4 / 1005)  # 3 timeouts + the open circuit; oversize is routing
     assert s.p95_ms == pytest.approx(147.0)  # no-call rows (oversize, circuit_open) excluded
-    assert s.cost_per_decision_usd == pytest.approx(1000 * 300 / 1005 * 0.000042 / 1000)
+    assert s.cost_per_decision_usd == pytest.approx(1000 * 300 / 1003 * 0.000042 / 1000)  # called rows
     assert s.gemini_cost_per_decision_usd == pytest.approx(1000 * 0.00004 / 1005)
     assert ev.live_gates(s) == {
         "DECISION_SHADOW_MIN_DAYS": True,
@@ -763,3 +763,38 @@ def test_aclose_clients_closes_this_loops_client(monkeypatch):
 
     asyncio.run(main())
     assert closed == [1] and _jev._clients == {}
+
+
+# ── review fix round: the promotion-gates script (minor 8) ──────────────────
+
+
+def test_p95_fails_when_no_call_went_out(ev):
+    rows = [_shadow_row(i, code="circuit_open", ms=0, day=i % 8) for i in range(1200)]
+    [s] = ev.shadow_stats(rows).values()
+    assert s.p95_ms == float("inf") and ev.live_gates(s)["DECISION_P95_MS"] is False
+
+
+def test_jev_cost_is_averaged_over_rows_that_made_a_call(ev):
+    rows = [_shadow_row(i, tokens=400) for i in range(10)]
+    rows += [_shadow_row(100 + i, code="oversize", ms=0) for i in range(10)]
+    [s] = ev.shadow_stats(rows).values()
+    assert s.cost_per_decision_usd == pytest.approx(400 * 0.000042 / 1000)
+
+
+def test_co_shadowed_decisions_never_inflate_each_others_gemini_cost(ev):
+    """Two decisions on the decision-agent task in one request: llm_usage cannot say whose
+    row is whose, so such requests are left out of both averages."""
+    rows = [_shadow_row(i, decision="judge_leak") for i in range(4)]
+    rows += [_shadow_row(i, decision="item_answerable") for i in range(2)]  # rq0, rq1 shared
+    usage = [{"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.0001} for i in range(4)]
+    usage += [{"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.0001} for i in range(2)]
+    stats = ev.shadow_stats(rows, usage_rows=usage)
+    assert stats["judge_leak"].gemini_cost_per_decision_usd == pytest.approx(0.0001)  # rq2, rq3 only
+    assert stats["judge_leak"].gemini_cost_conclusive is True
+    assert stats["item_answerable"].gemini_cost_conclusive is False  # every request shared
+    assert ev.live_gates(stats["item_answerable"])["cost_not_worse"] is None  # inconclusive
+
+
+def test_without_usage_rows_the_cost_gate_still_fails_closed(ev):
+    [s] = ev.shadow_stats([_shadow_row(i) for i in range(3)]).values()
+    assert ev.live_gates(s)["cost_not_worse"] is False

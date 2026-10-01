@@ -318,6 +318,9 @@ class ShadowStats:
     error_rate: float
     cost_per_decision_usd: float
     gemini_cost_per_decision_usd: float
+    # PKG-15 R1: False when every shadowed request also shadowed another decision on the
+    # same Gemini task (llm_usage cannot attribute the cost) → the cost gate is None
+    gemini_cost_conclusive: bool = True
 
 
 def _mean(values: list[float]) -> float:
@@ -450,7 +453,7 @@ LIVE_GATES = (
     "cost_not_worse",
 )
 # error codes for which no Jev call went out (its latency is not Jev's)
-NO_CALL_CODES = frozenset({"oversize", "circuit_open", "jev_absent"})
+NO_CALL_CODES = frozenset({"oversize", "circuit_open", "jev_absent", "privacy_gate"})
 # an oversize state is a routing rule (it goes to Gemini by design), not a Jev error
 NOT_AN_ERROR = frozenset({"oversize"})
 GEMINI_TASKS = {
@@ -472,9 +475,9 @@ def _ts(value):
 
 
 def _p95(values: list[float]) -> float:
-    """Nearest-rank p95 (0.0 when nothing was measured)."""
+    """Nearest-rank p95; +inf when nothing was measured (no call went out → the gate FAILS)."""
     if not values:
-        return 0.0
+        return float("inf")
     ordered = sorted(values)
     return float(ordered[max(0, -(-95 * len(ordered) // 100) - 1)])
 
@@ -499,14 +502,20 @@ def shadow_stats(rows, *, usage_rows=()) -> dict[str, ShadowStats]:
     - days: whole 24h periods between the first and the last shadow row;
     - n: shadow rows;
     - agreement: mean `agreement` over the rows Jev answered (no error_code);
-    - p95_ms: nearest-rank p95 of `shadow_latency_ms` over the rows where a call went out;
+    - p95_ms: nearest-rank p95 of `shadow_latency_ms` over the rows where a call went out
+      (+inf, a failing gate, when none did);
     - error_rate: rows with an error_code (except `oversize`) / n — an open circuit
       counts, since those decisions got no Jev answer;
-    - cost_per_decision_usd: mean `shadow_input_tokens` at llm_pricing's JEV_MODEL rate;
+    - cost_per_decision_usd: mean `shadow_input_tokens` over the rows where a call went
+      out, at llm_pricing's JEV_MODEL rate;
     - gemini_cost_per_decision_usd: the Gemini llm_usage cost (provider gemini, the
-      decision's tasks) of the shadowed requests / n. Without `usage_rows` it is NaN, so
-      the cost gate fails closed. A match_wrong_reason answered from the grader's prior
-      costs Gemini nothing extra, so Jev can never beat it on cost (honestly).
+      decision's tasks) of the shadowed requests / their count. A request that also
+      shadowed ANOTHER decision on the same Gemini tasks is left out (llm_usage carries no
+      decision name, so its rows cannot be attributed); if every request is shared the
+      figure is inconclusive (`gemini_cost_conclusive` False → the gate is None). Without
+      `usage_rows` it is NaN, so the cost gate fails closed. A match_wrong_reason answered
+      from the grader's prior costs Gemini nothing extra, so Jev can never beat it on
+      cost (honestly).
     """
     from services import llm_pricing
 
@@ -515,6 +524,12 @@ def shadow_stats(rows, *, usage_rows=()) -> dict[str, ShadowStats]:
     by_decision: dict[str, list[dict]] = {}
     for row in shadow_rows(rows):
         by_decision.setdefault(row["decision"], []).append(row)
+    # request_id → the decisions shadowed in it, per Gemini task set
+    sharing: dict[tuple, set[str]] = {}
+    for decision, group in by_decision.items():
+        tasks = GEMINI_TASKS.get(decision, _DECISION_TASKS)
+        for r in group:
+            sharing.setdefault((r.get("request_id"), tasks), set()).add(decision)
     stats = {}
     for decision, group in sorted(by_decision.items()):
         stamps = [t for t in (_ts(r.get("created_at")) for r in group) if t is not None]
@@ -523,15 +538,17 @@ def shadow_stats(rows, *, usage_rows=()) -> dict[str, ShadowStats]:
         called = [r for r in group if r.get("error_code") not in NO_CALL_CODES]
         errors = [r for r in group if r.get("error_code") and r["error_code"] not in NOT_AN_ERROR]
         tasks = GEMINI_TASKS.get(decision, _DECISION_TASKS)
-        requests = {r.get("request_id") for r in group}
-        if usage_rows:
+        own = [r for r in group if sharing[(r.get("request_id"), tasks)] == {decision}]
+        requests = {r.get("request_id") for r in own}
+        conclusive = bool(own)
+        if usage_rows and own:
             gemini = sum(
                 float(u.get("cost_usd") or 0.0)
                 for u in usage_rows
                 if u.get("provider", "gemini") == "gemini"
                 and u.get("task") in tasks
                 and u.get("request_id") in requests
-            ) / len(group)
+            ) / len(own)
         else:
             gemini = float("nan")
         stats[decision] = ShadowStats(
@@ -540,10 +557,11 @@ def shadow_stats(rows, *, usage_rows=()) -> dict[str, ShadowStats]:
             agreement=_mean([float(bool(r.get("agreement"))) for r in answered]),
             p95_ms=_p95([float(r.get("shadow_latency_ms") or 0) for r in called]),
             error_rate=len(errors) / len(group),
-            cost_per_decision_usd=_mean([float(r.get("shadow_input_tokens") or 0) for r in group])
+            cost_per_decision_usd=_mean([float(r.get("shadow_input_tokens") or 0) for r in called])
             * in_rate
             / 1000,
             gemini_cost_per_decision_usd=gemini,
+            gemini_cost_conclusive=conclusive,
         )
     return stats
 
@@ -551,7 +569,10 @@ def shadow_stats(rows, *, usage_rows=()) -> dict[str, ShadowStats]:
 def live_gates(stats: ShadowStats) -> dict[str, bool | None]:
     """Only the live §3.6 gates of `promotion_checks` (the gold gates need gold results)."""
     checks = promotion_checks([], [], shadow=stats)
-    return {name: checks[name] for name in LIVE_GATES}
+    gates = {name: checks[name] for name in LIVE_GATES}
+    if not stats.gemini_cost_conclusive:
+        gates["cost_not_worse"] = None  # inconclusive: the owner reads the cost by hand
+    return gates
 
 
 def _read_jsonl(path: str) -> list[dict]:
