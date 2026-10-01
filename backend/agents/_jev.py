@@ -52,28 +52,22 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass, field
-from typing import Any
-
-import httpx2
-from typesafe_sdk import (
-    AsyncTypeSafeClient,
-    Choice,
-    RetryPolicy,
-    TypeSafeAPIConnectionError,
-    TypeSafeAPIError,
-    TypeSafeAPIResponseValidationError,
-    TypeSafeAPITimeoutError,
-    TypeSafeError,
-)
-from typesafe_sdk import constants as _sdk_constants
+from typing import TYPE_CHECKING, Any
 
 from agents._providers import model_mode
+
+if TYPE_CHECKING:  # pragma: no cover
+    import httpx2
 
 logger = logging.getLogger("sapling.jev")
 
 PROVIDER = "typesafe"  # llm_usage.provider for every Jev row
-API_KEY_ENV = _sdk_constants.API_KEY_ENV  # "TYPESAFE_API_KEY" (the SDK's own name)
+API_KEY_ENV = "TYPESAFE_API_KEY"  # the SDK's own name (typesafe_sdk.constants.API_KEY_ENV)
 SDK_LOGGER = "typesafe_sdk"
+# Spec §13 A24's privacy gate, in code (A99 (c)): in these APP_ENVs (config.py: unset =
+# production) no Jev call goes out, serve or shadow, until the owner records the gate.
+PRIVACY_GATED_ENVS = frozenset({"production", "staging"})
+PRIVACY_GATE_ENV = "JEV_PRIVACY_GATE_RECORDED"
 CHARS_PER_TOKEN = 3  # † pessimistic (English runs ~4): Jev's tokenizer is unpublished (#672)
 RETRY_STATUSES = frozenset({500, 502, 503, 504})  # never 429 / 529 (they repeat)
 _MS_PER_S = 1000
@@ -81,6 +75,37 @@ _MS_PER_S = 1000
 #: Test seam: an httpx2 transport every client is built on (MockTransport in the
 #: hermetic suite; the conftest guard installs one that refuses). Never set in production.
 _transport_override: httpx2.AsyncBaseTransport | None = None
+
+# The SDK is imported LAZILY, at the first Jev call past the build guard (A99 (b)): app
+# start with JEV_ENABLED=false never depends on typesafe_sdk importing. Its names are
+# always read as attributes of the loaded module (no rebinding, no getattr: invariant 24).
+_SDK: Any = None
+#: Test seam: the client class `_client()` builds instead of the SDK's. Never set in production.
+_client_class_override: Any = None
+
+
+def _load_sdk():
+    """Import typesafe_sdk (once); a missing or broken SDK is `jev_absent` (the seam falls
+    back), never an import error at app start."""
+    global _SDK
+    if _SDK is None:
+        try:
+            import typesafe_sdk
+        except Exception:  # ImportError, or the SDK failing at its own import
+            logger.warning("typesafe_sdk unavailable; Jev is absent")
+            raise JevUnavailable("jev_absent") from None
+        _SDK = typesafe_sdk
+    _floor_sdk_logging()  # after the SDK's own import-time TYPESAFE_LOG_LEVEL handling
+    return _SDK
+
+
+def privacy_gate_open() -> bool:
+    """A24 in code: outside production/staging, or once the owner sets
+    JEV_PRIVACY_GATE_RECORDED=true (only `true`, any case; fail closed)."""
+    app_env = (os.getenv("APP_ENV") or "production").strip().lower()
+    if app_env not in PRIVACY_GATED_ENVS:
+        return True
+    return (os.getenv(PRIVACY_GATE_ENV) or "").strip().lower() == "true"
 
 
 def _settings():
@@ -95,11 +120,20 @@ def enabled() -> bool:
     return model_mode() == "real" and bool(_settings().JEV_ENABLED)
 
 
+def _below_warning_dropped(record: logging.LogRecord) -> bool:
+    return record.levelno >= logging.WARNING
+
+
 def _floor_sdk_logging() -> None:
-    """typesafe_sdk logs request/response bodies at DEBUG (student text): never below WARNING."""
+    """typesafe_sdk logs request/response BODIES (student text) at DEBUG and URLs at INFO.
+    Unconditionally (A99 (d)): its logger is set to WARNING whatever root or
+    TYPESAFE_LOG_LEVEL say, and a filter on it drops every record below WARNING even if
+    someone lowers the level later. Records are created on that logger itself, so the
+    filter runs before any propagation to a handler."""
     sdk = logging.getLogger(SDK_LOGGER)
-    if sdk.getEffectiveLevel() < logging.WARNING:
-        sdk.setLevel(logging.WARNING)
+    sdk.setLevel(logging.WARNING)
+    if _below_warning_dropped not in sdk.filters:
+        sdk.addFilter(_below_warning_dropped)
 
 
 _floor_sdk_logging()
@@ -216,12 +250,12 @@ def circuit_open() -> bool:
 
 
 # ── the client: one per running event loop (the #354 lesson; #672's pattern) ──
-_clients: dict[int, tuple[weakref.ref, AsyncTypeSafeClient]] = {}
+_clients: dict[int, tuple[weakref.ref, Any]] = {}
 _clients_lock = threading.Lock()
 
 
-def _retry_policy() -> RetryPolicy:
-    return RetryPolicy(
+def _retry_policy(sdk):
+    return sdk.RetryPolicy(
         max_retries=_settings().JEV_MAX_RETRIES,
         backoff_initial=0.0,
         backoff_max=0.0,
@@ -229,11 +263,11 @@ def _retry_policy() -> RetryPolicy:
         http_statuses=set(RETRY_STATUSES),
         api_timeout_error=False,
         api_connection_error=True,
-        timeout=None,  # the wall-clock deadline in ask() bounds the whole call
+        timeout=_settings().JEV_TIMEOUT_MS / _MS_PER_S,  # a retry only inside the budget
     )
 
 
-def _client() -> AsyncTypeSafeClient:
+def _client():
     """The ONLY client constructor site (invariant 24): refused unless `enabled()` and
     a key is set. An httpx2 pool binds to the loop that first uses it, so each running
     loop gets its own client; entries for closed or collected loops are pruned."""
@@ -242,6 +276,7 @@ def _client() -> AsyncTypeSafeClient:
     key = (os.getenv(API_KEY_ENV) or "").strip()
     if not key:
         raise JevUnavailable("jev_absent")
+    sdk = _load_sdk()
     s = _settings()
     loop = asyncio.get_running_loop()
     with _clients_lock:
@@ -252,11 +287,11 @@ def _client() -> AsyncTypeSafeClient:
         entry = _clients.get(id(loop))
         if entry is not None and entry[0]() is loop:
             return entry[1]
-        _floor_sdk_logging()
-        client = AsyncTypeSafeClient(
+        cls = _client_class_override or sdk.AsyncTypeSafeClient
+        client = cls(
             api_key=key,
             model=s.JEV_MODEL,
-            retry=_retry_policy(),
+            retry=_retry_policy(sdk),
             timeout=s.JEV_TIMEOUT_MS / _MS_PER_S,
             transport=_transport_override,
         )
@@ -271,14 +306,32 @@ def reset_for_tests() -> None:
     _breaker = _Breaker()
 
 
-def _code(exc: BaseException) -> str:
-    if isinstance(exc, (asyncio.TimeoutError, TypeSafeAPITimeoutError)):
+async def aclose_clients() -> None:
+    """App shutdown: close the running loop's client; other loops' clients cannot be
+    awaited from here and are dropped. Never raises."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover
+        loop = None
+    with _clients_lock:
+        entries = list(_clients.values())
+        _clients.clear()
+    for ref, client in entries:
+        if loop is not None and ref() is loop:
+            try:
+                await client.aclose()
+            except Exception:  # pragma: no cover - shutdown is best effort
+                logger.debug("jev client close failed", exc_info=True)
+
+
+def _code(exc: BaseException, sdk) -> str:
+    if isinstance(exc, (asyncio.TimeoutError, sdk.TypeSafeAPITimeoutError)):
         return "timeout"
-    if isinstance(exc, TypeSafeAPIResponseValidationError):
+    if isinstance(exc, sdk.TypeSafeAPIResponseValidationError):
         return "bad_answer"
-    if isinstance(exc, TypeSafeAPIError):
+    if isinstance(exc, sdk.TypeSafeAPIError):
         return f"http_{exc.status}"
-    if isinstance(exc, TypeSafeAPIConnectionError):
+    if isinstance(exc, sdk.TypeSafeAPIConnectionError):
         return "transport"
     return "bad_answer"  # a TypeSafeError before the wire (encoding): ours to fix, fail closed
 
@@ -300,29 +353,46 @@ def _parse(resp, questions: dict[str, Question], ms: int) -> Result:
 
 
 async def ask(state: dict[str, str], questions: dict[str, Question]) -> Result:
-    """One Jev evaluation, or JevUnavailable. Order: the build guard and the key (no
-    call), the token budget (no call, never truncated, not a breaker failure), the
-    breaker, then the call under a wall-clock deadline."""
+    """One Jev evaluation, or JevUnavailable. Order: the privacy gate, the build guard
+    and the key (no call), the token budget (no call, never truncated, not a breaker
+    failure), the breaker, then the call: JEV_TIMEOUT_MS bounds it IN TOTAL (the one
+    retry included), after which the caller serves Gemini.
+
+    Breaker accounting (review M1): once `allow()` lets the call out, EVERY exit but a
+    parsed success counts a failure and releases a half-open probe — a JevUnavailable,
+    any other exception (wrapped as `bad_answer`), and a cancellation (a client
+    disconnect cancels the route), which still propagates."""
     s = _settings()
-    wire = {name: Choice(instructions=q.instructions, criteria=dict(q.options)) for name, q in questions.items()}
+    if not privacy_gate_open():
+        raise JevUnavailable("privacy_gate")
     client = _client()
+    sdk = _load_sdk()
+    wire = {name: sdk.Choice(instructions=q.instructions, criteria=dict(q.options)) for name, q in questions.items()}
     if estimate_tokens(state, wire) > s.JEV_STATE_MAX_TOKENS:
         raise JevUnavailable("oversize")
     if not _breaker.allow():
         raise JevUnavailable("circuit_open")
-    deadline = s.JEV_TIMEOUT_MS * (1 + s.JEV_MAX_RETRIES) / _MS_PER_S
+    deadline = s.JEV_TIMEOUT_MS / _MS_PER_S
     t0 = time.monotonic()
+    succeeded = False
+
+    def elapsed() -> int:
+        return round((time.monotonic() - t0) * _MS_PER_S)
+
     try:
-        resp = await asyncio.wait_for(client.system_one(state, wire, model=s.JEV_MODEL), timeout=deadline)
-    except (asyncio.TimeoutError, TypeSafeError) as exc:
-        _breaker.failure()
-        # `from None`: the SDK error can quote the body, which can echo the state
-        raise JevUnavailable(_code(exc), latency_ms=round((time.monotonic() - t0) * _MS_PER_S)) from None
-    ms = round((time.monotonic() - t0) * _MS_PER_S)
-    try:
-        result = _parse(resp, questions, ms)
-    except JevUnavailable:
-        _breaker.failure()
-        raise
-    _breaker.success()
-    return result
+        try:
+            resp = await asyncio.wait_for(client.system_one(state, wire, model=s.JEV_MODEL), timeout=deadline)
+        except (asyncio.TimeoutError, sdk.TypeSafeError) as exc:
+            # `from None`: the SDK error can quote the body, which can echo the state
+            raise JevUnavailable(_code(exc, sdk), latency_ms=elapsed()) from None
+        except Exception as exc:  # not the SDK's: still only "Jev answered nothing"
+            logger.warning("jev call raised %s", type(exc).__name__)
+            raise JevUnavailable("bad_answer", latency_ms=elapsed()) from None
+        result = _parse(resp, questions, elapsed())
+        succeeded = True
+        return result
+    finally:
+        if succeeded:
+            _breaker.success()
+        else:
+            _breaker.failure()

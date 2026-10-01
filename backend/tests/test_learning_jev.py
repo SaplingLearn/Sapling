@@ -16,6 +16,8 @@ import pytest
 from agents import _jev
 from services import decisions
 
+_BACKEND = __import__("pathlib").Path(__file__).resolve().parents[1]
+
 STATE = {"question": "What does a base case do?", "student_answer": "It stops the recursion."}
 QUESTIONS = {
     "q1": _jev.Question(
@@ -61,6 +63,7 @@ def jev(monkeypatch):
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     monkeypatch.setattr(decisions, "JEV_ENABLED", True)
     monkeypatch.setenv(_jev.API_KEY_ENV, "ts-test-key")
+    monkeypatch.setenv("APP_ENV", "test")
     _jev.reset_for_tests()
     yield _jev
     _jev.reset_for_tests()
@@ -84,7 +87,7 @@ def _ask(state=STATE, questions=QUESTIONS):
 )
 def test_client_is_built_only_in_real_mode_with_jev_enabled(jev, monkeypatch, mode, enabled):
     built = []
-    monkeypatch.setattr(_jev, "AsyncTypeSafeClient", lambda **kw: built.append(kw))
+    monkeypatch.setattr(_jev, "_client_class_override", lambda **kw: built.append(kw))
     if mode is None:
         monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     else:
@@ -98,7 +101,7 @@ def test_client_is_built_only_in_real_mode_with_jev_enabled(jev, monkeypatch, mo
 
 def test_no_key_is_jev_absent_without_a_client(jev, monkeypatch):
     built = []
-    monkeypatch.setattr(_jev, "AsyncTypeSafeClient", lambda **kw: built.append(kw))
+    monkeypatch.setattr(_jev, "_client_class_override", lambda **kw: built.append(kw))
     monkeypatch.delenv(_jev.API_KEY_ENV, raising=False)
     with pytest.raises(_jev.JevUnavailable) as exc:
         _ask()
@@ -115,7 +118,7 @@ def test_client_is_pinned_and_bounded(jev, monkeypatch):
         async def system_one(self, state, questions, *, model=None, **kw):
             raise AssertionError("not called")
 
-    monkeypatch.setattr(_jev, "AsyncTypeSafeClient", _Spy)
+    monkeypatch.setattr(_jev, "_client_class_override", _Spy)
 
     async def _build():
         return _jev._client()
@@ -191,7 +194,7 @@ def test_the_wall_clock_deadline_holds(jev, monkeypatch):
         async def system_one(self, *a, **kw):
             await asyncio.sleep(5)
 
-    monkeypatch.setattr(_jev, "AsyncTypeSafeClient", _Slow)
+    monkeypatch.setattr(_jev, "_client_class_override", _Slow)
     with pytest.raises(_jev.JevUnavailable) as exc:
         _ask()
     assert exc.value.code == "timeout"
@@ -329,3 +332,188 @@ def test_jev_is_priced_input_only_on_the_pinned_id():
 
     assert llm_pricing.MODEL_PRICING[decisions.JEV_MODEL] == (0.000042, 0.0)
     assert llm_pricing.cost_usd(decisions.JEV_MODEL, 1_000_000, 50) == pytest.approx(0.042)
+
+
+# ── review fix round (PKG-15 R1) ─────────────────────────────────────────────
+
+
+def test_a_cancelled_half_open_probe_releases_the_circuit(jev, monkeypatch):
+    """M1 (the reviewer's probe_cancel.py): a probe cancelled mid-call (a client
+    disconnect cancels the route) must not leave the breaker probing forever."""
+    now = [1000.0]
+    monkeypatch.setattr(_jev, "_clock", lambda: now[0])
+    _install(monkeypatch, _Wire((500, {})))
+    for _ in range(decisions.JEV_CIRCUIT_FAILS):
+        with pytest.raises(_jev.JevUnavailable):
+            _ask()
+    assert _jev.circuit_open()
+    now[0] += decisions.JEV_CIRCUIT_COOLDOWN_S + 1
+
+    async def slow(request):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(_jev, "_transport_override", httpx2.MockTransport(slow))
+    _jev._clients.clear()
+
+    async def cancel_probe():
+        t = asyncio.create_task(_jev.ask(STATE, QUESTIONS))
+        await asyncio.sleep(0.02)
+        t.cancel()
+        with pytest.raises(asyncio.CancelledError):  # still propagates
+            await t
+
+    asyncio.run(cancel_probe())
+    assert _jev._breaker.probing is False  # released; the cancel counted as a failure
+    now[0] += decisions.JEV_CIRCUIT_COOLDOWN_S + 1
+    _install(monkeypatch, _Wire((200, _answer())))
+    assert _ask().answers["q1"].choice == "yes"
+    assert not _jev.circuit_open()
+
+
+def test_a_non_sdk_exception_during_the_call_releases_the_probe(jev, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(_jev, "_clock", lambda: now[0])
+    _jev._breaker.opened_at, _jev._breaker.fails = now[0], decisions.JEV_CIRCUIT_FAILS
+    now[0] += decisions.JEV_CIRCUIT_COOLDOWN_S + 1
+
+    class _Boom:
+        def __init__(self, **kw):
+            pass
+
+        async def system_one(self, *a, **kw):
+            raise RuntimeError("an SDK bug")
+
+    monkeypatch.setattr(_jev, "_client_class_override", _Boom)
+    with pytest.raises(_jev.JevUnavailable) as exc:
+        _ask()
+    assert exc.value.code == "bad_answer" and _jev._breaker.probing is False
+
+
+def test_a_transport_failure_records_its_real_latency(jev, monkeypatch):
+    import time as _time
+
+    def slow_refuse(request):
+        _time.sleep(0.03)
+        raise httpx2.ConnectError("refused")
+
+    monkeypatch.setattr(_jev, "_transport_override", httpx2.MockTransport(slow_refuse))
+    _jev.reset_for_tests()
+    with pytest.raises(_jev.JevUnavailable) as exc:
+        _ask()
+    assert exc.value.code == "transport" and exc.value.latency_ms >= 30
+
+
+def test_the_deadline_is_jev_timeout_ms_in_total(jev, monkeypatch):
+    """Minor 6: JEV_TIMEOUT_MS bounds the whole call, retries included."""
+    import time as _time
+
+    monkeypatch.setattr(decisions, "JEV_TIMEOUT_MS", 60)
+    calls = []
+
+    async def slow_503(request):
+        calls.append(1)
+        await asyncio.sleep(0.04)
+        return httpx2.Response(503, json={})
+
+    monkeypatch.setattr(_jev, "_transport_override", httpx2.MockTransport(slow_503))
+    _jev.reset_for_tests()
+    t0 = _time.monotonic()
+    with pytest.raises(_jev.JevUnavailable) as exc:
+        _ask()
+    assert (_time.monotonic() - t0) < 0.2 and exc.value.code == "timeout" and len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "app_env,recorded,allowed",
+    [
+        ("production", None, False),
+        ("staging", None, False),
+        ("production", "false", False),
+        ("production", "true", True),
+        ("staging", " TRUE ", True),
+        ("local", None, True),
+        ("test", None, True),
+    ],
+)
+def test_the_privacy_gate_interlock(jev, monkeypatch, app_env, recorded, allowed):
+    """Minor 3 (spec §13 A24): in production or staging no Jev call goes out — serve or
+    shadow — until the owner records the gate with JEV_PRIVACY_GATE_RECORDED=true."""
+    wire = _install(monkeypatch, _Wire((200, _answer())))
+    monkeypatch.setenv("APP_ENV", app_env)
+    if recorded is None:
+        monkeypatch.delenv("JEV_PRIVACY_GATE_RECORDED", raising=False)
+    else:
+        monkeypatch.setenv("JEV_PRIVACY_GATE_RECORDED", recorded)
+    if allowed:
+        assert _ask().answers["q1"].choice == "yes"
+    else:
+        with pytest.raises(_jev.JevUnavailable) as exc:
+            _ask()
+        assert exc.value.code == "privacy_gate" and wire.requests == []
+
+
+def test_an_unset_app_env_is_production_for_the_gate(jev, monkeypatch):
+    _install(monkeypatch, _Wire((200, _answer())))
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("JEV_PRIVACY_GATE_RECORDED", raising=False)
+    with pytest.raises(_jev.JevUnavailable) as exc:
+        _ask()
+    assert exc.value.code == "privacy_gate"  # config.py: unset APP_ENV means production
+
+
+def test_importing_jev_does_not_import_the_sdk():
+    """Minor 2: app start with JEV_ENABLED=false never depends on the SDK importing."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; import agents._jev, services.decisions; "
+        "print('typesafe_sdk' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(_BACKEND), check=True
+    )
+    assert out.stdout.strip() == "False"
+
+
+def test_a_missing_sdk_is_jev_absent(jev, monkeypatch):
+    import builtins
+
+    real = builtins.__import__
+
+    def no_sdk(name, *a, **k):
+        if name.startswith("typesafe_sdk"):
+            raise ImportError("not installed")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(_jev, "_SDK", None)
+    monkeypatch.setattr(builtins, "__import__", no_sdk)
+    with pytest.raises(_jev.JevUnavailable) as exc:
+        _ask()
+    assert exc.value.code == "jev_absent"
+
+
+def test_the_sdk_log_floor_is_unconditional(jev, monkeypatch):
+    """Minor 4: WARNING whatever the root level or TYPESAFE_LOG_LEVEL, and a filter that
+    drops anything below it even if someone lowers the level later."""
+    sdk = logging.getLogger("typesafe_sdk")
+    sdk.setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.ERROR)  # a high root must not "inherit" a low floor
+    try:
+        _jev._floor_sdk_logging()
+        assert sdk.level == logging.WARNING
+        sdk.setLevel(logging.DEBUG)  # lowered after the floor
+        seen = []
+
+        class _H(logging.Handler):
+            def emit(self, record):
+                seen.append(record)
+
+        h = _H(level=logging.DEBUG)
+        sdk.addHandler(h)
+        sdk.debug("body=%s", "It stops the recursion.")
+        sdk.removeHandler(h)
+        assert seen == []
+    finally:
+        logging.getLogger().setLevel(logging.WARNING)
+        sdk.setLevel(logging.WARNING)
