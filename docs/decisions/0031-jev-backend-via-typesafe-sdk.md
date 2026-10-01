@@ -126,8 +126,9 @@ privacy review. PKG-15 builds the backend. Three choices were open.
 - (+) Shadow data can be collected for the three servable decisions and for both
   grading decisions, with no effect on what students are served.
 - (−) The privacy gate (A24) is still open. Code cannot check a contract, but it
-  can refuse: with `APP_ENV` production or staging (unset counts as production),
-  no Jev call goes out, serve or shadow, until `JEV_PRIVACY_GATE_RECORDED=true`.
+  can refuse: with any `APP_ENV` except local/development/dev/test (unset and
+  unknown values included — spec §13 A104 made the gate an allowlist), no Jev call
+  goes out, serve or shadow, until `JEV_PRIVACY_GATE_RECORDED=true`.
   That flag is the owner's switch, to be set only once the gate is recorded. A
   shadow sends the student's answer to Typesafe.
 - (−) The circuit and the shadow cap are per process. With N workers, up to

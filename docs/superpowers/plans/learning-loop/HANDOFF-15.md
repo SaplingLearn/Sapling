@@ -8,7 +8,7 @@ Written by the session that built PKG-15. No `PKG-15-jev-backend.md` prompt exis
 - The breaker releases a half-open probe on every exit that is not a success, cancellation included.
 - `decision_shadow` and `decision_jev_extra` rows count in $ only. They never count toward the rate limit, the daily token cap or the grades.
 - `typesafe_sdk` is imported lazily.
-- With `APP_ENV` production or staging, no Jev call goes out until `JEV_PRIVACY_GATE_RECORDED=true`.
+- With any `APP_ENV` except local/development/dev/test (unset and unknown included; spec §13 A104), no Jev call goes out until `JEV_PRIVACY_GATE_RECORDED=true`.
 - The SDK log floor is unconditional.
 - `JEV_TIMEOUT_MS` is the TOTAL bound on a call.
 - The lifespan drains the shadows and closes the clients at shutdown.
@@ -100,7 +100,7 @@ Invariant 24 is no longer vacuous. PKG-05b's regex never matched `typesafe_sdk`;
 
 ## Runbook: the privacy gate (A24's switch)
 
-1. Until the owner records the A24 gate (DPA, ZDR, FERPA/under-18 terms, privacy notice; spec §13 A24), leave `JEV_PRIVACY_GATE_RECORDED` unset in production and staging. With it unset, every Jev call there is refused: a served `jev` decision falls back to Gemini with `decision.fallback{reason: privacy_gate}`, and a shadow is not scheduled at all (one WARNING per process). This holds even if `JEV_ENABLED=true` is set by mistake.
+1. Until the owner records the A24 gate (DPA, ZDR, FERPA/under-18 terms, privacy notice; spec §13 A24), leave `JEV_PRIVACY_GATE_RECORDED` unset in every deployed environment. With it unset, every Jev call is refused in any `APP_ENV` but local/development/dev/test — production, staging, prod, preview, any unknown value and unset alike (an allowlist, spec §13 A104): a served `jev` decision falls back to Gemini with `decision.fallback{reason: privacy_gate}`, and a shadow is not scheduled at all (one WARNING per process). This holds even if `JEV_ENABLED=true` is set by mistake.
 2. When the gate is recorded (an ADR or a spec amendment naming the date and the documents), set `JEV_PRIVACY_GATE_RECORDED=true` together with `JEV_ENABLED=true`, then choose `DECISION_BACKEND_<NAME>=shadow_jev` per decision.
 3. Revoking: unset `JEV_PRIVACY_GATE_RECORDED`, which is read per call and takes effect at once, or set `JEV_ENABLED=false`, which is read at import and takes effect on restart.
 
@@ -131,4 +131,5 @@ The full hermetic suite, from `backend/` with no `SAPLING_MODEL_MODE` / `SAPLING
 
 ## Post-hoc changes
 
-(none yet)
+- PKG-14/15 2026-10-01 (review fix round, M1): the privacy gate is an allowlist — only local/development/dev/test are ungated (`PRIVACY_GATED_ENVS` → `PRIVACY_UNGATED_ENVS` = `config.LOCAL_APP_ENVS`); `test_the_privacy_gate_interlock` +11 cases (prod, preview, beta, a random string, empty, unset, …); `.env.example` updated; spec §13 A104 — commit 1844a0c3
+- PKG-14/15 2026-10-01 (review fix round, m5): `shadow_stats` cost is +inf with no Jev call (no vacuous `cost_not_worse` pass); `_run_shadow` agreement compares raw values when both map to "other"; tests/test_learning_decisions_jev.py +5; spec §13 A107 — commit e617aa06
