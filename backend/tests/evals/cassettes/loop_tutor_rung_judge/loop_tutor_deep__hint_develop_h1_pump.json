@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What do you think is the first piece of information you need to find?",
+    "evidence": "What is the main quantity the question is asking you to solve for?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "7f873abc0f2ddadd5dc3d3a606fc43e54ceed20fa4131e33eb9d5155b42be7d7"
+  "served_sha256": "a33ff6fcb70a84a47add6bdca4e019bf63ee223afdfe82e9e6144186c91ea693"
 }

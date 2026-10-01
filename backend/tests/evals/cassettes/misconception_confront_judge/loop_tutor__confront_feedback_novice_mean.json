@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "The median is the middle value in an ordered set, but the mean considers all values through a calculation.",
+    "evidence": "While the median represents the middle value in a sorted dataset, the mean is calculated by summing all values and dividing by the count of those values.",
     "only_states_correction": true
   },
-  "served_sha256": "dd55640906c2e89807a75a95a837b9d379a4f71372fb4f68745a5c39f49d4b63"
+  "served_sha256": "0e0b2e0308113a0e11bc7cea60f5ff80d773274a2fdada787620ec50137d24a8"
 }

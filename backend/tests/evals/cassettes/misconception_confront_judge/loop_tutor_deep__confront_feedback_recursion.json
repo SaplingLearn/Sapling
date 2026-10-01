@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What number would `factorial(-1)` then try to call?",
+    "evidence": "Without a specific instruction to stop, what would prevent the factorial function from calling itself with increasingly negative numbers forever?",
     "only_states_correction": false
   },
-  "served_sha256": "269289e4050a7cb1f76aa8581ebe10178193e28eae2d59e9d9017703eb2d6f7f"
+  "served_sha256": "3ead112e684f117ccd5724e23adc104ff7430330bd4d2d2689aa6330e87b6394"
 }

@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "The power rule for derivatives involves adjusting the exponent as well as the coefficient.",
+    "evidence": "What happens to the exponent after differentiation when using the power rule?",
     "only_states_correction": true
   },
-  "served_sha256": "ced0650faf605bb32423ef8e3690ebf57d9bc6a86cceda9801a98db8cb6ba910"
+  "served_sha256": "e21c1f8b55292e9cf2ba7c59f71d5f9c7173bb67c675ed10ea54a27ebbd126cf"
 }

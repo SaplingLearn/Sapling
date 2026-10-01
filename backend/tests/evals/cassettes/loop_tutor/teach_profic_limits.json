@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"You want to check your understanding of limits.\", \"body\": \"You're looking for a limits problem to test your knowledge.\", \"question\": \"What kind of limit problems have you been studying recently?\"}"
+    "{\"key_idea\": \"You want to check your understanding of limits.\", \"body\": \"You're looking for a problem to test your knowledge of limits.\", \"question\": \"What kind of limits problems have you been working on recently?\"}"
   ],
   "input_sha256": "17290214b9ec2b1850f29a6dee13fe27ef34f90f5ee0174fa22f9452df092da2",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "You're looking for a limits problem to test your knowledge.",
+    "body": "You're looking for a problem to test your knowledge of limits.",
     "key_idea": "You want to check your understanding of limits.",
-    "question": "What kind of limit problems have you been studying recently?"
+    "question": "What kind of limits problems have you been working on recently?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "Key idea: Recursive functions require a base case to prevent infinite loops.",
+    "evidence": "Key idea: A base case terminates recursion by providing a condition under which the function does not call itself.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "a9989b35082afc22c638e9679535f84739656ca12992ab3d1e9d35a116dcae9d"
+  "served_sha256": "6b79815062d8ded9c2ba367ece3962e82ca9edd2568f57263d460a9cd801c47d"
 }

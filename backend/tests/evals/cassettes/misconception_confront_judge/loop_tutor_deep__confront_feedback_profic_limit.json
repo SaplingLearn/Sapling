@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What happens if you first simplify the expression for f(x) = (x^2 - 4)/(x - 2) before trying to find its limit as x approaches 2?",
+    "evidence": "To test the idea that a 0/0 form means the limit does not exist, consider the function f(x) = (x^2 - 4)/(x - 2) at x=2.\n\nWhat is the limit of (x^2 - 4)/(x - 2) as x approaches 2?",
     "only_states_correction": false
   },
-  "served_sha256": "7812f0392efe4ce3acc6f07c8ff92af4574e0d2c6968262f21d0f53bfdfa48c9"
+  "served_sha256": "ead4d7b6f1bdfa1e7dc9891b9cc003268a9f5edf26656fdbcef5306bd2820a46"
 }

@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "2fc99ab5f12c9ccc102a02668f79664563ad19a1729de5916f17ec68c48fec8f",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "When applying the power rule, you multiply the exponent by the coefficient and then subtract one from the exponent.",
+    "only_states_correction": true
+  },
+  "served_sha256": "2f1ca4b4b3c622c49012316fdfe590f2db5e7347cda8bdcf38e78ab4608e0e36"
+}

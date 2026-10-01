@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "4e15cf7efec37e4cbadce613ac6d320a08c18c34bdd5305e5e385805f941e241",
+  "output": {
+    "evidence": "In the expression sin(x)/x, what value does the denominator approach as x approaches 0?",
+    "reveals_final_answer": false,
+    "rung": 3
+  },
+  "served_sha256": "bcb079f6c834665f200abb4834e96bb4e52e84a668b07d0a25056ff0a027ddcf"
+}

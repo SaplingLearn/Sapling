@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Based on a sketch of the graph of y = x^2, what would you estimate the slope to be at x = 2, and what slope does your rule for x^4 suggest for x^2 at that same point?",
+    "evidence": "What is the actual slope of the tangent line to the graph of y = x^2 at the point x=1?",
     "only_states_correction": false
   },
-  "served_sha256": "37be2507c75832b15e6154d6f2c62df5a4ba586ea87cae93e4f36e227911e6ea"
+  "served_sha256": "3f7479307615c29e590c89ac2d5e6c6e5b9075bf995c307beeefc8c12463984a"
 }

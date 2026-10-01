@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.\", \"body\": \"A recursive function typically has two main parts: a base case that defines when the recursion stops, and a recursive step that calls the function with a modified input. This approach allows complex problems to be solved through repeated application of a simple rule.\", \"question\": \"Can you think of a real-world example where a process repeats itself in a similar, smaller fashion until a certain condition is met?\"}"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve a smaller version of the same problem.\", \"body\": \"A recursive function typically has two parts: a base case, which is a simple scenario that can be solved directly, and a recursive step, where the function calls itself with modified arguments, working towards the base case.\", \"question\": \"Can you think of a real-world example where a problem is solved by breaking it down into smaller, similar problems?\"}"
   ],
   "input_sha256": "914c5e3cfc226d4c6064e4672d8ea57400c69d249f863fa0f548c0c000fa4886",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "A recursive function typically has two main parts: a base case that defines when the recursion stops, and a recursive step that calls the function with a modified input. This approach allows complex problems to be solved through repeated application of a simple rule.",
-    "key_idea": "Recursion involves a function calling itself to solve a problem by breaking it down into smaller, similar subproblems.",
-    "question": "Can you think of a real-world example where a process repeats itself in a similar, smaller fashion until a certain condition is met?"
+    "body": "A recursive function typically has two parts: a base case, which is a simple scenario that can be solved directly, and a recursive step, where the function calls itself with modified arguments, working towards the base case.",
+    "key_idea": "Recursion involves a function calling itself to solve a smaller version of the same problem.",
+    "question": "Can you think of a real-world example where a problem is solved by breaking it down into smaller, similar problems?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

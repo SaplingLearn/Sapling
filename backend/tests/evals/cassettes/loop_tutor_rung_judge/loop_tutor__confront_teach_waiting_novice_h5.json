@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "71530d86d71daaecad405563f53fdab3f424bf8124ff0b35fb8f6237f943b326",
   "output": {
-    "evidence": "Consider the function f(x) = x^3. If we apply the power rule by multiplying the exponent and then lowering it by one, we get 3x^2.",
+    "evidence": "For the function f(x) = x^3, consider what happens to the exponent after multiplying by 3.",
     "reveals_final_answer": false,
     "rung": 4
   },
-  "served_sha256": "d357766409e112cc496edc31148a809970371c92f807b6d533f2af96b86f9d2b"
+  "served_sha256": "2d2cda13fbf37b05b91a99ce2d6c3101ce9ccfec7832dd5fedf9e5a2472d5e34"
 }

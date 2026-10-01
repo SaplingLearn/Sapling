@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\n\"key_idea\": \"You will start by identifying the core components of the problem.\",\n\"body\": \"This problem requires you to break down the information provided and determine what needs to be calculated.\",\n\"question\": \"What is the first piece of information you need to identify from the problem description?\"\n}"
+    "```json\n{\n  \"key_idea\": \"Start by identifying the core components of the problem.\",\n  \"body\": \"The first step is to break down the problem into manageable parts.\",\n  \"question\": \"What are the key pieces of information presented in the problem?\"\n}\n```"
   ],
   "input_sha256": "1244f71908e0171878bba451e4f14a700964328618f380cc3cacfce579d0e197",
   "model": "gemini-2.5-flash-lite",
   "output": {
-    "body": "This problem requires you to break down the information provided and determine what needs to be calculated.",
-    "key_idea": "You will start by identifying the core components of the problem.",
-    "question": "What is the first piece of information you need to identify from the problem description?"
+    "body": "The first step is to break down the problem into manageable parts.",
+    "key_idea": "Start by identifying the core components of the problem.",
+    "question": "What are the key pieces of information presented in the problem?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

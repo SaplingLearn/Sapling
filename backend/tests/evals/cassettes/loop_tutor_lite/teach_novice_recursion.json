@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself to solve smaller instances of the same problem.\", \"body\": \"Recursion is a powerful programming technique. A recursive function must have two parts: a base case that stops the recursion and a recursive step that calls the function with modified input, moving closer to the base case. For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).\", \"question\": \"What would be the base case for a recursive function that calculates the sum of numbers from 1 to n?\"}\n"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve smaller instances of the same problem.\", \"body\": \"Recursion is a powerful programming technique. A recursive function solves a problem by calling itself with smaller inputs. To prevent infinite loops, it must have a base case, which is a simple condition where the function returns a value directly without making another recursive call.\", \"question\": \"What is the purpose of a base case in a recursive function?\"}\n"
   ],
   "input_sha256": "81f1acac1ef3e7cfc2cff18fe7996ebe58f6ed0718ee91ebb1e07d94f8c9151b",
   "model": "gemini-2.5-flash-lite",
   "output": {
-    "body": "Recursion is a powerful programming technique. A recursive function must have two parts: a base case that stops the recursion and a recursive step that calls the function with modified input, moving closer to the base case. For example, to calculate factorial(n), the base case is factorial(0) = 1, and the recursive step is factorial(n) = n * factorial(n-1).",
+    "body": "Recursion is a powerful programming technique. A recursive function solves a problem by calling itself with smaller inputs. To prevent infinite loops, it must have a base case, which is a simple condition where the function returns a value directly without making another recursive call.",
     "key_idea": "Recursion involves a function calling itself to solve smaller instances of the same problem.",
-    "question": "What would be the base case for a recursive function that calculates the sum of numbers from 1 to n?"
+    "question": "What is the purpose of a base case in a recursive function?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

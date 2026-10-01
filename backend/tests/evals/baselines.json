@@ -2,7 +2,7 @@
   "chat_tutor": {
     "ExpositoryHasStructureEvaluator": 1.0,
     "GraphToolUsedEvaluator": 1.0,
-    "GroundedConceptEvaluator": 1.0,
+    "GroundedConceptEvaluator": 0.8125,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,
     "SocraticEndsWithQuestionEvaluator": 1.0,
@@ -63,14 +63,14 @@
     "NoControlTags": 1.0,
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
-    "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.875,
-    "ServedAnswerLeak": 1.0,
+    "RawAnswerLeak": 0.875,
+    "RetriesUsed": 0.75,
+    "ServedAnswerLeak": 0.875,
     "ServedNoReveal": 1.0,
     "SycophancyResists": 1.0
   },
   "loop_tutor_deep": {
-    "CeilingCompliance": 1.0,
+    "CeilingCompliance": 0.875,
     "FeedbackNeverEndsInAnswer": 1.0,
     "MaxSentences": 1.0,
     "NoControlTags": 1.0,
@@ -90,91 +90,14 @@
     "OneQuestion": 1.0,
     "PlainMathBelowH6": 1.0,
     "RawAnswerLeak": 0.875,
-    "RetriesUsed": 0.375,
+    "RetriesUsed": 0.25,
     "ServedAnswerLeak": 0.875,
     "ServedNoReveal": 0.875,
     "SycophancyResists": 1.0
   },
-  "quiz_generation": {
-    "AdaptiveDifficultyEvaluator": 1.0,
-    "ConceptCoverageEvaluator": 1.0,
-    "DifficultyMixEvaluator": 1.0,
-    "MultipleChoiceShapeEvaluator": 1.0,
-    "QuestionCountEvaluator": 1.0,
-    "SpacedRepetitionConceptEvaluator": 1.0,
-    "TypeMixEvaluator": 1.0
-  },
-  "syllabus_extraction": {
-    "AssignmentCountEvaluator": 1.0,
-    "AssignmentTypeNonNullEvaluator": 1.0,
-    "DueDateIsoStringEvaluator": 1.0,
-    "GradingCategoriesPresenceEvaluator": 1.0,
-    "NoInventedDatesEvaluator": 0.933333,
-    "WeightsAreNumericEvaluator": 1.0,
-    "WireFormatRequiredKeysEvaluator": 1.0
-  },
   "loop_tutor_routing": {
-    "_note": "PKG-07 fix round 2 (spec §13 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run.",
-    "runs": 3,
-    "loop_tutor_lite": [
-      {
-        "CeilingCompliance": 0.857,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoControlTags": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 0.857,
-        "RetriesUsed": 0.571,
-        "ServedAnswerLeak": 0.857,
-        "ServedNoReveal": 0.857,
-        "SycophancyResists": 1.0,
-        "_raised": true
-      },
-      {
-        "CeilingCompliance": 1.0,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoControlTags": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.571,
-        "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
-        "_raised": true
-      },
-      {
-        "CeilingCompliance": 0.875,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoControlTags": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 0.875,
-        "RetriesUsed": 0.375,
-        "ServedAnswerLeak": 0.875,
-        "ServedNoReveal": 0.875,
-        "SycophancyResists": 1.0,
-        "_raised": false
-      }
-    ],
+    "_note": "PKG-07 fix round 2 (spec \u00a713 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run.",
     "loop_tutor": [
-      {
-        "CeilingCompliance": 1.0,
-        "FeedbackNeverEndsInAnswer": 1.0,
-        "MaxSentences": 1.0,
-        "NoControlTags": 1.0,
-        "OneQuestion": 1.0,
-        "PlainMathBelowH6": 1.0,
-        "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.625,
-        "ServedAnswerLeak": 1.0,
-        "ServedNoReveal": 1.0,
-        "SycophancyResists": 1.0,
-        "_raised": false
-      },
       {
         "CeilingCompliance": 1.0,
         "FeedbackNeverEndsInAnswer": 1.0,
@@ -185,6 +108,20 @@
         "RawAnswerLeak": 1.0,
         "RetriesUsed": 0.875,
         "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "SycophancyResists": 1.0,
+        "_raised": false
+      },
+      {
+        "CeilingCompliance": 1.0,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 0.875,
+        "RetriesUsed": 0.75,
+        "ServedAnswerLeak": 0.875,
         "ServedNoReveal": 1.0,
         "SycophancyResists": 1.0,
         "_raised": false
@@ -234,6 +171,36 @@
         "_raised": false
       },
       {
+        "CeilingCompliance": 0.875,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 1.0,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 1.0,
+        "SycophancyResists": 1.0,
+        "_raised": false
+      }
+    ],
+    "loop_tutor_lite": [
+      {
+        "CeilingCompliance": 0.875,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 1.0,
+        "RetriesUsed": 0.25,
+        "ServedAnswerLeak": 1.0,
+        "ServedNoReveal": 0.875,
+        "SycophancyResists": 1.0,
+        "_raised": false
+      },
+      {
         "CeilingCompliance": 1.0,
         "FeedbackNeverEndsInAnswer": 1.0,
         "MaxSentences": 1.0,
@@ -241,30 +208,44 @@
         "OneQuestion": 1.0,
         "PlainMathBelowH6": 1.0,
         "RawAnswerLeak": 1.0,
-        "RetriesUsed": 0.875,
+        "RetriesUsed": 0.571429,
         "ServedAnswerLeak": 1.0,
         "ServedNoReveal": 1.0,
         "SycophancyResists": 1.0,
+        "_raised": true
+      },
+      {
+        "CeilingCompliance": 0.875,
+        "FeedbackNeverEndsInAnswer": 1.0,
+        "MaxSentences": 1.0,
+        "NoControlTags": 1.0,
+        "OneQuestion": 1.0,
+        "PlainMathBelowH6": 1.0,
+        "RawAnswerLeak": 0.875,
+        "RetriesUsed": 0.5,
+        "ServedAnswerLeak": 0.875,
+        "ServedNoReveal": 0.875,
+        "SycophancyResists": 1.0,
         "_raised": false
       }
-    ]
+    ],
+    "runs": 3
   },
-  "session_close": {
-    "RawIfThenForm": 1.0,
-    "RawKeysSubset": 1.0,
-    "RawOneQuestion": 1.0,
-    "RawSummaryComplete": 1.0,
-    "RawSummaryWithinCap": 1.0,
-    "ServedDirectionFaithful": 1.0,
-    "ServedIfThenForm": 1.0,
-    "ServedKeysSubset": 1.0,
-    "ServedModelWritten": 1.0,
-    "ServedNoInjection": 1.0,
-    "ServedNoUnreleasedAnswer": 1.0,
-    "ServedOneQuestion": 1.0,
-    "ServedSecondPerson": 1.0,
-    "ServedSummaryBounded": 1.0,
-    "ServedSummaryComplete": 1.0
+  "misconception_confront__loop_tutor": {
+    "CeilingCompliance": 1.0,
+    "Confronts": 0.285714,
+    "FeedbackNeverEndsInAnswer": 1.0,
+    "MaxSentences": 1.0,
+    "NoAffirmation": 1.0,
+    "NoControlTags": 1.0,
+    "NoInstructionEcho": 1.0,
+    "OneQuestion": 1.0,
+    "PlainMathBelowH6": 1.0,
+    "RawAnswerLeak": 1.0,
+    "RetriesUsed": 0.714286,
+    "ServedAnswerLeak": 1.0,
+    "ServedNoReveal": 1.0,
+    "VerdictHeld": 1.0
   },
   "misconception_confront__loop_tutor_deep": {
     "CeilingCompliance": 1.0,
@@ -282,24 +263,8 @@
     "ServedNoReveal": 1.0,
     "VerdictHeld": 1.0
   },
-  "misconception_confront__loop_tutor": {
-    "CeilingCompliance": 1.0,
-    "Confronts": 0.428571,
-    "FeedbackNeverEndsInAnswer": 0.857143,
-    "MaxSentences": 1.0,
-    "NoAffirmation": 1.0,
-    "NoControlTags": 1.0,
-    "NoInstructionEcho": 1.0,
-    "OneQuestion": 1.0,
-    "PlainMathBelowH6": 1.0,
-    "RawAnswerLeak": 1.0,
-    "RetriesUsed": 0.571429,
-    "ServedAnswerLeak": 1.0,
-    "ServedNoReveal": 1.0,
-    "VerdictHeld": 1.0
-  },
   "misconception_confront_routing": {
-    "_note": "PKG-10 (spec §13 A75): per-run scores of fresh recordings per slot; routes.learn_loop.CONFRONT_TIERS is exactly the tiers whose runs ALL score 1.0 on every served gate with no case raised (min-of-N, A49's direction).",
+    "_note": "PKG-10 (spec \u00a713 A75): per-run scores of fresh recordings per slot; routes.learn_loop.CONFRONT_TIERS is exactly the tiers whose runs ALL score 1.0 on every served gate with no case raised (min-of-N, A49's direction).",
     "loop_tutor": [
       {
         "CeilingCompliance": 1.0,
@@ -407,5 +372,40 @@
       }
     ],
     "runs": 3
+  },
+  "quiz_generation": {
+    "AdaptiveDifficultyEvaluator": 1.0,
+    "ConceptCoverageEvaluator": 1.0,
+    "DifficultyMixEvaluator": 1.0,
+    "MultipleChoiceShapeEvaluator": 1.0,
+    "QuestionCountEvaluator": 1.0,
+    "SpacedRepetitionConceptEvaluator": 1.0,
+    "TypeMixEvaluator": 1.0
+  },
+  "session_close": {
+    "RawIfThenForm": 1.0,
+    "RawKeysSubset": 1.0,
+    "RawOneQuestion": 1.0,
+    "RawSummaryComplete": 1.0,
+    "RawSummaryWithinCap": 1.0,
+    "ServedDirectionFaithful": 1.0,
+    "ServedIfThenForm": 1.0,
+    "ServedKeysSubset": 1.0,
+    "ServedModelWritten": 1.0,
+    "ServedNoInjection": 1.0,
+    "ServedNoUnreleasedAnswer": 1.0,
+    "ServedOneQuestion": 1.0,
+    "ServedSecondPerson": 1.0,
+    "ServedSummaryBounded": 1.0,
+    "ServedSummaryComplete": 1.0
+  },
+  "syllabus_extraction": {
+    "AssignmentCountEvaluator": 1.0,
+    "AssignmentTypeNonNullEvaluator": 1.0,
+    "DueDateIsoStringEvaluator": 1.0,
+    "GradingCategoriesPresenceEvaluator": 1.0,
+    "NoInventedDatesEvaluator": 0.933333,
+    "WeightsAreNumericEvaluator": 1.0,
+    "WireFormatRequiredKeysEvaluator": 1.0
   }
 }

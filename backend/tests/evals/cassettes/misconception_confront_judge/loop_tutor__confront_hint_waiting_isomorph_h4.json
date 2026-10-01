@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "To find the derivative of a term like x^n, you typically multiply the coefficient by the exponent 'n' and then subtract one from the exponent.",
+    "evidence": "Given this, what would be the derivative of x^3?",
     "only_states_correction": true
   },
-  "served_sha256": "852d98efdc1134dffc1061991c93a03f2ef61a9501a06ad6777671d382067346"
+  "served_sha256": "c4578474b2ba955fcd2a5e3e1c744817c0b624a511e65e7590ca3ead18175e58"
 }

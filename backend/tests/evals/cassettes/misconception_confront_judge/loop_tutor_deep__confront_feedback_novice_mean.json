@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Let's test that idea with a different set of numbers: {2, 4, 100}.\n\nWould 4 be a fair representation of the average for this new set?",
+    "evidence": "Consider the list 9, 2, 4, which has the same numbers in a different order.\n\nDoes your 'middle one' rule give the same average for the list 9, 2, 4?",
     "only_states_correction": false
   },
-  "served_sha256": "f3f7a0bb8bd640c4acfadef05c4209c5a9b427c44284a5ea7ef3b87f4ec76363"
+  "served_sha256": "c99e333c78ca871eb53bf2b085201c9c0095898f631d7c4518d51dce4c998e01"
 }

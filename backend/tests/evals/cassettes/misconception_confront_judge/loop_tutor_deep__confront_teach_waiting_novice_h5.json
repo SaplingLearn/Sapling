@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What result do you get when you expand the numerator, simplify the expression, and evaluate the limit?",
+    "evidence": "What result do you get for the derivative of x^2 when you calculate it using the limit definition?",
     "only_states_correction": false
   },
-  "served_sha256": "32fac8fc003f54989d39b49b0a7007fc2b1a1eab3d3d21dace2ec0736fe63f6c"
+  "served_sha256": "27775ebf97e521736d89e773bd4ca5a6b6ea8db2b06fc0272e5f0e25f7b8d769"
 }

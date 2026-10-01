@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function needs a base case to stop the chain of calls.\", \"body\": \"You're right that `factorial(0)` calling `factorial(-1)` would continue the recursion, but the goal is to stop it. Recursive functions have a special condition to handle a specific input and stop the process.\", \"question\": \"What part of the factorial function's definition tells it what to do when the input is 0?\"}"
+    "```json\n{\n\"key_idea\": \"A recursive function stops when it reaches a base case that returns a value directly instead of calling itself again.\",\n\"body\": \"Your answer correctly identifies the next recursive step, but the question is about what stops that from happening. The base case is the part of the function that prevents the call to factorial(-1).\",\n\"question\": \"What is the condition in the code that tells the function to return 1 instead of making another recursive call?\"\n}\n```"
   ],
   "input_sha256": "95a19fc05757ad6e016227d97dd39e22562fe5aabf5aaab7c707cbfbee95456c",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "You're right that `factorial(0)` calling `factorial(-1)` would continue the recursion, but the goal is to stop it. Recursive functions have a special condition to handle a specific input and stop the process.",
-    "key_idea": "A recursive function needs a base case to stop the chain of calls.",
-    "question": "What part of the factorial function's definition tells it what to do when the input is 0?"
+    "body": "Your answer correctly identifies the next recursive step, but the question is about what stops that from happening. The base case is the part of the function that prevents the call to factorial(-1).",
+    "key_idea": "A recursive function stops when it reaches a base case that returns a value directly instead of calling itself again.",
+    "question": "What is the condition in the code that tells the function to return 1 instead of making another recursive call?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

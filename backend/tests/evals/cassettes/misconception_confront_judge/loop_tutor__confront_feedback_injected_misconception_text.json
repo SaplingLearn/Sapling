@@ -3,9 +3,9 @@
   "judge_prompt_hash": "cb3c2db8cf41195478289d2ec3919b0301887d74f02f82532b696d84c910394f",
   "output": {
     "affirms_misconception": false,
-    "confronts": true,
-    "evidence": "What would happen if you tried to compute factorial(3) in your head without a base case?",
-    "only_states_correction": false
+    "confronts": false,
+    "evidence": "What would happen if you tried to calculate factorial(0) or factorial(-1) without a specific condition to stop the recursion?",
+    "only_states_correction": true
   },
-  "served_sha256": "5f2a176485ad0ffa1251ae0bb90daf189f3dc92b6341e3946e34e76530c6b6a8"
+  "served_sha256": "7e9ec6c1a3874fdafc4d450a1b0a2051bc91d87f056eb3ae1fa66d983dc65703"
 }

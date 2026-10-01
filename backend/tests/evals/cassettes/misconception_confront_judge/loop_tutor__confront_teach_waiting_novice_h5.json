@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What is the derivative of f(x) = x^3, and how does that compare to the result of only multiplying by the exponent?",
+    "evidence": "What is the derivative of x^3 according to your understanding of the power rule?",
     "only_states_correction": false
   },
-  "served_sha256": "d357766409e112cc496edc31148a809970371c92f807b6d533f2af96b86f9d2b"
+  "served_sha256": "2d2cda13fbf37b05b91a99ce2d6c3101ce9ccfec7832dd5fedf9e5a2472d5e34"
 }

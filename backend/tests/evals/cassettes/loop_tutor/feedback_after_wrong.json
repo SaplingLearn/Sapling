@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursive functions need a base case to prevent infinite recursion, and the base case handles a specific input without making further recursive calls.\", \"body\": \"Your reasoning about recursion stopping is on the right track; a base case is indeed what stops the recursion. However, factorial(0) doesn't call factorial(-1).\", \"question\": \"What is the smallest non-negative integer for which the factorial function is typically defined?\"}"
+    "{\"key_idea\": \"The base case in a recursive function defines a condition where the function returns a value directly without making further recursive calls.\", \"body\": \"Your answer incorrectly states that `factorial(0)` calls `factorial(-1)`. For the factorial function, the base case is typically when the input is 0, which returns 1 without any further recursion.\", \"question\": \"What is the specific condition in the factorial function that acts as the base case?\"}"
   ],
   "input_sha256": "8c8bb3c14b7d3706407e0322e49d31373e720b978ad79a50b6f29564dad1acba",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "Your reasoning about recursion stopping is on the right track; a base case is indeed what stops the recursion. However, factorial(0) doesn't call factorial(-1).",
-    "key_idea": "Recursive functions need a base case to prevent infinite recursion, and the base case handles a specific input without making further recursive calls.",
-    "question": "What is the smallest non-negative integer for which the factorial function is typically defined?"
+    "body": "Your answer incorrectly states that `factorial(0)` calls `factorial(-1)`. For the factorial function, the base case is typically when the input is 0, which returns 1 without any further recursion.",
+    "key_idea": "The base case in a recursive function defines a condition where the function returns a value directly without making further recursive calls.",
+    "question": "What is the specific condition in the factorial function that acts as the base case?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,
